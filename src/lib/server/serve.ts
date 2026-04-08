@@ -75,10 +75,7 @@ export interface ServeOptions {
  * @returns The http.Server instance. Use the `onListening` callback or
  *   listen for the 'listening' event to know when it's ready.
  */
-export function serve(
-  createAgent: (ctx: ServeContext) => McpServer,
-  options?: ServeOptions
-): HttpServer {
+export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: ServeOptions): HttpServer {
   const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
   if (envPort !== undefined && (Number.isNaN(envPort) || envPort < 0 || envPort > 65535)) {
     throw new Error(`Invalid PORT environment variable: "${process.env.PORT}"`);

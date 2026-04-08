@@ -48,9 +48,7 @@ describe('serve() task store sharing', () => {
     const port = httpServer.address().port;
 
     try {
-      const transport = new StreamableHTTPClientTransport(
-        new URL(`http://localhost:${port}/mcp`)
-      );
+      const transport = new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`));
       const client = new Client({ name: 'Test', version: '1.0.0' });
       await client.connect(transport);
 
@@ -103,9 +101,7 @@ describe('serve() task store sharing', () => {
     const port = httpServer.address().port;
 
     try {
-      const transport = new StreamableHTTPClientTransport(
-        new URL(`http://localhost:${port}/mcp`)
-      );
+      const transport = new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`));
       const client = new Client({ name: 'Test', version: '1.0.0' });
       await client.connect(transport);
 
@@ -155,9 +151,7 @@ describe('serve() task store sharing', () => {
     const port = httpServer.address().port;
 
     try {
-      const transport = new StreamableHTTPClientTransport(
-        new URL(`http://localhost:${port}/mcp`)
-      );
+      const transport = new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`));
       const client = new Client({ name: 'Test', version: '1.0.0' });
       await client.connect(transport);
 
@@ -188,9 +182,7 @@ describe('serve() task store sharing', () => {
     try {
       // Make two separate requests (each creates a new server instance)
       for (let i = 0; i < 2; i++) {
-        const transport = new StreamableHTTPClientTransport(
-          new URL(`http://localhost:${port}/mcp`)
-        );
+        const transport = new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`));
         const client = new Client({ name: 'Test', version: '1.0.0' });
         await client.connect(transport);
         await client.callTool({ name: 'ping', arguments: {} });
@@ -297,9 +289,7 @@ describe('serve() task store sharing', () => {
     const port = httpServer.address().port;
 
     try {
-      const transport = new StreamableHTTPClientTransport(
-        new URL(`http://localhost:${port}/mcp`)
-      );
+      const transport = new StreamableHTTPClientTransport(new URL(`http://localhost:${port}/mcp`));
       const client = new Client({ name: 'Test', version: '1.0.0' });
       await client.connect(transport);
 
