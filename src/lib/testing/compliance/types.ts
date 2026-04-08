@@ -99,7 +99,8 @@ export type ObservationCategory =
   | 'relevance'
   | 'auth'
   | 'coherence'
-  | 'error_compliance';
+  | 'error_compliance'
+  | 'tool_discovery';
 
 export type ObservationSeverity = 'info' | 'suggestion' | 'warning' | 'error';
 
