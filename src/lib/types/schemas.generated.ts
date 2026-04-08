@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-08T19:30:02.083Z
+// Generated at: 2026-04-08T19:32:38.443Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2359,21 +2359,6 @@ export const UpdatePropertyListRequestSchema = z.object({
     idempotency_key: z.string().nullish()
 }).passthrough();
 
-export const PropertyListSchema = z.object({
-    list_id: z.string(),
-    name: z.string(),
-    description: z.string().nullish(),
-    principal: z.string().nullish(),
-    base_properties: z.array(BasePropertySourceSchema).nullish(),
-    filters: PropertyListFiltersSchema.nullish(),
-    brand: BrandReferenceSchema.nullish(),
-    webhook_url: z.string().nullish(),
-    cache_duration_hours: z.number().nullish(),
-    created_at: z.string().nullish(),
-    updated_at: z.string().nullish(),
-    property_count: z.number().nullish()
-}).passthrough();
-
 export const GetPropertyListRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     list_id: z.string(),
@@ -2386,28 +2371,12 @@ export const GetPropertyListRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const GetPropertyListResponseSchema = z.object({
-    list: PropertyListSchema,
-    identifiers: z.array(IdentifierSchema).nullish(),
-    pagination: PaginationResponseSchema.nullish(),
-    resolved_at: z.string().nullish(),
-    cache_valid_until: z.string().nullish(),
-    coverage_gaps: z.record(z.string(), z.array(IdentifierSchema)).nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
 export const ListPropertyListsRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     principal: z.string().nullish(),
     name_contains: z.string().nullish(),
     pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const ListPropertyListsResponseSchema = z.object({
-    lists: z.array(PropertyListSchema),
-    pagination: PaginationResponseSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
@@ -2513,21 +2482,6 @@ export const GetContentStandardsRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     standards_id: z.string(),
     context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const ContentStandardsSchema = z.object({
-    standards_id: z.string(),
-    name: z.string().nullish(),
-    countries_all: z.array(z.string()).nullish(),
-    channels_any: z.array(MediaChannelSchema).nullish(),
-    languages_any: z.array(z.string()).nullish(),
-    policy: z.string().nullish(),
-    calibration_exemplars: z.object({
-        pass: z.array(ArtifactSchema).nullish(),
-        fail: z.array(ArtifactSchema).nullish()
-    }).passthrough().nullish(),
-    pricing_options: z.array(PricingOptionSchema).nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
@@ -3870,6 +3824,8 @@ export const PackageRequestSchema = z.object({
     catalogs: z.array(CatalogSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),
     targeting_overlay: TargetingOverlaySchema.nullish(),
+    measurement_terms: MeasurementTermsSchema.nullish(),
+    performance_standards: z.array(PerformanceStandardSchema).nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     creatives: z.array(CreativeAssetSchema).nullish(),
     context: ContextObjectSchema.nullish(),
@@ -4309,10 +4265,20 @@ export const CreatePropertyListRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const CreatePropertyListResponseSchema = z.object({
-    list: PropertyListSchema,
-    auth_token: z.string(),
-    ext: ExtensionObjectSchema.nullish()
+export const PropertyListSchema = z.object({
+    list_id: z.string(),
+    name: z.string(),
+    description: z.string().nullish(),
+    principal: z.string().nullish(),
+    base_properties: z.array(BasePropertySourceSchema).nullish(),
+    filters: PropertyListFiltersSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
+    webhook_url: z.string().nullish(),
+    cache_duration_hours: z.number().nullish(),
+    created_at: z.string().nullish(),
+    updated_at: z.string().nullish(),
+    property_count: z.number().nullish(),
+    pricing_options: z.array(VendorPricingOptionSchema).nullish()
 }).passthrough();
 
 export const UpdatePropertyListResponseSchema = z.object({
@@ -4320,16 +4286,36 @@ export const UpdatePropertyListResponseSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const ListContentStandardsResponseSchema = z.union([z.object({
-        standards: z.array(ContentStandardsSchema),
-        pagination: PaginationResponseSchema.nullish(),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    }).passthrough(), z.object({
-        errors: z.array(ErrorSchema),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    }).passthrough()]);
+export const GetPropertyListResponseSchema = z.object({
+    list: PropertyListSchema,
+    identifiers: z.array(IdentifierSchema).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
+    resolved_at: z.string().nullish(),
+    cache_valid_until: z.string().nullish(),
+    coverage_gaps: z.record(z.string(), z.array(IdentifierSchema)).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ListPropertyListsResponseSchema = z.object({
+    lists: z.array(PropertyListSchema),
+    pagination: PaginationResponseSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ContentStandardsSchema = z.object({
+    standards_id: z.string(),
+    name: z.string().nullish(),
+    countries_all: z.array(z.string()).nullish(),
+    channels_any: z.array(MediaChannelSchema).nullish(),
+    languages_any: z.array(z.string()).nullish(),
+    policy: z.string().nullish(),
+    calibration_exemplars: z.object({
+        pass: z.array(ArtifactSchema).nullish(),
+        fail: z.array(ArtifactSchema).nullish()
+    }).passthrough().nullish(),
+    pricing_options: z.array(VendorPricingOptionSchema).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
 
 export const GetContentStandardsResponseSchema = z.union([ContentStandardsSchema, z.object({
         errors: z.array(ErrorSchema),
@@ -4612,6 +4598,23 @@ export const LogEventRequestSchema = z.object({
 }).passthrough();
 
 export const PreviewCreativeResponseSchema = z.union([PreviewCreativeSingleResponseSchema, PreviewCreativeBatchResponseSchema, PreviewCreativeVariantResponseSchema]);
+
+export const CreatePropertyListResponseSchema = z.object({
+    list: PropertyListSchema,
+    auth_token: z.string(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ListContentStandardsResponseSchema = z.union([z.object({
+        standards: z.array(ContentStandardsSchema),
+        pagination: PaginationResponseSchema.nullish(),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    }).passthrough(), z.object({
+        errors: z.array(ErrorSchema),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    }).passthrough()]);
 
 export const SISendMessageResponseSchema = z.object({
     session_id: z.string(),

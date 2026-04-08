@@ -3678,6 +3678,11 @@ export interface PackageRequest {
    */
   optimization_goals?: OptimizationGoal[];
   targeting_overlay?: TargetingOverlay;
+  measurement_terms?: MeasurementTerms;
+  /**
+   * Buyer's proposed performance standards for this package. Overrides product defaults. Seller accepts, rejects with TERMS_REJECTED, or adjusts. When absent, product's performance_standards apply.
+   */
+  performance_standards?: PerformanceStandard[];
   /**
    * Assign existing library creatives to this package with optional weights and placement targeting
    */
@@ -9243,6 +9248,10 @@ export interface PropertyList {
    * Number of properties in the resolved list (at time of last resolution)
    */
   property_count?: number;
+  /**
+   * Pricing options for this property list. Present when the requesting account has a billing relationship with the list provider. The buyer passes the selected pricing_option_id in report_usage.
+   */
+  pricing_options?: VendorPricingOption[];
 }
 
 // update_property_list parameters
@@ -9541,7 +9550,7 @@ export interface ContentStandards {
   /**
    * Pricing options for this content standards service. The buyer passes the selected pricing_option_id in report_usage for billing verification.
    */
-  pricing_options?: PricingOption[];
+  pricing_options?: VendorPricingOption[];
   ext?: ExtensionObject;
 }
 /**
