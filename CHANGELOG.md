@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.22.1
+
+### Patch Changes
+
+- 744c829: serve() now creates a shared task store and passes it to the agent factory via ServeContext, fixing MCP Tasks protocol (tasks/get) failures over stateless HTTP where each request previously got its own empty task store.
+
 ## 4.22.0
 
 ### Minor Changes
