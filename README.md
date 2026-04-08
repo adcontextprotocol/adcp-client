@@ -9,6 +9,10 @@
 
 Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Build distributed advertising operations that work synchronously OR asynchronously with the same code.
 
+## For AI Agents
+
+Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
+
 ## The Core Concept
 
 AdCP operations are **distributed and asynchronous by default**. An agent might:
