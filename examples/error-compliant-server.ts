@@ -11,9 +11,8 @@
  *   npx @adcp/client comply http://localhost:3456/mcp
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
 import {
+  createTaskCapableServer,
   adcpError,
   capabilitiesResponse,
   productsResponse,
@@ -106,8 +105,8 @@ function checkRateLimit() {
 // ---------------------------------------------------------------------------
 // Server factory (McpServer.connect() can only be called once per instance)
 // ---------------------------------------------------------------------------
-function createAgentServer(): McpServer {
-  const server = new McpServer({ name: 'Example AdCP Agent', version: '1.0.0' });
+function createAgentServer() {
+  const server = createTaskCapableServer('Example AdCP Agent', '1.0.0');
 
   // --- get_adcp_capabilities ---
   server.tool('get_adcp_capabilities', {}, async () => {

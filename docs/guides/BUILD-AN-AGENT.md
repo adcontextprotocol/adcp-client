@@ -95,7 +95,7 @@ import {
   CreateMediaBuyRequestSchema,
 } from '@adcp/client';
 
-// Pass .shape to server.tool() for MCP tool registration
+// The MCP SDK expects a plain object of Zod fields, not a Zod schema — .shape unwraps it.
 server.tool('get_signals', 'Discover audience segments.', GetSignalsRequestSchema.shape, async (args) => {
   // args is fully typed from the schema
 });
