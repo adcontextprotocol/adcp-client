@@ -60,6 +60,20 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
+  // ── Brand & Rights ───────────────────────────────────────
+
+  get_brand_identity(_step, _context, options) {
+    return {
+      brand: resolveBrand(options),
+    };
+  },
+
+  get_rights(_step, _context, options) {
+    return {
+      brand: resolveBrand(options),
+    };
+  },
+
   // ── Product Discovery ──────────────────────────────────
 
   get_products(step, context, options) {
@@ -98,15 +112,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     const pkg: Record<string, unknown> = {
       product_id: product?.product_id ?? context.product_id ?? 'test-product',
       budget: options.budget ?? Math.max(1000, (pricingOption?.min_spend_per_package as number) ?? 1000),
+      pricing_option_id: pricingOption?.pricing_option_id ?? context.pricing_option_id ?? 'default',
     };
-
-    if (pricingOption?.pricing_option_id) {
-      pkg.pricing_option_id = pricingOption.pricing_option_id;
-    }
 
     // Add bid_price for auction-based pricing
     if (pricingOption?.pricing_model === 'auction' || pricingOption?.pricing_model === 'cpm') {
-      const floor = (pricingOption?.floor_price as number) ?? 5;
+      const floor = Number(pricingOption?.floor_price) || 5;
       pkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
     }
 
@@ -159,12 +170,80 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   provide_performance_feedback(_step, context, _options) {
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     return {
       media_buy_id: context.media_buy_id ?? 'unknown',
+      measurement_period: {
+        start: weekAgo.toISOString(),
+        end: now.toISOString(),
+      },
       feedback: {
         satisfaction: 'positive',
         notes: 'E2E test feedback',
       },
+    };
+  },
+
+  // ── Catalogs & Events ─────────────────────────────────
+
+  sync_catalogs(_step, context, options) {
+    return {
+      account: context.account ?? resolveAccount(options),
+      catalogs: [
+        {
+          catalog_id: `test-catalog-${Date.now()}`,
+          name: 'E2E Test Catalog',
+          feed_url: 'https://test-assets.adcontextprotocol.org/feeds/test-catalog.json',
+          feed_format: 'json',
+        },
+      ],
+    };
+  },
+
+  sync_event_sources(_step, context, options) {
+    return {
+      account: context.account ?? resolveAccount(options),
+      event_sources: [
+        {
+          event_source_id: `test-source-${Date.now()}`,
+          name: 'E2E Test Event Source',
+          event_types: ['purchase', 'add_to_cart'],
+        },
+      ],
+    };
+  },
+
+  log_event(_step, context, _options) {
+    return {
+      event_source_id: context.event_source_id ?? 'test-source',
+      events: [
+        {
+          event_id: `evt-${Date.now()}`,
+          event_type: 'purchase',
+          timestamp: new Date().toISOString(),
+          value: { amount: 49.99, currency: 'USD' },
+        },
+      ],
+    };
+  },
+
+  report_usage(_step, context, options) {
+    const now = new Date();
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    return {
+      account: context.account ?? resolveAccount(options),
+      reporting_period: {
+        start: monthAgo.toISOString(),
+        end: now.toISOString(),
+      },
+      usage: [
+        {
+          creative_id: context.creative_id ?? 'test-creative',
+          impressions: 10000,
+          spend: { amount: 500, currency: 'USD' },
+        },
+      ],
     };
   },
 

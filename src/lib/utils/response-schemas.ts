@@ -34,6 +34,17 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   list_accounts: schemas.ListAccountsResponseSchema,
   sync_governance: schemas.SyncGovernanceResponseSchema,
   sync_audiences: schemas.SyncAudiencesResponseSchema,
+  report_usage: schemas.ReportUsageResponseSchema,
+  get_account_financials: schemas.GetAccountFinancialsResponseSchema,
+
+  // Catalogs & events
+  sync_catalogs: schemas.SyncCatalogsResponseSchema,
+  sync_event_sources: schemas.SyncEventSourcesResponseSchema,
+  log_event: schemas.LogEventResponseSchema,
+  get_media_buy_artifacts: schemas.GetMediaBuyArtifactsResponseSchema,
+
+  // Creative (additional)
+  get_creative_features: schemas.GetCreativeFeaturesResponseSchema,
 
   // Governance — property lists & content standards
   create_property_list: schemas.CreatePropertyListResponseSchema,
