@@ -416,6 +416,9 @@ export {
   InMemoryTaskStore,
   isTerminal,
   serve,
+  PostgresTaskStore,
+  cleanupExpiredTasks,
+  MCP_TASKS_MIGRATION,
 } from './server';
 export type {
   AdcpTaskToolConfig,
@@ -430,6 +433,7 @@ export type {
   Task,
   ServeContext,
   ServeOptions,
+  PgQueryable,
 } from './server';
 
 // ====== ERROR EXTRACTION ======

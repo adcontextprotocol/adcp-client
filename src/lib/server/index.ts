@@ -24,5 +24,8 @@ export type {
   Task,
 } from './tasks';
 
+export { PostgresTaskStore, cleanupExpiredTasks, MCP_TASKS_MIGRATION } from './postgres-task-store';
+export type { PgQueryable } from './postgres-task-store';
+
 export { serve } from './serve';
 export type { ServeContext, ServeOptions } from './serve';
