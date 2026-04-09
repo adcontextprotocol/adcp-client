@@ -33,10 +33,7 @@ import type { Task, RequestId, Result, Request } from '@modelcontextprotocol/sdk
  * without forcing a hard dependency on the `pg` package.
  */
 export interface PgQueryable {
-  query(
-    text: string,
-    values?: unknown[],
-  ): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+  query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
 }
 
 /** Page size for listTasks pagination (matches InMemoryTaskStore). */
@@ -129,7 +126,7 @@ export class PostgresTaskStore implements TaskStore {
     taskParams: CreateTaskOptions,
     requestId: RequestId,
     request: Request,
-    _sessionId?: string,
+    _sessionId?: string
   ): Promise<Task> {
     const taskId = randomBytes(16).toString('hex');
     const ttl = taskParams.ttl ?? null;
@@ -142,17 +139,14 @@ export class PostgresTaskStore implements TaskStore {
                     THEN NOW() + ($2::integer || ' milliseconds')::interval
                     ELSE NULL END)
        RETURNING *`,
-      [taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)],
+      [taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)]
     );
 
     return rowToTask(rows[0] as unknown as TaskRow);
   }
 
   async getTask(taskId: string, _sessionId?: string): Promise<Task | null> {
-    const { rows } = await this.db.query(
-      `SELECT * FROM mcp_tasks WHERE task_id = $1 AND ${NOT_EXPIRED}`,
-      [taskId],
-    );
+    const { rows } = await this.db.query(`SELECT * FROM mcp_tasks WHERE task_id = $1 AND ${NOT_EXPIRED}`, [taskId]);
     return rows.length > 0 ? rowToTask(rows[0] as unknown as TaskRow) : null;
   }
 
@@ -160,7 +154,7 @@ export class PostgresTaskStore implements TaskStore {
     taskId: string,
     status: 'completed' | 'failed',
     result: Result,
-    _sessionId?: string,
+    _sessionId?: string
   ): Promise<void> {
     // Atomic check-and-update: only modify if task exists and is non-terminal.
     const { rowCount, rows } = await this.db.query(
@@ -175,29 +169,28 @@ export class PostgresTaskStore implements TaskStore {
          AND status NOT IN ('completed', 'failed', 'cancelled')
          AND ${NOT_EXPIRED}
        RETURNING status`,
-      [taskId, status, JSON.stringify(result)],
+      [taskId, status, JSON.stringify(result)]
     );
 
     if (!rowCount || rows.length === 0) {
       // Distinguish "not found" / "expired" from "already terminal".
       const { rows: existing } = await this.db.query(
         `SELECT status FROM mcp_tasks WHERE task_id = $1 AND ${NOT_EXPIRED}`,
-        [taskId],
+        [taskId]
       );
       if (existing.length === 0) {
         throw new Error(`Task with ID ${taskId} not found`);
       }
       throw new Error(
-        `Cannot store result for task ${taskId} in terminal status '${existing[0]!.status}'. Task results can only be stored once.`,
+        `Cannot store result for task ${taskId} in terminal status '${existing[0]!.status}'. Task results can only be stored once.`
       );
     }
   }
 
   async getTaskResult(taskId: string, _sessionId?: string): Promise<Result> {
-    const { rows } = await this.db.query(
-      `SELECT result FROM mcp_tasks WHERE task_id = $1 AND ${NOT_EXPIRED}`,
-      [taskId],
-    );
+    const { rows } = await this.db.query(`SELECT result FROM mcp_tasks WHERE task_id = $1 AND ${NOT_EXPIRED}`, [
+      taskId,
+    ]);
 
     if (rows.length === 0) {
       throw new Error(`Task with ID ${taskId} not found`);
@@ -213,7 +206,7 @@ export class PostgresTaskStore implements TaskStore {
     taskId: string,
     status: Task['status'],
     statusMessage?: string,
-    _sessionId?: string,
+    _sessionId?: string
   ): Promise<void> {
     // Atomic: only update if not already in a terminal state.
     const { rowCount, rows } = await this.db.query(
@@ -229,27 +222,24 @@ export class PostgresTaskStore implements TaskStore {
          AND status NOT IN ('completed', 'failed', 'cancelled')
          AND ${NOT_EXPIRED}
        RETURNING status`,
-      [taskId, status, statusMessage ?? null],
+      [taskId, status, statusMessage ?? null]
     );
 
     if (!rowCount || rows.length === 0) {
       const { rows: existing } = await this.db.query(
         `SELECT status FROM mcp_tasks WHERE task_id = $1 AND ${NOT_EXPIRED}`,
-        [taskId],
+        [taskId]
       );
       if (existing.length === 0) {
         throw new Error(`Task with ID ${taskId} not found`);
       }
       throw new Error(
-        `Cannot update task ${taskId} from terminal status '${existing[0]!.status}' to '${status}'. Terminal states (completed, failed, cancelled) cannot transition to other states.`,
+        `Cannot update task ${taskId} from terminal status '${existing[0]!.status}' to '${status}'. Terminal states (completed, failed, cancelled) cannot transition to other states.`
       );
     }
   }
 
-  async listTasks(
-    cursor?: string,
-    _sessionId?: string,
-  ): Promise<{ tasks: Task[]; nextCursor?: string }> {
+  async listTasks(cursor?: string, _sessionId?: string): Promise<{ tasks: Task[]; nextCursor?: string }> {
     let rawRows: Record<string, unknown>[];
 
     if (cursor) {
@@ -271,7 +261,7 @@ export class PostgresTaskStore implements TaskStore {
            AND (created_at, task_id) > ($1::timestamptz, $2)
          ORDER BY created_at, task_id
          LIMIT $3`,
-        [cursorCreatedAt, cursorTaskId, PAGE_SIZE + 1],
+        [cursorCreatedAt, cursorTaskId, PAGE_SIZE + 1]
       ));
     } else {
       ({ rows: rawRows } = await this.db.query(
@@ -279,7 +269,7 @@ export class PostgresTaskStore implements TaskStore {
          WHERE ${NOT_EXPIRED}
          ORDER BY created_at, task_id
          LIMIT $1`,
-        [PAGE_SIZE + 1],
+        [PAGE_SIZE + 1]
       ));
     }
 
@@ -316,8 +306,6 @@ export class PostgresTaskStore implements TaskStore {
  * @returns The number of deleted rows.
  */
 export async function cleanupExpiredTasks(db: PgQueryable): Promise<number> {
-  const { rowCount } = await db.query(
-    `DELETE FROM mcp_tasks WHERE expires_at IS NOT NULL AND expires_at <= NOW()`,
-  );
+  const { rowCount } = await db.query(`DELETE FROM mcp_tasks WHERE expires_at IS NOT NULL AND expires_at <= NOW()`);
   return rowCount ?? 0;
 }

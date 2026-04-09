@@ -99,36 +99,24 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   });
 
   test('storeTaskResult throws for nonexistent task', async () => {
-    await assert.rejects(
-      () => store.storeTaskResult('no-such-task', 'completed', { content: [] }),
-      /not found/,
-    );
+    await assert.rejects(() => store.storeTaskResult('no-such-task', 'completed', { content: [] }), /not found/);
   });
 
   test('storeTaskResult throws for already-terminal task', async () => {
     const task = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
     await store.storeTaskResult(task.taskId, 'completed', { content: [] });
 
-    await assert.rejects(
-      () => store.storeTaskResult(task.taskId, 'failed', { content: [] }),
-      /terminal status/,
-    );
+    await assert.rejects(() => store.storeTaskResult(task.taskId, 'failed', { content: [] }), /terminal status/);
   });
 
   test('getTaskResult throws when no result stored', async () => {
     const task = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
 
-    await assert.rejects(
-      () => store.getTaskResult(task.taskId),
-      /no result stored/,
-    );
+    await assert.rejects(() => store.getTaskResult(task.taskId), /no result stored/);
   });
 
   test('getTaskResult throws for nonexistent task', async () => {
-    await assert.rejects(
-      () => store.getTaskResult('no-such-task'),
-      /not found/,
-    );
+    await assert.rejects(() => store.getTaskResult('no-such-task'), /not found/);
   });
 
   test('updateTaskStatus transitions from working to input_required', async () => {
@@ -141,20 +129,14 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   });
 
   test('updateTaskStatus throws for nonexistent task', async () => {
-    await assert.rejects(
-      () => store.updateTaskStatus('no-such-task', 'cancelled'),
-      /not found/,
-    );
+    await assert.rejects(() => store.updateTaskStatus('no-such-task', 'cancelled'), /not found/);
   });
 
   test('updateTaskStatus throws when transitioning from terminal state', async () => {
     const task = await store.createTask({}, '1', fakeRequest);
     await store.storeTaskResult(task.taskId, 'completed', { content: [] });
 
-    await assert.rejects(
-      () => store.updateTaskStatus(task.taskId, 'working'),
-      /terminal status/,
-    );
+    await assert.rejects(() => store.updateTaskStatus(task.taskId, 'working'), /terminal status/);
   });
 
   test('listTasks returns tasks ordered by creation time', async () => {
@@ -190,10 +172,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   });
 
   test('listTasks with invalid cursor throws', async () => {
-    await assert.rejects(
-      () => store.listTasks('bad-cursor'),
-      /Invalid cursor/,
-    );
+    await assert.rejects(() => store.listTasks('bad-cursor'), /Invalid cursor/);
   });
 
   test('expired tasks are invisible to getTask', async () => {
@@ -202,7 +181,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await pool.query(
       `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ($1, 'working', 1, 1000, '1', $2, NOW() - interval '1 second')`,
-      [taskId, JSON.stringify(fakeRequest)],
+      [taskId, JSON.stringify(fakeRequest)]
     );
 
     const result = await store.getTask(taskId);
@@ -214,7 +193,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await pool.query(
       `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ('expired-list-1', 'working', 1, 1000, '1', $1, NOW() - interval '1 second')`,
-      [JSON.stringify(fakeRequest)],
+      [JSON.stringify(fakeRequest)]
     );
     // Insert live task
     await store.createTask({ ttl: null }, '2', fakeRequest);
@@ -228,7 +207,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await pool.query(
       `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ('cleanup-1', 'completed', 1, 1000, '1', $1, NOW() - interval '1 second')`,
-      [JSON.stringify(fakeRequest)],
+      [JSON.stringify(fakeRequest)]
     );
     // Insert live task
     await store.createTask({ ttl: null }, '2', fakeRequest);
@@ -245,24 +224,18 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     const task = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
 
     // Get original expires_at
-    const { rows: before } = await pool.query(
-      'SELECT expires_at FROM mcp_tasks WHERE task_id = $1',
-      [task.taskId],
-    );
+    const { rows: before } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
 
     // Small delay to ensure time advances
     await new Promise(r => setTimeout(r, 50));
 
     await store.storeTaskResult(task.taskId, 'completed', { content: [] });
 
-    const { rows: after } = await pool.query(
-      'SELECT expires_at FROM mcp_tasks WHERE task_id = $1',
-      [task.taskId],
-    );
+    const { rows: after } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
 
     assert.ok(
       new Date(after[0].expires_at) > new Date(before[0].expires_at),
-      'expires_at should be reset to a later time after storeTaskResult',
+      'expires_at should be reset to a later time after storeTaskResult'
     );
   });
 
@@ -273,10 +246,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   test('updateTaskStatus to cancelled resets expires_at', async () => {
     const task = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
 
-    const { rows: before } = await pool.query(
-      'SELECT expires_at FROM mcp_tasks WHERE task_id = $1',
-      [task.taskId],
-    );
+    const { rows: before } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
 
     await new Promise(r => setTimeout(r, 50));
     await store.updateTaskStatus(task.taskId, 'cancelled');
@@ -284,13 +254,10 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     const fetched = await store.getTask(task.taskId);
     assert.strictEqual(fetched.status, 'cancelled');
 
-    const { rows: after } = await pool.query(
-      'SELECT expires_at FROM mcp_tasks WHERE task_id = $1',
-      [task.taskId],
-    );
+    const { rows: after } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
     assert.ok(
       new Date(after[0].expires_at) > new Date(before[0].expires_at),
-      'expires_at should be reset after cancellation',
+      'expires_at should be reset after cancellation'
     );
   });
 
@@ -299,13 +266,10 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await pool.query(
       `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, result, expires_at)
        VALUES ('expired-result-1', 'completed', 1, 1000, '1', $1, $2, NOW() - interval '1 second')`,
-      [JSON.stringify(fakeRequest), JSON.stringify({ content: [{ type: 'text', text: 'Done' }] })],
+      [JSON.stringify(fakeRequest), JSON.stringify({ content: [{ type: 'text', text: 'Done' }] })]
     );
 
-    await assert.rejects(
-      () => store.getTaskResult('expired-result-1'),
-      /not found/,
-    );
+    await assert.rejects(() => store.getTaskResult('expired-result-1'), /not found/);
   });
 
   test('storeTaskResult throws for expired task', async () => {
@@ -313,12 +277,9 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await pool.query(
       `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ('expired-store-1', 'working', 1, 1000, '1', $1, NOW() - interval '1 second')`,
-      [JSON.stringify(fakeRequest)],
+      [JSON.stringify(fakeRequest)]
     );
 
-    await assert.rejects(
-      () => store.storeTaskResult('expired-store-1', 'completed', { content: [] }),
-      /not found/,
-    );
+    await assert.rejects(() => store.storeTaskResult('expired-store-1', 'completed', { content: [] }), /not found/);
   });
 });
