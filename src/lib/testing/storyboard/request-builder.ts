@@ -317,14 +317,19 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  activate_signal(_step, context, _options) {
+  activate_signal(step, context, _options) {
     const signal = selectSignal(context);
+    // Use step-specific destinations when the storyboard defines them (e.g., agent vs platform)
+    const destinations = step.sample_request?.destinations ?? [
+      { type: 'platform', platform: 'dv360', account: 'test-dv360-account' },
+      { type: 'platform', platform: 'trade-desk', account: 'test-ttd-account' },
+    ];
     return {
       signal_agent_segment_id: signal?.signal_agent_segment_id ?? context.signal_id ?? 'test-signal',
-      destinations: [
-        { type: 'platform', platform: 'dv360', account: 'test-dv360-account' },
-        { type: 'platform', platform: 'trade-desk', account: 'test-ttd-account' },
-      ],
+      pricing_option_id:
+        (signal?.pricing_options as Array<Record<string, unknown>> | undefined)?.[0]?.pricing_option_id ??
+        context.pricing_option_id,
+      destinations,
     };
   },
 
