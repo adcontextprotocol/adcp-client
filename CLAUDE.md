@@ -16,6 +16,8 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` — covers guaranteed vs non-guaranteed, pricing, approval workflows, creative management.
 
+**Building a generative seller / AI ad network?** Read and follow `skills/build-generative-seller-agent/SKILL.md` — covers brief-based creative generation, standard + generative format catalogs, brand resolution.
+
 **Building a signals agent?** Read and follow `skills/build-signals-agent/SKILL.md` — covers marketplace vs owned data, segments, pricing, activation destinations.
 
 **Critical rules**:
