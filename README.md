@@ -688,6 +688,7 @@ Available skills:
 | [`skills/build-seller-agent/`](skills/build-seller-agent/SKILL.md) | Publishers, SSPs, retail media | `media_buy_seller` |
 | [`skills/build-generative-seller-agent/`](skills/build-generative-seller-agent/SKILL.md) | AI ad networks, generative DSPs | `media_buy_generative_seller` |
 | [`skills/build-signals-agent/`](skills/build-signals-agent/SKILL.md) | CDPs, data providers | `signal_owned`, `signal_marketplace` |
+| [`skills/build-creative-agent/`](skills/build-creative-agent/SKILL.md) | Ad servers, creative platforms | `creative_lifecycle` |
 
 For manual implementation, see the [Build an Agent guide](docs/guides/BUILD-AN-AGENT.md) and [`examples/signals-agent.ts`](examples/signals-agent.ts).
 
