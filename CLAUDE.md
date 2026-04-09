@@ -12,9 +12,7 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Key entry points**: `src/lib/index.ts`, `examples/signals-agent.ts`
 
-**Building a server-side agent?** Read `docs/guides/BUILD-AN-AGENT.md` and the `storyboards/` directory.
-
-**Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` before writing code — it covers the domain decisions (guaranteed vs non-guaranteed, pricing, approval workflows, creative management) that SDK docs don't.
+**Building a server-side agent?** Read and follow `skills/build-adcp-agent/SKILL.md` — it covers domain decisions, implementation patterns, and storyboard validation for seller, signals, creative, and governance agents.
 
 **Critical rules**:
 - ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing

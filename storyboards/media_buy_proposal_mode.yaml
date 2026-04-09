@@ -324,7 +324,7 @@ phases:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
-            path: "results[0].action"
+            path: "creatives[0].action"
             description: "Each creative has an action (created/updated)"
 
   - id: delivery
@@ -366,5 +366,5 @@ phases:
           - check: response_schema
             description: "Response matches get-media-buy-delivery-response.json schema"
           - check: field_present
-            path: "media_buys"
+            path: "media_buy_deliveries"
             description: "Response contains media buy delivery data"
