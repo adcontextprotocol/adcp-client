@@ -419,6 +419,10 @@ export {
   serve,
   registerTestController,
   TestControllerStore,
+  PostgresTaskStore,
+  cleanupExpiredTasks,
+  getMcpTasksMigration,
+  MCP_TASKS_MIGRATION,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -436,6 +440,8 @@ export type {
   Task,
   ServeContext,
   ServeOptions,
+  PgQueryable,
+  PostgresTaskStoreOptions,
 } from './server';
 
 // ====== ERROR EXTRACTION ======
