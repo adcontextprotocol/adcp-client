@@ -127,7 +127,7 @@ mediaBuyResponse({
 taskToolResponse({
   media_buys: [{
     media_buy_id: string,   // required
-    status: 'active' | 'pending_activation' | ...,  // required
+    status: 'active' | 'pending_start' | ...,  // required
     currency: 'USD',        // required
     packages: [{
       package_id: string,   // required

@@ -148,7 +148,7 @@ describe('validateResponseSchema', () => {
   // ---- get_media_buys (#372) ----
   describe('get_media_buys — required fields and enum validation (#371, #372)', () => {
     it('passes for valid status enum values', () => {
-      for (const status of ['pending_activation', 'active', 'paused', 'completed', 'rejected', 'canceled']) {
+      for (const status of ['pending_start', 'active', 'paused', 'completed', 'rejected', 'canceled']) {
         const data = { media_buys: [{ ...validMediaBuy, status }] };
         const result = validateResponseSchema('get_media_buys', data);
         assert.strictEqual(result.passed, true, `Expected pass for status "${status}": ${result.error || ''}`);

@@ -25,7 +25,7 @@ describe('Zod Schema Validation', () => {
 
     const validMediaBuy = {
       media_buy_id: 'mb_123',
-      status: 'pending_activation', // Must match enum value
+      status: 'pending_start', // Must match enum value
       promoted_offering: 'Nike Spring Collection 2024',
       total_budget: 50000,
       packages: [],

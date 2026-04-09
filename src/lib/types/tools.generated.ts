@@ -4705,9 +4705,16 @@ export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError
  */
 export type AccountStatus = 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
 /**
- * Initial media buy status. Either 'active' (immediate activation) or 'pending_activation' (awaiting platform setup).
+ * Initial media buy status. Either 'pending_creatives' (awaiting creative assets), 'pending_start' (ready to serve, waiting for flight date), or 'active' (immediate activation).
  */
-export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
+export type MediaBuyStatus =
+  | 'pending_creatives'
+  | 'pending_start'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'rejected'
+  | 'canceled';
 /**
  * Which party initiated the package cancellation.
  */
@@ -5854,10 +5861,11 @@ export interface GetMediaBuyDeliveryResponse {
      */
     media_buy_id: string;
     /**
-     * Current media buy status. Lifecycle states use the same taxonomy as media-buy-status (`pending_activation`, `active`, `paused`, `completed`, `rejected`, `canceled`). In webhook context, reporting_delayed indicates data temporarily unavailable. `pending` is accepted as a legacy alias for pending_activation.
+     * Current media buy status. Lifecycle states use the same taxonomy as media-buy-status (`pending_creatives`, `pending_start`, `active`, `paused`, `completed`, `rejected`, `canceled`). In webhook context, reporting_delayed indicates data temporarily unavailable. `pending` is accepted as a legacy alias for pending_start.
      */
     status:
-      | 'pending_activation'
+      | 'pending_creatives'
+      | 'pending_start'
       | 'pending'
       | 'active'
       | 'paused'
@@ -12031,7 +12039,15 @@ export interface GetAdCPCapabilitiesResponse {
   /**
    * Which AdCP domain protocols this seller supports
    */
-  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
+  supported_protocols: (
+    | 'media_buy'
+    | 'signals'
+    | 'governance'
+    | 'sponsored_intelligence'
+    | 'creative'
+    | 'brand'
+    | 'compliance_testing'
+  )[];
   /**
    * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
@@ -12599,6 +12615,22 @@ export interface GetAdCPCapabilitiesResponse {
      * When true, this agent can transform or resize existing manifests via build_creative. The buyer provides a creative_manifest and a target_format_id, and the agent adapts the creative to the new format.
      */
     supports_transformation?: boolean;
+  };
+  /**
+   * Compliance testing capabilities. Only present if compliance_testing is in supported_protocols. Indicates this agent supports deterministic testing via comply_test_controller for lifecycle state machine validation.
+   */
+  compliance_testing?: {
+    /**
+     * Compliance testing scenarios this agent supports. Use comply_test_controller with scenario: 'list_scenarios' to discover available scenarios at runtime.
+     */
+    scenarios?: (
+      | 'force_creative_status'
+      | 'force_account_status'
+      | 'force_media_buy_status'
+      | 'force_session_status'
+      | 'simulate_delivery'
+      | 'simulate_budget_spend'
+    )[];
   };
   /**
    * Extension namespaces this agent supports. Buyers can expect meaningful data in ext.{namespace} fields on responses from this agent. Extension schemas are published in the AdCP extension registry.

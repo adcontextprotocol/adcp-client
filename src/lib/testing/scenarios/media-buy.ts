@@ -1545,8 +1545,8 @@ export async function testMediaBuyLifecycle(
       null,
       2
     );
-    if (status && status !== 'active' && status !== 'pending_activation') {
-      resumeStep.warnings = [`Expected status 'active' or 'pending_activation', got '${status}'`];
+    if (status && status !== 'active' && status !== 'pending_start') {
+      resumeStep.warnings = [`Expected status 'active' or 'pending_start', got '${status}'`];
     }
   } else if (resumeResult && !resumeResult.success) {
     resumeStep.passed = false;
@@ -2127,10 +2127,10 @@ export async function testPackageLifecycle(
         mediaBuys.find((item: Record<string, unknown>) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
       const status = mediaBuy?.status as string | undefined;
 
-      if (status === 'active' || status === 'pending_activation') {
+      if (status === 'active' || status === 'pending_start') {
         verifyStep.details = `Media buy still ${status} after package-level operations`;
       } else {
-        verifyStep.details = `Media buy status is '${status}' — expected 'active' or 'pending_activation'`;
+        verifyStep.details = `Media buy status is '${status}' — expected 'active' or 'pending_start'`;
         verifyStep.warnings = [`Package-level pause/resume changed media buy status to '${status}'`];
       }
       verifyStep.response_preview = JSON.stringify({ media_buy_id: mediaBuy?.media_buy_id, status }, null, 2);

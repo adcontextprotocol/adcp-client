@@ -163,7 +163,7 @@ taskToolResponse({
 taskToolResponse({
   media_buys: [{
     media_buy_id: string,
-    status: 'active' | 'pending_activation' | ...,
+    status: 'active' | 'pending_start' | ...,
     currency: 'USD',
     packages: [{ package_id: string }],
   }]

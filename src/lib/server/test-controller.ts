@@ -19,7 +19,7 @@
  * registerTestController(server, store);
  *
  * // In your create_media_buy handler:
- * store.setMediaBuyStatus(mediaBuyId, 'pending_activation');
+ * store.setMediaBuyStatus(mediaBuyId, 'pending_start');
  * ```
  */
 

@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-08T19:24:10.034Z
+// Generated at: 2026-04-09T23:37:02.942Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -13,7 +13,14 @@ export type BrandID = string;
 /**
  * Status of a media buy.
  */
-export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
+export type MediaBuyStatus =
+  | 'pending_creatives'
+  | 'pending_start'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'rejected'
+  | 'canceled';
 /**
  * Which party initiated the cancellation. 'buyer' when canceled via update_media_buy; 'seller' when the seller cancels (e.g., policy violation, inventory withdrawal).
  */
