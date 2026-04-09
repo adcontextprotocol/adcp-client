@@ -186,7 +186,7 @@ export function registerTestController(server: McpServer, store: TestControllerS
     ext: z.record(z.string(), z.unknown()).optional(),
   };
 
-  server.tool('comply_test_controller', inputSchema, async (args) => {
+  server.tool('comply_test_controller', inputSchema, async args => {
     const scenario = args.scenario as string;
     const params = (args.params ?? {}) as Record<string, unknown>;
 
@@ -201,7 +201,11 @@ export function registerTestController(server: McpServer, store: TestControllerS
         const id = params.account_id as string;
         const status = params.status as string;
         if (!id || !status) {
-          return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'account_id and status required' });
+          return taskToolResponse({
+            success: false,
+            error: 'INVALID_PARAMS',
+            error_detail: 'account_id and status required',
+          });
         }
         const result = store.forceAccountStatus(id, status);
         if (!result) {
@@ -218,7 +222,11 @@ export function registerTestController(server: McpServer, store: TestControllerS
         const id = params.media_buy_id as string;
         const status = params.status as string;
         if (!id || !status) {
-          return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'media_buy_id and status required' });
+          return taskToolResponse({
+            success: false,
+            error: 'INVALID_PARAMS',
+            error_detail: 'media_buy_id and status required',
+          });
         }
         const result = store.forceMediaBuyStatus(id, status);
         if (!result) {
@@ -235,7 +243,11 @@ export function registerTestController(server: McpServer, store: TestControllerS
         const id = params.creative_id as string;
         const status = params.status as string;
         if (!id || !status) {
-          return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'creative_id and status required' });
+          return taskToolResponse({
+            success: false,
+            error: 'INVALID_PARAMS',
+            error_detail: 'creative_id and status required',
+          });
         }
         const result = store.forceCreativeStatus(id, status);
         if (!result) {
@@ -252,7 +264,11 @@ export function registerTestController(server: McpServer, store: TestControllerS
         const id = params.session_id as string;
         const status = params.status as string;
         if (!id || !status) {
-          return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'session_id and status required' });
+          return taskToolResponse({
+            success: false,
+            error: 'INVALID_PARAMS',
+            error_detail: 'session_id and status required',
+          });
         }
         const result = store.forceSessionStatus(id, status);
         if (!result) {
@@ -276,7 +292,13 @@ export function registerTestController(server: McpServer, store: TestControllerS
           spend: ((params.reported_spend as Record<string, unknown>)?.amount as number) ?? 0,
           conversions: (params.conversions as number) ?? 0,
         };
-        const cumulative = store.addDelivery(id, simulated.impressions, simulated.clicks, simulated.spend, simulated.conversions);
+        const cumulative = store.addDelivery(
+          id,
+          simulated.impressions,
+          simulated.clicks,
+          simulated.spend,
+          simulated.conversions
+        );
         return taskToolResponse({ success: true, simulated, cumulative });
       }
 
@@ -284,11 +306,19 @@ export function registerTestController(server: McpServer, store: TestControllerS
         const id = params.media_buy_id as string;
         const pct = params.spend_percentage as number;
         if (!id || pct === undefined) {
-          return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'media_buy_id and spend_percentage required' });
+          return taskToolResponse({
+            success: false,
+            error: 'INVALID_PARAMS',
+            error_detail: 'media_buy_id and spend_percentage required',
+          });
         }
         const result = store.simulateBudgetSpend(id, pct);
         if (!result) {
-          return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Media buy ${id} not found or no budget set` });
+          return taskToolResponse({
+            success: false,
+            error: 'NOT_FOUND',
+            error_detail: `Media buy ${id} not found or no budget set`,
+          });
         }
         return taskToolResponse({
           success: true,
@@ -297,7 +327,11 @@ export function registerTestController(server: McpServer, store: TestControllerS
       }
 
       default:
-        return taskToolResponse({ success: false, error: 'UNKNOWN_SCENARIO', error_detail: `Unknown scenario: ${scenario}` });
+        return taskToolResponse({
+          success: false,
+          error: 'UNKNOWN_SCENARIO',
+          error_detail: `Unknown scenario: ${scenario}`,
+        });
     }
   });
 }
