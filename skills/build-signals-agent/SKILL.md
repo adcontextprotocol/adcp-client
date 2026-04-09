@@ -154,22 +154,28 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 
 ## Implementation
 
-1. Read `docs/guides/BUILD-AN-AGENT.md` for patterns
-2. Single `.ts` file for a mock agent
-3. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
-4. Use `Schema.shape` (not `Schema`) when registering tools
-5. Set `sandbox: true` for mock/demo data
-6. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)`
+1. Single `.ts` file — all tools in one file
+2. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
+3. Use `Schema.shape` (not `Schema`) when registering tools
+4. Set `sandbox: true` for mock/demo data
+5. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)`
+
+The skill contains everything you need. Do not read additional docs before writing code.
 
 ## Validation
 
-**After writing the agent, run the storyboard. Fix failures. Repeat.**
+**After writing the agent, validate it. Fix failures. Repeat.**
 
+**Full validation** (if you can bind ports):
 ```bash
-npx tsx agent.ts
-# In another terminal:
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_owned --json     # for owned data
+npx tsx agent.ts &
+npx @adcp/client storyboard run http://localhost:3001/mcp signal_owned --json       # for owned data
 npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace --json  # for marketplace
+```
+
+**Sandbox validation** (if ports are blocked):
+```bash
+npx tsc --noEmit agent.ts
 ```
 
 **Keep iterating until all steps pass.**

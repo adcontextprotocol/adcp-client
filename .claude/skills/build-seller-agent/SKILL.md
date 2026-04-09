@@ -187,25 +187,31 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 
 ## Implementation
 
-1. Read `docs/guides/BUILD-AN-AGENT.md` for patterns
-2. Single `.ts` file for a mock agent
-3. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
-4. Use `Schema.shape` (not `Schema`) when registering tools
-5. Use response builders — never return raw JSON
-6. Set `sandbox: true` on all mock/demo responses
-7. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)` and pass `taskStore` to `createTaskCapableServer`
+1. Single `.ts` file — all tools in one file
+2. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
+3. Use `Schema.shape` (not `Schema`) when registering tools
+4. Use response builders — never return raw JSON
+5. Set `sandbox: true` on all mock/demo responses
+6. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)` and pass `taskStore` to `createTaskCapableServer`
+
+The skill contains everything you need. Do not read additional docs before writing code.
 
 ## Validation
 
-**After writing the agent, run the storyboard. Fix failures. Repeat.**
+**After writing the agent, validate it. Fix failures. Repeat.**
 
+**Full validation** (if you can bind ports):
 ```bash
-npx tsx agent.ts
-# In another terminal:
+npx tsx agent.ts &
 npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
-Fix each failure:
+**Sandbox validation** (if ports are blocked):
+```bash
+npx tsc --noEmit agent.ts
+```
+
+When storyboard output shows failures, fix each one:
 - `response_schema` → response doesn't match Zod schema
 - `field_present` → required field missing
 - MCP error → check tool registration (schema, name)
