@@ -418,6 +418,7 @@ export {
   serve,
   PostgresTaskStore,
   cleanupExpiredTasks,
+  getMcpTasksMigration,
   MCP_TASKS_MIGRATION,
 } from './server';
 export type {
@@ -434,6 +435,7 @@ export type {
   ServeContext,
   ServeOptions,
   PgQueryable,
+  PostgresTaskStoreOptions,
 } from './server';
 
 // ====== ERROR EXTRACTION ======

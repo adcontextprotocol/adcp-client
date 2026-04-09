@@ -12,9 +12,11 @@ const assert = require('node:assert');
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
+const TABLE = 'adcp_mcp_tasks';
+
 describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
   let Pool, pool;
-  let PostgresTaskStore, MCP_TASKS_MIGRATION, cleanupExpiredTasks;
+  let PostgresTaskStore, MCP_TASKS_MIGRATION, getMcpTasksMigration, cleanupExpiredTasks;
   let store;
 
   before(async () => {
@@ -24,17 +26,18 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     const lib = require('../../dist/lib/index.js');
     PostgresTaskStore = lib.PostgresTaskStore;
     MCP_TASKS_MIGRATION = lib.MCP_TASKS_MIGRATION;
+    getMcpTasksMigration = lib.getMcpTasksMigration;
     cleanupExpiredTasks = lib.cleanupExpiredTasks;
 
     // Fresh table each run for schema safety
-    await pool.query('DROP TABLE IF EXISTS mcp_tasks CASCADE');
+    await pool.query(`DROP TABLE IF EXISTS ${TABLE} CASCADE`);
     await pool.query(MCP_TASKS_MIGRATION);
     store = new PostgresTaskStore(pool);
   });
 
   afterEach(async () => {
     // Clean slate between tests
-    await pool.query('DELETE FROM mcp_tasks');
+    await pool.query(`DELETE FROM ${TABLE}`);
   });
 
   after(async () => {
@@ -42,6 +45,53 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   });
 
   const fakeRequest = { jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name: 'test' } };
+
+  // ====== TABLE NAMING & CONFIGURATION ======
+
+  test('default table name is adcp_mcp_tasks', () => {
+    assert.ok(MCP_TASKS_MIGRATION.includes('adcp_mcp_tasks'), 'Migration should use adcp_mcp_tasks');
+    assert.ok(MCP_TASKS_MIGRATION.includes('adcp_mcp_tasks_valid_status'), 'Constraint should be namespaced to table');
+    assert.ok(MCP_TASKS_MIGRATION.includes('idx_adcp_mcp_tasks_expires_at'), 'Index should be namespaced to table');
+  });
+
+  test('getMcpTasksMigration generates custom table names', () => {
+    const sql = getMcpTasksMigration({ tableName: 'my_tasks' });
+    assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS my_tasks'));
+    assert.ok(sql.includes('my_tasks_valid_status'));
+    assert.ok(sql.includes('idx_my_tasks_expires_at'));
+    assert.ok(sql.includes('idx_my_tasks_created_at'));
+  });
+
+  test('getMcpTasksMigration rejects invalid table names', () => {
+    assert.throws(() => getMcpTasksMigration({ tableName: 'DROP TABLE; --' }), /Invalid table name/);
+    assert.throws(() => getMcpTasksMigration({ tableName: '123bad' }), /Invalid table name/);
+    assert.throws(() => getMcpTasksMigration({ tableName: 'MixedCase' }), /Invalid table name/);
+  });
+
+  test('constructor rejects invalid table names', () => {
+    assert.throws(() => new PostgresTaskStore(pool, { tableName: 'Robert; DROP TABLE--' }), /Invalid table name/);
+  });
+
+  test('custom tableName works end-to-end', async () => {
+    const customTable = 'custom_tasks';
+    await pool.query(`DROP TABLE IF EXISTS ${customTable} CASCADE`);
+    await pool.query(getMcpTasksMigration({ tableName: customTable }));
+
+    const customStore = new PostgresTaskStore(pool, { tableName: customTable });
+    const task = await customStore.createTask({ ttl: 60000 }, '1', fakeRequest);
+    assert.ok(task.taskId);
+
+    const fetched = await customStore.getTask(task.taskId);
+    assert.strictEqual(fetched.taskId, task.taskId);
+
+    // Default store should NOT see this task
+    const fromDefault = await store.getTask(task.taskId);
+    assert.strictEqual(fromDefault, null, 'Custom table tasks should not be visible from default store');
+
+    await pool.query(`DROP TABLE IF EXISTS ${customTable} CASCADE`);
+  });
+
+  // ====== CORE CRUD ======
 
   test('createTask returns a valid task with working status', async () => {
     const task = await store.createTask({ ttl: 60000, pollInterval: 2000 }, '1', fakeRequest);
@@ -60,7 +110,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     assert.strictEqual(task.ttl, null);
 
     // Verify no expires_at in DB
-    const { rows } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
+    const { rows } = await pool.query(`SELECT expires_at FROM ${TABLE} WHERE task_id = $1`, [task.taskId]);
     assert.strictEqual(rows[0].expires_at, null);
   });
 
@@ -139,6 +189,8 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await assert.rejects(() => store.updateTaskStatus(task.taskId, 'working'), /terminal status/);
   });
 
+  // ====== PAGINATION ======
+
   test('listTasks returns tasks ordered by creation time', async () => {
     const tasks = [];
     for (let i = 0; i < 3; i++) {
@@ -175,11 +227,13 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     await assert.rejects(() => store.listTasks('bad-cursor'), /Invalid cursor/);
   });
 
+  // ====== EXPIRATION ======
+
   test('expired tasks are invisible to getTask', async () => {
     // Insert a task with expires_at in the past
     const taskId = 'expired-task-1';
     await pool.query(
-      `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
+      `INSERT INTO ${TABLE} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ($1, 'working', 1, 1000, '1', $2, NOW() - interval '1 second')`,
       [taskId, JSON.stringify(fakeRequest)]
     );
@@ -191,7 +245,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   test('expired tasks are invisible to listTasks', async () => {
     // Insert expired task
     await pool.query(
-      `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
+      `INSERT INTO ${TABLE} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ('expired-list-1', 'working', 1, 1000, '1', $1, NOW() - interval '1 second')`,
       [JSON.stringify(fakeRequest)]
     );
@@ -205,7 +259,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   test('cleanupExpiredTasks deletes expired rows', async () => {
     // Insert expired task
     await pool.query(
-      `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
+      `INSERT INTO ${TABLE} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ('cleanup-1', 'completed', 1, 1000, '1', $1, NOW() - interval '1 second')`,
       [JSON.stringify(fakeRequest)]
     );
@@ -216,22 +270,34 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     assert.strictEqual(deleted, 1);
 
     // Verify only live task remains
-    const { rows } = await pool.query('SELECT count(*)::int as cnt FROM mcp_tasks');
+    const { rows } = await pool.query(`SELECT count(*)::int as cnt FROM ${TABLE}`);
     assert.strictEqual(rows[0].cnt, 1);
+  });
+
+  test('cleanupExpired instance method works', async () => {
+    // Insert expired task
+    await pool.query(
+      `INSERT INTO ${TABLE} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
+       VALUES ('cleanup-inst-1', 'completed', 1, 1000, '1', $1, NOW() - interval '1 second')`,
+      [JSON.stringify(fakeRequest)]
+    );
+
+    const deleted = await store.cleanupExpired();
+    assert.strictEqual(deleted, 1);
   });
 
   test('storeTaskResult resets expires_at from NOW()', async () => {
     const task = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
 
     // Get original expires_at
-    const { rows: before } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
+    const { rows: before } = await pool.query(`SELECT expires_at FROM ${TABLE} WHERE task_id = $1`, [task.taskId]);
 
     // Small delay to ensure time advances
     await new Promise(r => setTimeout(r, 50));
 
     await store.storeTaskResult(task.taskId, 'completed', { content: [] });
 
-    const { rows: after } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
+    const { rows: after } = await pool.query(`SELECT expires_at FROM ${TABLE} WHERE task_id = $1`, [task.taskId]);
 
     assert.ok(
       new Date(after[0].expires_at) > new Date(before[0].expires_at),
@@ -246,7 +312,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   test('updateTaskStatus to cancelled resets expires_at', async () => {
     const task = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
 
-    const { rows: before } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
+    const { rows: before } = await pool.query(`SELECT expires_at FROM ${TABLE} WHERE task_id = $1`, [task.taskId]);
 
     await new Promise(r => setTimeout(r, 50));
     await store.updateTaskStatus(task.taskId, 'cancelled');
@@ -254,7 +320,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     const fetched = await store.getTask(task.taskId);
     assert.strictEqual(fetched.status, 'cancelled');
 
-    const { rows: after } = await pool.query('SELECT expires_at FROM mcp_tasks WHERE task_id = $1', [task.taskId]);
+    const { rows: after } = await pool.query(`SELECT expires_at FROM ${TABLE} WHERE task_id = $1`, [task.taskId]);
     assert.ok(
       new Date(after[0].expires_at) > new Date(before[0].expires_at),
       'expires_at should be reset after cancellation'
@@ -264,7 +330,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   test('getTaskResult throws for expired task', async () => {
     // Insert expired task with a result
     await pool.query(
-      `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, result, expires_at)
+      `INSERT INTO ${TABLE} (task_id, status, ttl, poll_interval, request_id, request, result, expires_at)
        VALUES ('expired-result-1', 'completed', 1, 1000, '1', $1, $2, NOW() - interval '1 second')`,
       [JSON.stringify(fakeRequest), JSON.stringify({ content: [{ type: 'text', text: 'Done' }] })]
     );
@@ -275,7 +341,7 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
   test('storeTaskResult throws for expired task', async () => {
     // Insert expired working task
     await pool.query(
-      `INSERT INTO mcp_tasks (task_id, status, ttl, poll_interval, request_id, request, expires_at)
+      `INSERT INTO ${TABLE} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
        VALUES ('expired-store-1', 'working', 1, 1000, '1', $1, NOW() - interval '1 second')`,
       [JSON.stringify(fakeRequest)]
     );
