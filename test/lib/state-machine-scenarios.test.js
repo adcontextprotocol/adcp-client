@@ -294,7 +294,7 @@ describe('media_buy_lifecycle: status validation logic', () => {
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/scenarios/media-buy.js'), 'utf8');
 
     assert.ok(
-      src.includes("Expected status 'active' or 'pending_activation'"),
+      src.includes("Expected status 'active' or 'pending_start'"),
       'should warn when resume returns wrong status'
     );
   });

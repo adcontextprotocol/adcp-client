@@ -664,20 +664,34 @@ const result = await agent.syncCreatives(
 
 ## Building an Agent (Server)
 
-The examples above show client-side usage — calling existing agents. To build your own agent that serves AdCP tools:
+The fastest way to build an AdCP agent is to point your coding tool (Claude Code, Codex, Cursor, etc.) at the right skill file:
 
-```typescript
-import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/client';
+```
+# Seller agent (publisher, SSP, retail media)
+"Read skills/build-seller-agent/SKILL.md and build me a [your platform description]"
 
-const server = createTaskCapableServer('My Signals Agent', '1.0.0');
-
-server.tool('get_signals', 'Discover audience segments.', GetSignalsRequestSchema.shape, async args => {
-  const signals = queryYourDatabase(args.signal_spec);
-  return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} segment(s)`);
-});
+# Signals agent (CDP, data provider)
+"Read skills/build-signals-agent/SKILL.md and build me a [your data platform description]"
 ```
 
-See the [Build an Agent guide](docs/guides/BUILD-AN-AGENT.md) for the full walkthrough, and [`examples/signals-agent.ts`](examples/signals-agent.ts) for a complete runnable example.
+The skill guides domain decisions, scaffolds code, and tells you how to validate:
+
+```bash
+npx tsx agent.ts
+npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --json
+```
+
+Available skills:
+
+| Skill | For | Storyboard |
+|-------|-----|------------|
+| [`skills/build-seller-agent/`](skills/build-seller-agent/SKILL.md) | Publishers, SSPs, retail media | `media_buy_seller` |
+| [`skills/build-generative-seller-agent/`](skills/build-generative-seller-agent/SKILL.md) | AI ad networks, generative DSPs | `media_buy_generative_seller` |
+| [`skills/build-signals-agent/`](skills/build-signals-agent/SKILL.md) | CDPs, data providers | `signal_owned`, `signal_marketplace` |
+| [`skills/build-retail-media-agent/`](skills/build-retail-media-agent/SKILL.md) | Retail media networks | `media_buy_catalog_creative` |
+| [`skills/build-creative-agent/`](skills/build-creative-agent/SKILL.md) | Ad servers, creative platforms | `creative_lifecycle` |
+
+For manual implementation, see the [Build an Agent guide](docs/guides/BUILD-AN-AGENT.md) and [`examples/signals-agent.ts`](examples/signals-agent.ts).
 
 ## Contributing
 

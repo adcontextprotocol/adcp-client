@@ -320,28 +320,28 @@ export async function testMediaBuyStateMachine(
     transitionStep('Invalid: completed → active (expect INVALID_TRANSITION)', invalidResult, false, invalidDur)
   );
 
-  // Test rejection: force to pending_activation first (some sellers create as active),
-  // then reject from there. If the seller doesn't support pending_activation, skip.
+  // Test rejection: force to pending_start first (some sellers create as active),
+  // then reject from there. If the seller doesn't support pending_start, skip.
   const { steps: create2Steps, mediaBuyId: mediaBuyId2 } = await testCreateMediaBuy(agentUrl, options);
   steps.push(...create2Steps);
 
   if (mediaBuyId2) {
-    // Try to force to pending_activation first
+    // Try to force to pending_start first
     const { response: pendingResult } = await ctrl.forceStatus('force_media_buy_status', {
       media_buy_id: mediaBuyId2,
-      status: 'pending_activation',
+      status: 'pending_start',
     });
 
     if (pendingResult.success) {
-      // Now reject from pending_activation
+      // Now reject from pending_start
       const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_media_buy_status', {
         media_buy_id: mediaBuyId2,
         status: 'rejected',
         rejection_reason: 'Policy violation (comply test)',
       });
-      steps.push(transitionStep('Force media buy → rejected from pending_activation', rejectResult, true, rejectDur));
+      steps.push(transitionStep('Force media buy → rejected from pending_start', rejectResult, true, rejectDur));
     } else {
-      // Can't reach pending_activation — test cancellation instead (valid from active)
+      // Can't reach pending_start — test cancellation instead (valid from active)
       const { response: cancelResult, durationMs: cancelDur } = await ctrl.forceStatus('force_media_buy_status', {
         media_buy_id: mediaBuyId2,
         status: 'canceled',

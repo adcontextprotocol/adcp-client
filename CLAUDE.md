@@ -14,6 +14,16 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a server-side agent?** Read `docs/guides/BUILD-AN-AGENT.md` and the `storyboards/` directory.
 
+**Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` — covers guaranteed vs non-guaranteed, pricing, approval workflows, creative management.
+
+**Building a generative seller / AI ad network?** Read and follow `skills/build-generative-seller-agent/SKILL.md` — covers brief-based creative generation, standard + generative format catalogs, brand resolution.
+
+**Building a signals agent?** Read and follow `skills/build-signals-agent/SKILL.md` — covers marketplace vs owned data, segments, pricing, activation destinations.
+
+**Building a retail media network?** Read and follow `skills/build-retail-media-agent/SKILL.md` — covers catalog sync, conversion tracking, performance feedback, dynamic ads.
+
+**Building a creative agent?** Read and follow `skills/build-creative-agent/SKILL.md` — covers ad servers, creative management platforms, format discovery, preview, and build.
+
 **Critical rules**:
 - ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing
 - NEVER inject mock/fallback data — return exactly what agents provide

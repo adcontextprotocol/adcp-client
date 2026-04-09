@@ -34,3 +34,5 @@ export type { PgQueryable, PostgresTaskStoreOptions } from './postgres-task-stor
 
 export { serve } from './serve';
 export type { ServeContext, ServeOptions } from './serve';
+
+export { registerTestController, TestControllerStore } from './test-controller';

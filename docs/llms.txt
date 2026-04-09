@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-08
+> Generated at: 2026-04-09
 > Library: @adcp/client v4.22.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -427,10 +427,16 @@ Flow: `sync_accounts → list_accounts → sync_audiences → sync_creatives →
 **Behavioral analysis** — Validates product discovery behavior: brief filtering, response consistency, and pricing edge cases.
 Flow: `get_products`
 
-### Brand
+### Core
 
 **Brand identity and rights licensing** — Brand agent that serves identity assets and licenses rights for AI-generated content.
 Flow: `get_brand_identity → get_rights → acquire_rights → update_rights → creative_approval`
+
+**Capability discovery** — Buyer calls get_adcp_capabilities to discover what an agent supports before making any buying or creative decisions.
+Flow: `get_adcp_capabilities`
+
+**Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
+Flow: `comply_test_controller → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
 
 ### Campaign Governance
 
@@ -445,14 +451,6 @@ Flow: `sync_plans → check_governance`
 
 **Governance denial and human escalation** — Buyer's governance agent denies a media buy that exceeds spending authority, escalates to a human who approves with conditions.
 Flow: `sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
-
-### Core
-
-**Capability discovery** — Buyer calls get_adcp_capabilities to discover what an agent supports before making any buying or creative decisions.
-Flow: `get_adcp_capabilities`
-
-**Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
-Flow: `comply_test_controller → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
 
 ### Governance
 
@@ -476,6 +474,11 @@ Flow: `list_creative_formats → sync_creatives → preview_creative`
 **Creative template and transformation agent** — Stateless creative agent that takes assets in, applies templates, and produces tags or rendered output.
 Flow: `list_creative_formats → preview_creative → build_creative`
 
+### 
+
+**Generative creative agent** — Agent that takes a brief and generates finished creatives from scratch — no input assets required.
+Flow: `list_creative_formats → build_creative`
+
 ### Error Handling
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
@@ -485,6 +488,9 @@ Flow: `create_media_buy → get_products → create_media_buy`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
 Flow: `sync_accounts → list_creative_formats → sync_catalogs → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
+
+**Generative seller agent** — Seller agent that generates creatives from briefs at buy time — no pre-built assets required.
+Flow: `sync_accounts → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
 Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`

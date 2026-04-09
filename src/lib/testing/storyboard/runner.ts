@@ -207,11 +207,14 @@ async function executeStep(
 
   // Build request — priority:
   // 1. User-provided --request override
-  // 2. Request builder (builds from context + options, like hand-written scenarios)
-  // 3. sample_request from YAML with context injection (fallback)
+  // 2. For expect_error steps: use sample_request directly (preserves intentionally invalid input)
+  // 3. Request builder (builds from context + options, like hand-written scenarios)
+  // 4. sample_request from YAML with context injection (fallback)
   let request: Record<string, unknown>;
   if (options.request) {
     request = { ...options.request };
+  } else if (step.expect_error && step.sample_request) {
+    request = injectContext({ ...step.sample_request }, context);
   } else if (hasRequestBuilder(step.task)) {
     request = buildRequest(step, context, options);
   } else if (step.sample_request) {
@@ -226,9 +229,18 @@ async function executeStep(
   }
 
   // Execute the task
-  const { result: taskResult, step: stepResult } = await runStep(step.title, step.task, () =>
+  let { result: taskResult, step: stepResult } = await runStep(step.title, step.task, () =>
     executeStoryboardTask(client, step.task, request)
   );
+
+  // For expect_error steps: if the task threw, try to extract the adcp_error
+  // from the error message so validations can check error fields.
+  if (step.expect_error && !taskResult && stepResult.error) {
+    const errorData = extractErrorData(stepResult.error);
+    if (errorData) {
+      taskResult = { success: false, data: errorData, error: stepResult.error };
+    }
+  }
 
   // Determine pass/fail — inverted when expect_error is set
   let passed: boolean;
@@ -252,13 +264,13 @@ async function executeStep(
   const hasData = taskResult?.data !== undefined && taskResult?.data !== null;
 
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)
-  if (passed && hasData) {
+  if (passed && hasData && taskResult) {
     const extracted = extractContext(step.task, taskResult.data);
     Object.assign(updatedContext, extracted);
   }
 
   // Explicit context_outputs (always applied when data exists)
-  if (hasData && step.context_outputs?.length) {
+  if (hasData && taskResult && step.context_outputs?.length) {
     const explicit = applyContextOutputs(taskResult.data, step.context_outputs);
     Object.assign(updatedContext, explicit);
   }
@@ -327,6 +339,39 @@ function getNextStepPreview(
     expected: nextStep.expected,
     sample_request: previewRequest,
   };
+}
+
+/**
+ * Extract adcp_error data from an error message string.
+ *
+ * When adcpError() responses are thrown as exceptions, the error message
+ * contains JSON with the adcp_error structure. This extracts it so
+ * expect_error step validations can check error fields.
+ */
+function extractErrorData(errorMessage: string): Record<string, unknown> | null {
+  // Try to find JSON containing adcp_error in the error message
+  const jsonMatch = errorMessage.match(/\{[\s\S]*"adcp_error"[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      if (parsed.adcp_error) return parsed;
+    } catch {
+      // Not valid JSON
+    }
+  }
+
+  // Try to find just the adcp_error object embedded in the message
+  const codeMatch = errorMessage.match(/"code"\s*:\s*"([A-Z_]+)"/);
+  if (codeMatch) {
+    return {
+      adcp_error: {
+        code: codeMatch[1],
+        message: errorMessage,
+      },
+    };
+  }
+
+  return null;
 }
 
 /**

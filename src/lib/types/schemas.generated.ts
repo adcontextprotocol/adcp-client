@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-08T19:32:38.443Z
+// Generated at: 2026-04-09T23:37:04.742Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -14,7 +14,7 @@ export const AccountStatusSchema = z.union([z.literal("active"), z.literal("pend
 
 export const BrandIDSchema = z.string();
 
-export const MediaBuyStatusSchema = z.union([z.literal("pending_activation"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled")]);
+export const MediaBuyStatusSchema = z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled")]);
 
 export const CanceledBySchema = z.union([z.literal("buyer"), z.literal("seller")]);
 
@@ -3113,7 +3113,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     adcp: z.object({
         major_versions: z.array(z.number())
     }).passthrough(),
-    supported_protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative"), z.literal("brand")])),
+    supported_protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative"), z.literal("brand"), z.literal("compliance_testing")])),
     account: z.object({
         require_operator_auth: z.boolean().nullish(),
         authorization_endpoint: z.string().nullish(),
@@ -3277,6 +3277,9 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         has_creative_library: z.boolean().nullish(),
         supports_generation: z.boolean().nullish(),
         supports_transformation: z.boolean().nullish()
+    }).passthrough().nullish(),
+    compliance_testing: z.object({
+        scenarios: z.array(z.union([z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend")])).nullish()
     }).passthrough().nullish(),
     extensions_supported: z.array(z.string()).nullish(),
     last_updated: z.string().nullish(),
@@ -3942,7 +3945,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
     }).passthrough().nullish(),
     media_buy_deliveries: z.array(z.object({
         media_buy_id: z.string(),
-        status: z.union([z.literal("pending_activation"), z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled"), z.literal("failed"), z.literal("reporting_delayed")]),
+        status: z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled"), z.literal("failed"), z.literal("reporting_delayed")]),
         expected_availability: z.string().nullish(),
         is_adjusted: z.boolean().nullish(),
         pricing_model: PricingModelSchema.nullish(),
