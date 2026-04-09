@@ -428,6 +428,7 @@ phases:
             description: "Response matches provide-performance-feedback-response.json schema"
           - check: field_value
             path: "success"
+            value: true
             description: "Feedback accepted"
 
       - id: check_delivery
