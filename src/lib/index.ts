@@ -405,19 +405,25 @@ export type { StandardErrorCode, ErrorRecovery } from './types/error-codes';
 
 // ====== SERVER-SIDE HELPERS ======
 // Helpers for building AdCP-compliant MCP servers
-export { adcpError, capabilitiesResponse, productsResponse, mediaBuyResponse, deliveryResponse } from './server';
-export type { AdcpErrorOptions, AdcpErrorResponse, McpToolResponse } from './server';
-
-// MCP Tasks server-side helpers
 export {
+  adcpError,
+  capabilitiesResponse,
+  productsResponse,
+  mediaBuyResponse,
+  deliveryResponse,
   taskToolResponse,
   registerAdcpTaskTool,
   createTaskCapableServer,
   InMemoryTaskStore,
   isTerminal,
   serve,
+  registerTestController,
+  TestControllerStore,
 } from './server';
 export type {
+  AdcpErrorOptions,
+  AdcpErrorResponse,
+  McpToolResponse,
   AdcpTaskToolConfig,
   TaskStore,
   TaskMessageQueue,
@@ -431,9 +437,6 @@ export type {
   ServeContext,
   ServeOptions,
 } from './server';
-
-// Comply test controller (deterministic testing for seller agents)
-export { registerTestController, TestControllerStore } from './server';
 
 // ====== ERROR EXTRACTION ======
 // Extract structured AdCP errors from transport responses

@@ -74,7 +74,7 @@ export class TestControllerStore {
     this.budgets.set(id, { total, spent: 0 });
   }
 
-  // --- Getters ---
+  // --- Getters (return copies to prevent external mutation) ---
 
   getAccountStatus(id: string): string | undefined {
     return this.accounts.get(id);
@@ -93,11 +93,13 @@ export class TestControllerStore {
   }
 
   getDelivery(id: string): DeliveryData {
-    return this.delivery.get(id) ?? { impressions: 0, clicks: 0, spend: 0, conversions: 0 };
+    const d = this.delivery.get(id);
+    return d ? { ...d } : { impressions: 0, clicks: 0, spend: 0, conversions: 0 };
   }
 
   getBudget(id: string): { total: number; spent: number } | undefined {
-    return this.budgets.get(id);
+    const b = this.budgets.get(id);
+    return b ? { ...b } : undefined;
   }
 
   // --- Force state transitions ---
@@ -143,7 +145,7 @@ export class TestControllerStore {
     current.spend += spend ?? 0;
     current.conversions += conversions ?? 0;
     this.delivery.set(id, current);
-    return current;
+    return { ...current };
   }
 
   simulateBudgetSpend(id: string, percentage: number): { total: number; spent: number } | null {
@@ -152,12 +154,25 @@ export class TestControllerStore {
     budget.spent = (budget.total * percentage) / 100;
     return { ...budget };
   }
+
+  // --- Reset (for test isolation between storyboard runs) ---
+
+  clear(): void {
+    this.accounts.clear();
+    this.mediaBuys.clear();
+    this.creatives.clear();
+    this.sessions.clear();
+    this.delivery.clear();
+    this.budgets.clear();
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Supported scenarios
 // ---------------------------------------------------------------------------
 
+// Scenarios available for listing via list_scenarios. The list_scenarios
+// command itself is a meta-operation, not included in this list.
 const SUPPORTED_SCENARIOS = [
   'force_creative_status',
   'force_account_status',
@@ -166,6 +181,57 @@ const SUPPORTED_SCENARIOS = [
   'simulate_delivery',
   'simulate_budget_spend',
 ] as const;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function requireString(params: Record<string, unknown>, key: string): string {
+  const v = params[key];
+  return typeof v === 'string' ? v : '';
+}
+
+function toNum(v: unknown): number {
+  return typeof v === 'number' && !isNaN(v) ? v : 0;
+}
+
+type ForceMethod = (id: string, status: string) => { previous: string; current: string } | null;
+type GetMethod = (id: string) => string | undefined;
+
+function handleForceStatus(
+  store: TestControllerStore,
+  params: Record<string, unknown>,
+  idKey: string,
+  entityLabel: string,
+  forceMethod: ForceMethod,
+  getMethod: GetMethod
+) {
+  const id = requireString(params, idKey);
+  const status = requireString(params, 'status');
+  if (!id || !status) {
+    return taskToolResponse({
+      success: false,
+      error: 'INVALID_PARAMS',
+      error_detail: `${idKey} and status required`,
+    });
+  }
+  const result = forceMethod.call(store, id, status);
+  if (!result) {
+    const current = getMethod.call(store, id);
+    if (current === undefined) {
+      return taskToolResponse({
+        success: false,
+        error: 'NOT_FOUND',
+        error_detail: `${entityLabel} ${id} not found`,
+      });
+    }
+    return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
+  }
+  return taskToolResponse(
+    { success: true, previous_state: result.previous, current_state: result.current },
+    `${entityLabel} ${id}: ${result.previous} → ${result.current}`
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Register the tool
@@ -204,105 +270,60 @@ export function registerTestController(server: McpServer, store: TestControllerS
 
       switch (scenario) {
         case 'list_scenarios':
-          return taskToolResponse({
-            success: true,
-            scenarios: [...SUPPORTED_SCENARIOS],
-          });
+          return taskToolResponse(
+            { success: true, scenarios: [...SUPPORTED_SCENARIOS] },
+            `${SUPPORTED_SCENARIOS.length} scenarios available`
+          );
 
-        case 'force_account_status': {
-          const id = typeof params.account_id === 'string' ? params.account_id : '';
-          const status = typeof params.status === 'string' ? params.status : '';
-          if (!id || !status) {
-            return taskToolResponse({
-              success: false,
-              error: 'INVALID_PARAMS',
-              error_detail: 'account_id and status required',
-            });
-          }
-          const result = store.forceAccountStatus(id, status);
-          if (!result) {
-            const current = store.getAccountStatus(id);
-            if (current === undefined) {
-              return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Account ${id} not found` });
-            }
-            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
-          }
-          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-        }
+        case 'force_account_status':
+          return handleForceStatus(
+            store,
+            params,
+            'account_id',
+            'Account',
+            store.forceAccountStatus,
+            store.getAccountStatus
+          );
 
-        case 'force_media_buy_status': {
-          const id = typeof params.media_buy_id === 'string' ? params.media_buy_id : '';
-          const status = typeof params.status === 'string' ? params.status : '';
-          if (!id || !status) {
-            return taskToolResponse({
-              success: false,
-              error: 'INVALID_PARAMS',
-              error_detail: 'media_buy_id and status required',
-            });
-          }
-          const result = store.forceMediaBuyStatus(id, status);
-          if (!result) {
-            const current = store.getMediaBuyStatus(id);
-            if (current === undefined) {
-              return taskToolResponse({
-                success: false,
-                error: 'NOT_FOUND',
-                error_detail: `Media buy ${id} not found`,
-              });
-            }
-            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
-          }
-          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-        }
+        case 'force_media_buy_status':
+          return handleForceStatus(
+            store,
+            params,
+            'media_buy_id',
+            'Media buy',
+            store.forceMediaBuyStatus,
+            store.getMediaBuyStatus
+          );
 
-        case 'force_creative_status': {
-          const id = typeof params.creative_id === 'string' ? params.creative_id : '';
-          const status = typeof params.status === 'string' ? params.status : '';
-          if (!id || !status) {
-            return taskToolResponse({
-              success: false,
-              error: 'INVALID_PARAMS',
-              error_detail: 'creative_id and status required',
-            });
-          }
-          const result = store.forceCreativeStatus(id, status);
-          if (!result) {
-            const current = store.getCreativeStatus(id);
-            if (current === undefined) {
-              return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Creative ${id} not found` });
-            }
-            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
-          }
-          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-        }
+        case 'force_creative_status':
+          return handleForceStatus(
+            store,
+            params,
+            'creative_id',
+            'Creative',
+            store.forceCreativeStatus,
+            store.getCreativeStatus
+          );
 
-        case 'force_session_status': {
-          const id = typeof params.session_id === 'string' ? params.session_id : '';
-          const status = typeof params.status === 'string' ? params.status : '';
-          if (!id || !status) {
-            return taskToolResponse({
-              success: false,
-              error: 'INVALID_PARAMS',
-              error_detail: 'session_id and status required',
-            });
-          }
-          const result = store.forceSessionStatus(id, status);
-          if (!result) {
-            const current = store.getSessionStatus(id);
-            if (current === undefined) {
-              return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Session ${id} not found` });
-            }
-            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
-          }
-          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-        }
+        case 'force_session_status':
+          return handleForceStatus(
+            store,
+            params,
+            'session_id',
+            'Session',
+            store.forceSessionStatus,
+            store.getSessionStatus
+          );
 
         case 'simulate_delivery': {
-          const id = typeof params.media_buy_id === 'string' ? params.media_buy_id : '';
+          const id = requireString(params, 'media_buy_id');
           if (!id) {
-            return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'media_buy_id required' });
+            return taskToolResponse({
+              success: false,
+              error: 'INVALID_PARAMS',
+              error_detail: 'media_buy_id required',
+            });
           }
-          const toNum = (v: unknown): number => (typeof v === 'number' && !isNaN(v) ? v : 0);
           const spend = params.reported_spend as Record<string, unknown> | undefined;
           const simulated = {
             impressions: toNum(params.impressions),
@@ -317,11 +338,14 @@ export function registerTestController(server: McpServer, store: TestControllerS
             simulated.spend,
             simulated.conversions
           );
-          return taskToolResponse({ success: true, simulated, cumulative });
+          return taskToolResponse(
+            { success: true, simulated, cumulative },
+            `Simulated ${simulated.impressions} impressions, ${simulated.clicks} clicks for ${id}`
+          );
         }
 
         case 'simulate_budget_spend': {
-          const id = typeof params.media_buy_id === 'string' ? params.media_buy_id : '';
+          const id = requireString(params, 'media_buy_id');
           const pct = typeof params.spend_percentage === 'number' ? params.spend_percentage : NaN;
           if (!id || isNaN(pct)) {
             return taskToolResponse({
@@ -338,10 +362,10 @@ export function registerTestController(server: McpServer, store: TestControllerS
               error_detail: `Media buy ${id} not found or no budget set`,
             });
           }
-          return taskToolResponse({
-            success: true,
-            simulated: { spend_percentage: pct, spent: result.spent, total: result.total },
-          });
+          return taskToolResponse(
+            { success: true, simulated: { spend_percentage: pct, spent: result.spent, total: result.total } },
+            `Simulated ${pct}% budget spend for ${id}`
+          );
         }
 
         default:
