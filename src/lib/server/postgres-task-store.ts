@@ -256,7 +256,7 @@ export class PostgresTaskStore implements TaskStore {
       }
 
       ({ rows: rawRows } = await this.db.query(
-        `SELECT * FROM mcp_tasks
+        `SELECT *, created_at::text AS created_at_raw FROM mcp_tasks
          WHERE ${NOT_EXPIRED}
            AND (created_at, task_id) > ($1::timestamptz, $2)
          ORDER BY created_at, task_id
@@ -265,7 +265,7 @@ export class PostgresTaskStore implements TaskStore {
       ));
     } else {
       ({ rows: rawRows } = await this.db.query(
-        `SELECT * FROM mcp_tasks
+        `SELECT *, created_at::text AS created_at_raw FROM mcp_tasks
          WHERE ${NOT_EXPIRED}
          ORDER BY created_at, task_id
          LIMIT $1`,
@@ -273,7 +273,7 @@ export class PostgresTaskStore implements TaskStore {
       ));
     }
 
-    const rows = rawRows as unknown as TaskRow[];
+    const rows = rawRows as unknown as (TaskRow & { created_at_raw: string })[];
     const hasMore = rows.length > PAGE_SIZE;
     const pageRows = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
     const tasks = pageRows.map(rowToTask);
@@ -281,7 +281,11 @@ export class PostgresTaskStore implements TaskStore {
     let nextCursor: string | undefined;
     if (hasMore && pageRows.length > 0) {
       const last = pageRows[pageRows.length - 1]!;
-      nextCursor = `${new Date(last.created_at).toISOString()}|${last.task_id}`;
+      // Use the raw PostgreSQL text representation to preserve microsecond
+      // precision. JavaScript Date only has millisecond precision, which
+      // causes keyset pagination to re-include rows when multiple tasks
+      // share the same millisecond.
+      nextCursor = `${last.created_at_raw}|${last.task_id}`;
     }
 
     return { tasks, nextCursor };
