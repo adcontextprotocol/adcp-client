@@ -114,18 +114,22 @@ The handler should check `args.filters?.format_ids` — if present, return only 
 
 **`preview_creative`** — `PreviewCreativeRequestSchema.shape`
 
-Render a preview of a stored creative.
+Render a preview of a stored creative. Each preview has a `renders` array with output_format discriminator.
 ```
 taskToolResponse({
   response_type: 'single',
   previews: [{
-    render_id: string,
-    creative_id: string,
-    format_id: { agent_url: string, id: string },
-    url: string,           // URL to rendered preview (can be placeholder)
-    width: number,
-    height: number,
+    preview_id: string,
+    input: { format_id: { agent_url: string, id: string }, name: string, assets: {} },
+    renders: [{
+      render_id: string,
+      output_format: 'url',         // discriminator: 'url' or 'html'
+      preview_url: string,          // URL to rendered preview (for output_format: 'url')
+      role: 'primary',
+      dimensions: { width: number, height: number },
+    }],
   }],
+  expires_at: string,              // ISO timestamp
 })
 ```
 
