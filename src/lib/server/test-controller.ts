@@ -150,7 +150,7 @@ export class TestControllerStore {
     const budget = this.budgets.get(id);
     if (!budget) return null;
     budget.spent = (budget.total * percentage) / 100;
-    return budget;
+    return { ...budget };
   }
 }
 
@@ -180,158 +180,177 @@ const SUPPORTED_SCENARIOS = [
  */
 export function registerTestController(server: McpServer, store: TestControllerStore): void {
   const inputSchema = {
-    scenario: z.string(),
+    scenario: z.enum([
+      'list_scenarios',
+      'force_account_status',
+      'force_media_buy_status',
+      'force_creative_status',
+      'force_session_status',
+      'simulate_delivery',
+      'simulate_budget_spend',
+    ]),
     params: z.record(z.string(), z.unknown()).optional(),
     context: z.record(z.string(), z.unknown()).optional(),
     ext: z.record(z.string(), z.unknown()).optional(),
   };
 
-  server.tool('comply_test_controller', inputSchema, async args => {
-    const scenario = args.scenario as string;
-    const params = (args.params ?? {}) as Record<string, unknown>;
+  server.tool(
+    'comply_test_controller',
+    'Force entity state transitions and simulate delivery/budget for deterministic compliance testing.',
+    inputSchema,
+    async args => {
+      const scenario = args.scenario;
+      const params = (args.params ?? {}) as Record<string, unknown>;
 
-    switch (scenario) {
-      case 'list_scenarios':
-        return taskToolResponse({
-          success: true,
-          scenarios: [...SUPPORTED_SCENARIOS],
-        });
-
-      case 'force_account_status': {
-        const id = params.account_id as string;
-        const status = params.status as string;
-        if (!id || !status) {
+      switch (scenario) {
+        case 'list_scenarios':
           return taskToolResponse({
-            success: false,
-            error: 'INVALID_PARAMS',
-            error_detail: 'account_id and status required',
+            success: true,
+            scenarios: [...SUPPORTED_SCENARIOS],
           });
-        }
-        const result = store.forceAccountStatus(id, status);
-        if (!result) {
-          const current = store.getAccountStatus(id);
-          if (current === undefined) {
-            return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Account ${id} not found` });
+
+        case 'force_account_status': {
+          const id = typeof params.account_id === 'string' ? params.account_id : '';
+          const status = typeof params.status === 'string' ? params.status : '';
+          if (!id || !status) {
+            return taskToolResponse({
+              success: false,
+              error: 'INVALID_PARAMS',
+              error_detail: 'account_id and status required',
+            });
           }
-          return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
-        }
-        return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-      }
-
-      case 'force_media_buy_status': {
-        const id = params.media_buy_id as string;
-        const status = params.status as string;
-        if (!id || !status) {
-          return taskToolResponse({
-            success: false,
-            error: 'INVALID_PARAMS',
-            error_detail: 'media_buy_id and status required',
-          });
-        }
-        const result = store.forceMediaBuyStatus(id, status);
-        if (!result) {
-          const current = store.getMediaBuyStatus(id);
-          if (current === undefined) {
-            return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Media buy ${id} not found` });
+          const result = store.forceAccountStatus(id, status);
+          if (!result) {
+            const current = store.getAccountStatus(id);
+            if (current === undefined) {
+              return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Account ${id} not found` });
+            }
+            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
           }
-          return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
+          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
         }
-        return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-      }
 
-      case 'force_creative_status': {
-        const id = params.creative_id as string;
-        const status = params.status as string;
-        if (!id || !status) {
-          return taskToolResponse({
-            success: false,
-            error: 'INVALID_PARAMS',
-            error_detail: 'creative_id and status required',
-          });
-        }
-        const result = store.forceCreativeStatus(id, status);
-        if (!result) {
-          const current = store.getCreativeStatus(id);
-          if (current === undefined) {
-            return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Creative ${id} not found` });
+        case 'force_media_buy_status': {
+          const id = typeof params.media_buy_id === 'string' ? params.media_buy_id : '';
+          const status = typeof params.status === 'string' ? params.status : '';
+          if (!id || !status) {
+            return taskToolResponse({
+              success: false,
+              error: 'INVALID_PARAMS',
+              error_detail: 'media_buy_id and status required',
+            });
           }
-          return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
-        }
-        return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-      }
-
-      case 'force_session_status': {
-        const id = params.session_id as string;
-        const status = params.status as string;
-        if (!id || !status) {
-          return taskToolResponse({
-            success: false,
-            error: 'INVALID_PARAMS',
-            error_detail: 'session_id and status required',
-          });
-        }
-        const result = store.forceSessionStatus(id, status);
-        if (!result) {
-          const current = store.getSessionStatus(id);
-          if (current === undefined) {
-            return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Session ${id} not found` });
+          const result = store.forceMediaBuyStatus(id, status);
+          if (!result) {
+            const current = store.getMediaBuyStatus(id);
+            if (current === undefined) {
+              return taskToolResponse({
+                success: false,
+                error: 'NOT_FOUND',
+                error_detail: `Media buy ${id} not found`,
+              });
+            }
+            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
           }
-          return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
+          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
         }
-        return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
-      }
 
-      case 'simulate_delivery': {
-        const id = params.media_buy_id as string;
-        if (!id) {
-          return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'media_buy_id required' });
+        case 'force_creative_status': {
+          const id = typeof params.creative_id === 'string' ? params.creative_id : '';
+          const status = typeof params.status === 'string' ? params.status : '';
+          if (!id || !status) {
+            return taskToolResponse({
+              success: false,
+              error: 'INVALID_PARAMS',
+              error_detail: 'creative_id and status required',
+            });
+          }
+          const result = store.forceCreativeStatus(id, status);
+          if (!result) {
+            const current = store.getCreativeStatus(id);
+            if (current === undefined) {
+              return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Creative ${id} not found` });
+            }
+            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
+          }
+          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
         }
-        const simulated = {
-          impressions: (params.impressions as number) ?? 0,
-          clicks: (params.clicks as number) ?? 0,
-          spend: ((params.reported_spend as Record<string, unknown>)?.amount as number) ?? 0,
-          conversions: (params.conversions as number) ?? 0,
-        };
-        const cumulative = store.addDelivery(
-          id,
-          simulated.impressions,
-          simulated.clicks,
-          simulated.spend,
-          simulated.conversions
-        );
-        return taskToolResponse({ success: true, simulated, cumulative });
-      }
 
-      case 'simulate_budget_spend': {
-        const id = params.media_buy_id as string;
-        const pct = params.spend_percentage as number;
-        if (!id || pct === undefined) {
+        case 'force_session_status': {
+          const id = typeof params.session_id === 'string' ? params.session_id : '';
+          const status = typeof params.status === 'string' ? params.status : '';
+          if (!id || !status) {
+            return taskToolResponse({
+              success: false,
+              error: 'INVALID_PARAMS',
+              error_detail: 'session_id and status required',
+            });
+          }
+          const result = store.forceSessionStatus(id, status);
+          if (!result) {
+            const current = store.getSessionStatus(id);
+            if (current === undefined) {
+              return taskToolResponse({ success: false, error: 'NOT_FOUND', error_detail: `Session ${id} not found` });
+            }
+            return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
+          }
+          return taskToolResponse({ success: true, previous_state: result.previous, current_state: result.current });
+        }
+
+        case 'simulate_delivery': {
+          const id = typeof params.media_buy_id === 'string' ? params.media_buy_id : '';
+          if (!id) {
+            return taskToolResponse({ success: false, error: 'INVALID_PARAMS', error_detail: 'media_buy_id required' });
+          }
+          const toNum = (v: unknown): number => (typeof v === 'number' && !isNaN(v) ? v : 0);
+          const spend = params.reported_spend as Record<string, unknown> | undefined;
+          const simulated = {
+            impressions: toNum(params.impressions),
+            clicks: toNum(params.clicks),
+            spend: toNum(spend?.amount),
+            conversions: toNum(params.conversions),
+          };
+          const cumulative = store.addDelivery(
+            id,
+            simulated.impressions,
+            simulated.clicks,
+            simulated.spend,
+            simulated.conversions
+          );
+          return taskToolResponse({ success: true, simulated, cumulative });
+        }
+
+        case 'simulate_budget_spend': {
+          const id = typeof params.media_buy_id === 'string' ? params.media_buy_id : '';
+          const pct = typeof params.spend_percentage === 'number' ? params.spend_percentage : NaN;
+          if (!id || isNaN(pct)) {
+            return taskToolResponse({
+              success: false,
+              error: 'INVALID_PARAMS',
+              error_detail: 'media_buy_id and spend_percentage required',
+            });
+          }
+          const result = store.simulateBudgetSpend(id, pct);
+          if (!result) {
+            return taskToolResponse({
+              success: false,
+              error: 'NOT_FOUND',
+              error_detail: `Media buy ${id} not found or no budget set`,
+            });
+          }
           return taskToolResponse({
-            success: false,
-            error: 'INVALID_PARAMS',
-            error_detail: 'media_buy_id and spend_percentage required',
+            success: true,
+            simulated: { spend_percentage: pct, spent: result.spent, total: result.total },
           });
         }
-        const result = store.simulateBudgetSpend(id, pct);
-        if (!result) {
+
+        default:
           return taskToolResponse({
             success: false,
-            error: 'NOT_FOUND',
-            error_detail: `Media buy ${id} not found or no budget set`,
+            error: 'UNKNOWN_SCENARIO',
+            error_detail: `Unknown scenario: ${scenario}`,
           });
-        }
-        return taskToolResponse({
-          success: true,
-          simulated: { spend_percentage: pct, spent: result.spent, total: result.total },
-        });
       }
-
-      default:
-        return taskToolResponse({
-          success: false,
-          error: 'UNKNOWN_SCENARIO',
-          error_detail: `Unknown scenario: ${scenario}`,
-        });
     }
-  });
+  );
 }

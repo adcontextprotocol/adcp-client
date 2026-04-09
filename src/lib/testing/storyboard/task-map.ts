@@ -89,11 +89,15 @@ export async function executeStoryboardTask(
   // response (common for agents that process synchronously but report as
   // submitted), use that data. Only poll when there's no data at all.
   const hasData = result.data !== undefined && result.data !== null;
-  if (!hasData && result.status === 'submitted' && result.submitted?.waitForCompletion) {
+  const isAsync = result.status === 'submitted' || result.status === 'working';
+  if (!hasData && isAsync && result.submitted?.waitForCompletion) {
     try {
-      result = await result.submitted.waitForCompletion(2000);
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Task polling timeout')), 30_000)
+      );
+      result = await Promise.race([result.submitted.waitForCompletion(2000), timeout]);
     } catch {
-      // Polling failed — return the intermediate result as-is
+      // Polling failed or timed out — return the intermediate result as-is
     }
   }
 
