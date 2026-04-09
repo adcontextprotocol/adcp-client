@@ -48,19 +48,107 @@ A seller agent receives briefs from buyers, returns products with pricing, accep
 
 **5. Creative management** — standard (`list_creative_formats` + `sync_creatives`), catalog-driven (`sync_catalogs`), or none
 
-### Tools to Implement
+### Tools and Required Response Shapes
 
-| Tool | Required | Schema | Response builder |
-|------|----------|--------|-----------------|
-| `get_adcp_capabilities` | Yes | `{}` | `capabilitiesResponse()` |
-| `sync_accounts` | Yes | `SyncAccountsRequestSchema` | `taskToolResponse()` |
-| `get_products` | Yes | `GetProductsRequestSchema` | `productsResponse()` |
-| `create_media_buy` | Yes | `CreateMediaBuyRequestSchema` | `mediaBuyResponse()` |
-| `get_media_buys` | Recommended | `GetMediaBuysRequestSchema` | `taskToolResponse()` |
-| `list_creative_formats` | Recommended | `ListCreativeFormatsRequestSchema` | `taskToolResponse()` |
-| `sync_creatives` | Recommended | `SyncCreativesRequestSchema` | `taskToolResponse()` |
-| `get_media_buy_delivery` | Recommended | `GetMediaBuyDeliveryRequestSchema` | `deliveryResponse()` |
-| `sync_governance` | Optional | `SyncGovernanceRequestSchema` | `taskToolResponse()` |
+**`get_adcp_capabilities`** — register first, empty `{}` schema
+```
+capabilitiesResponse({
+  adcp: { major_versions: [3] },
+  supported_protocols: ['media_buy'],
+})
+```
+
+**`sync_accounts`** — `SyncAccountsRequestSchema.shape`
+```
+taskToolResponse({
+  accounts: [{
+    account_id: string,       // required - your platform's ID
+    brand: { domain: string },// required - echo back from request
+    operator: string,         // required - echo back from request
+    action: 'created' | 'updated',  // required
+    status: 'active' | 'pending_approval',  // required
+  }]
+})
+```
+
+**`sync_governance`** — `SyncGovernanceRequestSchema.shape`
+```
+taskToolResponse({
+  accounts: [{
+    account: { brand: {...}, operator: string },  // required - echo back
+    status: 'synced',         // required
+    governance_agents: [{ url: string, categories?: string[] }],  // required
+  }]
+})
+```
+
+**`get_products`** — `GetProductsRequestSchema.shape`
+```
+productsResponse({
+  products: Product[],  // required - each needs product_id, delivery_type, pricing_options
+  sandbox: true,        // for mock data
+})
+```
+
+**`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
+```
+mediaBuyResponse({
+  media_buy_id: string,       // required
+  packages: [{                // required
+    package_id: string,
+    product_id: string,
+    pricing_option_id: string,
+    budget: number,
+  }],
+})
+```
+
+**`get_media_buys`** — `GetMediaBuysRequestSchema.shape`
+```
+taskToolResponse({
+  media_buys: [{
+    media_buy_id: string,   // required
+    status: 'active' | 'pending_activation' | ...,  // required
+    currency: 'USD',        // required
+    packages: [{
+      package_id: string,   // required
+    }],
+  }]
+})
+```
+
+**`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
+```
+taskToolResponse({
+  formats: [{
+    format_id: { agent_url: string, id: string },  // required
+    name: string,  // required
+  }]
+})
+```
+
+**`sync_creatives`** — `SyncCreativesRequestSchema.shape`
+```
+taskToolResponse({
+  creatives: [{
+    creative_id: string,          // required - echo from request
+    action: 'created' | 'updated',  // required
+  }]
+})
+```
+
+**`get_media_buy_delivery`** — `GetMediaBuyDeliveryRequestSchema.shape`
+```
+deliveryResponse({
+  reporting_period: { start: string, end: string },  // required - ISO timestamps
+  media_buy_deliveries: [{
+    media_buy_id: string,     // required
+    status: 'active',         // required
+    totals: { impressions: number, spend: number },  // required
+    by_package: [],           // required (can be empty)
+  }]
+})
+```
 
 ### Storyboards
 
@@ -90,13 +178,15 @@ A signals agent serves audience segments to buyers for campaign targeting.
 
 **4. Activation** — platform destinations (DSP segment push) or agent destinations (key-value targeting)
 
-### Tools to Implement
+### Tools and Required Response Shapes
 
-| Tool | Required | Schema | Response builder |
-|------|----------|--------|-----------------|
-| `get_adcp_capabilities` | Yes | `{}` | `capabilitiesResponse()` |
-| `get_signals` | Yes | `GetSignalsRequestSchema` | `taskToolResponse()` |
-| `activate_signal` | Recommended | `ActivateSignalRequestSchema` | `taskToolResponse()` |
+**`get_signals`** — `GetSignalsRequestSchema.shape`
+
+Every signal must include `signal_agent_segment_id` (the key buyers pass to `activate_signal`). Support `signal_spec` (natural language search) and `signal_ids` (exact lookup). Set `sandbox: true`.
+
+**`activate_signal`** — `ActivateSignalRequestSchema.shape`
+
+Look up by `signal_agent_segment_id`. Return deployments with `activation_key`. Handle `idempotency_key`.
 
 ### Storyboards
 
@@ -160,6 +250,7 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 4. Use `Schema.shape` (not `Schema`) when registering tools
 5. Use response builders — never return raw JSON
 6. Set `sandbox: true` on all mock/demo responses
+7. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)` and pass `taskStore` to `createTaskCapableServer`
 
 ## Validation
 
@@ -191,7 +282,8 @@ The storyboard output shows per-step pass/fail with validation details. Fix each
 | Pass `Schema` instead of `Schema.shape` | MCP SDK needs unwrapped Zod fields |
 | Skip `get_adcp_capabilities` | Must be the first tool registered |
 | Return raw JSON without response builders | LLM clients need the text content layer |
-| Missing required fields on response objects | Check the Zod schema for required fields |
+| Missing `brand`/`operator` in sync_accounts response | Echo them back from the request — they're required |
+| sync_governance returns wrong shape | Must include `status: 'synced'` and `governance_agents` array per account |
 | `sandbox: false` on mock data | Buyers may treat mock data as real |
 
 ## Reference

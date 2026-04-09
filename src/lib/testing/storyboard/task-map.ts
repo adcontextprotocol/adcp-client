@@ -65,6 +65,8 @@ export const TASK_TO_METHOD: Record<string, string> = {
  * Execute a storyboard task against a SingleAgentClient.
  *
  * Uses the typed method if one exists, otherwise falls back to executeTask().
+ * When the agent returns an async status (working/submitted), waits for
+ * completion before returning — storyboard steps expect final results.
  */
 export async function executeStoryboardTask(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic dispatch requires any
@@ -74,18 +76,27 @@ export async function executeStoryboardTask(
 ): Promise<TaskResult> {
   const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
 
+  let result;
   if (methodName && typeof client[methodName] === 'function') {
-    const result = await client[methodName](params);
-    return {
-      success: result.success ?? true,
-      data: result.data,
-      error: result.error,
-    };
+    result = await client[methodName](params);
+  } else {
+    // Fall back to generic executeTask for tasks without dedicated methods
+    // (e.g., sync_governance, future tasks)
+    result = await client.executeTask(taskName, params);
   }
 
-  // Fall back to generic executeTask for tasks without dedicated methods
-  // (e.g., sync_governance, future tasks)
-  const result = await client.executeTask(taskName, params);
+  // If the agent returned an async status but included data in the initial
+  // response (common for agents that process synchronously but report as
+  // submitted), use that data. Only poll when there's no data at all.
+  const hasData = result.data !== undefined && result.data !== null;
+  if (!hasData && result.status === 'submitted' && result.submitted?.waitForCompletion) {
+    try {
+      result = await result.submitted.waitForCompletion(2000);
+    } catch {
+      // Polling failed — return the intermediate result as-is
+    }
+  }
+
   return {
     success: result.success ?? true,
     data: result.data,
