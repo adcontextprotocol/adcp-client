@@ -14,6 +14,8 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a server-side agent?** Read `docs/guides/BUILD-AN-AGENT.md` and the `storyboards/` directory.
 
+**Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` before writing code — it covers the domain decisions (guaranteed vs non-guaranteed, pricing, approval workflows, creative management) that SDK docs don't.
+
 **Critical rules**:
 - ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing
 - NEVER inject mock/fallback data — return exactly what agents provide

@@ -2,4 +2,4 @@
 "@adcp/client": patch
 ---
 
-Add seller agent quickstart example (`examples/seller-quickstart/`) with a runnable MCP server implementing the full `media_buy_seller` storyboard
+Add build-seller-agent skill (`skills/build-seller-agent/SKILL.md`) that guides coding agents through domain decisions and implementation of a seller MCP server
