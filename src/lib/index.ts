@@ -432,6 +432,9 @@ export type {
   ServeOptions,
 } from './server';
 
+// Comply test controller (deterministic testing for seller agents)
+export { registerTestController, TestControllerStore } from './server';
+
 // ====== ERROR EXTRACTION ======
 // Extract structured AdCP errors from transport responses
 export {
