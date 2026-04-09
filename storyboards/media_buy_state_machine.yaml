@@ -200,6 +200,7 @@ phases:
         doc_ref: "/media-buy/task-reference/update_media_buy"
         comply_scenario: terminal_state_enforcement
         stateful: true
+        expect_error: true
         expected: |
           Reject with INVALID_STATE_TRANSITION — cannot pause a canceled buy.
 
@@ -209,7 +210,7 @@ phases:
 
         validations:
           - check: field_present
-            path: "errors"
+            path: "adcp_error.code"
             description: "Response contains an error for invalid transition"
 
       - id: resume_canceled_buy
@@ -223,6 +224,7 @@ phases:
         doc_ref: "/media-buy/task-reference/update_media_buy"
         comply_scenario: terminal_state_enforcement
         stateful: true
+        expect_error: true
         expected: |
           Reject with INVALID_STATE_TRANSITION — cannot resume a canceled buy.
 
@@ -232,7 +234,7 @@ phases:
 
         validations:
           - check: field_present
-            path: "errors"
+            path: "adcp_error.code"
             description: "Response contains an error for invalid transition"
 
       - id: recancel_buy
@@ -246,6 +248,7 @@ phases:
         doc_ref: "/media-buy/task-reference/update_media_buy"
         comply_scenario: terminal_state_enforcement
         stateful: true
+        expect_error: true
         expected: |
           Either reject with INVALID_STATE_TRANSITION or accept idempotently.
           Both behaviors are valid.
