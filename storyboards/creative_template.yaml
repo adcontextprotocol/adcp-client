@@ -118,6 +118,7 @@ phases:
             description: "Response matches schema"
           - check: field_value
             path: "formats[*].type"
+            value: "display"
             description: "All returned formats are display type"
 
   - id: preview

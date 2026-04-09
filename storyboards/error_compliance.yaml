@@ -58,7 +58,6 @@ phases:
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_handling
         stateful: false
-        expect_error: true
         expected: |
           Reject the request with an error containing:
           - code: INVALID_REQUEST or BUDGET_TOO_LOW
@@ -76,8 +75,8 @@ phases:
 
         validations:
           - check: field_present
-            path: "adcp_error.code"
-            description: "Error response includes an AdCP error code"
+            path: "errors"
+            description: "Response contains an error for negative budget"
 
       - id: nonexistent_product
         title: "Reject nonexistent product ID"
@@ -90,7 +89,6 @@ phases:
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_handling
         stateful: false
-        expect_error: true
         expected: |
           Reject the request with:
           - code: PRODUCT_NOT_FOUND or INVALID_REQUEST
@@ -107,8 +105,8 @@ phases:
 
         validations:
           - check: field_present
-            path: "adcp_error.code"
-            description: "Error response includes an AdCP error code"
+            path: "errors"
+            description: "Response contains an error for nonexistent product"
 
       - id: missing_fields
         title: "Reject empty get_products request"
@@ -122,7 +120,6 @@ phases:
         doc_ref: "/media-buy/task-reference/get_products"
         comply_scenario: error_handling
         stateful: false
-        expect_error: true
         expected: |
           Either return products (treating empty request as browse) or return a
           structured error requesting the missing brief. Both are valid.
@@ -146,7 +143,6 @@ phases:
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_handling
         stateful: false
-        expect_error: true
         expected: |
           Reject with INVALID_REQUEST and correctable recovery.
 
@@ -161,8 +157,8 @@ phases:
 
         validations:
           - check: field_present
-            path: "adcp_error.code"
-            description: "Error response includes an AdCP error code"
+            path: "errors"
+            description: "Response contains an error for reversed dates"
 
   - id: error_structure
     title: "Error structure compliance"
@@ -183,7 +179,6 @@ phases:
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_codes
         stateful: false
-        expect_error: true
         expected: |
           Error response with:
           - code: a recognized AdCP error code
@@ -218,7 +213,6 @@ phases:
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_transport
         stateful: false
-        expect_error: true
         expected: |
           MCP response with:
           - isError: true

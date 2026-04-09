@@ -149,7 +149,7 @@ phases:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
-            path: "creatives"
+            path: "results"
             description: "Response contains per-creative results"
 
   - id: list_and_filter

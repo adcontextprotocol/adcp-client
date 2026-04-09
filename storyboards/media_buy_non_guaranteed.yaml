@@ -124,7 +124,7 @@ phases:
         expected: |
           Return the media buy in completed status:
           - media_buy_id: your platform's identifier
-          - status: confirmed or active (no async approval needed)
+          - status: active (no async approval needed)
           - confirmed_at: timestamp
           - packages: confirmed line items with bid prices acknowledged
           - valid_actions: pause, update_bid, get_delivery

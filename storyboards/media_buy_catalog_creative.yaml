@@ -260,7 +260,7 @@ phases:
         expected: |
           Create the media buy with catalog-driven packages. Return:
           - media_buy_id
-          - status: active or confirmed
+          - status: active
           - packages with catalog references preserved
 
         sample_request:

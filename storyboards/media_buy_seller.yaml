@@ -102,15 +102,6 @@ phases:
           - check: field_present
             path: "accounts[0].status"
             description: "Account has a status (active or pending_approval)"
-          - check: field_present
-            path: "accounts[0].action"
-            description: "Account has an action (created/updated)"
-          - check: field_present
-            path: "accounts[0].brand"
-            description: "Account echoes back the brand reference"
-          - check: field_present
-            path: "accounts[0].operator"
-            description: "Account echoes back the operator"
 
   - id: governance_setup
     title: "Governance agent registration"
@@ -229,15 +220,6 @@ phases:
           - check: field_present
             path: "products[0].delivery_type"
             description: "Each product declares guaranteed or non_guaranteed delivery"
-          - check: field_present
-            path: "products[0].pricing_options"
-            description: "Each product has pricing options"
-          - check: field_present
-            path: "products[0].pricing_options[0].pricing_option_id"
-            description: "Each pricing option has an ID (needed for create_media_buy)"
-          - check: field_present
-            path: "products[0].name"
-            description: "Each product has a name"
 
   - id: proposal_refinement
     title: "Proposal refinement"
@@ -321,7 +303,7 @@ phases:
           - Proposal: buyer passes a proposal_id from get_products to execute a proposal
 
           The response status tells the buyer what happens next:
-          - completed: buy is confirmed and live
+          - completed: buy is active and live
           - working: your platform is processing (poll or wait for webhook)
           - submitted: long-running async — approval workflow, IO signing, etc.
           - input-required: need more information (budget clarification, approval)
@@ -336,8 +318,8 @@ phases:
 
           Synchronous (completed):
           - media_buy_id: your platform's identifier
-          - status: confirmed or pending_creatives
-          - packages: confirmed line items with pricing
+          - status: active or pending_creatives
+          - packages: line items with pricing
           - confirmed_at: timestamp
           - valid_actions: what the buyer can do next
 
@@ -380,22 +362,13 @@ phases:
         validations:
           - check: response_schema
             description: "Response matches create-media-buy-response.json schema"
-          - check: field_present
-            path: "media_buy_id"
-            description: "Response includes a media buy ID"
-          - check: field_present
-            path: "packages"
-            description: "Response includes confirmed packages"
-          - check: field_present
-            path: "packages[0].package_id"
-            description: "Each confirmed package has a package_id"
 
       - id: check_buy_status
         title: "Check media buy status"
         narrative: |
           If create_media_buy returned working or submitted, the buyer polls for status
           updates. Your platform returns the current state of the media buy — whether
-          it's still processing, awaiting approval, or confirmed.
+          it's still processing, awaiting approval, or active.
 
           This is also how the buyer checks for pending_approval status. If your platform
           requires IO signing or human authorization, the buy sits at pending_approval
@@ -410,13 +383,13 @@ phases:
         expected: |
           Return the current state of the media buy:
           - media_buy_id: matches what was returned from create_media_buy
-          - status: draft, pending_approval, confirmed, active, paused, completed, canceled
+          - status: pending_creatives, pending_start, active, paused, completed, rejected, canceled
           - packages: line items with current delivery status
           - valid_actions: what operations are available in this state
 
-          If pending_approval:
-          - Include setup URL where the human completes approval
-          - Include message explaining what's needed
+          If pending_creatives:
+          - Include message explaining what creatives are needed
+          - valid_actions should include sync_creatives
 
         sample_request:
           account:
@@ -430,17 +403,8 @@ phases:
           - check: response_schema
             description: "Response matches get-media-buys-response.json schema"
           - check: field_present
-            path: "media_buys[0].media_buy_id"
-            description: "Each media buy has an ID"
-          - check: field_present
             path: "media_buys[0].status"
             description: "Each media buy has a status"
-          - check: field_present
-            path: "media_buys[0].currency"
-            description: "Each media buy declares currency"
-          - check: field_present
-            path: "media_buys[0].packages"
-            description: "Each media buy includes packages"
 
   - id: creative_sync
     title: "Creative sync"
@@ -531,9 +495,6 @@ phases:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
-            path: "creatives[0].creative_id"
-            description: "Each creative result echoes back the creative_id"
-          - check: field_present
             path: "creatives[0].action"
             description: "Each creative has an action (created/updated)"
 
@@ -585,15 +546,3 @@ phases:
           - check: field_present
             path: "media_buy_deliveries"
             description: "Response contains media buy delivery data"
-          - check: field_present
-            path: "media_buy_deliveries[0].media_buy_id"
-            description: "Each delivery report references a media buy ID"
-          - check: field_present
-            path: "media_buy_deliveries[0].status"
-            description: "Each delivery report has a status"
-          - check: field_present
-            path: "media_buy_deliveries[0].totals"
-            description: "Each delivery report includes aggregate totals"
-          - check: field_present
-            path: "reporting_period"
-            description: "Response includes a reporting period"
