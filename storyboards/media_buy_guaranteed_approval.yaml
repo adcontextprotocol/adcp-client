@@ -207,6 +207,9 @@ phases:
         validations:
           - check: response_schema
             description: "Response matches create-media-buy-response.json schema"
+          - check: field_present
+            path: "media_buy_id"
+            description: "Response includes a media buy ID"
 
   - id: poll_approval
     title: "Poll for IO approval"
@@ -250,8 +253,12 @@ phases:
           - check: response_schema
             description: "Response matches get-media-buys-response.json schema"
           - check: field_present
+            path: "media_buys[0].media_buy_id"
+            description: "Media buy has an ID"
+          - check: field_value
             path: "media_buys[0].status"
-            description: "Media buy has a status"
+            value: "pending_approval"
+            description: "Media buy is in pending_approval status (awaiting IO signing)"
           - check: field_present
             path: "media_buys[0].setup.url"
             description: "Pending approval buy includes a setup URL for IO signing"
