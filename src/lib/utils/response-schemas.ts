@@ -99,6 +99,12 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
     z.object({ rights_id: z.string(), status: z.string() }).passthrough(),
     z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
   ]),
-  update_rights: z.union([z.object({ rights_id: z.string() }).passthrough(), z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough()]),
-  creative_approval: z.union([z.object({ decision: z.string() }).passthrough(), z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough()]),
+  update_rights: z.union([
+    z.object({ rights_id: z.string() }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
+  creative_approval: z.union([
+    z.object({ decision: z.string() }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
 };

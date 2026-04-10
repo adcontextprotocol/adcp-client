@@ -16,9 +16,7 @@ const { loadBundledStoryboards } = require('../../dist/lib/testing/storyboard/lo
 const { hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { TASK_TO_METHOD } = require('../../dist/lib/testing/storyboard/task-map.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
-const {
-  PLATFORM_STORYBOARDS,
-} = require('../../dist/lib/testing/compliance/platform-storyboards.js');
+const { PLATFORM_STORYBOARDS } = require('../../dist/lib/testing/compliance/platform-storyboards.js');
 
 const storyboards = loadBundledStoryboards();
 
@@ -59,7 +57,11 @@ describe('storyboard structural completeness', () => {
           it('has unique step IDs', () => {
             const ids = phase.steps.map(s => s.id);
             const unique = new Set(ids);
-            assert.equal(unique.size, ids.length, `Duplicate step IDs in phase ${phase.id}: ${ids.filter((id, i) => ids.indexOf(id) !== i)}`);
+            assert.equal(
+              unique.size,
+              ids.length,
+              `Duplicate step IDs in phase ${phase.id}: ${ids.filter((id, i) => ids.indexOf(id) !== i)}`
+            );
           });
 
           for (const step of phase.steps) {

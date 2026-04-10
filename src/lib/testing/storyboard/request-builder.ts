@@ -432,7 +432,11 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     }
     return {
       standards_id: context.content_standards_id ?? 'unknown',
-      artifact: { property_rid: 'test-publisher.example', artifact_id: context.creative_id ?? 'test-creative', assets: {} },
+      artifact: {
+        property_rid: 'test-publisher.example',
+        artifact_id: context.creative_id ?? 'test-creative',
+        assets: {},
+      },
     };
   },
 
@@ -507,7 +511,16 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     }
     return {
       standards_id: context.content_standards_id ?? 'unknown',
-      records: [{ record_id: 'delivery_001', artifact: { property_rid: 'test-publisher.example', artifact_id: context.creative_id ?? 'test-creative', assets: {} } }],
+      records: [
+        {
+          record_id: 'delivery_001',
+          artifact: {
+            property_rid: 'test-publisher.example',
+            artifact_id: context.creative_id ?? 'test-creative',
+            assets: {},
+          },
+        },
+      ],
     };
   },
 
