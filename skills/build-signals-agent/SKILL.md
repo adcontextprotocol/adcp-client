@@ -71,7 +71,7 @@ Two discovery modes — support both:
 Plus filtering via `filters.catalog_types`, `filters.max_cpm`, `filters.min_coverage_percentage`, and `max_results`.
 
 ```
-taskToolResponse({
+getSignalsResponse({
   signals: [{
     signal_agent_segment_id: string,  // required - key for activate_signal
     name: string,                     // required
@@ -109,7 +109,7 @@ taskToolResponse({
 Look up by `signal_agent_segment_id`. Validate `pricing_option_id`. Return deployments matching the requested destinations.
 
 ```
-taskToolResponse({
+activateSignalResponse({
   deployments: [{
     // Match the destination type from the request:
     type: 'platform',              // for platform destinations
@@ -144,13 +144,22 @@ taskToolResponse({
 | `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support |
 | `server.tool(name, Schema.shape, handler)` | Register tool — `.shape` unwraps Zod |
 | `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
-| `taskToolResponse(data, summary)` | Build tool response |
+| `getSignalsResponse(data)` | Build `get_signals` response |
+| `activateSignalResponse(data)` | Build `activate_signal` response |
+| `taskToolResponse(data, summary)` | Build generic tool response (for tools without a dedicated builder) |
 | `adcpError(code, { message })` | Structured error (`SIGNAL_NOT_FOUND`, `INVALID_DESTINATION`) |
 | `GetSignalsRequestSchema.shape` | Zod schema for get_signals input |
 | `ActivateSignalRequestSchema.shape` | Zod schema for activate_signal input |
 | `type Signal = GetSignalsResponse['signals'][number]` | Type for a single signal object |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+
+## Setup
+
+```bash
+npm init -y
+npm install @adcp/client
+```
 
 ## Implementation
 

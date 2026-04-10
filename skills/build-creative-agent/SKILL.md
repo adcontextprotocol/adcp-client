@@ -66,7 +66,7 @@ capabilitiesResponse({
 
 **`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
 ```
-taskToolResponse({
+listCreativeFormatsResponse({
   formats: [{
     format_id: { agent_url: string, id: string },  // required
     name: string,                                    // required
@@ -87,7 +87,7 @@ taskToolResponse({
 
 Store creatives in the library. Echo back creative_id and action.
 ```
-taskToolResponse({
+syncCreativesResponse({
   creatives: [{
     creative_id: string,              // required — echo from request
     action: 'created' | 'updated',    // required
@@ -100,13 +100,15 @@ taskToolResponse({
 
 Return creatives from the library. Support filtering by format_id.
 ```
-taskToolResponse({
+listCreativesResponse({
+  query_summary: { total_matching: number, returned: number, filters: [] },
   creatives: [{
     creative_id: string,
     name: string,
     format_id: { agent_url: string, id: string },
     status: 'accepted' | 'pending_review' | 'rejected',
   }],
+  pagination: { total: number, offset: 0, limit: 50 },
 })
 ```
 
@@ -116,7 +118,7 @@ The handler should check `args.filters?.format_ids` — if present, return only 
 
 Render a preview of a stored creative. Each preview has a `renders` array with output_format discriminator.
 ```
-taskToolResponse({
+previewCreativeResponse({
   response_type: 'single',
   previews: [{
     preview_id: string,
@@ -137,7 +139,7 @@ taskToolResponse({
 
 Produce a serving tag from a stored creative.
 ```
-taskToolResponse({
+buildCreativeResponse({
   creative_manifest: {
     format_id: { agent_url: string, id: string },
     name: string,
@@ -155,12 +157,25 @@ taskToolResponse({
 | `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support |
 | `server.tool(name, Schema.shape, handler)` | Register tool — `.shape` unwraps Zod |
 | `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
-| `taskToolResponse(data, summary)` | Build generic tool response |
+| `listCreativeFormatsResponse(data)` | Build `list_creative_formats` response |
+| `syncCreativesResponse(data)` | Build `sync_creatives` response |
+| `listCreativesResponse(data)` | Build `list_creatives` response |
+| `previewCreativeResponse(data)` | Build `preview_creative` response |
+| `buildCreativeResponse(data)` | Build `build_creative` response |
+| `buildCreativeMultiResponse(data)` | Build multi-format `build_creative` response |
+| `taskToolResponse(data, summary)` | Build generic tool response (for tools without a dedicated builder) |
 | `adcpError(code, { message })` | Structured error |
 
 Schemas: `ListCreativeFormatsRequestSchema`, `SyncCreativesRequestSchema`, `ListCreativesRequestSchema`, `PreviewCreativeRequestSchema`, `BuildCreativeRequestSchema`.
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+
+## Setup
+
+```bash
+npm init -y
+npm install @adcp/client
+```
 
 ## Implementation
 

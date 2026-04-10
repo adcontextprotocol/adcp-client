@@ -99,7 +99,7 @@ mediaBuyResponse({
 
 Return BOTH generative and standard formats:
 ```
-taskToolResponse({
+listCreativeFormatsResponse({
   formats: [
     // Generative format — accepts brief input
     {
@@ -137,7 +137,7 @@ taskToolResponse({
 
 Handle both brief-based and standard creatives:
 ```
-taskToolResponse({
+syncCreativesResponse({
   creatives: [{
     creative_id: string,              // echo from request
     action: 'created' | 'updated',    // required
@@ -148,7 +148,7 @@ taskToolResponse({
 
 For invalid brand domains, return rejection:
 ```
-taskToolResponse({
+syncCreativesResponse({
   creatives: [{
     creative_id: string,
     action: 'created',
@@ -160,7 +160,7 @@ taskToolResponse({
 
 **`get_media_buys`** — `GetMediaBuysRequestSchema.shape`
 ```
-taskToolResponse({
+getMediaBuysResponse({
   media_buys: [{
     media_buy_id: string,
     status: 'active' | 'pending_start' | ...,
@@ -220,12 +220,22 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 | `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
 | `productsResponse(data)` | Build `get_products` response |
 | `mediaBuyResponse(data)` | Build `create_media_buy` response |
+| `getMediaBuysResponse(data)` | Build `get_media_buys` response |
 | `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
-| `taskToolResponse(data, summary)` | Build generic tool response |
+| `listCreativeFormatsResponse(data)` | Build `list_creative_formats` response |
+| `syncCreativesResponse(data)` | Build `sync_creatives` response |
+| `taskToolResponse(data, summary)` | Build generic tool response (for tools without a dedicated builder) |
 | `adcpError(code, { message })` | Structured error |
 | `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+
+## Setup
+
+```bash
+npm init -y
+npm install @adcp/client
+```
 
 ## Implementation
 

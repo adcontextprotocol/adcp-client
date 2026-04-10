@@ -124,7 +124,7 @@ mediaBuyResponse({
 
 **`get_media_buys`** — `GetMediaBuysRequestSchema.shape`
 ```
-taskToolResponse({
+getMediaBuysResponse({
   media_buys: [{
     media_buy_id: string,   // required
     status: 'active' | 'pending_start' | ...,  // required
@@ -138,7 +138,7 @@ taskToolResponse({
 
 **`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
 ```
-taskToolResponse({
+listCreativeFormatsResponse({
   formats: [{
     format_id: { agent_url: string, id: string },  // required
     name: string,  // required
@@ -148,7 +148,7 @@ taskToolResponse({
 
 **`sync_creatives`** — `SyncCreativesRequestSchema.shape`
 ```
-taskToolResponse({
+syncCreativesResponse({
   creatives: [{
     creative_id: string,          // required - echo from request
     action: 'created' | 'updated',  // required
@@ -242,13 +242,25 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 | `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
 | `productsResponse(data)` | Build `get_products` response |
 | `mediaBuyResponse(data)` | Build `create_media_buy` response |
+| `updateMediaBuyResponse(data)` | Build `update_media_buy` response |
+| `getMediaBuysResponse(data)` | Build `get_media_buys` response |
 | `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
-| `taskToolResponse(data, summary)` | Build generic tool response |
+| `listAccountsResponse(data)` | Build `list_accounts` response |
+| `listCreativeFormatsResponse(data)` | Build `list_creative_formats` response |
+| `syncCreativesResponse(data)` | Build `sync_creatives` response |
+| `taskToolResponse(data, summary)` | Build generic tool response (for tools without a dedicated builder) |
 | `adcpError(code, { message })` | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`) |
 | `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
 | `TestControllerError(code, message)` | Typed error from store methods |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+
+## Setup
+
+```bash
+npm init -y
+npm install @adcp/client
+```
 
 ## Implementation
 
