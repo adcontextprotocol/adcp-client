@@ -666,6 +666,7 @@ OPTIONS:
   --storyboards IDS        Comma-separated storyboard IDs to run (highest priority)
   --platform-type TYPE     Declare platform type for coherence checking
   --list-platform-types    List all available platform types
+  --timeout SECONDS        Timeout in seconds (default: 120)
   --brief TEXT             Custom brief for product discovery
   --json                   Output raw JSON
   --debug                  Show debug output
@@ -695,6 +696,7 @@ EXAMPLES:
     '--brief',
     '--json',
     '--debug',
+    '--timeout',
     '--no-dry-run',
     '--help',
   ];
@@ -764,6 +766,23 @@ EXAMPLES:
     }
   }
 
+  // Parse --timeout (seconds, default 120)
+  const timeoutFlagIndex = args.indexOf('--timeout');
+  const DEFAULT_COMPLY_TIMEOUT_S = 120;
+  let complyTimeoutMs = DEFAULT_COMPLY_TIMEOUT_S * 1000;
+  if (timeoutFlagIndex !== -1) {
+    if (timeoutFlagIndex + 1 >= args.length || args[timeoutFlagIndex + 1].startsWith('--')) {
+      console.error('ERROR: --timeout requires a value (seconds)\n');
+      process.exit(2);
+    }
+    const seconds = parseInt(args[timeoutFlagIndex + 1], 10);
+    if (isNaN(seconds) || seconds <= 0) {
+      console.error(`ERROR: --timeout must be a positive integer (seconds), got: ${args[timeoutFlagIndex + 1]}`);
+      process.exit(2);
+    }
+    complyTimeoutMs = seconds * 1000;
+  }
+
   const agentAlias = opts.positionalArgs[0];
   const testOptions = {
     protocol,
@@ -772,6 +791,7 @@ EXAMPLES:
     tracks,
     storyboards,
     platform_type,
+    timeout_ms: complyTimeoutMs,
     agent_alias: agentAlias !== agentUrl ? agentAlias : undefined,
     ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
   };
@@ -782,6 +802,7 @@ EXAMPLES:
     console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
     if (platform_type) console.log(`   Platform: ${platform_type}`);
+    console.log(`   Timeout: ${complyTimeoutMs / 1000}s`);
     console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
   }
 

@@ -241,51 +241,62 @@ export const PROTOCOL_TOOLS = ['get_adcp_capabilities'] as const;
  * Build synthetic capabilities from a list of available tools.
  * Used for v2 servers that don't support get_adcp_capabilities.
  */
+/**
+ * Tool-group → protocol mapping for detection from tools/list.
+ */
+const TOOL_PROTOCOL_MAP: [readonly string[], AdcpProtocol][] = [
+  [MEDIA_BUY_TOOLS, 'media_buy'],
+  [SIGNALS_TOOLS, 'signals'],
+  [GOVERNANCE_TOOLS, 'governance'],
+  [CREATIVE_TOOLS, 'creative'],
+  [SPONSORED_INTELLIGENCE_TOOLS, 'sponsored_intelligence'],
+  [TRUSTED_MATCH_TOOLS, 'trusted_match'],
+  [COMPLIANCE_TOOLS, 'compliance_testing'],
+  [BRAND_RIGHTS_TOOLS, 'brand'],
+];
+
+/**
+ * Detect protocols from tool names.
+ */
+function detectProtocolsFromTools(toolNames: Set<string>): AdcpProtocol[] {
+  const protocols: AdcpProtocol[] = [];
+  for (const [tools, protocol] of TOOL_PROTOCOL_MAP) {
+    if (tools.some(t => toolNames.has(t))) {
+      protocols.push(protocol);
+    }
+  }
+  return protocols;
+}
+
+/**
+ * Augment declared capabilities with compliance_testing if the tool is present.
+ *
+ * comply_test_controller is a testing-only tool that agents register but often
+ * forget to declare in get_adcp_capabilities. Auto-adding it avoids a common
+ * setup mistake without risk of false positives — no agent would register
+ * comply_test_controller by accident.
+ *
+ * Other protocols (media_buy, signals, etc.) are NOT augmented because a stub
+ * or partial tool registration could produce false positives.
+ */
+export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, tools: ToolInfo[]): AdcpCapabilities {
+  const toolNames = new Set(tools.map(t => t.name));
+  const hasComplianceTool = COMPLIANCE_TOOLS.some(t => toolNames.has(t));
+  if (!hasComplianceTool || capabilities.protocols.includes('compliance_testing')) {
+    return capabilities;
+  }
+  console.debug(
+    `[AdCP] Agent has comply_test_controller but does not declare compliance_testing. Adding automatically.`
+  );
+  return {
+    ...capabilities,
+    protocols: [...capabilities.protocols, 'compliance_testing'],
+  };
+}
+
 export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities {
   const toolNames = new Set(tools.map(t => t.name));
-
-  // Detect supported protocols from available tools
-  const protocols: AdcpProtocol[] = [];
-
-  const hasMediaBuyTools = MEDIA_BUY_TOOLS.some(t => toolNames.has(t));
-  if (hasMediaBuyTools) {
-    protocols.push('media_buy');
-  }
-
-  const hasSignalsTools = SIGNALS_TOOLS.some(t => toolNames.has(t));
-  if (hasSignalsTools) {
-    protocols.push('signals');
-  }
-
-  const hasGovernanceTools = GOVERNANCE_TOOLS.some(t => toolNames.has(t));
-  if (hasGovernanceTools) {
-    protocols.push('governance');
-  }
-
-  const hasCreativeTools = CREATIVE_TOOLS.some(t => toolNames.has(t));
-  if (hasCreativeTools) {
-    protocols.push('creative');
-  }
-
-  const hasSponsoredIntelligenceTools = SPONSORED_INTELLIGENCE_TOOLS.some(t => toolNames.has(t));
-  if (hasSponsoredIntelligenceTools) {
-    protocols.push('sponsored_intelligence');
-  }
-
-  const hasTrustedMatchTools = TRUSTED_MATCH_TOOLS.some(t => toolNames.has(t));
-  if (hasTrustedMatchTools) {
-    protocols.push('trusted_match');
-  }
-
-  const hasComplianceTools = COMPLIANCE_TOOLS.some(t => toolNames.has(t));
-  if (hasComplianceTools) {
-    protocols.push('compliance_testing');
-  }
-
-  const hasBrandRightsTools = BRAND_RIGHTS_TOOLS.some(t => toolNames.has(t));
-  if (hasBrandRightsTools) {
-    protocols.push('brand');
-  }
+  const protocols = detectProtocolsFromTools(toolNames);
 
   // Detect features from tool presence
   const features: MediaBuyFeatures = {
@@ -501,6 +512,8 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   get_brand_identity: ['brand'],
   get_rights: ['brand'],
   acquire_rights: ['brand'],
+  update_rights: ['brand'],
+  creative_approval: ['brand'],
 };
 
 /**
