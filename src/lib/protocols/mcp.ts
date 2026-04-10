@@ -44,6 +44,14 @@ const connectionCache = new Map<string, MCPClient>();
 const pendingConnections = new Map<string, Promise<MCPClient>>();
 const MAX_CACHED_CONNECTIONS = 20;
 
+/**
+ * Track URLs where StreamableHTTP has previously connected successfully.
+ * When reconnecting to these URLs, skip SSE fallback — if StreamableHTTP
+ * worked before, SSE won't help and will just produce 405 errors on
+ * servers that only support POST-based StreamableHTTP.
+ */
+const knownStreamableHTTPUrls = new Set<string>();
+
 function connectionCacheKey(agentUrl: string, authToken?: string): string {
   if (!authToken) return agentUrl;
   const tokenHash = createHash('sha256').update(authToken).digest('hex').slice(0, 16);
@@ -79,6 +87,7 @@ function evictLeastRecentlyUsed(): void {
 export async function closeMCPConnections(): Promise<void> {
   const entries = [...connectionCache.entries()];
   connectionCache.clear();
+  knownStreamableHTTPUrls.clear();
   for (const [, client] of entries) {
     try {
       await client.close();
@@ -269,6 +278,7 @@ async function connectMCPWithFallbackImpl(
     });
     await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
     failedClient = undefined;
+    knownStreamableHTTPUrls.add(url.toString());
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected via StreamableHTTP for ${label}`,
@@ -306,6 +316,7 @@ async function connectMCPWithFallbackImpl(
       try {
         const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
         await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
+        knownStreamableHTTPUrls.add(url.toString());
         debugLogs.push({
           type: 'success',
           message: `MCP: Connected via StreamableHTTP (retry) for ${label}`,
@@ -324,6 +335,19 @@ async function connectMCPWithFallbackImpl(
 
     // Auth failure — transport type won't change the outcome
     if (is401Error(error)) {
+      throw error;
+    }
+
+    // If StreamableHTTP previously worked for this URL, don't fall back to SSE.
+    // Transient failures (connection reuse, concurrency limits) should be retried
+    // with StreamableHTTP, not SSE — SSE sends GET requests that return 405 on
+    // servers that only support POST-based StreamableHTTP.
+    if (knownStreamableHTTPUrls.has(url.toString())) {
+      debugLogs.push({
+        type: 'info',
+        message: `MCP: StreamableHTTP previously succeeded for ${url} — skipping SSE fallback for ${label}`,
+        timestamp: new Date().toISOString(),
+      });
       throw error;
     }
 

@@ -6,7 +6,8 @@
  */
 
 import { z } from 'zod';
-import * as schemas from '../types/schemas.generated';
+import { getBestUnionErrors } from '../utils/union-errors';
+import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 
 export interface ValidationResult {
   valid: boolean;
@@ -71,8 +72,30 @@ export class ResponseValidator {
       const schemaResult = this.validateWithSchema(response, toolName, protocol);
       if (schemaResult) {
         schemaErrors = schemaResult.issues;
+
+        // Union schemas produce a single unhelpful "(root): Invalid input" error.
+        // Drill into variants to find the closest match's specific field errors.
+        const isUnionError =
+          schemaResult.issues.length === 1 &&
+          schemaResult.issues[0]?.code === 'invalid_union' &&
+          schemaResult.issues[0]?.path.length === 0;
+
+        if (isUnionError) {
+          const schema = this.getSchemaForTool(toolName);
+          const data = this.extractDataForValidation(response, protocol);
+          if (schema && data) {
+            const betterErrors = getBestUnionErrors(schema, data);
+            if (betterErrors && betterErrors.length > 0) {
+              betterErrors.forEach(v => {
+                errors.push(`Schema validation: ${v.path}: ${v.message}`);
+              });
+              return { valid: false, errors, warnings, protocol, schemaErrors };
+            }
+          }
+        }
+
         schemaResult.issues.forEach(issue => {
-          const path = issue.path.join('.');
+          const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
           errors.push(`Schema validation: ${path}: ${issue.message}`);
         });
       }
@@ -272,18 +295,23 @@ export class ResponseValidator {
   }
 
   /**
+   * Extract response data based on protocol for validation.
+   */
+  private extractDataForValidation(response: any, protocol: string): any {
+    if (protocol === 'mcp') {
+      return response.structuredContent;
+    } else if (protocol === 'a2a') {
+      return response.result?.artifacts?.[0]?.parts?.[0]?.data;
+    } else {
+      return response.data || response;
+    }
+  }
+
+  /**
    * Validate response data against AdCP Zod schema
    */
   private validateWithSchema(response: any, toolName: string, protocol: string): z.ZodError | null {
-    // Extract data based on protocol
-    let data: any;
-    if (protocol === 'mcp') {
-      data = response.structuredContent;
-    } else if (protocol === 'a2a') {
-      data = response.result?.artifacts?.[0]?.parts?.[0]?.data;
-    } else {
-      data = response.data || response;
-    }
+    const data = this.extractDataForValidation(response, protocol);
 
     if (!data) {
       return null; // No data to validate
@@ -304,23 +332,7 @@ export class ResponseValidator {
    * Get Zod schema for a given tool
    */
   private getSchemaForTool(toolName: string): z.ZodSchema | null {
-    // All AdCP response schemas mapped by tool name
-    const schemaMap: Partial<Record<string, z.ZodSchema>> = {
-      get_products: schemas.GetProductsResponseSchema,
-      list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
-      create_media_buy: schemas.CreateMediaBuyResponseSchema,
-      update_media_buy: schemas.UpdateMediaBuyResponseSchema,
-      sync_creatives: schemas.SyncCreativesResponseSchema,
-      list_creatives: schemas.ListCreativesResponseSchema,
-      get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
-      provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
-      build_creative: schemas.BuildCreativeResponseSchema,
-      preview_creative: schemas.PreviewCreativeResponseSchema,
-      get_signals: schemas.GetSignalsResponseSchema,
-      activate_signal: schemas.ActivateSignalResponseSchema,
-    };
-
-    return schemaMap[toolName] || null;
+    return TOOL_RESPONSE_SCHEMAS[toolName] || null;
   }
 }
 

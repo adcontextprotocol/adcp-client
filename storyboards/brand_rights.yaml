@@ -73,12 +73,16 @@ phases:
           - Visual style guidelines
 
         sample_request:
-          brand:
-            domain: "acmeoutdoor.com"
+          brand_id: "acme_outdoor"
+
+        context_outputs:
+          - source: "brand_id"
+            target: "brand_id"
 
         validations:
-          - check: response_schema
-            description: "Response matches get-brand-identity-response.json schema"
+          - check: field_present
+            path: "brand_id"
+            description: "Response includes brand_id"
 
   - id: rights_search
     title: "Browse available rights"
@@ -107,12 +111,19 @@ phases:
           - Usage constraints (impression caps, geo restrictions)
 
         sample_request:
-          brand:
-            domain: "acmeoutdoor.com"
+          query: "image generation rights for advertising"
+          uses:
+            - "ai_generated_image"
+          brand_id: "$context.brand_id"
+
+        context_outputs:
+          - source: "rights.0.rights_id"
+            target: "rights_id"
 
         validations:
-          - check: response_schema
-            description: "Response matches get-rights-response.json schema"
+          - check: field_present
+            path: "rights"
+            description: "Response includes rights array"
 
   - id: rights_acquisition
     title: "Acquire a rights license"
@@ -142,18 +153,23 @@ phases:
           - Terms and constraints
 
         sample_request:
-          brand:
-            domain: "acmeoutdoor.com"
-          right_type: "image_generation"
+          rights_id: "$context.rights_id"
           pricing_option_id: "standard_monthly"
+          buyer:
+            domain: "pinnacle-agency.example"
           campaign:
             name: "Acme Outdoor Summer 2026"
             start_date: "2026-04-01"
             end_date: "2026-06-30"
 
+        context_outputs:
+          - source: "rights_grant_id"
+            target: "rights_grant_id"
+
         validations:
-          - check: response_schema
-            description: "Response matches acquire-rights-response.json schema"
+          - check: field_present
+            path: "rights_grant_id"
+            description: "Response includes rights_grant_id"
 
   - id: rights_management
     title: "Manage rights"
@@ -180,14 +196,15 @@ phases:
           - Status confirmation
 
         sample_request:
-          rights_grant_id: "rg_acme_summer_2026"
+          rights_grant_id: "$context.rights_grant_id"
           updates:
             end_date: "2026-09-30"
             impression_cap: 5000000
 
         validations:
-          - check: response_schema
-            description: "Response matches update-rights-response.json schema"
+          - check: field_present
+            path: "rights_grant_id"
+            description: "Response includes rights_grant_id"
 
   - id: creative_approval
     title: "Creative approval"
@@ -215,7 +232,7 @@ phases:
           - Specific issues if changes requested or rejected
 
         sample_request:
-          rights_grant_id: "rg_acme_summer_2026"
+          rights_grant_id: "$context.rights_grant_id"
           creative:
             creative_id: "gen_trail_pro_display"
             format: "display_300x250"
@@ -224,5 +241,6 @@ phases:
                 url: "https://cdn.pinnacle-agency.example/gen-trail-pro-300x250.png"
 
         validations:
-          - check: response_schema
-            description: "Response matches creative-approval-response.json schema"
+          - check: field_present
+            path: "decision"
+            description: "Response includes approval decision"

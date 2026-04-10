@@ -63,15 +63,19 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Brand & Rights ───────────────────────────────────────
 
-  get_brand_identity(_step, _context, options) {
+  get_brand_identity(_step, context, options) {
+    const brand = resolveBrand(options);
     return {
-      brand: resolveBrand(options),
+      brand_id: context.brand_id ?? brand.brand_id ?? brand.domain,
     };
   },
 
-  get_rights(_step, _context, options) {
+  get_rights(_step, context, options) {
+    const brand = resolveBrand(options);
     return {
-      brand: resolveBrand(options),
+      query: 'available rights for advertising',
+      uses: ['ai_generated_image'],
+      brand_id: context.brand_id ?? brand.brand_id ?? brand.domain,
     };
   },
 
