@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.24.0
+
+### Minor Changes
+
+- daea974: Add brand rights protocol test scenarios (brand_identity, brand_rights_flow, creative_approval) and brand compliance track
+- 3e79195: Added PostgresTaskStore for distributed MCP servers. Replaces InMemoryTaskStore when running multiple server instances behind a load balancer, storing tasks in a shared PostgreSQL table. Includes MCP_TASKS_MIGRATION SQL constant and cleanupExpiredTasks() utility.
+- 14206aa: Comply CLI DX improvements: failures array, expected text, storyboard filtering, SKILL.md
+  - `ComplianceResult.failures[]` — flat array of failed steps with storyboard_id, step_id, expected text, error, and fix_command for targeted re-running
+  - `adcp comply --storyboards media_buy_seller,error_compliance` — run specific storyboards (validated against bundled set)
+  - "How to Fix" section in human-readable comply output with expected responses and debug commands
+  - `adcp storyboard show` now displays narratives and expected responses (was titles-only)
+  - `adcp storyboard list` now includes `track` field in JSON output
+  - `adcp storyboard step --context @file.json` — read context from file (no shell escaping)
+  - Updated SKILL.md with comply/storyboard workflow, routing, and filtering options
+  - Top-level help clarifies comply vs storyboard vs test relationship
+  - `ComplianceResult.storyboards_executed` (optional) lists which storyboard IDs were executed
+  - Scenario names in track results changed from bare `phase_id` to `storyboard_id/phase_id`
+
+- 41e9f9e: Added registerTestController(server, store) and TestControllerStore for server-side comply_test_controller implementation. Sellers can add deterministic compliance testing support with one function call instead of implementing the tool from scratch. Also adds skip_reason field to StoryboardStepResult to distinguish "not testable" (agent lacks tool) from "dependency failed" (prior step failed).
+
+### Patch Changes
+
+- 69a6dde: Add build-seller-agent skill (`skills/build-seller-agent/SKILL.md`) that guides coding agents through domain decisions and implementation of a seller MCP server
+- c56645a: Fix storyboard request builder gaps found during real-agent validation: always include pricing_option_id in create_media_buy, add measurement_period to provide_performance_feedback, add 6 missing request builders, register 7 missing response schemas
+
 ## 4.23.0
 
 ### Minor Changes
