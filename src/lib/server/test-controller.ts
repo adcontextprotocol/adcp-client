@@ -277,13 +277,13 @@ export async function handleTestControllerRequest(
       }
 
       default:
-        return controllerError('UNKNOWN_SCENARIO', `Unknown scenario: ${scenario}`);
+        return controllerError('UNKNOWN_SCENARIO', 'Unrecognized scenario name');
     }
   } catch (err) {
     if (err instanceof TestControllerError) {
       return controllerError(err.code, err.message, err.currentState);
     }
-    throw err;
+    return controllerError('INTERNAL_ERROR', 'An unexpected error occurred in the test controller store');
   }
 }
 

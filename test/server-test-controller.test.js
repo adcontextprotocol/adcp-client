@@ -255,20 +255,19 @@ describe('handleTestControllerRequest', () => {
       assert.strictEqual(result.current_state, 'completed');
     });
 
-    it('re-throws non-TestControllerError exceptions', async () => {
+    it('catches non-TestControllerError as INTERNAL_ERROR', async () => {
       const store = {
         async forceAccountStatus() {
-          throw new Error('unexpected');
+          throw new Error('db connection failed');
         },
       };
-      await assert.rejects(
-        () =>
-          handleTestControllerRequest(store, {
-            scenario: 'force_account_status',
-            params: { account_id: 'acct-1', status: 'suspended' },
-          }),
-        { message: 'unexpected' }
-      );
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_account_status',
+        params: { account_id: 'acct-1', status: 'suspended' },
+      });
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.error, 'INTERNAL_ERROR');
+      assert.ok(!result.error_detail.includes('db connection'));
     });
   });
 
@@ -289,6 +288,7 @@ describe('handleTestControllerRequest', () => {
         }
       );
       assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
+      assert.strictEqual(result.error_detail, 'Unrecognized scenario name');
     });
 
     it('accepts spend_percentage of 0', async () => {
