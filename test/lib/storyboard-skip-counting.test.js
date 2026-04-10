@@ -124,6 +124,40 @@ describe('storyboard skip counting', () => {
       assert.strictEqual(trackResult.status, 'fail', 'track with all-failed steps should have fail status');
     });
 
+    test('missing_test_harness skip_reason maps to test harness warning', () => {
+      const result = storyboardResult({
+        passed_count: 2,
+        failed_count: 0,
+        skipped_count: 1,
+        phases: [
+          {
+            phase_id: 'flow',
+            phase_title: 'Flow',
+            passed: true,
+            steps: [
+              stepResult({ duration_ms: 50 }),
+              stepResult({ step_id: 'step-2', duration_ms: 50 }),
+              stepResult({
+                step_id: 'step-3',
+                skipped: true,
+                skip_reason: 'missing_test_harness',
+                duration_ms: 0,
+              }),
+            ],
+            duration_ms: 100,
+          },
+        ],
+      });
+
+      const trackResult = mapStoryboardResultsToTrackResult('core', [result], dummyProfile);
+      const skippedStep = trackResult.scenarios[0].steps[2];
+      assert.ok(skippedStep.warnings, 'skipped step should have warnings');
+      assert.ok(
+        skippedStep.warnings[0].includes('comply_test_controller'),
+        'warning should mention test controller harness'
+      );
+    });
+
     test('track with mixed pass and fail reports partial status', () => {
       const result = storyboardResult({
         passed_count: 1,

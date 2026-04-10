@@ -100,6 +100,11 @@ export function normalizeFormatRenders(format: FormatV2 | FormatV3): FormatV3 {
  * Normalize all formats in a list_creative_formats response
  */
 export function normalizeFormatsResponse(response: any): any {
+  // Handle raw array responses (agent omitted { formats: [...] } wrapper)
+  if (Array.isArray(response)) {
+    return { formats: response.map(normalizeFormatRenders) };
+  }
+
   if (!response.formats || !Array.isArray(response.formats)) {
     return response;
   }

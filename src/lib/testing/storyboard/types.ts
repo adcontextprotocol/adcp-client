@@ -151,7 +151,7 @@ export interface StoryboardStepResult {
   /** True when the step was not executed */
   skipped?: boolean;
   /** Why the step was skipped */
-  skip_reason?: 'not_testable' | 'dependency_failed';
+  skip_reason?: 'not_testable' | 'dependency_failed' | 'missing_test_harness';
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;

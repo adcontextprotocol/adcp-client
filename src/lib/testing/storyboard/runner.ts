@@ -200,7 +200,7 @@ async function executeStep(
       task: step.task,
       passed: true,
       skipped: true,
-      skip_reason: 'not_testable',
+      skip_reason: step.requires_tool === 'comply_test_controller' ? 'missing_test_harness' : 'not_testable',
       duration_ms: 0,
       validations: [],
       context,
