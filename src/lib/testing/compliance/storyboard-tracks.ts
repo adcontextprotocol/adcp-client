@@ -113,7 +113,15 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
     error: stepResult.error,
     details: validationDetails || undefined,
     observation_data: stepResult.response as Record<string, unknown> | undefined,
-    warnings: stepResult.skipped ? ['Step skipped: required tool not available'] : undefined,
+    warnings: stepResult.skipped
+      ? [
+          stepResult.skip_reason === 'not_testable'
+            ? 'Not testable: agent lacks required tool'
+            : stepResult.skip_reason === 'dependency_failed'
+              ? 'Skipped: prior stateful step failed'
+              : 'Step skipped',
+        ]
+      : undefined,
   };
 }
 

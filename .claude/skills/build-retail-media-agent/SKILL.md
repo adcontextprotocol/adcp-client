@@ -151,6 +151,33 @@ deliveryResponse({
 })
 ```
 
+## Compliance Testing (Optional)
+
+Add `registerTestController` so the comply framework can deterministically test your state machines. One function call — the SDK handles request parsing, status validation, and response formatting.
+
+```
+import { registerTestController, TestControllerError } from '@adcp/client';
+import type { TestControllerStore } from '@adcp/client';
+
+const store: TestControllerStore = {
+  async forceAccountStatus(accountId, status) {
+    const prev = accounts.get(accountId);
+    if (!prev) throw new TestControllerError('NOT_FOUND', `Account ${accountId} not found`);
+    accounts.set(accountId, status);
+    return { success: true, previous_state: prev, current_state: status };
+  },
+  async forceMediaBuyStatus(mediaBuyId, status) { /* same pattern */ },
+  async forceCreativeStatus(creativeId, status) { /* same pattern */ },
+  // simulateDelivery, simulateBudgetSpend — implement as needed
+};
+
+registerTestController(server, store);
+```
+
+Declare `compliance_testing` in `supported_protocols` in your `get_adcp_capabilities` response. Only implement the store methods for scenarios your agent supports — unimplemented methods are excluded from `list_scenarios` automatically.
+
+Validate with: `adcp storyboard run <agent> deterministic_testing --json`
+
 ## SDK Quick Reference
 
 | SDK piece | Usage |
@@ -164,6 +191,7 @@ deliveryResponse({
 | `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
 | `taskToolResponse(data, summary)` | Build generic tool response |
 | `adcpError(code, { message })` | Structured error |
+| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
 
 Schemas: `GetProductsRequestSchema`, `CreateMediaBuyRequestSchema`, `GetMediaBuyDeliveryRequestSchema`, `SyncAccountsRequestSchema`, `ListCreativeFormatsRequestSchema`, `SyncCatalogsRequestSchema`, `SyncEventSourcesRequestSchema`, `LogEventRequestSchema`, `ProvidePerformanceFeedbackRequestSchema`.
 

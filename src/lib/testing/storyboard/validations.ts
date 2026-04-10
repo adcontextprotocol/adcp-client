@@ -119,6 +119,13 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
 // field_value: check a path equals expected value
 // ────────────────────────────────────────────────────────────
 
+function valuesMatch(actual: unknown, expected: unknown): boolean {
+  if (typeof actual === 'object' && actual !== null) {
+    return JSON.stringify(actual) === JSON.stringify(expected);
+  }
+  return actual === expected;
+}
+
 function validateFieldValue(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   if (!validation.path) {
     return {
@@ -131,11 +138,23 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
   }
 
   const actual = resolvePath(taskResult.data, validation.path);
-  // Use JSON comparison for objects/arrays, strict equality for primitives
-  const passed =
-    typeof actual === 'object' && actual !== null
-      ? JSON.stringify(actual) === JSON.stringify(validation.value)
-      : actual === validation.value;
+
+  // allowed_values: pass if actual matches any value in the list
+  if (validation.allowed_values?.length) {
+    const passed = validation.allowed_values.some(v => valuesMatch(actual, v));
+    return {
+      check: 'field_value',
+      passed,
+      description: validation.description,
+      path: validation.path,
+      error: passed
+        ? undefined
+        : `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(actual)}`,
+    };
+  }
+
+  // Exact match against value
+  const passed = valuesMatch(actual, validation.value);
 
   return {
     check: 'field_value',

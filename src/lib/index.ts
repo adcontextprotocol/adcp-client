@@ -418,7 +418,7 @@ export {
   isTerminal,
   serve,
   registerTestController,
-  TestControllerStore,
+  TestControllerError,
   PostgresTaskStore,
   cleanupExpiredTasks,
   getMcpTasksMigration,
@@ -442,6 +442,8 @@ export type {
   ServeOptions,
   PgQueryable,
   PostgresTaskStoreOptions,
+  TestControllerStore,
+  ControllerScenario,
 } from './server';
 
 // ====== ERROR EXTRACTION ======

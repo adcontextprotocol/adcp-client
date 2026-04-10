@@ -73,6 +73,8 @@ export async function runStoryboard(
           title: step.title,
           task: step.task,
           passed: false,
+          skipped: true,
+          skip_reason: 'dependency_failed',
           duration_ms: 0,
           validations: [],
           context,
@@ -198,6 +200,7 @@ async function executeStep(
       task: step.task,
       passed: true,
       skipped: true,
+      skip_reason: 'not_testable',
       duration_ms: 0,
       validations: [],
       context,
@@ -233,12 +236,35 @@ async function executeStep(
     executeStoryboardTask(client, step.task, request)
   );
 
-  // For expect_error steps: if the task threw, try to extract the adcp_error
-  // from the error message so validations can check error fields.
-  if (step.expect_error && !taskResult && stepResult.error) {
-    const errorData = extractErrorData(stepResult.error);
-    if (errorData) {
-      taskResult = { success: false, data: errorData, error: stepResult.error };
+  // Feature-unsupported errors → treat as not testable (skip)
+  if (!taskResult && stepResult.error?.includes('does not support:')) {
+    const next = getNextStepPreview(step.id, allSteps, context);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'not_testable',
+      duration_ms: stepResult.duration_ms,
+      validations: [],
+      context,
+      error: stepResult.error,
+      next,
+    };
+  }
+
+  // For expect_error steps: extract error data so validations can check fields.
+  // Error data may come from a thrown exception (stepResult.error) or from a
+  // TaskResult with success: false but no data (TaskExecutor catches MCP throws).
+  if (step.expect_error && !taskResult?.data) {
+    const errorSource = stepResult.error || taskResult?.error;
+    if (errorSource) {
+      const errorData = extractErrorData(errorSource);
+      if (errorData) {
+        taskResult = { success: false, data: errorData, error: errorSource };
+      }
     }
   }
 
@@ -350,7 +376,7 @@ function getNextStepPreview(
  */
 function extractErrorData(errorMessage: string): Record<string, unknown> | null {
   // Try to find JSON containing adcp_error in the error message
-  const jsonMatch = errorMessage.match(/\{[\s\S]*"adcp_error"[\s\S]*\}/);
+  const jsonMatch = errorMessage.match(/\{[\s\S]*?"adcp_error"[\s\S]*?\}/);
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
@@ -368,6 +394,16 @@ function extractErrorData(errorMessage: string): Record<string, unknown> | null 
         code: codeMatch[1],
         message: errorMessage,
       },
+    };
+  }
+
+  // Handle comply_test_controller error responses: "Controller error: ERROR_CODE"
+  const controllerMatch = errorMessage.match(/Controller error:\s*([A-Z_]+)/);
+  if (controllerMatch) {
+    return {
+      success: false,
+      error: controllerMatch[1],
+      error_detail: errorMessage,
     };
   }
 

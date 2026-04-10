@@ -13,6 +13,7 @@
 import { resolveBrand, resolveAccount, resolveAuthPrincipal } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
+import { injectContext } from './context';
 
 type RequestBuilder = (
   step: StoryboardStep,
@@ -474,9 +475,9 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   comply_test_controller(step, context, _options) {
     // The test controller request is highly step-specific.
-    // Use sample_request from YAML since it defines the exact scenario/state.
+    // Use sample_request from YAML with context injection for entity IDs.
     if (step.sample_request) {
-      return { ...step.sample_request };
+      return injectContext({ ...step.sample_request }, context);
     }
     return {
       scenario: context.controller_scenario ?? 'list_scenarios',

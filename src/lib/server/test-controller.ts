@@ -1,380 +1,338 @@
 /**
- * SDK-provided comply_test_controller for deterministic compliance testing.
+ * Server-side comply_test_controller implementation.
  *
- * Sellers who use `registerTestController(server, store)` get the test controller
- * tool registered automatically. The controller enables deterministic state
- * transitions for compliance testing without waiting for async workflows.
- *
- * The store tracks entity states (accounts, media buys, creatives, sessions)
- * and delivery/budget simulation data. Sellers populate the store from their
- * tool handlers (e.g., when create_media_buy creates a buy, store its ID and
- * initial status). The controller then forces transitions on those entities.
+ * Sellers call registerTestController(server, store) to add the
+ * comply_test_controller tool to their MCP server. The TestControllerStore
+ * interface lets sellers wire up their own state management while the SDK
+ * handles request parsing, scenario dispatch, and response formatting.
  *
  * @example
  * ```typescript
- * import { createTaskCapableServer, registerTestController, TestControllerStore } from '@adcp/client';
+ * import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+ * import { registerTestController } from '@adcp/client/server';
  *
- * const store = new TestControllerStore();
- * const server = createTaskCapableServer('My Agent', '1.0.0');
+ * const store: TestControllerStore = {
+ *   async forceAccountStatus(accountId, status) {
+ *     const prev = await db.getAccountStatus(accountId);
+ *     await db.setAccountStatus(accountId, status);
+ *     return { success: true, previous_state: prev, current_state: status };
+ *   },
+ *   // ... implement other scenarios as needed
+ * };
+ *
  * registerTestController(server, store);
- *
- * // In your create_media_buy handler:
- * store.setMediaBuyStatus(mediaBuyId, 'pending_start');
  * ```
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { taskToolResponse } from './tasks';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type {
+  ListScenariosSuccess,
+  StateTransitionSuccess,
+  SimulationSuccess,
+  ControllerError,
+  ComplyTestControllerResponse,
+} from '../types/tools.generated';
+import type { AccountStatus, MediaBuyStatus, CreativeStatus } from '../types/core.generated';
+import { AccountStatusSchema, MediaBuyStatusSchema, CreativeStatusSchema } from '../types/schemas.generated';
+import type { McpToolResponse } from './responses';
+import { toStructuredContent } from './responses';
 
-// ---------------------------------------------------------------------------
-// State store
-// ---------------------------------------------------------------------------
+// ────────────────────────────────────────────────────────────
+// Types
+// ────────────────────────────────────────────────────────────
 
-interface DeliveryData {
-  impressions: number;
-  clicks: number;
-  spend: number;
-  conversions: number;
+/** Scenario names the controller can support (derived from generated schema). */
+export type ControllerScenario = ListScenariosSuccess['scenarios'][number];
+
+/**
+ * Seller-side store for comply_test_controller.
+ *
+ * Implement the methods for each scenario you support.
+ * Unimplemented methods mean that scenario is not advertised in list_scenarios.
+ */
+export interface TestControllerStore {
+  /** Transition a creative to the specified status. */
+  forceCreativeStatus?(
+    creativeId: string,
+    status: CreativeStatus,
+    rejectionReason?: string
+  ): Promise<StateTransitionSuccess>;
+
+  /** Transition an account to the specified status. */
+  forceAccountStatus?(accountId: string, status: AccountStatus): Promise<StateTransitionSuccess>;
+
+  /** Transition a media buy to the specified status. */
+  forceMediaBuyStatus?(
+    mediaBuyId: string,
+    status: MediaBuyStatus,
+    rejectionReason?: string
+  ): Promise<StateTransitionSuccess>;
+
+  /** Transition an SI session to a terminal status. */
+  forceSessionStatus?(
+    sessionId: string,
+    status: 'complete' | 'terminated',
+    terminationReason?: string
+  ): Promise<StateTransitionSuccess>;
+
+  /** Inject synthetic delivery data for a media buy. */
+  simulateDelivery?(
+    mediaBuyId: string,
+    params: {
+      impressions?: number;
+      clicks?: number;
+      reported_spend?: { amount: number; currency: string };
+      conversions?: number;
+    }
+  ): Promise<SimulationSuccess>;
+
+  /** Simulate budget consumption to a specified percentage. */
+  simulateBudgetSpend?(params: {
+    account_id?: string;
+    media_buy_id?: string;
+    spend_percentage: number;
+  }): Promise<SimulationSuccess>;
+}
+
+// ────────────────────────────────────────────────────────────
+// Error class for sellers
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Throw from TestControllerStore methods to return a typed controller error.
+ *
+ * @example
+ * ```typescript
+ * throw new TestControllerError('NOT_FOUND', `Account ${id} not found`);
+ * throw new TestControllerError('INVALID_TRANSITION', 'Cannot pause a completed buy', 'completed');
+ * ```
+ */
+export class TestControllerError extends Error {
+  constructor(
+    public readonly code: ControllerError['error'],
+    message: string,
+    public readonly currentState?: string | null
+  ) {
+    super(message);
+    this.name = 'TestControllerError';
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// Request handler (exported for testing)
+// ────────────────────────────────────────────────────────────
+
+/** Map store method presence to scenario names. */
+const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
+  ['forceCreativeStatus', 'force_creative_status'],
+  ['forceAccountStatus', 'force_account_status'],
+  ['forceMediaBuyStatus', 'force_media_buy_status'],
+  ['forceSessionStatus', 'force_session_status'],
+  ['simulateDelivery', 'simulate_delivery'],
+  ['simulateBudgetSpend', 'simulate_budget_spend'],
+];
+
+function listScenarios(store: TestControllerStore): ControllerScenario[] {
+  return SCENARIO_MAP.filter(([method]) => typeof store[method] === 'function').map(([, scenario]) => scenario);
+}
+
+function controllerError(
+  code: ControllerError['error'],
+  detail: string,
+  currentState?: string | null
+): ControllerError {
+  return {
+    success: false,
+    error: code,
+    error_detail: detail,
+    ...(currentState !== undefined && { current_state: currentState }),
+  };
 }
 
 /**
- * In-memory state store for the test controller.
- *
- * Sellers populate this from their tool handlers so the controller
- * can force transitions on known entities.
+ * Handle a comply_test_controller request. Exported for unit testing.
  */
-export class TestControllerStore {
-  private accounts = new Map<string, string>();
-  private mediaBuys = new Map<string, string>();
-  private creatives = new Map<string, string>();
-  private sessions = new Map<string, string>();
-  private delivery = new Map<string, DeliveryData>();
-  private budgets = new Map<string, { total: number; spent: number }>();
-
-  // --- Setters (called from seller tool handlers) ---
-
-  setAccountStatus(id: string, status: string): void {
-    this.accounts.set(id, status);
-  }
-
-  setMediaBuyStatus(id: string, status: string): void {
-    this.mediaBuys.set(id, status);
-  }
-
-  setCreativeStatus(id: string, status: string): void {
-    this.creatives.set(id, status);
-  }
-
-  setSessionStatus(id: string, status: string): void {
-    this.sessions.set(id, status);
-  }
-
-  setMediaBuyBudget(id: string, total: number): void {
-    this.budgets.set(id, { total, spent: 0 });
-  }
-
-  // --- Getters (return copies to prevent external mutation) ---
-
-  getAccountStatus(id: string): string | undefined {
-    return this.accounts.get(id);
-  }
-
-  getMediaBuyStatus(id: string): string | undefined {
-    return this.mediaBuys.get(id);
-  }
-
-  getCreativeStatus(id: string): string | undefined {
-    return this.creatives.get(id);
-  }
-
-  getSessionStatus(id: string): string | undefined {
-    return this.sessions.get(id);
-  }
-
-  getDelivery(id: string): DeliveryData {
-    const d = this.delivery.get(id);
-    return d ? { ...d } : { impressions: 0, clicks: 0, spend: 0, conversions: 0 };
-  }
-
-  getBudget(id: string): { total: number; spent: number } | undefined {
-    const b = this.budgets.get(id);
-    return b ? { ...b } : undefined;
-  }
-
-  // --- Force state transitions ---
-
-  forceAccountStatus(id: string, status: string): { previous: string; current: string } | null {
-    const previous = this.accounts.get(id);
-    if (previous === undefined) return null;
-    this.accounts.set(id, status);
-    return { previous, current: status };
-  }
-
-  forceMediaBuyStatus(id: string, status: string): { previous: string; current: string } | null {
-    const previous = this.mediaBuys.get(id);
-    if (previous === undefined) return null;
-    const terminal = ['completed', 'rejected', 'canceled'];
-    if (terminal.includes(previous)) return null;
-    this.mediaBuys.set(id, status);
-    return { previous, current: status };
-  }
-
-  forceCreativeStatus(id: string, status: string): { previous: string; current: string } | null {
-    const previous = this.creatives.get(id);
-    if (previous === undefined) return null;
-    if (previous === 'archived') return null;
-    this.creatives.set(id, status);
-    return { previous, current: status };
-  }
-
-  forceSessionStatus(id: string, status: string): { previous: string; current: string } | null {
-    const previous = this.sessions.get(id);
-    if (previous === undefined) return null;
-    if (previous === 'terminated' || previous === 'complete') return null;
-    this.sessions.set(id, status);
-    return { previous, current: status };
-  }
-
-  // --- Simulation ---
-
-  addDelivery(id: string, impressions?: number, clicks?: number, spend?: number, conversions?: number): DeliveryData {
-    const current = this.delivery.get(id) ?? { impressions: 0, clicks: 0, spend: 0, conversions: 0 };
-    current.impressions += impressions ?? 0;
-    current.clicks += clicks ?? 0;
-    current.spend += spend ?? 0;
-    current.conversions += conversions ?? 0;
-    this.delivery.set(id, current);
-    return { ...current };
-  }
-
-  simulateBudgetSpend(id: string, percentage: number): { total: number; spent: number } | null {
-    const budget = this.budgets.get(id);
-    if (!budget) return null;
-    budget.spent = (budget.total * percentage) / 100;
-    return { ...budget };
-  }
-
-  // --- Reset (for test isolation between storyboard runs) ---
-
-  clear(): void {
-    this.accounts.clear();
-    this.mediaBuys.clear();
-    this.creatives.clear();
-    this.sessions.clear();
-    this.delivery.clear();
-    this.budgets.clear();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Supported scenarios
-// ---------------------------------------------------------------------------
-
-// Scenarios available for listing via list_scenarios. The list_scenarios
-// command itself is a meta-operation, not included in this list.
-const SUPPORTED_SCENARIOS = [
-  'force_creative_status',
-  'force_account_status',
-  'force_media_buy_status',
-  'force_session_status',
-  'simulate_delivery',
-  'simulate_budget_spend',
-] as const;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function requireString(params: Record<string, unknown>, key: string): string {
-  const v = params[key];
-  return typeof v === 'string' ? v : '';
-}
-
-function toNum(v: unknown): number {
-  return typeof v === 'number' && !isNaN(v) ? v : 0;
-}
-
-type ForceMethod = (id: string, status: string) => { previous: string; current: string } | null;
-type GetMethod = (id: string) => string | undefined;
-
-function handleForceStatus(
+export async function handleTestControllerRequest(
   store: TestControllerStore,
-  params: Record<string, unknown>,
-  idKey: string,
-  entityLabel: string,
-  forceMethod: ForceMethod,
-  getMethod: GetMethod
-) {
-  const id = requireString(params, idKey);
-  const status = requireString(params, 'status');
-  if (!id || !status) {
-    return taskToolResponse({
-      success: false,
-      error: 'INVALID_PARAMS',
-      error_detail: `${idKey} and status required`,
-    });
+  input: Record<string, unknown>
+): Promise<ComplyTestControllerResponse> {
+  const scenario = input.scenario as string | undefined;
+  if (!scenario) {
+    return controllerError('INVALID_PARAMS', 'Missing required field: scenario');
   }
-  const result = forceMethod.call(store, id, status);
-  if (!result) {
-    const current = getMethod.call(store, id);
-    if (current === undefined) {
-      return taskToolResponse({
-        success: false,
-        error: 'NOT_FOUND',
-        error_detail: `${entityLabel} ${id} not found`,
-      });
+
+  // list_scenarios — no params needed
+  if (scenario === 'list_scenarios') {
+    return { success: true, scenarios: listScenarios(store) };
+  }
+
+  const params = input.params as Record<string, unknown> | undefined;
+
+  try {
+    switch (scenario) {
+      case 'force_creative_status': {
+        if (!store.forceCreativeStatus) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.creative_id || !params?.status) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_creative_status requires params.creative_id and params.status'
+          );
+        }
+        const creativeStatus = CreativeStatusSchema.safeParse(params.status);
+        if (!creativeStatus.success) {
+          return controllerError('INVALID_PARAMS', `Invalid creative status: ${params.status}`);
+        }
+        return await store.forceCreativeStatus(
+          params.creative_id as string,
+          creativeStatus.data,
+          params.rejection_reason as string | undefined
+        );
+      }
+
+      case 'force_account_status': {
+        if (!store.forceAccountStatus) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.account_id || !params?.status) {
+          return controllerError('INVALID_PARAMS', 'force_account_status requires params.account_id and params.status');
+        }
+        const accountStatus = AccountStatusSchema.safeParse(params.status);
+        if (!accountStatus.success) {
+          return controllerError('INVALID_PARAMS', `Invalid account status: ${params.status}`);
+        }
+        return await store.forceAccountStatus(params.account_id as string, accountStatus.data);
+      }
+
+      case 'force_media_buy_status': {
+        if (!store.forceMediaBuyStatus) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.media_buy_id || !params?.status) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_media_buy_status requires params.media_buy_id and params.status'
+          );
+        }
+        const mediaBuyStatus = MediaBuyStatusSchema.safeParse(params.status);
+        if (!mediaBuyStatus.success) {
+          return controllerError('INVALID_PARAMS', `Invalid media buy status: ${params.status}`);
+        }
+        return await store.forceMediaBuyStatus(
+          params.media_buy_id as string,
+          mediaBuyStatus.data,
+          params.rejection_reason as string | undefined
+        );
+      }
+
+      case 'force_session_status': {
+        if (!store.forceSessionStatus) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.session_id || !params?.status) {
+          return controllerError('INVALID_PARAMS', 'force_session_status requires params.session_id and params.status');
+        }
+        const validSessionStatuses = ['complete', 'terminated'];
+        if (!validSessionStatuses.includes(params.status as string)) {
+          return controllerError('INVALID_PARAMS', `Invalid session status: ${params.status}`);
+        }
+        return await store.forceSessionStatus(
+          params.session_id as string,
+          params.status as 'complete' | 'terminated',
+          params.termination_reason as string | undefined
+        );
+      }
+
+      case 'simulate_delivery': {
+        if (!store.simulateDelivery) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.media_buy_id) {
+          return controllerError('INVALID_PARAMS', 'simulate_delivery requires params.media_buy_id');
+        }
+        return await store.simulateDelivery(params.media_buy_id as string, {
+          impressions: params.impressions as number | undefined,
+          clicks: params.clicks as number | undefined,
+          reported_spend: params.reported_spend as { amount: number; currency: string } | undefined,
+          conversions: params.conversions as number | undefined,
+        });
+      }
+
+      case 'simulate_budget_spend': {
+        if (!store.simulateBudgetSpend) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (params?.spend_percentage === undefined || params?.spend_percentage === null) {
+          return controllerError('INVALID_PARAMS', 'simulate_budget_spend requires params.spend_percentage');
+        }
+        if (!params?.account_id && !params?.media_buy_id) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'simulate_budget_spend requires params.account_id or params.media_buy_id'
+          );
+        }
+        return await store.simulateBudgetSpend({
+          account_id: params.account_id as string | undefined,
+          media_buy_id: params.media_buy_id as string | undefined,
+          spend_percentage: params.spend_percentage as number,
+        });
+      }
+
+      default:
+        return controllerError('UNKNOWN_SCENARIO', 'Unrecognized scenario name');
     }
-    return taskToolResponse({ success: false, error: 'INVALID_TRANSITION', current_state: current });
+  } catch (err) {
+    if (err instanceof TestControllerError) {
+      return controllerError(err.code, err.message, err.currentState);
+    }
+    return controllerError('INTERNAL_ERROR', 'An unexpected error occurred in the test controller store');
   }
-  return taskToolResponse(
-    { success: true, previous_state: result.previous, current_state: result.current },
-    `${entityLabel} ${id}: ${result.previous} → ${result.current}`
-  );
 }
 
-// ---------------------------------------------------------------------------
-// Register the tool
-// ---------------------------------------------------------------------------
+// ────────────────────────────────────────────────────────────
+// MCP tool registration
+// ────────────────────────────────────────────────────────────
+
+function summarize(data: ComplyTestControllerResponse): string {
+  if (data.success === false) return `Controller error: ${data.error}`;
+  if ('scenarios' in data) return `Supported scenarios: ${data.scenarios.join(', ')}`;
+  if ('previous_state' in data) return `Transitioned from ${data.previous_state} to ${data.current_state}`;
+  return `Simulation complete: ${JSON.stringify(data.simulated)}`;
+}
+
+function toMcpResponse(data: ComplyTestControllerResponse): McpToolResponse & { isError?: true } {
+  const isError = data.success === false;
+  return {
+    content: [{ type: 'text', text: summarize(data) }],
+    structuredContent: toStructuredContent(data),
+    ...(isError && { isError: true }),
+  };
+}
+
+const TOOL_INPUT_SHAPE = {
+  scenario: z.string().describe('Scenario to execute (e.g., list_scenarios, force_account_status)'),
+  params: z.record(z.string(), z.unknown()).optional().describe('Scenario-specific parameters'),
+  account: z.record(z.string(), z.unknown()).optional().describe('Account context for sandbox scoping'),
+  context: z.record(z.string(), z.unknown()).optional().describe('AdCP context object'),
+  ext: z.record(z.string(), z.unknown()).optional().describe('AdCP extension object'),
+};
 
 /**
  * Register the comply_test_controller tool on an MCP server.
  *
- * The controller enables deterministic compliance testing by exposing
- * force_* and simulate_* scenarios. Sellers populate the store from
- * their business logic handlers.
+ * The store determines which scenarios are supported. Unimplemented
+ * store methods are excluded from list_scenarios and return UNKNOWN_SCENARIO.
  */
 export function registerTestController(server: McpServer, store: TestControllerStore): void {
-  const inputSchema = {
-    scenario: z.enum([
-      'list_scenarios',
-      'force_account_status',
-      'force_media_buy_status',
-      'force_creative_status',
-      'force_session_status',
-      'simulate_delivery',
-      'simulate_budget_spend',
-    ]),
-    params: z.record(z.string(), z.unknown()).optional(),
-    context: z.record(z.string(), z.unknown()).optional(),
-    ext: z.record(z.string(), z.unknown()).optional(),
-  };
-
   server.tool(
     'comply_test_controller',
-    'Force entity state transitions and simulate delivery/budget for deterministic compliance testing.',
-    inputSchema,
-    async args => {
-      const scenario = args.scenario;
-      const params = (args.params ?? {}) as Record<string, unknown>;
-
-      switch (scenario) {
-        case 'list_scenarios':
-          return taskToolResponse(
-            { success: true, scenarios: [...SUPPORTED_SCENARIOS] },
-            `${SUPPORTED_SCENARIOS.length} scenarios available`
-          );
-
-        case 'force_account_status':
-          return handleForceStatus(
-            store,
-            params,
-            'account_id',
-            'Account',
-            store.forceAccountStatus,
-            store.getAccountStatus
-          );
-
-        case 'force_media_buy_status':
-          return handleForceStatus(
-            store,
-            params,
-            'media_buy_id',
-            'Media buy',
-            store.forceMediaBuyStatus,
-            store.getMediaBuyStatus
-          );
-
-        case 'force_creative_status':
-          return handleForceStatus(
-            store,
-            params,
-            'creative_id',
-            'Creative',
-            store.forceCreativeStatus,
-            store.getCreativeStatus
-          );
-
-        case 'force_session_status':
-          return handleForceStatus(
-            store,
-            params,
-            'session_id',
-            'Session',
-            store.forceSessionStatus,
-            store.getSessionStatus
-          );
-
-        case 'simulate_delivery': {
-          const id = requireString(params, 'media_buy_id');
-          if (!id) {
-            return taskToolResponse({
-              success: false,
-              error: 'INVALID_PARAMS',
-              error_detail: 'media_buy_id required',
-            });
-          }
-          const spend = params.reported_spend as Record<string, unknown> | undefined;
-          const simulated = {
-            impressions: toNum(params.impressions),
-            clicks: toNum(params.clicks),
-            spend: toNum(spend?.amount),
-            conversions: toNum(params.conversions),
-          };
-          const cumulative = store.addDelivery(
-            id,
-            simulated.impressions,
-            simulated.clicks,
-            simulated.spend,
-            simulated.conversions
-          );
-          return taskToolResponse(
-            { success: true, simulated, cumulative },
-            `Simulated ${simulated.impressions} impressions, ${simulated.clicks} clicks for ${id}`
-          );
-        }
-
-        case 'simulate_budget_spend': {
-          const id = requireString(params, 'media_buy_id');
-          const pct = typeof params.spend_percentage === 'number' ? params.spend_percentage : NaN;
-          if (!id || isNaN(pct)) {
-            return taskToolResponse({
-              success: false,
-              error: 'INVALID_PARAMS',
-              error_detail: 'media_buy_id and spend_percentage required',
-            });
-          }
-          const result = store.simulateBudgetSpend(id, pct);
-          if (!result) {
-            return taskToolResponse({
-              success: false,
-              error: 'NOT_FOUND',
-              error_detail: `Media buy ${id} not found or no budget set`,
-            });
-          }
-          return taskToolResponse(
-            { success: true, simulated: { spend_percentage: pct, spent: result.spent, total: result.total } },
-            `Simulated ${pct}% budget spend for ${id}`
-          );
-        }
-
-        default:
-          return taskToolResponse({
-            success: false,
-            error: 'UNKNOWN_SCENARIO',
-            error_detail: `Unknown scenario: ${scenario}`,
-          });
-      }
+    'Triggers seller-side state transitions for compliance testing. Sandbox only.',
+    TOOL_INPUT_SHAPE,
+    async input => {
+      const response = await handleTestControllerRequest(store, input as Record<string, unknown>);
+      return toMcpResponse(response);
     }
   );
 }

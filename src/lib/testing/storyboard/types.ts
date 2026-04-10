@@ -93,8 +93,10 @@ export interface StoryboardValidation {
   check: 'response_schema' | 'field_present' | 'field_value' | 'status_code' | 'error_code';
   /** JSON path for field checks, e.g. "accounts[0].account_id" */
   path?: string;
-  /** Expected value for field_value and error_code checks */
+  /** Expected value for field_value and error_code checks (exact match) */
   value?: unknown;
+  /** Accepted values for field_value checks (passes if actual matches any) */
+  allowed_values?: unknown[];
   description: string;
 }
 
@@ -146,8 +148,10 @@ export interface StoryboardStepResult {
   title: string;
   task: string;
   passed: boolean;
-  /** True when the step was skipped due to requires_tool not being present */
+  /** True when the step was not executed */
   skipped?: boolean;
+  /** Why the step was skipped */
+  skip_reason?: 'not_testable' | 'dependency_failed';
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;

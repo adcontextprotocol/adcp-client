@@ -1,7 +1,13 @@
 export { adcpError } from './errors';
 export type { AdcpErrorOptions, AdcpErrorPayload, AdcpErrorResponse } from './errors';
 
-export { capabilitiesResponse, productsResponse, mediaBuyResponse, deliveryResponse } from './responses';
+export {
+  capabilitiesResponse,
+  productsResponse,
+  mediaBuyResponse,
+  deliveryResponse,
+  toStructuredContent,
+} from './responses';
 export type { McpToolResponse } from './responses';
 
 export {
@@ -32,7 +38,8 @@ export {
 } from './postgres-task-store';
 export type { PgQueryable, PostgresTaskStoreOptions } from './postgres-task-store';
 
+export { registerTestController, TestControllerError } from './test-controller';
+export type { TestControllerStore, ControllerScenario } from './test-controller';
+
 export { serve } from './serve';
 export type { ServeContext, ServeOptions } from './serve';
-
-export { registerTestController, TestControllerStore } from './test-controller';

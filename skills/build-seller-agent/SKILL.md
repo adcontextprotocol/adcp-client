@@ -169,6 +169,69 @@ deliveryResponse({
 })
 ```
 
+## Compliance Testing (Optional)
+
+Add `registerTestController` so the comply framework can deterministically test your state machines. Without it, compliance testing relies on observational storyboards that can't force state transitions.
+
+```
+import { registerTestController } from '@adcp/client';
+import type { TestControllerStore } from '@adcp/client';
+
+const store: TestControllerStore = {
+  async forceAccountStatus(accountId, status) {
+    const prev = accounts.get(accountId);
+    if (!prev) throw new TestControllerError('NOT_FOUND', `Account ${accountId} not found`);
+    accounts.set(accountId, status);
+    return { success: true, previous_state: prev, current_state: status };
+  },
+  async forceMediaBuyStatus(mediaBuyId, status) {
+    const prev = mediaBuys.get(mediaBuyId);
+    if (!prev) throw new TestControllerError('NOT_FOUND', `Media buy ${mediaBuyId} not found`);
+    const terminal = ['completed', 'rejected', 'canceled'];
+    if (terminal.includes(prev))
+      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from ${prev}`, prev);
+    mediaBuys.set(mediaBuyId, status);
+    return { success: true, previous_state: prev, current_state: status };
+  },
+  async forceCreativeStatus(creativeId, status, rejectionReason) {
+    const prev = creatives.get(creativeId);
+    if (!prev) throw new TestControllerError('NOT_FOUND', `Creative ${creativeId} not found`);
+    if (prev === 'archived')
+      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from archived`, prev);
+    creatives.set(creativeId, status);
+    return { success: true, previous_state: prev, current_state: status };
+  },
+  async simulateDelivery(mediaBuyId, params) {
+    // Accumulate delivery data and return simulated + cumulative totals
+    return { success: true, simulated: { ...params }, cumulative: { ...params } };
+  },
+  async simulateBudgetSpend(params) {
+    return { success: true, simulated: { spend_percentage: params.spend_percentage } };
+  },
+};
+
+registerTestController(server, store);
+```
+
+When using this, declare `compliance_testing` in `supported_protocols`:
+```
+capabilitiesResponse({
+  adcp: { major_versions: [3] },
+  supported_protocols: ['media_buy', 'compliance_testing'],
+})
+```
+
+Only implement the store methods for scenarios your agent supports. Unimplemented methods are excluded from `list_scenarios` automatically.
+
+The storyboard tests state machine correctness:
+- `NOT_FOUND` when forcing transitions on unknown entities
+- `INVALID_TRANSITION` when transitioning from terminal states (completed, rejected, canceled for media buys; archived for creatives)
+- Successful transitions between valid states
+
+Throw `TestControllerError` from store methods for typed errors. The SDK validates status enum values before calling your store.
+
+Validate with: `adcp storyboard run <agent> deterministic_testing --json`
+
 ## SDK Quick Reference
 
 | SDK piece | Usage |
@@ -182,6 +245,8 @@ deliveryResponse({
 | `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
 | `taskToolResponse(data, summary)` | Build generic tool response |
 | `adcpError(code, { message })` | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`) |
+| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
+| `TestControllerError(code, message)` | Typed error from store methods |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
 
