@@ -101,8 +101,7 @@ export async function executeStoryboardTask(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const isRateLimit =
-        /rate limit/i.test(msg) ||
-        (/"code":\s*-32000/.test(msg) && /rate.?limit|too many|throttl/i.test(msg));
+        /rate limit/i.test(msg) || (/"code":\s*-32000/.test(msg) && /rate.?limit|too many|throttl/i.test(msg));
       if (isRateLimit && attempt < MAX_RETRIES) {
         const jitter = Math.random() * 1000;
         const delay = BASE_DELAY_MS * 2 ** attempt + jitter;

@@ -209,10 +209,7 @@ async function executeStep(
   }
 
   // Skip if agent doesn't implement the tool this step calls.
-  if (
-    options.agentTools &&
-    !options.agentTools.includes(step.task)
-  ) {
+  if (options.agentTools && !options.agentTools.includes(step.task)) {
     const next = getNextStepPreview(step.id, allSteps, context);
     return {
       step_id: step.id,
