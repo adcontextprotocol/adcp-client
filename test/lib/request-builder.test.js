@@ -167,9 +167,7 @@ describe('Request Builder', () => {
     test('includes signal_ids from sample_request', () => {
       const s = step('get_signals', {
         sample_request: {
-          signal_ids: [
-            { source: 'catalog', data_provider_domain: 'tridentauto.example', id: 'likely_ev_buyers' },
-          ],
+          signal_ids: [{ source: 'catalog', data_provider_domain: 'tridentauto.example', id: 'likely_ev_buyers' }],
         },
       });
       const result = buildRequest(s, {}, DEFAULT_OPTIONS);
@@ -199,9 +197,7 @@ describe('Request Builder', () => {
     test('injects context placeholders in signal_ids', () => {
       const s = step('get_signals', {
         sample_request: {
-          signal_ids: [
-            { source: 'catalog', data_provider_domain: '$context.provider_domain', id: 'seg1' },
-          ],
+          signal_ids: [{ source: 'catalog', data_provider_domain: '$context.provider_domain', id: 'seg1' }],
         },
       });
       const context = { provider_domain: 'resolved.example' };
@@ -218,9 +214,7 @@ describe('Request Builder', () => {
         },
       });
       const result = buildRequest(s, {}, DEFAULT_OPTIONS);
-      assert.deepStrictEqual(result.destinations, [
-        { type: 'agent', agent_url: 'https://sa.example' },
-      ]);
+      assert.deepStrictEqual(result.destinations, [{ type: 'agent', agent_url: 'https://sa.example' }]);
     });
 
     test('uses platform destinations from sample_request', () => {
@@ -262,9 +256,7 @@ describe('Request Builder', () => {
       });
       const context = { seller_url: 'https://resolved.example' };
       const result = buildRequest(s, context, DEFAULT_OPTIONS);
-      assert.deepStrictEqual(result.destinations, [
-        { type: 'agent', agent_url: 'https://resolved.example' },
-      ]);
+      assert.deepStrictEqual(result.destinations, [{ type: 'agent', agent_url: 'https://resolved.example' }]);
     });
   });
 
