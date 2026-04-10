@@ -151,7 +151,12 @@ export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: st
  */
 export function getMediaBuysResponse(data: GetMediaBuysResponse, summary?: string): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? `Found ${data.media_buys.length} media buy${data.media_buys.length === 1 ? '' : 's'}` }],
+    content: [
+      {
+        type: 'text',
+        text: summary ?? `Found ${data.media_buys.length} media buy${data.media_buys.length === 1 ? '' : 's'}`,
+      },
+    ],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -184,9 +189,7 @@ export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: stri
  */
 export function buildCreativeMultiResponse(data: BuildCreativeMultiSuccess, summary?: string): McpToolResponse {
   return {
-    content: [
-      { type: 'text', text: summary ?? `Built ${data.creative_manifests.length} creative formats` },
-    ],
+    content: [{ type: 'text', text: summary ?? `Built ${data.creative_manifests.length} creative formats` }],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -200,9 +203,15 @@ export function previewCreativeResponse(
 ): McpToolResponse {
   const defaultSummary =
     data.response_type === 'single'
-      ? (() => { const n = (data as PreviewCreativeSingleResponse).previews.length; return `Preview generated: ${n} variant${n === 1 ? '' : 's'}`; })()
+      ? (() => {
+          const n = (data as PreviewCreativeSingleResponse).previews.length;
+          return `Preview generated: ${n} variant${n === 1 ? '' : 's'}`;
+        })()
       : data.response_type === 'batch'
-        ? (() => { const n = (data as PreviewCreativeBatchResponse).results.length; return `Batch preview: ${n} result${n === 1 ? '' : 's'}`; })()
+        ? (() => {
+            const n = (data as PreviewCreativeBatchResponse).results.length;
+            return `Batch preview: ${n} result${n === 1 ? '' : 's'}`;
+          })()
         : `Variant preview generated`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
@@ -228,7 +237,8 @@ export function listCreativesResponse(data: ListCreativesResponse, summary?: str
     content: [
       {
         type: 'text',
-        text: summary ?? `Found ${data.query_summary.total_matching} creatives (${data.query_summary.returned} returned)`,
+        text:
+          summary ?? `Found ${data.query_summary.total_matching} creatives (${data.query_summary.returned} returned)`,
       },
     ],
     structuredContent: toStructuredContent(data),
@@ -240,7 +250,12 @@ export function listCreativesResponse(data: ListCreativesResponse, summary?: str
  */
 export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: string): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? `Synced ${data.creatives.length} creative${data.creatives.length === 1 ? '' : 's'}` }],
+    content: [
+      {
+        type: 'text',
+        text: summary ?? `Synced ${data.creatives.length} creative${data.creatives.length === 1 ? '' : 's'}`,
+      },
+    ],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -250,7 +265,9 @@ export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: stri
  */
 export function getSignalsResponse(data: GetSignalsResponse, summary?: string): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? `Found ${data.signals.length} signal${data.signals.length === 1 ? '' : 's'}` }],
+    content: [
+      { type: 'text', text: summary ?? `Found ${data.signals.length} signal${data.signals.length === 1 ? '' : 's'}` },
+    ],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -260,7 +277,14 @@ export function getSignalsResponse(data: GetSignalsResponse, summary?: string): 
  */
 export function activateSignalResponse(data: ActivateSignalSuccess, summary?: string): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? `Signal activated across ${data.deployments.length} deployment${data.deployments.length === 1 ? '' : 's'}` }],
+    content: [
+      {
+        type: 'text',
+        text:
+          summary ??
+          `Signal activated across ${data.deployments.length} deployment${data.deployments.length === 1 ? '' : 's'}`,
+      },
+    ],
     structuredContent: toStructuredContent(data),
   };
 }

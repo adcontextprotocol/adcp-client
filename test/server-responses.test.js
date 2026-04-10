@@ -121,7 +121,9 @@ describe('performanceFeedbackResponse', () => {
 
 describe('buildCreativeResponse', () => {
   it('returns format id in default summary', () => {
-    const result = buildCreativeResponse({ creative_manifest: { format_id: { agent_url: 'https://example.com', id: 'banner_300x250' } } });
+    const result = buildCreativeResponse({
+      creative_manifest: { format_id: { agent_url: 'https://example.com', id: 'banner_300x250' } },
+    });
     assert.strictEqual(result.content[0].text, 'Creative built: banner_300x250');
   });
 });
@@ -129,7 +131,10 @@ describe('buildCreativeResponse', () => {
 describe('buildCreativeMultiResponse', () => {
   it('returns manifest count in default summary', () => {
     const result = buildCreativeMultiResponse({
-      creative_manifests: [{ format_id: { agent_url: 'https://example.com', id: 'f1' } }, { format_id: { agent_url: 'https://example.com', id: 'f2' } }],
+      creative_manifests: [
+        { format_id: { agent_url: 'https://example.com', id: 'f1' } },
+        { format_id: { agent_url: 'https://example.com', id: 'f2' } },
+      ],
     });
     assert.strictEqual(result.content[0].text, 'Built 2 creative formats');
   });
