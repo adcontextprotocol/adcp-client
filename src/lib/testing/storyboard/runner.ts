@@ -208,6 +208,27 @@ async function executeStep(
     };
   }
 
+  // Skip if agent doesn't implement the tool this step calls.
+  if (
+    options.agentTools &&
+    !options.agentTools.includes(step.task)
+  ) {
+    const next = getNextStepPreview(step.id, allSteps, context);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'missing_tool',
+      duration_ms: 0,
+      validations: [],
+      context,
+      next,
+    };
+  }
+
   // Build request — priority:
   // 1. User-provided --request override
   // 2. For expect_error steps: use sample_request directly (preserves intentionally invalid input)
@@ -231,13 +252,36 @@ async function executeStep(
     request = applyContextInputs(request, step.context_inputs, context);
   }
 
+  // Detect unresolved $context placeholders — a prior step likely failed
+  // and didn't produce the expected output. Skip rather than sending garbage.
+  const unresolvedVars = findUnresolvedContextVars(request);
+  if (unresolvedVars.length > 0 && !step.expect_error) {
+    const next = getNextStepPreview(step.id, allSteps, context);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: false,
+      skipped: true,
+      skip_reason: 'dependency_failed',
+      duration_ms: 0,
+      validations: [],
+      context,
+      error: `Skipped: unresolved context variables: ${unresolvedVars.join(', ')}`,
+      next,
+    };
+  }
+
   // Execute the task
   let { result: taskResult, step: stepResult } = await runStep(step.title, step.task, () =>
     executeStoryboardTask(client, step.task, request)
   );
 
-  // Feature-unsupported errors → treat as not testable (skip)
-  if (!taskResult && stepResult.error?.includes('does not support:')) {
+  // Feature-unsupported or unknown-tool errors → treat as skip
+  const isUnsupported = stepResult.error?.includes('does not support:');
+  const isUnknownTool = stepResult.error && /Unknown tool[:\s]/i.test(stepResult.error);
+  if (!taskResult && (isUnsupported || isUnknownTool)) {
     const next = getNextStepPreview(step.id, allSteps, context);
     return {
       step_id: step.id,
@@ -246,7 +290,7 @@ async function executeStep(
       task: step.task,
       passed: true,
       skipped: true,
-      skip_reason: 'not_testable',
+      skip_reason: isUnknownTool ? 'missing_tool' : 'not_testable',
       duration_ms: stepResult.duration_ms,
       validations: [],
       context,
@@ -315,7 +359,7 @@ async function executeStep(
     response: taskResult?.data,
     validations,
     context: updatedContext,
-    error: step.expect_error ? undefined : stepResult.error || taskResult?.error || undefined,
+    error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
     next,
   };
 }
@@ -324,10 +368,36 @@ async function executeStep(
 // Helpers
 // ────────────────────────────────────────────────────────────
 
+const MAX_ERROR_LENGTH = 2000;
+
+function truncateError(error: string | undefined): string | undefined {
+  if (!error) return undefined;
+  return error.length > MAX_ERROR_LENGTH ? error.slice(0, MAX_ERROR_LENGTH) + '...[truncated]' : error;
+}
+
 interface FlatStep {
   step: StoryboardStep;
   phaseId: string;
   globalIndex: number;
+}
+
+/**
+ * Find any "$context.xxx" strings that weren't resolved during injection.
+ */
+function findUnresolvedContextVars(obj: unknown): string[] {
+  const vars: string[] = [];
+  const walk = (val: unknown) => {
+    if (typeof val === 'string') {
+      const match = val.match(/^\$context\.(\w+)$/);
+      if (match?.[1]) vars.push(match[1]);
+    } else if (Array.isArray(val)) {
+      val.forEach(walk);
+    } else if (val !== null && typeof val === 'object') {
+      Object.values(val as Record<string, unknown>).forEach(walk);
+    }
+  };
+  walk(obj);
+  return vars;
 }
 
 function flattenSteps(storyboard: Storyboard): FlatStep[] {
@@ -375,14 +445,15 @@ function getNextStepPreview(
  * expect_error step validations can check error fields.
  */
 function extractErrorData(errorMessage: string): Record<string, unknown> | null {
-  // Try to find JSON containing adcp_error in the error message
-  const jsonMatch = errorMessage.match(/\{[\s\S]*?"adcp_error"[\s\S]*?\}/);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      if (parsed.adcp_error) return parsed;
-    } catch {
-      // Not valid JSON
+  // Find a JSON object containing adcp_error by trying JSON.parse from each '{'
+  if (errorMessage.includes('"adcp_error"')) {
+    for (let i = errorMessage.indexOf('{'); i !== -1; i = errorMessage.indexOf('{', i + 1)) {
+      try {
+        const parsed = JSON.parse(errorMessage.slice(i)) as Record<string, unknown>;
+        if (parsed.adcp_error) return parsed;
+      } catch {
+        // Not valid JSON from this position, keep looking
+      }
     }
   }
 
