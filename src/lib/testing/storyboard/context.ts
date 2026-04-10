@@ -102,7 +102,7 @@ const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
 
   sync_creatives(data) {
     const d = data as Record<string, unknown> | undefined;
-    const results = d?.results as Array<Record<string, unknown>> | undefined;
+    const results = d?.creatives as Array<Record<string, unknown>> | undefined;
     if (!results?.length) return {};
     return { creative_results: results };
   },
