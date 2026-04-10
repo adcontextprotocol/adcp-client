@@ -251,7 +251,7 @@ phases:
         sample_request:
           scenario: 'force_account_status'
           params:
-            account_id: '{{account_id}}'
+            account_id: '$context.account_id'
             status: 'suspended'
 
         validations:
@@ -284,7 +284,7 @@ phases:
         sample_request:
           scenario: 'force_account_status'
           params:
-            account_id: '{{account_id}}'
+            account_id: '$context.account_id'
             status: 'active'
 
         validations:
@@ -314,7 +314,7 @@ phases:
         sample_request:
           scenario: 'force_account_status'
           params:
-            account_id: '{{account_id}}'
+            account_id: '$context.account_id'
             status: 'payment_required'
 
         validations:
@@ -338,7 +338,7 @@ phases:
         sample_request:
           scenario: 'force_account_status'
           params:
-            account_id: '{{account_id}}'
+            account_id: '$context.account_id'
             status: 'active'
 
         validations:
@@ -406,7 +406,7 @@ phases:
         sample_request:
           scenario: 'force_media_buy_status'
           params:
-            media_buy_id: '{{media_buy_id}}'
+            media_buy_id: '$context.media_buy_id'
             status: 'active'
 
         validations:
@@ -442,7 +442,7 @@ phases:
               domain: 'acmeoutdoor.com'
             operator: 'pinnacle-agency.com'
           media_buy_ids:
-            - '{{media_buy_id}}'
+            - '$context.media_buy_id'
 
         validations:
           - check: response_schema
@@ -466,7 +466,7 @@ phases:
         sample_request:
           scenario: 'force_media_buy_status'
           params:
-            media_buy_id: '{{media_buy_id}}'
+            media_buy_id: '$context.media_buy_id'
             status: 'completed'
 
         validations:
@@ -498,7 +498,7 @@ phases:
         sample_request:
           scenario: 'force_media_buy_status'
           params:
-            media_buy_id: '{{media_buy_id}}'
+            media_buy_id: '$context.media_buy_id'
             status: 'active'
 
         validations:
@@ -574,7 +574,7 @@ phases:
         sample_request:
           scenario: 'force_creative_status'
           params:
-            creative_id: '{{creative_id}}'
+            creative_id: '$context.creative_id'
             status: 'approved'
 
         validations:
@@ -603,7 +603,7 @@ phases:
         sample_request:
           scenario: 'force_creative_status'
           params:
-            creative_id: '{{creative_id}}'
+            creative_id: '$context.creative_id'
             status: 'archived'
 
         validations:
@@ -628,7 +628,7 @@ phases:
         sample_request:
           scenario: 'force_creative_status'
           params:
-            creative_id: '{{creative_id}}'
+            creative_id: '$context.creative_id'
             status: 'processing'
 
         validations:
@@ -658,7 +658,7 @@ phases:
         sample_request:
           scenario: 'force_creative_status'
           params:
-            creative_id: '{{creative_id}}'
+            creative_id: '$context.creative_id'
             status: 'rejected'
             rejection_reason: 'Brand safety policy violation (comply test)'
 
@@ -718,7 +718,7 @@ phases:
         sample_request:
           scenario: 'force_session_status'
           params:
-            session_id: '{{session_id}}'
+            session_id: '$context.session_id'
             status: 'terminated'
             termination_reason: 'session_timeout'
 
@@ -743,7 +743,7 @@ phases:
           must not accept messages on a terminated session.
 
         sample_request:
-          session_id: '{{session_id}}'
+          session_id: '$context.session_id'
           message: 'comply test — session should be terminated'
 
         validations:
@@ -810,7 +810,7 @@ phases:
         sample_request:
           scenario: 'simulate_delivery'
           params:
-            media_buy_id: '{{delivery_media_buy_id}}'
+            media_buy_id: '$context.delivery_media_buy_id'
             impressions: 10000
             clicks: 150
             reported_spend:
@@ -847,7 +847,7 @@ phases:
               domain: 'acmeoutdoor.com'
             operator: 'pinnacle-agency.com'
           media_buy_ids:
-            - '{{delivery_media_buy_id}}'
+            - '$context.delivery_media_buy_id'
 
         validations:
           - check: response_schema
@@ -913,7 +913,7 @@ phases:
         sample_request:
           scenario: 'simulate_budget_spend'
           params:
-            media_buy_id: '{{budget_media_buy_id}}'
+            media_buy_id: '$context.budget_media_buy_id'
             spend_percentage: 95
 
         validations:
@@ -938,7 +938,7 @@ phases:
         sample_request:
           scenario: 'simulate_budget_spend'
           params:
-            media_buy_id: '{{budget_media_buy_id}}'
+            media_buy_id: '$context.budget_media_buy_id'
             spend_percentage: 100
 
         validations:

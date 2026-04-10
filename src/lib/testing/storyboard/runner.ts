@@ -236,12 +236,16 @@ async function executeStep(
     executeStoryboardTask(client, step.task, request)
   );
 
-  // For expect_error steps: if the task threw, try to extract the adcp_error
-  // from the error message so validations can check error fields.
-  if (step.expect_error && !taskResult && stepResult.error) {
-    const errorData = extractErrorData(stepResult.error);
-    if (errorData) {
-      taskResult = { success: false, data: errorData, error: stepResult.error };
+  // For expect_error steps: extract error data so validations can check fields.
+  // Error data may come from a thrown exception (stepResult.error) or from a
+  // TaskResult with success: false but no data (TaskExecutor catches MCP throws).
+  if (step.expect_error && !taskResult?.data) {
+    const errorSource = stepResult.error || taskResult?.error;
+    if (errorSource) {
+      const errorData = extractErrorData(errorSource);
+      if (errorData) {
+        taskResult = { success: false, data: errorData, error: errorSource };
+      }
     }
   }
 
