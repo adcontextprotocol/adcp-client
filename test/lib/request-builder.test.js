@@ -70,16 +70,18 @@ describe('Request Builder', () => {
   });
 
   describe('get_brand_identity', () => {
-    test('includes brand from options', () => {
+    test('includes brand_id from options', () => {
       const result = buildRequest(step('get_brand_identity'), {}, DEFAULT_OPTIONS);
-      assert.deepStrictEqual(result.brand, { domain: 'acmeoutdoor.com' });
+      assert.strictEqual(result.brand_id, 'acmeoutdoor.com');
     });
   });
 
   describe('get_rights', () => {
-    test('includes brand from options', () => {
+    test('includes query, uses, and brand_id', () => {
       const result = buildRequest(step('get_rights'), {}, DEFAULT_OPTIONS);
-      assert.deepStrictEqual(result.brand, { domain: 'acmeoutdoor.com' });
+      assert.ok(result.query, 'should have query');
+      assert.ok(Array.isArray(result.uses), 'should have uses array');
+      assert.strictEqual(result.brand_id, 'acmeoutdoor.com');
     });
   });
 

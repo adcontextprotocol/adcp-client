@@ -11,8 +11,12 @@ export interface SchemaViolation {
  * "(root): Invalid input". This function tries each variant individually
  * and returns the closest match's specific field errors.
  *
- * Uses Zod v3 internal `_def.options` to access union variants.
- * Returns null if the schema is not a union or has no variants.
+ * ⚠️  Zod v3 internals: accesses `schema._def.options` which is not part
+ * of the public API. Zod v4 restructured `_def` — this will need updating
+ * on upgrade. A canary test in response-schema-validation.test.js ("can
+ * access union variant options from Zod schema internals") will fail if
+ * the internal structure changes. Degrades gracefully: returns null if
+ * `_def.options` is absent, and callers fall back to the standard error.
  */
 export function getBestUnionErrors(schema: ZodTypeAny, data: unknown): SchemaViolation[] | null {
   const options = (schema as any)._def?.options as ZodTypeAny[] | undefined;

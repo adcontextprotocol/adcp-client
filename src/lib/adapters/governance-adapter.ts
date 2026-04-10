@@ -34,8 +34,8 @@ export interface GovernanceAdapterConfig {
 export interface CommittedCheckRequest {
   /** Campaign governance plan ID */
   planId: string;
-  /** The seller's media buy ID */
-  mediaBuyId: string;
+  /** @deprecated No longer sent to governance agent — use governanceContext instead */
+  mediaBuyId?: string;
   /** Opaque governance context from the buyer's protocol envelope. Pass through verbatim. */
   governanceContext?: string;
   /** What the seller will actually deliver */
@@ -115,12 +115,12 @@ export class GovernanceAdapter implements IGovernanceAdapter {
     const checkRequest: CheckGovernanceRequest = {
       plan_id: request.planId,
       caller: this.agentConfig.callerUrl,
-      media_buy_id: request.mediaBuyId,
       governance_context: request.governanceContext,
       planned_delivery: request.plannedDelivery,
       phase: request.phase,
       delivery_metrics: request.deliveryMetrics,
-      modification_summary: request.modificationSummary,
+      ...(request.mediaBuyId && { payload: { media_buy_id: request.mediaBuyId } }),
+      ...(request.modificationSummary && { payload: { modification_summary: request.modificationSummary } }),
     };
 
     try {

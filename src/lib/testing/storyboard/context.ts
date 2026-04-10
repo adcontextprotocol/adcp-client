@@ -19,7 +19,7 @@ import { resolvePath, setPath } from './path';
 
 type ContextExtractor = (data: unknown) => Record<string, unknown>;
 
-const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
+export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   sync_accounts(data) {
     const d = data as Record<string, unknown> | undefined;
     const accounts = d?.accounts as Array<Record<string, unknown>> | undefined;
@@ -94,15 +94,24 @@ const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   build_creative(data) {
     const d = data as Record<string, unknown> | undefined;
     const extracted: Record<string, unknown> = {};
-    if (d?.creative_id) extracted.creative_id = d.creative_id;
-    const creatives = d?.creatives as Array<Record<string, unknown>> | undefined;
-    if (creatives?.[0]?.creative_id) extracted.creative_id = creatives[0].creative_id;
+    // Single response: creative_manifest
+    const manifest = d?.creative_manifest as Record<string, unknown> | undefined;
+    if (manifest) {
+      extracted.creative_manifest = manifest;
+      if (manifest.format_id) extracted.format_id = manifest.format_id;
+    }
+    // Multi response: creative_manifests
+    const manifests = d?.creative_manifests as Array<Record<string, unknown>> | undefined;
+    if (manifests?.[0]) {
+      extracted.creative_manifests = manifests;
+      if (manifests[0].format_id) extracted.format_id = manifests[0].format_id;
+    }
     return extracted;
   },
 
   sync_creatives(data) {
     const d = data as Record<string, unknown> | undefined;
-    const results = d?.results as Array<Record<string, unknown>> | undefined;
+    const results = d?.creatives as Array<Record<string, unknown>> | undefined;
     if (!results?.length) return {};
     return { creative_results: results };
   },
@@ -126,8 +135,12 @@ const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
 
   activate_signal(data) {
     const d = data as Record<string, unknown> | undefined;
-    const extracted: Record<string, unknown> = {};
-    if (d?.activation_id) extracted.activation_id = d.activation_id;
+    const deployments = d?.deployments as Array<Record<string, unknown>> | undefined;
+    if (!deployments?.[0]) return {};
+    const first = deployments[0];
+    const extracted: Record<string, unknown> = { deployments };
+    if (first.activation_key) extracted.activation_key = first.activation_key;
+    if (first.type) extracted.deployment_type = first.type;
     return extracted;
   },
 
@@ -156,8 +169,13 @@ const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
 
   create_property_list(data) {
     const d = data as Record<string, unknown> | undefined;
+    const list = d?.list as Record<string, unknown> | undefined;
+    if (!list) return {};
     const extracted: Record<string, unknown> = {};
-    if (d?.property_list_id) extracted.property_list_id = d.property_list_id;
+    if (list.list_id) extracted.property_list_id = list.list_id;
+    if (list.name) extracted.property_list_name = list.name;
+    // auth_token intentionally not extracted — avoid leaking credentials into
+    // storyboard context which may appear in logs or compliance reports.
     return extracted;
   },
 

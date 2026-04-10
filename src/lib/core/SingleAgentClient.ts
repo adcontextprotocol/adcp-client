@@ -97,6 +97,7 @@ import * as crypto from 'crypto';
 import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilities';
 import {
   buildSyntheticCapabilities,
+  augmentCapabilitiesFromTools,
   parseCapabilitiesResponse,
   resolveFeature,
   listDeclaredFeatures,
@@ -2461,7 +2462,7 @@ export class SingleAgentClient {
         const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined);
 
         if (result.success && result.data) {
-          this.cachedCapabilities = parseCapabilitiesResponse(result.data);
+          this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
           return this.cachedCapabilities;
         }
       } catch {
