@@ -146,8 +146,10 @@ export interface StoryboardStepResult {
   title: string;
   task: string;
   passed: boolean;
-  /** True when the step was skipped due to requires_tool not being present */
+  /** True when the step was not executed */
   skipped?: boolean;
+  /** Why the step was skipped */
+  skip_reason?: 'not_testable' | 'dependency_failed';
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;

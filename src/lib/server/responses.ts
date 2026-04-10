@@ -45,7 +45,7 @@ export interface McpToolResponse {
 // MCP SDK requires structuredContent to have an index signature ({ [x: string]: unknown }).
 // Generated AdCP types are TypeScript interfaces without index signatures. At runtime,
 // JSON objects are always Records — this bridge is safe.
-function toStructuredContent(data: object): Record<string, unknown> {
+export function toStructuredContent(data: object): Record<string, unknown> {
   return data as unknown as Record<string, unknown>;
 }
 
