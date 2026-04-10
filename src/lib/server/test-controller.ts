@@ -34,11 +34,7 @@ import type {
   ComplyTestControllerResponse,
 } from '../types/tools.generated';
 import type { AccountStatus, MediaBuyStatus, CreativeStatus } from '../types/core.generated';
-import {
-  AccountStatusSchema,
-  MediaBuyStatusSchema,
-  CreativeStatusSchema,
-} from '../types/schemas.generated';
+import { AccountStatusSchema, MediaBuyStatusSchema, CreativeStatusSchema } from '../types/schemas.generated';
 import type { McpToolResponse } from './responses';
 import { toStructuredContent } from './responses';
 
@@ -180,7 +176,10 @@ export async function handleTestControllerRequest(
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
         if (!params?.creative_id || !params?.status) {
-          return controllerError('INVALID_PARAMS', 'force_creative_status requires params.creative_id and params.status');
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_creative_status requires params.creative_id and params.status'
+          );
         }
         const creativeStatus = CreativeStatusSchema.safeParse(params.status);
         if (!creativeStatus.success) {
@@ -233,10 +232,7 @@ export async function handleTestControllerRequest(
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
         if (!params?.session_id || !params?.status) {
-          return controllerError(
-            'INVALID_PARAMS',
-            'force_session_status requires params.session_id and params.status'
-          );
+          return controllerError('INVALID_PARAMS', 'force_session_status requires params.session_id and params.status');
         }
         return await store.forceSessionStatus(
           params.session_id as string,
@@ -330,7 +326,7 @@ export function registerTestController(server: McpServer, store: TestControllerS
     'comply_test_controller',
     'Triggers seller-side state transitions for compliance testing. Sandbox only.',
     TOOL_INPUT_SHAPE,
-    async (input) => {
+    async input => {
       const response = await handleTestControllerRequest(store, input as Record<string, unknown>);
       return toMcpResponse(response);
     }

@@ -1,9 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const {
-  handleTestControllerRequest,
-  TestControllerError,
-} = require('../dist/lib/server/test-controller');
+const { handleTestControllerRequest, TestControllerError } = require('../dist/lib/server/test-controller');
 
 describe('handleTestControllerRequest', () => {
   // ── list_scenarios ──────────────────────────────────────
@@ -73,10 +70,13 @@ describe('handleTestControllerRequest', () => {
     });
 
     it('returns UNKNOWN_SCENARIO when store lacks method', async () => {
-      const result = await handleTestControllerRequest({}, {
-        scenario: 'force_creative_status',
-        params: { creative_id: 'cr-1', status: 'approved' },
-      });
+      const result = await handleTestControllerRequest(
+        {},
+        {
+          scenario: 'force_creative_status',
+          params: { creative_id: 'cr-1', status: 'approved' },
+        }
+      );
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
     });
@@ -262,10 +262,11 @@ describe('handleTestControllerRequest', () => {
         },
       };
       await assert.rejects(
-        () => handleTestControllerRequest(store, {
-          scenario: 'force_account_status',
-          params: { account_id: 'acct-1', status: 'suspended' },
-        }),
+        () =>
+          handleTestControllerRequest(store, {
+            scenario: 'force_account_status',
+            params: { account_id: 'acct-1', status: 'suspended' },
+          }),
         { message: 'unexpected' }
       );
     });
@@ -280,10 +281,13 @@ describe('handleTestControllerRequest', () => {
     });
 
     it('returns UNKNOWN_SCENARIO for unrecognized scenario', async () => {
-      const result = await handleTestControllerRequest({}, {
-        scenario: 'force_something_else',
-        params: {},
-      });
+      const result = await handleTestControllerRequest(
+        {},
+        {
+          scenario: 'force_something_else',
+          params: {},
+        }
+      );
       assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
     });
 
