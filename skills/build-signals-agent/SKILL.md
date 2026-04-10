@@ -71,7 +71,7 @@ capabilitiesResponse({
 
 Two discovery modes — support both:
 
-1. `signal_spec` — natural language. Match against segment names and descriptions. **Return all signals when no specific match is found** — the storyboard sends broad queries and expects results.
+1. `signal_spec` — natural language. Match against segment names and descriptions.
 2. `signal_ids` — exact lookup by `{ source, data_provider_domain, id }` or `{ source, agent_url, id }`.
 
 Plus filtering via `filters.catalog_types`, `filters.max_cpm`, `filters.min_coverage_percentage`, and `max_results`.
@@ -199,18 +199,17 @@ npx tsc --noEmit agent.ts
 
 ## Common Mistakes
 
-| Mistake                                       | Fix                                                                                                         |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Pass `Schema` instead of `Schema.shape`       | MCP SDK needs unwrapped Zod fields                                                                          |
-| Skip `get_adcp_capabilities`                  | Must be the first tool registered                                                                           |
-| `get_signals` returns empty for broad queries | Return all signals when `signal_spec` doesn't specifically match — storyboard sends generic queries         |
-| Missing `signal_agent_segment_id` on signals  | Buyers can't activate without it                                                                            |
-| Wrong `signal_id` shape                       | Marketplace: `{ source: "catalog", data_provider_domain, id }`. Owned: `{ source: "agent", agent_url, id }` |
-| Missing `data_provider` field                 | Required on every signal — your company/brand name                                                          |
-| Empty `pricing_options` array                 | Must have at least one pricing option per signal                                                            |
-| `is_live: true` in get_signals deployments    | Signals aren't live until `activate_signal` — use empty `deployments: []`                                   |
-| Activation doesn't match destination type     | If request has `type: "platform"`, deployment must be `type: "platform"`                                    |
-| `sandbox: false` on mock data                 | Buyers may treat mock data as real                                                                          |
+| Mistake                                      | Fix                                                                                                         |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Pass `Schema` instead of `Schema.shape`      | MCP SDK needs unwrapped Zod fields                                                                          |
+| Skip `get_adcp_capabilities`                 | Must be the first tool registered                                                                           |
+| Missing `signal_agent_segment_id` on signals | Buyers can't activate without it                                                                            |
+| Wrong `signal_id` shape                      | Marketplace: `{ source: "catalog", data_provider_domain, id }`. Owned: `{ source: "agent", agent_url, id }` |
+| Missing `data_provider` field                | Required on every signal — your company/brand name                                                          |
+| Empty `pricing_options` array                | Must have at least one pricing option per signal                                                            |
+| `is_live: true` in get_signals deployments   | Signals aren't live until `activate_signal` — use empty `deployments: []`                                   |
+| Activation doesn't match destination type    | If request has `type: "platform"`, deployment must be `type: "platform"`                                    |
+| `sandbox: false` on mock data                | Buyers may treat mock data as real                                                                          |
 
 ## Reference
 
