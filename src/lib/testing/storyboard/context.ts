@@ -179,6 +179,25 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     return extracted;
   },
 
+  create_content_standards(data) {
+    const d = data as Record<string, unknown> | undefined;
+    if (!d?.standards_id) return {};
+    return { content_standards_id: d.standards_id };
+  },
+
+  get_rights(data) {
+    const d = data as Record<string, unknown> | undefined;
+    const rights = d?.rights as Array<Record<string, unknown>> | undefined;
+    if (!rights?.[0]?.rights_id) return {};
+    return { rights_id: rights[0].rights_id };
+  },
+
+  acquire_rights(data) {
+    const d = data as Record<string, unknown> | undefined;
+    if (!d?.rights_grant_id) return {};
+    return { rights_grant_id: d.rights_grant_id, rights_id: d.rights_id };
+  },
+
   sync_governance(data) {
     // Governance registration — no IDs to extract, just confirmation
     return { governance_synced: true, governance_response: data };

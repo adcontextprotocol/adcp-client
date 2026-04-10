@@ -98,11 +98,10 @@ export function unwrapProtocolResponse(
   if (toolName) {
     const schema = TOOL_RESPONSE_SCHEMAS[toolName];
     if (schema) {
-      // Create wrapper schema that preserves protocol metadata
-      // We use z.intersection to combine the validated response with optional _message field
-      const wrapperSchema = z.intersection(schema, z.object({ _message: z.string().optional() }));
-
-      const result = wrapperSchema.safeParse(unwrapped);
+      // Strip _message before validation — it's a text summary added by the unwrapper,
+      // not part of the AdCP response schema. Intersection with union schemas fails in Zod v4.
+      const { _message: _msg, ...dataToValidate } = unwrapped as Record<string, unknown>;
+      const result = schema.safeParse(dataToValidate);
       if (!result.success) {
         // Union schemas produce a generic "Invalid input" at (root).
         // Try each variant to surface the actual missing/invalid fields.
@@ -110,7 +109,7 @@ export function unwrapProtocolResponse(
         const isUnionError = result.error.issues.length === 1 && firstIssue?.code === 'invalid_union';
 
         if (isUnionError) {
-          const betterErrors = getBestUnionErrors(schema, unwrapped);
+          const betterErrors = getBestUnionErrors(schema, dataToValidate);
           if (betterErrors && betterErrors.length > 0) {
             const bestMessage = betterErrors.map(e => `${e.path}: ${e.message}`).join('; ');
             throw new Error(`Response validation failed for ${toolName}: ${bestMessage}`);
@@ -120,7 +119,10 @@ export function unwrapProtocolResponse(
         throw new Error(`Response validation failed for ${toolName}: ${result.error.message}`);
       }
 
-      return result.data as AdCPResponse;
+      // Re-attach _message after validation so it's available for text summaries
+      const validated = result.data as AdCPResponse & { _message?: string };
+      if (_msg) validated._message = _msg as string;
+      return validated;
     }
   }
 
@@ -358,7 +360,8 @@ export function isAdcpSuccess(response: any, taskName: string): boolean {
   // Try to validate with Zod schema if available
   const schema = TOOL_RESPONSE_SCHEMAS[taskName];
   if (schema) {
-    const result = schema.safeParse(response);
+    const { _message: _, ...dataToValidate } = (response ?? {}) as Record<string, unknown>;
+    const result = schema.safeParse(dataToValidate);
     return result.success;
   }
 

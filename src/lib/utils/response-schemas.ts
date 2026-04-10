@@ -54,6 +54,8 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   delete_property_list: schemas.DeletePropertyListResponseSchema,
   list_content_standards: schemas.ListContentStandardsResponseSchema,
   get_content_standards: schemas.GetContentStandardsResponseSchema,
+  create_content_standards: schemas.CreateContentStandardsResponseSchema,
+  update_content_standards: schemas.UpdateContentStandardsResponseSchema,
   calibrate_content: schemas.CalibrateContentResponseSchema,
   validate_content_delivery: schemas.ValidateContentDeliveryResponseSchema,
 
@@ -75,22 +77,28 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerResponseSchema,
 
+  // Property governance — validate_property_delivery has no generated schema yet.
+  // Hand-written from protocol spec. Replace with generated schema when available.
+  validate_property_delivery: z.union([
+    z.object({ compliant: z.boolean() }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
+
   // Brand rights — no generated schemas yet, hand-written from protocol spec.
   // Replace with generated schemas once the schema generator covers brand tools.
-  // No .passthrough() — these only check required fields; unknown keys are stripped
-  // during parse but validation still succeeds (we only use safeParse for validity).
+  // .passthrough() preserves extra fields from agent responses (e.g., generation_credentials).
   get_brand_identity: z.union([
-    z.object({ brand_id: z.string(), names: z.array(z.unknown()) }),
-    z.object({ errors: z.array(schemas.ErrorSchema) }),
+    z.object({ brand_id: z.string(), names: z.array(z.unknown()) }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
   ]),
   get_rights: z.union([
-    z.object({ rights: z.array(z.object({ rights_id: z.string() })) }),
-    z.object({ errors: z.array(schemas.ErrorSchema) }),
+    z.object({ rights: z.array(z.object({ rights_id: z.string() }).passthrough()) }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
   ]),
   acquire_rights: z.union([
-    z.object({ rights_id: z.string(), status: z.string() }),
-    z.object({ errors: z.array(schemas.ErrorSchema) }),
+    z.object({ rights_id: z.string(), status: z.string() }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
   ]),
-  update_rights: z.union([z.object({ rights_id: z.string() }), z.object({ errors: z.array(schemas.ErrorSchema) })]),
-  creative_approval: z.union([z.object({ decision: z.string() }), z.object({ errors: z.array(schemas.ErrorSchema) })]),
+  update_rights: z.union([z.object({ rights_id: z.string() }).passthrough(), z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough()]),
+  creative_approval: z.union([z.object({ decision: z.string() }).passthrough(), z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough()]),
 };

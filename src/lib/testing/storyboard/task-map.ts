@@ -43,6 +43,7 @@ export const TASK_TO_METHOD: Record<string, string> = {
 
   // Governance
   sync_plans: 'syncPlans',
+  check_governance: 'checkGovernance',
   get_plan_audit_logs: 'getPlanAuditLogs',
   create_property_list: 'createPropertyList',
   get_property_list: 'getPropertyList',
@@ -51,8 +52,14 @@ export const TASK_TO_METHOD: Record<string, string> = {
   delete_property_list: 'deletePropertyList',
   list_content_standards: 'listContentStandards',
   get_content_standards: 'getContentStandards',
+  create_content_standards: 'createContentStandards',
+  update_content_standards: 'updateContentStandards',
   calibrate_content: 'calibrateContent',
   validate_content_delivery: 'validateContentDelivery',
+
+  // Account
+  get_account_financials: 'getAccountFinancials',
+  log_event: 'logEvent',
 
   // Sponsored Intelligence
   si_get_offering: 'siGetOffering',

@@ -65,7 +65,10 @@ function validateResponseSchema(
     };
   }
 
-  const parseResult = schema.safeParse(taskResult.data);
+  // Strip _message from data before validation — it's added by the response
+  // unwrapper as a text summary and is not part of the AdCP response schema.
+  const { _message, ...dataWithoutMessage } = (taskResult.data ?? {}) as Record<string, unknown>;
+  const parseResult = schema.safeParse(dataWithoutMessage);
   if (parseResult.success) {
     return {
       check: 'response_schema',
