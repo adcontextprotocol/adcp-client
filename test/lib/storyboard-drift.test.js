@@ -12,18 +12,17 @@ const assert = require('node:assert/strict');
 const { loadBundledStoryboards } = require('../../dist/lib/testing/storyboard/loader.js');
 const { parsePath } = require('../../dist/lib/testing/storyboard/path.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
-const { extractContext } = require('../../dist/lib/testing/storyboard/context.js');
+const { CONTEXT_EXTRACTORS } = require('../../dist/lib/testing/storyboard/context.js');
 
 // ────────────────────────────────────────────────────────────
 // Zod v4 schema walker
 // ────────────────────────────────────────────────────────────
 
 /**
- * Walk a Zod schema along a parsed path and return whether the path is reachable.
+ * Walk a Zod v4 schema along a parsed path and return whether the path is reachable.
  *
- * Handles: ZodObject (.shape), ZodArray (.element), ZodOptional/ZodNullable (.unwrap()),
- * ZodUnion (.options), ZodIntersection (._zod.def.left/right), ZodRecord (any string key).
- * Numeric segments (array indices) unwrap the array element type.
+ * Relies on Zod v4 internals (schema._zod.def.type). If Zod upgrades change
+ * these internals, the walker will need updating.
  */
 function isPathReachable(schema, segments) {
   if (segments.length === 0) return true;
@@ -34,8 +33,18 @@ function isPathReachable(schema, segments) {
   const [head, ...rest] = segments;
 
   // Unwrap wrappers transparently
-  if (type === 'optional' || type === 'nullable') {
+  if (type === 'optional' || type === 'nullable' || type === 'catch') {
     return isPathReachable(schema.unwrap(), segments);
+  }
+
+  // Default: unwrap inner type
+  if (type === 'default') {
+    return isPathReachable(schema._zod.def.innerType, segments);
+  }
+
+  // Pipe/transform: check the input schema
+  if (type === 'pipe') {
+    return isPathReachable(schema._zod.def.in, segments);
   }
 
   // Union: pass if ANY branch has the path
@@ -81,8 +90,9 @@ function isPathReachable(schema, segments) {
 // Collect validation paths from all storyboards
 // ────────────────────────────────────────────────────────────
 
-// Storyboards that validate test harness fields (e.g. TaskResult.success),
-// not protocol response schemas. Skip them in drift detection.
+// Storyboards that validate test harness wrapper fields (e.g. TaskResult.success
+// from comply_test_controller), not protocol response schemas. Add a storyboard
+// here only if its validations target runtime metadata rather than tool response data.
 const HARNESS_STORYBOARDS = new Set(['deterministic_testing']);
 
 function collectFieldValidations(storyboards) {
@@ -164,30 +174,9 @@ describe('storyboard schema drift', () => {
   });
 
   describe('context extractor tasks have registered response schemas', () => {
-    // Extract the task names that have context extractors by probing extractContext
-    // with a dummy payload. If extractContext returns something other than {},
-    // the task has an extractor.
-    const knownExtractorTasks = [
-      'sync_accounts',
-      'list_accounts',
-      'get_products',
-      'create_media_buy',
-      'update_media_buy',
-      'get_media_buys',
-      'list_creative_formats',
-      'build_creative',
-      'sync_creatives',
-      'preview_creative',
-      'get_signals',
-      'activate_signal',
-      'si_initiate_session',
-      'si_get_offering',
-      'sync_plans',
-      'create_property_list',
-      'sync_governance',
-    ];
+    const extractorTasks = Object.keys(CONTEXT_EXTRACTORS);
 
-    for (const task of knownExtractorTasks) {
+    for (const task of extractorTasks) {
       it(`${task} has a registered response schema`, () => {
         assert.ok(
           TOOL_RESPONSE_SCHEMAS[task],

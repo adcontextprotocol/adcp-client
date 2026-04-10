@@ -2,4 +2,4 @@
 "@adcp/client": patch
 ---
 
-Fix sync_creatives context extractor and storyboard validation to use correct `creatives` field instead of `results`
+Fix storyboard field name drift: governance `decision`→`status`, creative `results`→`creatives`, audit log `entries`→`plans[0].entries`, setup path nesting. Fix context extractors for build_creative, sync_creatives, activate_signal, create_property_list. Deprecate `CommittedCheckRequest.mediaBuyId` (removed from protocol). Add schema drift detection test.

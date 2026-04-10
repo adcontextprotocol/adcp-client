@@ -19,7 +19,7 @@ import { resolvePath, setPath } from './path';
 
 type ContextExtractor = (data: unknown) => Record<string, unknown>;
 
-const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
+export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   sync_accounts(data) {
     const d = data as Record<string, unknown> | undefined;
     const accounts = d?.accounts as Array<Record<string, unknown>> | undefined;
@@ -174,7 +174,8 @@ const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const extracted: Record<string, unknown> = {};
     if (list.list_id) extracted.property_list_id = list.list_id;
     if (list.name) extracted.property_list_name = list.name;
-    if (d?.auth_token) extracted.auth_token = d.auth_token;
+    // auth_token intentionally not extracted — avoid leaking credentials into
+    // storyboard context which may appear in logs or compliance reports.
     return extracted;
   },
 
