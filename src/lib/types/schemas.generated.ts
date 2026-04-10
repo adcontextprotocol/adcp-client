@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-10T10:09:31.684Z
+// Generated at: 2026-04-10T14:21:18.017Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1155,7 +1155,7 @@ export const SyncCreativesSuccessSchema = z.object({
         action: CreativeActionSchema,
         platform_id: z.string().nullish(),
         changes: z.array(z.string()).nullish(),
-        errors: z.array(z.string()).nullish(),
+        errors: z.array(ErrorSchema).nullish(),
         warnings: z.array(z.string()).nullish(),
         preview_url: z.string().nullish(),
         expires_at: z.string().nullish(),
@@ -1221,7 +1221,7 @@ export const SyncCatalogsSuccessSchema = z.object({
         last_synced_at: z.string().nullish(),
         next_fetch_at: z.string().nullish(),
         changes: z.array(z.string()).nullish(),
-        errors: z.array(z.string()).nullish(),
+        errors: z.array(ErrorSchema).nullish(),
         warnings: z.array(z.string()).nullish()
     }).passthrough()),
     sandbox: z.boolean().nullish(),
@@ -4062,7 +4062,7 @@ export const SyncEventSourcesSuccessSchema = z.object({
         }).passthrough().nullish(),
         action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("deleted"), z.literal("failed")]),
         health: EventSourceHealthSchema.nullish(),
-        errors: z.array(z.string()).nullish()
+        errors: z.array(ErrorSchema).nullish()
     }).passthrough()),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),

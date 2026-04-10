@@ -6552,7 +6552,7 @@ export interface SyncEventSourcesSuccess {
     /**
      * Errors for this event source (only present when action='failed')
      */
-    errors?: string[];
+    errors?: Error[];
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -6615,6 +6615,7 @@ export interface SyncEventSourcesError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+
 
 // log_event parameters
 /**
@@ -7172,7 +7173,7 @@ export interface SyncCatalogsSuccess {
     /**
      * Validation or processing errors (only present when action='failed')
      */
-    errors?: string[];
+    errors?: Error[];
     /**
      * Non-fatal warnings about this catalog
      */
@@ -7196,6 +7197,7 @@ export interface SyncCatalogsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+
 
 // build_creative parameters
 /**
@@ -8676,7 +8678,7 @@ export interface SyncCreativesSuccess {
     /**
      * Validation or processing errors (only present when action='failed')
      */
-    errors?: string[];
+    errors?: Error[];
     /**
      * Non-fatal warnings about this creative
      */
@@ -8724,6 +8726,7 @@ export interface SyncCreativesError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+
 
 // get_signals parameters
 /**
