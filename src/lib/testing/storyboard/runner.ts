@@ -236,6 +236,25 @@ async function executeStep(
     executeStoryboardTask(client, step.task, request)
   );
 
+  // Feature-unsupported errors → treat as not testable (skip)
+  if (!taskResult && stepResult.error?.includes('does not support:')) {
+    const next = getNextStepPreview(step.id, allSteps, context);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'not_testable',
+      duration_ms: stepResult.duration_ms,
+      validations: [],
+      context,
+      error: stepResult.error,
+      next,
+    };
+  }
+
   // For expect_error steps: extract error data so validations can check fields.
   // Error data may come from a thrown exception (stepResult.error) or from a
   // TaskResult with success: false but no data (TaskExecutor catches MCP throws).

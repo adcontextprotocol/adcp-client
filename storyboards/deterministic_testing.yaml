@@ -490,6 +490,7 @@ phases:
         task: comply_test_controller
         comply_scenario: deterministic_media_buy
         stateful: true
+        expect_error: true
         expected: |
           Return an error response:
           - success: false
@@ -622,6 +623,7 @@ phases:
         task: comply_test_controller
         comply_scenario: deterministic_creative
         stateful: true
+        expect_error: true
         expected: |
           Return error with INVALID_TRANSITION.
 
