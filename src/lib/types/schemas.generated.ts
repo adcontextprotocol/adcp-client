@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-09T23:37:04.742Z
+// Generated at: 2026-04-10T10:09:31.684Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2736,6 +2736,8 @@ export const SyncPlansResponseSchema = z.object({
     }).passthrough())
 }).passthrough();
 
+export const PurchaseTypeSchema = z.union([z.literal("media_buy"), z.literal("rights_license"), z.literal("signal_activation"), z.literal("creative_services")]);
+
 export const OutcomeTypeSchema = z.union([z.literal("completed"), z.literal("failed"), z.literal("delivery")]);
 
 export const ReportPlanOutcomeRequestSchema = z.object({
@@ -2743,9 +2745,10 @@ export const ReportPlanOutcomeRequestSchema = z.object({
     plan_id: z.string(),
     check_id: z.string().nullish(),
     idempotency_key: z.string().nullish(),
+    purchase_type: PurchaseTypeSchema.nullish(),
     outcome: OutcomeTypeSchema,
     seller_response: z.object({
-        media_buy_id: z.string().nullish(),
+        seller_reference: z.string().nullish(),
         committed_budget: z.number().nullish(),
         packages: z.array(z.object({
             budget: z.number().nullish()
@@ -2754,7 +2757,6 @@ export const ReportPlanOutcomeRequestSchema = z.object({
         creative_deadline: z.string().nullish()
     }).passthrough().nullish(),
     delivery: z.object({
-        media_buy_id: z.string().nullish(),
         reporting_period: z.object({
             start: z.string(),
             end: z.string()
@@ -2794,6 +2796,8 @@ export const GetPlanAuditLogsRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     plan_ids: z.array(z.string()).nullish(),
     portfolio_plan_ids: z.array(z.string()).nullish(),
+    governance_contexts: z.array(z.string()).nullish(),
+    purchase_types: z.array(PurchaseTypeSchema).nullish(),
     include_entries: z.boolean().nullish()
 }).passthrough();
 
@@ -2863,14 +2867,17 @@ export const GetPlanAuditLogsResponseSchema = z.object({
             }).passthrough()).nullish(),
             outcome: OutcomeTypeSchema.nullish(),
             committed_budget: z.number().nullish(),
-            media_buy_id: z.string().nullish(),
+            governance_context: z.string().nullish(),
+            purchase_type: PurchaseTypeSchema.nullish(),
             outcome_status: z.string().nullish()
         }).passthrough()).nullish(),
-        media_buys: z.array(z.object({
-            media_buy_id: z.string(),
+        governed_actions: z.array(z.object({
+            governance_context: z.string(),
+            purchase_type: PurchaseTypeSchema,
             status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
             committed: z.number(),
-            check_count: z.number().nullish()
+            check_count: z.number(),
+            seller_reference: z.string().nullish()
         }).passthrough())
     }).passthrough())
 }).passthrough();
@@ -2881,10 +2888,10 @@ export const CheckGovernanceRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     plan_id: z.string(),
     caller: z.string(),
+    purchase_type: PurchaseTypeSchema.nullish(),
     tool: z.string().nullish(),
     payload: z.object({}).passthrough().nullish(),
     governance_context: z.string().nullish(),
-    media_buy_id: z.string().nullish(),
     phase: GovernancePhaseSchema.nullish(),
     planned_delivery: PlannedDeliverySchema.nullish(),
     delivery_metrics: z.object({
@@ -4354,7 +4361,11 @@ export const SyncPlansRequestSchema = z.object({
             currency: z.string(),
             authority_level: BudgetAuthorityLevelSchema,
             per_seller_max_pct: z.number().nullish(),
-            reallocation_threshold: z.number().nullish()
+            reallocation_threshold: z.number().nullish(),
+            allocations: z.record(z.string(), z.object({
+                    amount: z.number().nullish(),
+                    max_pct: z.number().nullish()
+                }).passthrough()).nullish()
         }).passthrough(),
         channels: z.object({
             required: z.array(MediaChannelSchema).nullish(),

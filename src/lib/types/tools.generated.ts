@@ -10500,6 +10500,23 @@ export interface SyncPlansRequest {
        * Amount above which reallocations require escalation (for agent_limited).
        */
       reallocation_threshold?: number;
+      /**
+       * Optional budget partition across purchase types. Keys are purchase-type enum values (media_buy, rights_license, signal_activation, creative_services). When present, the governance agent validates spend against both the total and the per-type allocation. When absent, all spend counts against the single total regardless of purchase type.
+       */
+      allocations?: {
+        [k: string]:
+          | {
+              /**
+               * Maximum budget for this purchase type.
+               */
+              amount?: number;
+              /**
+               * Maximum percentage of total budget for this purchase type.
+               */
+              max_pct?: number;
+            }
+          | undefined;
+      };
     };
     /**
      * Channel constraints. If omitted, all channels are allowed.
@@ -10526,7 +10543,7 @@ export interface SyncPlansRequest {
       };
     };
     /**
-     * Authorized flight dates. Media buys with dates outside this window are rejected.
+     * Authorized flight dates. Governed actions with dates outside this window are rejected.
      */
     flight: {
       /**
@@ -10539,11 +10556,11 @@ export interface SyncPlansRequest {
       end: string;
     };
     /**
-     * ISO 3166-1 alpha-2 country codes for authorized markets (e.g., ['US', 'GB']). The governance agent rejects media buys targeting outside these countries and resolves applicable policies by matching against policy jurisdictions.
+     * ISO 3166-1 alpha-2 country codes for authorized markets (e.g., ['US', 'GB']). The governance agent rejects governed actions targeting outside these countries and resolves applicable policies by matching against policy jurisdictions.
      */
     countries?: string[];
     /**
-     * ISO 3166-2 subdivision codes for authorized sub-national markets (e.g., ['US-MA', 'US-CA']). When present, the governance agent restricts buys to these specific regions rather than the full country. Use for campaigns limited to specific states or provinces (e.g., cannabis in legal states). Policy resolution matches against both the subdivision and its parent country.
+     * ISO 3166-2 subdivision codes for authorized sub-national markets (e.g., ['US-MA', 'US-CA']). When present, the governance agent restricts governed actions to these specific regions rather than the full country. Use for plans limited to specific states or provinces (e.g., cannabis in legal states). Policy resolution matches against both the subdivision and its parent country.
      */
     regions?: string[];
     /**
@@ -10704,6 +10721,10 @@ export interface SyncPlansResponse {
 
 // report_plan_outcome parameters
 /**
+ * The type of financial commitment this outcome is for. Determines which budget allocation (if any) to charge against. Defaults to 'media_buy' when omitted.
+ */
+export type PurchaseType = 'media_buy' | 'rights_license' | 'signal_activation' | 'creative_services';
+/**
  * Outcome type.
  */
 export type OutcomeType = 'completed' | 'failed' | 'delivery';
@@ -10727,15 +10748,16 @@ export interface ReportPlanOutcomeRequest {
    * Client-generated unique key for this request. Prevents duplicate outcome reports on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
   idempotency_key?: string;
+  purchase_type?: PurchaseType;
   outcome: OutcomeType;
   /**
    * The seller's full response. Required when outcome is 'completed'.
    */
   seller_response?: {
     /**
-     * Seller's media buy identifier.
+     * The seller's identifier for the created resource (e.g., media_buy_id, rights_grant_id, deployment_id). Not interpreted by the governance agent — included in audit logs for human-readable traceability alongside the opaque governance_context.
      */
-    media_buy_id?: string;
+    seller_reference?: string;
     /**
      * Total budget committed across all confirmed packages. When present, the governance agent uses this directly instead of summing package budgets.
      */
@@ -10756,10 +10778,6 @@ export interface ReportPlanOutcomeRequest {
    * Delivery metrics. Required when outcome is 'delivery'.
    */
   delivery?: {
-    /**
-     * The media buy being reported on.
-     */
-    media_buy_id?: string;
     /**
      * Start and end timestamps for the reporting window.
      */
@@ -10883,11 +10901,18 @@ export type GetPlanAuditLogsRequest = {
    */
   portfolio_plan_ids?: string[];
   /**
+   * Filter audit entries by governance context. Returns only checks and outcomes that share these governance contexts, enabling lifecycle tracing across purchase types.
+   */
+  governance_contexts?: string[];
+  /**
+   * Filter audit entries by purchase type. Returns only checks and outcomes matching these purchase types (e.g., ['rights_license'] to see all rights activity).
+   */
+  purchase_types?: PurchaseType[];
+  /**
    * Include the full audit trail. Default: false.
    */
   include_entries?: boolean;
 };
-
 
 // get_plan_audit_logs response
 /**
@@ -11108,34 +11133,40 @@ export interface GetPlanAuditLogsResponse {
        */
       committed_budget?: number;
       /**
-       * Media buy ID (present for delivery outcome entries).
+       * Governance context for this entry (present for check and outcome entries).
        */
-      media_buy_id?: string;
+      governance_context?: string;
+      purchase_type?: PurchaseType;
       /**
        * Outcome status (present for outcome entries).
        */
       outcome_status?: string;
     }[];
     /**
-     * Per-media-buy breakdown.
+     * Per-action breakdown grouped by governance context.
      */
-    media_buys: {
+    governed_actions: {
       /**
-       * Seller-assigned media buy identifier.
+       * Governance context correlating this action's lifecycle.
        */
-      media_buy_id: string;
+      governance_context: string;
+      purchase_type: PurchaseType;
       /**
-       * Media buy status.
+       * Action status.
        */
       status: 'active' | 'suspended' | 'completed';
       /**
-       * Budget committed for this media buy.
+       * Budget committed for this action.
        */
       committed: number;
       /**
-       * Number of governance checks performed for this media buy.
+       * Number of governance checks performed for this action.
        */
-      check_count?: number;
+      check_count: number;
+      /**
+       * The seller's identifier for the resource (e.g., media_buy_id, rights_grant_id). Present when reported via report_plan_outcome.
+       */
+      seller_reference?: string;
     }[];
   }[];
 }
@@ -11143,11 +11174,11 @@ export interface GetPlanAuditLogsResponse {
 
 // check_governance parameters
 /**
- * The phase of the media buy lifecycle. 'purchase': initial create_media_buy. 'modification': update_media_buy. 'delivery': periodic delivery reporting. Defaults to 'purchase' if omitted.
+ * The phase of the governed action's lifecycle. 'purchase': initial commitment (create_media_buy, acquire_rights, activate_signal). 'modification': update to existing commitment. 'delivery': periodic delivery or usage reporting. Defaults to 'purchase' if omitted.
  */
 export type GovernancePhase = 'purchase' | 'modification' | 'delivery';
 /**
- * Universal governance check for campaign actions. The governance agent infers the check type from the fields present: tool+payload (intent check, orchestrator) or media_buy_id+planned_delivery (execution check, seller).
+ * Universal governance check for campaign actions. The governance agent infers the check type from the fields present: tool+payload = intent check (proposed, orchestrator-side). planned_delivery = execution check (committed, seller-side). governance_context maintains lifecycle continuity across either check type — its presence alone does not determine binding. To check budget availability without a specific action, omit tool and payload.
  */
 export interface CheckGovernanceRequest {
   /**
@@ -11162,8 +11193,9 @@ export interface CheckGovernanceRequest {
    * URL of the agent making the request.
    */
   caller: string;
+  purchase_type?: PurchaseType;
   /**
-   * The AdCP tool being checked (e.g., 'create_media_buy', 'get_products'). Present on intent checks (orchestrator). The governance agent uses the presence of tool+payload to identify an intent check.
+   * The AdCP tool being checked (e.g., 'create_media_buy', 'acquire_rights', 'activate_signal'). Present on intent checks (orchestrator). The governance agent uses the presence of tool+payload to identify an intent check.
    */
   tool?: string;
   /**
@@ -11171,13 +11203,9 @@ export interface CheckGovernanceRequest {
    */
   payload?: {};
   /**
-   * Opaque governance context from a prior check_governance response. Pass this on subsequent checks for the same media buy so the governance agent can maintain continuity across the lifecycle. Issued by the governance agent, never interpreted by callers.
+   * Opaque governance context from a prior check_governance response. Pass this on subsequent checks for the same governed action so the governance agent can maintain continuity across the lifecycle. Issued by the governance agent, never interpreted by callers.
    */
   governance_context?: string;
-  /**
-   * The seller's identifier for the media buy. Present on execution checks (seller). The governance agent uses the presence of media_buy_id+planned_delivery to identify an execution check.
-   */
-  media_buy_id?: string;
   phase?: GovernancePhase;
   planned_delivery?: PlannedDelivery;
   /**
@@ -11196,7 +11224,7 @@ export interface CheckGovernanceRequest {
      */
     spend?: number;
     /**
-     * Total spend since the media buy started.
+     * Total spend since the governed action started.
      */
     cumulative_spend?: number;
     /**
@@ -11204,7 +11232,7 @@ export interface CheckGovernanceRequest {
      */
     impressions?: number;
     /**
-     * Total impressions since the media buy started.
+     * Total impressions since the governed action started.
      */
     cumulative_impressions?: number;
     /**
@@ -11242,7 +11270,7 @@ export interface CheckGovernanceRequest {
         [k: string]: number | undefined;
       };
       /**
-       * Cumulative audience index values since the media buy started. Same key format as indices (dimension:value). Use for detecting sustained bias drift that may not appear in a single reporting period.
+       * Cumulative audience index values since the governed action started. Same key format as indices (dimension:value). Use for detecting sustained bias drift that may not appear in a single reporting period.
        */
       cumulative_indices?: {
         [k: string]: number | undefined;
@@ -11258,7 +11286,7 @@ export interface CheckGovernanceRequest {
 
 // check_governance response
 /**
- * Governance agent's response to a check request. Returns whether the action is approved under the campaign plan.
+ * Governance agent's response to a check request. Returns whether the action is approved under the governance plan.
  */
 export interface CheckGovernanceResponse {
   /**
@@ -11343,7 +11371,7 @@ export interface CheckGovernanceResponse {
    */
   policies_evaluated?: string[];
   /**
-   * Opaque governance context for this media buy. The buyer MUST attach this to the protocol envelope when sending the media buy to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this media buy's lifecycle. Only the issuing governance agent interprets this value.
+   * Opaque governance context for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle. Only the issuing governance agent interprets this value. This is the primary correlation key for audit and reporting across the governance lifecycle.
    */
   governance_context?: string;
 }
