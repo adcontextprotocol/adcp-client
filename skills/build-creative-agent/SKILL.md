@@ -97,7 +97,7 @@ syncCreativesResponse({
   creatives: [{
     creative_id: string,              // required — echo from request
     action: 'created' | 'updated',    // required
-    status: 'accepted' | 'pending_review' | 'rejected',
+    status: 'approved' | 'pending_review' | 'rejected',  // NB: 'approved' not 'accepted'
   }],
 })
 ```
@@ -113,9 +113,11 @@ listCreativesResponse({
     creative_id: string,
     name: string,
     format_id: { agent_url: string, id: string },
-    status: 'accepted' | 'pending_review' | 'rejected',
+    status: 'approved' | 'pending_review' | 'rejected',  // NB: 'approved' not 'accepted'
+    created_date: string,            // required — ISO timestamp
+    updated_date: string,            // required — ISO timestamp
   }],
-  pagination: { total: number, offset: 0, limit: 50 },
+  pagination: { total: number, offset: 0, limit: 50, has_more: boolean },
 })
 ```
 
@@ -125,7 +127,7 @@ The handler should check `args.filters?.format_ids` — if present, return only 
 
 Note: `PreviewCreativeRequestSchema` is a union (single/batch/variant) and can't use `.shape`. Use `PreviewCreativeSingleRequestSchema` for single preview support.
 
-Render a preview of a stored creative. Each preview has a `renders` array with output_format discriminator.
+Render a preview from the `creative_manifest` in the request. No library lookup needed — the manifest is provided. Each preview has a `renders` array with output_format discriminator.
 
 ```
 previewCreativeResponse({
@@ -147,14 +149,20 @@ previewCreativeResponse({
 
 **`build_creative`** — `BuildCreativeRequestSchema.shape`
 
-Produce a serving tag from a stored creative.
+Produce a serving tag. The request may include `target_format_id` (format to build for) and/or `message` (brief). Look up a matching creative from the library by format, then build the output.
+
+The handler should:
+
+1. Check `args.target_format_id` — find a synced creative matching that format
+2. Fall back to `args.creative_id` if provided (direct lookup)
+3. Build a serving tag from the matched creative's assets
 
 ```
 buildCreativeResponse({
   creative_manifest: {
     format_id: { agent_url: string, id: string },
     name: string,
-    assets: {},              // built output assets
+    assets: {},              // built output assets (serving tag, VAST XML, etc.)
   },
   sandbox: true,
 })
@@ -201,7 +209,9 @@ The skill contains everything you need. Do not read additional docs before writi
 
 ### Key implementation detail: creative library
 
-Use a `Map<string, Creative>` to store synced creatives. The `sync_creatives` handler adds/updates entries. The `list_creatives` handler queries the map. The `preview_creative` and `build_creative` handlers look up by `creative_id`.
+Use a `Map<string, Creative>` to store synced creatives. **Declare the Map outside the `createAgent` factory** — `serve()` creates a new server per request (stateless HTTP), so state inside the factory is lost between calls.
+
+The `sync_creatives` handler adds/updates entries. The `list_creatives` handler queries the map (include `created_date` and `updated_date` in each creative). The `preview_creative` handler previews the `creative_manifest` sent in the request (no library lookup needed). The `build_creative` handler finds a synced creative by `target_format_id` (matching the format), then builds a serving tag from it.
 
 ## Validation
 
@@ -224,14 +234,17 @@ npx tsc --noEmit agent.ts
 
 ## Common Mistakes
 
-| Mistake                                        | Fix                                                                              |
-| ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| Skip `get_adcp_capabilities`                   | Must be the first tool registered                                                |
-| Pass `Schema` instead of `Schema.shape`        | MCP SDK needs unwrapped Zod fields                                               |
-| `list_creatives` ignores format filter         | Check `args.filters?.format_ids` and filter results                              |
-| `preview_creative` returns wrong response_type | Must be `'single'` for single creative previews                                  |
-| `build_creative` missing creative_manifest     | Required field — contains the built output                                       |
-| No in-memory store for synced creatives        | `list_creatives` and `preview_creative` need to find previously synced creatives |
+| Mistake                                              | Fix                                                                               |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Skip `get_adcp_capabilities`                         | Must be the first tool registered                                                 |
+| Pass `Schema` instead of `Schema.shape`              | MCP SDK needs unwrapped Zod fields                                                |
+| Use `PreviewCreativeRequestSchema.shape`             | It's a union — use `PreviewCreativeSingleRequestSchema.shape` instead             |
+| `list_creatives` ignores format filter               | Check `args.filters?.format_ids` and filter results                               |
+| `preview_creative` returns wrong response_type       | Must be `'single'` for single creative previews                                   |
+| `preview_creative` looks up by creative_id           | Preview the `creative_manifest` from the request — no library lookup needed       |
+| `build_creative` looks up by `args.creative_id` only | Storyboard sends `target_format_id` — find a synced creative matching that format |
+| `build_creative` missing creative_manifest           | Required field — contains the built output                                        |
+| No in-memory store for synced creatives              | `list_creatives` and `build_creative` need to find previously synced creatives    |
 
 ## Storyboards
 
