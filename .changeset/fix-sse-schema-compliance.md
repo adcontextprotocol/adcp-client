@@ -9,3 +9,5 @@ Fix SSE transport fallback, schema validation, and compliance testing detection
 - Consolidate ResponseValidator to use canonical TOOL_RESPONSE_SCHEMAS map
 - Auto-augment declared capabilities when comply_test_controller is present but compliance_testing protocol is not declared
 - Fix brand_rights storyboard sample_requests to match protocol schemas (brand_id, rights_id, context flow)
+- Add brand rights response schemas for schema drift checking
+- Add --timeout flag to `adcp comply` CLI (default 120s) so storyboard runs have a budget
