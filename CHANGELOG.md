@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.25.0
+
+### Minor Changes
+
+- 5d5b2ec: Fix SSE transport fallback, schema validation, and compliance testing detection
+  - Track successful StreamableHTTP connections and skip SSE fallback on reconnection (prevents 405 errors on POST-only servers)
+  - Improve union schema error messages with field-level detail instead of generic "Invalid input"
+  - Consolidate ResponseValidator to use canonical TOOL_RESPONSE_SCHEMAS map
+  - Auto-augment declared capabilities when comply_test_controller is present but compliance_testing protocol is not declared
+  - Fix brand_rights storyboard sample_requests to match protocol schemas (brand_id, rights_id, context flow)
+  - Add brand rights response schemas for schema drift checking
+  - Add --timeout flag to `adcp comply` CLI (default 120s) so storyboard runs have a budget
+
+- 7de4434: Add 13 typed response builders for server-side AdCP tools, add `@adcp/client/server` subpath export, and add setup instructions to all build skills
+
+### Patch Changes
+
+- 8acb2d0: Fix normalizeFormatsResponse to handle raw array responses from creative agents, and distinguish missing test harness from not-testable skip reasons in storyboard runner
+- 71e2de3: Fix storyboard field name drift: governance `decision`→`status`, creative `results`→`creatives`, audit log `entries`→`plans[0].entries`, setup path nesting. Fix context extractors for build_creative, sync_creatives, activate_signal, create_property_list. Deprecate `CommittedCheckRequest.mediaBuyId` (removed from protocol). Add schema drift detection test.
+
 ## 4.24.0
 
 ### Minor Changes
