@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.26.0
+
+### Minor Changes
+
+- 51068e1: Improve comply runner signal-to-noise ratio against real agents
+  - Skip storyboard steps when agent doesn't implement the tool (new `missing_tool` skip reason)
+  - Detect unresolved `$context` placeholders and skip with `dependency_failed` instead of sending invalid requests
+  - Catch "Unknown tool" errors from agents and convert to skips
+  - Add rate limit retry with exponential backoff and jitter (3 retries, 2s/4s/8s base)
+  - Fix `sync_creatives` request builder to send creatives for all discovered formats, not just the first (#482)
+  - Fix `mapStepToTestStep` to preserve runner's skip semantics (skips no longer counted as failures)
+  - Fix `extractErrorData` to handle nested JSON in error messages
+  - Truncate agent error messages to 2000 chars to prevent report bloat
+
+- 24d9c97: Storyboard infrastructure and skill validation for all 16 remaining storyboards
+  - Fix response-unwrapper `_message` stripping for union schema validation (Zod v4 compatibility)
+  - Fix `expect_error` handling for `schema_validation` reversed_dates step
+  - Add `requires_tool` to governance storyboard steps that need seller tools
+  - Add request builders for governance, content standards, brand rights, SI tools
+  - Add context extractors for `create_content_standards`, `get_rights`, `acquire_rights`
+  - Register missing response schemas: `create_content_standards`, `update_content_standards`, `validate_property_delivery`
+  - Add task-map entries: `check_governance`, `create_content_standards`, `update_content_standards`, `get_account_financials`, `log_event`
+  - Fix campaign governance YAML sample_requests to match current schemas
+  - Fix content standards YAML sample_requests (scope, artifact, records fields)
+  - Sync PLATFORM_STORYBOARDS with storyboard platform_types declarations
+  - New test: storyboard-completeness.test.js (structural validation for all bundled storyboards)
+  - New skills: build-governance-agent, build-si-agent, build-brand-rights-agent
+  - Updated skills: build-seller-agent (error responses), build-creative-agent (asset shapes)
+
+### Patch Changes
+
+- 8ed8fe9: fix: comply runner sends account.sandbox: true in test controller requests
+
+  comply_test_controller request builder now injects account with sandbox: true so the training agent does not return FORBIDDEN during deterministic testing
+
 ## 4.25.0
 
 ### Minor Changes
