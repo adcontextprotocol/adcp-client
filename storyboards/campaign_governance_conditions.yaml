@@ -128,7 +128,7 @@ phases:
           - check: response_schema
             description: "Response matches check-governance-response.json schema"
           - check: field_present
-            path: "decision"
+            path: "status"
             description: "Response contains a governance decision"
           - check: field_present
             path: "conditions"
