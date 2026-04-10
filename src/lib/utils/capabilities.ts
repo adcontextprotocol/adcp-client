@@ -283,7 +283,7 @@ export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, too
   if (missing.length === 0) return capabilities;
   console.debug(
     `[AdCP] Augmented capabilities: agent declares [${capabilities.protocols.join(', ')}] ` +
-    `but tools imply [${detected.join(', ')}]. Added: [${missing.join(', ')}]`
+      `but tools imply [${detected.join(', ')}]. Added: [${missing.join(', ')}]`
   );
   return {
     ...capabilities,

@@ -8,30 +8,11 @@
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 
-// The generated CreateMediaBuyResponseSchema only includes success + error,
-// but agents may return async variants (working, submitted, input_required).
-// Build a complete union so validation doesn't reject valid async responses.
-const CreateMediaBuyFullResponseSchema = z.union([
-  schemas.CreateMediaBuySuccessSchema,
-  schemas.CreateMediaBuyErrorSchema,
-  schemas.CreateMediaBuyAsyncWorkingSchema,
-  schemas.CreateMediaBuyAsyncSubmittedSchema,
-  schemas.CreateMediaBuyAsyncInputRequiredSchema,
-]);
-
-const UpdateMediaBuyFullResponseSchema = z.union([
-  schemas.UpdateMediaBuySuccessSchema,
-  schemas.UpdateMediaBuyErrorSchema,
-  schemas.UpdateMediaBuyAsyncWorkingSchema,
-  schemas.UpdateMediaBuyAsyncSubmittedSchema,
-  schemas.UpdateMediaBuyAsyncInputRequiredSchema,
-]);
-
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
   get_products: schemas.GetProductsResponseSchema,
-  create_media_buy: CreateMediaBuyFullResponseSchema,
-  update_media_buy: UpdateMediaBuyFullResponseSchema,
+  create_media_buy: schemas.CreateMediaBuyResponseSchema,
+  update_media_buy: schemas.UpdateMediaBuyResponseSchema,
   get_media_buys: schemas.GetMediaBuysResponseSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
