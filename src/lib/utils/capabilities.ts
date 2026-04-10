@@ -21,7 +21,7 @@ export type AdcpProtocol =
   | 'creative'
   | 'sponsored_intelligence'
   | 'trusted_match'
-  | 'compliance'
+  | 'compliance_testing'
   | 'brand';
 
 /**
@@ -279,7 +279,7 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
 
   const hasComplianceTools = COMPLIANCE_TOOLS.some(t => toolNames.has(t));
   if (hasComplianceTools) {
-    protocols.push('compliance');
+    protocols.push('compliance_testing');
   }
 
   const hasBrandRightsTools = BRAND_RIGHTS_TOOLS.some(t => toolNames.has(t));
@@ -495,7 +495,7 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   identity_match: ['trusted_match'],
 
   // Compliance protocol
-  comply_test_controller: ['compliance'],
+  comply_test_controller: ['compliance_testing'],
 
   // Brand rights protocol
   get_brand_identity: ['brand'],

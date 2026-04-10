@@ -197,11 +197,11 @@ const store: TestControllerStore = {
 registerTestController(server, store);
 ```
 
-When using this, declare `compliance` in `supported_protocols`:
+When using this, declare `compliance_testing` in `supported_protocols`:
 ```
 capabilitiesResponse({
   adcp: { major_versions: [3] },
-  supported_protocols: ['media_buy', 'compliance'],
+  supported_protocols: ['media_buy', 'compliance_testing'],
 })
 ```
 

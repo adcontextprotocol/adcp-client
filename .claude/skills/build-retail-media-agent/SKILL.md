@@ -174,7 +174,7 @@ const store: TestControllerStore = {
 registerTestController(server, store);
 ```
 
-Declare `compliance` in `supported_protocols` in your `get_adcp_capabilities` response. Only implement the store methods for scenarios your agent supports — unimplemented methods are excluded from `list_scenarios` automatically.
+Declare `compliance_testing` in `supported_protocols` in your `get_adcp_capabilities` response. Only implement the store methods for scenarios your agent supports — unimplemented methods are excluded from `list_scenarios` automatically.
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
