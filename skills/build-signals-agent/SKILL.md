@@ -16,9 +16,10 @@ A signals agent serves audience segments to buyers for campaign targeting. Two t
 - User references `get_signals`, `activate_signal`, or the signals protocol
 
 **Not this skill:**
+
 - Selling ad inventory (products, packages, media buys) → `skills/build-seller-agent/`
 - Rendering creatives from briefs → that's a creative agent
-- Building a client that *calls* a signals agent → see `docs/getting-started.md`
+- Building a client that _calls_ a signals agent → see `docs/getting-started.md`
 
 ## Before Writing Code
 
@@ -35,6 +36,7 @@ These are fundamentally different businesses.
 ### 2. What Segments?
 
 Get specifics: names, definitions, what each represents. Push for 3-5 segments with variety. Each needs:
+
 - Clear behavioral/demographic definition
 - Realistic `coverage_percentage` (typically 5-30%)
 - Value type: `binary` (in/out), `categorical` (tier levels — define the categories), or `numeric` (score range — define min/max)
@@ -42,6 +44,7 @@ Get specifics: names, definitions, what each represents. Push for 3-5 segments w
 ### 3. Pricing
 
 At least one pricing option per signal:
+
 - `cpm` — `{ pricing_option_id: "po_cpm", model: "cpm", cpm: 2.50, currency: "USD" }`
 - `percent_of_media` — `{ pricing_option_id: "po_pom", model: "percent_of_media", percent: 15, currency: "USD" }`
 - `flat_fee` — `{ pricing_option_id: "po_flat", model: "flat_fee", amount: 5000, period: "monthly", currency: "USD" }`
@@ -49,12 +52,14 @@ At least one pricing option per signal:
 ### 4. Activation Destinations
 
 If implementing `activate_signal`:
+
 - **Platform** (DSP): `type: "platform"`, returns `activation_key: { type: "segment_id", segment_id: "..." }`
 - **Agent** (sales agent): `type: "agent"`, returns `activation_key: { type: "key_value", key: "...", value: "..." }`
 
 ## Tools and Required Response Shapes
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
+
 ```
 capabilitiesResponse({
   adcp: { major_versions: [3] },
@@ -65,13 +70,14 @@ capabilitiesResponse({
 **`get_signals`** — `GetSignalsRequestSchema.shape`
 
 Two discovery modes — support both:
+
 1. `signal_spec` — natural language. Match against segment names and descriptions.
 2. `signal_ids` — exact lookup by `{ source, data_provider_domain, id }` or `{ source, agent_url, id }`.
 
 Plus filtering via `filters.catalog_types`, `filters.max_cpm`, `filters.min_coverage_percentage`, and `max_results`.
 
 ```
-taskToolResponse({
+getSignalsResponse({
   signals: [{
     signal_agent_segment_id: string,  // required - key for activate_signal
     name: string,                     // required
@@ -109,7 +115,7 @@ taskToolResponse({
 Look up by `signal_agent_segment_id`. Validate `pricing_option_id`. Return deployments matching the requested destinations.
 
 ```
-taskToolResponse({
+activateSignalResponse({
   deployments: [{
     // Match the destination type from the request:
     type: 'platform',              // for platform destinations
@@ -138,19 +144,28 @@ taskToolResponse({
 
 ## SDK Quick Reference
 
-| SDK piece | Usage |
-|-----------|-------|
-| `serve(createAgent)` | Start HTTP server on `:3001/mcp` |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support |
-| `server.tool(name, Schema.shape, handler)` | Register tool — `.shape` unwraps Zod |
-| `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
-| `taskToolResponse(data, summary)` | Build tool response |
-| `adcpError(code, { message })` | Structured error (`SIGNAL_NOT_FOUND`, `INVALID_DESTINATION`) |
-| `GetSignalsRequestSchema.shape` | Zod schema for get_signals input |
-| `ActivateSignalRequestSchema.shape` | Zod schema for activate_signal input |
-| `type Signal = GetSignalsResponse['signals'][number]` | Type for a single signal object |
+| SDK piece                                               | Usage                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------- |
+| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
+| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
+| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod                                |
+| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
+| `getSignalsResponse(data)`                              | Build `get_signals` response                                        |
+| `activateSignalResponse(data)`                          | Build `activate_signal` response                                    |
+| `taskToolResponse(data, summary)`                       | Build generic tool response (for tools without a dedicated builder) |
+| `adcpError(code, { message })`                          | Structured error (`SIGNAL_NOT_FOUND`, `INVALID_DESTINATION`)        |
+| `GetSignalsRequestSchema.shape`                         | Zod schema for get_signals input                                    |
+| `ActivateSignalRequestSchema.shape`                     | Zod schema for activate_signal input                                |
+| `type Signal = GetSignalsResponse['signals'][number]`   | Type for a single signal object                                     |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+
+## Setup
+
+```bash
+npm init -y
+npm install @adcp/client
+```
 
 ## Implementation
 
@@ -167,6 +182,7 @@ The skill contains everything you need. Do not read additional docs before writi
 **After writing the agent, validate it. Fix failures. Repeat.**
 
 **Full validation** (if you can bind ports):
+
 ```bash
 npx tsx agent.ts &
 npx @adcp/client storyboard run http://localhost:3001/mcp signal_owned --json       # for owned data
@@ -174,6 +190,7 @@ npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace --j
 ```
 
 **Sandbox validation** (if ports are blocked):
+
 ```bash
 npx tsc --noEmit agent.ts
 ```
@@ -182,17 +199,17 @@ npx tsc --noEmit agent.ts
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| Pass `Schema` instead of `Schema.shape` | MCP SDK needs unwrapped Zod fields |
-| Skip `get_adcp_capabilities` | Must be the first tool registered |
-| Missing `signal_agent_segment_id` on signals | Buyers can't activate without it |
-| Wrong `signal_id` shape | Marketplace: `{ source: "catalog", data_provider_domain, id }`. Owned: `{ source: "agent", agent_url, id }` |
-| Missing `data_provider` field | Required on every signal — your company/brand name |
-| Empty `pricing_options` array | Must have at least one pricing option per signal |
-| `is_live: true` in get_signals deployments | Signals aren't live until `activate_signal` — use empty `deployments: []` |
-| Activation doesn't match destination type | If request has `type: "platform"`, deployment must be `type: "platform"` |
-| `sandbox: false` on mock data | Buyers may treat mock data as real |
+| Mistake                                      | Fix                                                                                                         |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Pass `Schema` instead of `Schema.shape`      | MCP SDK needs unwrapped Zod fields                                                                          |
+| Skip `get_adcp_capabilities`                 | Must be the first tool registered                                                                           |
+| Missing `signal_agent_segment_id` on signals | Buyers can't activate without it                                                                            |
+| Wrong `signal_id` shape                      | Marketplace: `{ source: "catalog", data_provider_domain, id }`. Owned: `{ source: "agent", agent_url, id }` |
+| Missing `data_provider` field                | Required on every signal — your company/brand name                                                          |
+| Empty `pricing_options` array                | Must have at least one pricing option per signal                                                            |
+| `is_live: true` in get_signals deployments   | Signals aren't live until `activate_signal` — use empty `deployments: []`                                   |
+| Activation doesn't match destination type    | If request has `type: "platform"`, deployment must be `type: "platform"`                                    |
+| `sandbox: false` on mock data                | Buyers may treat mock data as real                                                                          |
 
 ## Reference
 

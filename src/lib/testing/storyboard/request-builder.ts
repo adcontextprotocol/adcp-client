@@ -317,9 +317,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Signals ────────────────────────────────────────────
 
   get_signals(_step, _context, options) {
-    return {
-      signal_spec: options.brief || 'Show me all available audience signals and segments',
-    };
+    return options.brief ? { signal_spec: options.brief } : {};
   },
 
   activate_signal(step, context, _options) {

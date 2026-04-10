@@ -30,6 +30,11 @@
       "import": "./dist/lib/auth/index.js",
       "require": "./dist/lib/auth/index.js",
       "types": "./dist/lib/auth/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/lib/server/index.js",
+      "require": "./dist/lib/server/index.js",
+      "types": "./dist/lib/server/index.d.ts"
     }
   },
   "typesVersions": {
@@ -45,6 +50,9 @@
       ],
       "auth": [
         "dist/lib/auth/index.d.ts"
+      ],
+      "server": [
+        "dist/lib/server/index.d.ts"
       ]
     }
   },
