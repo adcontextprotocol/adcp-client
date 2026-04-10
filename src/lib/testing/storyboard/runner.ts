@@ -374,6 +374,16 @@ function extractErrorData(errorMessage: string): Record<string, unknown> | null 
     };
   }
 
+  // Handle comply_test_controller error responses: "Controller error: ERROR_CODE"
+  const controllerMatch = errorMessage.match(/Controller error:\s*([A-Z_]+)/);
+  if (controllerMatch) {
+    return {
+      success: false,
+      error: controllerMatch[1],
+      error_detail: errorMessage,
+    };
+  }
+
   return null;
 }
 
