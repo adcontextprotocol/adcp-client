@@ -234,6 +234,10 @@ export async function handleTestControllerRequest(
         if (!params?.session_id || !params?.status) {
           return controllerError('INVALID_PARAMS', 'force_session_status requires params.session_id and params.status');
         }
+        const validSessionStatuses = ['complete', 'terminated'];
+        if (!validSessionStatuses.includes(params.status as string)) {
+          return controllerError('INVALID_PARAMS', `Invalid session status: ${params.status}`);
+        }
         return await store.forceSessionStatus(
           params.session_id as string,
           params.status as 'complete' | 'terminated',

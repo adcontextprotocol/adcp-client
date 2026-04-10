@@ -347,6 +347,15 @@ describe('handleTestControllerRequest', () => {
       assert.strictEqual(result.error, 'INVALID_PARAMS');
     });
 
+    it('rejects invalid session status', async () => {
+      const store = { async forceSessionStatus() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_session_status',
+        params: { session_id: 'sess-1', status: 'invalid' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+    });
+
     it('list_scenarios ignores extraneous params', async () => {
       const store = { async forceAccountStatus() {} };
       const result = await handleTestControllerRequest(store, {

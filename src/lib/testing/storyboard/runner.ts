@@ -376,7 +376,7 @@ function getNextStepPreview(
  */
 function extractErrorData(errorMessage: string): Record<string, unknown> | null {
   // Try to find JSON containing adcp_error in the error message
-  const jsonMatch = errorMessage.match(/\{[\s\S]*"adcp_error"[\s\S]*\}/);
+  const jsonMatch = errorMessage.match(/\{[\s\S]*?"adcp_error"[\s\S]*?\}/);
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
