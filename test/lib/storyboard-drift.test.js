@@ -41,7 +41,7 @@ function isPathReachable(schema, segments) {
   // Union: pass if ANY branch has the path
   if (type === 'union') {
     const options = schema.options || [];
-    return options.some((opt) => isPathReachable(opt, segments));
+    return options.some(opt => isPathReachable(opt, segments));
   }
 
   // Intersection: pass if EITHER side has the path
@@ -126,7 +126,7 @@ describe('storyboard schema drift', () => {
   });
 
   describe('field_present paths are reachable in response schemas', () => {
-    const presentValidations = fieldValidations.filter((v) => v.check === 'field_present');
+    const presentValidations = fieldValidations.filter(v => v.check === 'field_present');
 
     for (const entry of presentValidations) {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
@@ -145,7 +145,7 @@ describe('storyboard schema drift', () => {
   });
 
   describe('field_value paths are reachable in response schemas', () => {
-    const valueValidations = fieldValidations.filter((v) => v.check === 'field_value');
+    const valueValidations = fieldValidations.filter(v => v.check === 'field_value');
 
     for (const entry of valueValidations) {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
@@ -198,7 +198,7 @@ describe('storyboard schema drift', () => {
   });
 
   describe('every storyboard task with field validations has a response schema', () => {
-    const tasksWithValidations = [...new Set(fieldValidations.map((v) => v.task))];
+    const tasksWithValidations = [...new Set(fieldValidations.map(v => v.task))];
 
     for (const task of tasksWithValidations) {
       it(`${task} has a registered response schema`, () => {
