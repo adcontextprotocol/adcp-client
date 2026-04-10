@@ -74,4 +74,27 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
 
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerResponseSchema,
+
+  // Brand rights — no generated schemas yet, hand-written from protocol spec.
+  // Replace with generated schemas once the schema generator covers brand tools.
+  get_brand_identity: z.union([
+    z.object({ brand_id: z.string(), names: z.array(z.unknown()) }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
+  get_rights: z.union([
+    z.object({ rights: z.array(z.object({ rights_id: z.string() }).passthrough()) }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
+  acquire_rights: z.union([
+    z.object({ rights_id: z.string(), status: z.string() }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
+  update_rights: z.union([
+    z.object({ rights_grant_id: z.string() }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
+  creative_approval: z.union([
+    z.object({ decision: z.string() }).passthrough(),
+    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
+  ]),
 };

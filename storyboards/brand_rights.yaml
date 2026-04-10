@@ -80,6 +80,8 @@ phases:
             target: "brand_id"
 
         validations:
+          - check: response_schema
+            description: "Response matches brand identity schema"
           - check: field_present
             path: "brand_id"
             description: "Response includes brand_id"
@@ -121,6 +123,8 @@ phases:
             target: "rights_id"
 
         validations:
+          - check: response_schema
+            description: "Response matches get_rights schema"
           - check: field_present
             path: "rights"
             description: "Response includes rights array"
@@ -167,6 +171,8 @@ phases:
             target: "rights_grant_id"
 
         validations:
+          - check: response_schema
+            description: "Response matches acquire_rights schema"
           - check: field_present
             path: "rights_grant_id"
             description: "Response includes rights_grant_id"
@@ -202,6 +208,8 @@ phases:
             impression_cap: 5000000
 
         validations:
+          - check: response_schema
+            description: "Response matches update_rights schema"
           - check: field_present
             path: "rights_grant_id"
             description: "Response includes rights_grant_id"
@@ -241,6 +249,8 @@ phases:
                 url: "https://cdn.pinnacle-agency.example/gen-trail-pro-300x250.png"
 
         validations:
+          - check: response_schema
+            description: "Response matches creative_approval schema"
           - check: field_present
             path: "decision"
             description: "Response includes approval decision"
