@@ -125,6 +125,38 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('comply_test_controller', () => {
+    test('includes account with sandbox: true', () => {
+      const result = buildRequest(step('comply_test_controller'), {}, DEFAULT_OPTIONS);
+      assert.ok(result.account, 'should have account');
+      assert.strictEqual(result.account.sandbox, true);
+    });
+
+    test('uses sample_request with account injected', () => {
+      const s = step('comply_test_controller', {
+        sample_request: { scenario: 'force_account_status', target_status: 'active' },
+      });
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.scenario, 'force_account_status');
+      assert.strictEqual(result.account.sandbox, true);
+    });
+
+    test('preserves context account but forces sandbox: true', () => {
+      const context = { account: { account_id: 'acct-1' } };
+      const result = buildRequest(step('comply_test_controller'), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.account.account_id, 'acct-1');
+      assert.strictEqual(result.account.sandbox, true);
+    });
+
+    test('sandbox: true wins even when sample_request has account', () => {
+      const s = step('comply_test_controller', {
+        sample_request: { scenario: 'x', account: { account_id: 'a1', sandbox: false } },
+      });
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.account.sandbox, true);
+    });
+  });
+
   describe('hasRequestBuilder', () => {
     test('returns true for tasks with builders', () => {
       const tasks = [
@@ -137,6 +169,7 @@ describe('Request Builder', () => {
         'provide_performance_feedback',
         'sync_event_sources',
         'log_event',
+        'comply_test_controller',
       ];
       for (const task of tasks) {
         assert.ok(hasRequestBuilder(task), `should have builder for ${task}`);
