@@ -492,9 +492,24 @@ export * from './types/schemas.generated';
 // server.tool(name, Schema.shape, handler) — MCP SDK requires z.object().
 // Export each variant so agents can register the one they support.
 import { PreviewCreativeRequestSchema } from './types/schemas.generated';
-export const PreviewCreativeSingleRequestSchema = PreviewCreativeRequestSchema.options[0];
-export const PreviewCreativeBatchRequestSchema = PreviewCreativeRequestSchema.options[1];
-export const PreviewCreativeVariantRequestSchema = PreviewCreativeRequestSchema.options[2];
+
+const [_single, _batch, _variant] = PreviewCreativeRequestSchema.options;
+
+function assertRequestType(schema: { shape: Record<string, unknown> }, expected: string): void {
+  const lit = schema.shape.request_type as { value?: string } | undefined;
+  if (lit?.value !== expected) {
+    throw new Error(
+      `PreviewCreativeRequestSchema union order changed: expected request_type="${expected}", got "${lit?.value}"`
+    );
+  }
+}
+assertRequestType(_single, 'single');
+assertRequestType(_batch, 'batch');
+assertRequestType(_variant, 'variant');
+
+export const PreviewCreativeSingleRequestSchema = _single;
+export const PreviewCreativeBatchRequestSchema = _batch;
+export const PreviewCreativeVariantRequestSchema = _variant;
 
 // ====== AUTHENTICATION ======
 // Auth utilities for custom integrations

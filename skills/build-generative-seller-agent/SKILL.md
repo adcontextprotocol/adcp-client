@@ -18,6 +18,7 @@ A generative seller that sells programmatic inventory MUST also accept standard 
 - User mentions "creative from brief", "AI-generated ads", or "generative"
 
 **Not this skill:**
+
 - Standard seller (no creative generation) → `skills/build-seller-agent/`
 - Standalone creative agent (renders but doesn't sell) → creative agent
 - Signals/audience data → `skills/build-signals-agent/`
@@ -39,6 +40,7 @@ Same as standard seller. Each product needs: name, channel, delivery_type, prici
 ### 3. Generative formats
 
 What creative formats does your platform generate?
+
 - **Display** — generated static images (300x250, 728x90, etc.)
 - **Video** — generated video ads (15s, 30s pre-roll)
 - **HTML** — generated interactive/rich media
@@ -59,6 +61,7 @@ The buyer's brand domain should be resolvable (via AgenticAdvertising.org or bra
 Everything from the standard seller skill applies. The delta is in `list_creative_formats` and `sync_creatives`.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
+
 ```
 capabilitiesResponse({
   adcp: { major_versions: [3] },
@@ -67,6 +70,7 @@ capabilitiesResponse({
 ```
 
 **`sync_accounts`** — `SyncAccountsRequestSchema.shape`
+
 ```
 taskToolResponse({
   accounts: [{
@@ -80,6 +84,7 @@ taskToolResponse({
 ```
 
 **`get_products`** — `GetProductsRequestSchema.shape`
+
 ```
 productsResponse({
   products: Product[],  // each needs product_id, delivery_type, pricing_options
@@ -88,6 +93,7 @@ productsResponse({
 ```
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
+
 ```
 mediaBuyResponse({
   media_buy_id: string,
@@ -98,6 +104,7 @@ mediaBuyResponse({
 **`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
 
 Return BOTH generative and standard formats:
+
 ```
 listCreativeFormatsResponse({
   formats: [
@@ -136,6 +143,7 @@ listCreativeFormatsResponse({
 **`sync_creatives`** — `SyncCreativesRequestSchema.shape`
 
 Handle both brief-based and standard creatives:
+
 ```
 syncCreativesResponse({
   creatives: [{
@@ -147,6 +155,7 @@ syncCreativesResponse({
 ```
 
 For invalid brand domains, return rejection:
+
 ```
 syncCreativesResponse({
   creatives: [{
@@ -159,6 +168,7 @@ syncCreativesResponse({
 ```
 
 **`get_media_buys`** — `GetMediaBuysRequestSchema.shape`
+
 ```
 getMediaBuysResponse({
   media_buys: [{
@@ -171,6 +181,7 @@ getMediaBuysResponse({
 ```
 
 **`get_media_buy_delivery`** — `GetMediaBuyDeliveryRequestSchema.shape`
+
 ```
 deliveryResponse({
   reporting_period: { start: string, end: string },
@@ -212,21 +223,21 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 ## SDK Quick Reference
 
-| SDK piece | Usage |
-|-----------|-------|
-| `serve(createAgent)` | Start HTTP server on `:3001/mcp` |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support |
-| `server.tool(name, Schema.shape, handler)` | Register tool — `.shape` unwraps Zod |
-| `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
-| `productsResponse(data)` | Build `get_products` response |
-| `mediaBuyResponse(data)` | Build `create_media_buy` response |
-| `getMediaBuysResponse(data)` | Build `get_media_buys` response |
-| `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
-| `listCreativeFormatsResponse(data)` | Build `list_creative_formats` response |
-| `syncCreativesResponse(data)` | Build `sync_creatives` response |
-| `taskToolResponse(data, summary)` | Build generic tool response (for tools without a dedicated builder) |
-| `adcpError(code, { message })` | Structured error |
-| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
+| SDK piece                                               | Usage                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------- |
+| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
+| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
+| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod                                |
+| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
+| `productsResponse(data)`                                | Build `get_products` response                                       |
+| `mediaBuyResponse(data)`                                | Build `create_media_buy` response                                   |
+| `getMediaBuysResponse(data)`                            | Build `get_media_buys` response                                     |
+| `deliveryResponse(data)`                                | Build `get_media_buy_delivery` response                             |
+| `listCreativeFormatsResponse(data)`                     | Build `list_creative_formats` response                              |
+| `syncCreativesResponse(data)`                           | Build `sync_creatives` response                                     |
+| `taskToolResponse(data, summary)`                       | Build generic tool response (for tools without a dedicated builder) |
+| `adcpError(code, { message })`                          | Structured error                                                    |
+| `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
 
@@ -251,6 +262,7 @@ The skill contains everything you need. Do not read additional docs before writi
 ### Key implementation detail: sync_creatives handler
 
 The sync_creatives handler must check the format_id to decide how to process:
+
 - If the format is generative (e.g., id contains "generative"): read the `brief` asset from the creative's assets
 - If the format is standard: read the image/video/html asset
 - Validate the brand domain from the account — reject if invalid
@@ -261,17 +273,20 @@ The sync_creatives handler must check the format_id to decide how to process:
 **After writing the agent, validate it. Fix failures. Repeat.**
 
 **Full validation** (if you can bind ports):
+
 ```bash
 npx tsx agent.ts &
 npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_generative_seller --json
 ```
 
 **Sandbox validation** (if ports are blocked):
+
 ```bash
 npx tsc --noEmit agent.ts
 ```
 
 When storyboard output shows failures, fix each one:
+
 - `response_schema` → response doesn't match Zod schema
 - `field_present` → required field missing
 - MCP error → check tool registration (schema, name)
@@ -280,14 +295,14 @@ When storyboard output shows failures, fix each one:
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| Only generative formats, no standard IAB | Programmatic sellers must accept pre-built assets too |
-| Ignore brand domain on brief sync | Validate brand, reject if unresolvable |
-| Same handler for brief and standard creatives | Check format_id to decide processing path |
-| Skip `get_adcp_capabilities` | Must be the first tool registered |
-| Pass `Schema` instead of `Schema.shape` | MCP SDK needs unwrapped Zod fields |
-| `sandbox: false` on mock data | Buyers may treat mock data as real |
+| Mistake                                       | Fix                                                   |
+| --------------------------------------------- | ----------------------------------------------------- |
+| Only generative formats, no standard IAB      | Programmatic sellers must accept pre-built assets too |
+| Ignore brand domain on brief sync             | Validate brand, reject if unresolvable                |
+| Same handler for brief and standard creatives | Check format_id to decide processing path             |
+| Skip `get_adcp_capabilities`                  | Must be the first tool registered                     |
+| Pass `Schema` instead of `Schema.shape`       | MCP SDK needs unwrapped Zod fields                    |
+| `sandbox: false` on mock data                 | Buyers may treat mock data as real                    |
 
 ## Reference
 
