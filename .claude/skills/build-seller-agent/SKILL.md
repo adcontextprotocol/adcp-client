@@ -169,6 +169,48 @@ deliveryResponse({
 })
 ```
 
+## Compliance Testing (Optional)
+
+Add `registerTestController` so the comply framework can deterministically test your state machines. Without it, compliance testing relies on observational storyboards that can't force state transitions.
+
+```
+import { registerTestController } from '@adcp/client';
+import type { TestControllerStore } from '@adcp/client';
+
+const store: TestControllerStore = {
+  async forceAccountStatus(accountId, status) {
+    const prev = accounts.get(accountId);
+    if (!prev) throw new TestControllerError('NOT_FOUND', `Account ${accountId} not found`);
+    accounts.set(accountId, status);
+    return { success: true, previous_state: prev, current_state: status };
+  },
+  async forceMediaBuyStatus(mediaBuyId, status) {
+    const prev = mediaBuys.get(mediaBuyId);
+    if (!prev) throw new TestControllerError('NOT_FOUND', `Media buy ${mediaBuyId} not found`);
+    mediaBuys.set(mediaBuyId, status);
+    return { success: true, previous_state: prev, current_state: status };
+  },
+  // Implement other scenarios as needed:
+  // forceCreativeStatus, forceSessionStatus, simulateDelivery, simulateBudgetSpend
+};
+
+registerTestController(server, store);
+```
+
+When using this, declare `compliance` in `supported_protocols`:
+```
+capabilitiesResponse({
+  adcp: { major_versions: [3] },
+  supported_protocols: ['media_buy', 'compliance'],
+})
+```
+
+Only implement the store methods for scenarios your agent supports. Unimplemented methods are excluded from `list_scenarios` automatically.
+
+Throw `TestControllerError` from store methods for typed errors (`NOT_FOUND`, `INVALID_TRANSITION`, `INVALID_STATE`, `FORBIDDEN`). The SDK validates status enum values before calling your store.
+
+Validate with: `adcp storyboard run <agent> deterministic_testing --json`
+
 ## SDK Quick Reference
 
 | SDK piece | Usage |
@@ -182,6 +224,8 @@ deliveryResponse({
 | `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
 | `taskToolResponse(data, summary)` | Build generic tool response |
 | `adcpError(code, { message })` | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`) |
+| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
+| `TestControllerError(code, message)` | Typed error from store methods |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
 
