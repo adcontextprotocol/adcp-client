@@ -167,15 +167,15 @@ phases:
             end_date: "2026-06-30"
 
         context_outputs:
-          - source: "rights_grant_id"
+          - source: "rights_id"
             target: "rights_grant_id"
 
         validations:
           - check: response_schema
             description: "Response matches acquire_rights schema"
           - check: field_present
-            path: "rights_grant_id"
-            description: "Response includes rights_grant_id"
+            path: "rights_id"
+            description: "Response includes rights_id"
 
   - id: rights_management
     title: "Manage rights"
@@ -211,8 +211,8 @@ phases:
           - check: response_schema
             description: "Response matches update_rights schema"
           - check: field_present
-            path: "rights_grant_id"
-            description: "Response includes rights_grant_id"
+            path: "rights_id"
+            description: "Response includes rights_id"
 
   - id: creative_approval
     title: "Creative approval"
