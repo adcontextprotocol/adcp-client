@@ -1103,9 +1103,16 @@ async function handleStoryboardRun(args) {
     console.log('═'.repeat(50));
     for (const phase of result.phases) {
       console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
+      const SKIP_ICONS = { missing_test_harness: '🔧', not_testable: '⏭️', dependency_failed: '⏭️' };
+      const SKIP_LABELS = {
+        missing_test_harness: ' [needs test harness]',
+        not_testable: ' [not testable]',
+        dependency_failed: ' [dependency failed]',
+      };
       for (const step of phase.steps) {
-        const icon = step.passed ? '✅' : '❌';
-        console.log(`\n${icon} ${step.title} (${step.duration_ms}ms)`);
+        const icon = step.skipped ? (SKIP_ICONS[step.skip_reason] ?? '⏭️') : step.passed ? '✅' : '❌';
+        const skipLabel = SKIP_LABELS[step.skip_reason] ?? '';
+        console.log(`\n${icon} ${step.title}${skipLabel} (${step.duration_ms}ms)`);
         console.log(`   Task: ${step.task}`);
         if (step.error) {
           console.log(`   Error: ${step.error}`);

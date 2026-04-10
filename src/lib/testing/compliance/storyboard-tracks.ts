@@ -115,11 +115,13 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
     observation_data: stepResult.response as Record<string, unknown> | undefined,
     warnings: stepResult.skipped
       ? [
-          stepResult.skip_reason === 'not_testable'
-            ? 'Not testable: agent lacks required tool'
-            : stepResult.skip_reason === 'dependency_failed'
-              ? 'Skipped: prior stateful step failed'
-              : 'Step skipped',
+          (
+            {
+              missing_test_harness: 'Not testable: requires comply_test_controller harness',
+              not_testable: 'Not testable: agent lacks required tool',
+              dependency_failed: 'Skipped: prior stateful step failed',
+            } as Record<string, string>
+          )[stepResult.skip_reason ?? ''] ?? 'Step skipped',
         ]
       : undefined,
   };

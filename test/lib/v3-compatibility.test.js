@@ -651,6 +651,26 @@ describe('Format Renders Normalizer', () => {
       assert.ok(normalized.formats[0].renders);
       assert.ok(normalized.formats[1].renders);
     });
+
+    test('should wrap raw array response in { formats: [...] }', () => {
+      const response = [
+        { format_id: { id: 'format-1' }, width: 300, height: 250 },
+        { format_id: { id: 'format-2' }, renders: [{ role: 'primary' }] },
+      ];
+
+      const normalized = normalizeFormatsResponse(response);
+
+      assert.ok(normalized.formats, 'should have formats property');
+      assert.strictEqual(normalized.formats.length, 2);
+      assert.ok(normalized.formats[0].renders, 'v2 format should be normalized');
+      assert.ok(normalized.formats[1].renders, 'v3 format should be preserved');
+    });
+
+    test('should return response unchanged when formats is missing', () => {
+      const response = { other: 'data' };
+      const normalized = normalizeFormatsResponse(response);
+      assert.deepStrictEqual(normalized, response);
+    });
   });
 });
 
