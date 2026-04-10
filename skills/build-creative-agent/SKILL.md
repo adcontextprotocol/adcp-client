@@ -16,6 +16,7 @@ A creative agent manages the creative lifecycle: accepts assets from buyers, sto
 - User references creative formats, VAST tags, serving tags, or creative libraries
 
 **Not this skill:**
+
 - Selling inventory + generating creatives → `skills/build-generative-seller-agent/`
 - Selling inventory (no creative management) → `skills/build-seller-agent/`
 - Serving audience segments → `skills/build-signals-agent/`
@@ -33,6 +34,7 @@ Determine these things. Ask the user — don't guess.
 ### 2. What formats?
 
 Get specific formats the platform supports. Common ones:
+
 - **Display**: `display_300x250`, `display_728x90`, `display_160x600`
 - **Video**: `video_30s`, `vast_30s`, `video_15s`
 - **Native**: `native_content` (image + headline + description)
@@ -50,6 +52,7 @@ Each format needs: dimensions, accepted asset types (image, video, html, text), 
 ### 4. Review pipeline?
 
 What happens when a creative is synced:
+
 - **Instant accept** — creative passes validation, immediately available
 - **Pending review** — human or automated review before going live
 - **Rejection** — creative fails validation (wrong dimensions, prohibited content)
@@ -57,6 +60,7 @@ What happens when a creative is synced:
 ## Tools and Required Response Shapes
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
+
 ```
 capabilitiesResponse({
   adcp: { major_versions: [3] },
@@ -65,6 +69,7 @@ capabilitiesResponse({
 ```
 
 **`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
+
 ```
 listCreativeFormatsResponse({
   formats: [{
@@ -86,6 +91,7 @@ listCreativeFormatsResponse({
 **`sync_creatives`** — `SyncCreativesRequestSchema.shape`
 
 Store creatives in the library. Echo back creative_id and action.
+
 ```
 syncCreativesResponse({
   creatives: [{
@@ -99,6 +105,7 @@ syncCreativesResponse({
 **`list_creatives`** — `ListCreativesRequestSchema.shape`
 
 Return creatives from the library. Support filtering by format_id.
+
 ```
 listCreativesResponse({
   query_summary: { total_matching: number, returned: number, filters: [] },
@@ -114,15 +121,18 @@ listCreativesResponse({
 
 The handler should check `args.filters?.format_ids` — if present, return only creatives matching those formats.
 
-**`preview_creative`** — `PreviewCreativeRequestSchema.shape`
+**`preview_creative`** — `PreviewCreativeSingleRequestSchema.shape`
+
+Note: `PreviewCreativeRequestSchema` is a union (single/batch/variant) and can't use `.shape`. Use `PreviewCreativeSingleRequestSchema` for single preview support.
 
 Render a preview of a stored creative. Each preview has a `renders` array with output_format discriminator.
+
 ```
 previewCreativeResponse({
   response_type: 'single',
   previews: [{
     preview_id: string,
-    input: { format_id: { agent_url: string, id: string }, name: string, assets: {} },
+    input: { name: string },
     renders: [{
       render_id: string,
       output_format: 'url',         // discriminator: 'url' or 'html'
@@ -138,6 +148,7 @@ previewCreativeResponse({
 **`build_creative`** — `BuildCreativeRequestSchema.shape`
 
 Produce a serving tag from a stored creative.
+
 ```
 buildCreativeResponse({
   creative_manifest: {
@@ -151,22 +162,22 @@ buildCreativeResponse({
 
 ## SDK Quick Reference
 
-| SDK piece | Usage |
-|-----------|-------|
-| `serve(createAgent)` | Start HTTP server on `:3001/mcp` |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support |
-| `server.tool(name, Schema.shape, handler)` | Register tool — `.shape` unwraps Zod |
-| `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
-| `listCreativeFormatsResponse(data)` | Build `list_creative_formats` response |
-| `syncCreativesResponse(data)` | Build `sync_creatives` response |
-| `listCreativesResponse(data)` | Build `list_creatives` response |
-| `previewCreativeResponse(data)` | Build `preview_creative` response |
-| `buildCreativeResponse(data)` | Build `build_creative` response |
-| `buildCreativeMultiResponse(data)` | Build multi-format `build_creative` response |
-| `taskToolResponse(data, summary)` | Build generic tool response (for tools without a dedicated builder) |
-| `adcpError(code, { message })` | Structured error |
+| SDK piece                                               | Usage                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------- |
+| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
+| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
+| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod                                |
+| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
+| `listCreativeFormatsResponse(data)`                     | Build `list_creative_formats` response                              |
+| `syncCreativesResponse(data)`                           | Build `sync_creatives` response                                     |
+| `listCreativesResponse(data)`                           | Build `list_creatives` response                                     |
+| `previewCreativeResponse(data)`                         | Build `preview_creative` response                                   |
+| `buildCreativeResponse(data)`                           | Build `build_creative` response                                     |
+| `buildCreativeMultiResponse(data)`                      | Build multi-format `build_creative` response                        |
+| `taskToolResponse(data, summary)`                       | Build generic tool response (for tools without a dedicated builder) |
+| `adcpError(code, { message })`                          | Structured error                                                    |
 
-Schemas: `ListCreativeFormatsRequestSchema`, `SyncCreativesRequestSchema`, `ListCreativesRequestSchema`, `PreviewCreativeRequestSchema`, `BuildCreativeRequestSchema`.
+Schemas: `ListCreativeFormatsRequestSchema`, `SyncCreativesRequestSchema`, `ListCreativesRequestSchema`, `PreviewCreativeSingleRequestSchema`, `BuildCreativeRequestSchema`.
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
 
@@ -197,12 +208,14 @@ Use a `Map<string, Creative>` to store synced creatives. The `sync_creatives` ha
 **After writing the agent, validate it. Fix failures. Repeat.**
 
 **Full validation** (if you can bind ports):
+
 ```bash
 npx tsx agent.ts &
 npx @adcp/client storyboard run http://localhost:3001/mcp creative_lifecycle --json
 ```
 
 **Sandbox validation** (if ports are blocked):
+
 ```bash
 npx tsc --noEmit agent.ts
 ```
@@ -211,23 +224,23 @@ npx tsc --noEmit agent.ts
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| Skip `get_adcp_capabilities` | Must be the first tool registered |
-| Pass `Schema` instead of `Schema.shape` | MCP SDK needs unwrapped Zod fields |
-| `list_creatives` ignores format filter | Check `args.filters?.format_ids` and filter results |
-| `preview_creative` returns wrong response_type | Must be `'single'` for single creative previews |
-| `build_creative` missing creative_manifest | Required field — contains the built output |
-| No in-memory store for synced creatives | `list_creatives` and `preview_creative` need to find previously synced creatives |
+| Mistake                                        | Fix                                                                              |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| Skip `get_adcp_capabilities`                   | Must be the first tool registered                                                |
+| Pass `Schema` instead of `Schema.shape`        | MCP SDK needs unwrapped Zod fields                                               |
+| `list_creatives` ignores format filter         | Check `args.filters?.format_ids` and filter results                              |
+| `preview_creative` returns wrong response_type | Must be `'single'` for single creative previews                                  |
+| `build_creative` missing creative_manifest     | Required field — contains the built output                                       |
+| No in-memory store for synced creatives        | `list_creatives` and `preview_creative` need to find previously synced creatives |
 
 ## Storyboards
 
-| Storyboard | Tests |
-|-----------|-------|
-| `creative_lifecycle` | Full lifecycle: format discovery → sync → list → preview → build |
-| `creative_template` | Stateless template rendering (build + preview only) |
-| `creative_sales_agent` | Sales agent that accepts pushed assets |
-| `creative_ad_server` | Ad server with pre-loaded library |
+| Storyboard             | Tests                                                            |
+| ---------------------- | ---------------------------------------------------------------- |
+| `creative_lifecycle`   | Full lifecycle: format discovery → sync → list → preview → build |
+| `creative_template`    | Stateless template rendering (build + preview only)              |
+| `creative_sales_agent` | Sales agent that accepts pushed assets                           |
+| `creative_ad_server`   | Ad server with pre-loaded library                                |
 
 ## Reference
 

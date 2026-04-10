@@ -488,6 +488,14 @@ export { normalizeRequestParams, normalizePackageParams } from './utils/request-
 // Re-export all Zod schemas for user validation needs
 export * from './types/schemas.generated';
 
+// PreviewCreativeRequestSchema is a z.union() which can't be used with
+// server.tool(name, Schema.shape, handler) — MCP SDK requires z.object().
+// Export each variant so agents can register the one they support.
+import { PreviewCreativeRequestSchema } from './types/schemas.generated';
+export const PreviewCreativeSingleRequestSchema = PreviewCreativeRequestSchema.options[0];
+export const PreviewCreativeBatchRequestSchema = PreviewCreativeRequestSchema.options[1];
+export const PreviewCreativeVariantRequestSchema = PreviewCreativeRequestSchema.options[2];
+
 // ====== AUTHENTICATION ======
 // Auth utilities for custom integrations
 export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
