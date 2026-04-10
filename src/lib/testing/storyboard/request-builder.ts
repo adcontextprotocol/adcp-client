@@ -43,17 +43,22 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  sync_audiences(_step, context, options) {
+  sync_audiences(step, context, options) {
+    // Delegate to sample_request for delete/discovery patterns
+    const sampleAudiences = step.sample_request?.audiences as Array<Record<string, unknown>> | undefined;
+    if (sampleAudiences?.[0]?.delete || (step.sample_request && !step.sample_request.audiences)) {
+      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
+    }
     return {
       account: context.account ?? resolveAccount(options),
       audiences: [
         {
-          audience_id: `test-audience-${Date.now()}`,
+          audience_id: context.audience_id ?? `test-audience-${Date.now()}`,
           name: 'E2E Test Audience',
-          identifiers: [
+          add: [
             {
-              type: 'hashed_email',
-              value: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              external_id: 'user-001',
+              hashed_email: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
             },
           ],
         },
@@ -368,13 +373,13 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     return {
       name: options.property_list_name ?? `E2E Test List ${Date.now()}`,
       description: 'Property list created by storyboard testing',
-      base_properties: {
-        include: [{ identifier_type: 'domain', identifier_value: 'test.example.com' }],
-      },
-      filters: {
-        garm_categories: { exclude: ['adult', 'arms'] },
-      },
-      brand_manifest: { name: resolveBrand(options).domain, url: `https://${resolveBrand(options).domain}` },
+      base_properties: [
+        {
+          selection_type: 'identifiers',
+          identifiers: [{ type: 'domain', value: 'test.example.com' }],
+        },
+      ],
+      brand: resolveBrand(options),
     };
   },
 
@@ -389,12 +394,15 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     return {
       list_id: context.property_list_id ?? 'unknown',
       description: 'Updated by storyboard testing',
-      base_properties: {
-        include: [
-          { identifier_type: 'domain', identifier_value: 'test.example.com' },
-          { identifier_type: 'domain', identifier_value: 'updated.example.com' },
-        ],
-      },
+      base_properties: [
+        {
+          selection_type: 'identifiers',
+          identifiers: [
+            { type: 'domain', value: 'test.example.com' },
+            { type: 'domain', value: 'updated.example.com' },
+          ],
+        },
+      ],
     };
   },
 
@@ -414,20 +422,145 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   get_content_standards(_step, context, _options) {
     return {
-      content_standards_id: context.content_standards_id ?? 'unknown',
+      standards_id: context.content_standards_id ?? 'unknown',
     };
   },
 
-  sync_plans(_step, context, options) {
+  calibrate_content(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
-      account: context.account ?? resolveAccount(options),
+      standards_id: context.content_standards_id ?? 'unknown',
+      artifact: {
+        property_rid: 'test-publisher.example',
+        artifact_id: context.creative_id ?? 'test-creative',
+        assets: {},
+      },
+    };
+  },
+
+  sync_plans(step, context, options) {
+    // Governance storyboards define scenario-specific plans in sample_request
+    // (e.g., custom_policies for conditions, authority_level for denied).
+    // Delegate to sample_request when present.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    const now = Date.now();
+    const startDate = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const endDate = new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
+    return {
       plans: [
         {
           plan_id: `test-plan-${Date.now()}`,
-          name: 'E2E Test Plan',
-          budget: { total: options.budget ?? 10000, currency: 'USD' },
+          brand: resolveBrand(options),
+          objectives: 'E2E test campaign — maximize reach across digital channels',
+          budget: { total: options.budget ?? 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: { start: startDate, end: endDate },
+          approved_sellers: null,
         },
       ],
+    };
+  },
+
+  check_governance(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      plan_id: context.plan_id ?? 'unknown',
+      caller: resolveBrand(options).domain,
+      payload: {
+        type: 'media_buy',
+        account: context.account ?? resolveAccount(options),
+        total_budget: options.budget ?? 10000,
+      },
+    };
+  },
+
+  get_account_financials(_step, context, options) {
+    return {
+      account: context.account ?? resolveAccount(options),
+    };
+  },
+
+  create_content_standards(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      name: 'E2E Test Content Standards',
+      rules: [{ category: 'brand_safety', description: 'No violent imagery', severity: 'must' }],
+    };
+  },
+
+  update_content_standards(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      standards_id: context.content_standards_id ?? 'unknown',
+      add_rules: [{ category: 'quality', description: 'High resolution assets', severity: 'should' }],
+    };
+  },
+
+  validate_content_delivery(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      standards_id: context.content_standards_id ?? 'unknown',
+      records: [
+        {
+          record_id: 'delivery_001',
+          artifact: {
+            property_rid: 'test-publisher.example',
+            artifact_id: context.creative_id ?? 'test-creative',
+            assets: {},
+          },
+        },
+      ],
+    };
+  },
+
+  validate_property_delivery(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      brand: resolveBrand(options),
+      list_id: context.property_list_id ?? 'unknown',
+      delivery: [{ property: 'test.example.com', impressions: 1000 }],
+    };
+  },
+
+  acquire_rights(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      rights_id: context.rights_id ?? 'unknown',
+      buyer: { domain: resolveBrand(options).domain },
+    };
+  },
+
+  update_rights(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      rights_grant_id: context.rights_grant_id ?? 'unknown',
+    };
+  },
+
+  creative_approval(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    return {
+      rights_grant_id: context.rights_grant_id ?? 'unknown',
+      creative: { creative_id: context.creative_id ?? 'test-creative' },
     };
   },
 
@@ -449,8 +582,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
       identity: {
-        principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal',
-        device_id: 'e2e-test-device',
+        consent_granted: true,
+        user: { principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal' },
       },
       context: options.si_context ?? 'E2E test session',
       placement: 'e2e-test',
@@ -470,6 +603,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   si_terminate_session(_step, context, _options) {
     return {
       session_id: context.session_id ?? 'unknown',
+      reason: 'user_exit',
     };
   },
 

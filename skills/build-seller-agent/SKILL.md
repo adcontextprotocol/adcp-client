@@ -119,7 +119,10 @@ productsResponse({
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
 
+Validate the request before creating the buy. Return an error response (not `adcpError`) when business validation fails:
+
 ```
+// Success:
 mediaBuyResponse({
   media_buy_id: string,       // required
   packages: [{                // required
@@ -129,6 +132,9 @@ mediaBuyResponse({
     budget: number,
   }],
 })
+
+// Validation failure (reversed dates, budget too low, unknown product):
+adcpError('INVALID_REQUEST', { message: 'start_time must be before end_time' })
 ```
 
 **`get_media_buys`** — `GetMediaBuysRequestSchema.shape`
@@ -322,6 +328,7 @@ When storyboard output shows failures, fix each one:
 | `media_buy_guaranteed_approval` | IO approval workflow                           |
 | `media_buy_proposal_mode`       | AI-generated proposals                         |
 | `media_buy_catalog_creative`    | Catalog sync + conversions                     |
+| `schema_validation`             | Schema compliance + date validation errors     |
 
 ## Common Mistakes
 
@@ -333,6 +340,7 @@ When storyboard output shows failures, fix each one:
 | Missing `brand`/`operator` in sync_accounts response | Echo them back from the request — they're required            |
 | sync_governance returns wrong shape                  | Must include `status: 'synced'` and `governance_agents` array |
 | `sandbox: false` on mock data                        | Buyers may treat mock data as real                            |
+| Returns raw JSON for validation failures             | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure    |
 
 ## Reference
 

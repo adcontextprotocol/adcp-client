@@ -24,6 +24,12 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a creative agent?** Read and follow `skills/build-creative-agent/SKILL.md` — covers ad servers, creative management platforms, format discovery, preview, and build.
 
+**Building a governance agent?** Read and follow `skills/build-governance-agent/SKILL.md` — covers campaign governance (spending authority, approval/denial), property lists, content standards.
+
+**Building a sponsored intelligence agent?** Read and follow `skills/build-si-agent/SKILL.md` — covers offering discovery, session lifecycle, conversational sponsored content.
+
+**Building a brand rights agent?** Read and follow `skills/build-brand-rights-agent/SKILL.md` — covers brand identity, rights licensing, creative approval.
+
 **Critical rules**:
 - ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing
 - NEVER inject mock/fallback data — return exactly what agents provide

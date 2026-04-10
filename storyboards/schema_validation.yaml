@@ -129,6 +129,7 @@ phases:
         response_schema_ref: "media-buy/create-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: temporal_validation
+        expect_error: true
         stateful: false
         expected: |
           Reject the request with:
@@ -145,7 +146,7 @@ phases:
 
         validations:
           - check: field_present
-            path: "errors"
+            path: "adcp_error"
             description: "Response contains an error for reversed dates"
 
       - id: past_start_date

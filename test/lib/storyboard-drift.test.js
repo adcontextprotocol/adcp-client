@@ -102,6 +102,7 @@ function collectFieldValidations(storyboards) {
     for (const phase of sb.phases) {
       for (const step of phase.steps) {
         if (!step.validations) continue;
+        if (step.expect_error) continue; // error steps validate extracted error data, not response schemas
         for (const v of step.validations) {
           if ((v.check === 'field_present' || v.check === 'field_value') && v.path) {
             entries.push({

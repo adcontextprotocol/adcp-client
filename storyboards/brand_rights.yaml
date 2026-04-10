@@ -76,8 +76,8 @@ phases:
           brand_id: "acme_outdoor"
 
         context_outputs:
-          - source: "brand_id"
-            target: "brand_id"
+          - path: "brand_id"
+            key: "brand_id"
 
         validations:
           - check: response_schema
@@ -119,8 +119,8 @@ phases:
           brand_id: "$context.brand_id"
 
         context_outputs:
-          - source: "rights.0.rights_id"
-            target: "rights_id"
+          - path: "rights.0.rights_id"
+            key: "rights_id"
 
         validations:
           - check: response_schema
@@ -167,8 +167,8 @@ phases:
             end_date: "2026-06-30"
 
         context_outputs:
-          - source: "rights_id"
-            target: "rights_grant_id"
+          - path: "rights_grant_id"
+            key: "rights_grant_id"
 
         validations:
           - check: response_schema

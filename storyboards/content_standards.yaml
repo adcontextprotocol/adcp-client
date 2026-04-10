@@ -68,19 +68,10 @@ phases:
           - Status: active
 
         sample_request:
-          brand:
-            domain: "acmeoutdoor.com"
-          name: "Acme Outdoor creative standards"
-          rules:
-            - category: "brand_safety"
-              description: "No violent or controversial imagery"
-              severity: "must"
-            - category: "quality"
-              description: "Minimum 72 DPI for display assets"
-              severity: "should"
-            - category: "brand_compliance"
-              description: "Brand colors must match palette within 5% tolerance"
-              severity: "must"
+          scope:
+            languages_any: ["en"]
+            description: "Acme Outdoor creative quality standards"
+          policy: "No violent or controversial imagery (must). Minimum 72 DPI for display assets (should). Brand colors must match palette within 5% tolerance (must)."
 
         validations:
           - check: response_schema
@@ -134,7 +125,7 @@ phases:
           - All rules with categories, descriptions, and severity
 
         sample_request:
-          standards_id: "cs_acme_creative_001"
+          standards_id: "$context.content_standards_id"
 
         validations:
           - check: response_schema
@@ -163,11 +154,8 @@ phases:
           - Confirmation of changes applied
 
         sample_request:
-          standards_id: "cs_acme_creative_001"
-          add_rules:
-            - category: "accessibility"
-              description: "All images must have alt text"
-              severity: "should"
+          standards_id: "$context.content_standards_id"
+          policy: "No violent or controversial imagery (must). Minimum 72 DPI (should). Brand colors within 5% tolerance (must). All images must have alt text (should)."
 
         validations:
           - check: response_schema
@@ -200,13 +188,15 @@ phases:
           - Remediation guidance for failed rules
 
         sample_request:
-          standards_id: "cs_acme_creative_001"
-          content:
-            creative_id: "display_trail_pro_300x250"
-            format: "display_300x250"
+          standards_id: "$context.content_standards_id"
+          artifact:
+            property_rid: "test-publisher.example"
+            artifact_id: "display_trail_pro_300x250"
             assets:
-              - asset_type: "image"
+              - type: "image"
                 url: "https://cdn.pinnacle-agency.example/trail-pro-300x250.png"
+                width: 300
+                height: 250
 
         validations:
           - check: response_schema
@@ -239,12 +229,25 @@ phases:
           - Violations with rule references and evidence
 
         sample_request:
-          standards_id: "cs_acme_creative_001"
-          delivery:
-            - creative_id: "display_trail_pro_300x250"
-              impressions: 150000
-            - creative_id: "video_30s_trail_pro"
-              impressions: 75000
+          standards_id: "$context.content_standards_id"
+          records:
+            - record_id: "delivery_display_001"
+              artifact:
+                property_rid: "test-publisher.example"
+                artifact_id: "display_trail_pro_300x250"
+                assets:
+                  - type: "image"
+                    url: "https://cdn.pinnacle-agency.example/trail-pro-300x250.png"
+                    width: 300
+                    height: 250
+            - record_id: "delivery_video_001"
+              artifact:
+                property_rid: "test-publisher.example"
+                artifact_id: "video_30s_trail_pro"
+                assets:
+                  - type: "video"
+                    url: "https://cdn.pinnacle-agency.example/trail-pro-30s.mp4"
+                    duration_ms: 30000
 
         validations:
           - check: response_schema

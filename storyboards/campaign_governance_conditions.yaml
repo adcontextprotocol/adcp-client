@@ -68,11 +68,18 @@ phases:
 
         sample_request:
           plans:
-            - plan_name: "Acme Outdoor conditional governance"
+            - plan_id: "gov_acme_conditional"
               brand:
                 domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
-              authority_level: "agent_full"
+              objectives: "CTV and display media buy with conditional governance policies"
+              budget:
+                total: 40000
+                currency: "USD"
+                authority_level: "agent_full"
+              flight:
+                start: "2026-04-01T00:00:00Z"
+                end: "2026-06-30T23:59:59Z"
+              approved_sellers: null
               custom_policies:
                 - "CTV buys require weekly delivery reporting"
                 - "UGC placements require brand safety review before go-live"
@@ -110,13 +117,10 @@ phases:
           - findings: may include should-severity findings noting the conditions
 
         sample_request:
-          plan_id: "gov_acme_conditional"
-          binding:
+          plan_id: "$context.plan_id"
+          caller: "pinnacle-agency.com"
+          payload:
             type: "media_buy"
-            account:
-              brand:
-                domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
             total_budget: 40000
             packages:
               - product_id: "sports_ctv_q2"
@@ -147,6 +151,7 @@ phases:
     steps:
       - id: create_media_buy
         title: "Create a media buy with conditional governance approval"
+        requires_tool: create_media_buy
         narrative: |
           The buyer creates the media buy with the governance_context token from the
           conditional approval. The seller confirms the buy. The buyer is now bound by

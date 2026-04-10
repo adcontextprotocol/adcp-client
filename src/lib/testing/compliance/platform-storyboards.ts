@@ -33,6 +33,8 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'behavioral_analysis',
     'media_buy_seller',
     'media_buy_state_machine',
+    'audience_sync',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -42,6 +44,7 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'behavioral_analysis',
     'media_buy_seller',
     'media_buy_state_machine',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -51,6 +54,8 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'behavioral_analysis',
     'social_platform',
     'media_buy_state_machine',
+    'audience_sync',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -61,6 +66,8 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'media_buy_seller',
     'media_buy_state_machine',
     'creative_lifecycle',
+    'audience_sync',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -70,6 +77,8 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'behavioral_analysis',
     'media_buy_seller',
     'media_buy_state_machine',
+    'audience_sync',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -80,6 +89,8 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'media_buy_seller',
     'media_buy_catalog_creative',
     'media_buy_state_machine',
+    'audience_sync',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -89,6 +100,7 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'behavioral_analysis',
     'media_buy_seller',
     'media_buy_state_machine',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -98,6 +110,8 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'behavioral_analysis',
     'media_buy_seller',
     'media_buy_state_machine',
+    'audience_sync',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -107,6 +121,7 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'behavioral_analysis',
     'media_buy_seller',
     'media_buy_state_machine',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -131,6 +146,7 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'media_buy_seller',
     'media_buy_state_machine',
     'creative_lifecycle',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -139,6 +155,7 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'schema_validation',
     'behavioral_analysis',
     'creative_template',
+    'deterministic_testing',
     'error_compliance',
   ],
 
@@ -149,6 +166,7 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
     'media_buy_seller',
     'media_buy_state_machine',
     'creative_lifecycle',
+    'deterministic_testing',
     'error_compliance',
   ],
 };

@@ -161,12 +161,18 @@ The handler should:
 buildCreativeResponse({
   creative_manifest: {
     format_id: { agent_url: string, id: string },
-    name: string,
     assets: {},              // built output assets (serving tag, VAST XML, etc.)
   },
   sandbox: true,
 })
 ```
+
+Asset values use type-specific shapes, not a generic `asset_type` discriminator:
+
+- Image: `{ url: string, width: number, height: number, format: string }`
+- Video: `{ url: string, duration_ms: number, format: string }`
+- HTML: `{ content: string }` (not `{ html: string }`)
+- Text: `{ text: string }`
 
 ## SDK Quick Reference
 
@@ -244,6 +250,8 @@ npx tsc --noEmit agent.ts
 | `preview_creative` looks up by creative_id           | Preview the `creative_manifest` from the request — no library lookup needed       |
 | `build_creative` looks up by `args.creative_id` only | Storyboard sends `target_format_id` — find a synced creative matching that format |
 | `build_creative` missing creative_manifest           | Required field — contains the built output                                        |
+| `creative_manifest` includes `name` field            | `CreativeManifest` has no `name` — only `format_id` and `assets`                  |
+| HTML asset uses `{ html: '...' }`                    | Use `{ content: '...' }` — the schema field is `content`, not `html`              |
 | No in-memory store for synced creatives              | `list_creatives` and `build_creative` need to find previously synced creatives    |
 
 ## Storyboards
