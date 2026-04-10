@@ -330,24 +330,27 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Signals ────────────────────────────────────────────
 
-  get_signals(_step, _context, options) {
-    return options.brief ? { signal_spec: options.brief } : {};
+  get_signals(step, context, options) {
+    if (options.brief) return { signal_spec: options.brief };
+    if (step.sample_request?.signal_ids) {
+      return injectContext({ signal_ids: step.sample_request.signal_ids }, context);
+    }
+    return {};
   },
 
   activate_signal(step, context, _options) {
     const signal = selectSignal(context);
-    // Use step-specific destinations when the storyboard defines them (e.g., agent vs platform)
-    const destinations = step.sample_request?.destinations ?? [
-      { type: 'platform', platform: 'dv360', account: 'test-dv360-account' },
-      { type: 'platform', platform: 'trade-desk', account: 'test-ttd-account' },
-    ];
-    return {
+    const destinations = step.sample_request?.destinations as Array<Record<string, unknown>> | undefined;
+    const request: Record<string, unknown> = {
       signal_agent_segment_id: signal?.signal_agent_segment_id ?? context.signal_id ?? 'test-signal',
       pricing_option_id:
         (signal?.pricing_options as Array<Record<string, unknown>> | undefined)?.[0]?.pricing_option_id ??
         context.pricing_option_id,
-      destinations,
     };
+    if (destinations) {
+      request.destinations = (injectContext({ destinations }, context) as Record<string, unknown>).destinations;
+    }
+    return request;
   },
 
   // ── Capabilities ───────────────────────────────────────
