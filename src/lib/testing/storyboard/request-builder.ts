@@ -475,13 +475,14 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Test Controller ────────────────────────────────────
 
-  comply_test_controller(step, context, _options) {
-    // The test controller request is highly step-specific.
-    // Use sample_request from YAML with context injection for entity IDs.
+  comply_test_controller(step, context, options) {
+    // The test controller requires account.sandbox: true to be set.
+    const account = { ...(context.account ?? resolveAccount(options)), sandbox: true };
     if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
+      return { ...injectContext({ ...step.sample_request }, context), account };
     }
     return {
+      account,
       scenario: context.controller_scenario ?? 'list_scenarios',
     };
   },

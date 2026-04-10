@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-09T23:37:02.942Z
+// Generated at: 2026-04-10T14:21:16.215Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -4913,7 +4913,7 @@ export interface SyncCreativesSuccess {
     /**
      * Validation or processing errors (only present when action='failed')
      */
-    errors?: string[];
+    errors?: Error[];
     /**
      * Non-fatal warnings about this creative
      */
@@ -5162,7 +5162,7 @@ export interface SyncCatalogsSuccess {
     /**
      * Validation or processing errors (only present when action='failed')
      */
-    errors?: string[];
+    errors?: Error[];
     /**
      * Non-fatal warnings about this catalog
      */
