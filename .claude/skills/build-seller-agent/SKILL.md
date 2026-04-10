@@ -187,11 +187,27 @@ const store: TestControllerStore = {
   async forceMediaBuyStatus(mediaBuyId, status) {
     const prev = mediaBuys.get(mediaBuyId);
     if (!prev) throw new TestControllerError('NOT_FOUND', `Media buy ${mediaBuyId} not found`);
+    const terminal = ['completed', 'rejected', 'canceled'];
+    if (terminal.includes(prev))
+      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from ${prev}`, prev);
     mediaBuys.set(mediaBuyId, status);
     return { success: true, previous_state: prev, current_state: status };
   },
-  // Implement other scenarios as needed:
-  // forceCreativeStatus, forceSessionStatus, simulateDelivery, simulateBudgetSpend
+  async forceCreativeStatus(creativeId, status, rejectionReason) {
+    const prev = creatives.get(creativeId);
+    if (!prev) throw new TestControllerError('NOT_FOUND', `Creative ${creativeId} not found`);
+    if (prev === 'archived')
+      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from archived`, prev);
+    creatives.set(creativeId, status);
+    return { success: true, previous_state: prev, current_state: status };
+  },
+  async simulateDelivery(mediaBuyId, params) {
+    // Accumulate delivery data and return simulated + cumulative totals
+    return { success: true, simulated: { ...params }, cumulative: { ...params } };
+  },
+  async simulateBudgetSpend(params) {
+    return { success: true, simulated: { spend_percentage: params.spend_percentage } };
+  },
 };
 
 registerTestController(server, store);
@@ -207,7 +223,12 @@ capabilitiesResponse({
 
 Only implement the store methods for scenarios your agent supports. Unimplemented methods are excluded from `list_scenarios` automatically.
 
-Throw `TestControllerError` from store methods for typed errors (`NOT_FOUND`, `INVALID_TRANSITION`, `INVALID_STATE`, `FORBIDDEN`). The SDK validates status enum values before calling your store.
+The storyboard tests state machine correctness:
+- `NOT_FOUND` when forcing transitions on unknown entities
+- `INVALID_TRANSITION` when transitioning from terminal states (completed, rejected, canceled for media buys; archived for creatives)
+- Successful transitions between valid states
+
+Throw `TestControllerError` from store methods for typed errors. The SDK validates status enum values before calling your store.
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 

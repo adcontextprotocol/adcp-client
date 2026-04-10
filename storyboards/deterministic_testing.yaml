@@ -535,7 +535,7 @@ phases:
         stateful: true
         context_outputs:
           - name: creative_id
-            path: 'results[0].creative_id'
+            path: 'creatives[0].creative_id'
         expected: |
           Accept the creative and return a creative_id for state machine testing.
 
@@ -678,7 +678,7 @@ phases:
     steps:
       - id: initiate_session
         title: 'Initiate SI session'
-        requires_tool: comply_test_controller
+        requires_tool: si_initiate_session
         narrative: |
           Create an SI session via si_initiate_session. The session_id is captured
           for controller-driven termination.
