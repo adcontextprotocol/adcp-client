@@ -119,7 +119,8 @@ export class GovernanceAdapter implements IGovernanceAdapter {
       planned_delivery: request.plannedDelivery,
       phase: request.phase,
       delivery_metrics: request.deliveryMetrics,
-      modification_summary: request.modificationSummary,
+      ...(request.mediaBuyId && { payload: { media_buy_id: request.mediaBuyId } }),
+      ...(request.modificationSummary && { payload: { modification_summary: request.modificationSummary } }),
     };
 
     try {
