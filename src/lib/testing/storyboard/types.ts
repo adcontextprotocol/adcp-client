@@ -93,8 +93,10 @@ export interface StoryboardValidation {
   check: 'response_schema' | 'field_present' | 'field_value' | 'status_code' | 'error_code';
   /** JSON path for field checks, e.g. "accounts[0].account_id" */
   path?: string;
-  /** Expected value for field_value and error_code checks */
+  /** Expected value for field_value and error_code checks (exact match) */
   value?: unknown;
+  /** Accepted values for field_value checks (passes if actual matches any) */
+  allowed_values?: unknown[];
   description: string;
 }
 

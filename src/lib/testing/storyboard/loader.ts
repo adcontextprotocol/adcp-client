@@ -18,6 +18,19 @@ export function parseStoryboard(yamlContent: string): Storyboard {
   if (!parsed?.id || !parsed?.phases) {
     throw new Error('Invalid storyboard YAML: missing required fields (id, phases)');
   }
+  // Normalize context_outputs: YAML uses "name" but TypeScript expects "key"
+  for (const phase of parsed.phases) {
+    for (const step of phase.steps) {
+      if (step.context_outputs) {
+        for (const output of step.context_outputs) {
+          const raw = output as unknown as Record<string, unknown>;
+          if (raw.name && !raw.key) {
+            output.key = raw.name as string;
+          }
+        }
+      }
+    }
+  }
   return parsed;
 }
 
