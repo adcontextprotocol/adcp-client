@@ -49,8 +49,22 @@ const MAX_CACHED_CONNECTIONS = 20;
  * When reconnecting to these URLs, skip SSE fallback — if StreamableHTTP
  * worked before, SSE won't help and will just produce 405 errors on
  * servers that only support POST-based StreamableHTTP.
+ *
+ * Capped at MAX_CACHED_CONNECTIONS to avoid unbounded growth. Oldest
+ * entries are evicted first (Set iteration order = insertion order).
  */
 const knownStreamableHTTPUrls = new Set<string>();
+
+function trackStreamableHTTPUrl(url: string): void {
+  // Refresh position if already known
+  knownStreamableHTTPUrls.delete(url);
+  knownStreamableHTTPUrls.add(url);
+  // Evict oldest if over capacity
+  while (knownStreamableHTTPUrls.size > MAX_CACHED_CONNECTIONS) {
+    const oldest = knownStreamableHTTPUrls.values().next().value;
+    if (oldest) knownStreamableHTTPUrls.delete(oldest);
+  }
+}
 
 function connectionCacheKey(agentUrl: string, authToken?: string): string {
   if (!authToken) return agentUrl;
@@ -278,7 +292,7 @@ async function connectMCPWithFallbackImpl(
     });
     await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
     failedClient = undefined;
-    knownStreamableHTTPUrls.add(url.toString());
+    trackStreamableHTTPUrl(url.toString());
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected via StreamableHTTP for ${label}`,
@@ -316,7 +330,7 @@ async function connectMCPWithFallbackImpl(
       try {
         const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
         await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
-        knownStreamableHTTPUrls.add(url.toString());
+        trackStreamableHTTPUrl(url.toString());
         debugLogs.push({
           type: 'success',
           message: `MCP: Connected via StreamableHTTP (retry) for ${label}`,

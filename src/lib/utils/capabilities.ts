@@ -269,25 +269,28 @@ function detectProtocolsFromTools(toolNames: Set<string>): AdcpProtocol[] {
 }
 
 /**
- * Augment declared capabilities with protocols detected from the tool list.
+ * Augment declared capabilities with compliance_testing if the tool is present.
  *
- * Agents may omit protocols from get_adcp_capabilities even though the tools
- * are present. The tool list is authoritative — if comply_test_controller is
- * registered, the agent supports compliance_testing regardless of what it declares.
+ * comply_test_controller is a testing-only tool that agents register but often
+ * forget to declare in get_adcp_capabilities. Auto-adding it avoids a common
+ * setup mistake without risk of false positives — no agent would register
+ * comply_test_controller by accident.
+ *
+ * Other protocols (media_buy, signals, etc.) are NOT augmented because a stub
+ * or partial tool registration could produce false positives.
  */
 export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, tools: ToolInfo[]): AdcpCapabilities {
   const toolNames = new Set(tools.map(t => t.name));
-  const detected = detectProtocolsFromTools(toolNames);
-  const existing = new Set(capabilities.protocols);
-  const missing = detected.filter(p => !existing.has(p));
-  if (missing.length === 0) return capabilities;
+  const hasComplianceTool = COMPLIANCE_TOOLS.some(t => toolNames.has(t));
+  if (!hasComplianceTool || capabilities.protocols.includes('compliance_testing')) {
+    return capabilities;
+  }
   console.debug(
-    `[AdCP] Augmented capabilities: agent declares [${capabilities.protocols.join(', ')}] ` +
-      `but tools imply [${detected.join(', ')}]. Added: [${missing.join(', ')}]`
+    `[AdCP] Agent has comply_test_controller but does not declare compliance_testing. Adding automatically.`
   );
   return {
     ...capabilities,
-    protocols: [...capabilities.protocols, ...missing],
+    protocols: [...capabilities.protocols, 'compliance_testing'],
   };
 }
 
