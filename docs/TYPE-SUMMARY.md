@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-04-08
+> Generated at: 2026-04-10
 > @adcp/client v4.22.1
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -626,6 +626,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   governance_context: string  // required
   check_id: string
   idempotency_key: string
+  purchase_type: Purchase Type
   seller_response: object
   delivery: object
   error: object
@@ -638,6 +639,8 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   plan_ids: string[]
   portfolio_plan_ids: string[]
+  governance_contexts: string[]
+  purchase_types: object[]
   include_entries: boolean
 }
 ```
@@ -648,10 +651,10 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   plan_id: string  // required
   caller: string  // required
+  purchase_type: Purchase Type
   tool: string
   payload: object
   governance_context: string
-  media_buy_id: string
   phase: Governance Phase
   planned_delivery: Planned Delivery
   delivery_metrics: object
