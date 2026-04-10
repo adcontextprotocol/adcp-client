@@ -108,7 +108,7 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
   return {
     step: stepResult.title,
     task: stepResult.task,
-    passed: stepResult.skipped ? false : stepResult.passed,
+    passed: stepResult.passed,
     duration_ms: stepResult.duration_ms,
     error: stepResult.error,
     details: validationDetails || undefined,
@@ -118,6 +118,7 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
           (
             {
               missing_test_harness: 'Not testable: requires comply_test_controller harness',
+              missing_tool: 'Skipped: agent does not implement this tool',
               not_testable: 'Not testable: agent lacks required tool',
               dependency_failed: 'Skipped: prior stateful step failed',
             } as Record<string, string>

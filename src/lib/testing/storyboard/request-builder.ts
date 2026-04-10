@@ -287,29 +287,38 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   sync_creatives(_step, context, options) {
-    const format = selectFormat(context);
-    const formatId = format?.format_id ?? context.format_id ?? { agent_url: 'unknown', id: 'unknown' };
+    const formats = (context.formats as Array<Record<string, unknown>> | undefined) ?? [];
+    const now = Date.now();
 
-    // Build assets as a record (not array) — keyed by asset role
-    const assets: Record<string, unknown> = {
-      primary: {
-        url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
-        width: 1200,
-        height: 628,
-        format: 'image/jpeg',
-      },
-    };
+    // Send one creative per discovered format so downstream steps
+    // (e.g., build_video_tag) can find creatives in every format.
+    const creatives =
+      formats.length > 0
+        ? formats.map((fmt, i) => ({
+            creative_id: `test-creative-${now}-${i}`,
+            name: `E2E Test Creative ${i + 1}`,
+            format_id: fmt.format_id ?? context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
+            assets: buildAssetsForFormat(fmt),
+          }))
+        : [
+            {
+              creative_id: `test-creative-${now}`,
+              name: 'E2E Test Creative',
+              format_id: context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
+              assets: {
+                primary: {
+                  url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
+                  width: 1200,
+                  height: 628,
+                  format: 'image/jpeg',
+                },
+              },
+            },
+          ];
 
     return {
       account: context.account ?? resolveAccount(options),
-      creatives: [
-        {
-          creative_id: `test-creative-${Date.now()}`,
-          name: 'E2E Test Creative',
-          format_id: formatId,
-          assets,
-        },
-      ],
+      creatives,
     };
   },
 
@@ -689,4 +698,47 @@ function selectSignal(context: StoryboardContext): Record<string, unknown> | und
   const signals = context.signals as Array<Record<string, unknown>> | undefined;
   if (!signals?.length) return undefined;
   return signals[0];
+}
+
+/**
+ * Build placeholder assets appropriate for a format's type.
+ * Uses the format name to guess whether it's video, native, or display.
+ */
+function buildAssetsForFormat(format: Record<string, unknown>): Record<string, unknown> {
+  const name = String(format.name ?? format.format_id ?? '').toLowerCase();
+  const type = String(format.type ?? '').toLowerCase();
+
+  if (type === 'video' || name.includes('video') || name.includes('vast')) {
+    return {
+      video: {
+        url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/trail-pro-30s.mp4',
+        duration: 30,
+        format: 'video/mp4',
+      },
+    };
+  }
+
+  if (type === 'native' || name.includes('native')) {
+    return {
+      image: {
+        url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
+        width: 1200,
+        height: 628,
+        format: 'image/jpeg',
+      },
+      headline: {
+        content: 'Trail Pro 3000 — Built for the Summit',
+      },
+    };
+  }
+
+  // Default: display image
+  return {
+    primary: {
+      url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
+      width: 1200,
+      height: 628,
+      format: 'image/jpeg',
+    },
+  };
 }

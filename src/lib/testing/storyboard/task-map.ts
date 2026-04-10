@@ -84,12 +84,32 @@ export async function executeStoryboardTask(
   const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
 
   let result;
-  if (methodName && typeof client[methodName] === 'function') {
-    result = await client[methodName](params);
-  } else {
-    // Fall back to generic executeTask for tasks without dedicated methods
-    // (e.g., sync_governance, future tasks)
-    result = await client.executeTask(taskName, params);
+  const invoke = async () => {
+    if (methodName && typeof client[methodName] === 'function') {
+      return client[methodName](params);
+    }
+    return client.executeTask(taskName, params);
+  };
+
+  // Retry with exponential backoff on rate limit errors
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 2000;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      result = await invoke();
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isRateLimit =
+        /rate limit/i.test(msg) || (/"code":\s*-32000/.test(msg) && /rate.?limit|too many|throttl/i.test(msg));
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        const jitter = Math.random() * 1000;
+        const delay = BASE_DELAY_MS * 2 ** attempt + jitter;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw err;
+    }
   }
 
   // If the agent returned an async status but included data in the initial
