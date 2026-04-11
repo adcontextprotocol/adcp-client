@@ -236,25 +236,27 @@ adcp mcp https://agent.example.com/mcp get_products '{"brief":"test"}' --json | 
 
 The CLI includes two higher-level evaluation flows on top of the existing scenario runner.
 
-### `adcp comply`
+### `adcp storyboard run`
 
 Runs all applicable capability tracks against an agent and reports the full picture instead of stopping at the first failure.
 
+> **Note:** `adcp comply` still works as a deprecated alias for `adcp storyboard run` but will be removed in v5.
+
 ```bash
 # Run all applicable tracks
-adcp comply myagent
+adcp storyboard run myagent
 
 # Declare platform type for coherence checking
-adcp comply myagent --platform-type social_platform
+adcp storyboard run myagent --platform-type social_platform
 
 # Limit to a subset of tracks
-adcp comply myagent --tracks core,products,media_buy
+adcp storyboard run myagent --tracks core,products,media_buy
 
 # List available platform types
-adcp comply --list-platform-types
+adcp storyboard run --list-platform-types
 
 # Use raw JSON in CI
-adcp comply https://agent.example.com/mcp --auth "$ADCP_AUTH_TOKEN" --json
+adcp storyboard run https://agent.example.com/mcp --auth "$ADCP_AUTH_TOKEN" --json
 ```
 
 Available tracks:

@@ -265,7 +265,7 @@ npx @adcp/client http://localhost:3001/mcp get_signals '{}' --json
 ### Compliance Check
 
 ```bash
-npx @adcp/client comply http://localhost:3001/mcp
+npx @adcp/client storyboard run http://localhost:3001/mcp
 ```
 
 This runs a standard validation suite against your agent to check AdCP compliance.
