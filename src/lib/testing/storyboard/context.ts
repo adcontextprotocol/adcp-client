@@ -116,6 +116,15 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     return { creative_results: results };
   },
 
+  list_creatives(data) {
+    const d = data as Record<string, unknown> | undefined;
+    const creatives = d?.creatives as Array<Record<string, unknown>> | undefined;
+    if (!creatives?.[0]) return {};
+    const extracted: Record<string, unknown> = { creatives };
+    if (creatives[0].creative_id) extracted.creative_id = creatives[0].creative_id;
+    return extracted;
+  },
+
   preview_creative(data) {
     const d = data as Record<string, unknown> | undefined;
     const previews = d?.previews as Array<Record<string, unknown>> | undefined;
@@ -141,6 +150,33 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const extracted: Record<string, unknown> = { deployments };
     if (first.activation_key) extracted.activation_key = first.activation_key;
     if (first.type) extracted.deployment_type = first.type;
+    return extracted;
+  },
+
+  sync_catalogs(data) {
+    const d = data as Record<string, unknown> | undefined;
+    const catalogs = d?.catalogs as Array<Record<string, unknown>> | undefined;
+    if (!catalogs?.[0]) return {};
+    const extracted: Record<string, unknown> = { catalogs };
+    if (catalogs[0].catalog_id) extracted.catalog_id = catalogs[0].catalog_id;
+    return extracted;
+  },
+
+  sync_audiences(data) {
+    const d = data as Record<string, unknown> | undefined;
+    const audiences = d?.audiences as Array<Record<string, unknown>> | undefined;
+    if (!audiences?.[0]) return {};
+    const extracted: Record<string, unknown> = { audiences };
+    if (audiences[0].audience_id) extracted.audience_id = audiences[0].audience_id;
+    return extracted;
+  },
+
+  sync_event_sources(data) {
+    const d = data as Record<string, unknown> | undefined;
+    const sources = d?.event_sources as Array<Record<string, unknown>> | undefined;
+    if (!sources?.[0]) return {};
+    const extracted: Record<string, unknown> = { event_sources: sources };
+    if (sources[0].event_source_id) extracted.event_source_id = sources[0].event_source_id;
     return extracted;
   },
 
