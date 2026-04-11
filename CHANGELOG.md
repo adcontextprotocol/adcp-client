@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.27.0
+
+### Minor Changes
+
+- 9bb0a66: Deprecate `adcp comply` CLI command in favor of `adcp storyboard run`. Running `adcp storyboard run <agent>` without a storyboard ID now runs all matching storyboards (the same behavior as `adcp comply`). The `comply` command still works but prints a deprecation warning and will be removed in v5.
+
+### Patch Changes
+
+- eed5456: Add context extractors for list_creatives, sync_catalogs, sync_audiences, and sync_event_sources so storyboards can use $context references instead of hardcoded IDs
+
 ## 4.26.2
 
 ### Patch Changes
