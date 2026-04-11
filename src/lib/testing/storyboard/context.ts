@@ -202,6 +202,22 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     // Governance registration — no IDs to extract, just confirmation
     return { governance_synced: true, governance_response: data };
   },
+
+  check_governance(data) {
+    const d = data as Record<string, unknown>;
+    const extracted: Record<string, unknown> = {};
+    if (d?.governance_context) extracted.governance_context = d.governance_context;
+    if (d?.check_id) extracted.check_id = d.check_id;
+    if (d?.status) extracted.governance_status = d.status;
+    return extracted;
+  },
+
+  report_plan_outcome(data) {
+    const d = data as Record<string, unknown>;
+    const extracted: Record<string, unknown> = {};
+    if (d?.status) extracted.outcome_status = d.status;
+    return extracted;
+  },
 };
 
 /**
