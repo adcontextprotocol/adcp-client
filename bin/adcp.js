@@ -977,17 +977,23 @@ async function handleStoryboardRun(args) {
   // --dry-run: preview mode — show the plan without executing
   if (dryRun) {
     if (jsonOutput) {
-      console.log(JSON.stringify({
-        storyboard_id: storyboard.id,
-        storyboard_title: storyboard.title,
-        agent_url: agentUrl,
-        protocol,
-        preview: true,
-        phases: storyboard.phases.map(p => ({
-          phase: p.title,
-          steps: p.steps.map(s => ({ id: s.id, title: s.title, task: s.task })),
-        })),
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            storyboard_id: storyboard.id,
+            storyboard_title: storyboard.title,
+            agent_url: agentUrl,
+            protocol,
+            preview: true,
+            phases: storyboard.phases.map(p => ({
+              phase: p.title,
+              steps: p.steps.map(s => ({ id: s.id, title: s.title, task: s.task })),
+            })),
+          },
+          null,
+          2
+        )
+      );
     } else {
       console.log(`\n${storyboard.title} (${storyboard.id})`);
       console.log('═'.repeat(50));

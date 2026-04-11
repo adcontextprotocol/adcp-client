@@ -373,7 +373,6 @@ describe('formatComplianceResults', () => {
             steps: [],
             summary: 'Passed',
             total_duration_ms: 100,
-
           },
         ],
         skipped_scenarios: [],
@@ -391,7 +390,6 @@ describe('formatComplianceResults', () => {
             steps: [{ step: 'Check pricing', passed: false, duration_ms: 50, error: 'No pricing options' }],
             summary: 'Failed',
             total_duration_ms: 50,
-
           },
         ],
         skipped_scenarios: [],

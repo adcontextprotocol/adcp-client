@@ -270,7 +270,6 @@ describe('formatSuiteResults', () => {
       failed_count: 0,
       total_duration_ms: 300,
       tested_at: '2025-01-01T00:00:00.000Z',
-
     };
 
     const output = formatSuiteResults(suite);
@@ -294,7 +293,6 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-
     };
 
     const output = formatSuiteResults(suite);
@@ -333,7 +331,6 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-
     };
 
     const output = formatSuiteResults(suite);
@@ -360,7 +357,6 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-
     };
 
     // Should not throw even without steps
@@ -389,7 +385,6 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-
     };
 
     const output = formatSuiteResults(suite);
@@ -409,7 +404,6 @@ describe('formatSuiteResults', () => {
       failed_count: 0,
       total_duration_ms: 100,
       tested_at: '2025-01-01T00:00:00.000Z',
-
     };
 
     const output = formatSuiteResults(suite);
@@ -435,7 +429,6 @@ describe('formatSuiteResultsJSON', () => {
       failed_count: 0,
       total_duration_ms: 0,
       tested_at: '2025-01-01T00:00:00.000Z',
-
     };
     const json = formatSuiteResultsJSON(suite);
     const parsed = JSON.parse(json);
