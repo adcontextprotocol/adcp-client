@@ -85,11 +85,6 @@ export function getLogger(): Logger {
 export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', options: TestOptions = {}) {
   const headers: Record<string, string> = {};
 
-  // Dry-run is true by default for safety
-  if (options.dry_run !== false) {
-    headers['X-Dry-Run'] = 'true';
-  }
-
   if (options.test_session_id) {
     headers['X-Test-Session-ID'] = options.test_session_id;
   }

@@ -39,7 +39,7 @@ function storyboardResult(overrides = {}) {
     failed_count: 0,
     skipped_count: 0,
     tested_at: '2026-01-01T00:00:00.000Z',
-    dry_run: true,
+
     ...overrides,
   };
 }

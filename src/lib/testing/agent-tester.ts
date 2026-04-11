@@ -5,7 +5,7 @@
  *
  * Features:
  * - Channel-aware testing (only tests features the agent supports)
- * - Optional dry-run mode (real testing requires actual media buys)
+ * - Sandbox mode for safe testing (real testing requires actual media buys)
  * - Comprehensive scenario coverage based on AdCP spec
  * - Schema validation via @adcp/client
  *
@@ -112,10 +112,9 @@ export async function testAgent(
   let profile: AgentProfile | undefined;
   const logger = getLogger();
 
-  // Default dry_run to true for safety
   const effectiveOptions: TestOptions = {
     ...options,
-    dry_run: options.dry_run !== false,
+    sandbox: options.sandbox !== false,
     test_session_id: options.test_session_id || `addie-test-${Date.now()}`,
   };
 
@@ -463,7 +462,6 @@ export async function testAgent(
     total_duration_ms: totalDuration,
     tested_at: new Date().toISOString(),
     agent_profile: profile,
-    dry_run: effectiveOptions.dry_run !== false,
   };
 
   logger.info({ agentUrl, scenario, overallPassed, passedCount, failedCount, totalDuration }, 'Agent test completed');

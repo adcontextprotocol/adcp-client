@@ -70,7 +70,6 @@ export function mapStoryboardResultsToTrackResult(
           : `${phase.phase_title}: ${steps.filter(s => !s.passed).length} step(s) failed`,
         total_duration_ms: phase.duration_ms,
         tested_at: sbResult.tested_at,
-        dry_run: sbResult.dry_run,
       };
 
       scenarios.push(testResult);

@@ -563,7 +563,7 @@ Run compliance tests with `adcp test <agent> <scenario>`. 24 built-in scenarios:
 |----------|---------------|
 | `health_check` | Basic connectivity check - verify agent responds |
 | `discovery` | Test get_products, list_creative_formats, list_authorized_properties |
-| `create_media_buy` | Discovery + create a test media buy (dry-run by default) |
+| `create_media_buy` | Discovery + create a test media buy (sandbox) |
 | `full_sales_flow` | Full lifecycle: discovery → create → update → delivery |
 | `creative_sync` | Test sync_creatives flow |
 | `creative_inline` | Test inline creatives in create_media_buy |

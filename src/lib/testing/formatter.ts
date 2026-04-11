@@ -13,7 +13,6 @@ export function formatTestResults(result: TestResult): string {
   output += `**Agent:** ${result.agent_url}\n`;
   output += `**Scenario:** ${result.scenario}\n`;
   output += `**Duration:** ${result.total_duration_ms}ms\n`;
-  output += `**Mode:** ${result.dry_run ? '🧪 Dry Run' : '🔴 Live'}\n`;
   output += `**Result:** ${result.summary}\n\n`;
 
   // Show agent profile if discovered

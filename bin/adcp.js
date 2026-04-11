@@ -235,7 +235,7 @@ async function handleTestCommand(args) {
     const descriptions = {
       health_check: 'Basic connectivity check - verify agent responds',
       discovery: 'Test get_products, list_creative_formats, list_authorized_properties',
-      create_media_buy: 'Discovery + create a test media buy (dry-run by default)',
+      create_media_buy: 'Discovery + create a test media buy (sandbox)',
       full_sales_flow: 'Full lifecycle: discovery → create → update → delivery',
       creative_sync: 'Test sync_creatives flow',
       creative_inline: 'Test inline creatives in create_media_buy',
@@ -304,7 +304,7 @@ async function handleTestCommand(args) {
 
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
-  const dryRun = !args.includes('--no-dry-run');
+  const dryRun = args.includes('--dry-run');
   const useOAuth = args.includes('--oauth');
 
   // Filter out flag arguments to find positional arguments
@@ -413,7 +413,6 @@ async function handleTestCommand(args) {
   // Build test options
   const testOptions = {
     protocol,
-    dry_run: dryRun,
     brief,
     ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
   };
@@ -421,7 +420,6 @@ async function handleTestCommand(args) {
   if (!jsonOutput) {
     console.log(`\n🧪 Running '${scenario}' tests against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
-    console.log(`   Dry Run: ${dryRun ? 'Yes (safe mode)' : 'No (real operations)'}`);
     console.log(`   Auth: ${oauthTokens ? 'oauth' : finalAuthToken ? 'configured' : 'none'}\n`);
   }
 
@@ -599,7 +597,7 @@ function parseAgentOptions(args) {
 
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
-  const dryRun = !args.includes('--no-dry-run');
+  const dryRun = args.includes('--dry-run');
 
   // Filter out flags and their values to find positional args
   const flagValues = [
@@ -782,7 +780,7 @@ OPTIONS:
   --json                JSON output (recommended for LLM consumption)
   --auth TOKEN          Authentication token
   --protocol PROTO      Force protocol: mcp or a2a
-  --no-dry-run          Execute real operations (default: dry-run)
+  --dry-run             Preview steps without executing
   --debug               Debug output
 
 EXAMPLES:
@@ -968,16 +966,44 @@ async function handleStoryboardRun(args) {
     authToken: resolvedAuth,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
+  const stepCount = storyboard.phases.reduce((sum, p) => sum + p.steps.length, 0);
+
   if (!jsonOutput) {
     console.error(`Running storyboard: ${storyboard.title}`);
     console.error(`Agent: ${agentUrl} (${protocol})`);
-    console.error(`Steps: ${storyboard.phases.reduce((sum, p) => sum + p.steps.length, 0)}`);
-    console.error(`Dry run: ${dryRun}\n`);
+    console.error(`Steps: ${stepCount}\n`);
+  }
+
+  // --dry-run: preview mode — show the plan without executing
+  if (dryRun) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({
+        storyboard_id: storyboard.id,
+        storyboard_title: storyboard.title,
+        agent_url: agentUrl,
+        protocol,
+        preview: true,
+        phases: storyboard.phases.map(p => ({
+          phase: p.title,
+          steps: p.steps.map(s => ({ id: s.id, title: s.title, task: s.task })),
+        })),
+      }, null, 2));
+    } else {
+      console.log(`\n${storyboard.title} (${storyboard.id})`);
+      console.log('═'.repeat(50));
+      for (const phase of storyboard.phases) {
+        console.log(`\n── Phase: ${phase.title} ──`);
+        for (const step of phase.steps) {
+          console.log(`  ${step.id}: ${step.title} → ${step.task}`);
+        }
+      }
+      console.log(`\n${stepCount} step(s) would be executed. Use without --dry-run to run.`);
+    }
+    return;
   }
 
   const options = {
     protocol,
-    dry_run: dryRun,
     ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
   };
 
@@ -1103,7 +1129,6 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
   const testOptions = {
     protocol,
-    dry_run: opts.dryRun,
     brief: opts.brief,
     tracks,
     storyboards,
@@ -1116,7 +1141,6 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
   if (!opts.jsonOutput) {
     console.log(`\nRunning storyboard assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
-    console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
     if (platform_type) console.log(`   Platform: ${platform_type}`);
     console.log(`   Timeout: ${timeoutMs / 1000}s`);
@@ -1151,7 +1175,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
 async function handleStoryboardStepCmd(args) {
   const { getStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
-  const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = parseAgentOptions(args);
+  const { authToken, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
 
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];
@@ -1188,7 +1212,6 @@ async function handleStoryboardStepCmd(args) {
 
   const options = {
     protocol,
-    dry_run: dryRun,
     context,
     request,
     ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),

@@ -42,7 +42,7 @@ describe('formatSuiteResults includes step-level failure details', () => {
       failed_count: 1,
       total_duration_ms: 2513,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);
@@ -88,7 +88,7 @@ describe('formatSuiteResults includes step-level failure details', () => {
       failed_count: 0,
       total_duration_ms: 500,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);
@@ -118,7 +118,7 @@ describe('formatSuiteResults includes step-level failure details', () => {
       failed_count: 1,
       total_duration_ms: 100,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);

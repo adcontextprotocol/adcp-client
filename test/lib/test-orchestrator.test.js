@@ -270,7 +270,7 @@ describe('formatSuiteResults', () => {
       failed_count: 0,
       total_duration_ms: 300,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);
@@ -280,7 +280,6 @@ describe('formatSuiteResults', () => {
     assert.ok(output.includes('2 passed'), 'should show pass count');
     assert.ok(output.includes('create_media_buy'), 'should list skipped scenarios');
     assert.ok(output.includes('health_check'), 'should list run scenarios');
-    assert.ok(output.includes('Dry Run'), 'should indicate dry run mode');
   });
 
   test('formats a failed suite correctly', () => {
@@ -295,7 +294,7 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);
@@ -334,7 +333,7 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);
@@ -361,7 +360,7 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     // Should not throw even without steps
@@ -390,7 +389,7 @@ describe('formatSuiteResults', () => {
       failed_count: 1,
       total_duration_ms: 50,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);
@@ -410,7 +409,7 @@ describe('formatSuiteResults', () => {
       failed_count: 0,
       total_duration_ms: 100,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
 
     const output = formatSuiteResults(suite);
@@ -436,7 +435,7 @@ describe('formatSuiteResultsJSON', () => {
       failed_count: 0,
       total_duration_ms: 0,
       tested_at: '2025-01-01T00:00:00.000Z',
-      dry_run: true,
+
     };
     const json = formatSuiteResultsJSON(suite);
     const parsed = JSON.parse(json);
