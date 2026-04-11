@@ -583,7 +583,11 @@ function parseAgentOptions(args) {
 
   const platformTypeIndex = args.indexOf('--platform-type');
   let platformTypeValue = null;
-  if (platformTypeIndex !== -1 && platformTypeIndex + 1 < args.length && !args[platformTypeIndex + 1].startsWith('--')) {
+  if (
+    platformTypeIndex !== -1 &&
+    platformTypeIndex + 1 < args.length &&
+    !args[platformTypeIndex + 1].startsWith('--')
+  ) {
     platformTypeValue = args[platformTypeIndex + 1];
   }
 
@@ -598,7 +602,17 @@ function parseAgentOptions(args) {
   const dryRun = !args.includes('--no-dry-run');
 
   // Filter out flags and their values to find positional args
-  const flagValues = [authToken, protocolFlag, brief, contextValue, requestValue, tracksValue, storyboardsValue, platformTypeValue, timeoutValue].filter(Boolean);
+  const flagValues = [
+    authToken,
+    protocolFlag,
+    brief,
+    contextValue,
+    requestValue,
+    tracksValue,
+    storyboardsValue,
+    platformTypeValue,
+    timeoutValue,
+  ].filter(Boolean);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
   return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, positionalArgs };
@@ -655,7 +669,12 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
 
 async function handleComplyCommand(args) {
   // 'adcp comply' is an alias for 'adcp storyboard run'
-  if (!args.includes('--json') && !args.includes('--help') && !args.includes('-h') && !args.includes('--list-platform-types')) {
+  if (
+    !args.includes('--json') &&
+    !args.includes('--help') &&
+    !args.includes('-h') &&
+    !args.includes('--list-platform-types')
+  ) {
     console.error('DEPRECATED: "adcp comply" will be removed in v5. Use "adcp storyboard run" instead.\n');
   }
 
