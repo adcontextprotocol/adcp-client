@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.26.2
+
+### Patch Changes
+
+- 49c0466: Add check_governance and report_plan_outcome context extractors to storyboard runner
+
 ## 4.26.1
 
 ### Patch Changes
