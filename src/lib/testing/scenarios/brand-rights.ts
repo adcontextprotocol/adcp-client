@@ -136,7 +136,6 @@ export async function testBrandRightsFlow(
           brand_domain: options.brand?.domain ?? 'example.com',
           brand_id: options.brand?.brand_id,
           rights_type: 'usage',
-          dry_run: options.dry_run !== false,
         }) as Promise<TaskResult>
     );
 
@@ -148,7 +147,6 @@ export async function testBrandRightsFlow(
           request_id: data['request_id'],
           status: data['status'],
           rights_id: data['rights_id'],
-          dry_run: data['dry_run'],
         },
         null,
         2
@@ -317,7 +315,6 @@ export async function testCreativeApproval(
             },
           ],
         },
-        dry_run: options.dry_run !== false,
       }) as Promise<TaskResult>
   );
 

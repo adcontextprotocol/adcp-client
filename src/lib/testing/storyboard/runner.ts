@@ -122,7 +122,6 @@ export async function runStoryboard(
     failed_count: failedCount,
     skipped_count: skippedCount,
     tested_at: new Date().toISOString(),
-    dry_run: options.dry_run !== false,
   };
 
   // Close MCP connections when the runner created its own client

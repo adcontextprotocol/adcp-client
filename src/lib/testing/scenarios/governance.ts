@@ -260,7 +260,7 @@ export async function testGovernancePropertyLists(
   }
 
   // Test: delete_property_list
-  if (profile.tools.includes('delete_property_list') && createdListId && options.dry_run === false) {
+  if (profile.tools.includes('delete_property_list') && createdListId) {
     const { result, step } = await runStep<TaskResult>(
       'Delete property list',
       'delete_property_list',
@@ -308,14 +308,6 @@ export async function testGovernancePropertyLists(
       }
       steps.push(errorStep);
     }
-  } else if (profile.tools.includes('delete_property_list') && createdListId) {
-    steps.push({
-      step: 'Delete property list',
-      task: 'delete_property_list',
-      passed: true,
-      duration_ms: 0,
-      details: 'Skipped in dry-run mode',
-    });
   }
 
   return { steps, profile };
@@ -749,8 +741,8 @@ export async function testPropertyListFilters(
   }
   steps.push(getStep);
 
-  // Cleanup: delete if not dry-run
-  if (options.dry_run === false && profile.tools.includes('delete_property_list')) {
+  // Cleanup
+  if (profile.tools.includes('delete_property_list')) {
     const { result: delResult, step: delStep } = await runStep<TaskResult>(
       'Delete test property list (cleanup)',
       'delete_property_list',

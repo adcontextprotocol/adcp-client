@@ -373,7 +373,6 @@ describe('formatComplianceResults', () => {
             steps: [],
             summary: 'Passed',
             total_duration_ms: 100,
-            dry_run: true,
           },
         ],
         skipped_scenarios: [],
@@ -391,7 +390,6 @@ describe('formatComplianceResults', () => {
             steps: [{ step: 'Check pricing', passed: false, duration_ms: 50, error: 'No pricing options' }],
             summary: 'Failed',
             total_duration_ms: 50,
-            dry_run: true,
           },
         ],
         skipped_scenarios: [],
@@ -442,7 +440,6 @@ describe('formatComplianceResults', () => {
     storyboards_executed: ['capability_discovery', 'schema_validation'],
     tested_at: new Date().toISOString(),
     total_duration_ms: 150,
-    dry_run: true,
   };
 
   test('includes agent name and URL', () => {

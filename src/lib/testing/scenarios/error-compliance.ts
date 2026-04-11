@@ -113,7 +113,6 @@ export async function testErrorCodes(
 
   const authToken = options.auth?.type === 'bearer' ? options.auth.token : undefined;
   const headers: Record<string, string> = {};
-  if (options.dry_run !== false) headers['X-Dry-Run'] = 'true';
 
   let correctCodes = 0;
   let totalChecked = 0;
@@ -247,7 +246,6 @@ export async function testErrorStructure(
 
   const authToken = options.auth?.type === 'bearer' ? options.auth.token : undefined;
   const headers: Record<string, string> = {};
-  if (options.dry_run !== false) headers['X-Dry-Run'] = 'true';
 
   const start = Date.now();
   // Use first provocation to get an error response
@@ -350,7 +348,6 @@ export async function testErrorTransport(
 
   const authToken = options.auth?.type === 'bearer' ? options.auth.token : undefined;
   const headers: Record<string, string> = {};
-  if (options.dry_run !== false) headers['X-Dry-Run'] = 'true';
 
   const start = Date.now();
   const provocation = createProvocations()[0]!;

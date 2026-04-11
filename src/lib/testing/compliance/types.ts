@@ -95,7 +95,6 @@ export interface ComplianceResult {
   controller_scenarios?: string[];
   tested_at: string;
   total_duration_ms: number;
-  dry_run: boolean;
 }
 
 export interface ComplianceSummary {

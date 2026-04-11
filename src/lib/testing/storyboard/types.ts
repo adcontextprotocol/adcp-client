@@ -185,5 +185,4 @@ export interface StoryboardResult {
   failed_count: number;
   skipped_count: number;
   tested_at: string;
-  dry_run: boolean;
 }

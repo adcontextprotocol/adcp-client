@@ -158,7 +158,7 @@ export async function testSignalsFlow(
         } else if (result && !result.success) {
           // Check if this is an expected failure (e.g., destination not supported)
           const error = result.error || '';
-          if (error.includes('not supported') || error.includes('invalid destination') || error.includes('dry_run')) {
+          if (error.includes('not supported') || error.includes('invalid destination')) {
             step.passed = true;
             step.details = `Expected rejection: ${error}`;
           } else {

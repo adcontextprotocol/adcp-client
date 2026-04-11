@@ -277,7 +277,7 @@ Useful flags:
 - `--list-platform-types`: Show all available platform types
 - `--tracks core,products,...`: Restrict the run to specific tracks
 - `--brief TEXT`: Override the default sample discovery brief
-- `--no-dry-run`: Use live mode instead of dry-run mode
+- `--dry-run`: Preview steps without executing
 - `--json`: Emit machine-readable output for automation
 
 ## Environment Variables

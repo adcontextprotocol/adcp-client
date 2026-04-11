@@ -84,8 +84,6 @@ export interface TestOptions {
   format_ids?: string[];
   // Test session ID for isolation
   test_session_id?: string;
-  // Whether to use dry-run mode (default: true for safety)
-  dry_run?: boolean;
   // Channels to focus on (if not specified, tests all agent supports)
   channels?: string[];
   // Specific pricing models to test
@@ -208,8 +206,6 @@ export interface TestResult {
   tested_at: string;
   // Agent profile discovered during testing
   agent_profile?: AgentProfile;
-  // Was this run in dry-run mode?
-  dry_run: boolean;
 }
 
 export interface SuiteResult {
@@ -230,7 +226,6 @@ export interface SuiteResult {
   /** Wall-clock time including capability discovery and all scenario runs */
   total_duration_ms: number;
   tested_at: string;
-  dry_run: boolean;
 }
 
 // Generic task result from executeTask

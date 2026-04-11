@@ -182,7 +182,7 @@ export function getApplicableScenarios(tools: string[], filter?: readonly TestSc
  * Run all applicable test scenarios against an agent and return aggregated results.
  *
  * Scenarios are run sequentially. Each scenario re-uses the same TestOptions
- * (including auth, dry_run, brand, etc.). The total duration includes the
+ * (including auth, brand, etc.). The total duration includes the
  * initial capability discovery call.
  *
  * Note: testAllScenarios creates a client for capability discovery, then each
@@ -199,7 +199,7 @@ export async function testAllScenarios(agentUrl: string, options: OrchestratorOp
 
   const effectiveOptions: TestOptions = {
     ...testOptions,
-    dry_run: testOptions.dry_run !== false,
+    sandbox: testOptions.sandbox !== false,
     test_session_id: testOptions.test_session_id || `addie-suite-${Date.now()}`,
   };
 
@@ -223,7 +223,6 @@ export async function testAllScenarios(agentUrl: string, options: OrchestratorOp
       failed_count: 0,
       total_duration_ms: Date.now() - start,
       tested_at: new Date().toISOString(),
-      dry_run: effectiveOptions.dry_run !== false,
     };
   }
 
@@ -252,7 +251,6 @@ export async function testAllScenarios(agentUrl: string, options: OrchestratorOp
     failed_count: failedCount,
     total_duration_ms: Date.now() - start,
     tested_at: new Date().toISOString(),
-    dry_run: effectiveOptions.dry_run !== false,
   };
 }
 
@@ -265,7 +263,6 @@ export function formatSuiteResults(suite: SuiteResult): string {
   output += `**Agent:** ${suite.agent_url}\n`;
   output += `**Agent Name:** ${suite.agent_profile.name}\n`;
   output += `**Duration:** ${suite.total_duration_ms}ms\n`;
-  output += `**Mode:** ${suite.dry_run ? '🧪 Dry Run' : '🔴 Live'}\n`;
   if (suite.scenarios_run.length === 0) {
     output += `**Result:** No applicable scenarios found for this agent.\n\n`;
   } else {

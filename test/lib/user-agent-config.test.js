@@ -250,7 +250,6 @@ describe('userAgent config', () => {
       // We verify by checking the agent config it was constructed with
       const client = createTestClient('https://agent.example.com/mcp', 'mcp', {
         userAgent: 'AAO-ComplianceCheck/1.0',
-        dry_run: true,
       });
 
       // The client's getAgent() should reflect the injected User-Agent
@@ -265,12 +264,9 @@ describe('userAgent config', () => {
     test('does not inject User-Agent when userAgent option is not set', () => {
       const { createTestClient } = require('../../dist/lib/testing/client.js');
 
-      const client = createTestClient('https://agent.example.com/mcp', 'mcp', {
-        dry_run: true,
-      });
+      const client = createTestClient('https://agent.example.com/mcp', 'mcp', {});
 
       const agent = client.getAgent();
-      // Headers may have X-Dry-Run but should not have User-Agent
       assert.strictEqual(
         agent.headers?.['User-Agent'],
         undefined,

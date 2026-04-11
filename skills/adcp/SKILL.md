@@ -124,7 +124,7 @@ When `--platform-type` and `--tracks` are both set, `--tracks` controls which st
 - `--tracks TRACKS` — Comma-separated tracks to test
 - `--list-platform-types` — Show available platform types
 - `--debug` — Verbose logging
-- `--no-dry-run` — Execute real operations (default is dry-run)
+- `--dry-run` — Preview steps without executing
 
 ### JSON output structure
 
@@ -203,7 +203,7 @@ Run `adcp test --list-scenarios` for all 24 with descriptions.
 - `--json` — Machine-readable output for CI
 - `--debug` — Verbose logging
 - `--protocol mcp|a2a` — Force protocol
-- `--no-dry-run` — Execute real operations (default is dry-run)
+- `--dry-run` — Preview steps without executing
 - `--brief "text"` — Custom brief for product discovery tests
 
 ## Registry

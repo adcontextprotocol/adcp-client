@@ -85,7 +85,7 @@ describe('Testing Framework Deprecation Warnings', () => {
       scenario: 'creative_flow',
       overall_passed: true,
       total_duration_ms: 1000,
-      dry_run: true,
+
       steps: [
         { step: 'Step 1', passed: true, duration_ms: 100 },
         {
@@ -111,7 +111,7 @@ describe('Testing Framework Deprecation Warnings', () => {
       scenario: 'creative_flow',
       overall_passed: true,
       total_duration_ms: 1000,
-      dry_run: true,
+
       summary: '3/3 passed',
       steps: [
         {

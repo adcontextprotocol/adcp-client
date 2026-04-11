@@ -176,7 +176,7 @@ function collectObservations(
               track,
               message:
                 'Agent does not confirm sandbox mode in get_media_buys response. ' +
-                'Include sandbox: true so buyers can verify the agent honored dry_run mode.',
+                'Include sandbox: true so buyers can verify the agent honored sandbox mode.',
             });
           }
 
@@ -634,7 +634,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   try {
     const effectiveOptions: TestOptions = {
       ...testOptions,
-      dry_run: testOptions.dry_run !== false,
+      sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
     };
 
@@ -796,7 +796,6 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
       tested_at: new Date().toISOString(),
       total_duration_ms: Date.now() - start,
-      dry_run: effectiveOptions.dry_run !== false,
     };
   } finally {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
@@ -885,7 +884,6 @@ async function buildUnreachableResult(
     storyboards_executed: [],
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
-    dry_run: effectiveOptions.dry_run !== false,
   };
 }
 
@@ -952,7 +950,7 @@ export function formatComplianceResults(result: ComplianceResult): string {
   output += `Agent:    ${result.agent_url}\n`;
   output += `Name:     ${result.agent_profile.name}\n`;
   output += `Tools:    ${result.agent_profile.tools.length}\n`;
-  output += `Mode:     ${result.dry_run ? 'Dry Run' : 'Live'}\n`;
+  output += `Mode:     Sandbox\n`;
   if (result.platform_coherence) {
     output += `Platform: ${result.platform_coherence.label}\n`;
   }
