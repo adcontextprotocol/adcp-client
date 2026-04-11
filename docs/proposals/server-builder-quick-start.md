@@ -1,6 +1,6 @@
 # Server Builder Quick Start
 
-How to build an AdCP MCP server that passes `comply`. Focuses on the non-obvious pitfalls.
+How to build an AdCP MCP server that passes `storyboard run`. Focuses on the non-obvious pitfalls.
 
 ## The Minimum Viable Server
 
@@ -43,7 +43,7 @@ Right:
 Key details:
 - `adcp.major_versions` is an array of integers, not a version string.
 - `supported_protocols` lists **domain protocols** (media_buy, signals, governance, creative, sponsored_intelligence), not transport protocols (mcp, a2a).
-- If you get this wrong, `parseCapabilitiesResponse` silently produces a "supports nothing" capabilities object. There is no error. Your server will appear to work but comply will report cross-validation failures.
+- If you get this wrong, `parseCapabilitiesResponse` silently produces a "supports nothing" capabilities object. There is no error. Your server will appear to work but `storyboard run` will report cross-validation failures.
 
 ## Pitfall 2: Product Schema Required Fields
 
@@ -153,15 +153,15 @@ The response must include the full media buy object with packages array. Comply 
 | Reporting (1) | full_sales_flow (reused) | get_media_buy_delivery returns valid delivery data |
 | Error Handling (3) | error_codes, error_structure, error_transport | Errors use AdCP error codes and structuredContent |
 
-## Comply Quick Reference
+## Storyboard Quick Reference
 
 ```bash
 # Run all tracks
-npx @adcp/client comply http://localhost:3456/mcp
+npx @adcp/client storyboard run http://localhost:3456/mcp
 
 # Run one track
-npx @adcp/client comply http://localhost:3456/mcp --track core
+npx @adcp/client storyboard run http://localhost:3456/mcp --track core
 
 # JSON output for debugging
-npx @adcp/client comply http://localhost:3456/mcp --format json
+npx @adcp/client storyboard run http://localhost:3456/mcp --format json
 ```

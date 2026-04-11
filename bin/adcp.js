@@ -568,12 +568,37 @@ function parseAgentOptions(args) {
     requestValue = args[requestIndex + 1];
   }
 
+  // Assessment flags (--tracks, --storyboards, --platform-type, --timeout)
+  const tracksIndex = args.indexOf('--tracks');
+  let tracksValue = null;
+  if (tracksIndex !== -1 && tracksIndex + 1 < args.length && !args[tracksIndex + 1].startsWith('--')) {
+    tracksValue = args[tracksIndex + 1];
+  }
+
+  const storyboardsIndex = args.indexOf('--storyboards');
+  let storyboardsValue = null;
+  if (storyboardsIndex !== -1 && storyboardsIndex + 1 < args.length && !args[storyboardsIndex + 1].startsWith('--')) {
+    storyboardsValue = args[storyboardsIndex + 1];
+  }
+
+  const platformTypeIndex = args.indexOf('--platform-type');
+  let platformTypeValue = null;
+  if (platformTypeIndex !== -1 && platformTypeIndex + 1 < args.length && !args[platformTypeIndex + 1].startsWith('--')) {
+    platformTypeValue = args[platformTypeIndex + 1];
+  }
+
+  const timeoutIndex = args.indexOf('--timeout');
+  let timeoutValue = null;
+  if (timeoutIndex !== -1 && timeoutIndex + 1 < args.length && !args[timeoutIndex + 1].startsWith('--')) {
+    timeoutValue = args[timeoutIndex + 1];
+  }
+
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = !args.includes('--no-dry-run');
 
   // Filter out flags and their values to find positional args
-  const flagValues = [authToken, protocolFlag, brief, contextValue, requestValue].filter(Boolean);
+  const flagValues = [authToken, protocolFlag, brief, contextValue, requestValue, tracksValue, storyboardsValue, platformTypeValue, timeoutValue].filter(Boolean);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
   return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, positionalArgs };
@@ -629,208 +654,27 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
 }
 
 async function handleComplyCommand(args) {
-  // Handle --list-platform-types before anything else
+  // 'adcp comply' is an alias for 'adcp storyboard run'
+  if (!args.includes('--json') && !args.includes('--help') && !args.includes('-h') && !args.includes('--list-platform-types')) {
+    console.error('DEPRECATED: "adcp comply" will be removed in v5. Use "adcp storyboard run" instead.\n');
+  }
+
+  // Handle --list-platform-types
   if (args.includes('--list-platform-types')) {
-    const { getPlatformTypesWithLabels, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
-    const types = getPlatformTypesWithLabels();
-    console.log('\nAvailable platform types:\n');
-    for (const { id, label } of types) {
-      const profile = getPlatformProfile(id);
-      console.log(`  ${id}`);
-      console.log(`    ${label}`);
-      console.log(`    Expected tracks: ${profile.expected_tracks.join(', ')}`);
-      console.log('');
-    }
+    await handleStoryboardListPlatformTypes();
     return;
   }
 
   if (args.includes('--help') || args.length === 0) {
     console.log(`
-AdCP Comply - Compliance Assessment
-
-USAGE:
-  adcp comply <agent> [options]
-
-DESCRIPTION:
-  Runs all applicable capability tracks against an agent and reports
-  results for every track. Never stops at the first failure — shows
-  the full picture.
-
-  Tracks: core, products, media_buy, creative, reporting, governance,
-          signals, si, audiences, error_handling
-
-OPTIONS:
-  --auth TOKEN             Authentication token (overrides saved tokens)
-  --protocol PROTO         Force protocol: mcp or a2a
-  --tracks TRACKS          Comma-separated tracks to run (default: all applicable)
-  --storyboards IDS        Comma-separated storyboard IDs to run (highest priority)
-  --platform-type TYPE     Declare platform type for coherence checking
-  --list-platform-types    List all available platform types
-  --timeout SECONDS        Timeout in seconds (default: 120)
-  --brief TEXT             Custom brief for product discovery
-  --json                   Output raw JSON
-  --debug                  Show debug output
-  --no-dry-run             Run in live mode (default: dry run)
-
-EXAMPLES:
-  adcp comply test-mcp
-  adcp comply myagent                                    # uses saved OAuth tokens automatically
-  adcp comply test-mcp --tracks core,products,media_buy
-  adcp comply test-mcp --storyboards media_buy_seller,error_compliance
-  adcp comply test-mcp --platform-type social_platform
-  adcp comply https://my-agent.com/mcp --auth my-token
-  adcp comply test-mcp --json | jq '.summary'
-  adcp comply --list-platform-types
+DEPRECATED: "adcp comply" will be removed in v5.
+Use "adcp storyboard run" instead. Run "adcp storyboard run --help" for full usage.
 `);
     return;
   }
 
-  // Detect unknown flags before parsing
-  const knownFlags = [
-    '--auth',
-    '--protocol',
-    '--tracks',
-    '--storyboards',
-    '--platform-type',
-    '--list-platform-types',
-    '--brief',
-    '--json',
-    '--debug',
-    '--timeout',
-    '--no-dry-run',
-    '--help',
-  ];
-  const unknownFlags = args.filter(a => a.startsWith('--') && !knownFlags.includes(a));
-  if (unknownFlags.length > 0) {
-    for (const flag of unknownFlags) {
-      const suggestion = closestFlag(flag, knownFlags);
-      if (suggestion) {
-        console.error(`ERROR: Unknown flag: ${flag}\nDid you mean: ${suggestion}?\n`);
-      } else {
-        console.error(`ERROR: Unknown flag: ${flag}\n`);
-      }
-    }
-    process.exit(2);
-  }
-
-  const opts = parseAgentOptions(args);
-
-  if (opts.positionalArgs.length === 0) {
-    console.error('ERROR: comply requires an agent alias or URL\n');
-    process.exit(2);
-  }
-
-  const {
-    agentUrl,
-    protocol,
-    authToken: finalAuthToken,
-  } = await resolveAgent(opts.positionalArgs[0], opts.authToken, opts.protocolFlag, opts.jsonOutput);
-
-  // Parse --tracks
-  const tracksIndex = args.indexOf('--tracks');
-  let tracks;
-  if (tracksIndex !== -1 && tracksIndex + 1 < args.length) {
-    tracks = args[tracksIndex + 1].split(',');
-  }
-
-  // Parse --storyboards
-  const storyboardsIndex = args.indexOf('--storyboards');
-  let storyboards;
-  if (storyboardsIndex !== -1 && storyboardsIndex + 1 < args.length) {
-    storyboards = args[storyboardsIndex + 1].split(',');
-    // Validate against bundled storyboard IDs
-    const { listStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
-    const knownIds = new Set(listStoryboards().map(s => s.id));
-    const unknown = storyboards.filter(id => !knownIds.has(id));
-    if (unknown.length > 0) {
-      console.error(`ERROR: Unknown storyboard ID(s): ${unknown.join(', ')}`);
-      console.error(`Available: ${[...knownIds].sort().join(', ')}`);
-      console.error(`Run 'adcp storyboard list' to see all options.\n`);
-      process.exit(2);
-    }
-  }
-
-  // Parse --platform-type
-  const platformTypeIndex = args.indexOf('--platform-type');
-  let platform_type;
-  if (platformTypeIndex !== -1 && platformTypeIndex + 1 < args.length) {
-    platform_type = args[platformTypeIndex + 1];
-    // Validate against known types
-    const { getAllPlatformTypes } = await import('../dist/lib/testing/compliance/index.js');
-    const validTypes = getAllPlatformTypes();
-    if (!validTypes.includes(platform_type)) {
-      console.error(`ERROR: Unknown platform type: ${platform_type}`);
-      console.error(`Valid types: ${validTypes.join(', ')}`);
-      console.error(`Run 'adcp comply --list-platform-types' to see all options.\n`);
-      process.exit(2);
-    }
-  }
-
-  // Parse --timeout (seconds, default 120)
-  const timeoutFlagIndex = args.indexOf('--timeout');
-  const DEFAULT_COMPLY_TIMEOUT_S = 120;
-  let complyTimeoutMs = DEFAULT_COMPLY_TIMEOUT_S * 1000;
-  if (timeoutFlagIndex !== -1) {
-    if (timeoutFlagIndex + 1 >= args.length || args[timeoutFlagIndex + 1].startsWith('--')) {
-      console.error('ERROR: --timeout requires a value (seconds)\n');
-      process.exit(2);
-    }
-    const seconds = parseInt(args[timeoutFlagIndex + 1], 10);
-    if (isNaN(seconds) || seconds <= 0) {
-      console.error(`ERROR: --timeout must be a positive integer (seconds), got: ${args[timeoutFlagIndex + 1]}`);
-      process.exit(2);
-    }
-    complyTimeoutMs = seconds * 1000;
-  }
-
-  const agentAlias = opts.positionalArgs[0];
-  const testOptions = {
-    protocol,
-    dry_run: opts.dryRun,
-    brief: opts.brief,
-    tracks,
-    storyboards,
-    platform_type,
-    timeout_ms: complyTimeoutMs,
-    agent_alias: agentAlias !== agentUrl ? agentAlias : undefined,
-    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
-  };
-
-  if (!opts.jsonOutput) {
-    console.log(`\n🔍 Running compliance assessment against ${agentUrl}`);
-    console.log(`   Protocol: ${protocol.toUpperCase()}`);
-    console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
-    if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
-    if (platform_type) console.log(`   Platform: ${platform_type}`);
-    console.log(`   Timeout: ${complyTimeoutMs / 1000}s`);
-    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
-  }
-
-  try {
-    const { comply, formatComplianceResults, formatComplianceResultsJSON } =
-      await import('../dist/lib/testing/compliance/index.js');
-
-    // Silence logger unless debug
-    const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
-    if (!opts.debug) {
-      setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
-    }
-
-    const result = await comply(agentUrl, testOptions);
-
-    if (opts.jsonOutput) {
-      console.log(formatComplianceResultsJSON(result));
-    } else {
-      console.log(formatComplianceResults(result));
-    }
-
-    const hasFailures = result.summary.tracks_failed > 0;
-    process.exit(hasFailures ? 3 : 0);
-  } catch (error) {
-    console.error(`\n❌ Compliance assessment failed: ${error.message}`);
-    if (opts.debug) console.error(error.stack);
-    process.exit(1);
-  }
+  // Delegate to storyboard run (full assessment mode)
+  await handleStoryboardRun(args);
 }
 
 function printUsage() {
@@ -842,8 +686,8 @@ USAGE:
   adcp <command> [args]
 
 COMMANDS:
-  comply <agent> [options]    Full compliance assessment ("does my agent work?")
-  storyboard <subcommand>     Debug specific flows step by step
+  storyboard <subcommand>     Test agent flows (run, list, show, step)
+  comply <agent> [options]    DEPRECATED — use "storyboard run" instead
   test <agent> [scenario]     Run individual test scenarios (legacy)
   registry <command>          Brand/property registry lookups
 
@@ -852,7 +696,8 @@ COMMANDS:
 QUICK START:
   adcp test-mcp                                    List tools on the test agent
   adcp test-mcp get_products '{"brief":"coffee"}'  Call a tool
-  adcp comply test-mcp --platform-type dsp         Run compliance check
+  adcp storyboard run test-mcp --platform-type dsp Run all matching storyboards
+  adcp storyboard run test-mcp media_buy_seller    Run a single storyboard
   adcp test test-mcp full_sales_flow               Run test scenario
 
 AGENT MANAGEMENT:
@@ -894,14 +739,22 @@ Storyboard-driven testing
 USAGE:
   adcp storyboard list [--platform-type TYPE] [--json]
   adcp storyboard show <storyboard_id> [--json]
-  adcp storyboard run <agent> <storyboard_id> [options]
+  adcp storyboard run <agent> [storyboard_id] [options]
   adcp storyboard step <agent> <storyboard_id> <step_id> [options]
 
 SUBCOMMANDS:
   list                List available storyboards
   show <id>           Show storyboard structure (phases, steps)
-  run <agent> <id>    Run entire storyboard against an agent
+  run <agent> [id]    Run storyboard(s) against an agent (omit id to run all matching)
   step <agent> <id> <step_id>  Run a single step (stateless, LLM-friendly)
+
+RUN OPTIONS (when no storyboard_id):
+  --tracks TRACKS          Comma-separated tracks to run (default: all applicable)
+  --storyboards IDS        Comma-separated storyboard IDs to run
+  --platform-type TYPE     Declare platform type for coherence checking
+  --list-platform-types    List all available platform types
+  --timeout SECONDS        Timeout in seconds (default: 120)
+  --brief TEXT             Custom brief for product discovery
 
 OPTIONS:
   --platform-type TYPE  Filter storyboards by platform type (list only)
@@ -914,10 +767,13 @@ OPTIONS:
   --debug               Debug output
 
 EXAMPLES:
+  adcp storyboard run test-mcp                             # run all matching storyboards
+  adcp storyboard run test-mcp --platform-type dsp         # run with platform coherence
+  adcp storyboard run test-mcp --tracks core,products      # run specific tracks
+  adcp storyboard run test-mcp media_buy_seller --json     # run a single storyboard
   adcp storyboard list
   adcp storyboard list --platform-type retail_media --json
   adcp storyboard show media_buy_seller
-  adcp storyboard run test-mcp media_buy_seller --json
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
   adcp storyboard step test-mcp media_buy_seller get_products_brief \\
     --context '{"account_id":"abc123"}' --json
@@ -1057,15 +913,28 @@ async function handleStoryboardShow(args) {
 }
 
 async function handleStoryboardRun(args) {
+  // Handle --list-platform-types before anything else
+  if (args.includes('--list-platform-types')) {
+    await handleStoryboardListPlatformTypes();
+    return;
+  }
+
   const { getStoryboardById, runStoryboard } = await import('../dist/lib/testing/storyboard/index.js');
-  const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = parseAgentOptions(args);
+  const opts = parseAgentOptions(args);
+  const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = opts;
 
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];
 
-  if (!agentArg || !storyboardId) {
-    console.error('Usage: adcp storyboard run <agent> <storyboard_id> [options]');
+  if (!agentArg) {
+    console.error('Usage: adcp storyboard run <agent> [storyboard_id] [options]');
     process.exit(2);
+  }
+
+  // No storyboard ID → run all matching storyboards (full assessment)
+  if (!storyboardId) {
+    await runFullAssessment(agentArg, args, opts);
+    return;
   }
 
   const storyboard = getStoryboardById(storyboardId);
@@ -1133,6 +1002,132 @@ async function handleStoryboardRun(args) {
   }
 
   process.exit(result.overall_passed ? 0 : 3);
+}
+
+async function handleStoryboardListPlatformTypes() {
+  const { getPlatformTypesWithLabels, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
+  const types = getPlatformTypesWithLabels();
+  console.log('\nAvailable platform types:\n');
+  for (const { id, label } of types) {
+    const profile = getPlatformProfile(id);
+    console.log(`  ${id}`);
+    console.log(`    ${label}`);
+    console.log(`    Expected tracks: ${profile.expected_tracks.join(', ')}`);
+    console.log('');
+  }
+}
+
+// Shared implementation: run all matching storyboards against an agent
+async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
+  const opts = parsedOpts || parseAgentOptions(rawArgs);
+
+  const {
+    agentUrl,
+    protocol,
+    authToken: finalAuthToken,
+  } = await resolveAgent(agentArg, opts.authToken, opts.protocolFlag, opts.jsonOutput);
+
+  // Parse --tracks
+  const tracksIndex = rawArgs.indexOf('--tracks');
+  let tracks;
+  if (tracksIndex !== -1 && tracksIndex + 1 < rawArgs.length) {
+    tracks = rawArgs[tracksIndex + 1].split(',');
+  }
+
+  // Parse --storyboards
+  const storyboardsIndex = rawArgs.indexOf('--storyboards');
+  let storyboards;
+  if (storyboardsIndex !== -1 && storyboardsIndex + 1 < rawArgs.length) {
+    storyboards = rawArgs[storyboardsIndex + 1].split(',');
+    const { listStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
+    const knownIds = new Set(listStoryboards().map(s => s.id));
+    const unknown = storyboards.filter(id => !knownIds.has(id));
+    if (unknown.length > 0) {
+      console.error(`ERROR: Unknown storyboard ID(s): ${unknown.join(', ')}`);
+      console.error(`Available: ${[...knownIds].sort().join(', ')}`);
+      console.error(`Run 'adcp storyboard list' to see all options.\n`);
+      process.exit(2);
+    }
+  }
+
+  // Parse --platform-type
+  const platformTypeIndex = rawArgs.indexOf('--platform-type');
+  let platform_type;
+  if (platformTypeIndex !== -1 && platformTypeIndex + 1 < rawArgs.length) {
+    platform_type = rawArgs[platformTypeIndex + 1];
+    const { getAllPlatformTypes } = await import('../dist/lib/testing/compliance/index.js');
+    const validTypes = getAllPlatformTypes();
+    if (!validTypes.includes(platform_type)) {
+      console.error(`ERROR: Unknown platform type: ${platform_type}`);
+      console.error(`Valid types: ${validTypes.join(', ')}`);
+      console.error(`Run 'adcp storyboard run --list-platform-types' to see all options.\n`);
+      process.exit(2);
+    }
+  }
+
+  // Parse --timeout (seconds, default 120)
+  const timeoutFlagIndex = rawArgs.indexOf('--timeout');
+  const DEFAULT_TIMEOUT_S = 120;
+  let timeoutMs = DEFAULT_TIMEOUT_S * 1000;
+  if (timeoutFlagIndex !== -1) {
+    if (timeoutFlagIndex + 1 >= rawArgs.length || rawArgs[timeoutFlagIndex + 1].startsWith('--')) {
+      console.error('ERROR: --timeout requires a value (seconds)\n');
+      process.exit(2);
+    }
+    const seconds = parseInt(rawArgs[timeoutFlagIndex + 1], 10);
+    if (isNaN(seconds) || seconds <= 0) {
+      console.error(`ERROR: --timeout must be a positive integer (seconds), got: ${rawArgs[timeoutFlagIndex + 1]}`);
+      process.exit(2);
+    }
+    timeoutMs = seconds * 1000;
+  }
+
+  const testOptions = {
+    protocol,
+    dry_run: opts.dryRun,
+    brief: opts.brief,
+    tracks,
+    storyboards,
+    platform_type,
+    timeout_ms: timeoutMs,
+    agent_alias: agentArg !== agentUrl ? agentArg : undefined,
+    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
+  };
+
+  if (!opts.jsonOutput) {
+    console.log(`\nRunning storyboard assessment against ${agentUrl}`);
+    console.log(`   Protocol: ${protocol.toUpperCase()}`);
+    console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
+    if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
+    if (platform_type) console.log(`   Platform: ${platform_type}`);
+    console.log(`   Timeout: ${timeoutMs / 1000}s`);
+    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
+  }
+
+  try {
+    const { comply, formatComplianceResults, formatComplianceResultsJSON } =
+      await import('../dist/lib/testing/compliance/index.js');
+
+    const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
+    if (!opts.debug) {
+      setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
+    }
+
+    const result = await comply(agentUrl, testOptions);
+
+    if (opts.jsonOutput) {
+      console.log(formatComplianceResultsJSON(result));
+    } else {
+      console.log(formatComplianceResults(result));
+    }
+
+    const hasFailures = result.summary.tracks_failed > 0;
+    process.exit(hasFailures ? 3 : 0);
+  } catch (error) {
+    console.error(`\nAssessment failed: ${error.message}`);
+    if (opts.debug) console.error(error.stack);
+    process.exit(1);
+  }
 }
 
 async function handleStoryboardStepCmd(args) {
