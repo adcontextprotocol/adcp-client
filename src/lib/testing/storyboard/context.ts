@@ -204,17 +204,19 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   },
 
   check_governance(data) {
-    const d = data as Record<string, unknown>;
+    const d = data as Record<string, unknown> | undefined;
     const extracted: Record<string, unknown> = {};
     if (d?.governance_context) extracted.governance_context = d.governance_context;
     if (d?.check_id) extracted.check_id = d.check_id;
+    if (d?.plan_id) extracted.plan_id = d.plan_id;
     if (d?.status) extracted.governance_status = d.status;
     return extracted;
   },
 
   report_plan_outcome(data) {
-    const d = data as Record<string, unknown>;
+    const d = data as Record<string, unknown> | undefined;
     const extracted: Record<string, unknown> = {};
+    if (d?.outcome_id) extracted.outcome_id = d.outcome_id;
     if (d?.status) extracted.outcome_status = d.status;
     return extracted;
   },
