@@ -122,7 +122,7 @@ phases:
             agent_url: "https://your-agent.example.com"
             id: "display_300x250_generative"
           brand:
-            domain: "acme-outdoor.example.com"
+            domain: "acmeoutdoor.example"
           quality: "draft"
           include_preview: true
 
@@ -180,7 +180,7 @@ phases:
             agent_url: "https://your-agent.example.com"
             id: "display_300x250_generative"
           brand:
-            domain: "acme-outdoor.example.com"
+            domain: "acmeoutdoor.example"
           quality: "draft"
           include_preview: true
 
@@ -246,7 +246,7 @@ phases:
             - agent_url: "https://your-agent.example.com"
               id: "display_320x50_generative"
           brand:
-            domain: "acme-outdoor.example.com"
+            domain: "acmeoutdoor.example"
           quality: "production"
 
         validations:
@@ -302,7 +302,7 @@ phases:
             agent_url: "https://your-agent.example.com"
             id: "display_300x250_generative"
           brand:
-            domain: "acme-outdoor.example.com"
+            domain: "acmeoutdoor.example"
           quality: "production"
           include_preview: true
 

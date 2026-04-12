@@ -1,18 +1,23 @@
 # Acme Outdoor — Sample Advertiser Test Kit
 #
+# Entity definition: fictional-entities.yaml → advertisers[acme_outdoor]
+#
 # Provides the "ingredients" needed to test creative agent storyboards:
 # a brand identity, sample assets at common dimensions, and sample text.
 #
-# Acme Outdoor is a fictional outdoor gear brand from the AdCP character bible.
-# Use this test kit with any storyboard that requires an advertiser brand.
+# This brand is registered as a sandbox brand in AgenticAdvertising.org (AAO).
+# Agents resolve acmeoutdoor.example via the standard AAO brand resolution path.
+# AAO returns the brand.json below but excludes sandbox brands from production
+# brand discovery results.
 
 id: acme_outdoor
 name: "Acme Outdoor"
 description: "Fictional outdoor gear brand for storyboard testing"
+sandbox: true
 
 brand:
   house:
-    domain: "acme-outdoor.example.com"
+    domain: "acmeoutdoor.example"
     name: "Acme Outdoor"
   brand_id: "acme_outdoor"
   names:
@@ -115,4 +120,4 @@ assets:
       - "Explore the Collection"
       - "Find Your Gear"
 
-  click_url: "https://acme-outdoor.example.com/summer-sale"
+  click_url: "https://acmeoutdoor.example/summer-sale"

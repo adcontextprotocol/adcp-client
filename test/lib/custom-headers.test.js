@@ -15,7 +15,7 @@ test('AgentConfig.headers: field is accepted on agent config objects', () => {
   const config = {
     id: 'test-agent',
     name: 'Test Agent',
-    agent_uri: 'https://test.example.com/mcp',
+    agent_uri: 'https://test.example/mcp',
     protocol: 'mcp',
     auth_token: 'bearer-token',
     headers: {

@@ -722,7 +722,7 @@ These are the main domain objects returned in tool responses. Defined in `src/li
 | `Package` | Line item within a media buy — has package_id, product_id, budget, pricing_option_id, targeting |
 | `CreativeAsset` | Creative with assets — has creative_id, name, type, format_id, status, manifest |
 | `Targeting` | Audience criteria — geographic, demographic, behavioral, contextual, device, daypart, signals |
-| `PricingOption` | Discriminated by pricing_model: cpm, vcpm, cpc, cpcv, cpv, cpp, cpa, flat_rate, time |
+| `PricingOption` | Discriminated union by pricing_model — see variant details below |
 | `Format` | Creative format specification — has format_id, name, channel, requirements (typed asset constraints) |
 | `Proposal` | Suggested media plan — has proposal_id, status (draft|committed), allocations, delivery_forecast, insertion_order |
 | `SignalDefinition` | Data signal — has signal_id, name, description, value_type, targeting constraints, pricing |
@@ -730,6 +730,37 @@ These are the main domain objects returned in tool responses. Defined in `src/li
 | `ContentStandards` | Brand safety config — has standards_id, name, scope, policy entries, calibration exemplars |
 | `Catalog` | Data feed — typed (offering, product, store, etc.) with items, URL, or inline data |
 | `Offering` | Promotable item with asset groups — used in sponsored intelligence and catalog creatives |
+
+## PricingOption Variants
+
+All variants share these common fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `pricing_option_id` | string | yes | Unique identifier within a product |
+| `pricing_model` | string | yes | Discriminant — determines which variant |
+| `currency` | string | yes | ISO 4217 currency code |
+| `fixed_price` | number | no | Fixed price (mutually exclusive with floor_price for auction) |
+| `floor_price` | number | no | Minimum acceptable bid (auction pricing) |
+| `max_bid` | boolean | no | Whether fixed_price is a ceiling vs exact price |
+| `price_guidance` | PriceGuidance | no | Percentile guidance (p25, p50, p75, p90) |
+| `min_spend_per_package` | number | no | Minimum spend requirement |
+
+Variant-specific fields:
+
+| Variant | pricing_model | Extra Required Fields |
+|---------|--------------|----------------------|
+| `CPMPricingOption` | `'cpm'` | — (common fields only) |
+| `VCPMPricingOption` | `'vcpm'` | — |
+| `CPCPricingOption` | `'cpc'` | — |
+| `CPCVPricingOption` | `'cpcv'` | — |
+| `CPVPricingOption` | `'cpv'` | `parameters: { view_threshold: number \| { duration_seconds: number } }` |
+| `CPPPricingOption` | `'cpp'` | — |
+| `CPAPricingOption` | `'cpa'` | — |
+| `FlatRatePricingOption` | `'flat_rate'` | — |
+| `TimeBasedPricingOption` | `'time'` | — |
+
+**CPV note**: The `parameters.view_threshold` is required and defines what counts as a "view". Use a number for percentage-based thresholds or `{ duration_seconds }` for time-based thresholds.
 
 ## Key Enums
 
@@ -740,6 +771,6 @@ These are the main domain objects returned in tool responses. Defined in `src/li
 | `pricing_model` | 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time' |
 | `media_buy_status` | 'draft' | 'pending_review' | 'active' | 'paused' | 'completed' | 'cancelled' |
 | `creative_status` | 'draft' | 'pending_review' | 'approved' | 'rejected' | 'active' | 'archived' |
-| `channels` | 'display' | 'video' | 'audio' | 'dooh' | 'ctv' | 'social' | 'native' | 'search' |
+| `channels` (MediaChannel) | 'display' | 'olv' | 'social' | 'search' | 'ctv' | 'linear_tv' | 'radio' | 'streaming_audio' | 'podcast' | 'dooh' | 'ooh' | 'print' | 'cinema' | 'email' | 'gaming' | 'retail_media' | 'influencer' | 'affiliate' | 'product_placement' | 'sponsored_intelligence' |
 | `task_status` | 'completed' | 'working' | 'submitted' | 'input_required' | 'deferred' |
 | `pacing` | 'even' | 'asap' | 'front_loaded' |

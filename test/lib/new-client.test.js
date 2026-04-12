@@ -30,7 +30,7 @@ describe('ADCP Conversation Client Library', { skip: process.env.CI ? 'Slow test
       {
         id: 'test-agent',
         name: 'Test Agent',
-        agent_uri: 'https://test.example.com',
+        agent_uri: 'https://test.example',
         protocol: 'mcp',
       },
     ];

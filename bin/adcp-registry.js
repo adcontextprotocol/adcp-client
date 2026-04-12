@@ -54,6 +54,7 @@ function parseArgs(args) {
     properties: false,
     limit: undefined,
     offset: undefined,
+    sandbox: false,
   };
   const positional = [];
 
@@ -79,6 +80,8 @@ function parseArgs(args) {
       flags.capabilities = true;
     } else if (arg === '--properties') {
       flags.properties = true;
+    } else if (arg === '--sandbox') {
+      flags.sandbox = true;
     } else if (arg.startsWith('--')) {
       // Unknown flag — skip
     } else {
@@ -211,7 +214,7 @@ LOOKUP COMMANDS:
   properties <domain> [d...]    Bulk property lookup (max 100)
 
 SAVE COMMANDS (requires --auth):
-  save-brand <domain> <name> [manifest-json]
+  save-brand <domain> <name> [manifest-json] [--sandbox]
                                 Save or update a community brand
   save-brand <domain> <name> @manifest.json
                                 Save brand with manifest from file
@@ -251,6 +254,7 @@ OPTIONS:
   --health            Include agent health data
   --capabilities      Include agent capabilities data
   --properties        Include agent property data
+  --sandbox           Mark brand as sandbox (test fixture) when saving
   --limit N           Limit number of results
   --offset N          Offset for pagination
 
@@ -288,6 +292,7 @@ EXAMPLES:
   # Save a brand
   adcp registry save-brand acme.com "Acme Corp" --auth sk_your_key
   adcp registry save-brand acme.com "Acme Corp" '{"colors":{"primary":"#FF0000"}}' --auth sk_your_key
+  adcp registry save-brand acmeoutdoor.example "Acme Outdoor" --sandbox --auth sk_your_key
 
   # Save a property
   adcp registry save-property example.com https://agent.example.com --auth sk_your_key`);
@@ -428,13 +433,16 @@ async function handleRegistryCommand(args) {
         const brandName = positional[2];
         if (!domain || !brandName) {
           console.error('Error: domain and brand name are required\n');
-          console.error('Usage: adcp registry save-brand <domain> <brand-name> [manifest-json]\n');
+          console.error('Usage: adcp registry save-brand <domain> <brand-name> [manifest-json] [--sandbox]\n');
           return 2;
         }
         const payload = { domain, brand_name: brandName };
         const manifestArg = positional[3];
         if (manifestArg) {
           payload.brand_manifest = parsePayload(manifestArg);
+        }
+        if (flags.sandbox) {
+          payload.sandbox = true;
         }
         const result = await client.saveBrand(payload);
         if (flags.json) {
@@ -444,6 +452,7 @@ async function handleRegistryCommand(args) {
         }
         break;
       }
+
       case 'save-property': {
         const domain = positional[1];
         const agentUrl = positional[2];

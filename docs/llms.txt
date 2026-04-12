@@ -588,6 +588,8 @@ Run compliance tests with `adcp test <agent> <scenario>`. 24 built-in scenarios:
 
 **Deep dive:** storyboards/ directory has full YAML definitions for each flow
 
+**Fictional entities:** storyboards/fictional-entities.yaml defines all fictional companies used in storyboards and training (advertisers, agencies, publishers, data providers). Aligned to the character bible at docs.adcontextprotocol.org/specs/character-bible. All domains use the `.example` TLD. Sandbox brands (advertisers) are resolvable via AgenticAdvertising.org.
+
 ## Key Types
 
 See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:

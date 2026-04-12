@@ -18,7 +18,7 @@ import type {
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 
-const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example.com' };
+const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example' };
 
 /**
  * Extract a principal identifier from TestOptions auth.

@@ -203,8 +203,8 @@ phases:
 
         sample_request:
           brand:
-            domain: 'test.example.com'
-          operator: 'test.example.com'
+            domain: 'test.example'
+          operator: 'test.example'
           sandbox: true
 
         validations:
@@ -377,10 +377,10 @@ phases:
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.com'
-            operator: 'pinnacle-agency.com'
+              domain: 'acmeoutdoor.example'
+            operator: 'pinnacle-agency.example'
           brand:
-            domain: 'acmeoutdoor.com'
+            domain: 'acmeoutdoor.example'
           start_time: '2026-04-01T00:00:00Z'
           end_time: '2026-06-30T23:59:59Z'
           packages:
@@ -439,8 +439,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.com'
-            operator: 'pinnacle-agency.com'
+              domain: 'acmeoutdoor.example'
+            operator: 'pinnacle-agency.example'
           media_buy_ids:
             - '$context.media_buy_id'
 
@@ -543,8 +543,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.com'
-            operator: 'pinnacle-agency.com'
+              domain: 'acmeoutdoor.example'
+            operator: 'pinnacle-agency.example'
           creatives:
             - creative_id: 'comply-state-test-creative'
               name: 'Comply State Test Creative'
@@ -782,10 +782,10 @@ phases:
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.com'
-            operator: 'pinnacle-agency.com'
+              domain: 'acmeoutdoor.example'
+            operator: 'pinnacle-agency.example'
           brand:
-            domain: 'acmeoutdoor.com'
+            domain: 'acmeoutdoor.example'
           start_time: '2026-04-01T00:00:00Z'
           end_time: '2026-06-30T23:59:59Z'
           packages:
@@ -846,8 +846,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.com'
-            operator: 'pinnacle-agency.com'
+              domain: 'acmeoutdoor.example'
+            operator: 'pinnacle-agency.example'
           media_buy_ids:
             - '$context.delivery_media_buy_id'
 
@@ -885,10 +885,10 @@ phases:
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.com'
-            operator: 'pinnacle-agency.com'
+              domain: 'acmeoutdoor.example'
+            operator: 'pinnacle-agency.example'
           brand:
-            domain: 'acmeoutdoor.com'
+            domain: 'acmeoutdoor.example'
           start_time: '2026-04-01T00:00:00Z'
           end_time: '2026-06-30T23:59:59Z'
           packages:

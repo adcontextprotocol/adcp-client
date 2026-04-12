@@ -104,7 +104,7 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'E2E SDK governance integration test',
           budget: {
             total: 10000,
@@ -139,8 +139,8 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
     assert.ok(testProduct, 'Need a valid product from get_products');
     const result = await client.executeTask('create_media_buy', {
       buyer_ref: `e2e-buy-${Date.now()}`,
-      account: { brand: { domain: 'test.example.com' } },
-      brand: { domain: 'test.example.com' },
+      account: { brand: { domain: 'test.example' } },
+      brand: { domain: 'test.example' },
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 1000, currency: 'USD' },
@@ -175,8 +175,8 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
     assert.ok(testProduct, 'Need a valid product from get_products');
     const result = await client.executeTask('create_media_buy', {
       buyer_ref: `e2e-overbudget-${Date.now()}`,
-      account: { brand: { domain: 'test.example.com' } },
-      brand: { domain: 'test.example.com' },
+      account: { brand: { domain: 'test.example' } },
+      brand: { domain: 'test.example' },
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 50000, currency: 'USD' },
@@ -203,8 +203,8 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
     assert.ok(testProduct, 'Need a valid product from get_products');
     const result = await client.executeTask('create_media_buy', {
       buyer_ref: `e2e-badgeo-${Date.now()}`,
-      account: { brand: { domain: 'test.example.com' } },
-      brand: { domain: 'test.example.com' },
+      account: { brand: { domain: 'test.example' } },
+      brand: { domain: 'test.example' },
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 500, currency: 'USD' },
@@ -231,8 +231,8 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
     assert.ok(testProduct, 'Need a valid product from get_products');
     const result = await client.executeTask('create_media_buy', {
       buyer_ref: `e2e-conditions-${Date.now()}`,
-      account: { brand: { domain: 'test.example.com' } },
-      brand: { domain: 'test.example.com' },
+      account: { brand: { domain: 'test.example' } },
+      brand: { domain: 'test.example' },
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 8000, currency: 'USD' },
@@ -306,7 +306,7 @@ describe('Governance E2E: Delivery monitoring', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Delivery monitoring test',
           budget: {
             total: 10000,
@@ -429,7 +429,7 @@ describe('Governance E2E: Capabilities discovery', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Capabilities test',
           budget: { total: 1000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -461,7 +461,7 @@ describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Escalation flow test',
           budget: {
             total: 10000,
@@ -545,7 +545,7 @@ describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () =>
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Advisory mode test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -598,7 +598,7 @@ describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () =>
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Audit mode test',
           budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -651,7 +651,7 @@ describe('Governance E2E: Channel compliance', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Channel compliance test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -729,7 +729,7 @@ describe('Governance E2E: Flight compliance', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Flight compliance test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -814,7 +814,7 @@ describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Delegation authority test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -866,7 +866,7 @@ describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: expiredPlanId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Expired delegation test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -918,7 +918,7 @@ describe('Governance E2E: Plan not found', { skip: skipReason }, () => {
       plan_id: `non-existent-plan-${Date.now()}`,
       buyer_campaign_ref: 'test',
       binding: 'proposed',
-      caller: 'https://test.example.com',
+      caller: 'https://test.example',
       tool: 'create_media_buy',
       payload: { budget: { total: 100 } },
     });
@@ -940,7 +940,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Version test',
           budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -958,7 +958,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Updated version test',
           budget: { total: 8000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -981,7 +981,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Categories test',
           budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -1017,7 +1017,7 @@ describe('Governance E2E: Outcome reporting', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Outcome reporting test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -1140,7 +1140,7 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Audit detail test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -1241,7 +1241,7 @@ describe('Governance E2E: Multiple findings in single check', { skip: skipReason
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Multiple findings test',
           budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
@@ -1298,7 +1298,7 @@ describe('Governance E2E: Approval expiration', { skip: skipReason }, () => {
       plans: [
         {
           plan_id: planId,
-          brand: { domain: 'test.example.com' },
+          brand: { domain: 'test.example' },
           objectives: 'Expiry test',
           budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
           flight: {
