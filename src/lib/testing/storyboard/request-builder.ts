@@ -368,7 +368,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
           account: context.account ?? resolveAccount(options),
           governance_agents: [
             {
-              url: 'https://governance.test.example.com',
+              url: 'https://governance.test.example',
               authentication: {
                 schemes: ['Bearer'],
                 credentials: 'test-governance-token',
@@ -388,7 +388,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       base_properties: [
         {
           selection_type: 'identifiers',
-          identifiers: [{ type: 'domain', value: 'test.example.com' }],
+          identifiers: [{ type: 'domain', value: 'test.example' }],
         },
       ],
       brand: resolveBrand(options),
@@ -410,8 +410,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
         {
           selection_type: 'identifiers',
           identifiers: [
-            { type: 'domain', value: 'test.example.com' },
-            { type: 'domain', value: 'updated.example.com' },
+            { type: 'domain', value: 'test.example' },
+            { type: 'domain', value: 'updated.example' },
           ],
         },
       ],
@@ -543,7 +543,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     return {
       brand: resolveBrand(options),
       list_id: context.property_list_id ?? 'unknown',
-      delivery: [{ property: 'test.example.com', impressions: 1000 }],
+      delivery: [{ property: 'test.example', impressions: 1000 }],
     };
   },
 

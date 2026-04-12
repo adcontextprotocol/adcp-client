@@ -108,8 +108,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           creatives:
             - creative_id: "display_trail_pro_300x250"
               name: "Trail Pro 3000 - Display 300x250"
@@ -181,8 +181,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
 
         validations:
           - check: response_schema
@@ -210,8 +210,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           filters:
             format_ids:
               - agent_url: "https://your-platform.example.com"

@@ -11,7 +11,7 @@ describe('SingleAgentClient Request Validation', () => {
   const mockAgent = {
     id: 'test-agent',
     name: 'Test Agent',
-    agent_uri: 'https://test.example.com',
+    agent_uri: 'https://test.example',
     protocol: 'a2a',
   };
 
@@ -27,7 +27,7 @@ describe('SingleAgentClient Request Validation', () => {
               {
                 creative_id: 'test',
                 name: 'Test Creative',
-                format_id: { agent_url: 'https://test.example.com', id: 'format1' },
+                format_id: { agent_url: 'https://test.example', id: 'format1' },
                 // Invalid: assets should be object, not array
                 assets: [
                   {
@@ -57,7 +57,7 @@ describe('SingleAgentClient Request Validation', () => {
               {
                 creative_id: 'test',
                 name: 'Test Creative',
-                format_id: { agent_url: 'https://test.example.com', id: 'format1' },
+                format_id: { agent_url: 'https://test.example', id: 'format1' },
                 assets: {
                   video: {
                     url: 'https://example.com/video.mp4',
@@ -396,7 +396,7 @@ describe('SingleAgentClient Request Validation', () => {
                 product_id: 'prod123',
                 format_ids: [
                   {
-                    agent_url: 'https://test.example.com',
+                    agent_url: 'https://test.example',
                     id: 'display_300x250',
                     width: 300,
                     height: 250,
@@ -438,7 +438,7 @@ describe('SingleAgentClient Request Validation', () => {
                 product_id: 'prod123',
                 format_ids: [
                   {
-                    agent_url: 'https://test.example.com',
+                    agent_url: 'https://test.example',
                     id: 'display_300x250',
                     width: 300,
                     height: 250,
@@ -503,7 +503,7 @@ describe('SingleAgentClient Request Validation', () => {
               {
                 creative_id: 'test',
                 name: 'Test Creative',
-                format_id: { agent_url: 'https://test.example.com', id: 'format1' },
+                format_id: { agent_url: 'https://test.example', id: 'format1' },
                 assets: {
                   video: {
                     url: 'https://example.com/video.mp4',
@@ -561,7 +561,7 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.buildCreative({
-            target_format_id: { agent_url: 'https://test.example.com', id: 'format1' },
+            target_format_id: { agent_url: 'https://test.example', id: 'format1' },
             context: {
               build_id: 'build-789',
               environment: 'test',

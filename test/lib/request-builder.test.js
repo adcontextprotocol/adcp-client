@@ -11,8 +11,8 @@ const assert = require('node:assert');
 const { buildRequest, hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 
 const DEFAULT_OPTIONS = {
-  brand: { domain: 'acmeoutdoor.com' },
-  account: { brand: { domain: 'acmeoutdoor.com' }, operator: 'acmeoutdoor.com' },
+  brand: { domain: 'acmeoutdoor.example' },
+  account: { brand: { domain: 'acmeoutdoor.example' }, operator: 'acmeoutdoor.example' },
 };
 
 function step(task, overrides = {}) {
@@ -72,7 +72,7 @@ describe('Request Builder', () => {
   describe('get_brand_identity', () => {
     test('includes brand_id from options', () => {
       const result = buildRequest(step('get_brand_identity'), {}, DEFAULT_OPTIONS);
-      assert.strictEqual(result.brand_id, 'acmeoutdoor.com');
+      assert.strictEqual(result.brand_id, 'acmeoutdoor.example');
     });
   });
 
@@ -81,7 +81,7 @@ describe('Request Builder', () => {
       const result = buildRequest(step('get_rights'), {}, DEFAULT_OPTIONS);
       assert.ok(result.query, 'should have query');
       assert.ok(Array.isArray(result.uses), 'should have uses array');
-      assert.strictEqual(result.brand_id, 'acmeoutdoor.com');
+      assert.strictEqual(result.brand_id, 'acmeoutdoor.example');
     });
   });
 

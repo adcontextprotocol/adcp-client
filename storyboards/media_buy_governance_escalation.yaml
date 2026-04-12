@@ -69,8 +69,8 @@ phases:
         sample_request:
           accounts:
             - brand:
-                domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
+                domain: "acmeoutdoor.example"
+              operator: "pinnacle-agency.example"
               billing: "operator"
               payment_terms: "net_30"
 
@@ -102,8 +102,8 @@ phases:
           accounts:
             - account:
                 brand:
-                  domain: "acmeoutdoor.com"
-                operator: "pinnacle-agency.com"
+                  domain: "acmeoutdoor.example"
+                operator: "pinnacle-agency.example"
               governance_agents:
                 - url: "https://governance.pinnacle-agency.example"
                   authentication:
@@ -147,8 +147,8 @@ phases:
           plans:
             - plan_name: "Acme Outdoor Q2 Governance"
               brand:
-                domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
+                domain: "acmeoutdoor.example"
+              operator: "pinnacle-agency.example"
               authority_level: "agent_limited"
               per_transaction_threshold: 20000
               escalation_path: "human_review"
@@ -190,11 +190,11 @@ phases:
           buying_mode: "brief"
           brief: "Premium CTV and video on sports publishers. Q2 flight, $50K budget. Adults 25-54, US."
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
 
         validations:
           - check: response_schema
@@ -242,8 +242,8 @@ phases:
             type: "media_buy"
             account:
               brand:
-                domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
+                domain: "acmeoutdoor.example"
+              operator: "pinnacle-agency.example"
             total_budget: 50000
             packages:
               - product_id: "sports_ctv_q2"
@@ -301,8 +301,8 @@ phases:
             type: "media_buy"
             account:
               brand:
-                domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
+                domain: "acmeoutdoor.example"
+              operator: "pinnacle-agency.example"
             total_budget: 50000
             packages:
               - product_id: "sports_ctv_q2"
@@ -310,7 +310,7 @@ phases:
               - product_id: "outdoor_video_q2"
                 budget: 20000
           human_approval:
-            approved_by: "jsmith@pinnacle-agency.com"
+            approved_by: "jsmith@pinnacle-agency.example"
             approved_at: "2026-04-03T14:22:00Z"
             conditions:
               - "Weekly delivery reporting required"
@@ -359,10 +359,10 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
           governance_context: "gov_ctx_acme_q2_approved"
           start_time: "2026-04-01T00:00:00Z"
           end_time: "2026-06-30T23:59:59Z"

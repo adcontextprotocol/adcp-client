@@ -6,6 +6,26 @@
 # Each storyboard targets a specific agent interaction model and
 # describes the flow from a caller's perspective.
 
+# --- Fictional Entities ---
+#
+# All fictional companies, brands, agencies, and data providers used in
+# storyboards are defined in fictional-entities.yaml. That file is the
+# single source of truth — do not introduce new fictional entities without
+# adding them there first.
+#
+# All fictional entities use the IANA-reserved .example TLD.
+#
+# Sandbox brands (advertisers) are registered in AgenticAdvertising.org (AAO):
+#   - Resolve via the standard AAO brand resolution path (no special handling)
+#   - Return valid brand.json with logos, colors, fonts, and tone
+#   - Are excluded from production brand discovery results
+#   - Full brand identity data lives in test-kits/
+#   - The AAO registry imports getSandboxEntities() from @adcp/client directly
+#
+# Agents under test should accept any brand registered via sync_accounts rather
+# than hardcoding an allowlist. This ensures storyboard brand domains work
+# without special-casing.
+
 # --- Schema definition ---
 
 # A storyboard file must conform to this structure:

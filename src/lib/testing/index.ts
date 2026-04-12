@@ -159,6 +159,12 @@ export {
   // Validations
   runValidations,
   resolvePath,
+  // Sandbox entities
+  getSandboxEntities,
+  getSandboxBrands,
+  getSandboxBrand,
+  isSandboxDomain,
+  clearSandboxCache,
   // Types
   type Storyboard,
   type StoryboardPhase,
@@ -171,4 +177,7 @@ export {
   type StoryboardStepResult,
   type StoryboardPhaseResult,
   type StoryboardResult,
+  type SandboxBrand,
+  type SandboxAgent,
+  type SandboxEntities,
 } from './storyboard';

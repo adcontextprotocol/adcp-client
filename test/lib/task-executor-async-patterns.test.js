@@ -56,7 +56,7 @@ describe(
       mockAgent = {
         id: 'test-agent',
         name: 'Test Agent',
-        agent_uri: 'https://test.example.com',
+        agent_uri: 'https://test.example',
         protocol: 'mcp',
       };
     });

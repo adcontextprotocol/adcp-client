@@ -171,7 +171,7 @@ phases:
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-300x250.jpg"
               - asset_id: "click_url"
                 asset_type: "url"
-                url: "https://acme-outdoor.example.com/summer-sale"
+                url: "https://acmeoutdoor.example/summer-sale"
               - asset_id: "headline"
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
@@ -235,7 +235,7 @@ phases:
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-300x250.jpg"
               - asset_id: "click_url"
                 asset_type: "url"
-                url: "https://acme-outdoor.example.com/summer-sale"
+                url: "https://acmeoutdoor.example/summer-sale"
               - asset_id: "headline"
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
@@ -243,7 +243,7 @@ phases:
             agent_url: "https://your-agent.example.com"
             id: "display_300x250"
           brand:
-            domain: "acme-outdoor.example.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -283,7 +283,7 @@ phases:
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg"
               - asset_id: "click_url"
                 asset_type: "url"
-                url: "https://acme-outdoor.example.com/summer-sale"
+                url: "https://acmeoutdoor.example/summer-sale"
               - asset_id: "headline"
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
@@ -295,7 +295,7 @@ phases:
             - agent_url: "https://your-agent.example.com"
               id: "display_320x50"
           brand:
-            domain: "acme-outdoor.example.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema

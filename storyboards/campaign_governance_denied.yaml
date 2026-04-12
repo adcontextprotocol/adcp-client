@@ -66,7 +66,7 @@ phases:
           plans:
             - plan_id: "gov_acme_strict"
               brand:
-                domain: "acmeoutdoor.com"
+                domain: "acmeoutdoor.example"
               objectives: "Limited-authority media buy — governance must deny buys above $10K"
               budget:
                 total: 10000
@@ -113,7 +113,7 @@ phases:
 
         sample_request:
           plan_id: "$context.plan_id"
-          caller: "pinnacle-agency.com"
+          caller: "pinnacle-agency.example"
           payload:
             type: "media_buy"
             total_budget: 50000

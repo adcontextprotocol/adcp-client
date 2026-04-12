@@ -72,8 +72,8 @@ phases:
         sample_request:
           accounts:
             - brand:
-                domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
+                domain: "acmeoutdoor.example"
+              operator: "pinnacle-agency.example"
               billing: "operator"
 
         validations:
@@ -101,7 +101,7 @@ phases:
 
         sample_request:
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -139,8 +139,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           audiences:
             - audience_id: "outdoor_enthusiasts_25_54"
               name: "Outdoor enthusiasts 25-54"
@@ -178,8 +178,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           creatives:
             - creative_id: "native_trail_pro"
               name: "Trail Pro 3000 - Native"
@@ -226,8 +226,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           events:
             - event_type: "purchase"
               event_id: "evt_trail_pro_001"
@@ -266,8 +266,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
 
         validations:
           - check: response_schema

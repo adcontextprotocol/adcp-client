@@ -41,7 +41,7 @@ export type ControllerDetection = ControllerCapabilities | NoController;
 const TOOL_NAME = 'comply_test_controller';
 
 /** Fallback sandbox account when no options are available (detection phase) */
-const DEFAULT_SANDBOX_ACCOUNT = { brand: { domain: 'test.example.com' }, operator: 'test.example.com', sandbox: true };
+const DEFAULT_SANDBOX_ACCOUNT = { brand: { domain: 'test.example' }, operator: 'test.example', sandbox: true };
 
 /**
  * Build the account ref for controller calls.

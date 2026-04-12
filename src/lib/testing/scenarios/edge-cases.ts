@@ -54,7 +54,7 @@ export async function testErrorHandling(
           idempotency_key: `error-test-${Date.now()}`,
           brand_manifest: {
             name: 'Error Test Brand',
-            url: 'https://test.example.com',
+            url: 'https://test.example',
           },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
@@ -197,7 +197,7 @@ export async function testValidation(
       async () =>
         client.createMediaBuy({
           idempotency_key: `validation-test-${Date.now()}`,
-          brand_manifest: { name: 'Validation Test', url: 'https://test.example.com' },
+          brand_manifest: { name: 'Validation Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -229,7 +229,7 @@ export async function testValidation(
       async () =>
         client.createMediaBuy({
           idempotency_key: `negative-budget-test-${Date.now()}`,
-          brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example.com' },
+          brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -401,7 +401,7 @@ export async function testPricingEdgeCases(
       async () =>
         client.createMediaBuy({
           idempotency_key: `auction-no-bid-${Date.now()}`,
-          brand_manifest: { name: 'Auction Test', url: 'https://test.example.com' },
+          brand_manifest: { name: 'Auction Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -435,7 +435,7 @@ export async function testPricingEdgeCases(
       async () =>
         client.createMediaBuy({
           idempotency_key: `under-min-spend-${Date.now()}`,
-          brand_manifest: { name: 'Min Spend Test', url: 'https://test.example.com' },
+          brand_manifest: { name: 'Min Spend Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -486,7 +486,7 @@ export async function testTemporalValidation(
     async () =>
       client.createMediaBuy({
         idempotency_key: `temporal-test-${Date.now()}`,
-        brand_manifest: { name: 'Temporal Test', url: 'https://test.example.com' },
+        brand_manifest: { name: 'Temporal Test', url: 'https://test.example' },
         start_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
         end_time: new Date(Date.now() + 86400000).toISOString(), // 1 day from now (before start!)
         packages: [
@@ -519,7 +519,7 @@ export async function testTemporalValidation(
     async () =>
       client.createMediaBuy({
         idempotency_key: `past-start-${Date.now()}`,
-        brand_manifest: { name: 'Past Start Test', url: 'https://test.example.com' },
+        brand_manifest: { name: 'Past Start Test', url: 'https://test.example' },
         start_time: new Date(Date.now() - 86400000).toISOString(), // Yesterday
         end_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
         packages: [

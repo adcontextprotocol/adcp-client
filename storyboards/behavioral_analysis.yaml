@@ -80,7 +80,7 @@ phases:
           buying_mode: "brief"
           brief: "Podcast audio advertising only — 30-second pre-roll spots"
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -109,7 +109,7 @@ phases:
           buying_mode: "brief"
           brief: "Show me everything — all channels, all formats, all inventory"
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -141,7 +141,7 @@ phases:
           buying_mode: "brief"
           brief: "Premium video inventory on sports publishers. Adults 25-54."
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -166,7 +166,7 @@ phases:
           buying_mode: "brief"
           brief: "Premium video inventory on sports publishers. Adults 25-54."
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -199,7 +199,7 @@ phases:
           buying_mode: "brief"
           brief: "All available products with detailed pricing"
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema

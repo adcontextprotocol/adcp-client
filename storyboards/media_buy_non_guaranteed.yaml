@@ -78,11 +78,11 @@ phases:
           buying_mode: "brief"
           brief: "Display and video inventory across sports and outdoor lifestyle sites. Q2 flight, $25K budget. Adults 25-54, US. Auction-based, looking for competitive CPMs."
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
 
         validations:
           - check: response_schema
@@ -134,10 +134,10 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
           start_time: "2026-04-01T00:00:00Z"
           end_time: "2026-06-30T23:59:59Z"
           packages:
@@ -188,8 +188,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           media_buy_ids:
             - "mb_acme_q2_2026_auction"
 
@@ -230,8 +230,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           media_buy_id: "mb_acme_q2_2026_auction"
           packages:
             - product_id: "sports_display_auction"
@@ -275,8 +275,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           media_buy_ids:
             - "mb_acme_q2_2026_auction"
           include_package_daily_breakdown: true

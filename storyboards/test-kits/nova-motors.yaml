@@ -1,9 +1,30 @@
+# Nova Motors — Signal-Focused Advertiser Test Kit
+#
+# Entity definition: fictional-entities.yaml → advertisers[nova_motors]
+# Data providers defined in this kit: see fictional-entities.yaml → data_providers
+#
+# This brand is registered as a sandbox brand in AgenticAdvertising.org (AAO).
+# Agents resolve novamotors.example via the standard AAO brand resolution path.
+# AAO returns the brand.json below but excludes sandbox brands from production
+# brand discovery results.
+
 id: nova_motors
 name: "Nova Motors"
 description: |
   Signal-focused test kit for the Nova Motors Volta EV launch campaign.
   Provides sample signal definitions, pricing options, and destination
   configurations for testing signal agent storyboards.
+sandbox: true
+
+brand:
+  house:
+    domain: "novamotors.example"
+    name: "Nova Motors"
+  brand_id: "nova_motors"
+  names:
+    - en: "Nova Motors"
+  description: "Electric vehicles for the next generation. The Volta EV — performance meets sustainability."
+  industry: "automotive"
 
 campaign:
   brand: "Nova Motors"

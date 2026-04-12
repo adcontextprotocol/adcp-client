@@ -126,7 +126,7 @@ phases:
 
         sample_request:
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema

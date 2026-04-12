@@ -65,7 +65,7 @@ phases:
           buying_mode: "brief"
           brief: "Show all available advertising products"
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -101,7 +101,7 @@ phases:
           buying_mode: "brief"
           brief: "Premium display inventory with pricing details"
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: field_present

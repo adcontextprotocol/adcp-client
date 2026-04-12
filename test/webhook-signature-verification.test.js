@@ -7,7 +7,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   const agent = {
     id: 'test_agent',
     name: 'Test Agent',
-    agent_uri: 'https://test.example.com',
+    agent_uri: 'https://test.example',
     protocol: 'mcp',
   };
 
@@ -294,7 +294,7 @@ describe('AdCP Spec Test Vectors (webhook-hmac-sha256.json)', () => {
   const agent = {
     id: 'test_agent',
     name: 'Test Agent',
-    agent_uri: 'https://test.example.com',
+    agent_uri: 'https://test.example',
     protocol: 'mcp',
   };
 

@@ -69,13 +69,13 @@ phases:
 
         sample_request:
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
           list_type: "inclusion"
           name: "Acme Outdoor approved properties"
           properties:
-            - domain: "outdoormagazine.example.com"
-            - domain: "hikingtrails.example.com"
-            - domain: "campinggear.example.com"
+            - domain: "outdoormagazine.example"
+            - domain: "hikingtrails.example"
+            - domain: "campinggear.example"
 
         validations:
           - check: response_schema
@@ -106,7 +106,7 @@ phases:
 
         sample_request:
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
 
         validations:
           - check: response_schema
@@ -160,9 +160,9 @@ phases:
         sample_request:
           list_id: "pl_acme_inclusion_001"
           add:
-            - domain: "mountaineering.example.com"
+            - domain: "mountaineering.example"
           remove:
-            - domain: "campinggear.example.com"
+            - domain: "campinggear.example"
 
         validations:
           - check: response_schema
@@ -226,12 +226,12 @@ phases:
 
         sample_request:
           brand:
-            domain: "acmeoutdoor.com"
+            domain: "acmeoutdoor.example"
           list_id: "pl_acme_inclusion_001"
           delivery:
-            - property: "outdoormagazine.example.com"
+            - property: "outdoormagazine.example"
               impressions: 50000
-            - property: "randomsite.example.com"
+            - property: "randomsite.example"
               impressions: 200
 
         validations:
