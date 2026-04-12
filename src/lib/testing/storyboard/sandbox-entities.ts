@@ -60,15 +60,17 @@ function buildBrandJson(kit: Record<string, unknown>): Record<string, unknown> {
   return {
     $schema: 'https://adcontextprotocol.org/schemas/brand.json',
     house: (brand.house as Record<string, unknown>)?.domain,
-    brands: [{
-      brand_id: brand.brand_id ?? kit.id,
-      name: brand.names ?? { en: (brand.house as Record<string, unknown>)?.name ?? kit.name },
-      description: brand.description,
-      logos: brand.logos,
-      colors: brand.colors,
-      fonts: brand.fonts,
-      voice: brand.tone,
-    }],
+    brands: [
+      {
+        brand_id: brand.brand_id ?? kit.id,
+        name: brand.names ?? { en: (brand.house as Record<string, unknown>)?.name ?? kit.name },
+        description: brand.description,
+        logos: brand.logos,
+        colors: brand.colors,
+        fonts: brand.fonts,
+        voice: brand.tone,
+      },
+    ],
   };
 }
 

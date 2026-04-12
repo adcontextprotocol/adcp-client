@@ -593,6 +593,10 @@ function generateLlmsTxt(
     ln();
     ln(`**Deep dive:** storyboards/ directory has full YAML definitions for each flow`);
     ln();
+    ln(
+      `**Fictional entities:** storyboards/fictional-entities.yaml defines all fictional companies used in storyboards and training (advertisers, agencies, publishers, data providers). Aligned to the character bible at docs.adcontextprotocol.org/specs/character-bible. All domains use the \`.example\` TLD. Sandbox brands (advertisers) are resolvable via AgenticAdvertising.org.`
+    );
+    ln();
   }
 
   // --- Key types ---
@@ -820,7 +824,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
     ['Package', 'Line item within a media buy — has package_id, product_id, budget, pricing_option_id, targeting'],
     ['CreativeAsset', 'Creative with assets — has creative_id, name, type, format_id, status, manifest'],
     ['Targeting', 'Audience criteria — geographic, demographic, behavioral, contextual, device, daypart, signals'],
-    ['PricingOption', 'Discriminated by pricing_model: cpm, vcpm, cpc, cpcv, cpv, cpp, cpa, flat_rate, time'],
+    ['PricingOption', 'Discriminated union by pricing_model — see variant details below'],
     ['Format', 'Creative format specification — has format_id, name, channel, requirements (typed asset constraints)'],
     [
       'Proposal',
@@ -840,6 +844,43 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   }
   ln();
 
+  // --- PricingOption Variants ---
+  ln(`## PricingOption Variants`);
+  ln();
+  ln(`All variants share these common fields:`);
+  ln();
+  ln(`| Field | Type | Required | Description |`);
+  ln(`|-------|------|----------|-------------|`);
+  ln(`| \`pricing_option_id\` | string | yes | Unique identifier within a product |`);
+  ln(`| \`pricing_model\` | string | yes | Discriminant — determines which variant |`);
+  ln(`| \`currency\` | string | yes | ISO 4217 currency code |`);
+  ln(`| \`fixed_price\` | number | no | Fixed price (mutually exclusive with floor_price for auction) |`);
+  ln(`| \`floor_price\` | number | no | Minimum acceptable bid (auction pricing) |`);
+  ln(`| \`max_bid\` | boolean | no | Whether fixed_price is a ceiling vs exact price |`);
+  ln(`| \`price_guidance\` | PriceGuidance | no | Percentile guidance (p25, p50, p75, p90) |`);
+  ln(`| \`min_spend_per_package\` | number | no | Minimum spend requirement |`);
+  ln();
+  ln(`Variant-specific fields:`);
+  ln();
+  ln(`| Variant | pricing_model | Extra Required Fields |`);
+  ln(`|---------|--------------|----------------------|`);
+  ln(`| \`CPMPricingOption\` | \`'cpm'\` | — (common fields only) |`);
+  ln(`| \`VCPMPricingOption\` | \`'vcpm'\` | — |`);
+  ln(`| \`CPCPricingOption\` | \`'cpc'\` | — |`);
+  ln(`| \`CPCVPricingOption\` | \`'cpcv'\` | — |`);
+  ln(
+    `| \`CPVPricingOption\` | \`'cpv'\` | \`parameters: { view_threshold: number \\| { duration_seconds: number } }\` |`
+  );
+  ln(`| \`CPPPricingOption\` | \`'cpp'\` | — |`);
+  ln(`| \`CPAPricingOption\` | \`'cpa'\` | — |`);
+  ln(`| \`FlatRatePricingOption\` | \`'flat_rate'\` | — |`);
+  ln(`| \`TimeBasedPricingOption\` | \`'time'\` | — |`);
+  ln();
+  ln(
+    `**CPV note**: The \`parameters.view_threshold\` is required and defines what counts as a "view". Use a number for percentage-based thresholds or \`{ duration_seconds }\` for time-based thresholds.`
+  );
+  ln();
+
   // --- Enums ---
   ln(`## Key Enums`);
   ln();
@@ -850,7 +891,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
     ['pricing_model', "'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time'"],
     ['media_buy_status', "'draft' | 'pending_review' | 'active' | 'paused' | 'completed' | 'cancelled'"],
     ['creative_status', "'draft' | 'pending_review' | 'approved' | 'rejected' | 'active' | 'archived'"],
-    ['channels', "'display' | 'video' | 'audio' | 'dooh' | 'ctv' | 'social' | 'native' | 'search'"],
+    [
+      'channels (MediaChannel)',
+      "'display' | 'olv' | 'social' | 'search' | 'ctv' | 'linear_tv' | 'radio' | 'streaming_audio' | 'podcast' | 'dooh' | 'ooh' | 'print' | 'cinema' | 'email' | 'gaming' | 'retail_media' | 'influencer' | 'affiliate' | 'product_placement' | 'sponsored_intelligence'",
+    ],
     ['task_status', "'completed' | 'working' | 'submitted' | 'input_required' | 'deferred'"],
     ['pacing', "'even' | 'asap' | 'front_loaded'"],
   ];

@@ -64,7 +64,9 @@ export function loadBundledStoryboards(): Storyboard[] {
   const dir = getStoryboardsDir();
   let files: string[];
   try {
-    files = readdirSync(dir).filter(f => (f.endsWith('.yaml') || f.endsWith('.yml')) && f !== 'schema.yaml' && f !== 'fictional-entities.yaml');
+    files = readdirSync(dir).filter(
+      f => (f.endsWith('.yaml') || f.endsWith('.yml')) && f !== 'schema.yaml' && f !== 'fictional-entities.yaml'
+    );
   } catch {
     return [];
   }

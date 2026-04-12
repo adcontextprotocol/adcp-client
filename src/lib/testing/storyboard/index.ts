@@ -55,4 +55,10 @@ export { runValidations } from './validations';
 
 // Sandbox entities
 export type { SandboxBrand, SandboxAgent, SandboxEntities } from './sandbox-entities';
-export { getSandboxEntities, getSandboxBrands, getSandboxBrand, isSandboxDomain, clearSandboxCache } from './sandbox-entities';
+export {
+  getSandboxEntities,
+  getSandboxBrands,
+  getSandboxBrand,
+  isSandboxDomain,
+  clearSandboxCache,
+} from './sandbox-entities';
