@@ -64,18 +64,13 @@ phases:
 
         sample_request:
           plans:
-            - plan_id: "gov_acme_strict"
+            - plan_name: "Acme Outdoor strict governance"
               brand:
-                domain: "acmeoutdoor.example"
-              objectives: "Limited-authority media buy — governance must deny buys above $10K"
-              budget:
-                total: 10000
-                currency: "USD"
-                authority_level: "agent_limited"
-              flight:
-                start: "2026-04-01T00:00:00Z"
-                end: "2026-06-30T23:59:59Z"
-              approved_sellers: null
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
+              authority_level: "agent_limited"
+              per_transaction_threshold: 10000
+              escalation_path: "none"
 
         validations:
           - check: response_schema
@@ -112,10 +107,13 @@ phases:
           - No escalation instructions (plan has no escalation path)
 
         sample_request:
-          plan_id: "$context.plan_id"
-          caller: "pinnacle-agency.example"
-          payload:
+          plan_id: "gov_acme_strict"
+          binding:
             type: "media_buy"
+            account:
+              brand:
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
             total_budget: 50000
             packages:
               - product_id: "sports_ctv_q2"

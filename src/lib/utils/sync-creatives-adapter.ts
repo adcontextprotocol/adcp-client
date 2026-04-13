@@ -36,7 +36,7 @@ function adaptCreativeAssetForV2(creative: any): any {
  * Strips v3-only top-level fields and adapts each creative asset.
  */
 export function adaptSyncCreativesRequestForV2(request: any): any {
-  const { account, ...rest } = request;
+  const { account, adcp_major_version, ...rest } = request;
 
   return {
     ...rest,

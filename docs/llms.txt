@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-12
-> Library: @adcp/client v4.22.1
+> Generated at: 2026-04-13
+> Library: @adcp/client v4.28.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -485,6 +485,9 @@ Flow: `list_creative_formats → build_creative`
 Flow: `create_media_buy → get_products → create_media_buy`
 
 ### Media Buy
+
+**Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
+Flow: `get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
 Flow: `sync_accounts → list_creative_formats → sync_catalogs → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`

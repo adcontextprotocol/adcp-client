@@ -81,7 +81,7 @@ import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { createMCPAuthHeaders } from '../auth';
-import { AuthenticationRequiredError, FeatureUnsupportedError, is401Error } from '../errors';
+import { AuthenticationRequiredError, FeatureUnsupportedError, TaskTimeoutError, is401Error } from '../errors';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -979,9 +979,17 @@ export class SingleAgentClient {
     const agent = await this.ensureEndpointDiscovered();
 
     // Adapt request for v2 servers if needed
+    const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
 
-    const result = await this.executor.executeTask<T>(agent, taskType, adaptedParams, inputHandler, options);
+    const result = await this.executor.executeTask<T>(
+      agent,
+      taskType,
+      adaptedParams,
+      inputHandler,
+      options,
+      serverVersion
+    );
 
     // Normalize response to v3 format
     if (result.success && result.data) {
@@ -1897,9 +1905,17 @@ export class SingleAgentClient {
 
     // Adapt request for the server's protocol version (e.g. strip v3-only
     // fields like buying_mode when talking to v2 agents).
+    const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
 
-    const result = await this.executor.executeTask<T>(agent, taskName, adaptedParams, inputHandler, options);
+    const result = await this.executor.executeTask<T>(
+      agent,
+      taskName,
+      adaptedParams,
+      inputHandler,
+      options,
+      serverVersion
+    );
 
     // Normalize response to v3 format for consistent API surface
     if (result.success && result.data) {
@@ -2465,8 +2481,24 @@ export class SingleAgentClient {
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
           return this.cachedCapabilities;
         }
-      } catch {
-        // Fall through to synthetic capabilities
+        // Log when executeTask returns but success is false
+        console.warn(`[AdCP] get_adcp_capabilities returned non-success, falling back to synthetic capabilities`, {
+          success: result.success,
+          error: result.error,
+          hasData: !!result.data,
+        });
+      } catch (error: unknown) {
+        // Re-throw errors that indicate real infrastructure problems —
+        // only fall through for tool-execution failures (the agent
+        // advertises get_adcp_capabilities but can't actually serve it).
+        if (error instanceof AuthenticationRequiredError || error instanceof TaskTimeoutError) {
+          throw error;
+        }
+        console.warn(
+          `[AdCP] get_adcp_capabilities call failed, falling back to synthetic capabilities: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
       }
     }
 
