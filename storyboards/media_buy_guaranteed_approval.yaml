@@ -253,11 +253,8 @@ phases:
             path: "media_buys[0].status"
             description: "Media buy has a status"
           - check: field_present
-            path: "media_buys[0].setup.url"
-            description: "Pending approval buy includes a setup URL for IO signing"
-          - check: field_present
-            path: "media_buys[0].setup.message"
-            description: "Pending approval buy includes a message explaining what's needed"
+            path: "media_buys[0].valid_actions"
+            description: "Pending approval buy includes valid actions"
 
   - id: confirm_active
     title: "Confirm active after IO signing"

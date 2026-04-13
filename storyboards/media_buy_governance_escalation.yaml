@@ -255,7 +255,7 @@ phases:
           - check: response_schema
             description: "Response matches check-governance-response.json schema"
           - check: field_present
-            path: "decision"
+            path: "status"
             description: "Response contains a governance decision"
           - check: field_present
             path: "findings"
@@ -320,7 +320,7 @@ phases:
           - check: response_schema
             description: "Response matches check-governance-response.json schema"
           - check: field_present
-            path: "decision"
+            path: "status"
             description: "Response contains an approved governance decision"
           - check: field_present
             path: "conditions"
@@ -467,5 +467,5 @@ phases:
           - check: response_schema
             description: "Response matches get-plan-audit-logs-response.json schema"
           - check: field_present
-            path: "entries"
+            path: "plans"
             description: "Response contains audit log entries"

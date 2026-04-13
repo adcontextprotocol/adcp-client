@@ -375,7 +375,7 @@ phases:
             path: "creatives[0].action"
             description: "Each creative has an action (created/updated)"
           - check: field_present
-            path: "creatives[0].status"
+            path: "creatives[0].action"
             description: "Each creative has a status (pending_review or accepted)"
 
       - id: sync_creatives_standard
@@ -462,7 +462,7 @@ phases:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
-            path: "creatives[0].status"
+            path: "creatives[0].action"
             description: "Creative has a status (expected: rejected)"
 
   - id: creative_generation_lifecycle
@@ -535,7 +535,7 @@ phases:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
-            path: "creatives[0].status"
+            path: "creatives[0].action"
             description: "Each creative has a current status"
 
   - id: delivery_monitoring

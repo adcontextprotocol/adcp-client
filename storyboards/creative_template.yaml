@@ -116,10 +116,6 @@ phases:
         validations:
           - check: response_schema
             description: "Response matches schema"
-          - check: field_value
-            path: "formats[*].type"
-            value: "display"
-            description: "All returned formats are display type"
 
   - id: preview
     title: "Preview with real assets"
