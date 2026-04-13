@@ -982,7 +982,14 @@ export class SingleAgentClient {
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
 
-    const result = await this.executor.executeTask<T>(agent, taskType, adaptedParams, inputHandler, options, serverVersion);
+    const result = await this.executor.executeTask<T>(
+      agent,
+      taskType,
+      adaptedParams,
+      inputHandler,
+      options,
+      serverVersion
+    );
 
     // Normalize response to v3 format
     if (result.success && result.data) {
@@ -1901,7 +1908,14 @@ export class SingleAgentClient {
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
 
-    const result = await this.executor.executeTask<T>(agent, taskName, adaptedParams, inputHandler, options, serverVersion);
+    const result = await this.executor.executeTask<T>(
+      agent,
+      taskName,
+      adaptedParams,
+      inputHandler,
+      options,
+      serverVersion
+    );
 
     // Normalize response to v3 format for consistent API surface
     if (result.success && result.data) {

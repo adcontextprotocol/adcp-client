@@ -926,7 +926,16 @@ export class TaskExecutor {
         // Fall through to tool call if protocol method is not supported
       }
     }
-    const response = (await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, undefined, this.lastKnownServerVersion)) as Record<string, unknown>;
+    const response = (await ProtocolClient.callTool(
+      agent,
+      'tasks/list',
+      {},
+      [],
+      undefined,
+      undefined,
+      undefined,
+      this.lastKnownServerVersion
+    )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
   }
 
@@ -953,7 +962,16 @@ export class TaskExecutor {
         // Fall through to tool call if protocol method is not supported
       }
     }
-    const response = (await ProtocolClient.callTool(agent, 'tasks/get', { taskId }, [], undefined, undefined, undefined, this.lastKnownServerVersion)) as Record<string, unknown>;
+    const response = (await ProtocolClient.callTool(
+      agent,
+      'tasks/get',
+      { taskId },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      this.lastKnownServerVersion
+    )) as Record<string, unknown>;
     return (response.task as TaskInfo) || (response as unknown as TaskInfo);
   }
 

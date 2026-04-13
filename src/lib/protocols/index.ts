@@ -64,8 +64,7 @@ export class ProtocolClient {
 
         // Declare AdCP major version on every request so sellers can validate compatibility.
         // Skip for v2 servers — they don't recognise the field and strict-schema agents reject it.
-        const argsWithVersion =
-          serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+        const argsWithVersion = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
 
         // Build push_notification_config for ASYNC TASK STATUS notifications
         // (NOT for reporting_webhook - that stays in args)
@@ -111,7 +110,12 @@ export class ProtocolClient {
 /**
  * Simple factory functions for protocol-specific clients
  */
-export const createMCPClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>, serverVersion?: 'v2' | 'v3') => ({
+export const createMCPClient = (
+  agentUrl: string,
+  authToken?: string,
+  headers?: Record<string, string>,
+  serverVersion?: 'v2' | 'v3'
+) => ({
   callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
     callMCPToolWithTasks(
       agentUrl,
@@ -123,7 +127,12 @@ export const createMCPClient = (agentUrl: string, authToken?: string, headers?: 
     ),
 });
 
-export const createA2AClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>, serverVersion?: 'v2' | 'v3') => ({
+export const createA2AClient = (
+  agentUrl: string,
+  authToken?: string,
+  headers?: Record<string, string>,
+  serverVersion?: 'v2' | 'v3'
+) => ({
   callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
     callA2ATool(
       agentUrl,
