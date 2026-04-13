@@ -1,5 +1,5 @@
 ---
-"@adcp/client": major
+"@adcp/client": minor
 ---
 
 Add compliance status APIs for buyer integration
@@ -10,4 +10,4 @@ Add compliance status APIs for buyer integration
 - `AgentSearchResult` includes optional `compliance_summary` field
 - `findAgents()` accepts `compliance_status` filter
 - Exported new types: `AgentCompliance`, `AgentComplianceDetail`, `StoryboardStatus`, `OperatorLookupResult`, `PublisherLookupResult`, `ComplianceChangedPayload`
-- **BREAKING**: Registry schema sync changes agent type enum from `sales/si/buyer` to `buying/brand/rights/measurement` (upstream spec change). Code filtering by `type === 'sales'` must update to `type === 'buying'`.
+- Registry schema sync adds new agent types: `brand`, `rights`, `measurement`, `buying` (additive, non-breaking)
