@@ -92,6 +92,11 @@ export type PropertyActivity = components['schemas']['PropertyActivity'];
 export type PolicySummary = components['schemas']['PolicySummary'];
 export type Policy = components['schemas']['Policy'];
 export type PolicyHistory = components['schemas']['PolicyHistory'];
+export type AgentCompliance = components['schemas']['AgentCompliance'];
+export type AgentComplianceDetail = components['schemas']['AgentComplianceDetail'];
+export type StoryboardStatus = components['schemas']['StoryboardStatus'];
+export type OperatorLookupResult = components['schemas']['OperatorLookupResult'];
+export type PublisherLookupResult = components['schemas']['PublisherLookupResult'];
 
 // ====== Inline operation types ======
 // The following types are defined inline in operation responses (not in components.schemas)
@@ -140,6 +145,7 @@ export type AgentSearchResult = {
   name: string;
   type: string;
   inventory_profile: AgentInventoryProfile;
+  compliance_summary?: AgentCompliance;
   match: { score: number; matched_filters: string[] };
 };
 

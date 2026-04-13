@@ -1016,4 +1016,267 @@ describe('RegistrySync', () => {
       assert.ok(maxConcurrent <= 2, `max concurrent was ${maxConcurrent}, expected <= 2`);
     });
   });
+
+  // ============ agent.compliance_changed event ============
+
+  describe('agent.compliance_changed event', () => {
+    test('updates agent compliance_summary in index', async () => {
+      let requestCount = 0;
+      restore = mockFetch(async url => {
+        requestCount++;
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/feed')) {
+          if (requestCount <= 2) {
+            // Bootstrap feed: empty
+            return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+          }
+          // Polling feed: compliance changed
+          return new Response(
+            JSON.stringify(
+              makeFeedResponse([
+                makeEvent('agent.compliance_changed', AGENT_1.url, {
+                  previous_status: 'unknown',
+                  current_status: 'passing',
+                  compliance_summary: {
+                    status: 'passing',
+                    lifecycle_stage: 'production',
+                    tracks: { core: 'pass' },
+                    streak_days: 7,
+                    last_checked_at: '2026-04-01T00:00:00Z',
+                    headline: 'All passing',
+                  },
+                }),
+              ])
+            ),
+            { status: 200 }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client, pollIntervalMs: 50 });
+
+      await sync.start();
+
+      // Wait for one poll cycle
+      await new Promise(r => setTimeout(r, 150));
+      sync.stop();
+
+      const agent = sync.getAgent(AGENT_1.url);
+      assert.ok(agent.compliance_summary);
+      assert.strictEqual(agent.compliance_summary.status, 'passing');
+      assert.strictEqual(agent.compliance_summary.streak_days, 7);
+    });
+
+    test('emits compliance_changed event', async () => {
+      let requestCount = 0;
+      restore = mockFetch(async url => {
+        requestCount++;
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/feed')) {
+          if (requestCount <= 2) {
+            return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+          }
+          return new Response(
+            JSON.stringify(
+              makeFeedResponse([
+                makeEvent('agent.compliance_changed', AGENT_1.url, {
+                  previous_status: 'failing',
+                  current_status: 'passing',
+                }),
+              ])
+            ),
+            { status: 200 }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client, pollIntervalMs: 50 });
+
+      const events = [];
+      sync.on('compliance_changed', evt => events.push(evt));
+
+      await sync.start();
+      await new Promise(r => setTimeout(r, 150));
+      sync.stop();
+
+      assert.ok(events.length >= 1);
+      assert.strictEqual(events[0].agentUrl, AGENT_1.url);
+      assert.strictEqual(events[0].previousStatus, 'failing');
+      assert.strictEqual(events[0].currentStatus, 'passing');
+    });
+
+    test('emits event even when indexAgents is false', async () => {
+      let requestCount = 0;
+      restore = mockFetch(async url => {
+        requestCount++;
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/feed')) {
+          if (requestCount <= 2) {
+            return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+          }
+          return new Response(
+            JSON.stringify(
+              makeFeedResponse([
+                makeEvent('agent.compliance_changed', 'https://any.example.com', {
+                  previous_status: 'unknown',
+                  current_status: 'passing',
+                }),
+              ])
+            ),
+            { status: 200 }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client, pollIntervalMs: 50, indexes: { agents: false } });
+
+      const events = [];
+      sync.on('compliance_changed', evt => events.push(evt));
+
+      await sync.start();
+      await new Promise(r => setTimeout(r, 150));
+      sync.stop();
+
+      assert.ok(events.length >= 1);
+      assert.strictEqual(events[0].currentStatus, 'passing');
+    });
+
+    test('does not update index for unknown agent but still emits event', async () => {
+      let requestCount = 0;
+      restore = mockFetch(async url => {
+        requestCount++;
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/feed')) {
+          if (requestCount <= 2) {
+            return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+          }
+          return new Response(
+            JSON.stringify(
+              makeFeedResponse([
+                makeEvent('agent.compliance_changed', 'https://unknown.example.com', {
+                  previous_status: 'unknown',
+                  current_status: 'passing',
+                  compliance_summary: {
+                    status: 'passing',
+                    lifecycle_stage: 'production',
+                    tracks: {},
+                    streak_days: 0,
+                    last_checked_at: null,
+                    headline: null,
+                  },
+                }),
+              ])
+            ),
+            { status: 200 }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client, pollIntervalMs: 50 });
+
+      const events = [];
+      sync.on('compliance_changed', evt => events.push(evt));
+
+      await sync.start();
+      await new Promise(r => setTimeout(r, 150));
+      sync.stop();
+
+      // Agent 1 should still be in the index, unchanged
+      const agent = sync.getAgent(AGENT_1.url);
+      assert.ok(agent);
+      assert.strictEqual(agent.compliance_summary, undefined);
+
+      // But the event should still have been emitted
+      assert.ok(events.length >= 1);
+      assert.strictEqual(events[0].agentUrl, 'https://unknown.example.com');
+    });
+  });
+
+  // ============ findAgents compliance_status filter ============
+
+  describe('findAgents compliance_status filter', () => {
+    test('filters agents by compliance status', async () => {
+      const AGENT_PASSING = {
+        ...AGENT_1,
+        compliance_summary: {
+          status: 'passing',
+          lifecycle_stage: 'production',
+          tracks: {},
+          streak_days: 5,
+          last_checked_at: null,
+          headline: null,
+        },
+      };
+      const AGENT_FAILING = {
+        ...AGENT_2,
+        compliance_summary: {
+          status: 'failing',
+          lifecycle_stage: 'testing',
+          tracks: {},
+          streak_days: 0,
+          last_checked_at: null,
+          headline: null,
+        },
+      };
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_PASSING, AGENT_FAILING])), { status: 200 });
+        }
+        return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client });
+      await sync.start();
+      sync.stop();
+
+      const passing = sync.findAgents({ compliance_status: ['passing'] });
+      assert.strictEqual(passing.length, 1);
+      assert.strictEqual(passing[0].url, AGENT_1.url);
+
+      const failing = sync.findAgents({ compliance_status: ['failing'] });
+      assert.strictEqual(failing.length, 1);
+      assert.strictEqual(failing[0].url, AGENT_2.url);
+
+      const both = sync.findAgents({ compliance_status: ['passing', 'failing'] });
+      assert.strictEqual(both.length, 2);
+    });
+
+    test('agents without compliance_summary default to unknown', async () => {
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1, AGENT_2])), { status: 200 });
+        }
+        return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client });
+      await sync.start();
+      sync.stop();
+
+      const unknown = sync.findAgents({ compliance_status: ['unknown'] });
+      assert.strictEqual(unknown.length, 2);
+
+      const passing = sync.findAgents({ compliance_status: ['passing'] });
+      assert.strictEqual(passing.length, 0);
+    });
+  });
 });
