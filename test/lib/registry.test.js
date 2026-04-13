@@ -1956,4 +1956,297 @@ describe('RegistryClient', () => {
       );
     });
   });
+
+  // ============ getAgentCompliance ============
+
+  describe('getAgentCompliance', () => {
+    const COMPLIANCE = {
+      status: 'passing',
+      lifecycle_stage: 'production',
+      tracks: { core: 'pass', products: 'pass' },
+      streak_days: 14,
+      last_checked_at: '2026-04-01T00:00:00Z',
+      headline: 'All tracks passing',
+      storyboards_passing: 5,
+      storyboards_total: 6,
+    };
+
+    test('returns compliance data for an agent', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('/api/registry/agents/'));
+        assert.ok(url.includes('/compliance'));
+        return new Response(JSON.stringify(COMPLIANCE), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.getAgentCompliance('https://ads.example.com');
+      assert.strictEqual(result.status, 'passing');
+      assert.strictEqual(result.storyboards_passing, 5);
+    });
+
+    test('returns null on 404', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.getAgentCompliance('https://unknown.example.com');
+      assert.strictEqual(result, null);
+    });
+
+    test('throws on empty agentUrl', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(() => client.getAgentCompliance(''), err => {
+        assert.ok(err.message.includes('agentUrl is required'));
+        return true;
+      });
+    });
+
+    test('encodes agentUrl in path', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(COMPLIANCE), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.getAgentCompliance('https://ads.example.com/v1');
+      assert.ok(capturedUrl.includes(encodeURIComponent('https://ads.example.com/v1')));
+    });
+  });
+
+  // ============ getAgentStoryboardStatus ============
+
+  describe('getAgentStoryboardStatus', () => {
+    const STORYBOARD_RESPONSE = {
+      agent_url: 'https://ads.example.com',
+      storyboards: [
+        { storyboard_id: 'media_buy_seller', title: 'Media Buy (Seller)', status: 'passing', category: 'sales', track: 'media_buy', steps_passed: 5, steps_total: 5, last_tested_at: '2026-04-01T00:00:00Z' },
+        { storyboard_id: 'core_seller', title: 'Core (Seller)', status: 'failing', category: 'sales', track: 'core', steps_passed: 2, steps_total: 4, last_tested_at: '2026-04-01T00:00:00Z' },
+      ],
+      passing_count: 1,
+      total_count: 2,
+    };
+
+    test('returns storyboard detail', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('/storyboard-status'));
+        return new Response(JSON.stringify(STORYBOARD_RESPONSE), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.getAgentStoryboardStatus('https://ads.example.com');
+      assert.strictEqual(result.storyboards.length, 2);
+      assert.strictEqual(result.storyboards[0].storyboard_id, 'media_buy_seller');
+      assert.strictEqual(result.passing_count, 1);
+    });
+
+    test('throws without apiKey', async () => {
+      const savedEnv = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () => client.getAgentStoryboardStatus('https://ads.example.com'),
+          err => {
+            assert.ok(err.message.includes('apiKey is required'));
+            return true;
+          }
+        );
+      } finally {
+        if (savedEnv !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedEnv;
+      }
+    });
+
+    test('throws on empty agentUrl', async () => {
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await assert.rejects(() => client.getAgentStoryboardStatus(''), err => {
+        assert.ok(err.message.includes('agentUrl is required'));
+        return true;
+      });
+    });
+
+    test('sends Authorization header', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(opts.headers?.['Authorization']?.includes('Bearer test-key'));
+        return new Response(JSON.stringify(STORYBOARD_RESPONSE), { status: 200 });
+      });
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await client.getAgentStoryboardStatus('https://ads.example.com');
+    });
+  });
+
+  // ============ getAgentStoryboardStatusBulk ============
+
+  describe('getAgentStoryboardStatusBulk', () => {
+    test('posts agent_urls and returns results', async () => {
+      const bulkResponse = {
+        agents: {
+          'https://ads.example.com': [
+            { storyboard_id: 'core_seller', title: 'Core', status: 'passing', category: 'sales', track: 'core', steps_passed: 3, steps_total: 3, last_tested_at: '2026-04-01T00:00:00Z' },
+          ],
+        },
+      };
+
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/agents/storyboard-status'));
+        const body = JSON.parse(opts.body);
+        assert.deepStrictEqual(body.agent_urls, ['https://ads.example.com']);
+        return new Response(JSON.stringify(bulkResponse), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.getAgentStoryboardStatusBulk(['https://ads.example.com']);
+      assert.ok(result.agents['https://ads.example.com']);
+    });
+
+    test('throws when array exceeds 100', async () => {
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const urls = Array.from({ length: 101 }, (_, i) => `https://agent${i}.example.com`);
+      await assert.rejects(() => client.getAgentStoryboardStatusBulk(urls), err => {
+        assert.ok(err.message.includes('Cannot query more than 100'));
+        return true;
+      });
+    });
+
+    test('throws without apiKey', async () => {
+      const savedEnv = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () => client.getAgentStoryboardStatusBulk(['https://ads.example.com']),
+          err => {
+            assert.ok(err.message.includes('apiKey is required'));
+            return true;
+          }
+        );
+      } finally {
+        if (savedEnv !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedEnv;
+      }
+    });
+
+    test('throws on empty array', async () => {
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await assert.rejects(() => client.getAgentStoryboardStatusBulk([]), err => {
+        assert.ok(err.message.includes('agentUrls is required'));
+        return true;
+      });
+    });
+
+    test('sends Authorization header', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(opts.headers?.['Authorization']?.includes('Bearer test-key'));
+        return new Response(JSON.stringify({ agents: {} }), { status: 200 });
+      });
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await client.getAgentStoryboardStatusBulk(['https://ads.example.com']);
+    });
+
+    test('deduplicates and strips whitespace from URLs', async () => {
+      let sentBody;
+      restore = mockFetch(async (url, opts) => {
+        sentBody = JSON.parse(opts.body);
+        return new Response(JSON.stringify({ agents: {} }), { status: 200 });
+      });
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await client.getAgentStoryboardStatusBulk([
+        'https://ads.example.com',
+        '  https://ads.example.com  ',
+        'https://other.example.com',
+      ]);
+      assert.deepStrictEqual(sentBody.agent_urls.sort(), [
+        'https://ads.example.com',
+        'https://other.example.com',
+      ]);
+    });
+
+    test('throws on array of only whitespace entries', async () => {
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await assert.rejects(() => client.getAgentStoryboardStatusBulk(['', '  ']), err => {
+        assert.ok(err.message.includes('no valid entries'));
+        return true;
+      });
+    });
+  });
+
+  // ============ lookupOperator ============
+
+  describe('lookupOperator', () => {
+    const OPERATOR = {
+      domain: 'pubmatic.com',
+      member: { slug: 'pubmatic', display_name: 'PubMatic' },
+      agents: [{ url: 'https://ads.pubmatic.com', name: 'PubMatic Ads', type: 'sales', authorized_by: [] }],
+    };
+
+    test('returns operator data', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('/api/registry/operator?domain=pubmatic.com'));
+        return new Response(JSON.stringify(OPERATOR), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.lookupOperator('pubmatic.com');
+      assert.strictEqual(result.domain, 'pubmatic.com');
+      assert.strictEqual(result.agents.length, 1);
+    });
+
+    test('returns null on 404', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.lookupOperator('unknown.com');
+      assert.strictEqual(result, null);
+    });
+
+    test('throws on empty domain', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(() => client.lookupOperator(''), err => {
+        assert.ok(err.message.includes('domain is required'));
+        return true;
+      });
+    });
+  });
+
+  // ============ lookupPublisher ============
+
+  describe('lookupPublisher', () => {
+    const PUBLISHER = {
+      domain: 'voxmedia.com',
+      member: { slug: 'voxmedia', display_name: 'Vox Media' },
+      adagents_valid: true,
+      authorized_agents: [{ url: 'https://ads.vox.com', name: 'Vox Ads', type: 'sales' }],
+    };
+
+    test('returns publisher data', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('/api/registry/publisher?domain=voxmedia.com'));
+        return new Response(JSON.stringify(PUBLISHER), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.lookupPublisher('voxmedia.com');
+      assert.strictEqual(result.domain, 'voxmedia.com');
+    });
+
+    test('returns null on 404', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.lookupPublisher('unknown.com');
+      assert.strictEqual(result, null);
+    });
+
+    test('throws on empty domain', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(() => client.lookupPublisher(''), err => {
+        assert.ok(err.message.includes('domain is required'));
+        return true;
+      });
+    });
+  });
 });

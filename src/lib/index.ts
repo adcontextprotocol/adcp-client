@@ -45,6 +45,14 @@ export type {
   GetBrandHistoryResponse,
   GetPropertyHistoryQuery,
   GetPropertyHistoryResponse,
+  AgentCompliance,
+  AgentComplianceDetail,
+  StoryboardStatus,
+  OperatorLookupResult,
+  PublisherLookupResult,
+  ComplianceChangedPayload,
+  GetAgentStoryboardStatusResponse,
+  GetAgentStoryboardStatusBulkResponse,
 } from './registry';
 
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======

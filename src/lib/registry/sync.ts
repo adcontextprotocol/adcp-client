@@ -3,6 +3,7 @@ import type { RegistryClient } from './index';
 import type {
   CatalogEvent,
   AgentSearchResult,
+  AgentCompliance,
   AuthorizationEntry,
   AgentSearchResponse,
   FeedResponse,
@@ -40,6 +41,8 @@ export interface RegistrySyncEvents {
   /** Emitted for each event applied during polling. Not emitted during bootstrap. */
   event: [{ event: CatalogEvent }];
   error: [{ error: Error }];
+  /** Emitted when an agent's compliance status changes. */
+  compliance_changed: [{ agentUrl: string; previousStatus: AgentCompliance['status']; currentStatus: AgentCompliance['status'] }];
   stateChange: [{ from: RegistrySyncState; to: RegistrySyncState }];
 }
 
@@ -55,6 +58,7 @@ export interface AgentFilter {
   delivery_types?: string[];
   has_tmp?: boolean;
   min_properties?: number;
+  compliance_status?: AgentCompliance['status'][];
 }
 
 // ====== RegistrySync ======
@@ -160,6 +164,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       if (filter.delivery_types?.length && !filter.delivery_types.some(d => p.delivery_types.includes(d))) return false;
       if (filter.has_tmp != null && p.has_tmp !== filter.has_tmp) return false;
       if (filter.min_properties != null && p.property_count < filter.min_properties) return false;
+      if (filter.compliance_status?.length) {
+        const status = agent.compliance_summary?.status ?? 'unknown';
+        if (!filter.compliance_status.includes(status)) return false;
+      }
       return true;
     });
   }
@@ -419,6 +427,31 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
           if (filtered.length > 0) this.authByAgent.set(agentUrl, filtered);
           else this.authByAgent.delete(agentUrl);
         }
+        break;
+      }
+
+      case 'agent.compliance_changed': {
+        if (this.indexAgents) {
+          const existing = this.agents.get(event.entity_id);
+          const summary = payload.compliance_summary;
+          if (
+            existing &&
+            summary &&
+            typeof summary === 'object' &&
+            'status' in summary &&
+            typeof (summary as Record<string, unknown>).status === 'string'
+          ) {
+            this.agents.set(event.entity_id, {
+              ...existing,
+              compliance_summary: summary as AgentSearchResult['compliance_summary'],
+            });
+          }
+        }
+        this.emit('compliance_changed', {
+          agentUrl: event.entity_id,
+          previousStatus: (typeof payload.previous_status === 'string' ? payload.previous_status : 'unknown') as AgentCompliance['status'],
+          currentStatus: (typeof payload.current_status === 'string' ? payload.current_status : 'unknown') as AgentCompliance['status'],
+        });
         break;
       }
 

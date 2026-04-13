@@ -34,6 +34,11 @@ export type {
   AgentSearchResult,
   AgentSearchResponse,
   CrawlRequestResponse,
+  AgentCompliance,
+  AgentComplianceDetail,
+  StoryboardStatus,
+  OperatorLookupResult,
+  PublisherLookupResult,
   AuthorizationEntry,
 } from './types.generated';
 
@@ -137,6 +142,21 @@ export type GetPropertyHistoryQuery = operations['getPropertyHistory']['paramete
 /** Response from GET /api/properties/history (200) */
 export type GetPropertyHistoryResponse =
   operations['getPropertyHistory']['responses']['200']['content']['application/json'];
+
+/** Response from GET /api/registry/agents/{agentUrl}/storyboard-status */
+export type GetAgentStoryboardStatusResponse =
+  operations['getAgentStoryboardStatus']['responses']['200']['content']['application/json'];
+
+/** Response from POST /api/registry/agents/storyboard-status */
+export type GetAgentStoryboardStatusBulkResponse =
+  operations['bulkAgentStoryboardStatus']['responses']['200']['content']['application/json'];
+
+/** Payload for agent.compliance_changed feed events. */
+export interface ComplianceChangedPayload {
+  previous_status: import('./types.generated').AgentCompliance['status'];
+  current_status: import('./types.generated').AgentCompliance['status'];
+  compliance_summary?: import('./types.generated').AgentCompliance;
+}
 
 // ====== Backward compatibility ======
 
