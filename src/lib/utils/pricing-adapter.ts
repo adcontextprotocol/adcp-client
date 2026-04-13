@@ -317,6 +317,7 @@ export function adaptGetProductsRequestForV2(request: any): any {
   delete adapted.property_list;
   delete adapted.account;
   delete adapted.pagination;
+  delete adapted.adcp_major_version;
 
   return adapted;
 }

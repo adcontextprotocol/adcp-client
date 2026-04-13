@@ -979,9 +979,17 @@ export class SingleAgentClient {
     const agent = await this.ensureEndpointDiscovered();
 
     // Adapt request for v2 servers if needed
+    const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
 
-    const result = await this.executor.executeTask<T>(agent, taskType, adaptedParams, inputHandler, options);
+    const result = await this.executor.executeTask<T>(
+      agent,
+      taskType,
+      adaptedParams,
+      inputHandler,
+      options,
+      serverVersion
+    );
 
     // Normalize response to v3 format
     if (result.success && result.data) {
@@ -1897,9 +1905,17 @@ export class SingleAgentClient {
 
     // Adapt request for the server's protocol version (e.g. strip v3-only
     // fields like buying_mode when talking to v2 agents).
+    const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
 
-    const result = await this.executor.executeTask<T>(agent, taskName, adaptedParams, inputHandler, options);
+    const result = await this.executor.executeTask<T>(
+      agent,
+      taskName,
+      adaptedParams,
+      inputHandler,
+      options,
+      serverVersion
+    );
 
     // Normalize response to v3 format for consistent API surface
     if (result.success && result.data) {

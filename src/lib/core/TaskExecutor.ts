@@ -90,6 +90,7 @@ export class TaskExecutor {
   private activeTasks = new Map<string, TaskState>();
   private conversationStorage?: Map<string, Message[]>;
   private governanceMiddleware?: GovernanceMiddleware;
+  private lastKnownServerVersion?: 'v2' | 'v3';
 
   constructor(
     private config: {
@@ -160,8 +161,10 @@ export class TaskExecutor {
     taskName: string,
     params: any,
     inputHandler?: InputHandler,
-    options: TaskOptions = {}
+    options: TaskOptions = {},
+    serverVersion?: 'v2' | 'v3'
   ): Promise<TaskResult<T>> {
+    if (serverVersion) this.lastKnownServerVersion = serverVersion;
     const taskId = options.contextId || randomUUID();
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
@@ -287,7 +290,9 @@ export class TaskExecutor {
         effectiveParams,
         debugLogs,
         webhookUrl,
-        this.config.webhookSecret
+        this.config.webhookSecret,
+        undefined,
+        serverVersion
       );
 
       // Emit protocol_response activity
@@ -921,7 +926,16 @@ export class TaskExecutor {
         // Fall through to tool call if protocol method is not supported
       }
     }
-    const response = (await ProtocolClient.callTool(agent, 'tasks/list', {})) as Record<string, unknown>;
+    const response = (await ProtocolClient.callTool(
+      agent,
+      'tasks/list',
+      {},
+      [],
+      undefined,
+      undefined,
+      undefined,
+      this.lastKnownServerVersion
+    )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
   }
 
@@ -948,7 +962,16 @@ export class TaskExecutor {
         // Fall through to tool call if protocol method is not supported
       }
     }
-    const response = (await ProtocolClient.callTool(agent, 'tasks/get', { taskId })) as Record<string, unknown>;
+    const response = (await ProtocolClient.callTool(
+      agent,
+      'tasks/get',
+      { taskId },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      this.lastKnownServerVersion
+    )) as Record<string, unknown>;
     return (response.task as TaskInfo) || (response as unknown as TaskInfo);
   }
 
@@ -1044,7 +1067,11 @@ export class TaskExecutor {
         contextId,
         input,
       },
-      debugLogs
+      debugLogs,
+      undefined,
+      undefined,
+      undefined,
+      this.lastKnownServerVersion
     );
 
     // Add response message
