@@ -291,7 +291,25 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 ```bash
 npm init -y
 npm install @adcp/client
+npm install -D typescript @types/node
 ```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -358,4 +376,5 @@ npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --js
 - `storyboards/property_governance.yaml` — property list lifecycle
 - `storyboards/content_standards.yaml` — content standards lifecycle
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
+- `docs/TYPE-SUMMARY.md` — curated type signatures
 - `docs/llms.txt` — full protocol reference

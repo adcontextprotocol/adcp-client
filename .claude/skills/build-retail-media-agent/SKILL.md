@@ -16,6 +16,7 @@ A retail media agent sells advertising on a retailer's properties (sponsored pro
 - User references `sync_catalogs`, `log_event`, or `provide_performance_feedback`
 
 **Not this skill:**
+
 - Standard seller without catalogs → `skills/build-seller-agent/`
 - Generative seller (AI creative from briefs) → `skills/build-generative-seller-agent/`
 - Signals/audience data → `skills/build-signals-agent/`
@@ -25,20 +26,26 @@ A retail media agent sells advertising on a retailer's properties (sponsored pro
 Same domain decisions as the seller skill, plus:
 
 ### 1. Products and pricing
-Same as seller. Get specific inventory: names, channels, pricing model, min spend.
+
+Same as seller. Each product needs: `product_id`, `name`, `description`, `publisher_properties`, `format_ids`, `delivery_type`, `pricing_options`. See [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md) for full field details.
 
 ### 2. Catalog support
+
 What product catalogs does the platform accept?
+
 - Feed format: JSON, CSV, XML
 - What fields: product_id, title, price, image_url, category
 - How does the catalog connect to ad rendering?
 
 ### 3. Event tracking
+
 What conversion events does the platform track?
+
 - Purchase, add_to_cart, page_view, search
 - How are events attributed to catalog items?
 
 ### 4. Performance feedback
+
 Does the buyer send performance metrics back for optimization?
 
 ## Tools and Required Response Shapes
@@ -46,6 +53,7 @@ Does the buyer send performance metrics back for optimization?
 All standard seller tools apply (see `skills/build-seller-agent/SKILL.md`). The additional tools:
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
+
 ```
 capabilitiesResponse({
   adcp: { major_versions: [3] },
@@ -54,6 +62,7 @@ capabilitiesResponse({
 ```
 
 **`sync_accounts`** — `SyncAccountsRequestSchema.shape`
+
 ```
 taskToolResponse({
   accounts: [{
@@ -67,11 +76,13 @@ taskToolResponse({
 ```
 
 **`get_products`** — `GetProductsRequestSchema.shape`
+
 ```
 productsResponse({ products: Product[], sandbox: true })
 ```
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
+
 ```
 mediaBuyResponse({
   media_buy_id: string,
@@ -80,8 +91,9 @@ mediaBuyResponse({
 ```
 
 **`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
+
 ```
-taskToolResponse({
+listCreativeFormatsResponse({
   formats: [{
     format_id: { agent_url: string, id: string },
     name: string,
@@ -92,6 +104,7 @@ taskToolResponse({
 **`sync_catalogs`** — `SyncCatalogsRequestSchema.shape`
 
 Accept product catalog feeds. Return per-catalog status with item counts.
+
 ```
 taskToolResponse({
   catalogs: [{
@@ -107,6 +120,7 @@ taskToolResponse({
 **`sync_event_sources`** — `SyncEventSourcesRequestSchema.shape`
 
 Register event tracking integrations.
+
 ```
 taskToolResponse({
   event_sources: [{
@@ -120,6 +134,7 @@ taskToolResponse({
 **`log_event`** — `LogEventRequestSchema.shape`
 
 Accept conversion events.
+
 ```
 taskToolResponse({
   events_received: number,     // required — how many events in the request
@@ -131,14 +146,16 @@ taskToolResponse({
 **`provide_performance_feedback`** — `ProvidePerformanceFeedbackRequestSchema.shape`
 
 Accept performance metrics from the buyer.
+
 ```
-taskToolResponse({
+performanceFeedbackResponse({
   success: true,
   sandbox: true,
 })
 ```
 
 **`get_media_buy_delivery`** — `GetMediaBuyDeliveryRequestSchema.shape`
+
 ```
 deliveryResponse({
   reporting_period: { start: string, end: string },
@@ -180,22 +197,49 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 ## SDK Quick Reference
 
-| SDK piece | Usage |
-|-----------|-------|
-| `serve(createAgent)` | Start HTTP server on `:3001/mcp` |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support |
-| `server.tool(name, Schema.shape, handler)` | Register tool — `.shape` unwraps Zod |
-| `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
-| `productsResponse(data)` | Build `get_products` response |
-| `mediaBuyResponse(data)` | Build `create_media_buy` response |
-| `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
-| `taskToolResponse(data, summary)` | Build generic tool response |
-| `adcpError(code, { message })` | Structured error |
-| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
+| SDK piece                                               | Usage                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------- |
+| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
+| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
+| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod                                |
+| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
+| `productsResponse(data)`                                | Build `get_products` response                                       |
+| `mediaBuyResponse(data)`                                | Build `create_media_buy` response                                   |
+| `deliveryResponse(data)`                                | Build `get_media_buy_delivery` response                             |
+| `listCreativeFormatsResponse(data)`                     | Build `list_creative_formats` response                              |
+| `performanceFeedbackResponse(data)`                     | Build `provide_performance_feedback` response                       |
+| `taskToolResponse(data, summary)`                       | Build generic tool response (for tools without a dedicated builder) |
+| `adcpError(code, { message })`                          | Structured error                                                    |
+| `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |
 
 Schemas: `GetProductsRequestSchema`, `CreateMediaBuyRequestSchema`, `GetMediaBuyDeliveryRequestSchema`, `SyncAccountsRequestSchema`, `ListCreativeFormatsRequestSchema`, `SyncCatalogsRequestSchema`, `SyncEventSourcesRequestSchema`, `LogEventRequestSchema`, `ProvidePerformanceFeedbackRequestSchema`.
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+
+## Setup
+
+```bash
+npm init -y
+npm install @adcp/client
+npm install -D typescript @types/node
+```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -221,17 +265,18 @@ npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_catalog_crea
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| Skip `get_adcp_capabilities` | Must be the first tool registered |
-| Pass `Schema` instead of `Schema.shape` | MCP SDK needs unwrapped Zod fields |
-| sync_catalogs missing `item_count` / `items_approved` | Required fields for catalog validation results |
-| log_event missing `events_received` / `events_processed` | Required counters |
-| `sandbox: false` on mock data | Buyers may treat mock data as real |
+| Mistake                                                  | Fix                                            |
+| -------------------------------------------------------- | ---------------------------------------------- |
+| Skip `get_adcp_capabilities`                             | Must be the first tool registered              |
+| Pass `Schema` instead of `Schema.shape`                  | MCP SDK needs unwrapped Zod fields             |
+| sync_catalogs missing `item_count` / `items_approved`    | Optional but recommended for catalog validation results |
+| log_event missing `events_received` / `events_processed` | Required counters                              |
+| `sandbox: false` on mock data                            | Buyers may treat mock data as real             |
 
 ## Reference
 
 - `skills/build-seller-agent/SKILL.md` — base seller skill (retail media extends this)
 - `storyboards/media_buy_catalog_creative.yaml` — full catalog creative storyboard
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
+- `docs/TYPE-SUMMARY.md` — curated type signatures
 - `docs/llms.txt` — full protocol reference

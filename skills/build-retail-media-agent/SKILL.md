@@ -27,7 +27,7 @@ Same domain decisions as the seller skill, plus:
 
 ### 1. Products and pricing
 
-Same as seller. Get specific inventory: names, channels, pricing model, min spend.
+Same as seller. Each product needs: `product_id`, `name`, `description`, `publisher_properties`, `format_ids`, `delivery_type`, `pricing_options`. See [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md) for full field details.
 
 ### 2. Catalog support
 
@@ -221,7 +221,25 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 ```bash
 npm init -y
 npm install @adcp/client
+npm install -D typescript @types/node
 ```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -251,7 +269,7 @@ npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_catalog_crea
 | -------------------------------------------------------- | ---------------------------------------------- |
 | Skip `get_adcp_capabilities`                             | Must be the first tool registered              |
 | Pass `Schema` instead of `Schema.shape`                  | MCP SDK needs unwrapped Zod fields             |
-| sync_catalogs missing `item_count` / `items_approved`    | Required fields for catalog validation results |
+| sync_catalogs missing `item_count` / `items_approved`    | Optional but recommended for catalog validation results |
 | log_event missing `events_received` / `events_processed` | Required counters                              |
 | `sandbox: false` on mock data                            | Buyers may treat mock data as real             |
 
@@ -260,4 +278,5 @@ npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_catalog_crea
 - `skills/build-seller-agent/SKILL.md` — base seller skill (retail media extends this)
 - `storyboards/media_buy_catalog_creative.yaml` — full catalog creative storyboard
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
+- `docs/TYPE-SUMMARY.md` — curated type signatures
 - `docs/llms.txt` — full protocol reference

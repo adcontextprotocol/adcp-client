@@ -43,7 +43,7 @@ Get specifics: names, definitions, what each represents. Push for 3-5 segments w
 
 ### 3. Pricing
 
-At least one pricing option per signal:
+At least one pricing option per signal. Signals use `VendorPricingOption` (field: `model`), distinct from product `PricingOption` (field: `pricing_model`).
 
 - `cpm` — `{ pricing_option_id: "po_cpm", model: "cpm", cpm: 2.50, currency: "USD" }`
 - `percent_of_media` — `{ pricing_option_id: "po_pom", model: "percent_of_media", percent: 15, currency: "USD" }`
@@ -165,7 +165,25 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 ```bash
 npm init -y
 npm install @adcp/client
+npm install -D typescript @types/node
 ```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -217,4 +235,5 @@ npx tsc --noEmit agent.ts
 - `storyboards/signal_marketplace.yaml` — buyer call sequences for marketplace agent
 - `storyboards/signal_owned.yaml` — call sequences for owned data agent
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
+- `docs/TYPE-SUMMARY.md` — curated type signatures
 - `docs/llms.txt` — full protocol reference

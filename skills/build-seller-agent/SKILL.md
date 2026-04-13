@@ -42,18 +42,22 @@ Many sellers support both — different products can have different delivery typ
 
 Get specific inventory. Each product needs:
 
-- Name and description
-- Channel: `display`, `olv`, `ctv`, `social`, `retail_media`, `dooh`, etc.
-- Creative format requirements
-- At least one pricing option
+- `product_id`, `name`, `description`
+- `publisher_properties` — at least one `{ publisher_domain: 'example.com', selection_type: 'all' }` (discriminated union: `'all'` | `'by_id'` with `property_ids` | `'by_tag'` with `tags`)
+- `format_ids` — array of `{ agent_url: string, id: string }` referencing creative formats
+- `delivery_type` — `'guaranteed'` or `'non_guaranteed'`
+- `pricing_options` — at least one (see below)
+- Optional: `channels` (`display`, `olv`, `ctv`, `social`, `retail_media`, `dooh`, etc.)
 
-Pricing models:
+Pricing models (all require `pricing_option_id` and `currency`):
 
-- `cpm` — `{ pricing_model: "cpm", fixed_price: 12.00, currency: "USD" }`
-- `cpc` — `{ pricing_model: "cpc", fixed_price: 1.50, currency: "USD" }`
-- Auction — `{ pricing_model: "cpm", floor_price: 5.00, currency: "USD" }` (buyer bids above floor)
+- `cpm` — `{ pricing_option_id: 'cpm-1', pricing_model: "cpm", fixed_price: 12.00, currency: "USD" }`
+- `cpc` — `{ pricing_option_id: 'cpc-1', pricing_model: "cpc", fixed_price: 1.50, currency: "USD" }`
+- Auction — `{ pricing_option_id: 'auction-1', pricing_model: "cpm", floor_price: 5.00, currency: "USD" }` (buyer bids above floor)
 
 Each pricing option can set `min_spend_per_package` to enforce minimum budgets.
+
+For all `PricingOption` variants and `Product` required fields, see [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md).
 
 ### 4. Approval Workflow
 
@@ -112,7 +116,20 @@ taskToolResponse({
 
 ```
 productsResponse({
-  products: Product[],  // required - each needs product_id, delivery_type, pricing_options
+  products: [{
+    product_id: 'prod-1',
+    name: 'Homepage Display',
+    description: 'Premium display ads on homepage',
+    publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
+    format_ids: [{ agent_url: 'https://creative.example.com/mcp', id: 'display-300x250' }],
+    delivery_type: 'guaranteed',
+    pricing_options: [{
+      pricing_option_id: 'cpm-standard',
+      pricing_model: 'cpm',
+      fixed_price: 12.00,
+      currency: 'USD',
+    }],
+  }],
   sandbox: true,        // for mock data
 })
 ```
@@ -281,7 +298,25 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 ```bash
 npm init -y
 npm install @adcp/client
+npm install -D typescript @types/node
 ```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -341,6 +376,8 @@ When storyboard output shows failures, fix each one:
 | sync_governance returns wrong shape                  | Must include `status: 'synced'` and `governance_agents` array |
 | `sandbox: false` on mock data                        | Buyers may treat mock data as real                            |
 | Returns raw JSON for validation failures             | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure    |
+| Missing `publisher_properties` or `format_ids` on Product | Both are required — see product example in `get_products` section |
+| Missing `@types/node` in devDependencies             | `process.env` doesn't resolve without it — see Setup section  |
 
 ## Reference
 
