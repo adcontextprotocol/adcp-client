@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const { resolveAccountForAudiences } = require('../../dist/lib/testing/index.js');
 
 describe('resolveAccountForAudiences', () => {
-  const defaultOptions = { brand: { domain: 'test.example.com' } };
+  const defaultOptions = { brand: { domain: 'test.example' } };
 
   test('explicit audience_account_id takes precedence over sandbox', async () => {
     const { accountRef, steps } = await resolveAccountForAudiences(
@@ -41,8 +41,8 @@ describe('resolveAccountForAudiences', () => {
     );
 
     assert.strictEqual(accountRef.sandbox, true);
-    assert.strictEqual(accountRef.operator, 'test.example.com');
-    assert.deepStrictEqual(accountRef.brand, { domain: 'test.example.com' });
+    assert.strictEqual(accountRef.operator, 'test.example');
+    assert.deepStrictEqual(accountRef.brand, { domain: 'test.example' });
     assert.strictEqual(steps.length, 1);
     assert.strictEqual(steps[0].passed, true, 'step should be marked passed (informational probe)');
     assert.match(steps[0].details, /No explicit sandbox accounts found/);
@@ -56,7 +56,7 @@ describe('resolveAccountForAudiences', () => {
     );
 
     assert.strictEqual(accountRef.sandbox, true);
-    assert.strictEqual(accountRef.operator, 'test.example.com');
+    assert.strictEqual(accountRef.operator, 'test.example');
     assert.strictEqual(steps.length, 1);
     assert.strictEqual(steps[0].passed, true, 'step should be marked passed (fallback succeeded)');
     assert.match(steps[0].details, /list_accounts failed/);
@@ -72,8 +72,8 @@ describe('resolveAccountForAudiences', () => {
     );
 
     assert.strictEqual(accountRef.sandbox, true);
-    assert.strictEqual(accountRef.operator, 'test.example.com');
-    assert.deepStrictEqual(accountRef.brand, { domain: 'test.example.com' });
+    assert.strictEqual(accountRef.operator, 'test.example');
+    assert.deepStrictEqual(accountRef.brand, { domain: 'test.example' });
     assert.strictEqual(steps.length, 0, 'no steps needed for direct natural key');
   });
 
@@ -173,7 +173,7 @@ describe('resolveAccountForAudiences', () => {
 
     // Should fall back to natural key
     assert.strictEqual(accountRef.sandbox, true);
-    assert.strictEqual(accountRef.operator, 'test.example.com');
+    assert.strictEqual(accountRef.operator, 'test.example');
     assert.strictEqual(steps.length, 1);
     // runStep catches the exception and marks passed=false, then our code sets passed=true and clears error for fallback
     assert.strictEqual(steps[0].passed, true);

@@ -104,7 +104,7 @@ export async function testGovernancePropertyLists(
           base_properties: {
             include: [
               { identifier_type: 'domain', identifier_value: 'example.com' },
-              { identifier_type: 'domain', identifier_value: 'test.example.com' },
+              { identifier_type: 'domain', identifier_value: 'test.example' },
             ],
           },
           filters: {
@@ -117,7 +117,7 @@ export async function testGovernancePropertyLists(
           },
           brand_manifest: options.brand_manifest || {
             name: 'E2E Test Brand',
-            url: 'https://test.example.com',
+            url: 'https://test.example',
           },
         } as unknown as CreatePropertyListRequest) as Promise<TaskResult>
     );
@@ -191,8 +191,8 @@ export async function testGovernancePropertyLists(
           base_properties: {
             include: [
               { identifier_type: 'domain', identifier_value: 'example.com' },
-              { identifier_type: 'domain', identifier_value: 'test.example.com' },
-              { identifier_type: 'domain', identifier_value: 'new.example.com' },
+              { identifier_type: 'domain', identifier_value: 'test.example' },
+              { identifier_type: 'domain', identifier_value: 'new.example' },
             ],
           },
           filters: {
@@ -662,7 +662,7 @@ export async function testPropertyListFilters(
         filters,
         brand_manifest: options.brand_manifest || {
           name: 'E2E Test Brand',
-          url: 'https://test.example.com',
+          url: 'https://test.example',
         },
       } as unknown as CreatePropertyListRequest) as Promise<TaskResult>
   );
@@ -820,7 +820,7 @@ export async function testCampaignGovernance(
 
   const testPlanId = `test-plan-${Date.now()}`;
   const testMediaBuyId = `test-mb-${Date.now()}`;
-  const callerUrl = 'https://test-orchestrator.example.com';
+  const callerUrl = 'https://test-orchestrator.example';
   const flightStart = new Date();
   const flightEnd = new Date(flightStart.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
@@ -834,7 +834,7 @@ export async function testCampaignGovernance(
           plans: [
             {
               plan_id: testPlanId,
-              brand: options.brand || { domain: 'test.example.com' },
+              brand: options.brand || { domain: 'test.example' },
               objectives: 'E2E test campaign for governance protocol validation',
               budget: {
                 total: options.budget || 10000,
@@ -1064,7 +1064,7 @@ export async function testCampaignGovernanceDenied(
   profile.supports_governance = true;
 
   const testPlanId = `test-denied-plan-${Date.now()}`;
-  const callerUrl = 'https://test-orchestrator.example.com';
+  const callerUrl = 'https://test-orchestrator.example';
   const flightStart = new Date();
   const flightEnd = new Date(flightStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
@@ -1077,7 +1077,7 @@ export async function testCampaignGovernanceDenied(
         plans: [
           {
             plan_id: testPlanId,
-            brand: options.brand || { domain: 'test.example.com' },
+            brand: options.brand || { domain: 'test.example' },
             objectives: 'E2E denial test: budget and geo restrictions',
             budget: {
               total: 500,
@@ -1267,7 +1267,7 @@ export async function testCampaignGovernanceConditions(
   profile.supports_governance = true;
 
   const testPlanId = `test-conditions-plan-${Date.now()}`;
-  const callerUrl = 'https://test-orchestrator.example.com';
+  const callerUrl = 'https://test-orchestrator.example';
   const flightStart = new Date();
   const flightEnd = new Date(flightStart.getTime() + 14 * 24 * 60 * 60 * 1000);
 
@@ -1280,7 +1280,7 @@ export async function testCampaignGovernanceConditions(
         plans: [
           {
             plan_id: testPlanId,
-            brand: options.brand || { domain: 'test.example.com' },
+            brand: options.brand || { domain: 'test.example' },
             objectives: 'E2E conditions test: budget cap per seller',
             budget: {
               total: 5000,
@@ -1458,7 +1458,7 @@ export async function testCampaignGovernanceDelivery(
 
   const testPlanId = `test-delivery-plan-${Date.now()}`;
   const testMediaBuyId = `test-mb-${Date.now()}`;
-  const callerUrl = 'https://test-seller.example.com';
+  const callerUrl = 'https://test-seller.example';
   const flightStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const flightEnd = new Date(Date.now() + 23 * 24 * 60 * 60 * 1000);
 
@@ -1472,7 +1472,7 @@ export async function testCampaignGovernanceDelivery(
           plans: [
             {
               plan_id: testPlanId,
-              brand: options.brand || { domain: 'test.example.com' },
+              brand: options.brand || { domain: 'test.example' },
               objectives: 'E2E delivery monitoring test',
               budget: {
                 total: 10000,
@@ -1676,7 +1676,7 @@ export async function testSellerGovernanceContext(
       client.executeTask('get_products', {
         buying_mode: 'brief',
         brief: options.brief || 'display advertising',
-        brand: options.brand || { domain: 'test.example.com' },
+        brand: options.brand || { domain: 'test.example' },
       }) as Promise<TaskResult>
   );
   steps.push(productsStep);
@@ -1822,7 +1822,7 @@ export async function testSellerGovernanceContext(
     async () =>
       client.executeTask('create_media_buy', {
         account,
-        brand: options.brand || { domain: 'test.example.com' },
+        brand: options.brand || { domain: 'test.example' },
         start_time: flightStart.toISOString(),
         end_time: flightEnd.toISOString(),
         plan_id: governanceContext ? planId : undefined,
@@ -1977,7 +1977,7 @@ async function resolveTestAccount(
       const result = (await client.executeTask('sync_accounts', {
         accounts: [
           {
-            brand: options.brand || { domain: 'test.example.com' },
+            brand: options.brand || { domain: 'test.example' },
             operator: 'comply-test',
             billing: 'operator',
             sandbox: true,

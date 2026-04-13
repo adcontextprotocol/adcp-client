@@ -17,7 +17,7 @@ describe('AdCPClient', () => {
         {
           id: 'test-agent',
           name: 'Test Agent',
-          agent_uri: 'https://test.example.com',
+          agent_uri: 'https://test.example',
           protocol: 'mcp',
         },
       ];
@@ -71,7 +71,7 @@ describe('AdCPClient', () => {
       const originalAgent = {
         id: 'test',
         name: 'Test',
-        agent_uri: 'https://test.example.com',
+        agent_uri: 'https://test.example',
         protocol: 'mcp',
       };
 
@@ -111,7 +111,7 @@ describe('AdCPClient', () => {
         {
           id: 'test-agent',
           name: 'Test Agent',
-          agent_uri: 'https://test.example.com',
+          agent_uri: 'https://test.example',
           protocol: 'mcp',
         },
       ]);
@@ -204,7 +204,7 @@ describe('ConfigurationManager', () => {
           {
             id: 'env-test',
             name: 'Env Test Agent',
-            agent_uri: 'https://env-test.example.com',
+            agent_uri: 'https://env-test.example',
             protocol: 'mcp',
             auth_token: 'TEST_TOKEN',
           },

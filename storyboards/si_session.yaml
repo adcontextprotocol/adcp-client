@@ -106,7 +106,7 @@ phases:
 
         sample_request:
           brand:
-            domain: "novamotors.example.com"
+            domain: "novamotors.example"
           campaign_context: "Nova EV launch — targeting environmentally conscious drivers interested in electric vehicles"
 
         validations:

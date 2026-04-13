@@ -72,7 +72,7 @@ test('MCP: Protocol integration sends auth headers', async t => {
     const agentConfig = {
       id: 'test-agent',
       protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
+      agent_uri: 'https://test.example/mcp',
       auth_token: 'test-direct-token-1234567890',
     };
 
@@ -88,7 +88,7 @@ test('MCP: Protocol integration sends auth headers', async t => {
     const shortTokenConfig = {
       id: 'test-agent',
       protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
+      agent_uri: 'https://test.example/mcp',
       auth_token: 'ci-test-token',
     };
 
@@ -99,7 +99,7 @@ test('MCP: Protocol integration sends auth headers', async t => {
     const veryShortTokenConfig = {
       id: 'test-agent',
       protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
+      agent_uri: 'https://test.example/mcp',
       auth_token: 'abc123',
     };
 
@@ -113,7 +113,7 @@ test('MCP: Protocol integration sends auth headers', async t => {
     const noAuthConfig = {
       id: 'test-agent',
       protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
+      agent_uri: 'https://test.example/mcp',
     };
 
     const authToken = getAuthToken(noAuthConfig);
@@ -126,7 +126,7 @@ test('MCP: Protocol integration sends auth headers', async t => {
     const emptyTokenConfig = {
       id: 'test-agent',
       protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
+      agent_uri: 'https://test.example/mcp',
       auth_token: '',
     };
 

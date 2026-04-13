@@ -54,7 +54,9 @@ Optional: `audience`, `territory`, `compliance` (required_disclosures, prohibite
 
 ### 5. Brand resolution
 
-The buyer's brand domain should be resolvable (via AgenticAdvertising.org or brand.json). If the brand domain is invalid, reject the creative — don't generate with unknown brand identity.
+The buyer's brand domain should be resolvable. If the brand domain is invalid, reject the creative — don't generate with unknown brand identity.
+
+Brands should be registered dynamically through `sync_accounts` — when a buyer syncs an account with a `brand.domain`, treat that domain as resolvable. Do not hardcode a brand allowlist. Storyboards use fictional brand domains with the `.example` TLD (e.g., `acmeoutdoor.example`) from `storyboards/fictional-entities.yaml`, so a hardcoded list will fail validation.
 
 ## Tools and Required Response Shapes
 
@@ -149,20 +151,19 @@ syncCreativesResponse({
   creatives: [{
     creative_id: string,              // echo from request
     action: 'created' | 'updated',    // required
-    status: 'accepted' | 'pending_review',  // pending_review if generation is async
+    preview_url: string,              // optional — URL to preview generative creative
   }],
 })
 ```
 
-For invalid brand domains, return rejection:
+For invalid brand domains, return failure:
 
 ```
 syncCreativesResponse({
   creatives: [{
     creative_id: string,
-    action: 'created',
-    status: 'rejected',
-    errors: ['Brand domain not found: nonexistent-brand.example'],
+    action: 'failed',
+    errors: [{ code: 'INVALID_BRAND', message: 'Brand domain not found: nonexistent-brand.example' }],
   }],
 })
 ```
@@ -265,8 +266,8 @@ The sync_creatives handler must check the format_id to decide how to process:
 
 - If the format is generative (e.g., id contains "generative"): read the `brief` asset from the creative's assets
 - If the format is standard: read the image/video/html asset
-- Validate the brand domain from the account — reject if invalid
-- Return `pending_review` for generative (async generation) or `accepted` for standard
+- Validate the brand domain from the account — return `action: 'failed'` with an error if invalid
+- Return `action: 'created'` for both generative and standard creatives
 
 ## Validation
 
