@@ -363,19 +363,16 @@ export class RegistryClient {
   /** Get compliance status for an agent, including storyboard pass/fail counts. Returns null if agent not found. */
   async getAgentCompliance(agentUrl: string): Promise<AgentComplianceDetail | null> {
     if (!agentUrl?.trim()) throw new Error('agentUrl is required');
-    return this.get(
-      `${this.baseUrl}/api/registry/agents/${encodeURIComponent(agentUrl)}/compliance`,
-      { nullOn404: true }
-    );
+    return this.get(`${this.baseUrl}/api/registry/agents/${encodeURIComponent(agentUrl)}/compliance`, {
+      nullOn404: true,
+    });
   }
 
   /** Get per-storyboard compliance detail for an agent. Requires authentication. */
   async getAgentStoryboardStatus(agentUrl: string): Promise<GetAgentStoryboardStatusResponse> {
     if (!agentUrl?.trim()) throw new Error('agentUrl is required');
     if (!this.apiKey) throw new Error('apiKey is required for storyboard status');
-    return this.get(
-      `${this.baseUrl}/api/registry/agents/${encodeURIComponent(agentUrl)}/storyboard-status`
-    );
+    return this.get(`${this.baseUrl}/api/registry/agents/${encodeURIComponent(agentUrl)}/storyboard-status`);
   }
 
   /** Bulk query storyboard status for up to 100 agents. Requires authentication. */
@@ -395,19 +392,13 @@ export class RegistryClient {
   /** Look up which agents a domain operates and which publishers trust them. Returns null if not found. */
   async lookupOperator(domain: string): Promise<OperatorLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
-    return this.get(
-      `${this.baseUrl}/api/registry/operator?domain=${encodeURIComponent(domain)}`,
-      { nullOn404: true }
-    );
+    return this.get(`${this.baseUrl}/api/registry/operator?domain=${encodeURIComponent(domain)}`, { nullOn404: true });
   }
 
   /** Look up the inventory a domain publishes and which agents it authorizes. Returns null if not found. */
   async lookupPublisher(domain: string): Promise<PublisherLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
-    return this.get(
-      `${this.baseUrl}/api/registry/publisher?domain=${encodeURIComponent(domain)}`,
-      { nullOn404: true }
-    );
+    return this.get(`${this.baseUrl}/api/registry/publisher?domain=${encodeURIComponent(domain)}`, { nullOn404: true });
   }
 
   // ====== Authorization Lookups ======

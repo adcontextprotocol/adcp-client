@@ -1996,10 +1996,13 @@ describe('RegistryClient', () => {
 
     test('throws on empty agentUrl', async () => {
       const client = new RegistryClient();
-      await assert.rejects(() => client.getAgentCompliance(''), err => {
-        assert.ok(err.message.includes('agentUrl is required'));
-        return true;
-      });
+      await assert.rejects(
+        () => client.getAgentCompliance(''),
+        err => {
+          assert.ok(err.message.includes('agentUrl is required'));
+          return true;
+        }
+      );
     });
 
     test('encodes agentUrl in path', async () => {
@@ -2021,8 +2024,26 @@ describe('RegistryClient', () => {
     const STORYBOARD_RESPONSE = {
       agent_url: 'https://ads.example.com',
       storyboards: [
-        { storyboard_id: 'media_buy_seller', title: 'Media Buy (Seller)', status: 'passing', category: 'sales', track: 'media_buy', steps_passed: 5, steps_total: 5, last_tested_at: '2026-04-01T00:00:00Z' },
-        { storyboard_id: 'core_seller', title: 'Core (Seller)', status: 'failing', category: 'sales', track: 'core', steps_passed: 2, steps_total: 4, last_tested_at: '2026-04-01T00:00:00Z' },
+        {
+          storyboard_id: 'media_buy_seller',
+          title: 'Media Buy (Seller)',
+          status: 'passing',
+          category: 'sales',
+          track: 'media_buy',
+          steps_passed: 5,
+          steps_total: 5,
+          last_tested_at: '2026-04-01T00:00:00Z',
+        },
+        {
+          storyboard_id: 'core_seller',
+          title: 'Core (Seller)',
+          status: 'failing',
+          category: 'sales',
+          track: 'core',
+          steps_passed: 2,
+          steps_total: 4,
+          last_tested_at: '2026-04-01T00:00:00Z',
+        },
       ],
       passing_count: 1,
       total_count: 2,
@@ -2060,10 +2081,13 @@ describe('RegistryClient', () => {
 
     test('throws on empty agentUrl', async () => {
       const client = new RegistryClient({ apiKey: 'test-key' });
-      await assert.rejects(() => client.getAgentStoryboardStatus(''), err => {
-        assert.ok(err.message.includes('agentUrl is required'));
-        return true;
-      });
+      await assert.rejects(
+        () => client.getAgentStoryboardStatus(''),
+        err => {
+          assert.ok(err.message.includes('agentUrl is required'));
+          return true;
+        }
+      );
     });
 
     test('sends Authorization header', async () => {
@@ -2083,7 +2107,16 @@ describe('RegistryClient', () => {
       const bulkResponse = {
         agents: {
           'https://ads.example.com': [
-            { storyboard_id: 'core_seller', title: 'Core', status: 'passing', category: 'sales', track: 'core', steps_passed: 3, steps_total: 3, last_tested_at: '2026-04-01T00:00:00Z' },
+            {
+              storyboard_id: 'core_seller',
+              title: 'Core',
+              status: 'passing',
+              category: 'sales',
+              track: 'core',
+              steps_passed: 3,
+              steps_total: 3,
+              last_tested_at: '2026-04-01T00:00:00Z',
+            },
           ],
         },
       };
@@ -2103,10 +2136,13 @@ describe('RegistryClient', () => {
     test('throws when array exceeds 100', async () => {
       const client = new RegistryClient({ apiKey: 'test-key' });
       const urls = Array.from({ length: 101 }, (_, i) => `https://agent${i}.example.com`);
-      await assert.rejects(() => client.getAgentStoryboardStatusBulk(urls), err => {
-        assert.ok(err.message.includes('Cannot query more than 100'));
-        return true;
-      });
+      await assert.rejects(
+        () => client.getAgentStoryboardStatusBulk(urls),
+        err => {
+          assert.ok(err.message.includes('Cannot query more than 100'));
+          return true;
+        }
+      );
     });
 
     test('throws without apiKey', async () => {
@@ -2128,10 +2164,13 @@ describe('RegistryClient', () => {
 
     test('throws on empty array', async () => {
       const client = new RegistryClient({ apiKey: 'test-key' });
-      await assert.rejects(() => client.getAgentStoryboardStatusBulk([]), err => {
-        assert.ok(err.message.includes('agentUrls is required'));
-        return true;
-      });
+      await assert.rejects(
+        () => client.getAgentStoryboardStatusBulk([]),
+        err => {
+          assert.ok(err.message.includes('agentUrls is required'));
+          return true;
+        }
+      );
     });
 
     test('sends Authorization header', async () => {
@@ -2155,18 +2194,18 @@ describe('RegistryClient', () => {
         '  https://ads.example.com  ',
         'https://other.example.com',
       ]);
-      assert.deepStrictEqual(sentBody.agent_urls.sort(), [
-        'https://ads.example.com',
-        'https://other.example.com',
-      ]);
+      assert.deepStrictEqual(sentBody.agent_urls.sort(), ['https://ads.example.com', 'https://other.example.com']);
     });
 
     test('throws on array of only whitespace entries', async () => {
       const client = new RegistryClient({ apiKey: 'test-key' });
-      await assert.rejects(() => client.getAgentStoryboardStatusBulk(['', '  ']), err => {
-        assert.ok(err.message.includes('no valid entries'));
-        return true;
-      });
+      await assert.rejects(
+        () => client.getAgentStoryboardStatusBulk(['', '  ']),
+        err => {
+          assert.ok(err.message.includes('no valid entries'));
+          return true;
+        }
+      );
     });
   });
 
@@ -2203,10 +2242,13 @@ describe('RegistryClient', () => {
 
     test('throws on empty domain', async () => {
       const client = new RegistryClient();
-      await assert.rejects(() => client.lookupOperator(''), err => {
-        assert.ok(err.message.includes('domain is required'));
-        return true;
-      });
+      await assert.rejects(
+        () => client.lookupOperator(''),
+        err => {
+          assert.ok(err.message.includes('domain is required'));
+          return true;
+        }
+      );
     });
   });
 
@@ -2243,10 +2285,13 @@ describe('RegistryClient', () => {
 
     test('throws on empty domain', async () => {
       const client = new RegistryClient();
-      await assert.rejects(() => client.lookupPublisher(''), err => {
-        assert.ok(err.message.includes('domain is required'));
-        return true;
-      });
+      await assert.rejects(
+        () => client.lookupPublisher(''),
+        err => {
+          assert.ok(err.message.includes('domain is required'));
+          return true;
+        }
+      );
     });
   });
 });

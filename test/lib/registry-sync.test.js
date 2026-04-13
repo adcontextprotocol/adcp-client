@@ -1025,10 +1025,7 @@ describe('RegistrySync', () => {
       restore = mockFetch(async url => {
         requestCount++;
         if (url.includes('/agents/search')) {
-          return new Response(
-            JSON.stringify(makeSearchResponse([AGENT_1])),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/feed')) {
           if (requestCount <= 2) {
@@ -1079,10 +1076,7 @@ describe('RegistrySync', () => {
       restore = mockFetch(async url => {
         requestCount++;
         if (url.includes('/agents/search')) {
-          return new Response(
-            JSON.stringify(makeSearchResponse([AGENT_1])),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/feed')) {
           if (requestCount <= 2) {
@@ -1124,10 +1118,7 @@ describe('RegistrySync', () => {
       restore = mockFetch(async url => {
         requestCount++;
         if (url.includes('/agents/search')) {
-          return new Response(
-            JSON.stringify(makeSearchResponse([AGENT_1])),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/feed')) {
           if (requestCount <= 2) {
@@ -1139,7 +1130,14 @@ describe('RegistrySync', () => {
                 makeEvent('agent.compliance_changed', 'https://unknown.example.com', {
                   previous_status: 'unknown',
                   current_status: 'passing',
-                  compliance_summary: { status: 'passing', lifecycle_stage: 'production', tracks: {}, streak_days: 0, last_checked_at: null, headline: null },
+                  compliance_summary: {
+                    status: 'passing',
+                    lifecycle_stage: 'production',
+                    tracks: {},
+                    streak_days: 0,
+                    last_checked_at: null,
+                    headline: null,
+                  },
                 }),
               ])
             ),
@@ -1169,19 +1167,30 @@ describe('RegistrySync', () => {
     test('filters agents by compliance status', async () => {
       const AGENT_PASSING = {
         ...AGENT_1,
-        compliance_summary: { status: 'passing', lifecycle_stage: 'production', tracks: {}, streak_days: 5, last_checked_at: null, headline: null },
+        compliance_summary: {
+          status: 'passing',
+          lifecycle_stage: 'production',
+          tracks: {},
+          streak_days: 5,
+          last_checked_at: null,
+          headline: null,
+        },
       };
       const AGENT_FAILING = {
         ...AGENT_2,
-        compliance_summary: { status: 'failing', lifecycle_stage: 'testing', tracks: {}, streak_days: 0, last_checked_at: null, headline: null },
+        compliance_summary: {
+          status: 'failing',
+          lifecycle_stage: 'testing',
+          tracks: {},
+          streak_days: 0,
+          last_checked_at: null,
+          headline: null,
+        },
       };
 
       restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
-          return new Response(
-            JSON.stringify(makeSearchResponse([AGENT_PASSING, AGENT_FAILING])),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_PASSING, AGENT_FAILING])), { status: 200 });
         }
         return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
       });
@@ -1206,10 +1215,7 @@ describe('RegistrySync', () => {
     test('agents without compliance_summary default to unknown', async () => {
       restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
-          return new Response(
-            JSON.stringify(makeSearchResponse([AGENT_1, AGENT_2])),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1, AGENT_2])), { status: 200 });
         }
         return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
       });

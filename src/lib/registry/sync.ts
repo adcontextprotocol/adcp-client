@@ -42,7 +42,9 @@ export interface RegistrySyncEvents {
   event: [{ event: CatalogEvent }];
   error: [{ error: Error }];
   /** Emitted when an agent's compliance status changes. */
-  compliance_changed: [{ agentUrl: string; previousStatus: AgentCompliance['status']; currentStatus: AgentCompliance['status'] }];
+  compliance_changed: [
+    { agentUrl: string; previousStatus: AgentCompliance['status']; currentStatus: AgentCompliance['status'] },
+  ];
   stateChange: [{ from: RegistrySyncState; to: RegistrySyncState }];
 }
 
@@ -449,8 +451,12 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         }
         this.emit('compliance_changed', {
           agentUrl: event.entity_id,
-          previousStatus: (typeof payload.previous_status === 'string' ? payload.previous_status : 'unknown') as AgentCompliance['status'],
-          currentStatus: (typeof payload.current_status === 'string' ? payload.current_status : 'unknown') as AgentCompliance['status'],
+          previousStatus: (typeof payload.previous_status === 'string'
+            ? payload.previous_status
+            : 'unknown') as AgentCompliance['status'],
+          currentStatus: (typeof payload.current_status === 'string'
+            ? payload.current_status
+            : 'unknown') as AgentCompliance['status'],
         });
         break;
       }
