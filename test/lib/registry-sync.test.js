@@ -1113,7 +1113,47 @@ describe('RegistrySync', () => {
       assert.strictEqual(events[0].currentStatus, 'passing');
     });
 
-    test('no-op when agent not in index', async () => {
+    test('emits event even when indexAgents is false', async () => {
+      let requestCount = 0;
+      restore = mockFetch(async url => {
+        requestCount++;
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/feed')) {
+          if (requestCount <= 2) {
+            return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+          }
+          return new Response(
+            JSON.stringify(
+              makeFeedResponse([
+                makeEvent('agent.compliance_changed', 'https://any.example.com', {
+                  previous_status: 'unknown',
+                  current_status: 'passing',
+                }),
+              ])
+            ),
+            { status: 200 }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client, pollIntervalMs: 50, indexes: { agents: false } });
+
+      const events = [];
+      sync.on('compliance_changed', evt => events.push(evt));
+
+      await sync.start();
+      await new Promise(r => setTimeout(r, 150));
+      sync.stop();
+
+      assert.ok(events.length >= 1);
+      assert.strictEqual(events[0].currentStatus, 'passing');
+    });
+
+    test('does not update index for unknown agent but still emits event', async () => {
       let requestCount = 0;
       restore = mockFetch(async url => {
         requestCount++;
@@ -1150,6 +1190,9 @@ describe('RegistrySync', () => {
       const client = new RegistryClient({ apiKey: 'test-key' });
       const sync = new RegistrySync({ client, pollIntervalMs: 50 });
 
+      const events = [];
+      sync.on('compliance_changed', evt => events.push(evt));
+
       await sync.start();
       await new Promise(r => setTimeout(r, 150));
       sync.stop();
@@ -1158,6 +1201,10 @@ describe('RegistrySync', () => {
       const agent = sync.getAgent(AGENT_1.url);
       assert.ok(agent);
       assert.strictEqual(agent.compliance_summary, undefined);
+
+      // But the event should still have been emitted
+      assert.ok(events.length >= 1);
+      assert.strictEqual(events[0].agentUrl, 'https://unknown.example.com');
     });
   });
 
