@@ -88,8 +88,8 @@ phases:
         sample_request:
           accounts:
             - brand:
-                domain: "acmeoutdoor.example"
-              operator: "pinnacle-agency.example"
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
               billing: "operator"
               payment_terms: "net_30"
 
@@ -201,11 +201,11 @@ phases:
           buying_mode: "brief"
           brief: "Premium display and video inventory on outdoor lifestyle content. Q2 flight, $50K budget. Adults 25-54, US. We want your platform to generate the creatives from our brand brief."
           brand:
-            domain: "acmeoutdoor.example"
+            domain: "acmeoutdoor.com"
           account:
             brand:
-              domain: "acmeoutdoor.example"
-            operator: "pinnacle-agency.example"
+              domain: "acmeoutdoor.com"
+            operator: "pinnacle-agency.com"
 
         validations:
           - check: response_schema
@@ -247,10 +247,10 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.example"
-            operator: "pinnacle-agency.example"
+              domain: "acmeoutdoor.com"
+            operator: "pinnacle-agency.com"
           brand:
-            domain: "acmeoutdoor.example"
+            domain: "acmeoutdoor.com"
           start_time: "2026-04-01T00:00:00Z"
           end_time: "2026-06-30T23:59:59Z"
           packages:
@@ -310,8 +310,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.example"
-            operator: "pinnacle-agency.example"
+              domain: "acmeoutdoor.com"
+            operator: "pinnacle-agency.com"
           creatives:
             - creative_id: "gen_display_summer_sale"
               name: "Summer Sale - Generated Display 300x250"
@@ -374,6 +374,9 @@ phases:
           - check: field_present
             path: "creatives[0].action"
             description: "Each creative has an action (created/updated)"
+          - check: field_present
+            path: "creatives[0].action"
+            description: "Each creative has a status (pending_review or accepted)"
 
       - id: sync_creatives_standard
         title: "Sync standard creatives alongside generative"
@@ -395,8 +398,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.example"
-            operator: "pinnacle-agency.example"
+              domain: "acmeoutdoor.com"
+            operator: "pinnacle-agency.com"
           creatives:
             - creative_id: "static_display_300x250"
               name: "Trail Pro 3000 - Pre-built Display 300x250"
@@ -439,7 +442,7 @@ phases:
           account:
             brand:
               domain: "nonexistent-brand-xyz.example"
-            operator: "pinnacle-agency.example"
+            operator: "pinnacle-agency.com"
           creatives:
             - creative_id: "gen_invalid_brand"
               name: "Invalid Brand Test"
@@ -460,7 +463,7 @@ phases:
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
             path: "creatives[0].action"
-            description: "Creative has an action (expected: rejected)"
+            description: "Creative has a status (expected: rejected)"
 
   - id: creative_generation_lifecycle
     title: "Creative generation lifecycle"
@@ -498,8 +501,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.example"
-            operator: "pinnacle-agency.example"
+              domain: "acmeoutdoor.com"
+            operator: "pinnacle-agency.com"
           creatives:
             - creative_id: "gen_display_summer_sale"
               name: "Summer Sale - Generated Display 300x250"
@@ -533,7 +536,7 @@ phases:
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
             path: "creatives[0].action"
-            description: "Each creative has a current action"
+            description: "Each creative has a current status"
 
   - id: delivery_monitoring
     title: "Delivery and reporting"
@@ -564,8 +567,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.example"
-            operator: "pinnacle-agency.example"
+              domain: "acmeoutdoor.com"
+            operator: "pinnacle-agency.com"
           media_buy_ids:
             - "mb_acme_q2_2026"
           include_package_daily_breakdown: true

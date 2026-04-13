@@ -66,19 +66,14 @@ phases:
 
         sample_request:
           plans:
-            - plan_id: "gov_acme_delivery"
+            - plan_name: "Acme Outdoor delivery governance"
               brand:
-                domain: "acmeoutdoor.example"
-              objectives: "Display and video campaign with delivery monitoring governance"
-              budget:
-                total: 40000
-                currency: "USD"
-                authority_level: "agent_full"
-                reallocation_threshold: 0.20
-              flight:
-                start: "2026-04-01T00:00:00Z"
-                end: "2026-06-30T23:59:59Z"
-              approved_sellers: null
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
+              authority_level: "agent_full"
+              reallocation_threshold: 0.20
+              conditions:
+                - "Re-evaluate governance if any line item drifts >20% from plan"
 
         validations:
           - check: response_schema
@@ -110,10 +105,13 @@ phases:
           - monitoring: delivery phase governance is active
 
         sample_request:
-          plan_id: "$context.plan_id"
-          caller: "pinnacle-agency.example"
-          payload:
+          plan_id: "gov_acme_delivery"
+          binding:
             type: "media_buy"
+            account:
+              brand:
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
             total_budget: 40000
             packages:
               - product_id: "sports_ctv_q2"
@@ -138,7 +136,6 @@ phases:
     steps:
       - id: get_delivery
         title: "Check delivery metrics"
-        requires_tool: get_media_buy_delivery
         narrative: |
           The buyer requests delivery data and finds budget drift. One line item is
           significantly overpacing while the other is underpacing.
@@ -157,8 +154,8 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.example"
-            operator: "pinnacle-agency.example"
+              domain: "acmeoutdoor.com"
+            operator: "pinnacle-agency.com"
           media_buy_ids:
             - "mb_acme_q2_2026"
           include_package_daily_breakdown: true
@@ -202,15 +199,26 @@ phases:
           - conditions: if approved, conditions for rebalancing (e.g., "Reallocate $5K from CTV to video")
 
         sample_request:
-          plan_id: "$context.plan_id"
-          caller: "pinnacle-agency.example"
-          phase: "delivery"
-          governance_context: "$context.governance_context"
-          delivery_metrics:
-            reporting_period:
-              start: "2026-04-01T00:00:00Z"
-              end: "2026-05-15T00:00:00Z"
-            cumulative_spend: 20000
+          plan_id: "gov_acme_delivery"
+          governance_phase: "delivery"
+          governance_context: "gov_ctx_acme_delivery_approved"
+          binding:
+            type: "media_buy"
+            account:
+              brand:
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
+            media_buy_id: "mb_acme_q2_2026"
+            delivery_evidence:
+              packages:
+                - product_id: "sports_ctv_q2"
+                  budget: 20000
+                  spend_to_date: 14000
+                  flight_progress: 0.50
+                - product_id: "outdoor_video_q2"
+                  budget: 20000
+                  spend_to_date: 6000
+                  flight_progress: 0.50
 
         validations:
           - check: response_schema

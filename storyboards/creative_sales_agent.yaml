@@ -112,7 +112,7 @@ phases:
                   url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg"
                 - asset_id: "click_url"
                   asset_type: "url"
-                  url: "https://acmeoutdoor.example/summer-sale"
+                  url: "https://acme-outdoor.example.com/summer-sale"
 
         validations:
           - check: response_schema
