@@ -270,6 +270,7 @@ async function executeStep(
   }
 
   // Execute the task
+  // eslint-disable-next-line prefer-const -- stepResult is const but taskResult is reassigned below
   let { result: taskResult, step: stepResult } = await runStep(step.title, step.task, () =>
     executeStoryboardTask(client, step.task, request)
   );

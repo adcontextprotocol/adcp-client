@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-13T18:18:40.570Z
+// Generated at: 2026-04-13T18:53:38.359Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3223,7 +3223,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
             supports_webhook_delivery: z.boolean().nullish()
         }).passthrough().nullish(),
         portfolio: z.object({
-            publisher_domains: z.array(z.string()).nullish(),
+            publisher_domains: z.array(z.string()),
             primary_channels: z.array(MediaChannelSchema).nullish(),
             primary_countries: z.array(z.string()).nullish(),
             description: z.string().nullish(),
@@ -4451,9 +4451,9 @@ export const ComplyTestControllerRequestSchema = z.union([ListScenariosSchema, F
 
 export const ComplyTestControllerResponseSchema = z.union([ListScenariosSuccessSchema, StateTransitionSuccessSchema, SimulationSuccessSchema, ControllerErrorSchema]);
 
-export const AdCPAsyncResponseDataSchema = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, BuildCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
+export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, BuildCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
 
-export const MCPWebhookPayloadSchema = z.object({
+export const MCPWebhookPayloadSchema: z.ZodType = z.object({
     operation_id: z.string().nullish(),
     task_id: z.string(),
     task_type: TaskTypeSchema,

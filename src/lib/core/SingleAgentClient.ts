@@ -2482,18 +2482,16 @@ export class SingleAgentClient {
           return this.cachedCapabilities;
         }
         // Log when executeTask returns but success is false
-        console.warn(
-          `[AdCP] get_adcp_capabilities returned non-success, falling back to synthetic capabilities`,
-          { success: result.success, error: result.error, hasData: !!result.data }
-        );
+        console.warn(`[AdCP] get_adcp_capabilities returned non-success, falling back to synthetic capabilities`, {
+          success: result.success,
+          error: result.error,
+          hasData: !!result.data,
+        });
       } catch (error: unknown) {
         // Re-throw errors that indicate real infrastructure problems —
         // only fall through for tool-execution failures (the agent
         // advertises get_adcp_capabilities but can't actually serve it).
-        if (
-          error instanceof AuthenticationRequiredError ||
-          error instanceof TaskTimeoutError
-        ) {
+        if (error instanceof AuthenticationRequiredError || error instanceof TaskTimeoutError) {
           throw error;
         }
         console.warn(

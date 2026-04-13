@@ -12446,7 +12446,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Publisher domains this seller is authorized to represent. Buyers should fetch each publisher's adagents.json for property definitions.
        */
-      publisher_domains?: string[];
+      publisher_domains: string[];
       /**
        * Primary advertising channels in this portfolio
        */
