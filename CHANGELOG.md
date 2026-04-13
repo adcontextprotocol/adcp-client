@@ -1,5 +1,41 @@
 # Changelog
 
+## 4.28.0
+
+### Minor Changes
+
+- 43efdc8: Remove dry_run as a protocol concept in favor of sandbox
+  - Removed X-Dry-Run HTTP header from test client
+  - Removed dry_run from TestOptions, TestResult, SuiteResult, StoryboardResult, ComplianceResult
+  - Made sandbox: true the default for all test runs (comply, testAgent, testAllScenarios)
+  - Changed CLI --dry-run to preview mode (shows steps without executing, opt-in)
+  - Replaced --no-dry-run flag with --dry-run (default is now to execute)
+
+- 02cdc70: Add sandbox entity system for storyboard testing and fix documentation gaps
+  - Fix sync_creatives examples in generative seller SKILL.md (status→action, errors as objects)
+  - Fix channels enum in TYPE-SUMMARY.md (20 real MediaChannel values, not 8)
+  - Add PricingOption variant details to TYPE-SUMMARY.md (CPV parameters)
+  - Add fictional-entities.yaml defining all 14 companies from the AdCP character bible
+  - Add getSandboxEntities() / getSandboxBrand() / isSandboxDomain() exports from testing module
+  - Add sandbox boolean to registry OpenAPI spec (ResolvedBrand, BrandRegistryItem, saveBrand)
+  - Migrate all fictional entity domains to IANA-reserved .example TLD
+  - Add --sandbox flag to save-brand CLI command
+
+- ce4932a: Sync storyboards from adcp 3.0: broadcast TV seller, generative updates, governance and status fixes
+  - Add media_buy_broadcast_seller storyboard (linear TV with Ad-ID, measurement windows, C7 reconciliation)
+  - Update creative_generative and media_buy_generative_seller storyboards
+  - Fix governance storyboards: status→decision field, binding structure, domain→.com
+  - Fix media buy storyboards: status lifecycle (pending_activation→pending_creatives/pending_start)
+  - Fix path references (media_buys→media_buy_deliveries, field_value additions)
+  - Fix signal storyboards: validation and path corrections
+
+### Patch Changes
+
+- bcf2651: Fix adcp_major_version breaking v2 seller tool calls
+  - Stop injecting adcp_major_version into tool args for v2 sellers (strict Pydantic schemas reject it)
+  - Make ProtocolClient version-aware via serverVersion parameter
+  - Strip adcp_major_version in all v2 request adapters as belt-and-suspenders
+
 ## 4.27.0
 
 ### Minor Changes
