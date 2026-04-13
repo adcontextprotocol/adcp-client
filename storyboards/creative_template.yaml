@@ -116,9 +116,10 @@ phases:
         validations:
           - check: response_schema
             description: "Response matches schema"
-          - check: field_present
-            path: "formats[0].format_id"
-            description: "Each format has a format_id"
+          - check: field_value
+            path: "formats[*].type"
+            value: "display"
+            description: "All returned formats are display type"
 
   - id: preview
     title: "Preview with real assets"
@@ -171,7 +172,7 @@ phases:
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-300x250.jpg"
               - asset_id: "click_url"
                 asset_type: "url"
-                url: "https://acmeoutdoor.example/summer-sale"
+                url: "https://acme-outdoor.example.com/summer-sale"
               - asset_id: "headline"
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
@@ -235,7 +236,7 @@ phases:
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-300x250.jpg"
               - asset_id: "click_url"
                 asset_type: "url"
-                url: "https://acmeoutdoor.example/summer-sale"
+                url: "https://acme-outdoor.example.com/summer-sale"
               - asset_id: "headline"
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
@@ -243,7 +244,7 @@ phases:
             agent_url: "https://your-agent.example.com"
             id: "display_300x250"
           brand:
-            domain: "acmeoutdoor.example"
+            domain: "acme-outdoor.example.com"
 
         validations:
           - check: response_schema
@@ -283,7 +284,7 @@ phases:
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg"
               - asset_id: "click_url"
                 asset_type: "url"
-                url: "https://acmeoutdoor.example/summer-sale"
+                url: "https://acme-outdoor.example.com/summer-sale"
               - asset_id: "headline"
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
@@ -295,7 +296,7 @@ phases:
             - agent_url: "https://your-agent.example.com"
               id: "display_320x50"
           brand:
-            domain: "acmeoutdoor.example"
+            domain: "acme-outdoor.example.com"
 
         validations:
           - check: response_schema
