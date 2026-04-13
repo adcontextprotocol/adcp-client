@@ -87,6 +87,7 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
     artifact_webhook,
     brand,
     brand_manifest: inputManifest,
+    adcp_major_version,
     ...rest
   } = request;
 
@@ -124,7 +125,7 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
  * Strips v3-only top-level fields and adapts packages.
  */
 export function adaptUpdateMediaBuyRequestForV2(request: any): any {
-  const { reporting_webhook, ...rest } = request;
+  const { reporting_webhook, adcp_major_version, ...rest } = request;
 
   return {
     ...rest,
