@@ -57,6 +57,7 @@ advertisers:
     domain: "bistro-oranje.example"
     industry: hospitality
     sandbox_brand: true
+    test_kit: "test-kits/bistro-oranje.yaml"
     description: >
       Dutch restaurant chain. Used in rights licensing scenarios where
       Carlos manages programmatic rights for ad campaigns.
@@ -68,6 +69,7 @@ advertisers:
     domain: "summitfoods.example"
     industry: cpg
     sandbox_brand: true
+    test_kit: "test-kits/summit-foods.yaml"
     description: >
       Organic food / CPG brand. Buys retail media inventory on ShopGrid
       in commerce media scenarios.
@@ -78,6 +80,7 @@ advertisers:
     domain: "oseinatural.example"
     industry: beauty
     sandbox_brand: true
+    test_kit: "test-kits/osei-natural.yaml"
     description: >
       8-person natural skincare company based in Nairobi. Represents the
       small business that advertising should serve but currently doesn't.
