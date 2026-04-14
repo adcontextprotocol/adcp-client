@@ -3,6 +3,8 @@ version: "1.0.0"
 title: "Generative creative agent"
 category: creative_generative
 summary: "Agent that takes a brief and generates finished creatives from scratch — no input assets required."
+required_tools:
+  - build_creative
 
 narrative: |
   You run a generative creative platform — an AI ad network, a generative DSP, or any system
