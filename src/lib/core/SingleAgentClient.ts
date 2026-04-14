@@ -1060,6 +1060,23 @@ export class SingleAgentClient {
     if (!toolSchema) return adapted;
 
     const declaredFields = new Set(Object.keys(toolSchema));
+
+    // The v2 adapter may rename fields (e.g. brand → brand_manifest) that a
+    // v3 server — misdetected as v2 — doesn't declare.  Reconcile known
+    // adapter mappings so the value isn't silently dropped.
+    const adapterAliases: [string, string][] = [['brand_manifest', 'brand']];
+    for (const [adapterField, schemaField] of adapterAliases) {
+      if (
+        adapted[adapterField] !== undefined &&
+        !declaredFields.has(adapterField) &&
+        declaredFields.has(schemaField) &&
+        adapted[schemaField] === undefined
+      ) {
+        adapted[schemaField] = adapted[adapterField];
+        delete adapted[adapterField];
+      }
+    }
+
     // Protocol envelope fields are always preserved — they live at the
     // protocol layer, not in individual tool schemas.
     const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id', 'ext']);
@@ -2484,12 +2501,20 @@ export class SingleAgentClient {
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
           return this.cachedCapabilities;
         }
-        // Log when executeTask returns but success is false
-        console.warn(`[AdCP] get_adcp_capabilities returned non-success, falling back to synthetic capabilities`, {
-          success: result.success,
-          error: result.error,
-          hasData: !!result.data,
-        });
+        // Log when executeTask returns but success is false — this causes
+        // the server to be treated as v2 even though it advertises
+        // get_adcp_capabilities, which will trigger v2 field adapters.
+        console.warn(
+          `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
+            `returned non-success — falling back to v2 synthetic capabilities. ` +
+            `This may cause v2 field adapters to run against a v3 server.`,
+          {
+            success: result.success,
+            error: result.error,
+            hasData: !!result.data,
+            data: result.data,
+          }
+        );
       } catch (error: unknown) {
         // Re-throw errors that indicate real infrastructure problems —
         // only fall through for tool-execution failures (the agent
@@ -2498,14 +2523,20 @@ export class SingleAgentClient {
           throw error;
         }
         console.warn(
-          `[AdCP] get_adcp_capabilities call failed, falling back to synthetic capabilities: ${
-            error instanceof Error ? error.message : String(error)
-          }`
+          `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
+            `threw — falling back to v2 synthetic capabilities. ` +
+            `This may cause v2 field adapters to run against a v3 server. ` +
+            `Error: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
 
     // Build synthetic capabilities from tool list (v2)
+    console.warn(
+      `[AdCP] Agent "${this.agent.id}" detected as v2` +
+        (hasCapabilitiesTool ? ' (has get_adcp_capabilities tool but call failed)' : '') +
+        `. Tools: [${tools.map(t => t.name).join(', ')}]`
+    );
     this.cachedCapabilities = buildSyntheticCapabilities(tools);
     return this.cachedCapabilities;
   }
