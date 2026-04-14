@@ -66,7 +66,7 @@ export function unwrapProtocolResponse(
   protocolResponse: any,
   toolName?: string,
   protocol?: 'mcp' | 'a2a',
-  options?: { filterInvalidArrayItems?: boolean }
+  options?: { filterInvalidProducts?: boolean }
 ): AdCPResponse & { _message?: string } {
   if (!protocolResponse) {
     throw new Error('Protocol response is null or undefined');
@@ -105,10 +105,10 @@ export function unwrapProtocolResponse(
       const { _message: _msg, ...dataToValidate } = unwrapped as Record<string, unknown>;
       const result = schema.safeParse(dataToValidate);
       if (!result.success) {
-        // When filterInvalidArrayItems is enabled, try filtering invalid items from
-        // array fields individually rather than rejecting the entire response.
-        if (options?.filterInvalidArrayItems) {
-          const filtered = filterInvalidItems(schema, dataToValidate);
+        // When filterInvalidArrayItems is enabled and this is a get_products response,
+        // try filtering invalid products individually rather than rejecting the entire response.
+        if (options?.filterInvalidProducts && toolName === 'get_products') {
+          const filtered = filterInvalidProducts(schema, dataToValidate);
           if (filtered) {
             const validated = filtered as unknown as AdCPResponse & { _message?: string };
             if (_msg) validated._message = _msg as string;
@@ -144,88 +144,42 @@ export function unwrapProtocolResponse(
 }
 
 /**
- * Attempt to salvage a response that fails whole-response validation by
- * filtering invalid items out of array fields and re-validating.
+ * Filter invalid products from a get_products response.
  *
- * Walks the top-level schema shape, finds required array fields (e.g. `products`),
- * validates each element individually, and keeps only valid ones.
- * Returns the filtered + re-validated response, or null if filtering can't help
- * (e.g. all items invalid, or the failure isn't in an array field).
+ * Validates each product individually against the ProductSchema,
+ * keeps only valid ones, and re-validates the full response.
+ * Returns the filtered response, or null if filtering can't help.
  */
-function filterInvalidItems(schema: z.ZodType, data: Record<string, unknown>): Record<string, unknown> | null {
-  // Extract the object schema — unwrap unions/effects to find the underlying z.object
-  const objectSchema = extractObjectSchema(schema);
-  if (!objectSchema) return null;
+function filterInvalidProducts(schema: z.ZodType, data: Record<string, unknown>): Record<string, unknown> | null {
+  const products = data.products;
+  if (!Array.isArray(products)) return null;
 
-  const shape = objectSchema.shape as Record<string, z.ZodType>;
-  const filtered = { ...data };
-  let didFilter = false;
+  const ProductSchema = (schema as z.ZodObject<any>).shape?.products;
+  if (!(ProductSchema instanceof z.ZodArray)) return null;
 
-  for (const [key, fieldSchema] of Object.entries(shape)) {
-    const arrayValue = data[key];
-    if (!Array.isArray(arrayValue)) continue;
-
-    // Unwrap to find the inner array schema and its element type
-    const elementSchema = extractArrayElementSchema(fieldSchema);
-    if (!elementSchema) continue;
-
-    const validItems: unknown[] = [];
-    for (const item of arrayValue) {
-      if (elementSchema.safeParse(item).success) {
-        validItems.push(item);
-      }
-    }
-
-    if (validItems.length < arrayValue.length) {
-      didFilter = true;
-      filtered[key] = validItems;
+  const elementSchema = (ProductSchema as z.ZodArray<any>).element;
+  const validProducts: unknown[] = [];
+  for (const product of products) {
+    if (elementSchema.safeParse(product).success) {
+      validProducts.push(product);
     }
   }
 
-  if (!didFilter) return null;
+  // Nothing was filtered — all products are individually valid, so the validation
+  // error is at the response level (not caused by invalid products). Fall through
+  // to the normal error path.
+  if (validProducts.length === products.length) return null;
 
-  // Re-validate the filtered response against the full schema
+  const filtered = { ...data, products: validProducts };
   const revalidated = schema.safeParse(filtered);
   if (revalidated.success) {
+    const droppedCount = products.length - validProducts.length;
+    console.warn(
+      `[adcp-client] Filtered ${droppedCount} invalid product(s) from get_products response (${validProducts.length} valid, ${products.length} total)`
+    );
     return revalidated.data as Record<string, unknown>;
   }
 
-  return null;
-}
-
-/**
- * Extract the underlying z.object schema from a potentially wrapped type
- * (union, passthrough, etc.)
- */
-function extractObjectSchema(schema: z.ZodType): z.ZodObject<any> | null {
-  if (schema instanceof z.ZodObject) return schema as z.ZodObject<any>;
-  if (schema instanceof z.ZodUnion) {
-    // Try each union variant — return the first object schema found
-    for (const option of (schema as z.ZodUnion<any>).options) {
-      const obj = extractObjectSchema(option);
-      if (obj) return obj;
-    }
-  }
-  return null;
-}
-
-/**
- * Extract the element schema from a z.array() field, unwrapping
- * optional/nullable/default wrappers.
- */
-function extractArrayElementSchema(fieldSchema: z.ZodType): z.ZodType | null {
-  if (fieldSchema instanceof z.ZodArray) {
-    return (fieldSchema as z.ZodArray<any>).element;
-  }
-  if (fieldSchema instanceof z.ZodOptional) {
-    return extractArrayElementSchema((fieldSchema as z.ZodOptional<any>).unwrap());
-  }
-  if (fieldSchema instanceof z.ZodNullable) {
-    return extractArrayElementSchema((fieldSchema as z.ZodNullable<any>).unwrap());
-  }
-  if (fieldSchema instanceof z.ZodDefault) {
-    return extractArrayElementSchema((fieldSchema as z.ZodDefault<any>)._def.innerType);
-  }
   return null;
 }
 

@@ -657,18 +657,6 @@ export interface MediaBuyFeatures {
    */
   property_list_filtering?: boolean;
   /**
-   * Full support for content_standards configuration including sampling rates and category filtering
-   */
-  content_standards?: boolean;
-  /**
-   * Supports sync_event_sources and log_event tasks for conversion event tracking
-   */
-  conversion_tracking?: boolean;
-  /**
-   * Supports sync_audiences task and audience_include/audience_exclude in targeting overlays for first-party CRM audience management
-   */
-  audience_targeting?: boolean;
-  /**
    * Supports sync_catalogs task for catalog feed management with platform review and approval
    */
   catalog_management?: boolean;
@@ -954,7 +942,18 @@ export type InstallmentStatus = 'scheduled' | 'tentative' | 'live' | 'postponed'
 /**
  * Rating system used
  */
-export type ContentRatingSystem = 'tv_parental' | 'mpaa' | 'podcast' | 'esrb' | 'bbfc' | 'fsk' | 'acb' | 'custom';
+export type ContentRatingSystem =
+  | 'tv_parental'
+  | 'mpaa'
+  | 'podcast'
+  | 'esrb'
+  | 'bbfc'
+  | 'fsk'
+  | 'acb'
+  | 'chvrs'
+  | 'csa'
+  | 'pegi'
+  | 'custom';
 /**
  * Category of the event
  */
@@ -1126,7 +1125,7 @@ export interface Product {
    */
   performance_standards?: PerformanceStandard[];
   cancellation_policy?: CancellationPolicy;
-  reporting_capabilities?: ReportingCapabilities;
+  reporting_capabilities: ReportingCapabilities;
   creative_policy?: CreativePolicy;
   /**
    * Whether this is a custom product
@@ -3823,6 +3822,8 @@ export interface TargetingOverlay {
   audience_exclude?: string[];
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
+  collection_list?: CollectionListReference;
+  collection_list_exclude?: CollectionListReference;
   /**
    * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
    */
@@ -3909,6 +3910,23 @@ export interface TargetingOverlay {
      */
     match_type: 'broad' | 'phrase' | 'exact';
   }[];
+}
+/**
+ * Reference to a collection list for including specific collections (programs, shows) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.
+ */
+export interface CollectionListReference {
+  /**
+   * URL of the agent managing the collection list
+   */
+  agent_url: string;
+  /**
+   * Identifier for the collection list within the agent
+   */
+  list_id: string;
+  /**
+   * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
+   */
+  auth_token?: string;
 }
 /**
  * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
@@ -9526,6 +9544,454 @@ export interface DeletePropertyListResponse {
   ext?: ExtensionObject;
 }
 
+// create_collection_list parameters
+/**
+ * A source of collections for a collection list. Supports three selection patterns: distribution identifiers (cross-publisher), publisher-specific collection IDs, or publisher-specific genres.
+ */
+export type BaseCollectionSource = DistributionIDsSource | PublisherCollectionsSource | PublisherGenresSource;
+/**
+ * Type of distribution identifier
+ */
+export type DistributionIdentifierType =
+  | 'apple_podcast_id'
+  | 'spotify_collection_id'
+  | 'rss_url'
+  | 'podcast_guid'
+  | 'amazon_music_id'
+  | 'iheart_id'
+  | 'podcast_index_id'
+  | 'youtube_channel_id'
+  | 'youtube_playlist_id'
+  | 'amazon_title_id'
+  | 'roku_channel_id'
+  | 'pluto_channel_id'
+  | 'tubi_id'
+  | 'peacock_id'
+  | 'tiktok_id'
+  | 'twitch_channel'
+  | 'imdb_id'
+  | 'gracenote_id'
+  | 'eidr_id'
+  | 'domain'
+  | 'substack_id';
+/**
+ * Taxonomy for the genre values. Required so sellers can interpret genre strings unambiguously. Use 'custom' for free-form values negotiated out of band.
+ */
+export type GenreTaxonomy =
+  | 'iab_content_3.0'
+  | 'iab_content_2.2'
+  | 'gracenote'
+  | 'eidr'
+  | 'apple_genres'
+  | 'google_genres'
+  | 'roku'
+  | 'amazon_genres'
+  | 'custom';
+/**
+ * Production quality tier for collection content. Maps to OpenRTB content.prodq: professional=1, prosumer=2, ugc=3. Seller-declared — no external validation.
+ */
+export type ProductionQuality = 'professional' | 'prosumer' | 'ugc';
+/**
+ * Request parameters for creating a new collection list
+ */
+export interface CreateCollectionListRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Human-readable name for the list
+   */
+  name: string;
+  /**
+   * Description of the list's purpose
+   */
+  description?: string;
+  /**
+   * Array of collection sources to evaluate. Each entry is a discriminated union: distribution_ids (platform-independent identifiers), publisher_collections (publisher_domain + collection_ids), or publisher_genres (publisher_domain + genres). If omitted, queries the agent's entire collection database.
+   */
+  base_collections?: BaseCollectionSource[];
+  filters?: CollectionListFilters;
+  brand?: BrandReference;
+  /**
+   * Client-generated unique key for this request. Prevents duplicate collection list creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Select collections by platform-independent distribution identifiers. The primary mechanism for cross-publisher collection matching.
+ */
+export interface DistributionIDsSource {
+  /**
+   * Discriminator indicating selection by platform-independent distribution identifiers
+   */
+  selection_type: 'distribution_ids';
+  /**
+   * Platform-independent identifiers (imdb_id, gracenote_id, eidr_id, etc.). Each identifier uniquely identifies a collection across all publishers.
+   */
+  identifiers: {
+    type: DistributionIdentifierType;
+    /**
+     * The identifier value
+     */
+    value: string;
+  }[];
+}
+/**
+ * Select specific collections within a publisher's adagents.json by collection ID
+ */
+export interface PublisherCollectionsSource {
+  /**
+   * Discriminator indicating selection by specific collection IDs within a publisher
+   */
+  selection_type: 'publisher_collections';
+  /**
+   * Domain where publisher's adagents.json is hosted
+   */
+  publisher_domain: string;
+  /**
+   * Specific collection IDs from the publisher's adagents.json
+   */
+  collection_ids: string[];
+}
+/**
+ * Select all collections from a publisher matching genre criteria. Use when excluding entire content categories from a specific publisher.
+ */
+export interface PublisherGenresSource {
+  /**
+   * Discriminator indicating selection by genre within a publisher
+   */
+  selection_type: 'publisher_genres';
+  /**
+   * Domain where publisher's adagents.json is hosted
+   */
+  publisher_domain: string;
+  /**
+   * Genre values to match against the publisher's collections
+   */
+  genres: string[];
+  genre_taxonomy: GenreTaxonomy;
+}
+/**
+ * Dynamic filters to apply when resolving the list
+ */
+export interface CollectionListFilters {
+  /**
+   * Exclude collections with any of these content ratings (OR logic). This is a metadata filter on the collection's declared content_rating field — it does not evaluate episode content.
+   */
+  content_ratings_exclude?: ContentRating[];
+  /**
+   * Include only collections with any of these content ratings (OR logic). Collections without a declared content_rating are excluded.
+   */
+  content_ratings_include?: ContentRating[];
+  /**
+   * Exclude collections tagged with any of these genres (OR logic). Values are interpreted against genre_taxonomy when present.
+   */
+  genres_exclude?: string[];
+  /**
+   * Include only collections with any of these genres (OR logic). Collections without genre metadata are excluded. Values are interpreted against genre_taxonomy when present.
+   */
+  genres_include?: string[];
+  genre_taxonomy?: GenreTaxonomy;
+  /**
+   * Filter to these collection kinds
+   */
+  kinds?: ('series' | 'publication' | 'event_series' | 'rotation')[];
+  /**
+   * Always exclude collections with these distribution identifiers
+   */
+  exclude_distribution_ids?: {
+    type: DistributionIdentifierType;
+    /**
+     * The identifier value
+     */
+    value: string;
+  }[];
+  /**
+   * Filter by production quality tier
+   */
+  production_quality?: ProductionQuality[];
+}
+
+// create_collection_list response
+/**
+ * Response payload for create_collection_list task
+ */
+export interface CreateCollectionListResponse {
+  list: CollectionList;
+  /**
+   * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
+   */
+  auth_token: string;
+  ext?: ExtensionObject;
+}
+/**
+ * The created collection list
+ */
+export interface CollectionList {
+  /**
+   * Unique identifier for this collection list
+   */
+  list_id: string;
+  /**
+   * Human-readable name for the list
+   */
+  name: string;
+  /**
+   * Description of the list's purpose
+   */
+  description?: string;
+  /**
+   * Principal identity that owns this list
+   */
+  principal?: string;
+  /**
+   * Array of collection sources to evaluate. Each entry is a discriminated union: distribution_ids (platform-independent identifiers), publisher_collections (publisher_domain + collection_ids), or publisher_genres (publisher_domain + genres). If omitted, queries the agent's entire collection database.
+   */
+  base_collections?: BaseCollectionSource[];
+  filters?: CollectionListFilters;
+  brand?: BrandReference;
+  /**
+   * URL to receive notifications when the resolved list changes
+   */
+  webhook_url?: string;
+  /**
+   * Recommended cache duration for resolved list. Consumers should re-fetch after this period. Defaults to 168 (one week) because collection metadata changes less frequently than property metadata.
+   */
+  cache_duration_hours?: number;
+  /**
+   * When the list was created
+   */
+  created_at?: string;
+  /**
+   * When the list was last modified
+   */
+  updated_at?: string;
+  /**
+   * Number of collections in the resolved list (at time of last resolution)
+   */
+  collection_count?: number;
+}
+
+// update_collection_list parameters
+/**
+ * Request parameters for updating an existing collection list
+ */
+export interface UpdateCollectionListRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * ID of the collection list to update
+   */
+  list_id: string;
+  /**
+   * New name for the list
+   */
+  name?: string;
+  /**
+   * New description
+   */
+  description?: string;
+  /**
+   * Complete replacement for the base collections list (not a patch). Each entry is a discriminated union: distribution_ids (platform-independent identifiers), publisher_collections (publisher_domain + collection_ids), or publisher_genres (publisher_domain + genres).
+   */
+  base_collections?: BaseCollectionSource[];
+  filters?: CollectionListFilters;
+  brand?: BrandReference;
+  /**
+   * Update the webhook URL for list change notifications (set to empty string to remove)
+   */
+  webhook_url?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
+}
+
+// update_collection_list response
+/**
+ * Response payload for update_collection_list task
+ */
+export interface UpdateCollectionListResponse {
+  list: CollectionList;
+  ext?: ExtensionObject;
+}
+
+// get_collection_list parameters
+/**
+ * Request parameters for retrieving a collection list with resolved collections
+ */
+export interface GetCollectionListRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * ID of the collection list to retrieve
+   */
+  list_id: string;
+  /**
+   * Whether to apply filters and return resolved collections (default: true)
+   */
+  resolve?: boolean;
+  /**
+   * Pagination parameters. Uses higher limits than standard pagination because collection lists can contain thousands of entries.
+   */
+  pagination?: {
+    /**
+     * Maximum number of collections to return per page
+     */
+    max_results?: number;
+    /**
+     * Opaque cursor from a previous response to fetch the next page
+     */
+    cursor?: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// get_collection_list response
+/**
+ * Response payload for get_collection_list task. Returns resolved collection entries with identification and key metadata for matching. Consumers should cache the resolved collections and refresh based on cache_valid_until.
+ */
+export interface GetCollectionListResponse {
+  list: CollectionList;
+  /**
+   * Resolved collections that passed filters (if resolve=true). Each entry contains identification and key metadata for seller matching.
+   */
+  collections?: {
+    /**
+     * Registry-assigned stable identifier for this collection. Present when the collection has been registered in the collection registry.
+     */
+    collection_rid?: string;
+    /**
+     * Human-readable collection name
+     */
+    name: string;
+    /**
+     * Platform-independent identifiers for cross-publisher matching
+     */
+    distribution_ids?: {
+      type: DistributionIdentifierType;
+      /**
+       * The identifier value
+       */
+      value: string;
+    }[];
+    content_rating?: ContentRating;
+    /**
+     * Genre tags for this collection
+     */
+    genre?: string[];
+    genre_taxonomy?: GenreTaxonomy;
+    /**
+     * What kind of content program this is
+     */
+    kind?: 'series' | 'publication' | 'event_series' | 'rotation';
+  }[];
+  pagination?: PaginationResponse;
+  /**
+   * When the list was resolved
+   */
+  resolved_at?: string;
+  /**
+   * Cache expiration timestamp. Re-fetch the list after this time to get updated collections.
+   */
+  cache_valid_until?: string;
+  /**
+   * Collections included in the list despite missing metadata for a filtered dimension. Maps dimension name (e.g., 'genre', 'content_rating') to arrays of distribution identifiers for collections not covered. Only present when filters are applied and some collections lack the filtered metadata.
+   */
+  coverage_gaps?: {
+    [k: string]:
+      | {
+          type: DistributionIdentifierType;
+          /**
+           * The identifier value
+           */
+          value: string;
+        }[]
+      | undefined;
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Request parameters for listing collection lists
+ */
+export interface ListCollectionListsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Filter to lists owned by this principal
+   */
+  principal?: string;
+  /**
+   * Filter to lists whose name contains this string
+   */
+  name_contains?: string;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// list_collection_lists response
+/**
+ * Response payload for list_collection_lists task
+ */
+export interface ListCollectionListsResponse {
+  /**
+   * Array of collection lists (metadata only, not resolved collections)
+   */
+  lists: CollectionList[];
+  pagination?: PaginationResponse;
+  ext?: ExtensionObject;
+}
+
+// delete_collection_list parameters
+/**
+ * Request parameters for deleting a collection list
+ */
+export interface DeleteCollectionListRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * ID of the collection list to delete
+   */
+  list_id: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
+}
+
+// delete_collection_list response
+/**
+ * Response payload for delete_collection_list task
+ */
+export interface DeleteCollectionListResponse {
+  /**
+   * Whether the list was successfully deleted
+   */
+  deleted: boolean;
+  /**
+   * ID of the deleted list
+   */
+  list_id: string;
+  ext?: ExtensionObject;
+}
+
 // list_content_standards parameters
 /**
  * Request parameters for listing content standards configurations
@@ -12188,56 +12654,22 @@ export interface GetAdCPCapabilitiesResponse {
     sandbox?: boolean;
   };
   /**
-   * Media-buy protocol capabilities. Only present if media_buy is in supported_protocols.
+   * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy should also include account with supported_billing.
    */
   media_buy?: {
     /**
      * Pricing models this seller supports across its product portfolio. Buyers can use this for pre-flight filtering before querying individual products. Individual products may support a subset of these models.
      */
     supported_pricing_models?: PricingModel[];
-    /**
-     * Seller-level reporting capabilities. Summarizes what reporting features are available across the seller's product portfolio. Individual products may vary — check product-level reporting_capabilities for specifics.
-     */
-    reporting?: {
-      /**
-       * Whether any products support date range filtering (date_range_support: 'date_range'). When false, all products return lifetime-only data.
-       */
-      supports_date_range?: boolean;
-      /**
-       * Whether delivery reporting includes daily_breakdown at the media buy and/or package level.
-       */
-      supports_daily_breakdown?: boolean;
-      /**
-       * Whether any products support webhook-based reporting notifications.
-       */
-      supports_webhooks?: boolean;
-      /**
-       * Reporting dimensions available across the seller's portfolio. Individual products may support a subset. Dimensions geo, device_type, device_platform, audience, and placement are opt-in via reporting_dimensions on the delivery request. Dimensions creative, keyword, and catalog_item are included automatically when the seller supports them (not controlled by reporting_dimensions).
-       */
-      available_dimensions?: (
-        | 'geo'
-        | 'device_type'
-        | 'device_platform'
-        | 'audience'
-        | 'placement'
-        | 'creative'
-        | 'keyword'
-        | 'catalog_item'
-      )[];
-    };
     features?: MediaBuyFeatures;
     /**
      * Technical execution capabilities for media buying
      */
     execution?: {
       /**
-       * Trusted Match Protocol (TMP) support. When present, this seller supports real-time contextual and/or identity matching. Check individual products via get_products for per-product TMP capabilities.
+       * Trusted Match Protocol (TMP) support. Presence of this object indicates the seller has TMP infrastructure deployed. Check individual products via get_products for per-product TMP capabilities.
        */
       trusted_match?: {
-        /**
-         * Whether this seller has TMP infrastructure deployed.
-         */
-        supported?: boolean;
         /**
          * Surface types this seller supports via TMP.
          */
@@ -12283,81 +12715,64 @@ export interface GetAdCPCapabilitiesResponse {
        */
       targeting?: {
         /**
-         * Supports country-level geo targeting using ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE')
+         * Geographic targeting levels this seller supports.
+         */
+        supported_geo_levels?: ('countries' | 'regions' | 'metros' | 'postal_areas')[];
+        /**
+         * Metro area classification systems this seller supports. Only meaningful when supported_geo_levels includes 'metros'.
+         */
+        supported_metro_systems?: ('nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2')[];
+        /**
+         * Postal code systems this seller supports. Only meaningful when supported_geo_levels includes 'postal_areas'.
+         */
+        supported_postal_systems?: (
+          | 'us_zip'
+          | 'us_zip_plus_four'
+          | 'gb_outward'
+          | 'gb_full'
+          | 'ca_fsa'
+          | 'ca_full'
+          | 'de_plz'
+          | 'fr_code_postal'
+          | 'au_postcode'
+          | 'ch_plz'
+          | 'at_plz'
+        )[];
+        /**
+         * @deprecated
+         * Deprecated in 3.0, will be removed in 4.0. Use supported_geo_levels instead.
          */
         geo_countries?: boolean;
         /**
-         * Supports region/state-level geo targeting using ISO 3166-2 subdivision codes (e.g., 'US-NY', 'GB-SCT', 'DE-BY')
+         * @deprecated
+         * Deprecated in 3.0, will be removed in 4.0. Use supported_geo_levels instead.
          */
         geo_regions?: boolean;
         /**
-         * Metro area targeting support. Specifies which classification systems are supported.
+         * @deprecated
+         * Deprecated in 3.0, will be removed in 4.0. Use supported_metro_systems instead.
          */
         geo_metros?: {
-          /**
-           * Supports Nielsen DMA codes (US market, e.g., '501' for NYC)
-           */
           nielsen_dma?: boolean;
-          /**
-           * Supports UK ITL Level 1 regions
-           */
           uk_itl1?: boolean;
-          /**
-           * Supports UK ITL Level 2 regions
-           */
           uk_itl2?: boolean;
-          /**
-           * Supports Eurostat NUTS Level 2 regions (EU)
-           */
           eurostat_nuts2?: boolean;
         };
         /**
-         * Postal area targeting support. Specifies which postal code systems are supported. System names encode country and precision.
+         * @deprecated
+         * Deprecated in 3.0, will be removed in 4.0. Use supported_postal_systems instead.
          */
         geo_postal_areas?: {
-          /**
-           * US 5-digit ZIP codes (e.g., '10001')
-           */
           us_zip?: boolean;
-          /**
-           * US 9-digit ZIP+4 codes (e.g., '10001-1234')
-           */
           us_zip_plus_four?: boolean;
-          /**
-           * UK postcode district / outward code (e.g., 'SW1', 'EC1')
-           */
           gb_outward?: boolean;
-          /**
-           * UK full postcode (e.g., 'SW1A 1AA')
-           */
           gb_full?: boolean;
-          /**
-           * Canadian Forward Sortation Area (e.g., 'K1A')
-           */
           ca_fsa?: boolean;
-          /**
-           * Canadian full postal code (e.g., 'K1A 0B1')
-           */
           ca_full?: boolean;
-          /**
-           * German Postleitzahl, 5 digits (e.g., '10115')
-           */
           de_plz?: boolean;
-          /**
-           * French code postal, 5 digits (e.g., '75001')
-           */
           fr_code_postal?: boolean;
-          /**
-           * Australian postcode, 4 digits (e.g., '2000')
-           */
           au_postcode?: boolean;
-          /**
-           * Swiss Postleitzahl, 4 digits (e.g., '8000')
-           */
           ch_plz?: boolean;
-          /**
-           * Austrian Postleitzahl, 4 digits (e.g., '1010')
-           */
           at_plz?: boolean;
         };
         /**
@@ -12374,25 +12789,9 @@ export interface GetAdCPCapabilitiesResponse {
           verification_methods?: AgeVerificationMethod[];
         };
         /**
-         * Whether seller supports device platform targeting (Sec-CH-UA-Platform values)
-         */
-        device_platform?: boolean;
-        /**
-         * Whether seller supports device type targeting (form factor: desktop, mobile, tablet, ctv, dooh, unknown). When true, seller supports both device_type (include) and device_type_exclude (exclude) in targeting overlays.
-         */
-        device_type?: boolean;
-        /**
          * Whether seller supports language targeting (ISO 639-1 codes)
          */
         language?: boolean;
-        /**
-         * Whether seller supports audience_include in targeting overlays (requires features.audience_targeting)
-         */
-        audience_include?: boolean;
-        /**
-         * Whether seller supports audience_exclude in targeting overlays (requires features.audience_targeting)
-         */
-        audience_exclude?: boolean;
         /**
          * Keyword targeting capabilities. Presence indicates support for targeting_overlay.keyword_targets and keyword_targets_add/remove in update_media_buy.
          */
@@ -12435,7 +12834,7 @@ export interface GetAdCPCapabilitiesResponse {
       };
     };
     /**
-     * Audience targeting capabilities. Only present when features.audience_targeting is true.
+     * Audience targeting capabilities. Presence of this object indicates the seller supports audience targeting, including sync_audiences and audience_include/audience_exclude in targeting overlays.
      */
     audience_targeting?: {
       /**
@@ -12463,7 +12862,7 @@ export interface GetAdCPCapabilitiesResponse {
       };
     };
     /**
-     * Seller-level conversion tracking capabilities. Only present when features.conversion_tracking is true.
+     * Seller-level conversion tracking capabilities. Presence of this object indicates the seller supports sync_event_sources and log_event for conversion event tracking.
      */
     conversion_tracking?: {
       /**
@@ -12502,9 +12901,9 @@ export interface GetAdCPCapabilitiesResponse {
       }[];
     };
     /**
-     * Content standards implementation details. Only meaningful when features.content_standards is true. Gives buyers pre-buy visibility into local evaluation and artifact delivery capabilities.
+     * Content standards implementation details. Presence of this object indicates the seller supports content_standards configuration including sampling rates and category filtering. Gives buyers pre-buy visibility into local evaluation and artifact delivery capabilities.
      */
-    content_standards_detail?: {
+    content_standards?: {
       /**
        * Whether the seller runs a local evaluation model. When false, all artifacts will have local_verdict: 'unevaluated' and the failures_only filter on get_media_buy_artifacts is not useful.
        */
@@ -12519,7 +12918,7 @@ export interface GetAdCPCapabilitiesResponse {
       supports_webhook_delivery?: boolean;
     };
     /**
-     * Information about the seller's media inventory portfolio
+     * Information about the seller's media inventory portfolio. Expected for media_buy sellers — buyers use this to understand inventory coverage and verify authorization via adagents.json.
      */
     portfolio?: {
       /**
@@ -12680,10 +13079,6 @@ export interface GetAdCPCapabilitiesResponse {
    * Brand protocol capabilities. Only present if brand is in supported_protocols. Brand agents provide identity data (logos, colors, tone, assets) and optionally rights clearance for licensable content (talent, music, stock media).
    */
   brand?: {
-    /**
-     * Supports get_brand_identity for retrieving brand identity data
-     */
-    identity?: boolean;
     /**
      * Supports get_rights and acquire_rights for rights discovery and clearance
      */

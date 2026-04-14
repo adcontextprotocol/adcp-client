@@ -536,20 +536,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
-                    products: [
-                      {
-                        product_id: 'prod-1',
-                        name: 'Test Product',
-                        description: 'A test product',
-                        publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
-                        format_ids: [{ agent_url: 'https://agent.example.com', id: 'banner-300x250' }],
-                        delivery_type: 'guaranteed',
-                        pricing_options: [
-                          { pricing_option_id: 'cpm-1', pricing_model: 'cpm', currency: 'USD', fixed_price: 5.0 },
-                        ],
-                        delivery_measurement: { provider: 'Internal' },
-                      },
-                    ],
+                    products: [createTestProduct({ product_id: 'prod-1' })],
                   },
                 },
               ],
@@ -634,7 +621,7 @@ describe('Response Unwrapper', () => {
       );
     });
 
-    test('should filter invalid products when filterInvalidArrayItems is enabled', () => {
+    test('should filter invalid products when filterInvalidProducts is enabled', () => {
       const validProduct = createTestProduct({ product_id: 'valid-1' });
       const invalidProduct = { product_id: 'invalid-1' }; // Missing required fields
 
@@ -645,20 +632,17 @@ describe('Response Unwrapper', () => {
       };
 
       // Without filtering, should throw
-      assert.throws(
-        () => unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp'),
-        /validation failed/i
-      );
+      assert.throws(() => unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp'), /validation failed/i);
 
       // With filtering, should return only the valid product
       const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
-        filterInvalidArrayItems: true,
+        filterInvalidProducts: true,
       });
       assert.strictEqual(result.products.length, 1);
       assert.strictEqual(result.products[0].product_id, 'valid-1');
     });
 
-    test('should return empty array when all items are invalid and filtering is enabled', () => {
+    test('should return empty array when all products are invalid and filtering is enabled', () => {
       const invalidProduct1 = { product_id: 'bad-1' };
       const invalidProduct2 = { product_id: 'bad-2' };
 
@@ -669,7 +653,7 @@ describe('Response Unwrapper', () => {
       };
 
       const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
-        filterInvalidArrayItems: true,
+        filterInvalidProducts: true,
       });
       assert.strictEqual(result.products.length, 0);
     });
@@ -685,9 +669,72 @@ describe('Response Unwrapper', () => {
       };
 
       const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
-        filterInvalidArrayItems: true,
+        filterInvalidProducts: true,
       });
       assert.strictEqual(result.products.length, 2);
+    });
+
+    test('should NOT filter other tools even when filterInvalidProducts is enabled', () => {
+      const mcpResponse = {
+        structuredContent: {
+          media_buy_id: 'mb-1',
+          // Missing required fields like buyer_ref, packages
+        },
+      };
+
+      assert.throws(
+        () =>
+          unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp', {
+            filterInvalidProducts: true,
+          }),
+        /validation failed/i
+      );
+    });
+
+    test('should filter invalid products via A2A protocol path', () => {
+      const validProduct = createTestProduct({ product_id: 'a2a-valid' });
+      const invalidProduct = { product_id: 'a2a-bad' };
+
+      const a2aResponse = {
+        result: {
+          status: { state: 'completed' },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [validProduct, invalidProduct],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a', {
+        filterInvalidProducts: true,
+      });
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.products[0].product_id, 'a2a-valid');
+    });
+
+    test('should return null from filtering when products field is not an array', () => {
+      const mcpResponse = {
+        structuredContent: {
+          products: 'not-an-array',
+        },
+      };
+
+      // Should still throw validation error, filtering can't help
+      assert.throws(
+        () =>
+          unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
+            filterInvalidProducts: true,
+          }),
+        /validation failed/i
+      );
     });
   });
 
