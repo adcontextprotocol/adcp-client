@@ -25,6 +25,49 @@ brand:
     - en: "Nova Motors"
   description: "Electric vehicles for the next generation. The Volta EV — performance meets sustainability."
   industry: "automotive"
+  keller_type: "master"
+  logos:
+    - url: "https://test-assets.adcontextprotocol.org/nova-motors/logo-primary.png"
+      orientation: "horizontal"
+      background: "light-bg"
+      variant: "primary"
+      width: 400
+      height: 100
+    - url: "https://test-assets.adcontextprotocol.org/nova-motors/logo-icon.png"
+      orientation: "square"
+      background: "transparent-bg"
+      variant: "icon"
+      width: 200
+      height: 200
+  colors:
+    primary: "#0D47A1"
+    secondary: "#00BFA5"
+    accent: "#FF6D00"
+    background: "#F5F5F5"
+    text: "#1A1A1A"
+  fonts:
+    heading:
+      family: "Inter"
+      weight: 700
+      url: "https://fonts.googleapis.com/css2?family=Inter:wght@700"
+    body:
+      family: "Inter"
+      weight: 400
+      url: "https://fonts.googleapis.com/css2?family=Inter"
+  tone:
+    voice: "Forward-thinking and precise. We speak to drivers who care about engineering and the planet — no greenwashing, no hype."
+    attributes:
+      - "innovative"
+      - "precise"
+      - "optimistic"
+    dos:
+      - "Lead with performance specs"
+      - "Reference sustainability with evidence"
+      - "Use clean, modern language"
+    donts:
+      - "Greenwash or overstate environmental claims"
+      - "Use legacy automotive clichés"
+      - "Condescend about range anxiety"
 
 campaign:
   brand: "Nova Motors"
@@ -141,6 +184,58 @@ signals:
           percent: 12
           max_cpm: 3.00
           currency: "USD"
+
+assets:
+  images:
+    - id: "hero_300x250"
+      url: "https://test-assets.adcontextprotocol.org/nova-motors/hero-300x250.jpg"
+      width: 300
+      height: 250
+      mime_type: "image/jpeg"
+      description: "Medium rectangle hero — Volta EV on coastal highway"
+
+    - id: "hero_728x90"
+      url: "https://test-assets.adcontextprotocol.org/nova-motors/hero-728x90.jpg"
+      width: 728
+      height: 90
+      mime_type: "image/jpeg"
+      description: "Leaderboard hero — Volta EV front profile with charging station"
+
+    - id: "hero_320x50"
+      url: "https://test-assets.adcontextprotocol.org/nova-motors/hero-320x50.jpg"
+      width: 320
+      height: 50
+      mime_type: "image/jpeg"
+      description: "Mobile banner hero — Volta EV dashboard detail"
+
+    - id: "hero_160x600"
+      url: "https://test-assets.adcontextprotocol.org/nova-motors/hero-160x600.jpg"
+      width: 160
+      height: 600
+      mime_type: "image/jpeg"
+      description: "Wide skyscraper hero — vertical Volta EV silhouette"
+
+    - id: "hero_master"
+      url: "https://test-assets.adcontextprotocol.org/nova-motors/hero-master.jpg"
+      width: 1200
+      height: 628
+      mime_type: "image/jpeg"
+      description: "Master hero image — high-res Volta EV in motion"
+
+  text:
+    headlines:
+      - "The Volta EV — 0 to 60 in 3.2s"
+      - "Performance Meets Sustainability"
+      - "Drive Electric. Drive Nova."
+    descriptions:
+      - "340 miles of range. 15-minute fast charge. The Volta EV is engineered for drivers who refuse to compromise."
+      - "Zero emissions, zero compromises. Test drive the Volta EV at your nearest Nova Motors dealer."
+    cta:
+      - "Reserve Yours"
+      - "Schedule a Test Drive"
+      - "Explore the Volta"
+
+  click_url: "https://novamotors.example/volta-ev"
 
 destinations:
   platforms:
