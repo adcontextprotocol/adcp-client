@@ -281,6 +281,40 @@ Request parameters for deleting a property list.
 Required: `list_id: string`
 Optional: `context: Context`, `idempotency_key: string`
 
+#### `create_collection_list`
+
+Request parameters for creating a new collection list.
+
+Required: `name: string`
+Optional: `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `idempotency_key: string`, `context: Context`
+
+#### `update_collection_list`
+
+Request parameters for updating an existing collection list.
+
+Required: `list_id: string`
+Optional: `name: string`, `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `webhook_url: string`, `context: Context`, `idempotency_key: string`
+
+#### `get_collection_list`
+
+Request parameters for retrieving a collection list with resolved collections.
+
+Required: `list_id: string`
+Optional: `resolve: boolean`, `pagination: object`, `context: Context`
+
+#### `list_collection_lists`
+
+Request parameters for listing collection lists.
+
+Optional: `principal: string`, `name_contains: string`, `pagination: Pagination Request`, `context: Context`
+
+#### `delete_collection_list`
+
+Request parameters for deleting a collection list.
+
+Required: `list_id: string`
+Optional: `context: Context`, `idempotency_key: string`
+
 #### `list_content_standards`
 
 Request parameters for listing content standards configurations.
