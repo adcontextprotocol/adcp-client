@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-10T14:21:16.215Z
+// Generated at: 2026-04-14T15:19:02.167Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -643,6 +643,10 @@ export interface Package {
      */
     acknowledged_at?: string;
   };
+  /**
+   * Agency estimate or authorization number for this package. Echoed from the buyer's request. When present on the package, takes precedence over the media buy-level estimate number.
+   */
+  agency_estimate_number?: string;
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
    */
@@ -1380,6 +1384,10 @@ export type CatalogAsset = Catalog;
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
 export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
+/**
+ * Industry-standard identifier types for advertising creatives. These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ */
+export type CreativeIdentifierType = 'ad_id' | 'isci' | 'clearcast_clock';
 
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -1450,6 +1458,10 @@ export interface CreativeAsset {
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
    */
   placement_ids?: string[];
+  /**
+   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   */
+  industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
 }
 /**
@@ -2050,6 +2062,16 @@ export interface ReferenceAsset {
    * Human-readable description of the asset and how it should inform creative generation
    */
   description?: string;
+}
+/**
+ * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ */
+export interface IndustryIdentifier {
+  type: CreativeIdentifierType;
+  /**
+   * The identifier value (e.g., 'ABCD1234000H' for Ad-ID)
+   */
+  value: string;
 }
 /**
  * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
@@ -4669,6 +4691,10 @@ export interface CreativeManifest {
    * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
    */
   rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
   ext?: ExtensionObject;
 }

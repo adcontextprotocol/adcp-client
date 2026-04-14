@@ -3418,6 +3418,10 @@ export type CatalogAsset = Catalog;
  */
 export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
 /**
+ * Industry-standard identifier types for advertising creatives. These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ */
+export type CreativeIdentifierType = 'ad_id' | 'isci' | 'clearcast_clock';
+/**
  * Industry classification for this specific campaign. A brand may operate across multiple industries (brand.json industries field), but each media buy targets one. For example, a consumer health company running a wellness campaign sends 'healthcare.wellness', not 'cpg'. Sellers map this to platform-native codes (e.g., Spotify ADV categories, LinkedIn industry IDs). When omitted, sellers may infer from the brand manifest's industries field.
  */
 export type AdvertiserIndustry =
@@ -3576,6 +3580,10 @@ export interface CreateMediaBuyRequest {
    * Purchase order number for tracking
    */
   po_number?: string;
+  /**
+   * Agency estimate or authorization number. Primary financial reference for broadcast buys — links the order to the agency's media plan and billing system. Travels with the order and Ad-IDs through the transaction lifecycle.
+   */
+  agency_estimate_number?: string;
   start_time: StartTiming;
   /**
    * Campaign end date/time in ISO 8601 format
@@ -3951,6 +3959,10 @@ export interface CreativeAsset {
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
    */
   placement_ids?: string[];
+  /**
+   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   */
+  industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
 }
 /**
@@ -4553,6 +4565,16 @@ export interface ReferenceAsset {
   description?: string;
 }
 /**
+ * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ */
+export interface IndustryIdentifier {
+  type: CreativeIdentifierType;
+  /**
+   * The identifier value (e.g., 'ABCD1234000H' for Ad-ID)
+   */
+  value: string;
+}
+/**
  * Override the account's default billing entity for this specific buy. When provided, the seller invoices this entity instead. The seller MUST validate the invoice recipient is authorized for this account. When governance_agents are configured, the seller MUST include invoice_recipient in the check_governance request.
  */
 export interface BusinessEntity {
@@ -5010,6 +5032,10 @@ export interface Package {
      */
     acknowledged_at?: string;
   };
+  /**
+   * Agency estimate or authorization number for this package. Echoed from the buyer's request. When present on the package, takes precedence over the media buy-level estimate number.
+   */
+  agency_estimate_number?: string;
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
    */
@@ -5750,9 +5776,9 @@ export type AudienceSource = 'synced' | 'platform' | 'third_party' | 'lookalike'
  */
 export interface GetMediaBuyDeliveryResponse {
   /**
-   * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with updated data
+   * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with corrected data (same window), window_update = resending period with a wider measurement window (e.g., C3 superseding live, C7 superseding C3)
    */
-  notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted';
+  notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
   /**
    * Indicates if any media buys in this webhook have missing/delayed data (only present in webhook deliveries)
    */
@@ -5918,6 +5944,18 @@ export interface GetMediaBuyDeliveryResponse {
        * Whether this package is currently paused by the buyer
        */
       paused?: boolean;
+      /**
+       * Whether this delivery data is final for the reporting period. When false, the data may be updated as measurement matures (e.g., broadcast C7 window accumulating DVR playback) or as processing completes (e.g., IVT filtering, deduplication). When true, the seller considers this data closed — no further updates for this period. Absent means the seller does not distinguish provisional from final data.
+       */
+      is_final?: boolean;
+      /**
+       * Which measurement window this data represents, referencing a window_id from the product's reporting_capabilities.measurement_windows. For broadcast: 'live', 'c3', 'c7'. When absent, the data is not windowed (standard digital reporting). When present with is_final: false, a later report for the same period will provide a wider window or more complete data.
+       */
+      measurement_window?: string;
+      /**
+       * Which measurement window this data replaces. Present on window_update notifications to indicate progression (e.g., 'live' when reporting C3 data that supersedes live-only numbers). Absent on the first report for a period. Buyers should replace stored data for the superseded window with this report's data.
+       */
+      supersedes_window?: string;
       /**
        * Delivery by catalog item within this package. Available for catalog-driven packages when the seller supports item-level reporting.
        */
@@ -7342,6 +7380,10 @@ export interface CreativeManifest {
    * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
    */
   rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
   ext?: ExtensionObject;
 }

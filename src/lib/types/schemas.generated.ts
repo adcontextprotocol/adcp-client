@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-14T12:45:16.111Z
+// Generated at: 2026-04-14T15:19:04.247Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -292,6 +292,8 @@ export const CatalogSchema = z.object({
 
 export const CreativeStatusSchema = z.union([z.literal("processing"), z.literal("pending_review"), z.literal("approved"), z.literal("rejected"), z.literal("archived")]);
 
+export const CreativeIdentifierTypeSchema = z.union([z.literal("ad_id"), z.literal("isci"), z.literal("clearcast_clock")]);
+
 export const ImageAssetSchema = z.object({
     url: z.string(),
     width: z.number(),
@@ -458,6 +460,11 @@ export const MarkdownAssetSchema = z.object({
 }).passthrough();
 
 export const CatalogAssetSchema = CatalogSchema;
+
+export const IndustryIdentifierSchema = z.object({
+    type: CreativeIdentifierTypeSchema,
+    value: z.string()
+}).passthrough();
 
 export const ReferenceAssetSchema = z.object({
     url: z.string(),
@@ -1570,6 +1577,7 @@ export const PackageSchema = z.object({
         reason: z.string().nullish(),
         acknowledged_at: z.string().nullish()
     }).passthrough().nullish(),
+    agency_estimate_number: z.string().nullish(),
     creative_deadline: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1606,6 +1614,7 @@ export const CreativeAssetSchema = z.object({
     status: CreativeStatusSchema.nullish(),
     weight: z.number().nullish(),
     placement_ids: z.array(z.string()).nullish(),
+    industry_identifiers: z.array(IndustryIdentifierSchema).nullish(),
     provenance: ProvenanceSchema.nullish()
 }).passthrough();
 
@@ -1997,6 +2006,7 @@ export const CreativeManifestSchema = z.object({
     format_id: FormatIDSchema,
     assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
     rights: z.array(RightsConstraintSchema).nullish(),
+    industry_identifiers: z.array(IndustryIdentifierSchema).nullish(),
     provenance: ProvenanceSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -3922,7 +3932,7 @@ export const GetMediaBuysResponseSchema = z.object({
 }).passthrough();
 
 export const GetMediaBuyDeliveryResponseSchema = z.object({
-    notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted")]).nullish(),
+    notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update")]).nullish(),
     partial_data: z.boolean().nullish(),
     unavailable_count: z.number().nullish(),
     sequence_number: z.number().nullish(),
@@ -3967,6 +3977,9 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             currency: z.string().nullish(),
             delivery_status: z.union([z.literal("delivering"), z.literal("completed"), z.literal("budget_exhausted"), z.literal("flight_ended"), z.literal("goal_met")]).nullish(),
             paused: z.boolean().nullish(),
+            is_final: z.boolean().nullish(),
+            measurement_window: z.string().nullish(),
+            supersedes_window: z.string().nullish(),
             by_catalog_item: z.array(DeliveryMetricsSchema.and(z.object({
                 content_id: z.string().nullish(),
                 content_id_type: ContentIDTypeSchema.nullish()
@@ -4561,6 +4574,7 @@ export const CreateMediaBuyRequestSchema = z.object({
         signature_id: z.string().nullish()
     }).passthrough().nullish(),
     po_number: z.string().nullish(),
+    agency_estimate_number: z.string().nullish(),
     start_time: StartTimingSchema,
     end_time: z.string(),
     push_notification_config: PushNotificationConfigSchema.nullish(),
