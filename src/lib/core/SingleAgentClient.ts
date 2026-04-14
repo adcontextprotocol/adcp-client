@@ -224,6 +224,19 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      * @default true
      */
     logSchemaViolations?: boolean;
+    /**
+     * Filter out invalid products from get_products responses instead of rejecting the entire response (default: false)
+     *
+     * When true: Each product in a get_products response is validated individually.
+     * Valid products are kept, invalid products are dropped, and the response is
+     * returned as long as it passes full schema validation after filtering.
+     * When false: The entire response is rejected if any product fails validation.
+     *
+     * Only applies to get_products — all other tool responses use standard validation.
+     *
+     * @default false
+     */
+    filterInvalidProducts?: boolean;
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
@@ -277,6 +290,7 @@ export class SingleAgentClient {
       webhookSecret: config.webhookSecret,
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
+      filterInvalidProducts: config.validation?.filterInvalidProducts === true, // Default: false
       onActivity: config.onActivity,
       governance: config.governance,
     });

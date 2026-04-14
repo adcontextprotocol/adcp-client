@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-14T15:29:08.528Z
+// Generated at: 2026-04-14T21:55:00.553Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -198,6 +198,12 @@ export const FrequencyCapSchema = z.object({
 }).passthrough();
 
 export const PropertyListReferenceSchema = z.object({
+    agent_url: z.string(),
+    list_id: z.string(),
+    auth_token: z.string().nullish()
+}).passthrough();
+
+export const CollectionListReferenceSchema = z.object({
     agent_url: z.string(),
     list_id: z.string(),
     auth_token: z.string().nullish()
@@ -524,7 +530,7 @@ export const ActionSourceSchema = z.union([z.literal("website"), z.literal("app"
 
 export const InstallmentStatusSchema = z.union([z.literal("scheduled"), z.literal("tentative"), z.literal("live"), z.literal("postponed"), z.literal("cancelled"), z.literal("aired"), z.literal("published")]);
 
-export const ContentRatingSystemSchema = z.union([z.literal("tv_parental"), z.literal("mpaa"), z.literal("podcast"), z.literal("esrb"), z.literal("bbfc"), z.literal("fsk"), z.literal("acb"), z.literal("custom")]);
+export const ContentRatingSystemSchema = z.union([z.literal("tv_parental"), z.literal("mpaa"), z.literal("podcast"), z.literal("esrb"), z.literal("bbfc"), z.literal("fsk"), z.literal("acb"), z.literal("chvrs"), z.literal("csa"), z.literal("pegi"), z.literal("custom")]);
 
 export const SpecialCategorySchema = z.union([z.literal("awards"), z.literal("championship"), z.literal("concert"), z.literal("conference"), z.literal("election"), z.literal("festival"), z.literal("gala"), z.literal("holiday"), z.literal("premiere"), z.literal("product_launch"), z.literal("reunion"), z.literal("tribute")]);
 
@@ -1285,9 +1291,6 @@ export const PaginationRequestSchema = z.object({
 export const MediaBuyFeaturesSchema = z.record(z.string(), z.boolean()).and(z.object({
     inline_creative_management: z.boolean().nullish(),
     property_list_filtering: z.boolean().nullish(),
-    content_standards: z.boolean().nullish(),
-    conversion_tracking: z.boolean().nullish(),
-    audience_targeting: z.boolean().nullish(),
     catalog_management: z.boolean().nullish()
 }).passthrough());
 
@@ -1533,6 +1536,8 @@ export const TargetingOverlaySchema = z.object({
     audience_exclude: z.array(z.string()).nullish(),
     frequency_cap: FrequencyCapSchema.nullish(),
     property_list: PropertyListReferenceSchema.nullish(),
+    collection_list: CollectionListReferenceSchema.nullish(),
+    collection_list_exclude: CollectionListReferenceSchema.nullish(),
     age_restriction: z.object({
         min: z.number(),
         verification_required: z.boolean().nullish(),
@@ -2415,6 +2420,143 @@ export const DeletePropertyListResponseSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
+export const PublisherCollectionsSourceSchema = z.object({
+    selection_type: z.literal("publisher_collections"),
+    publisher_domain: z.string(),
+    collection_ids: z.array(z.string())
+}).passthrough();
+
+export const DistributionIdentifierTypeSchema = z.union([z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("rss_url"), z.literal("podcast_guid"), z.literal("amazon_music_id"), z.literal("iheart_id"), z.literal("podcast_index_id"), z.literal("youtube_channel_id"), z.literal("youtube_playlist_id"), z.literal("amazon_title_id"), z.literal("roku_channel_id"), z.literal("pluto_channel_id"), z.literal("tubi_id"), z.literal("peacock_id"), z.literal("tiktok_id"), z.literal("twitch_channel"), z.literal("imdb_id"), z.literal("gracenote_id"), z.literal("eidr_id"), z.literal("domain"), z.literal("substack_id")]);
+
+export const GenreTaxonomySchema = z.union([z.literal("iab_content_3.0"), z.literal("iab_content_2.2"), z.literal("gracenote"), z.literal("eidr"), z.literal("apple_genres"), z.literal("google_genres"), z.literal("roku"), z.literal("amazon_genres"), z.literal("custom")]);
+
+export const ProductionQualitySchema = z.union([z.literal("professional"), z.literal("prosumer"), z.literal("ugc")]);
+
+export const CollectionListFiltersSchema = z.object({
+    content_ratings_exclude: z.array(ContentRatingSchema).nullish(),
+    content_ratings_include: z.array(ContentRatingSchema).nullish(),
+    genres_exclude: z.array(z.string()).nullish(),
+    genres_include: z.array(z.string()).nullish(),
+    genre_taxonomy: GenreTaxonomySchema.nullish(),
+    kinds: z.array(z.union([z.literal("series"), z.literal("publication"), z.literal("event_series"), z.literal("rotation")])).nullish(),
+    exclude_distribution_ids: z.array(z.object({
+        type: DistributionIdentifierTypeSchema,
+        value: z.string()
+    }).passthrough()).nullish(),
+    production_quality: z.array(ProductionQualitySchema).nullish()
+}).passthrough();
+
+export const DistributionIDsSourceSchema = z.object({
+    selection_type: z.literal("distribution_ids"),
+    identifiers: z.array(z.object({
+        type: DistributionIdentifierTypeSchema,
+        value: z.string()
+    }).passthrough())
+}).passthrough();
+
+export const PublisherGenresSourceSchema = z.object({
+    selection_type: z.literal("publisher_genres"),
+    publisher_domain: z.string(),
+    genres: z.array(z.string()),
+    genre_taxonomy: GenreTaxonomySchema
+}).passthrough();
+
+export const BaseCollectionSourceSchema = z.union([DistributionIDsSourceSchema, PublisherCollectionsSourceSchema, PublisherGenresSourceSchema]);
+
+export const UpdateCollectionListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
+    list_id: z.string(),
+    name: z.string().nullish(),
+    description: z.string().nullish(),
+    base_collections: z.array(BaseCollectionSourceSchema).nullish(),
+    filters: CollectionListFiltersSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
+    webhook_url: z.string().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish(),
+    idempotency_key: z.string().nullish()
+}).passthrough();
+
+export const CollectionListSchema = z.object({
+    list_id: z.string(),
+    name: z.string(),
+    description: z.string().nullish(),
+    principal: z.string().nullish(),
+    base_collections: z.array(BaseCollectionSourceSchema).nullish(),
+    filters: CollectionListFiltersSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
+    webhook_url: z.string().nullish(),
+    cache_duration_hours: z.number().nullish(),
+    created_at: z.string().nullish(),
+    updated_at: z.string().nullish(),
+    collection_count: z.number().nullish()
+}).passthrough();
+
+export const GetCollectionListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
+    list_id: z.string(),
+    resolve: z.boolean().nullish(),
+    pagination: z.object({
+        max_results: z.number().nullish(),
+        cursor: z.string().nullish()
+    }).passthrough().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const GetCollectionListResponseSchema = z.object({
+    list: CollectionListSchema,
+    collections: z.array(z.object({
+        collection_rid: z.string().nullish(),
+        name: z.string(),
+        distribution_ids: z.array(z.object({
+            type: DistributionIdentifierTypeSchema,
+            value: z.string()
+        }).passthrough()).nullish(),
+        content_rating: ContentRatingSchema.nullish(),
+        genre: z.array(z.string()).nullish(),
+        genre_taxonomy: GenreTaxonomySchema.nullish(),
+        kind: z.union([z.literal("series"), z.literal("publication"), z.literal("event_series"), z.literal("rotation")]).nullish()
+    }).passthrough()).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
+    resolved_at: z.string().nullish(),
+    cache_valid_until: z.string().nullish(),
+    coverage_gaps: z.record(z.string(), z.array(z.object({
+            type: DistributionIdentifierTypeSchema,
+            value: z.string()
+        }).passthrough())).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ListCollectionListsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
+    principal: z.string().nullish(),
+    name_contains: z.string().nullish(),
+    pagination: PaginationRequestSchema.nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ListCollectionListsResponseSchema = z.object({
+    lists: z.array(CollectionListSchema),
+    pagination: PaginationResponseSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const DeleteCollectionListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
+    list_id: z.string(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish(),
+    idempotency_key: z.string().nullish()
+}).passthrough();
+
+export const DeleteCollectionListResponseSchema = z.object({
+    deleted: z.boolean(),
+    list_id: z.string(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
 export const ListContentStandardsRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     channels: z.array(MediaChannelSchema).nullish(),
@@ -3152,16 +3294,9 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     }).passthrough().nullish(),
     media_buy: z.object({
         supported_pricing_models: z.array(PricingModelSchema).nullish(),
-        reporting: z.object({
-            supports_date_range: z.boolean().nullish(),
-            supports_daily_breakdown: z.boolean().nullish(),
-            supports_webhooks: z.boolean().nullish(),
-            available_dimensions: z.array(z.union([z.literal("geo"), z.literal("device_type"), z.literal("device_platform"), z.literal("audience"), z.literal("placement"), z.literal("creative"), z.literal("keyword"), z.literal("catalog_item")])).nullish()
-        }).passthrough().nullish(),
         features: MediaBuyFeaturesSchema.nullish(),
         execution: z.object({
             trusted_match: z.object({
-                supported: z.boolean().nullish(),
                 surfaces: z.array(z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio"), z.literal("ai_assistant")])).nullish()
             }).passthrough().nullish(),
             axe_integrations: z.array(z.string()).nullish(),
@@ -3172,6 +3307,9 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                 simid: z.boolean().nullish()
             }).passthrough().nullish(),
             targeting: z.object({
+                supported_geo_levels: z.array(z.union([z.literal("countries"), z.literal("regions"), z.literal("metros"), z.literal("postal_areas")])).nullish(),
+                supported_metro_systems: z.array(z.union([z.literal("nielsen_dma"), z.literal("uk_itl1"), z.literal("uk_itl2"), z.literal("eurostat_nuts2")])).nullish(),
+                supported_postal_systems: z.array(z.union([z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode"), z.literal("ch_plz"), z.literal("at_plz")])).nullish(),
                 geo_countries: z.boolean().nullish(),
                 geo_regions: z.boolean().nullish(),
                 geo_metros: z.object({
@@ -3197,11 +3335,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                     supported: z.boolean().nullish(),
                     verification_methods: z.array(AgeVerificationMethodSchema).nullish()
                 }).passthrough().nullish(),
-                device_platform: z.boolean().nullish(),
-                device_type: z.boolean().nullish(),
                 language: z.boolean().nullish(),
-                audience_include: z.boolean().nullish(),
-                audience_exclude: z.boolean().nullish(),
                 keyword_targets: z.object({
                     supported_match_types: z.array(z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]))
                 }).passthrough().nullish(),
@@ -3238,7 +3372,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                 post_view: z.array(DurationSchema).nullish()
             }).passthrough()).nullish()
         }).passthrough().nullish(),
-        content_standards_detail: z.object({
+        content_standards: z.object({
             supports_local_evaluation: z.boolean().nullish(),
             supported_channels: z.array(MediaChannelSchema).nullish(),
             supports_webhook_delivery: z.boolean().nullish()
@@ -3293,7 +3427,6 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         brand_url: z.string().nullish()
     }).passthrough().nullish(),
     brand: z.object({
-        identity: z.boolean().nullish(),
         rights: z.boolean().nullish(),
         right_types: z.array(RightTypeSchema).nullish(),
         available_uses: z.array(RightUseSchema).nullish(),
@@ -3691,7 +3824,7 @@ export const ProductSchema = z.object({
     measurement_terms: MeasurementTermsSchema.nullish(),
     performance_standards: z.array(PerformanceStandardSchema).nullish(),
     cancellation_policy: CancellationPolicySchema.nullish(),
-    reporting_capabilities: ReportingCapabilitiesSchema.nullish(),
+    reporting_capabilities: ReportingCapabilitiesSchema,
     creative_policy: CreativePolicySchema.nullish(),
     is_custom: z.boolean().nullish(),
     property_targeting_allowed: z.boolean().nullish(),
@@ -4334,6 +4467,29 @@ export const GetPropertyListResponseSchema = z.object({
 export const ListPropertyListsResponseSchema = z.object({
     lists: z.array(PropertyListSchema),
     pagination: PaginationResponseSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const CreateCollectionListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
+    name: z.string(),
+    description: z.string().nullish(),
+    base_collections: z.array(BaseCollectionSourceSchema).nullish(),
+    filters: CollectionListFiltersSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
+    idempotency_key: z.string().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const CreateCollectionListResponseSchema = z.object({
+    list: CollectionListSchema,
+    auth_token: z.string(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const UpdateCollectionListResponseSchema = z.object({
+    list: CollectionListSchema,
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 

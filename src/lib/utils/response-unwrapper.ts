@@ -58,13 +58,15 @@ export type AdCPResponse =
  * @param protocolResponse - Raw response from MCP or A2A protocol
  * @param toolName - Optional AdCP tool name for validation
  * @param protocol - Protocol type ('mcp' or 'a2a'), if known. If not provided, will auto-detect.
+ * @param options - Optional validation behavior overrides
  * @returns Raw AdCP response data matching schema exactly
  * @throws {Error} If response doesn't match expected schema for the tool
  */
 export function unwrapProtocolResponse(
   protocolResponse: any,
   toolName?: string,
-  protocol?: 'mcp' | 'a2a'
+  protocol?: 'mcp' | 'a2a',
+  options?: { filterInvalidProducts?: boolean }
 ): AdCPResponse & { _message?: string } {
   if (!protocolResponse) {
     throw new Error('Protocol response is null or undefined');
@@ -103,6 +105,17 @@ export function unwrapProtocolResponse(
       const { _message: _msg, ...dataToValidate } = unwrapped as Record<string, unknown>;
       const result = schema.safeParse(dataToValidate);
       if (!result.success) {
+        // When filterInvalidArrayItems is enabled and this is a get_products response,
+        // try filtering invalid products individually rather than rejecting the entire response.
+        if (options?.filterInvalidProducts && toolName === 'get_products') {
+          const filtered = filterInvalidProducts(schema, dataToValidate);
+          if (filtered) {
+            const validated = filtered as unknown as AdCPResponse & { _message?: string };
+            if (_msg) validated._message = _msg as string;
+            return validated;
+          }
+        }
+
         // Union schemas produce a generic "Invalid input" at (root).
         // Try each variant to surface the actual missing/invalid fields.
         const firstIssue = result.error.issues[0];
@@ -128,6 +141,46 @@ export function unwrapProtocolResponse(
 
   // Return unwrapped response (no validation)
   return unwrapped as AdCPResponse;
+}
+
+/**
+ * Filter invalid products from a get_products response.
+ *
+ * Validates each product individually against the ProductSchema,
+ * keeps only valid ones, and re-validates the full response.
+ * Returns the filtered response, or null if filtering can't help.
+ */
+function filterInvalidProducts(schema: z.ZodType, data: Record<string, unknown>): Record<string, unknown> | null {
+  const products = data.products;
+  if (!Array.isArray(products)) return null;
+
+  const ProductSchema = (schema as z.ZodObject<any>).shape?.products;
+  if (!(ProductSchema instanceof z.ZodArray)) return null;
+
+  const elementSchema = (ProductSchema as z.ZodArray<any>).element;
+  const validProducts: unknown[] = [];
+  for (const product of products) {
+    if (elementSchema.safeParse(product).success) {
+      validProducts.push(product);
+    }
+  }
+
+  // Nothing was filtered — all products are individually valid, so the validation
+  // error is at the response level (not caused by invalid products). Fall through
+  // to the normal error path.
+  if (validProducts.length === products.length) return null;
+
+  const filtered = { ...data, products: validProducts };
+  const revalidated = schema.safeParse(filtered);
+  if (revalidated.success) {
+    const droppedCount = products.length - validProducts.length;
+    console.warn(
+      `[adcp-client] Filtered ${droppedCount} invalid product(s) from get_products response (${validProducts.length} valid, ${products.length} total)`
+    );
+    return revalidated.data as Record<string, unknown>;
+  }
+
+  return null;
 }
 
 /**

@@ -22,6 +22,14 @@ const validProduct = {
   format_ids: [{ agent_url: 'https://example.com', id: 'fmt1' }],
   delivery_type: 'guaranteed',
   pricing_options: [{ pricing_option_id: 'po1', pricing_model: 'cpm', rate: 10, currency: 'USD' }],
+  reporting_capabilities: {
+    available_reporting_frequencies: ['daily'],
+    expected_delay_minutes: 60,
+    timezone: 'UTC',
+    supports_webhooks: false,
+    available_metrics: ['impressions'],
+    date_range_support: 'date_range',
+  },
 };
 
 const validCreateMediaBuySuccess = {

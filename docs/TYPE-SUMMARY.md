@@ -515,6 +515,68 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+**`create_collection_list`** — Request parameters for creating a new collection list.
+
+```
+{
+  name: string  // required
+  description: string
+  base_collections: object[]
+  filters: Collection List Filters
+  brand: Brand Ref
+  idempotency_key: string
+  context: Context
+}
+```
+
+**`update_collection_list`** — Request parameters for updating an existing collection list.
+
+```
+{
+  list_id: string  // required
+  name: string
+  description: string
+  base_collections: object[]
+  filters: Collection List Filters
+  brand: Brand Ref
+  webhook_url: string
+  context: Context
+  idempotency_key: string
+}
+```
+
+**`get_collection_list`** — Request parameters for retrieving a collection list with resolved collections.
+
+```
+{
+  list_id: string  // required
+  resolve: boolean
+  pagination: object
+  context: Context
+}
+```
+
+**`list_collection_lists`** — Request parameters for listing collection lists.
+
+```
+{
+  principal: string
+  name_contains: string
+  pagination: Pagination Request
+  context: Context
+}
+```
+
+**`delete_collection_list`** — Request parameters for deleting a collection list.
+
+```
+{
+  list_id: string  // required
+  context: Context
+  idempotency_key: string
+}
+```
+
 **`list_content_standards`** — Request parameters for listing content standards configurations.
 
 ```

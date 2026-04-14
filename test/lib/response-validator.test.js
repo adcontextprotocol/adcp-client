@@ -42,6 +42,14 @@ describe('ResponseValidator Tests', () => {
     delivery_measurement: {
       provider: 'Test Measurement Provider',
     },
+    reporting_capabilities: {
+      available_reporting_frequencies: ['daily'],
+      expected_delay_minutes: 60,
+      timezone: 'UTC',
+      supports_webhooks: false,
+      available_metrics: ['impressions'],
+      date_range_support: 'date_range',
+    },
     ...overrides,
   });
 

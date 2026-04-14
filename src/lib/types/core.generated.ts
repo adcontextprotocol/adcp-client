@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-14T15:29:06.571Z
+// Generated at: 2026-04-14T21:54:58.555Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -881,6 +881,8 @@ export interface TargetingOverlay {
   audience_exclude?: string[];
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
+  collection_list?: CollectionListReference;
+  collection_list_exclude?: CollectionListReference;
   /**
    * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
    */
@@ -1012,6 +1014,23 @@ export interface PropertyListReference {
   agent_url: string;
   /**
    * Identifier for the property list within the agent
+   */
+  list_id: string;
+  /**
+   * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
+   */
+  auth_token?: string;
+}
+/**
+ * Reference to a collection list for including specific collections (programs, shows) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.
+ */
+export interface CollectionListReference {
+  /**
+   * URL of the agent managing the collection list
+   */
+  agent_url: string;
+  /**
+   * Identifier for the collection list within the agent
    */
   list_id: string;
   /**
@@ -2319,7 +2338,18 @@ export type InstallmentStatus = 'scheduled' | 'tentative' | 'live' | 'postponed'
 /**
  * Rating system used
  */
-export type ContentRatingSystem = 'tv_parental' | 'mpaa' | 'podcast' | 'esrb' | 'bbfc' | 'fsk' | 'acb' | 'custom';
+export type ContentRatingSystem =
+  | 'tv_parental'
+  | 'mpaa'
+  | 'podcast'
+  | 'esrb'
+  | 'bbfc'
+  | 'fsk'
+  | 'acb'
+  | 'chvrs'
+  | 'csa'
+  | 'pegi'
+  | 'custom';
 /**
  * Category of the event
  */
@@ -2417,7 +2447,7 @@ export interface Product {
    */
   performance_standards?: PerformanceStandard[];
   cancellation_policy?: CancellationPolicy;
-  reporting_capabilities?: ReportingCapabilities;
+  reporting_capabilities: ReportingCapabilities;
   creative_policy?: CreativePolicy;
   /**
    * Whether this is a custom product
