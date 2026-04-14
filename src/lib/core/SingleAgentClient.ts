@@ -224,6 +224,17 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      * @default true
      */
     logSchemaViolations?: boolean;
+    /**
+     * Filter out invalid items from array fields instead of rejecting the entire response (default: false)
+     *
+     * When true: If a response contains array fields (e.g. products), each item is validated
+     * individually. Valid items are kept, invalid items are dropped, and the response is
+     * returned as long as at least one valid item remains.
+     * When false: The entire response is rejected if any array item fails validation.
+     *
+     * @default false
+     */
+    filterInvalidArrayItems?: boolean;
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
@@ -277,6 +288,7 @@ export class SingleAgentClient {
       webhookSecret: config.webhookSecret,
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
+      filterInvalidArrayItems: config.validation?.filterInvalidArrayItems === true, // Default: false
       onActivity: config.onActivity,
       governance: config.governance,
     });

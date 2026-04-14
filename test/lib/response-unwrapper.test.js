@@ -633,6 +633,62 @@ describe('Response Unwrapper', () => {
         }
       );
     });
+
+    test('should filter invalid products when filterInvalidArrayItems is enabled', () => {
+      const validProduct = createTestProduct({ product_id: 'valid-1' });
+      const invalidProduct = { product_id: 'invalid-1' }; // Missing required fields
+
+      const mcpResponse = {
+        structuredContent: {
+          products: [validProduct, invalidProduct],
+        },
+      };
+
+      // Without filtering, should throw
+      assert.throws(
+        () => unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp'),
+        /validation failed/i
+      );
+
+      // With filtering, should return only the valid product
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
+        filterInvalidArrayItems: true,
+      });
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.products[0].product_id, 'valid-1');
+    });
+
+    test('should return empty array when all items are invalid and filtering is enabled', () => {
+      const invalidProduct1 = { product_id: 'bad-1' };
+      const invalidProduct2 = { product_id: 'bad-2' };
+
+      const mcpResponse = {
+        structuredContent: {
+          products: [invalidProduct1, invalidProduct2],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
+        filterInvalidArrayItems: true,
+      });
+      assert.strictEqual(result.products.length, 0);
+    });
+
+    test('should pass through fully valid responses unchanged when filtering is enabled', () => {
+      const product1 = createTestProduct({ product_id: 'p1' });
+      const product2 = createTestProduct({ product_id: 'p2' });
+
+      const mcpResponse = {
+        structuredContent: {
+          products: [product1, product2],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
+        filterInvalidArrayItems: true,
+      });
+      assert.strictEqual(result.products.length, 2);
+    });
   });
 
   describe('Protocol Auto-Detection Edge Cases', () => {

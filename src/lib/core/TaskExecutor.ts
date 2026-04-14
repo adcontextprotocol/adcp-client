@@ -116,6 +116,8 @@ export class TaskExecutor {
       strictSchemaValidation?: boolean;
       /** Log all schema validation violations to debug logs (default: true) */
       logSchemaViolations?: boolean;
+      /** Filter out invalid items from array fields instead of rejecting the entire response (default: false) */
+      filterInvalidArrayItems?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
       /** Governance configuration for buyer-side campaign governance */
@@ -603,7 +605,9 @@ export class TaskExecutor {
       }
 
       // Now unwrap the response
-      const unwrapped = unwrapProtocolResponse(response, toolName);
+      const unwrapped = unwrapProtocolResponse(response, toolName, undefined, {
+        filterInvalidArrayItems: this.config.filterInvalidArrayItems,
+      });
 
       // Log successful extraction with result details
       if (response?.structuredContent) {

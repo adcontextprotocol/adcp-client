@@ -58,13 +58,15 @@ export type AdCPResponse =
  * @param protocolResponse - Raw response from MCP or A2A protocol
  * @param toolName - Optional AdCP tool name for validation
  * @param protocol - Protocol type ('mcp' or 'a2a'), if known. If not provided, will auto-detect.
+ * @param options - Optional validation behavior overrides
  * @returns Raw AdCP response data matching schema exactly
  * @throws {Error} If response doesn't match expected schema for the tool
  */
 export function unwrapProtocolResponse(
   protocolResponse: any,
   toolName?: string,
-  protocol?: 'mcp' | 'a2a'
+  protocol?: 'mcp' | 'a2a',
+  options?: { filterInvalidArrayItems?: boolean }
 ): AdCPResponse & { _message?: string } {
   if (!protocolResponse) {
     throw new Error('Protocol response is null or undefined');
@@ -103,6 +105,17 @@ export function unwrapProtocolResponse(
       const { _message: _msg, ...dataToValidate } = unwrapped as Record<string, unknown>;
       const result = schema.safeParse(dataToValidate);
       if (!result.success) {
+        // When filterInvalidArrayItems is enabled, try filtering invalid items from
+        // array fields individually rather than rejecting the entire response.
+        if (options?.filterInvalidArrayItems) {
+          const filtered = filterInvalidItems(schema, dataToValidate);
+          if (filtered) {
+            const validated = filtered as unknown as AdCPResponse & { _message?: string };
+            if (_msg) validated._message = _msg as string;
+            return validated;
+          }
+        }
+
         // Union schemas produce a generic "Invalid input" at (root).
         // Try each variant to surface the actual missing/invalid fields.
         const firstIssue = result.error.issues[0];
@@ -128,6 +141,92 @@ export function unwrapProtocolResponse(
 
   // Return unwrapped response (no validation)
   return unwrapped as AdCPResponse;
+}
+
+/**
+ * Attempt to salvage a response that fails whole-response validation by
+ * filtering invalid items out of array fields and re-validating.
+ *
+ * Walks the top-level schema shape, finds required array fields (e.g. `products`),
+ * validates each element individually, and keeps only valid ones.
+ * Returns the filtered + re-validated response, or null if filtering can't help
+ * (e.g. all items invalid, or the failure isn't in an array field).
+ */
+function filterInvalidItems(schema: z.ZodType, data: Record<string, unknown>): Record<string, unknown> | null {
+  // Extract the object schema — unwrap unions/effects to find the underlying z.object
+  const objectSchema = extractObjectSchema(schema);
+  if (!objectSchema) return null;
+
+  const shape = objectSchema.shape as Record<string, z.ZodType>;
+  const filtered = { ...data };
+  let didFilter = false;
+
+  for (const [key, fieldSchema] of Object.entries(shape)) {
+    const arrayValue = data[key];
+    if (!Array.isArray(arrayValue)) continue;
+
+    // Unwrap to find the inner array schema and its element type
+    const elementSchema = extractArrayElementSchema(fieldSchema);
+    if (!elementSchema) continue;
+
+    const validItems: unknown[] = [];
+    for (const item of arrayValue) {
+      if (elementSchema.safeParse(item).success) {
+        validItems.push(item);
+      }
+    }
+
+    if (validItems.length < arrayValue.length) {
+      didFilter = true;
+      filtered[key] = validItems;
+    }
+  }
+
+  if (!didFilter) return null;
+
+  // Re-validate the filtered response against the full schema
+  const revalidated = schema.safeParse(filtered);
+  if (revalidated.success) {
+    return revalidated.data as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+/**
+ * Extract the underlying z.object schema from a potentially wrapped type
+ * (union, passthrough, etc.)
+ */
+function extractObjectSchema(schema: z.ZodType): z.ZodObject<any> | null {
+  if (schema instanceof z.ZodObject) return schema as z.ZodObject<any>;
+  if (schema instanceof z.ZodUnion) {
+    // Try each union variant — return the first object schema found
+    for (const option of (schema as z.ZodUnion<any>).options) {
+      const obj = extractObjectSchema(option);
+      if (obj) return obj;
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract the element schema from a z.array() field, unwrapping
+ * optional/nullable/default wrappers.
+ */
+function extractArrayElementSchema(fieldSchema: z.ZodType): z.ZodType | null {
+  if (fieldSchema instanceof z.ZodArray) {
+    return (fieldSchema as z.ZodArray<any>).element;
+  }
+  if (fieldSchema instanceof z.ZodOptional) {
+    return extractArrayElementSchema((fieldSchema as z.ZodOptional<any>).unwrap());
+  }
+  if (fieldSchema instanceof z.ZodNullable) {
+    return extractArrayElementSchema((fieldSchema as z.ZodNullable<any>).unwrap());
+  }
+  if (fieldSchema instanceof z.ZodDefault) {
+    return extractArrayElementSchema((fieldSchema as z.ZodDefault<any>)._def.innerType);
+  }
+  return null;
 }
 
 /**
