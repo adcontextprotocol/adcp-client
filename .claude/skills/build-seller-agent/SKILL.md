@@ -16,6 +16,7 @@ A seller agent receives briefs from buyers, returns products with pricing, accep
 - User references `get_products`, `create_media_buy`, or the media buy protocol
 
 **Not this skill:**
+
 - Buying ad inventory → that's a buyer/DSP agent (see `docs/getting-started.md`)
 - Serving audience segments → `skills/build-signals-agent/`
 - Rendering creatives from briefs → that's a creative agent
@@ -40,21 +41,28 @@ Many sellers support both — different products can have different delivery typ
 ### 3. Products and Pricing
 
 Get specific inventory. Each product needs:
-- Name and description
-- Channel: `display`, `olv`, `ctv`, `social`, `retail_media`, `dooh`, etc.
-- Creative format requirements
-- At least one pricing option
 
-Pricing models:
-- `cpm` — `{ pricing_model: "cpm", fixed_price: 12.00, currency: "USD" }`
-- `cpc` — `{ pricing_model: "cpc", fixed_price: 1.50, currency: "USD" }`
-- Auction — `{ pricing_model: "cpm", floor_price: 5.00, currency: "USD" }` (buyer bids above floor)
+- `product_id`, `name`, `description`
+- `publisher_properties` — at least one `{ publisher_domain: 'example.com', selection_type: 'all' }` (discriminated union: `'all'` | `'by_id'` with `property_ids` | `'by_tag'` with `tags`)
+- `format_ids` — array of `{ agent_url: string, id: string }` referencing creative formats
+- `delivery_type` — `'guaranteed'` or `'non_guaranteed'`
+- `pricing_options` — at least one (see below)
+- Optional: `channels` (`display`, `olv`, `ctv`, `social`, `retail_media`, `dooh`, etc.)
+
+Pricing models (all require `pricing_option_id` and `currency`):
+
+- `cpm` — `{ pricing_option_id: 'cpm-1', pricing_model: "cpm", fixed_price: 12.00, currency: "USD" }`
+- `cpc` — `{ pricing_option_id: 'cpc-1', pricing_model: "cpc", fixed_price: 1.50, currency: "USD" }`
+- Auction — `{ pricing_option_id: 'auction-1', pricing_model: "cpm", floor_price: 5.00, currency: "USD" }` (buyer bids above floor)
 
 Each pricing option can set `min_spend_per_package` to enforce minimum budgets.
+
+For all `PricingOption` variants and `Product` required fields, see [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md).
 
 ### 4. Approval Workflow
 
 For guaranteed buys, choose one:
+
 - **Instant confirmation** — `create_media_buy` returns completed with confirmed status. Simplest.
 - **Async approval** — returns `submitted`, buyer polls `get_media_buys`. Use `registerAdcpTaskTool`.
 - **Human-in-the-loop** — returns `input-required` with a setup URL for IO signing.
@@ -70,6 +78,7 @@ Non-guaranteed buys are always instant confirmation.
 ## Tools and Required Response Shapes
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
+
 ```
 capabilitiesResponse({
   adcp: { major_versions: [3] },
@@ -78,6 +87,7 @@ capabilitiesResponse({
 ```
 
 **`sync_accounts`** — `SyncAccountsRequestSchema.shape`
+
 ```
 taskToolResponse({
   accounts: [{
@@ -91,6 +101,7 @@ taskToolResponse({
 ```
 
 **`sync_governance`** — `SyncGovernanceRequestSchema.shape`
+
 ```
 taskToolResponse({
   accounts: [{
@@ -102,15 +113,33 @@ taskToolResponse({
 ```
 
 **`get_products`** — `GetProductsRequestSchema.shape`
+
 ```
 productsResponse({
-  products: Product[],  // required - each needs product_id, delivery_type, pricing_options
+  products: [{
+    product_id: 'prod-1',
+    name: 'Homepage Display',
+    description: 'Premium display ads on homepage',
+    publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
+    format_ids: [{ agent_url: 'https://creative.example.com/mcp', id: 'display-300x250' }],
+    delivery_type: 'guaranteed',
+    pricing_options: [{
+      pricing_option_id: 'cpm-standard',
+      pricing_model: 'cpm',
+      fixed_price: 12.00,
+      currency: 'USD',
+    }],
+  }],
   sandbox: true,        // for mock data
 })
 ```
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
+
+Validate the request before creating the buy. Return an error response (not `adcpError`) when business validation fails:
+
 ```
+// Success:
 mediaBuyResponse({
   media_buy_id: string,       // required
   packages: [{                // required
@@ -120,11 +149,15 @@ mediaBuyResponse({
     budget: number,
   }],
 })
+
+// Validation failure (reversed dates, budget too low, unknown product):
+adcpError('INVALID_REQUEST', { message: 'start_time must be before end_time' })
 ```
 
 **`get_media_buys`** — `GetMediaBuysRequestSchema.shape`
+
 ```
-taskToolResponse({
+getMediaBuysResponse({
   media_buys: [{
     media_buy_id: string,   // required
     status: 'active' | 'pending_start' | ...,  // required
@@ -137,8 +170,9 @@ taskToolResponse({
 ```
 
 **`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
+
 ```
-taskToolResponse({
+listCreativeFormatsResponse({
   formats: [{
     format_id: { agent_url: string, id: string },  // required
     name: string,  // required
@@ -147,8 +181,9 @@ taskToolResponse({
 ```
 
 **`sync_creatives`** — `SyncCreativesRequestSchema.shape`
+
 ```
-taskToolResponse({
+syncCreativesResponse({
   creatives: [{
     creative_id: string,          // required - echo from request
     action: 'created' | 'updated',  // required
@@ -157,6 +192,7 @@ taskToolResponse({
 ```
 
 **`get_media_buy_delivery`** — `GetMediaBuyDeliveryRequestSchema.shape`
+
 ```
 deliveryResponse({
   reporting_period: { start: string, end: string },  // required - ISO timestamps
@@ -214,6 +250,7 @@ registerTestController(server, store);
 ```
 
 When using this, declare `compliance_testing` in `supported_protocols`:
+
 ```
 capabilitiesResponse({
   adcp: { major_versions: [3] },
@@ -224,6 +261,7 @@ capabilitiesResponse({
 Only implement the store methods for scenarios your agent supports. Unimplemented methods are excluded from `list_scenarios` automatically.
 
 The storyboard tests state machine correctness:
+
 - `NOT_FOUND` when forcing transitions on unknown entities
 - `INVALID_TRANSITION` when transitioning from terminal states (completed, rejected, canceled for media buys; archived for creatives)
 - Successful transitions between valid states
@@ -234,21 +272,51 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 ## SDK Quick Reference
 
-| SDK piece | Usage |
-|-----------|-------|
-| `serve(createAgent)` | Start HTTP server on `:3001/mcp` |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support |
-| `server.tool(name, Schema.shape, handler)` | Register tool — `.shape` unwraps Zod for MCP SDK |
-| `capabilitiesResponse(data)` | Build `get_adcp_capabilities` response |
-| `productsResponse(data)` | Build `get_products` response |
-| `mediaBuyResponse(data)` | Build `create_media_buy` response |
-| `deliveryResponse(data)` | Build `get_media_buy_delivery` response |
-| `taskToolResponse(data, summary)` | Build generic tool response |
-| `adcpError(code, { message })` | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`) |
-| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing |
-| `TestControllerError(code, message)` | Typed error from store methods |
+| SDK piece                                               | Usage                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------- |
+| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
+| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
+| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod for MCP SDK                    |
+| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
+| `productsResponse(data)`                                | Build `get_products` response                                       |
+| `mediaBuyResponse(data)`                                | Build `create_media_buy` response                                   |
+| `updateMediaBuyResponse(data)`                          | Build `update_media_buy` response                                   |
+| `getMediaBuysResponse(data)`                            | Build `get_media_buys` response                                     |
+| `deliveryResponse(data)`                                | Build `get_media_buy_delivery` response                             |
+| `listAccountsResponse(data)`                            | Build `list_accounts` response                                      |
+| `listCreativeFormatsResponse(data)`                     | Build `list_creative_formats` response                              |
+| `syncCreativesResponse(data)`                           | Build `sync_creatives` response                                     |
+| `taskToolResponse(data, summary)`                       | Build generic tool response (for tools without a dedicated builder) |
+| `adcpError(code, { message })`                          | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)      |
+| `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |
+| `TestControllerError(code, message)`                    | Typed error from store methods                                      |
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+
+## Setup
+
+```bash
+npm init -y
+npm install @adcp/client
+npm install -D typescript @types/node
+```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -266,17 +334,20 @@ The skill contains everything you need. Do not read additional docs before writi
 **After writing the agent, validate it. Fix failures. Repeat.**
 
 **Full validation** (if you can bind ports):
+
 ```bash
 npx tsx agent.ts &
 npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
 **Sandbox validation** (if ports are blocked):
+
 ```bash
 npx tsc --noEmit agent.ts
 ```
 
 When storyboard output shows failures, fix each one:
+
 - `response_schema` → response doesn't match Zod schema
 - `field_present` → required field missing
 - MCP error → check tool registration (schema, name)
@@ -285,24 +356,28 @@ When storyboard output shows failures, fix each one:
 
 ## Storyboards
 
-| Storyboard | Use case |
-|-----------|----------|
-| `media_buy_seller` | Full lifecycle — every seller should pass this |
-| `media_buy_non_guaranteed` | Auction flow with bid adjustment |
-| `media_buy_guaranteed_approval` | IO approval workflow |
-| `media_buy_proposal_mode` | AI-generated proposals |
-| `media_buy_catalog_creative` | Catalog sync + conversions |
+| Storyboard                      | Use case                                       |
+| ------------------------------- | ---------------------------------------------- |
+| `media_buy_seller`              | Full lifecycle — every seller should pass this |
+| `media_buy_non_guaranteed`      | Auction flow with bid adjustment               |
+| `media_buy_guaranteed_approval` | IO approval workflow                           |
+| `media_buy_proposal_mode`       | AI-generated proposals                         |
+| `media_buy_catalog_creative`    | Catalog sync + conversions                     |
+| `schema_validation`             | Schema compliance + date validation errors     |
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| Pass `Schema` instead of `Schema.shape` | MCP SDK needs unwrapped Zod fields |
-| Skip `get_adcp_capabilities` | Must be the first tool registered |
-| Return raw JSON without response builders | LLM clients need the text content layer |
-| Missing `brand`/`operator` in sync_accounts response | Echo them back from the request — they're required |
-| sync_governance returns wrong shape | Must include `status: 'synced'` and `governance_agents` array |
-| `sandbox: false` on mock data | Buyers may treat mock data as real |
+| Mistake                                              | Fix                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------- |
+| Pass `Schema` instead of `Schema.shape`              | MCP SDK needs unwrapped Zod fields                            |
+| Skip `get_adcp_capabilities`                         | Must be the first tool registered                             |
+| Return raw JSON without response builders            | LLM clients need the text content layer                       |
+| Missing `brand`/`operator` in sync_accounts response | Echo them back from the request — they're required            |
+| sync_governance returns wrong shape                  | Must include `status: 'synced'` and `governance_agents` array |
+| `sandbox: false` on mock data                        | Buyers may treat mock data as real                            |
+| Returns raw JSON for validation failures             | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure    |
+| Missing `publisher_properties` or `format_ids` on Product | Both are required — see product example in `get_products` section |
+| Missing `@types/node` in devDependencies             | `process.env` doesn't resolve without it — see Setup section  |
 
 ## Reference
 

@@ -90,9 +90,9 @@ taskToolResponse({
     uses: string[],             // e.g., ['ai_generated_image', 'digital_display']
     pricing_options: [{
       pricing_option_id: string,
-      model: 'flat_fee',
+      pricing_model: 'flat_rate',
       currency: 'USD',
-      price: number,
+      fixed_price: number,
     }],
     terms: {
       duration: '30d',
@@ -158,7 +158,25 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 ```bash
 npm init -y
 npm install @adcp/client
+npm install -D typescript @types/node
 ```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -198,4 +216,5 @@ npx @adcp/client storyboard run http://localhost:3001/mcp brand_rights --json
 
 - `storyboards/brand_rights.yaml` — full brand rights storyboard
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
+- `docs/TYPE-SUMMARY.md` — curated type signatures
 - `docs/llms.txt` — full protocol reference

@@ -35,7 +35,7 @@ Determine these things. Ask the user — don't guess.
 
 ### 2. Products and pricing
 
-Same as standard seller. Each product needs: name, channel, delivery_type, pricing_options.
+Same as standard seller. Each product needs: `product_id`, `name`, `description`, `publisher_properties`, `format_ids`, `delivery_type`, `pricing_options`. See [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md) for full field details and `PricingOption` variants.
 
 ### 3. Generative formats
 
@@ -89,7 +89,20 @@ taskToolResponse({
 
 ```
 productsResponse({
-  products: Product[],  // each needs product_id, delivery_type, pricing_options
+  products: [{
+    product_id: 'prod-1',
+    name: 'AI Display Network',
+    description: 'AI-generated display ads across premium publishers',
+    publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
+    format_ids: [{ agent_url: 'https://your-agent.example/mcp', id: 'display_300x250_generative' }],
+    delivery_type: 'non_guaranteed',
+    pricing_options: [{
+      pricing_option_id: 'cpm-standard',
+      pricing_model: 'cpm',
+      fixed_price: 15.00,
+      currency: 'USD',
+    }],
+  }],
   sandbox: true,
 })
 ```
@@ -247,7 +260,25 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 ```bash
 npm init -y
 npm install @adcp/client
+npm install -D typescript @types/node
 ```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -311,4 +342,5 @@ When storyboard output shows failures, fix each one:
 - `storyboards/media_buy_seller.yaml` — base seller storyboard (for standard seller parts)
 - `skills/build-seller-agent/SKILL.md` — standard seller skill (generative extends this)
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
+- `docs/TYPE-SUMMARY.md` — curated type signatures
 - `docs/llms.txt` — full protocol reference

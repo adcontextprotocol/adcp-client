@@ -96,8 +96,7 @@ Store creatives in the library. Echo back creative_id and action.
 syncCreativesResponse({
   creatives: [{
     creative_id: string,              // required — echo from request
-    action: 'created' | 'updated',    // required
-    status: 'approved' | 'pending_review' | 'rejected',  // NB: 'approved' not 'accepted'
+    action: 'created' | 'updated',    // required (also: 'unchanged' | 'failed' | 'deleted')
   }],
 })
 ```
@@ -108,16 +107,16 @@ Return creatives from the library. Support filtering by format_id.
 
 ```
 listCreativesResponse({
-  query_summary: { total_matching: number, returned: number, filters: [] },
+  query_summary: { total_matching: number, returned: number, filters_applied: [] },
   creatives: [{
     creative_id: string,
     name: string,
     format_id: { agent_url: string, id: string },
-    status: 'approved' | 'pending_review' | 'rejected',  // NB: 'approved' not 'accepted'
+    status: 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived',
     created_date: string,            // required — ISO timestamp
     updated_date: string,            // required — ISO timestamp
   }],
-  pagination: { total: number, offset: 0, limit: 50, has_more: boolean },
+  pagination: { has_more: boolean, cursor?: string, total_count?: number },
 })
 ```
 
@@ -200,7 +199,25 @@ Import everything from `@adcp/client`. Types from `@adcp/client` with `import ty
 ```bash
 npm init -y
 npm install @adcp/client
+npm install -D typescript @types/node
 ```
+
+Minimal `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  }
+}
+```
+
+`skipLibCheck: true` avoids false-positive errors from transitive `.d.ts` files (e.g., `@opentelemetry/api`).
 
 ## Implementation
 
@@ -267,4 +284,5 @@ npx tsc --noEmit agent.ts
 
 - `storyboards/creative_lifecycle.yaml` — full creative lifecycle storyboard
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
+- `docs/TYPE-SUMMARY.md` — curated type signatures
 - `docs/llms.txt` — full protocol reference
