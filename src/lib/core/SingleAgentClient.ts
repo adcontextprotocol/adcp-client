@@ -1026,58 +1026,61 @@ export class SingleAgentClient {
     // Get server version (cached after first call)
     const version = await this.detectServerVersion();
 
-    if (version === 'v3') {
-      // For v3 agents that have a cached inputSchema, strip any top-level fields
-      // not declared in the schema's properties. This handles partial v3
-      // implementations (agents that declare get_adcp_capabilities but omit some
-      // v3 fields like brand or buying_mode from their tool schema).
-      // Fails open when no schema is cached — better to send unknown fields and
-      // let the agent respond than to silently drop data that might be required.
-      // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
-      const toolSchema = this.cachedToolSchemas?.get(taskType);
-      if (!toolSchema) return params;
+    let adapted = params;
 
-      const declaredFields = new Set(Object.keys(toolSchema));
-      // Protocol envelope fields are always preserved — they live at the
-      // protocol layer, not in individual tool schemas.
-      const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id']);
-      const filtered: Record<string, unknown> = {};
-      const stripped: string[] = [];
+    if (version !== 'v3') {
+      // Adapt v3 requests for v2 servers
+      switch (taskType) {
+        case 'get_products':
+          adapted = adaptGetProductsRequestForV2(params);
+          break;
 
-      for (const [key, value] of Object.entries(params)) {
-        if (declaredFields.has(key) || envelopeFields.has(key)) {
-          filtered[key] = value;
-        } else {
-          stripped.push(key);
-        }
+        case 'create_media_buy':
+          adapted = adaptCreateMediaBuyRequestForV2(params);
+          break;
+
+        case 'update_media_buy':
+          adapted = adaptUpdateMediaBuyRequestForV2(params);
+          break;
+
+        case 'sync_creatives':
+          adapted = adaptSyncCreativesRequestForV2(params);
+          break;
       }
-
-      if (stripped.length > 0) {
-        console.warn(
-          `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${stripped.join(', ')}`
-        );
-      }
-
-      return filtered;
     }
 
-    // Adapt v3 requests for v2 servers
-    switch (taskType) {
-      case 'get_products':
-        return adaptGetProductsRequestForV2(params);
+    // Strip any top-level fields not declared in the agent's tool schema.
+    // This handles partial implementations (agents that omit some fields)
+    // and prevents unknown fields like idempotency_key/ext from causing
+    // validation errors on the remote server.
+    // Fails open when no schema is cached — better to send unknown fields and
+    // let the agent respond than to silently drop data that might be required.
+    // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
+    const toolSchema = this.cachedToolSchemas?.get(taskType);
+    if (!toolSchema) return adapted;
 
-      case 'create_media_buy':
-        return adaptCreateMediaBuyRequestForV2(params);
+    const declaredFields = new Set(Object.keys(toolSchema));
+    // Protocol envelope fields are always preserved — they live at the
+    // protocol layer, not in individual tool schemas.
+    const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id']);
+    const filtered: Record<string, unknown> = {};
+    const stripped: string[] = [];
 
-      case 'update_media_buy':
-        return adaptUpdateMediaBuyRequestForV2(params);
-
-      case 'sync_creatives':
-        return adaptSyncCreativesRequestForV2(params);
-
-      default:
-        return params;
+    for (const [key, value] of Object.entries(adapted)) {
+      if (declaredFields.has(key) || envelopeFields.has(key)) {
+        filtered[key] = value;
+      } else {
+        stripped.push(key);
+      }
     }
+
+    if (stripped.length > 0) {
+      console.warn(
+        `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${stripped.join(', ')}`
+      );
+    }
+
+    return filtered;
   }
 
   /**
