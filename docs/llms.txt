@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-04-14
-> Library: @adcp/client v4.29.0
+> Library: @adcp/client v4.30.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -123,7 +123,7 @@ Optional: `format_ids: object[]`, `asset_types: object[]`, `max_width: integer`,
 Request parameters for creating a media buy.
 
 Required: `account: Account Ref`, `brand: Brand Ref`, `start_time: Start Timing`, `end_time: string`
-Optional: `idempotency_key: string`, `plan_id: string`, `proposal_id: string`, `total_budget: object`, `packages: object[]`, `advertiser_industry: Advertiser Industry`, `invoice_recipient: Business Entity`, `io_acceptance: object`, +5 more
+Optional: `idempotency_key: string`, `plan_id: string`, `proposal_id: string`, `total_budget: object`, `packages: object[]`, `advertiser_industry: Advertiser Industry`, `invoice_recipient: Business Entity`, `io_acceptance: object`, +6 more
 
 #### `update_media_buy`
 

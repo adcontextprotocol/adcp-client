@@ -89,7 +89,6 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
     brand_manifest: inputManifest,
     adcp_major_version,
     idempotency_key,
-    ext,
     ...rest
   } = request;
 
@@ -127,7 +126,7 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
  * Strips v3-only top-level fields and adapts packages.
  */
 export function adaptUpdateMediaBuyRequestForV2(request: any): any {
-  const { reporting_webhook, adcp_major_version, idempotency_key, ext, ...rest } = request;
+  const { reporting_webhook, adcp_major_version, idempotency_key, ...rest } = request;
 
   return {
     ...rest,

@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
 > Generated at: 2026-04-14
-> @adcp/client v4.29.0
+> @adcp/client v4.30.1
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -189,6 +189,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   invoice_recipient: Business Entity
   io_acceptance: object
   po_number: string
+  agency_estimate_number: string
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
   artifact_webhook: object

@@ -1051,7 +1051,7 @@ export class SingleAgentClient {
 
     // Strip any top-level fields not declared in the agent's tool schema.
     // This handles partial implementations (agents that omit some fields)
-    // and prevents unknown fields like idempotency_key/ext from causing
+    // and prevents unknown fields like idempotency_key from causing
     // validation errors on the remote server.
     // Fails open when no schema is cached — better to send unknown fields and
     // let the agent respond than to silently drop data that might be required.
@@ -1062,7 +1062,7 @@ export class SingleAgentClient {
     const declaredFields = new Set(Object.keys(toolSchema));
     // Protocol envelope fields are always preserved — they live at the
     // protocol layer, not in individual tool schemas.
-    const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id']);
+    const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id', 'ext']);
     const filtered: Record<string, unknown> = {};
     const stripped: string[] = [];
 

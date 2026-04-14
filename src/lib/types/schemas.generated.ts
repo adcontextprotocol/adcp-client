@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-14T12:45:16.111Z
+// Generated at: 2026-04-14T15:58:18.136Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -145,7 +145,8 @@ export const FormatIDSchema = z.object({
 export const MeasurementTermsSchema = z.object({
     billing_measurement: z.object({
         vendor: BrandReferenceSchema,
-        max_variance_percent: z.number().nullish()
+        max_variance_percent: z.number().nullish(),
+        measurement_window: z.string().nullish()
     }).passthrough().nullish(),
     makegood_policy: z.object({
         available_remedies: z.array(MakegoodRemedySchema)
@@ -291,6 +292,8 @@ export const CatalogSchema = z.object({
 }).passthrough();
 
 export const CreativeStatusSchema = z.union([z.literal("processing"), z.literal("pending_review"), z.literal("approved"), z.literal("rejected"), z.literal("archived")]);
+
+export const CreativeIdentifierTypeSchema = z.union([z.literal("ad_id"), z.literal("isci"), z.literal("clearcast_clock")]);
 
 export const ImageAssetSchema = z.object({
     url: z.string(),
@@ -458,6 +461,11 @@ export const MarkdownAssetSchema = z.object({
 }).passthrough();
 
 export const CatalogAssetSchema = CatalogSchema;
+
+export const IndustryIdentifierSchema = z.object({
+    type: CreativeIdentifierTypeSchema,
+    value: z.string()
+}).passthrough();
 
 export const ReferenceAssetSchema = z.object({
     url: z.string(),
@@ -725,6 +733,14 @@ export const GeographicBreakdownSupportSchema = z.object({
     region: z.boolean().nullish(),
     metro: z.record(z.string(), z.boolean()).nullish(),
     postal_area: z.record(z.string(), z.boolean()).nullish()
+}).passthrough();
+
+export const MeasurementWindowSchema = z.object({
+    window_id: z.string(),
+    description: z.string().nullish(),
+    duration_days: z.number(),
+    expected_availability_days: z.number().nullish(),
+    is_guarantee_basis: z.boolean().nullish()
 }).passthrough();
 
 export const DiagnosticIssueSchema = z.object({
@@ -1061,7 +1077,8 @@ export const AccountSchema = z.object({
 export const MeasurementTerms1Schema = z.object({
     billing_measurement: z.object({
         vendor: BrandReferenceSchema,
-        max_variance_percent: z.number().nullish()
+        max_variance_percent: z.number().nullish(),
+        measurement_window: z.string().nullish()
     }).passthrough().nullish(),
     makegood_policy: z.object({
         available_remedies: z.array(MakegoodRemedySchema)
@@ -1334,7 +1351,8 @@ export const ReportingCapabilitiesSchema = z.object({
     supports_device_platform_breakdown: z.boolean().nullish(),
     supports_audience_breakdown: z.boolean().nullish(),
     supports_placement_breakdown: z.boolean().nullish(),
-    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")])
+    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")]),
+    measurement_windows: z.array(MeasurementWindowSchema).nullish()
 }).passthrough();
 
 export const MeasurementReadinessSchema = z.object({
@@ -1570,6 +1588,7 @@ export const PackageSchema = z.object({
         reason: z.string().nullish(),
         acknowledged_at: z.string().nullish()
     }).passthrough().nullish(),
+    agency_estimate_number: z.string().nullish(),
     creative_deadline: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1606,6 +1625,7 @@ export const CreativeAssetSchema = z.object({
     status: CreativeStatusSchema.nullish(),
     weight: z.number().nullish(),
     placement_ids: z.array(z.string()).nullish(),
+    industry_identifiers: z.array(IndustryIdentifierSchema).nullish(),
     provenance: ProvenanceSchema.nullish()
 }).passthrough();
 
@@ -1997,6 +2017,7 @@ export const CreativeManifestSchema = z.object({
     format_id: FormatIDSchema,
     assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
     rights: z.array(RightsConstraintSchema).nullish(),
+    industry_identifiers: z.array(IndustryIdentifierSchema).nullish(),
     provenance: ProvenanceSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -3838,6 +3859,7 @@ export const PackageRequestSchema = z.object({
     performance_standards: z.array(PerformanceStandardSchema).nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     creatives: z.array(CreativeAssetSchema).nullish(),
+    agency_estimate_number: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -3922,7 +3944,7 @@ export const GetMediaBuysResponseSchema = z.object({
 }).passthrough();
 
 export const GetMediaBuyDeliveryResponseSchema = z.object({
-    notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted")]).nullish(),
+    notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update")]).nullish(),
     partial_data: z.boolean().nullish(),
     unavailable_count: z.number().nullish(),
     sequence_number: z.number().nullish(),
@@ -3967,6 +3989,9 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             currency: z.string().nullish(),
             delivery_status: z.union([z.literal("delivering"), z.literal("completed"), z.literal("budget_exhausted"), z.literal("flight_ended"), z.literal("goal_met")]).nullish(),
             paused: z.boolean().nullish(),
+            is_final: z.boolean().nullish(),
+            measurement_window: z.string().nullish(),
+            supersedes_window: z.string().nullish(),
             by_catalog_item: z.array(DeliveryMetricsSchema.and(z.object({
                 content_id: z.string().nullish(),
                 content_id_type: ContentIDTypeSchema.nullish()
@@ -4561,6 +4586,7 @@ export const CreateMediaBuyRequestSchema = z.object({
         signature_id: z.string().nullish()
     }).passthrough().nullish(),
     po_number: z.string().nullish(),
+    agency_estimate_number: z.string().nullish(),
     start_time: StartTimingSchema,
     end_time: z.string(),
     push_notification_config: PushNotificationConfigSchema.nullish(),

@@ -1914,6 +1914,10 @@ export interface MeasurementTerms {
      * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
      */
     max_variance_percent?: number;
+    /**
+     * Which measurement window the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. For broadcast TV, this is typically 'c7' (live + 7 days DVR). When absent, billing is based on the seller's standard reporting without windowed maturation.
+     */
+    measurement_window?: string;
   };
   /**
    * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.
@@ -2001,6 +2005,10 @@ export interface ReportingCapabilities {
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
+  /**
+   * Measurement maturation windows available for this product. Used by broadcast and linear TV sellers where measurement accumulates over time (Live, C3, C7). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Digital-only sellers typically omit this.
+   */
+  measurement_windows?: MeasurementWindow[];
 }
 /**
  * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
@@ -2026,6 +2034,31 @@ export interface GeographicBreakdownSupport {
   postal_area?: {
     [k: string]: boolean | undefined;
   };
+}
+/**
+ * A measurement maturation window for broadcast and linear TV. Broadcast measurement is not delayed data — it matures over time as time-shifted (DVR) viewing accumulates. Each window represents a defined accumulation period after the live broadcast.
+ */
+export interface MeasurementWindow {
+  /**
+   * Identifier for this measurement window. Standard values: 'live' (real-time viewers only), 'c3' (live + 3 days time-shifted), 'c7' (live + 7 days time-shifted). Sellers may define custom windows for other accumulation periods.
+   */
+  window_id: string;
+  /**
+   * Human-readable description of what this window measures
+   */
+  description?: string;
+  /**
+   * Number of days after live broadcast included in this window. 0 = live only, 3 = live + 3 days DVR, 7 = live + 7 days DVR.
+   */
+  duration_days: number;
+  /**
+   * Expected number of days after broadcast before this window's data is available from the measurement vendor. For example, C7 window data from VideoAmp typically arrives ~22 days after broadcast (7-day accumulation + ~15-day processing).
+   */
+  expected_availability_days?: number;
+  /**
+   * Whether this window is the basis for delivery guarantees and reconciliation. A product typically has one guarantee basis window (e.g., C7 for most US broadcast). Buyers reconcile against the guarantee basis window's final numbers.
+   */
+  is_guarantee_basis?: boolean;
 }
 /**
  * Creative requirements and restrictions for a product
@@ -3418,6 +3451,10 @@ export type CatalogAsset = Catalog;
  */
 export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
 /**
+ * Industry-standard identifier types for advertising creatives. These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ */
+export type CreativeIdentifierType = 'ad_id' | 'isci' | 'clearcast_clock';
+/**
  * Industry classification for this specific campaign. A brand may operate across multiple industries (brand.json industries field), but each media buy targets one. For example, a consumer health company running a wellness campaign sends 'healthcare.wellness', not 'cpg'. Sellers map this to platform-native codes (e.g., Spotify ADV categories, LinkedIn industry IDs). When omitted, sellers may infer from the brand manifest's industries field.
  */
 export type AdvertiserIndustry =
@@ -3576,6 +3613,10 @@ export interface CreateMediaBuyRequest {
    * Purchase order number for tracking
    */
   po_number?: string;
+  /**
+   * Agency estimate or authorization number. Primary financial reference for broadcast buys — links the order to the agency's media plan and billing system. Travels with the order and Ad-IDs through the transaction lifecycle.
+   */
+  agency_estimate_number?: string;
   start_time: StartTiming;
   /**
    * Campaign end date/time in ISO 8601 format
@@ -3691,6 +3732,10 @@ export interface PackageRequest {
    * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
    */
   creatives?: CreativeAsset[];
+  /**
+   * Agency estimate or authorization number for this package. Overrides the media buy-level estimate number when different packages correspond to different agency estimates (e.g., different stations or flights within the same buy).
+   */
+  agency_estimate_number?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3951,6 +3996,10 @@ export interface CreativeAsset {
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
    */
   placement_ids?: string[];
+  /**
+   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   */
+  industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
 }
 /**
@@ -4553,6 +4602,16 @@ export interface ReferenceAsset {
   description?: string;
 }
 /**
+ * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ */
+export interface IndustryIdentifier {
+  type: CreativeIdentifierType;
+  /**
+   * The identifier value (e.g., 'ABCD1234000H' for Ad-ID)
+   */
+  value: string;
+}
+/**
  * Override the account's default billing entity for this specific buy. When provided, the seller invoices this entity instead. The seller MUST validate the invoice recipient is authorized for this account. When governance_agents are configured, the seller MUST include invoice_recipient in the check_governance request.
  */
 export interface BusinessEntity {
@@ -5010,6 +5069,10 @@ export interface Package {
      */
     acknowledged_at?: string;
   };
+  /**
+   * Agency estimate or authorization number for this package. Echoed from the buyer's request. When present on the package, takes precedence over the media buy-level estimate number.
+   */
+  agency_estimate_number?: string;
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
    */
@@ -5750,9 +5813,9 @@ export type AudienceSource = 'synced' | 'platform' | 'third_party' | 'lookalike'
  */
 export interface GetMediaBuyDeliveryResponse {
   /**
-   * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with updated data
+   * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with corrected data (same window), window_update = resending period with a wider measurement window (e.g., C3 superseding live, C7 superseding C3)
    */
-  notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted';
+  notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
   /**
    * Indicates if any media buys in this webhook have missing/delayed data (only present in webhook deliveries)
    */
@@ -5918,6 +5981,18 @@ export interface GetMediaBuyDeliveryResponse {
        * Whether this package is currently paused by the buyer
        */
       paused?: boolean;
+      /**
+       * Whether this delivery data is final for the reporting period. When false, the data may be updated as measurement matures (e.g., broadcast C7 window accumulating DVR playback) or as processing completes (e.g., IVT filtering, deduplication). When true, the seller considers this data closed — no further updates for this period. Absent means the seller does not distinguish provisional from final data.
+       */
+      is_final?: boolean;
+      /**
+       * Which measurement window this data represents, referencing a window_id from the product's reporting_capabilities.measurement_windows. For broadcast: 'live', 'c3', 'c7'. When absent, the data is not windowed (standard digital reporting). When present with is_final: false, a later report for the same period will provide a wider window or more complete data.
+       */
+      measurement_window?: string;
+      /**
+       * Which measurement window this data replaces. Present on window_update notifications to indicate progression (e.g., 'live' when reporting C3 data that supersedes live-only numbers). Absent on the first report for a period. Buyers should replace stored data for the superseded window with this report's data.
+       */
+      supersedes_window?: string;
       /**
        * Delivery by catalog item within this package. Available for catalog-driven packages when the seller supports item-level reporting.
        */
@@ -7342,6 +7417,10 @@ export interface CreativeManifest {
    * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
    */
   rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
   ext?: ExtensionObject;
 }
