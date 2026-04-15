@@ -704,6 +704,7 @@ USAGE:
 
 COMMANDS:
   storyboard <subcommand>     Test agent flows (run, list, show, step)
+  check-network               Validate managed publisher network deployment
   comply <agent> [options]    DEPRECATED — use "storyboard run" instead
   test <agent> [scenario]     Run individual test scenarios (legacy)
   registry <command>          Brand/property registry lookups
@@ -1264,6 +1265,137 @@ async function handleStoryboardStepCmd(args) {
   process.exit(result.passed ? 0 : 3);
 }
 
+async function handleCheckNetworkCommand(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Validate a managed publisher network deployment.
+
+USAGE:
+  adcp check-network --url <authoritative-url> [options]
+  adcp check-network --domains <domain1,domain2,...> [options]
+
+OPTIONS:
+  --url URL           URL of the authoritative adagents.json
+  --domains LIST      Comma-separated domains to check
+  --concurrency N     Max parallel fetches (default: 10)
+  --timeout MS        Per-request timeout in ms (default: 10000)
+  --json              Output raw JSON
+  --help, -h          Show this help
+
+EXAMPLES:
+  adcp check-network --url https://network.example.com/adagents/v2/adagents.json
+  adcp check-network --url https://network.example.com/adagents.json --domains extra1.com,extra2.com
+  adcp check-network --domains cookingdaily.com,gardenweekly.com
+`);
+    return;
+  }
+
+  const urlIndex = args.indexOf('--url');
+  const domainsIndex = args.indexOf('--domains');
+  const concurrencyIndex = args.indexOf('--concurrency');
+  const timeoutIndex = args.indexOf('--timeout');
+  const jsonOutput = args.includes('--json');
+
+  const url = urlIndex !== -1 ? args[urlIndex + 1] : undefined;
+  const domainsStr = domainsIndex !== -1 ? args[domainsIndex + 1] : undefined;
+  const concurrency = concurrencyIndex !== -1 ? parseInt(args[concurrencyIndex + 1], 10) : undefined;
+  const timeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : undefined;
+
+  if (concurrency !== undefined && (isNaN(concurrency) || concurrency < 1)) {
+    console.error('ERROR: --concurrency must be a positive integer');
+    process.exit(2);
+  }
+  if (timeout !== undefined && (isNaN(timeout) || timeout < 1)) {
+    console.error('ERROR: --timeout must be a positive integer');
+    process.exit(2);
+  }
+
+  if (!url && !domainsStr) {
+    console.error('ERROR: --url or --domains is required\n');
+    console.error('Run "adcp check-network --help" for usage');
+    process.exit(2);
+  }
+
+  const domains = domainsStr ? domainsStr.split(',').map(d => d.trim()).filter(Boolean) : undefined;
+
+  const { NetworkConsistencyChecker } = require('../dist/lib/index.js');
+  const checker = new NetworkConsistencyChecker({
+    authoritativeUrl: url,
+    domains,
+    concurrency,
+    timeoutMs: timeout,
+    logLevel: 'warn',
+  });
+
+  try {
+    const report = await checker.check();
+
+    const totalIssues = report.schemaErrors.length + report.missingPointers.length +
+      report.stalePointers.length + report.orphanedPointers.length +
+      report.agentHealth.filter(a => !a.reachable).length;
+
+    if (jsonOutput) {
+      console.log(JSON.stringify(report, null, 2));
+      process.exit(totalIssues > 0 ? 1 : 0);
+      return;
+    }
+
+    // Pretty-print report
+    console.log(`\nNetwork Consistency Report`);
+    console.log(`${'='.repeat(50)}`);
+    console.log(`Authoritative URL: ${report.authoritativeUrl}`);
+    console.log(`Coverage: ${(report.coverage * 100).toFixed(1)}%`);
+
+    if (report.schemaErrors.length > 0) {
+      console.log(`\nSchema Errors (${report.schemaErrors.length}):`);
+      for (const err of report.schemaErrors) {
+        console.log(`  - ${err.field}: ${err.message}`);
+      }
+    }
+
+    if (report.agentHealth.length > 0) {
+      console.log(`\nAgent Health:`);
+      for (const agent of report.agentHealth) {
+        const status = agent.reachable ? 'OK' : 'UNREACHABLE';
+        const detail = agent.error ? ` (${agent.error})` : agent.statusCode ? ` (HTTP ${agent.statusCode})` : '';
+        console.log(`  ${status} ${agent.url}${detail}`);
+      }
+    }
+
+    if (report.missingPointers.length > 0) {
+      console.log(`\nMissing Pointers (${report.missingPointers.length}):`);
+      for (const p of report.missingPointers) {
+        console.log(`  - ${p.domain}: ${p.error}`);
+      }
+    }
+
+    if (report.stalePointers.length > 0) {
+      console.log(`\nStale Pointers (${report.stalePointers.length}):`);
+      for (const p of report.stalePointers) {
+        console.log(`  - ${p.domain}: points to ${p.pointerUrl}, expected ${p.expectedUrl}`);
+      }
+    }
+
+    if (report.orphanedPointers.length > 0) {
+      console.log(`\nOrphaned Pointers (${report.orphanedPointers.length}):`);
+      for (const p of report.orphanedPointers) {
+        console.log(`  - ${p.domain}: points to ${p.pointerUrl} but not listed in properties`);
+      }
+    }
+
+    if (totalIssues === 0) {
+      console.log(`\nAll checks passed.`);
+    } else {
+      console.log(`\n${totalIssues} issue(s) found.`);
+    }
+
+    process.exit(totalIssues > 0 ? 1 : 0);
+  } catch (error) {
+    console.error(`ERROR: ${error.message}`);
+    process.exit(2);
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -1285,6 +1417,11 @@ async function main() {
 
   if (args[0] === 'storyboard') {
     await handleStoryboardCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'check-network') {
+    await handleCheckNetworkCommand(args.slice(1));
     return;
   }
 
