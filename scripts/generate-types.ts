@@ -1213,16 +1213,24 @@ function schemaPathToTypeName(relativePath: string): string {
  * - Schemas whose type names were already generated via $ref resolution
  * - Async response variant schemas (working/submitted/input-required)
  */
-async function compileGapSchemas(
-  generatedTypes: Set<string>,
-  refResolver: any,
-): Promise<string> {
+async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any): Promise<string> {
   const allFiles = discoverAllSchemaFiles(LATEST_CACHE_DIR);
   const gapCode: string[] = [];
 
   // Directories that contain task request/response schemas (already covered by tool generation)
-  const taskDirs = new Set(['account', 'media-buy', 'creative', 'signals', 'governance',
-    'protocol', 'sponsored-intelligence', 'compliance', 'content-standards', 'property', 'collection']);
+  const taskDirs = new Set([
+    'account',
+    'media-buy',
+    'creative',
+    'signals',
+    'governance',
+    'protocol',
+    'sponsored-intelligence',
+    'compliance',
+    'content-standards',
+    'property',
+    'collection',
+  ]);
 
   // Patterns that indicate task request/response schemas
   const taskSchemaPattern = /-(request|response)\.json$/;
