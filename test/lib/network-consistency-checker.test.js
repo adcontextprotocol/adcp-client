@@ -590,7 +590,7 @@ describe('NetworkConsistencyChecker', () => {
       routedFetch({
         'network.example.com/adagents.json': { data: authFile },
         'example.com/.well-known/adagents.json': urlStr => {
-          if (urlStr.includes('www.example.com')) {
+          if (urlStr === 'https://www.example.com/.well-known/adagents.json') {
             return { data: makePointer(AUTH_URL) };
           }
           return { status: 301, location: 'https://www.example.com/.well-known/adagents.json' };
