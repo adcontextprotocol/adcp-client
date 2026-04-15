@@ -27,13 +27,15 @@ const PRODUCTS = [
     channels: ['display'],
     format_ids: [{ agent_url: 'https://creatives.example.com/mcp', id: 'display-300x250' }],
     delivery_type: 'non_guaranteed',
-    pricing_options: [{
-      pricing_option_id: 'cpm-display',
-      pricing_model: 'cpm',
-      floor_price: 5.0,
-      currency: 'USD',
-      min_spend_per_package: 500,
-    }],
+    pricing_options: [
+      {
+        pricing_option_id: 'cpm-display',
+        pricing_model: 'cpm',
+        floor_price: 5.0,
+        currency: 'USD',
+        min_spend_per_package: 500,
+      },
+    ],
   },
   {
     product_id: 'prod-video-preroll',
@@ -43,18 +45,23 @@ const PRODUCTS = [
     channels: ['olv'],
     format_ids: [{ agent_url: 'https://creatives.example.com/mcp', id: 'video-preroll' }],
     delivery_type: 'non_guaranteed',
-    pricing_options: [{
-      pricing_option_id: 'cpm-video',
-      pricing_model: 'cpm',
-      floor_price: 12.0,
-      currency: 'USD',
-      min_spend_per_package: 1000,
-    }],
+    pricing_options: [
+      {
+        pricing_option_id: 'cpm-video',
+        pricing_model: 'cpm',
+        floor_price: 12.0,
+        currency: 'USD',
+        min_spend_per_package: 1000,
+      },
+    ],
   },
 ];
 
 const FORMATS = [
-  { format_id: { agent_url: 'https://creatives.example.com/mcp', id: 'display-300x250' }, name: 'Display Banner 300x250' },
+  {
+    format_id: { agent_url: 'https://creatives.example.com/mcp', id: 'display-300x250' },
+    name: 'Display Banner 300x250',
+  },
   { format_id: { agent_url: 'https://creatives.example.com/mcp', id: 'video-preroll' }, name: 'Video Pre-Roll 15s' },
 ];
 
@@ -75,7 +82,7 @@ function createAgent({ taskStore }: ServeContext) {
     taskStore,
     stateStore,
 
-    resolveAccount: async (ref) => {
+    resolveAccount: async ref => {
       if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
       // Resolve by brand+operator
       const result = await stateStore.list('accounts', {
@@ -100,7 +107,7 @@ function createAgent({ taskStore }: ServeContext) {
             account_id: accountId,
             brand: acct.brand,
             operator: acct.operator,
-            action: existing ? 'updated' as const : 'created' as const,
+            action: existing ? ('updated' as const) : ('created' as const),
             status: 'active' as const,
           });
         }
@@ -155,7 +162,11 @@ function createAgent({ taskStore }: ServeContext) {
                 field: `packages[${i}].pricing_option_id`,
               });
             }
-            if ('min_spend_per_package' in pricing && pricing.min_spend_per_package != null && pkg.budget < pricing.min_spend_per_package) {
+            if (
+              'min_spend_per_package' in pricing &&
+              pricing.min_spend_per_package != null &&
+              pkg.budget < pricing.min_spend_per_package
+            ) {
               return adcpError('BUDGET_TOO_LOW', {
                 message: `Budget ${pkg.budget} below minimum ${pricing.min_spend_per_package}`,
                 field: `packages[${i}].budget`,
@@ -184,9 +195,7 @@ function createAgent({ taskStore }: ServeContext) {
       getMediaBuys: async (params, ctx) => {
         let buys: Record<string, unknown>[];
         if (params.media_buy_ids?.length) {
-          const results = await Promise.all(
-            params.media_buy_ids.map(id => ctx.store.get('media_buys', id))
-          );
+          const results = await Promise.all(params.media_buy_ids.map(id => ctx.store.get('media_buys', id)));
           buys = results.filter(Boolean) as Record<string, unknown>[];
         } else {
           const result = await ctx.store.list('media_buys');
@@ -217,7 +226,7 @@ function createAgent({ taskStore }: ServeContext) {
           });
           results.push({
             creative_id: creative.creative_id,
-            action: existing ? 'updated' as const : 'created' as const,
+            action: existing ? ('updated' as const) : ('created' as const),
           });
         }
         return { creatives: results, context: params.context ?? undefined };

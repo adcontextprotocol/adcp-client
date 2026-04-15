@@ -137,12 +137,14 @@ describe('Discriminated Union Validation', () => {
     test('flat schema accepts batch mode with requests array', () => {
       const batchWithRequests = {
         request_type: 'batch',
-        requests: [{
-          creative_manifest: {
-            format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-            assets: {},
+        requests: [
+          {
+            creative_manifest: {
+              format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
+              assets: {},
+            },
           },
-        }],
+        ],
       };
       const result = PreviewCreativeRequestSchema.safeParse(batchWithRequests);
       assert.strictEqual(result.success, true);

@@ -863,24 +863,18 @@ function alignOptionalWithNullish(typeDefinitions: string): string {
   let result = typeDefinitions;
 
   // 1. Convert optional properties: `name?: Type` → `name?: Type | null`
-  result = result.replace(
-    /^(\s+\w+\?:\s*)(.+?)(;\s*)$/gm,
-    (match, prefix, type, suffix) => {
-      if (type.includes('| null')) return match;
-      if (type.trim() === 'undefined') return match;
-      return `${prefix}${type} | null${suffix}`;
-    }
-  );
+  result = result.replace(/^(\s+\w+\?:\s*)(.+?)(;\s*)$/gm, (match, prefix, type, suffix) => {
+    if (type.includes('| null')) return match;
+    if (type.trim() === 'undefined') return match;
+    return `${prefix}${type} | null${suffix}`;
+  });
 
   // 2. Align index signatures with optional properties:
   //    `[k: string]: Type | undefined` → `[k: string]: Type | null | undefined`
-  result = result.replace(
-    /(\[k: string\]: )(.+?)( \| undefined)(;\s*)$/gm,
-    (match, prefix, type, undef, suffix) => {
-      if (type.includes('| null')) return match;
-      return `${prefix}${type} | null${undef}${suffix}`;
-    }
-  );
+  result = result.replace(/(\[k: string\]: )(.+?)( \| undefined)(;\s*)$/gm, (match, prefix, type, undef, suffix) => {
+    if (type.includes('| null')) return match;
+    return `${prefix}${type} | null${undef}${suffix}`;
+  });
 
   return result;
 }

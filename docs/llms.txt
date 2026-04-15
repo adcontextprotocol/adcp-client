@@ -12,24 +12,21 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 ## Are you building a client or a server?
 
 - **Client** (calling existing agents): Continue reading — the Quick Start below is for you.
-- **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` instead. Minimal example using `createAdcpServer`:
+- **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` instead. Minimal example:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
 
-serve(() => createAdcpServer({
-  name: 'My Agent',
-  version: '1.0.0',
-  signals: {
-    getSignals: async (params, ctx) => ({
-      signals: [/* your segments */],
-      sandbox: true,
-    }),
-  },
-})); // http://localhost:3001/mcp
+function createAgent({ taskStore }) {
+  const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
+  server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {
+    return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');
+  });
+  return server;
+}
+
+serve(createAgent); // http://localhost:3001/mcp
 ```
-
-`createAdcpServer` provides domain-grouped handlers, auto-generated `get_adcp_capabilities`, auto-applied response builders, account resolution (`resolveAccount`), state persistence (`ctx.store`), tool annotations, and error catching. For low-level control, use `createTaskCapableServer` + `server.tool()` directly.
 
 ## Quick Start (Client)
 
@@ -132,7 +129,7 @@ Optional: `idempotency_key: string`, `plan_id: string`, `proposal_id: string`, `
 
 Request parameters for updating campaign and package settings.
 
-Required: `media_buy_id: string`
+Required: `account: Account Ref`, `media_buy_id: string`
 Optional: `revision: integer`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `start_time: Start Timing`, `end_time: string`, `packages: object[]`, `invoice_recipient: Business Entity`, +5 more
 
 #### `get_media_buys`
@@ -200,6 +197,8 @@ Optional: `message: string`, `creative_manifest: Creative Manifest`, `creative_i
 
 Request parameters for generating creative previews.
 
+Required: `request_type: 'single' | 'batch' | 'variant'`
+Optional: `creative_manifest: Creative Manifest`, `format_id: Format Id`, `inputs: object[]`, `template_id: string`, `quality: Creative Quality`, `output_format: Preview Output Format`, `item_limit: integer`, `requests: object[]`, +3 more
 
 #### `list_creative_formats`
 

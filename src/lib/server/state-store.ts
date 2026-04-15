@@ -59,27 +59,16 @@ export interface ListResult<T = Record<string, unknown>> {
  */
 export interface AdcpStateStore {
   /** Get a document by collection and id. Returns null if not found. */
-  get<T extends Record<string, unknown> = Record<string, unknown>>(
-    collection: string,
-    id: string
-  ): Promise<T | null>;
+  get<T extends Record<string, unknown> = Record<string, unknown>>(collection: string, id: string): Promise<T | null>;
 
   /** Create or replace a document (upsert semantics). */
-  put(
-    collection: string,
-    id: string,
-    data: Record<string, unknown>
-  ): Promise<void>;
+  put(collection: string, id: string, data: Record<string, unknown>): Promise<void>;
 
   /**
    * Merge fields into an existing document. Creates the document if it doesn't exist.
    * Only top-level fields are merged — nested objects are replaced, not deep-merged.
    */
-  patch(
-    collection: string,
-    id: string,
-    partial: Record<string, unknown>
-  ): Promise<void>;
+  patch(collection: string, id: string, partial: Record<string, unknown>): Promise<void>;
 
   /** Delete a document. Returns true if it existed. */
   delete(collection: string, id: string): Promise<boolean>;
@@ -123,19 +112,11 @@ export class InMemoryStateStore implements AdcpStateStore {
     return doc ? ({ ...doc } as T) : null;
   }
 
-  async put(
-    collection: string,
-    id: string,
-    data: Record<string, unknown>
-  ): Promise<void> {
+  async put(collection: string, id: string, data: Record<string, unknown>): Promise<void> {
     this.getCollection(collection).set(id, { ...data });
   }
 
-  async patch(
-    collection: string,
-    id: string,
-    partial: Record<string, unknown>
-  ): Promise<void> {
+  async patch(collection: string, id: string, partial: Record<string, unknown>): Promise<void> {
     const col = this.getCollection(collection);
     const existing = col.get(id);
     col.set(id, { ...(existing ?? {}), ...partial });
@@ -174,9 +155,7 @@ export class InMemoryStateStore implements AdcpStateStore {
     const hasMore = entries.length > limit;
     entries = entries.slice(0, limit);
 
-    const nextCursor = hasMore && entries.length > 0
-      ? entries[entries.length - 1]!.id
-      : undefined;
+    const nextCursor = hasMore && entries.length > 0 ? entries[entries.length - 1]!.id : undefined;
 
     return { items: entries.map(e => ({ ...e.data })), nextCursor };
   }

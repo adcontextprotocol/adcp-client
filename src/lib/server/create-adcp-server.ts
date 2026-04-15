@@ -63,20 +63,49 @@ import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
-  GetProductsRequestSchema, CreateMediaBuyRequestSchema, UpdateMediaBuyRequestSchema,
-  GetMediaBuysRequestSchema, GetMediaBuyDeliveryRequestSchema, ProvidePerformanceFeedbackRequestSchema,
-  ListCreativeFormatsRequestSchema, BuildCreativeRequestSchema, GetCreativeDeliveryRequestSchema,
-  ListCreativesRequestSchema, SyncCreativesRequestSchema, GetSignalsRequestSchema, ActivateSignalRequestSchema,
-  ListAccountsRequestSchema, SyncAccountsRequestSchema, SyncGovernanceRequestSchema,
-  GetAccountFinancialsRequestSchema, ReportUsageRequestSchema, SyncEventSourcesRequestSchema,
-  LogEventRequestSchema, SyncAudiencesRequestSchema, SyncCatalogsRequestSchema,
-  CreatePropertyListRequestSchema, UpdatePropertyListRequestSchema, GetPropertyListRequestSchema,
-  ListPropertyListsRequestSchema, DeletePropertyListRequestSchema, ListContentStandardsRequestSchema,
-  GetContentStandardsRequestSchema, CreateContentStandardsRequestSchema, UpdateContentStandardsRequestSchema,
-  CalibrateContentRequestSchema, ValidateContentDeliveryRequestSchema, GetMediaBuyArtifactsRequestSchema,
-  GetCreativeFeaturesRequestSchema, SyncPlansRequestSchema, CheckGovernanceRequestSchema,
-  ReportPlanOutcomeRequestSchema, GetPlanAuditLogsRequestSchema, SIGetOfferingRequestSchema,
-  SIInitiateSessionRequestSchema, SISendMessageRequestSchema, SITerminateSessionRequestSchema,
+  GetProductsRequestSchema,
+  CreateMediaBuyRequestSchema,
+  UpdateMediaBuyRequestSchema,
+  GetMediaBuysRequestSchema,
+  GetMediaBuyDeliveryRequestSchema,
+  ProvidePerformanceFeedbackRequestSchema,
+  ListCreativeFormatsRequestSchema,
+  BuildCreativeRequestSchema,
+  GetCreativeDeliveryRequestSchema,
+  ListCreativesRequestSchema,
+  SyncCreativesRequestSchema,
+  GetSignalsRequestSchema,
+  ActivateSignalRequestSchema,
+  ListAccountsRequestSchema,
+  SyncAccountsRequestSchema,
+  SyncGovernanceRequestSchema,
+  GetAccountFinancialsRequestSchema,
+  ReportUsageRequestSchema,
+  SyncEventSourcesRequestSchema,
+  LogEventRequestSchema,
+  SyncAudiencesRequestSchema,
+  SyncCatalogsRequestSchema,
+  CreatePropertyListRequestSchema,
+  UpdatePropertyListRequestSchema,
+  GetPropertyListRequestSchema,
+  ListPropertyListsRequestSchema,
+  DeletePropertyListRequestSchema,
+  ListContentStandardsRequestSchema,
+  GetContentStandardsRequestSchema,
+  CreateContentStandardsRequestSchema,
+  UpdateContentStandardsRequestSchema,
+  CalibrateContentRequestSchema,
+  ValidateContentDeliveryRequestSchema,
+  GetMediaBuyArtifactsRequestSchema,
+  GetCreativeFeaturesRequestSchema,
+  SyncPlansRequestSchema,
+  CheckGovernanceRequestSchema,
+  ReportPlanOutcomeRequestSchema,
+  GetPlanAuditLogsRequestSchema,
+  SIGetOfferingRequestSchema,
+  SIInitiateSessionRequestSchema,
+  SISendMessageRequestSchema,
+  SITerminateSessionRequestSchema,
   PreviewCreativeRequestSchema,
 } from '../types/schemas.generated';
 
@@ -183,12 +212,27 @@ export interface AdcpToolMap {
   create_media_buy: { params: z.input<typeof CreateMediaBuyRequestSchema>; result: CreateMediaBuySuccess };
   update_media_buy: { params: z.input<typeof UpdateMediaBuyRequestSchema>; result: UpdateMediaBuySuccess };
   get_media_buys: { params: z.input<typeof GetMediaBuysRequestSchema>; result: GetMediaBuysResponse };
-  get_media_buy_delivery: { params: z.input<typeof GetMediaBuyDeliveryRequestSchema>; result: GetMediaBuyDeliveryResponse };
-  provide_performance_feedback: { params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>; result: ProvidePerformanceFeedbackSuccess };
-  list_creative_formats: { params: z.input<typeof ListCreativeFormatsRequestSchema>; result: ListCreativeFormatsResponse };
-  build_creative: { params: z.input<typeof BuildCreativeRequestSchema>; result: BuildCreativeSuccess | BuildCreativeMultiSuccess };
+  get_media_buy_delivery: {
+    params: z.input<typeof GetMediaBuyDeliveryRequestSchema>;
+    result: GetMediaBuyDeliveryResponse;
+  };
+  provide_performance_feedback: {
+    params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>;
+    result: ProvidePerformanceFeedbackSuccess;
+  };
+  list_creative_formats: {
+    params: z.input<typeof ListCreativeFormatsRequestSchema>;
+    result: ListCreativeFormatsResponse;
+  };
+  build_creative: {
+    params: z.input<typeof BuildCreativeRequestSchema>;
+    result: BuildCreativeSuccess | BuildCreativeMultiSuccess;
+  };
   preview_creative: { params: z.input<typeof PreviewCreativeRequestSchema>; result: PreviewCreativeResponse };
-  get_creative_delivery: { params: z.input<typeof GetCreativeDeliveryRequestSchema>; result: GetCreativeDeliveryResponse };
+  get_creative_delivery: {
+    params: z.input<typeof GetCreativeDeliveryRequestSchema>;
+    result: GetCreativeDeliveryResponse;
+  };
   list_creatives: { params: z.input<typeof ListCreativesRequestSchema>; result: ListCreativesResponse };
   sync_creatives: { params: z.input<typeof SyncCreativesRequestSchema>; result: SyncCreativesSuccess };
   get_signals: { params: z.input<typeof GetSignalsRequestSchema>; result: GetSignalsResponse };
@@ -196,7 +240,10 @@ export interface AdcpToolMap {
   list_accounts: { params: z.input<typeof ListAccountsRequestSchema>; result: ListAccountsResponse };
   sync_accounts: { params: z.input<typeof SyncAccountsRequestSchema>; result: SyncAccountsSuccess };
   sync_governance: { params: z.input<typeof SyncGovernanceRequestSchema>; result: SyncGovernanceSuccess };
-  get_account_financials: { params: z.input<typeof GetAccountFinancialsRequestSchema>; result: GetAccountFinancialsSuccess };
+  get_account_financials: {
+    params: z.input<typeof GetAccountFinancialsRequestSchema>;
+    result: GetAccountFinancialsSuccess;
+  };
   report_usage: { params: z.input<typeof ReportUsageRequestSchema>; result: ReportUsageResponse };
   sync_event_sources: { params: z.input<typeof SyncEventSourcesRequestSchema>; result: SyncEventSourcesSuccess };
   log_event: { params: z.input<typeof LogEventRequestSchema>; result: LogEventSuccess };
@@ -207,14 +254,35 @@ export interface AdcpToolMap {
   get_property_list: { params: z.input<typeof GetPropertyListRequestSchema>; result: GetPropertyListResponse };
   list_property_lists: { params: z.input<typeof ListPropertyListsRequestSchema>; result: ListPropertyListsResponse };
   delete_property_list: { params: z.input<typeof DeletePropertyListRequestSchema>; result: DeletePropertyListResponse };
-  list_content_standards: { params: z.input<typeof ListContentStandardsRequestSchema>; result: ListContentStandardsResponse };
-  get_content_standards: { params: z.input<typeof GetContentStandardsRequestSchema>; result: GetContentStandardsResponse };
-  create_content_standards: { params: z.input<typeof CreateContentStandardsRequestSchema>; result: CreateContentStandardsResponse };
-  update_content_standards: { params: z.input<typeof UpdateContentStandardsRequestSchema>; result: UpdateContentStandardsResponse };
+  list_content_standards: {
+    params: z.input<typeof ListContentStandardsRequestSchema>;
+    result: ListContentStandardsResponse;
+  };
+  get_content_standards: {
+    params: z.input<typeof GetContentStandardsRequestSchema>;
+    result: GetContentStandardsResponse;
+  };
+  create_content_standards: {
+    params: z.input<typeof CreateContentStandardsRequestSchema>;
+    result: CreateContentStandardsResponse;
+  };
+  update_content_standards: {
+    params: z.input<typeof UpdateContentStandardsRequestSchema>;
+    result: UpdateContentStandardsResponse;
+  };
   calibrate_content: { params: z.input<typeof CalibrateContentRequestSchema>; result: CalibrateContentResponse };
-  validate_content_delivery: { params: z.input<typeof ValidateContentDeliveryRequestSchema>; result: ValidateContentDeliveryResponse };
-  get_media_buy_artifacts: { params: z.input<typeof GetMediaBuyArtifactsRequestSchema>; result: GetMediaBuyArtifactsResponse };
-  get_creative_features: { params: z.input<typeof GetCreativeFeaturesRequestSchema>; result: GetCreativeFeaturesResponse };
+  validate_content_delivery: {
+    params: z.input<typeof ValidateContentDeliveryRequestSchema>;
+    result: ValidateContentDeliveryResponse;
+  };
+  get_media_buy_artifacts: {
+    params: z.input<typeof GetMediaBuyArtifactsRequestSchema>;
+    result: GetMediaBuyArtifactsResponse;
+  };
+  get_creative_features: {
+    params: z.input<typeof GetCreativeFeaturesRequestSchema>;
+    result: GetCreativeFeaturesResponse;
+  };
   sync_plans: { params: z.input<typeof SyncPlansRequestSchema>; result: SyncPlansResponse };
   check_governance: { params: z.input<typeof CheckGovernanceRequestSchema>; result: CheckGovernanceResponse };
   report_plan_outcome: { params: z.input<typeof ReportPlanOutcomeRequestSchema>; result: ReportPlanOutcomeResponse };
@@ -399,68 +467,68 @@ const IDEMP: ToolAnnotation = { readOnlyHint: false, idempotentHint: true };
 
 const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
-  get_products:                   { wrap: productsResponse,              annotations: RO },
-  create_media_buy:               { wrap: mediaBuyResponse,              annotations: MUT },
-  update_media_buy:               { wrap: updateMediaBuyResponse,        annotations: MUT },
-  get_media_buys:                 { wrap: getMediaBuysResponse,          annotations: RO },
-  get_media_buy_delivery:         { wrap: deliveryResponse,              annotations: RO },
-  provide_performance_feedback:   { wrap: performanceFeedbackResponse,   annotations: MUT },
+  get_products: { wrap: productsResponse, annotations: RO },
+  create_media_buy: { wrap: mediaBuyResponse, annotations: MUT },
+  update_media_buy: { wrap: updateMediaBuyResponse, annotations: MUT },
+  get_media_buys: { wrap: getMediaBuysResponse, annotations: RO },
+  get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
+  provide_performance_feedback: { wrap: performanceFeedbackResponse, annotations: MUT },
 
   // Creative
-  list_creative_formats:          { wrap: listCreativeFormatsResponse,   annotations: RO },
-  build_creative:                 { wrap: wrapBuildCreative,             annotations: MUT },
-  preview_creative:               { wrap: null,                          annotations: RO },
-  get_creative_delivery:          { wrap: creativeDeliveryResponse,      annotations: RO },
-  list_creatives:                 { wrap: listCreativesResponse,         annotations: RO },
-  sync_creatives:                 { wrap: syncCreativesResponse,         annotations: IDEMP },
+  list_creative_formats: { wrap: listCreativeFormatsResponse, annotations: RO },
+  build_creative: { wrap: wrapBuildCreative, annotations: MUT },
+  preview_creative: { wrap: null, annotations: RO },
+  get_creative_delivery: { wrap: creativeDeliveryResponse, annotations: RO },
+  list_creatives: { wrap: listCreativesResponse, annotations: RO },
+  sync_creatives: { wrap: syncCreativesResponse, annotations: IDEMP },
 
   // Signals
-  get_signals:                    { wrap: getSignalsResponse,            annotations: RO },
-  activate_signal:                { wrap: activateSignalResponse,        annotations: MUT },
+  get_signals: { wrap: getSignalsResponse, annotations: RO },
+  activate_signal: { wrap: activateSignalResponse, annotations: MUT },
 
   // Accounts
-  list_accounts:                  { wrap: listAccountsResponse,          annotations: RO },
-  sync_accounts:                  { wrap: null,                          annotations: IDEMP },
-  sync_governance:                { wrap: null,                          annotations: IDEMP },
-  get_account_financials:         { wrap: null,                          annotations: RO },
-  report_usage:                   { wrap: null,                          annotations: MUT },
+  list_accounts: { wrap: listAccountsResponse, annotations: RO },
+  sync_accounts: { wrap: null, annotations: IDEMP },
+  sync_governance: { wrap: null, annotations: IDEMP },
+  get_account_financials: { wrap: null, annotations: RO },
+  report_usage: { wrap: null, annotations: MUT },
 
   // Event Tracking
-  sync_event_sources:             { wrap: null,                          annotations: IDEMP },
-  log_event:                      { wrap: null,                          annotations: MUT },
+  sync_event_sources: { wrap: null, annotations: IDEMP },
+  log_event: { wrap: null, annotations: MUT },
 
   // Audiences & Catalogs
-  sync_audiences:                 { wrap: null,                          annotations: IDEMP },
-  sync_catalogs:                  { wrap: null,                          annotations: IDEMP },
+  sync_audiences: { wrap: null, annotations: IDEMP },
+  sync_catalogs: { wrap: null, annotations: IDEMP },
 
   // Governance - Property Lists
-  create_property_list:           { wrap: null,                          annotations: MUT },
-  update_property_list:           { wrap: null,                          annotations: MUT },
-  get_property_list:              { wrap: null,                          annotations: RO },
-  list_property_lists:            { wrap: null,                          annotations: RO },
-  delete_property_list:           { wrap: null,                          annotations: DEST },
+  create_property_list: { wrap: null, annotations: MUT },
+  update_property_list: { wrap: null, annotations: MUT },
+  get_property_list: { wrap: null, annotations: RO },
+  list_property_lists: { wrap: null, annotations: RO },
+  delete_property_list: { wrap: null, annotations: DEST },
 
   // Governance - Content Standards
-  list_content_standards:         { wrap: null,                          annotations: RO },
-  get_content_standards:          { wrap: null,                          annotations: RO },
-  create_content_standards:       { wrap: null,                          annotations: MUT },
-  update_content_standards:       { wrap: null,                          annotations: MUT },
-  calibrate_content:              { wrap: null,                          annotations: MUT },
-  validate_content_delivery:      { wrap: null,                          annotations: RO },
-  get_media_buy_artifacts:        { wrap: null,                          annotations: RO },
+  list_content_standards: { wrap: null, annotations: RO },
+  get_content_standards: { wrap: null, annotations: RO },
+  create_content_standards: { wrap: null, annotations: MUT },
+  update_content_standards: { wrap: null, annotations: MUT },
+  calibrate_content: { wrap: null, annotations: MUT },
+  validate_content_delivery: { wrap: null, annotations: RO },
+  get_media_buy_artifacts: { wrap: null, annotations: RO },
 
   // Governance - Campaign
-  get_creative_features:          { wrap: null,                          annotations: RO },
-  sync_plans:                     { wrap: null,                          annotations: IDEMP },
-  check_governance:               { wrap: null,                          annotations: RO },
-  report_plan_outcome:            { wrap: null,                          annotations: MUT },
-  get_plan_audit_logs:            { wrap: null,                          annotations: RO },
+  get_creative_features: { wrap: null, annotations: RO },
+  sync_plans: { wrap: null, annotations: IDEMP },
+  check_governance: { wrap: null, annotations: RO },
+  report_plan_outcome: { wrap: null, annotations: MUT },
+  get_plan_audit_logs: { wrap: null, annotations: RO },
 
   // Sponsored Intelligence
-  si_get_offering:                { wrap: null,                          annotations: RO },
-  si_initiate_session:            { wrap: null,                          annotations: MUT },
-  si_send_message:                { wrap: null,                          annotations: MUT },
-  si_terminate_session:           { wrap: null,                          annotations: DEST },
+  si_get_offering: { wrap: null, annotations: RO },
+  si_initiate_session: { wrap: null, annotations: MUT },
+  si_send_message: { wrap: null, annotations: MUT },
+  si_terminate_session: { wrap: null, annotations: DEST },
 };
 
 // ---------------------------------------------------------------------------
@@ -565,10 +633,26 @@ function detectProtocols(toolNames: string[]): AdcpProtocol[] {
 // ---------------------------------------------------------------------------
 
 const COHERENCE_RULES: [string, string, string][] = [
-  ['create_media_buy', 'get_products', 'create_media_buy without get_products — buyers cannot discover products before purchasing'],
-  ['update_media_buy', 'get_media_buys', 'update_media_buy without get_media_buys — buyers cannot look up what to modify'],
-  ['activate_signal', 'get_signals', 'activate_signal without get_signals — buyers cannot discover signals before activating'],
-  ['sync_creatives', 'list_creative_formats', 'sync_creatives without list_creative_formats — buyers cannot discover valid formats'],
+  [
+    'create_media_buy',
+    'get_products',
+    'create_media_buy without get_products — buyers cannot discover products before purchasing',
+  ],
+  [
+    'update_media_buy',
+    'get_media_buys',
+    'update_media_buy without get_media_buys — buyers cannot look up what to modify',
+  ],
+  [
+    'activate_signal',
+    'get_signals',
+    'activate_signal without get_signals — buyers cannot discover signals before activating',
+  ],
+  [
+    'sync_creatives',
+    'list_creative_formats',
+    'sync_creatives without list_creative_formats — buyers cannot discover valid formats',
+  ],
 ];
 
 function checkCoherence(toolNames: Set<string>, logger: AdcpLogger): void {
@@ -669,51 +753,57 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, _extra: any) => {
-          const ctx: HandlerContext<TAccount> = { store: stateStore };
+        const ctx: HandlerContext<TAccount> = { store: stateStore };
 
-          // --- Account resolution ---
-          if (hasAccount && params.account != null && resolveAccount) {
-            try {
-              const account = await resolveAccount(params.account);
-              if (account == null) {
-                logger.warn('Account not found', { tool: toolName, account: params.account });
-                return adcpError('ACCOUNT_NOT_FOUND', {
-                  message: 'The specified account does not exist',
-                  field: 'account',
-                  suggestion: 'Use list_accounts to discover available accounts, or sync_accounts to create one',
-                });
-              }
-              ctx.account = account;
-            } catch (err) {
-              logger.error('Account resolution failed', {
-                tool: toolName,
-                error: err instanceof Error ? err.message : String(err),
-              });
-              return adcpError('SERVICE_UNAVAILABLE', {
-                message: 'Account resolution failed',
-              });
-            }
-          }
-
-          // --- Handler ---
+        // --- Account resolution ---
+        if (hasAccount && params.account != null && resolveAccount) {
           try {
-            const result = await handler(params, ctx);
-            if (isFormattedResponse(result)) return result;
-            // Inject context passthrough — echo params.context into response
-            if (params.context !== undefined && params.context !== null && typeof result === 'object' && result !== null && !('context' in result)) {
-              (result as Record<string, unknown>).context = params.context;
+            const account = await resolveAccount(params.account);
+            if (account == null) {
+              logger.warn('Account not found', { tool: toolName, account: params.account });
+              return adcpError('ACCOUNT_NOT_FOUND', {
+                message: 'The specified account does not exist',
+                field: 'account',
+                suggestion: 'Use list_accounts to discover available accounts, or sync_accounts to create one',
+              });
             }
-            return wrap(result);
+            ctx.account = account;
           } catch (err) {
-            logger.error('Handler failed', {
+            logger.error('Account resolution failed', {
               tool: toolName,
               error: err instanceof Error ? err.message : String(err),
             });
             return adcpError('SERVICE_UNAVAILABLE', {
-              message: `Tool ${toolName} encountered an internal error`,
+              message: 'Account resolution failed',
             });
           }
-        };
+        }
+
+        // --- Handler ---
+        try {
+          const result = await handler(params, ctx);
+          if (isFormattedResponse(result)) return result;
+          // Inject context passthrough — echo params.context into response
+          if (
+            params.context !== undefined &&
+            params.context !== null &&
+            typeof result === 'object' &&
+            result !== null &&
+            !('context' in result)
+          ) {
+            (result as Record<string, unknown>).context = params.context;
+          }
+          return wrap(result);
+        } catch (err) {
+          logger.error('Handler failed', {
+            tool: toolName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return adcpError('SERVICE_UNAVAILABLE', {
+            message: `Tool ${toolName} encountered an internal error`,
+          });
+        }
+      };
 
       server.tool(toolName, schema.shape as any, toolHandler);
       if (meta?.annotations) {

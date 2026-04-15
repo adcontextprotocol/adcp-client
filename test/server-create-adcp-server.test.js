@@ -37,7 +37,8 @@ describe('createAdcpServer', () => {
   describe('domain grouping', () => {
     it('registers mediaBuy tools under correct MCP tool names', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async () => ({ media_buy_id: 'mb1', packages: [] }),
@@ -51,7 +52,8 @@ describe('createAdcpServer', () => {
 
     it('registers signals tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         signals: {
           getSignals: async () => ({ signals: [] }),
         },
@@ -61,7 +63,8 @@ describe('createAdcpServer', () => {
 
     it('registers creative tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         creative: {
           buildCreative: async () => ({
             creative_manifest: { format_id: { id: 'f1', agent_url: 'https://example.com' } },
@@ -73,7 +76,8 @@ describe('createAdcpServer', () => {
 
     it('registers governance tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         governance: {
           checkGovernance: async () => ({ decision: 'approve' }),
         },
@@ -83,7 +87,8 @@ describe('createAdcpServer', () => {
 
     it('registers account tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         accounts: {
           listAccounts: async () => ({ accounts: [] }),
         },
@@ -93,7 +98,8 @@ describe('createAdcpServer', () => {
 
     it('registers sponsored intelligence tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         sponsoredIntelligence: {
           getOffering: async () => ({ offering_id: 'o1' }),
         },
@@ -103,7 +109,8 @@ describe('createAdcpServer', () => {
 
     it('deduplicates shared tools across domains', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           listCreativeFormats: async () => ({ formats: [] }),
         },
@@ -120,7 +127,8 @@ describe('createAdcpServer', () => {
   describe('auto-generated capabilities', () => {
     it('detects media_buy protocol from mediaBuy handlers', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: { getProducts: async () => ({ products: [] }) },
       });
       const caps = await callTool(server, 'get_adcp_capabilities', {});
@@ -129,7 +137,8 @@ describe('createAdcpServer', () => {
 
     it('detects multiple protocols', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: { getProducts: async () => ({ products: [] }) },
         signals: { getSignals: async () => ({ signals: [] }) },
         sponsoredIntelligence: { getOffering: async () => ({ offering_id: 'o1' }) },
@@ -142,7 +151,8 @@ describe('createAdcpServer', () => {
 
     it('includes media_buy features', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: { getProducts: async () => ({ products: [] }) },
         capabilities: { features: { inlineCreativeManagement: true } },
       });
@@ -154,13 +164,15 @@ describe('createAdcpServer', () => {
   describe('response builder wiring', () => {
     it('wraps get_products with productsResponse', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           getProducts: async () => ({ products: [{ product_id: 'p1' }] }),
         },
       });
       const result = await callToolRaw(server, 'get_products', {
-        buying_mode: 'brief', brief: 'test',
+        buying_mode: 'brief',
+        brief: 'test',
       });
       assert.strictEqual(result.content[0].text, 'Found 1 products');
       assert.strictEqual(result.structuredContent.products.length, 1);
@@ -168,7 +180,8 @@ describe('createAdcpServer', () => {
 
     it('wraps create_media_buy with mediaBuyResponse defaults', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
@@ -187,7 +200,8 @@ describe('createAdcpServer', () => {
 
     it('wraps get_signals with getSignalsResponse', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         signals: { getSignals: async () => ({ signals: [{ signal_id: 's1' }] }) },
       });
       const result = await callToolRaw(server, 'get_signals', {});
@@ -196,7 +210,8 @@ describe('createAdcpServer', () => {
 
     it('uses generic wrapper for tools without dedicated builders', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         governance: {
           createPropertyList: async () => ({ list_id: 'pl_1', name: 'My List' }),
         },
@@ -208,15 +223,19 @@ describe('createAdcpServer', () => {
 
     it('passes through adcpError responses', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
-          getProducts: async () => adcpError('RATE_LIMITED', {
-            message: 'Too many requests', retry_after: 30,
-          }),
+          getProducts: async () =>
+            adcpError('RATE_LIMITED', {
+              message: 'Too many requests',
+              retry_after: 30,
+            }),
         },
       });
       const result = await callToolRaw(server, 'get_products', {
-        buying_mode: 'brief', brief: 'test',
+        buying_mode: 'brief',
+        brief: 'test',
       });
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'RATE_LIMITED');
@@ -224,7 +243,8 @@ describe('createAdcpServer', () => {
 
     it('detects build_creative single vs multi-format', async () => {
       const serverSingle = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         creative: {
           buildCreative: async () => ({
             creative_manifest: { format_id: { id: 'f1', agent_url: 'https://example.com' } },
@@ -235,7 +255,8 @@ describe('createAdcpServer', () => {
       assert.ok(single.content[0].text.includes('f1'));
 
       const serverMulti = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         creative: {
           buildCreative: async () => ({
             creative_manifests: [
@@ -254,8 +275,9 @@ describe('createAdcpServer', () => {
     it('resolves account and passes to handler context', async () => {
       let receivedCtx;
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
-        resolveAccount: async (ref) => ({ id: ref.account_id, name: 'Test Account' }),
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id, name: 'Test Account' }),
         mediaBuy: {
           getProducts: async (params, ctx) => {
             receivedCtx = ctx;
@@ -265,7 +287,9 @@ describe('createAdcpServer', () => {
       });
 
       await callTool(server, 'get_products', {
-        buying_mode: 'brief', brief: 'test', account: { account_id: 'a1' },
+        buying_mode: 'brief',
+        brief: 'test',
+        account: { account_id: 'a1' },
       });
 
       assert.ok(receivedCtx);
@@ -275,15 +299,20 @@ describe('createAdcpServer', () => {
 
     it('returns ACCOUNT_NOT_FOUND when resolveAccount returns null', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         resolveAccount: async () => null,
         mediaBuy: {
-          getProducts: async () => { throw new Error('Should not be called'); },
+          getProducts: async () => {
+            throw new Error('Should not be called');
+          },
         },
       });
 
       const result = await callToolRaw(server, 'get_products', {
-        buying_mode: 'brief', brief: 'test', account: { account_id: 'bad_id' },
+        buying_mode: 'brief',
+        brief: 'test',
+        account: { account_id: 'bad_id' },
       });
 
       assert.strictEqual(result.isError, true);
@@ -293,8 +322,12 @@ describe('createAdcpServer', () => {
     it('skips account resolution when no account in request', async () => {
       let resolveAccountCalled = false;
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
-        resolveAccount: async () => { resolveAccountCalled = true; return {}; },
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async () => {
+          resolveAccountCalled = true;
+          return {};
+        },
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
         },
@@ -307,8 +340,12 @@ describe('createAdcpServer', () => {
     it('skips account resolution for tools without account field', async () => {
       let resolveAccountCalled = false;
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
-        resolveAccount: async () => { resolveAccountCalled = true; return {}; },
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async () => {
+          resolveAccountCalled = true;
+          return {};
+        },
         mediaBuy: {
           updateMediaBuy: async () => ({ media_buy_id: 'mb1' }),
         },
@@ -321,8 +358,12 @@ describe('createAdcpServer', () => {
     it('resolves account on create_media_buy (required account field)', async () => {
       let resolvedRef;
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
-        resolveAccount: async (ref) => { resolvedRef = ref; return { id: 'resolved' }; },
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async ref => {
+          resolvedRef = ref;
+          return { id: 'resolved' };
+        },
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async (params, ctx) => {
@@ -344,15 +385,22 @@ describe('createAdcpServer', () => {
 
     it('returns SERVICE_UNAVAILABLE when resolveAccount throws', async () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
-        resolveAccount: async () => { throw new Error('DB connection failed'); },
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async () => {
+          throw new Error('DB connection failed');
+        },
         mediaBuy: {
-          getProducts: async () => { throw new Error('Should not be called'); },
+          getProducts: async () => {
+            throw new Error('Should not be called');
+          },
         },
       });
 
       const result = await callToolRaw(server, 'get_products', {
-        buying_mode: 'brief', brief: 'test', account: { account_id: 'a1' },
+        buying_mode: 'brief',
+        brief: 'test',
+        account: { account_id: 'a1' },
       });
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
@@ -379,11 +427,15 @@ describe('createAdcpServer', () => {
     it('logs account not found as warning', async () => {
       const warnings = [];
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         resolveAccount: async () => null,
         logger: {
-          debug() {}, info() {},
-          warn(msg, data) { warnings.push({ msg, data }); },
+          debug() {},
+          info() {},
+          warn(msg, data) {
+            warnings.push({ msg, data });
+          },
           error() {},
         },
         mediaBuy: {
@@ -392,22 +444,27 @@ describe('createAdcpServer', () => {
       });
 
       await callToolRaw(server, 'get_products', {
-        buying_mode: 'brief', brief: 'test', account: { account_id: 'bad' },
+        buying_mode: 'brief',
+        brief: 'test',
+        account: { account_id: 'bad' },
       });
 
       assert.ok(warnings.some(w => w.msg === 'Account not found'));
     });
-
   });
 
   describe('tool coherence', () => {
     it('warns when create_media_buy registered without get_products', () => {
       const warnings = [];
       createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         logger: {
-          debug() {}, info() {},
-          warn(msg) { warnings.push(msg); },
+          debug() {},
+          info() {},
+          warn(msg) {
+            warnings.push(msg);
+          },
           error() {},
         },
         mediaBuy: {
@@ -421,10 +478,14 @@ describe('createAdcpServer', () => {
     it('does not warn when both tools are present', () => {
       const warnings = [];
       createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         logger: {
-          debug() {}, info() {},
-          warn(msg) { warnings.push(msg); },
+          debug() {},
+          info() {},
+          warn(msg) {
+            warnings.push(msg);
+          },
           error() {},
         },
         mediaBuy: {
@@ -441,18 +502,26 @@ describe('createAdcpServer', () => {
     it('returns SERVICE_UNAVAILABLE when handler throws', async () => {
       const errors = [];
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         logger: {
-          debug() {}, info() {}, warn() {},
-          error(msg, data) { errors.push({ msg, data }); },
+          debug() {},
+          info() {},
+          warn() {},
+          error(msg, data) {
+            errors.push({ msg, data });
+          },
         },
         mediaBuy: {
-          getProducts: async () => { throw new Error('Database connection lost'); },
+          getProducts: async () => {
+            throw new Error('Database connection lost');
+          },
         },
       });
 
       const result = await callToolRaw(server, 'get_products', {
-        buying_mode: 'brief', brief: 'test',
+        buying_mode: 'brief',
+        brief: 'test',
       });
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
@@ -473,10 +542,14 @@ describe('createAdcpServer', () => {
     it('logs warning when tool registered by multiple domains', () => {
       const warnings = [];
       createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         logger: {
-          debug() {}, info() {},
-          warn(msg) { warnings.push(msg); },
+          debug() {},
+          info() {},
+          warn(msg) {
+            warnings.push(msg);
+          },
           error() {},
         },
         mediaBuy: {
@@ -493,7 +566,8 @@ describe('createAdcpServer', () => {
   describe('eventTracking domain', () => {
     it('registers event tracking tools in their own domain', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         eventTracking: {
           syncEventSources: async () => ({ event_sources: [] }),
           logEvent: async () => ({ accepted: true }),
@@ -512,7 +586,8 @@ describe('createAdcpServer', () => {
   describe('tool annotations', () => {
     it('sets readOnlyHint on read tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
         },
@@ -523,7 +598,8 @@ describe('createAdcpServer', () => {
 
     it('sets destructiveHint false on mutation tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async () => ({ media_buy_id: 'mb1', packages: [] }),
@@ -536,7 +612,8 @@ describe('createAdcpServer', () => {
 
     it('sets destructiveHint true on destructive tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         governance: {
           deletePropertyList: async () => ({ deleted: true }),
         },
@@ -547,7 +624,8 @@ describe('createAdcpServer', () => {
 
     it('sets idempotentHint on sync tools', () => {
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           syncCreatives: async () => ({ creatives: [] }),
         },
@@ -561,10 +639,14 @@ describe('createAdcpServer', () => {
     it('warns when handler key is not recognized (typo)', () => {
       const warnings = [];
       createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         logger: {
-          debug() {}, info() {},
-          warn(msg) { warnings.push(msg); },
+          debug() {},
+          info() {},
+          warn(msg) {
+            warnings.push(msg);
+          },
           error() {},
         },
         mediaBuy: {
@@ -577,10 +659,14 @@ describe('createAdcpServer', () => {
     it('does not warn on valid handler keys', () => {
       const warnings = [];
       createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         logger: {
-          debug() {}, info() {},
-          warn(msg) { warnings.push(msg); },
+          debug() {},
+          info() {},
+          warn(msg) {
+            warnings.push(msg);
+          },
           error() {},
         },
         mediaBuy: {
@@ -595,7 +681,8 @@ describe('createAdcpServer', () => {
     it('provides ctx.store to handlers (InMemoryStateStore by default)', async () => {
       let receivedStore;
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         mediaBuy: {
           getProducts: async (params, ctx) => {
             receivedStore = ctx.store;
@@ -615,7 +702,8 @@ describe('createAdcpServer', () => {
     it('accepts a custom state store', async () => {
       const store = new InMemoryStateStore();
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         stateStore: store,
         mediaBuy: {
           createMediaBuy: async (params, ctx) => {
@@ -652,7 +740,8 @@ describe('createAdcpServer', () => {
     it('shares state store across domain handlers', async () => {
       const store = new InMemoryStateStore();
       const server = createAdcpServer({
-        name: 'Test', version: '1.0.0',
+        name: 'Test',
+        version: '1.0.0',
         stateStore: store,
         mediaBuy: {
           getProducts: async (params, ctx) => {

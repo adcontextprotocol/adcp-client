@@ -90,19 +90,15 @@ export class PostgresStateStore implements AdcpStateStore {
     collection: string,
     id: string
   ): Promise<T | null> {
-    const { rows } = await this.db.query(
-      `SELECT data FROM ${this.table} WHERE collection = $1 AND id = $2`,
-      [collection, id]
-    );
+    const { rows } = await this.db.query(`SELECT data FROM ${this.table} WHERE collection = $1 AND id = $2`, [
+      collection,
+      id,
+    ]);
     if (rows.length === 0) return null;
     return rows[0]!.data as T;
   }
 
-  async put(
-    collection: string,
-    id: string,
-    data: Record<string, unknown>
-  ): Promise<void> {
+  async put(collection: string, id: string, data: Record<string, unknown>): Promise<void> {
     await this.db.query(
       `INSERT INTO ${this.table} (collection, id, data)
        VALUES ($1, $2, $3)
@@ -112,11 +108,7 @@ export class PostgresStateStore implements AdcpStateStore {
     );
   }
 
-  async patch(
-    collection: string,
-    id: string,
-    partial: Record<string, unknown>
-  ): Promise<void> {
+  async patch(collection: string, id: string, partial: Record<string, unknown>): Promise<void> {
     await this.db.query(
       `INSERT INTO ${this.table} (collection, id, data)
        VALUES ($1, $2, $3)
@@ -127,10 +119,10 @@ export class PostgresStateStore implements AdcpStateStore {
   }
 
   async delete(collection: string, id: string): Promise<boolean> {
-    const { rowCount } = await this.db.query(
-      `DELETE FROM ${this.table} WHERE collection = $1 AND id = $2`,
-      [collection, id]
-    );
+    const { rowCount } = await this.db.query(`DELETE FROM ${this.table} WHERE collection = $1 AND id = $2`, [
+      collection,
+      id,
+    ]);
     return (rowCount ?? 0) > 0;
   }
 
@@ -192,10 +184,7 @@ export class PostgresStateStore implements AdcpStateStore {
    * Delete all documents in a collection.
    */
   async clearCollection(collection: string): Promise<number> {
-    const { rowCount } = await this.db.query(
-      `DELETE FROM ${this.table} WHERE collection = $1`,
-      [collection]
-    );
+    const { rowCount } = await this.db.query(`DELETE FROM ${this.table} WHERE collection = $1`, [collection]);
     return rowCount ?? 0;
   }
 }
