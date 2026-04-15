@@ -340,17 +340,20 @@ Minimal `tsconfig.json`:
 Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
 
 ```typescript
-import { createAdcpServer, serve, adcpError, checkGovernance, governanceDeniedError } from '@adcp/client';
+import { createAdcpServer, serve, adcpError, InMemoryStateStore, checkGovernance, governanceDeniedError } from '@adcp/client';
 import type { ServeContext } from '@adcp/client';
+
+const stateStore = new InMemoryStateStore(); // shared across requests
 
 function createAgent({ taskStore }: ServeContext) {
   return createAdcpServer({
     name: 'My Seller Agent',
     version: '1.0.0',
     taskStore,
+    stateStore,
 
     resolveAccount: async (ref) => {
-      if ('account_id' in ref) return ctx.store.get('accounts', ref.account_id);
+      if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
       return null; // or resolve by brand+operator
     },
 
