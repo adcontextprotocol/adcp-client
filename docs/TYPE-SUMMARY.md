@@ -201,6 +201,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  account: Account Ref  // required
   media_buy_id: string  // required
   revision: integer
   paused: boolean
@@ -343,6 +344,22 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 **`preview_creative`** — Request parameters for generating creative previews.
 
+```
+{
+  request_type: 'single' | 'batch' | 'variant'  // required
+  creative_manifest: Creative Manifest
+  format_id: Format Id
+  inputs: object[]
+  template_id: string
+  quality: Creative Quality
+  output_format: Preview Output Format
+  item_limit: integer
+  requests: object[]
+  variant_id: string
+  creative_id: string
+  context: Context
+}
+```
 
 **`list_creative_formats`** — Request parameters for discovering creative formats from this creative agent.
 
