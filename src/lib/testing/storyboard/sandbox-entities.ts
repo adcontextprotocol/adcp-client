@@ -10,6 +10,9 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { parse } from 'yaml';
+import { BrandJsonSchema, type BrandJson } from '../../types/wellknown-schemas.generated';
+
+export type { BrandJson } from '../../types/wellknown-schemas.generated';
 
 // ====== Public types ======
 
@@ -18,7 +21,7 @@ export interface SandboxBrand {
   brand_name: string;
   brand_id: string;
   industry?: string;
-  brand_json: Record<string, unknown>;
+  brand_json: BrandJson;
   sandbox: true;
 }
 
@@ -53,25 +56,37 @@ function loadFictionalEntities(dir: string): Record<string, unknown> | null {
   return parse(content) as Record<string, unknown>;
 }
 
-function buildBrandJson(kit: Record<string, unknown>): Record<string, unknown> {
+function buildBrandJson(kit: Record<string, unknown>): BrandJson {
   const brand = kit.brand as Record<string, unknown> | undefined;
-  if (!brand) return {};
+  const house = brand?.house as Record<string, unknown> | undefined;
+  const houseDomain = house?.domain as string | undefined;
 
-  return {
+  if (!brand || !house || !houseDomain) {
+    throw new Error(`Test kit "${kit.id ?? kit.name}" missing brand.house.domain`);
+  }
+
+  const id = (brand.brand_id as string) ?? (kit.id as string);
+  const rawNames = brand.names as Array<Record<string, string>> | undefined;
+  const names = rawNames ?? [{ en: (house.name as string) ?? (kit.name as string) }];
+
+  const raw: Record<string, unknown> = {
     $schema: 'https://adcontextprotocol.org/schemas/brand.json',
-    house: (brand.house as Record<string, unknown>)?.domain,
+    house: houseDomain,
     brands: [
       {
-        brand_id: brand.brand_id ?? kit.id,
-        name: brand.names ?? { en: (brand.house as Record<string, unknown>)?.name ?? kit.name },
-        description: brand.description,
-        logos: brand.logos,
-        colors: brand.colors,
-        fonts: brand.fonts,
-        voice: brand.tone,
+        id,
+        names,
+        ...(brand.keller_type != null && { keller_type: brand.keller_type }),
+        ...(brand.description != null && { description: brand.description }),
+        ...(brand.logos != null && { logos: brand.logos }),
+        ...(brand.colors != null && { colors: brand.colors }),
+        ...(brand.fonts != null && { fonts: brand.fonts }),
+        ...(brand.tone != null && { tone: brand.tone }),
       },
     ],
   };
+
+  return BrandJsonSchema.parse(raw);
 }
 
 // ====== Public API ======
@@ -132,11 +147,11 @@ export function getSandboxEntities(): SandboxEntities {
           brand_name: adv.name as string,
           brand_id: adv.id as string,
           industry: adv.industry as string | undefined,
-          brand_json: {
+          brand_json: BrandJsonSchema.parse({
             $schema: 'https://adcontextprotocol.org/schemas/brand.json',
             house: domain,
-            brands: [{ brand_id: adv.id, name: { en: adv.name } }],
-          },
+            brands: [{ id: adv.id, names: [{ en: adv.name }] }],
+          }),
           sandbox: true,
         });
       }

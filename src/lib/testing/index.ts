@@ -180,4 +180,8 @@ export {
   type SandboxBrand,
   type SandboxAgent,
   type SandboxEntities,
+  type BrandJson,
+  type AdagentsJson,
+  BrandJsonSchema,
+  AdagentsJsonSchema,
 } from './storyboard';

@@ -57,7 +57,9 @@ export { buildRequest, hasRequestBuilder } from './request-builder';
 export { runValidations } from './validations';
 
 // Sandbox entities
-export type { SandboxBrand, SandboxAgent, SandboxEntities } from './sandbox-entities';
+export type { SandboxBrand, SandboxAgent, SandboxEntities, BrandJson } from './sandbox-entities';
+export { BrandJsonSchema, AdagentsJsonSchema } from '../../types/wellknown-schemas.generated';
+export type { AdagentsJson } from '../../types/wellknown-schemas.generated';
 export {
   getSandboxEntities,
   getSandboxBrands,
