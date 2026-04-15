@@ -14,25 +14,18 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 
 ## Quick Start
 
-A minimal signals agent in ~20 lines:
+A minimal signals agent using `createAdcpServer`:
 
 ```typescript
-import {
-  createTaskCapableServer,
-  taskToolResponse,
-  serve,
-  GetSignalsRequestSchema,
-} from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/client';
 
-function createAgent({ taskStore }) {
-  const server = createTaskCapableServer('My Signals Agent', '1.0.0', { taskStore });
+serve(() => createAdcpServer({
+  name: 'My Signals Agent',
+  version: '1.0.0',
 
-  server.tool(
-    'get_signals',
-    'Discover audience segments.',
-    GetSignalsRequestSchema.shape,
-    async (args) => {
-      const signals = [
+  signals: {
+    getSignals: async (params, ctx) => ({
+      signals: [
         {
           signal_agent_segment_id: 'demo_segment',
           signal_id: { source: 'catalog', data_provider_domain: 'example.com', id: 'demo_segment' },
@@ -47,16 +40,11 @@ function createAgent({ taskStore }) {
             { pricing_option_id: 'po_demo', model: 'cpm', currency: 'USD', cpm: 5 },
           ],
         },
-      ];
-
-      return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} segment(s)`);
-    },
-  );
-
-  return server;
-}
-
-serve(createAgent); // listening on http://localhost:3001/mcp
+      ],
+      sandbox: true,
+    }),
+  },
+})); // listening on http://localhost:3001/mcp
 ```
 
 Start it and test immediately:
@@ -69,56 +57,137 @@ npx @adcp/client http://localhost:3001/mcp get_signals '{}'   # call get_signals
 
 ## Key Concepts
 
-### createTaskCapableServer
+### createAdcpServer (Recommended)
 
-Creates an MCP server pre-configured with task support (async operations). This is the recommended way to build AdCP agents — it handles task lifecycle plumbing so you can focus on business logic.
+The declarative way to build AdCP agents. You provide domain-grouped handler functions, and the framework handles schema validation, response formatting, account resolution, capabilities generation, and error catching.
 
 ```typescript
-import { createTaskCapableServer } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/client';
 
-const server = createTaskCapableServer('Agent Name', '1.0.0', {
-  instructions: 'Description of what your agent does.',
+serve(() => createAdcpServer({
+  name: 'My Publisher',
+  version: '1.0.0',
+
+  resolveAccount: async (ref) => db.findAccount(ref),
+
+  mediaBuy: {
+    getProducts: async (params, ctx) => ({ products: catalog.search(params) }),
+    createMediaBuy: async (params, ctx) => ({
+      media_buy_id: `mb_${Date.now()}`,
+      packages: [],
+    }),
+    getMediaBuyDelivery: async (params, ctx) => ({
+      media_buys: [],
+    }),
+  },
+
+  accounts: {
+    listAccounts: async (params, ctx) => ({ accounts: [] }),
+    syncAccounts: async (params, ctx) => ({ accounts: [] }),
+  },
+}));
+```
+
+**What the framework does for you:**
+
+- **Auto-generates `get_adcp_capabilities`** from registered handlers — no manual capability declaration
+- **Auto-applies response builders** — return raw data objects, the framework wraps them in MCP `CallToolResult` with `structuredContent`
+- **Resolves accounts** — if a tool has an `account` field and `resolveAccount` is configured, the framework resolves it before calling your handler. Returns `ACCOUNT_NOT_FOUND` if resolution returns null.
+- **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing
+- **Sets tool annotations** — `readOnlyHint`, `destructiveHint`, `idempotentHint` per tool
+- **Warns on incoherent tool sets** — e.g., `create_media_buy` without `get_products`
+
+**7 domain groups:**
+
+| Group | Handler keys |
+|-------|-------------|
+| `mediaBuy` | `getProducts`, `createMediaBuy`, `updateMediaBuy`, `getMediaBuys`, `getMediaBuyDelivery`, `providePerformanceFeedback`, `listCreativeFormats`, `syncCreatives`, `listCreatives` |
+| `signals` | `getSignals`, `activateSignal` |
+| `creative` | `listCreativeFormats`, `buildCreative`, `listCreatives`, `syncCreatives`, `getCreativeDelivery` |
+| `governance` | `createPropertyList`, `updatePropertyList`, `getPropertyList`, `listPropertyLists`, `deletePropertyList`, `listContentStandards`, `getContentStandards`, `createContentStandards`, `updateContentStandards`, `calibrateContent`, `validateContentDelivery`, `getMediaBuyArtifacts`, `getCreativeFeatures`, `syncPlans`, `checkGovernance`, `reportPlanOutcome`, `getPlanAuditLogs` |
+| `accounts` | `listAccounts`, `syncAccounts`, `syncGovernance`, `getAccountFinancials`, `reportUsage` |
+| `eventTracking` | `syncEventSources`, `logEvent`, `syncAudiences`, `syncCatalogs` |
+| `sponsoredIntelligence` | `getOffering`, `initiateSession`, `sendMessage`, `terminateSession` |
+
+### State Persistence (ctx.store)
+
+Every handler receives `ctx.store` — a key-value store for persisting domain objects across requests. Operations: `get`, `put`, `patch`, `delete`, `list`, each scoped by collection and ID.
+
+```typescript
+mediaBuy: {
+  createMediaBuy: async (params, ctx) => {
+    const mediaBuy = { media_buy_id: `mb_${Date.now()}`, status: 'pending', packages: [] };
+    await ctx.store.put('media_buys', mediaBuy.media_buy_id, mediaBuy);
+    return mediaBuy;
+  },
+  getMediaBuys: async (params, ctx) => {
+    if (params.media_buy_ids?.length) {
+      const buys = await Promise.all(
+        params.media_buy_ids.map(id => ctx.store.get('media_buys', id))
+      );
+      return { media_buys: buys.filter(Boolean) };
+    }
+    const all = await ctx.store.list('media_buys');
+    return { media_buys: all };
+  },
+},
+```
+
+`InMemoryStateStore` is the default (good for development and testing). Use `PostgresStateStore` for production deployments where state must survive restarts.
+
+### Account Resolution
+
+When `resolveAccount` is configured and a tool request includes an `account` field, the framework resolves the account before calling your handler. The resolved account is available as `ctx.account`.
+
+```typescript
+createAdcpServer({
+  resolveAccount: async (ref) => {
+    // ref is an AccountReference — has account_id, name, or domain
+    return await db.accounts.findOne({ account_id: ref.account_id });
+  },
+
+  mediaBuy: {
+    getProducts: async (params, ctx) => {
+      // ctx.account is the resolved account (guaranteed non-null here)
+      const products = await catalog.search(params, ctx.account.id);
+      return { products };
+    },
+  },
 });
 ```
 
-For sync-only tools, use `server.tool()` directly. For tools that need async processing, use `registerAdcpTaskTool()` which requires explicit `createTask`/`getTask`/`getTaskResult` handlers.
+If `resolveAccount` returns `null`, the framework responds with `ACCOUNT_NOT_FOUND` and the handler never runs.
 
-### Generated Schemas
+### createTaskCapableServer (Low-Level)
 
-`@adcp/client` exports Zod schemas for every AdCP tool's input and output. Use these instead of hand-rolling JSON Schema definitions:
+For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` uses this internally.
 
 ```typescript
-import {
-  GetSignalsRequestSchema,    // input validation for get_signals
-  GetSignalsResponseSchema,   // output validation
-  GetProductsRequestSchema,   // input validation for get_products
-  CreateMediaBuyRequestSchema,
-} from '@adcp/client';
+import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/client';
 
-// The MCP SDK expects a plain object of Zod fields, not a Zod schema — .shape unwraps it.
-server.tool('get_signals', 'Discover audience segments.', GetSignalsRequestSchema.shape, async (args) => {
-  // args is fully typed from the schema
-});
+function createAgent({ taskStore }) {
+  const server = createTaskCapableServer('Agent Name', '1.0.0', { taskStore });
+
+  server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {
+    return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');
+  });
+
+  return server;
+}
 ```
 
-### taskToolResponse
+When using `createTaskCapableServer` directly, you are responsible for:
+- Wiring Zod schemas via `.shape`
+- Wrapping responses with `taskToolResponse()` or domain-specific builders
+- Implementing `get_adcp_capabilities` manually
+- Error handling in each tool handler
 
-Builds a properly formatted MCP `CallToolResult` from your response data:
+### Response Builders
 
-```typescript
-import { taskToolResponse } from '@adcp/client';
-
-// Returns { content: [{ type: 'text', text: '...' }] }
-return taskToolResponse(
-  { signals: [...], sandbox: true },
-  'Found 3 audience segment(s)',  // summary text
-);
-```
-
-For media buy and product tools, dedicated response builders are also available:
+With `createAdcpServer`, response builders are applied automatically — return raw data and the framework wraps it. If you need manual control (e.g., with `createTaskCapableServer`), builders are available:
 
 ```typescript
-import { productsResponse, mediaBuyResponse, deliveryResponse, adcpError } from '@adcp/client';
+import { productsResponse, mediaBuyResponse, deliveryResponse, adcpError, taskToolResponse } from '@adcp/client';
 ```
 
 ### Task Statuses (Server-Side Contract)
@@ -133,11 +202,7 @@ When your agent receives a tool call, it returns one of these statuses. The buye
 | `input_required` | Need clarification from buyer | Fires buyer's `InputHandler` callback with the question |
 | `deferred` | Requires human decision | Returns a token; human resumes later via `result.deferred.resume()` |
 
-For synchronous tools, use `taskToolResponse()` — it sets `completed` automatically:
-
-```typescript
-return taskToolResponse({ signals: [...], sandbox: true }, 'Found 3 segments');
-```
+With `createAdcpServer`, synchronous handlers return raw data and the framework sets `completed` automatically. With `createTaskCapableServer`, use `taskToolResponse()` explicitly.
 
 For async tools that need background processing, use `registerAdcpTaskTool()`:
 
@@ -193,19 +258,19 @@ Key storyboards for server-side builders:
 
 ### HTTP Transport
 
-The `serve()` helper handles HTTP transport setup. Pass it a factory function that receives a `ServeContext` and returns a configured `McpServer`:
+The `serve()` helper handles HTTP transport setup. Pass it a factory function that returns a configured `McpServer`:
 
 ```typescript
-import { serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/client';
 
-serve(createMyAgent);                          // defaults: port 3001, path /mcp
-serve(createMyAgent, { port: 8080 });          // custom port
-serve(createMyAgent, { path: '/v1/mcp' });     // custom path
+serve(() => createAdcpServer({ name: 'My Agent', version: '1.0.0', /* handlers */ }));
+serve(() => createAdcpServer({ /* ... */ }), { port: 8080 });          // custom port
+serve(() => createAdcpServer({ /* ... */ }), { path: '/v1/mcp' });     // custom path
 ```
 
-`serve()` creates a shared task store and passes it to your factory on every request via `{ taskStore }`. Pass it through to `createTaskCapableServer()` so MCP Tasks work correctly across stateless HTTP requests.
-
 `serve()` returns the underlying `http.Server` for lifecycle control (e.g., graceful shutdown).
+
+When using `createTaskCapableServer` directly, `serve()` passes a `{ taskStore }` to your factory so MCP Tasks work correctly across stateless HTTP requests.
 
 For custom routing or middleware, you can wire the transport manually:
 

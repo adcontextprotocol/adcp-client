@@ -12,21 +12,24 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 ## Are you building a client or a server?
 
 - **Client** (calling existing agents): Continue reading — the Quick Start below is for you.
-- **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` instead. Minimal example:
+- **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` instead. Minimal example using `createAdcpServer`:
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/client';
 
-function createAgent({ taskStore }) {
-  const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
-  server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {
-    return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');
-  });
-  return server;
-}
-
-serve(createAgent); // http://localhost:3001/mcp
+serve(() => createAdcpServer({
+  name: 'My Agent',
+  version: '1.0.0',
+  signals: {
+    getSignals: async (params, ctx) => ({
+      signals: [/* your segments */],
+      sandbox: true,
+    }),
+  },
+})); // http://localhost:3001/mcp
 ```
+
+`createAdcpServer` provides domain-grouped handlers, auto-generated `get_adcp_capabilities`, auto-applied response builders, account resolution (`resolveAccount`), state persistence (`ctx.store`), tool annotations, and error catching. For low-level control, use `createTaskCapableServer` + `server.tool()` directly.
 
 ## Quick Start (Client)
 
