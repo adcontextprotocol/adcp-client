@@ -618,6 +618,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     instructions,
   });
 
+  // Extract .shape from a Zod schema, handling ZodIntersection (.and()) wrappers
+  function extractShape(schema: unknown): Record<string, unknown> | null {
+    const s = schema as any;
+    if (s?.shape) return s.shape;
+    // ZodIntersection: try right side (the ZodObject), then left
+    if (s?._def?.right?.shape) return s._def.right.shape;
+    if (s?._def?.left?.shape) return s._def.left.shape;
+    return null;
+  }
+
   const registeredToolNames = new Set<string>();
 
   // Collect all domain handlers into a flat toolName → handler map
@@ -654,12 +664,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
 
       const meta = TOOL_META[toolName];
-      const schema = TOOL_REQUEST_SCHEMAS[toolName] as { shape: Record<string, unknown> } | undefined;
-      if (!schema) {
+      const rawSchema = TOOL_REQUEST_SCHEMAS[toolName];
+      if (!rawSchema) {
         logger.warn(`No schema found for tool "${toolName}" in TOOL_REQUEST_SCHEMAS, skipping`);
         continue;
       }
-      const hasAccount = 'account' in schema.shape;
+      // Extract .shape — handle ZodIntersection (.and()) by checking _def.right
+      const schema = extractShape(rawSchema);
+      if (!schema) {
+        logger.warn(`Schema for "${toolName}" has no extractable shape, skipping`);
+        continue;
+      }
+      const hasAccount = 'account' in schema;
 
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, _extra: any) => {
@@ -709,7 +725,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         };
 
-      server.tool(toolName, schema.shape as any, toolHandler);
+      server.tool(toolName, schema as any, toolHandler);
       if (meta?.annotations) {
         const registered = (server as any)._registeredTools[toolName];
         if (registered?.update) {
@@ -771,8 +787,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     (capabilitiesData as any).extensions_supported = capConfig.extensions_supported;
   }
 
-  const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;
-  server.tool('get_adcp_capabilities', capSchema?.shape ?? {}, async (params: any) => {
+  const capShape = extractShape(TOOL_REQUEST_SCHEMAS['get_adcp_capabilities']);
+  server.tool('get_adcp_capabilities', (capShape ?? {}) as any, async (params: any) => {
     const data = { ...capabilitiesData };
     if (params?.context != null) {
       (data as any).context = params.context;

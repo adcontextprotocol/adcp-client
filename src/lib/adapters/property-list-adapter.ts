@@ -207,8 +207,8 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     if (request.resolve !== false) {
       const resolved = await this.resolveList(
         request.list_id,
-        request.pagination?.max_results,
-        request.pagination?.cursor
+        request.pagination?.max_results ?? undefined,
+        request.pagination?.cursor ?? undefined
       );
       identifiers = resolved.map(p => ({
         identifier_type: p.identifier_type,

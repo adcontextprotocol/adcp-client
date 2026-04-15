@@ -846,6 +846,45 @@ function fixTypedIndexSignatures(typeDefinitions: string): string {
   );
 }
 
+/**
+ * Align optional TypeScript properties with Zod .nullish() behavior.
+ *
+ * json-schema-to-typescript generates `property?: Type` (accepts undefined).
+ * But the Zod schemas use .nullish() (accepts null | undefined) because real-world
+ * JSON APIs send explicit null for absent optional fields.
+ *
+ * Without this alignment, server handlers that echo Zod-parsed input back
+ * (e.g., params.context → response.context) hit type errors:
+ *   Type 'X | null | undefined' is not assignable to type 'X | undefined'
+ *
+ * This converts `property?: Type` to `property?: Type | null` for consistency.
+ */
+function alignOptionalWithNullish(typeDefinitions: string): string {
+  let result = typeDefinitions;
+
+  // 1. Convert optional properties: `name?: Type` → `name?: Type | null`
+  result = result.replace(
+    /^(\s+\w+\?:\s*)(.+?)(;\s*)$/gm,
+    (match, prefix, type, suffix) => {
+      if (type.includes('| null')) return match;
+      if (type.trim() === 'undefined') return match;
+      return `${prefix}${type} | null${suffix}`;
+    }
+  );
+
+  // 2. Align index signatures with optional properties:
+  //    `[k: string]: Type | undefined` → `[k: string]: Type | null | undefined`
+  result = result.replace(
+    /(\[k: string\]: )(.+?)( \| undefined)(;\s*)$/gm,
+    (match, prefix, type, undef, suffix) => {
+      if (type.includes('| null')) return match;
+      return `${prefix}${type} | null${undef}${suffix}`;
+    }
+  );
+
+  return result;
+}
+
 // Remove numbered type duplicates like EventType1, Catalog1 that are identical to EventType, Catalog.
 // The json-schema-to-typescript compiler appends numbers when it encounters the same $ref multiple
 // times within a single compilation unit. We replace all references to the numbered variant with
@@ -1463,13 +1502,13 @@ async function generateTypes() {
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
   // Remove index signature types that were incorrectly generated from oneOf schemas
-  const processedCoreTypes = fixTypedIndexSignatures(
+  const processedCoreTypes = alignOptionalWithNullish(fixTypedIndexSignatures(
     removeIndexSignatureTypes(removeNumberedTypeDuplicates(coreTypes))
-  );
+  ));
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const toolsChanged = writeFileIfChanged(toolTypesPath, toolTypes);
+  const toolsChanged = writeFileIfChanged(toolTypesPath, alignOptionalWithNullish(toolTypes));
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');
   const agentsChanged = writeFileIfChanged(agentClassesPath, agentClasses);

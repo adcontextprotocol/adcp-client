@@ -375,7 +375,7 @@ export async function testPricingEdgeCases(
       } else if ('fixed_price' in po) {
         fixedProducts.push({ product, pricingOption: po });
       }
-      if (po.min_spend_per_package !== undefined && po.min_spend_per_package > 0) {
+      if (po.min_spend_per_package != null && po.min_spend_per_package > 0) {
         productsWithMinSpend.push({
           product,
           pricingOption: po,

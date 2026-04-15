@@ -307,7 +307,10 @@ export class GovernanceAgentStub {
     });
 
     // --- get_plan_audit_logs ---
-    server.tool('get_plan_audit_logs', GetPlanAuditLogsRequestSchema.shape, async (args: Record<string, unknown>) => {
+    // GetPlanAuditLogsRequestSchema is a ZodIntersection (z.record().and(z.object())),
+    // so .shape lives on the inner ZodObject (_def.right).
+    const auditLogsShape = (GetPlanAuditLogsRequestSchema._def.right as { shape: Record<string, unknown> }).shape;
+    server.tool('get_plan_audit_logs', auditLogsShape, async (args: Record<string, unknown>) => {
       this.recordCall('get_plan_audit_logs', args);
 
       const planIds = (args.plan_ids as string[]) || [];

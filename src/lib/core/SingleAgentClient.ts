@@ -725,12 +725,12 @@ export class SingleAgentClient {
       const mcpPayload = payload as MCPWebhookPayload;
       return {
         operation_id: operationId || 'unknown',
-        context_id: mcpPayload.context_id,
+        context_id: mcpPayload.context_id ?? undefined,
         task_id: mcpPayload.task_id,
         task_type: taskType,
         status: mcpPayload.status,
-        result: mcpPayload.result,
-        message: mcpPayload.message,
+        result: mcpPayload.result ?? undefined,
+        message: mcpPayload.message ?? undefined,
         timestamp: mcpPayload.timestamp,
       };
     }

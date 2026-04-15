@@ -133,9 +133,9 @@ export async function checkGovernance(options: CheckGovernanceOptions): Promise<
       approved: true,
       checkId: response.check_id,
       explanation: response.explanation,
-      governanceContext: response.governance_context,
-      expiresAt: response.expires_at,
-      nextCheck: response.next_check,
+      governanceContext: response.governance_context ?? undefined,
+      expiresAt: response.expires_at ?? undefined,
+      nextCheck: response.next_check ?? undefined,
       findings: response.findings,
     };
   }
@@ -147,7 +147,7 @@ export async function checkGovernance(options: CheckGovernanceOptions): Promise<
       explanation: response.explanation,
       conditions: response.conditions!,
       findings: response.findings,
-      governanceContext: response.governance_context,
+      governanceContext: response.governance_context ?? undefined,
     };
   }
 
