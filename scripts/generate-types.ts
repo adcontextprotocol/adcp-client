@@ -1502,13 +1502,13 @@ async function generateTypes() {
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
   // Remove index signature types that were incorrectly generated from oneOf schemas
-  const processedCoreTypes = alignOptionalWithNullish(fixTypedIndexSignatures(
+  const processedCoreTypes = fixTypedIndexSignatures(
     removeIndexSignatureTypes(removeNumberedTypeDuplicates(coreTypes))
-  ));
+  );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const toolsChanged = writeFileIfChanged(toolTypesPath, alignOptionalWithNullish(toolTypes));
+  const toolsChanged = writeFileIfChanged(toolTypesPath, toolTypes);
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');
   const agentsChanged = writeFileIfChanged(agentClassesPath, agentClasses);

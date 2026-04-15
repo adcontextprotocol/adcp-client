@@ -509,15 +509,12 @@ async function generateZodSchemas() {
     // This is needed because real-world API responses (e.g., Yahoo webhook) send explicit
     // null values for optional fields, but ts-to-zod generates .optional() which only
     // accepts undefined, not null. Using .nullish() accepts both undefined and null.
-    zodSchemas = postProcessForNullish(zodSchemas);
+    // Note: we intentionally keep .optional() (NOT .nullish()) so Zod schemas match
+    // TypeScript types. Callers that need to accept null from external APIs should use
+    // .nullish() at the call site, not globally in every schema.
 
     // Post-process: Fix broken imports from "undefined" (recursive types with z.lazy())
     zodSchemas = postProcessUndefinedImports(zodSchemas);
-
-    // Post-process: Loosen z.ZodSchema<X> annotations on lazy schemas to z.ZodTypeAny
-    // Our .nullish() post-processing makes the inferred type incompatible with the strict
-    // TypeScript type annotation. ZodTypeAny avoids this while still breaking circular refs.
-    zodSchemas = postProcessLazyTypeAnnotations(zodSchemas);
 
     // Post-process: Convert tuple patterns to arrays to allow empty arrays
     // ts-to-zod converts @minItems 1 to z.tuple([]).rest() which requires at least one element,

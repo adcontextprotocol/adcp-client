@@ -98,7 +98,7 @@ export type AccountReference =
       /**
        * When true, references the sandbox account for this brand/operator pair. Defaults to false (production account).
        */
-      sandbox?: boolean | null;
+      sandbox?: boolean;
     };
 /**
  * Type of inventory delivery
@@ -179,11 +179,11 @@ export type SignalTargeting =
       /**
        * Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided. Should be >= signal's range.min if defined.
        */
-      min_value?: number | null;
+      min_value?: number;
       /**
        * Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided. Should be <= signal's range.max if defined.
        */
-      max_value?: number | null;
+      max_value?: number;
     };
 /**
  * The signal to target
@@ -248,7 +248,7 @@ export interface GetProductsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests. v3 clients MUST include buying_mode. Sellers receiving requests from pre-v3 clients without buying_mode SHOULD default to 'brief'.
    */
@@ -256,7 +256,7 @@ export interface GetProductsRequest {
   /**
    * Natural language description of campaign requirements. Required when buying_mode is 'brief'. Must not be provided when buying_mode is 'wholesale' or 'refine'.
    */
-  brief?: string | null;
+  brief?: string;
   /**
    * Array of change requests for iterating on products and proposals from a previous get_products response. Each entry declares a scope (request, product, or proposal) and what the buyer is asking for. Only valid when buying_mode is 'refine'. The seller responds to each entry via refinement_applied in the response, matched by position.
    */
@@ -287,7 +287,7 @@ export interface GetProductsRequest {
         /**
          * What the buyer is asking for on this product. For 'include': specific changes to request (e.g., 'add 16:9 format'). For 'more_like_this': what 'similar' means (e.g., 'same audience but video format'). Ignored when action is 'omit'.
          */
-        ask?: string | null;
+        ask?: string;
       }
     | {
         /**
@@ -305,18 +305,18 @@ export interface GetProductsRequest {
         /**
          * What the buyer is asking for on this proposal (e.g., 'shift more budget toward video', 'reduce total by 10%'). Ignored when action is 'omit'.
          */
-        ask?: string | null;
+        ask?: string;
       }
   )[];
-  brand?: BrandReference | null;
-  catalog?: Catalog | null;
-  account?: AccountReference | null;
+  brand?: BrandReference;
+  catalog?: Catalog;
+  account?: AccountReference;
   /**
    * Delivery types the buyer prefers, in priority order. Unlike filters.delivery_type which excludes non-matching products, this signals preference for curation — the publisher may still include other delivery types when they match the brief well.
    */
-  preferred_delivery_types?: DeliveryType[] | null;
-  filters?: ProductFilters | null;
-  property_list?: PropertyListReference | null;
+  preferred_delivery_types?: DeliveryType[];
+  filters?: ProductFilters;
+  property_list?: PropertyListReference;
   /**
    * Specific product fields to include in the response. When omitted, all fields are returned. Use for lightweight discovery calls where only a subset of product data is needed (e.g., just IDs and pricing for comparison). Required fields (product_id, name) are always included regardless of selection.
    */
@@ -355,14 +355,14 @@ export interface GetProductsRequest {
   /**
    * Maximum time the buyer will commit to this request. The seller returns the best results achievable within this budget and does not start processes (human approvals, expensive external queries) that cannot complete in time. When omitted, the seller decides timing.
    */
-  time_budget?: Duration | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
+  time_budget?: Duration;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
   /**
    * Registry policy IDs that the buyer requires to be enforced for products in this response. Sellers filter products to only those that comply with or already enforce the requested policies.
    */
-  required_policies?: string[] | null;
-  ext?: ExtensionObject | null;
+  required_policies?: string[];
+  ext?: ExtensionObject;
 }
 /**
  * Brand reference for product discovery context. Resolved to full brand identity at execution time.
@@ -372,7 +372,7 @@ export interface BrandReference {
    * Domain where /.well-known/brand.json is hosted, or the brand's operating domain
    */
   domain: string;
-  brand_id?: BrandID | null;
+  brand_id?: BrandID;
 }
 /**
  * Catalog of items the buyer wants to promote. The seller matches catalog items against its inventory and returns products where matches exist. Supports all catalog types: a job catalog finds job ad products, a product catalog finds sponsored product slots. Reference a synced catalog by catalog_id, or provide inline items.
@@ -381,51 +381,51 @@ export interface Catalog {
   /**
    * Buyer's identifier for this catalog. Required when syncing via sync_catalogs. When used in creatives, references a previously synced catalog on the account.
    */
-  catalog_id?: string | null;
+  catalog_id?: string;
   /**
    * Human-readable name for this catalog (e.g., 'Summer Products 2025', 'Amsterdam Store Locations').
    */
-  name?: string | null;
+  name?: string;
   type: CatalogType;
   /**
    * URL to an external catalog feed. The platform fetches and resolves items from this URL. For offering-type catalogs, the feed contains an array of Offering objects. For other types, the feed format is determined by feed_format. When omitted with type 'product', the platform uses its synced copy of the brand's product catalog.
    */
-  url?: string | null;
-  feed_format?: FeedFormat | null;
-  update_frequency?: UpdateFrequency | null;
+  url?: string;
+  feed_format?: FeedFormat;
+  update_frequency?: UpdateFrequency;
   /**
    * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', AppItem for 'app', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
    */
-  items?: {}[] | null;
+  items?: {}[];
   /**
    * Filter catalog to specific item IDs. For offering-type catalogs, these are offering_id values. For product-type catalogs, these are SKU identifiers.
    */
-  ids?: string[] | null;
+  ids?: string[];
   /**
    * Filter product-type catalogs by GTIN identifiers for cross-retailer catalog matching. Accepts standard GTIN formats (GTIN-8, UPC-A/GTIN-12, EAN-13/GTIN-13, GTIN-14). Only applicable when type is 'product'.
    */
-  gtins?: string[] | null;
+  gtins?: string[];
   /**
    * Filter catalog to items with these tags. Tags are matched using OR logic — items matching any tag are included.
    */
-  tags?: string[] | null;
+  tags?: string[];
   /**
    * Filter catalog to items in this category (e.g., 'beverages/soft-drinks', 'chef-positions').
    */
-  category?: string | null;
+  category?: string;
   /**
    * Natural language filter for catalog items (e.g., 'all pasta sauces under $5', 'amsterdam vacancies').
    */
-  query?: string | null;
+  query?: string;
   /**
    * Event types that represent conversions for items in this catalog. Declares what events the platform should attribute to catalog items — e.g., a job catalog converts via submit_application, a product catalog via purchase. The event's content_ids field carries the item IDs that connect back to catalog items. Use content_id_type to declare what identifier type content_ids values represent.
    */
-  conversion_events?: EventType[] | null;
-  content_id_type?: ContentIDType | null;
+  conversion_events?: EventType[];
+  content_id_type?: ContentIDType;
   /**
    * Declarative normalization rules for external feeds. Maps non-standard feed field names, date formats, price encodings, and image URLs to the AdCP catalog item schema. Applied during sync_catalogs ingestion. Supports field renames, named transforms (date, divide, boolean, split), static literal injection, and assignment of image URLs to typed asset pools.
    */
-  feed_field_mappings?: CatalogFieldMapping[] | null;
+  feed_field_mappings?: CatalogFieldMapping[];
 }
 /**
  * Declares how a field in an external feed maps to the AdCP catalog item schema. Used in sync_catalogs feed_field_mappings to normalize non-AdCP feeds (Google Merchant Center, LinkedIn Jobs XML, hotel XML, etc.) to the standard catalog item schema without requiring the buyer to preprocess every feed. Multiple mappings can assemble a nested object via dot notation (e.g., separate mappings for price.amount and price.currency).
@@ -434,48 +434,48 @@ export interface CatalogFieldMapping {
   /**
    * Field name in the external feed record. Omit when injecting a static literal value (use the value property instead).
    */
-  feed_field?: string | null;
+  feed_field?: string;
   /**
    * Target field on the catalog item schema, using dot notation for nested fields (e.g., 'name', 'price.amount', 'location.city'). Mutually exclusive with asset_group_id.
    */
-  catalog_field?: string | null;
+  catalog_field?: string;
   /**
    * Places the feed field value (a URL) into a typed asset pool on the catalog item's assets array. The value is wrapped as an image or video asset in a group with this ID. Use standard group IDs: 'images_landscape', 'images_vertical', 'images_square', 'logo', 'video'. Mutually exclusive with catalog_field.
    */
-  asset_group_id?: string | null;
+  asset_group_id?: string;
   /**
    * Static literal value to inject into catalog_field for every item, regardless of what the feed contains. Mutually exclusive with feed_field. Useful for fields the feed omits (e.g., currency when price is always USD, or a constant category value).
    */
   value?: {
-    [k: string]: unknown | null | undefined;
+    [k: string]: unknown | undefined;
   };
   /**
    * Named transform to apply to the feed field value before writing to the catalog schema. See transform-specific parameters (format, timezone, by, separator).
    */
-  transform?: 'date' | 'divide' | 'boolean' | 'split' | null;
+  transform?: 'date' | 'divide' | 'boolean' | 'split';
   /**
    * For transform 'date': the input date format string (e.g., 'YYYYMMDD', 'MM/DD/YYYY', 'DD-MM-YYYY'). Output is always ISO 8601 (e.g., '2025-03-01'). Uses Unicode date pattern tokens.
    */
-  format?: string | null;
+  format?: string;
   /**
    * For transform 'date': the timezone of the input value. IANA timezone identifier (e.g., 'UTC', 'America/New_York', 'Europe/Amsterdam'). Defaults to UTC when omitted.
    */
-  timezone?: string | null;
+  timezone?: string;
   /**
    * For transform 'divide': the divisor to apply (e.g., 100 to convert integer cents to decimal dollars).
    */
-  by?: number | null;
+  by?: number;
   /**
    * For transform 'split': the separator character or string to split on. Defaults to ','.
    */
-  separator?: string | null;
+  separator?: string;
   /**
    * Fallback value to use when feed_field is absent, null, or empty. Applied after any transform would have been applied. Allows optional feed fields to have a guaranteed baseline value.
    */
   default?: {
-    [k: string]: unknown | null | undefined;
+    [k: string]: unknown | undefined;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -485,46 +485,46 @@ export interface ExtensionObject {}
  * Structured filters for product discovery
  */
 export interface ProductFilters {
-  delivery_type?: DeliveryType | null;
-  exclusivity?: Exclusivity | null;
+  delivery_type?: DeliveryType;
+  exclusivity?: Exclusivity;
   /**
    * Filter by pricing availability: true = products offering fixed pricing (at least one option with fixed_price), false = products offering auction pricing (at least one option without fixed_price). Products with both fixed and auction options match both true and false.
    */
-  is_fixed_price?: boolean | null;
+  is_fixed_price?: boolean;
   /**
    * Filter by specific format IDs
    */
-  format_ids?: FormatID[] | null;
+  format_ids?: FormatID[];
   /**
    * Only return products accepting IAB standard formats
    */
-  standard_formats_only?: boolean | null;
+  standard_formats_only?: boolean;
   /**
    * Minimum exposures/impressions needed for measurement validity
    */
-  min_exposures?: number | null;
+  min_exposures?: number;
   /**
    * Campaign start date (ISO 8601 date format: YYYY-MM-DD) for availability checks
    */
-  start_date?: string | null;
+  start_date?: string;
   /**
    * Campaign end date (ISO 8601 date format: YYYY-MM-DD) for availability checks
    */
-  end_date?: string | null;
+  end_date?: string;
   /**
    * Budget range to filter appropriate products
    */
   budget_range?: {
-    [k: string]: unknown | null | undefined;
+    [k: string]: unknown | undefined;
   };
   /**
    * Filter by country coverage using ISO 3166-1 alpha-2 codes (e.g., ['US', 'CA', 'GB']). Works for all inventory types.
    */
-  countries?: string[] | null;
+  countries?: string[];
   /**
    * Filter by region coverage using ISO 3166-2 codes (e.g., ['US-NY', 'US-CA', 'GB-SCT']). Use for locally-bound inventory (regional OOH, local TV) where products have region-specific coverage.
    */
-  regions?: string[] | null;
+  regions?: string[];
   /**
    * Filter by metro coverage for locally-bound inventory (radio, DOOH, local TV). Use when products have DMA/metro-specific coverage. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
    */
@@ -538,12 +538,12 @@ export interface ProductFilters {
   /**
    * Filter by advertising channels (e.g., ['display', 'ctv', 'dooh'])
    */
-  channels?: MediaChannel[] | null;
+  channels?: MediaChannel[];
   /**
    * @deprecated
    * Deprecated: Use trusted_match filter instead. Filter to products executable through specific agentic ad exchanges. URLs are canonical identifiers.
    */
-  required_axe_integrations?: string[] | null;
+  required_axe_integrations?: string[];
   /**
    * Filter products by Trusted Match Protocol capabilities. Only products with matching TMP support are returned.
    */
@@ -559,18 +559,18 @@ export interface ProductFilters {
       /**
        * When true, require this provider to support context match.
        */
-      context_match?: boolean | null;
+      context_match?: boolean;
       /**
        * When true, require this provider to support identity match.
        */
-      identity_match?: boolean | null;
+      identity_match?: boolean;
     }[];
     /**
      * Filter to products supporting specific TMP response types (e.g., 'activation', 'creative', 'catalog_items'). Products must support at least one of the listed types.
      */
-    response_types?: TMPResponseType[] | null;
+    response_types?: TMPResponseType[];
   };
-  required_features?: MediaBuyFeatures | null;
+  required_features?: MediaBuyFeatures;
   /**
    * Filter to products from sellers supporting specific geo targeting capabilities. Each entry specifies a targeting level (country, region, metro, postal_area) and optionally a system for levels that have multiple classification systems.
    */
@@ -579,12 +579,12 @@ export interface ProductFilters {
     /**
      * Classification system within the level. Required for metro (e.g., 'nielsen_dma') and postal_area (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
      */
-    system?: string | null;
+    system?: string;
   }[];
   /**
    * Filter to products supporting specific signals from data provider catalogs. Products must have the requested signals in their data_provider_signals and signal_targeting_allowed must be true (or all signals requested).
    */
-  signal_targeting?: SignalTargeting[] | null;
+  signal_targeting?: SignalTargeting[];
   /**
    * Filter by postal area coverage for locally-bound inventory (direct mail, DOOH, local campaigns). Use when products have postal-area-specific coverage. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
    */
@@ -599,12 +599,12 @@ export interface ProductFilters {
    * Filter by proximity to geographic points. Returns products with inventory coverage near these locations. Follows the same format as the targeting overlay — each entry uses exactly one method: travel_time + transport_mode, radius, or geometry. For locally-bound inventory (DOOH, radio), filters to products with coverage in the area. For digital inventory, filters to products from sellers supporting geo_proximity targeting.
    */
   geo_proximity?: {
-    [k: string]: unknown | null | undefined;
+    [k: string]: unknown | undefined;
   }[];
   /**
    * Filter to products that can meet the buyer's performance standard requirements. Each entry specifies a metric, minimum threshold, and optionally a required vendor and standard. Products that cannot meet these thresholds or do not support the specified vendors are excluded. Use this to tell the seller upfront: 'I need DoubleVerify for viewability at 70% MRC.'
    */
-  required_performance_standards?: PerformanceStandard[] | null;
+  required_performance_standards?: PerformanceStandard[];
   /**
    * Filter by keyword relevance for search and retail media platforms. Returns products that support keyword targeting for these terms. Allows the sell-side agent to assess keyword availability and recommend appropriate products. Use match_type to indicate the desired precision.
    */
@@ -616,7 +616,7 @@ export interface ProductFilters {
     /**
      * Desired match type: broad matches related queries, phrase matches queries containing the keyword phrase, exact matches the query exactly. Defaults to broad.
      */
-    match_type?: 'broad' | 'phrase' | 'exact' | null;
+    match_type?: 'broad' | 'phrase' | 'exact';
   }[];
 }
 /**
@@ -634,15 +634,15 @@ export interface FormatID {
   /**
    * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
    */
-  width?: number | null;
+  width?: number;
   /**
    * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
    */
-  height?: number | null;
+  height?: number;
   /**
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
    */
-  duration_ms?: number | null;
+  duration_ms?: number;
 }
 /**
  * Filter to products from sellers supporting specific protocol features. Only features set to true are used for filtering.
@@ -651,16 +651,16 @@ export interface MediaBuyFeatures {
   /**
    * Supports creatives provided inline in create_media_buy requests
    */
-  inline_creative_management?: boolean | null;
+  inline_creative_management?: boolean;
   /**
    * Honors property_list parameter in get_products to filter results to buyer-approved properties
    */
-  property_list_filtering?: boolean | null;
+  property_list_filtering?: boolean;
   /**
    * Supports sync_catalogs task for catalog feed management with platform review and approval
    */
-  catalog_management?: boolean | null;
-  [k: string]: boolean | null | undefined;
+  catalog_management?: boolean;
+  [k: string]: boolean | undefined;
 }
 /**
  * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
@@ -671,7 +671,7 @@ export interface PerformanceStandard {
    * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
    */
   threshold: number;
-  standard?: ViewabilityStandard | null;
+  standard?: ViewabilityStandard;
   vendor: BrandReference;
 }
 /**
@@ -689,7 +689,7 @@ export interface PropertyListReference {
   /**
    * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
    */
-  auth_token?: string | null;
+  auth_token?: string;
 }
 /**
  * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
@@ -711,11 +711,11 @@ export interface PaginationRequest {
   /**
    * Maximum number of items to return per page
    */
-  max_results?: number | null;
+  max_results?: number;
   /**
    * Opaque cursor from a previous response to fetch the next page
    */
-  cursor?: string | null;
+  cursor?: string;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
@@ -799,20 +799,20 @@ export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediamet
  * A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.
  */
 export type ForecastRange = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * Conservative (low-end) forecast value
    */
-  low?: number | null;
+  low?: number;
   /**
    * Expected (most likely) forecast value
    */
-  mid?: number | null;
+  mid?: number;
   /**
    * Optimistic (high-end) forecast value
    */
-  high?: number | null;
+  high?: number;
 };
 /**
  * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'availability': total available inventory, budget omitted. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets. 'package': each point is a distinct inventory package.
@@ -1007,19 +1007,19 @@ export interface GetProductsResponse {
   /**
    * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
    */
-  proposals?: Proposal[] | null;
+  proposals?: Proposal[];
   /**
    * Task-specific errors and warnings (e.g., product filtering issues)
    */
-  errors?: Error[] | null;
+  errors?: Error[];
   /**
    * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
    */
-  property_list_applied?: boolean | null;
+  property_list_applied?: boolean;
   /**
    * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
    */
-  catalog_applied?: boolean | null;
+  catalog_applied?: boolean;
   /**
    * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'.
    */
@@ -1027,11 +1027,11 @@ export interface GetProductsResponse {
     /**
      * Echoes the scope from the corresponding refine entry. Allows orchestrators to cross-validate alignment.
      */
-    scope?: 'request' | 'product' | 'proposal' | null;
+    scope?: 'request' | 'product' | 'proposal';
     /**
      * Echoes the id from the corresponding refine entry (for product and proposal scopes).
      */
-    id?: string | null;
+    id?: string;
     /**
      * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
      */
@@ -1039,7 +1039,7 @@ export interface GetProductsResponse {
     /**
      * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
      */
-    notes?: string | null;
+    notes?: string;
   }[];
   /**
    * Declares what the seller could not finish within the buyer's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
@@ -1056,15 +1056,15 @@ export interface GetProductsResponse {
     /**
      * How much additional time would resolve this scope. Allows the buyer to decide whether to retry with a larger time_budget.
      */
-    estimated_wait?: Duration | null;
+    estimated_wait?: Duration;
   }[];
-  pagination?: PaginationResponse | null;
+  pagination?: PaginationResponse;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Represents available advertising inventory
@@ -1089,7 +1089,7 @@ export interface Product {
   /**
    * Advertising channels this product is sold as. Products inherit from their properties' supported_channels but may narrow the scope. For example, a product covering YouTube properties might be sold as ['ctv'] even though those properties support ['olv', 'social', 'ctv'].
    */
-  channels?: MediaChannel[] | null;
+  channels?: MediaChannel[];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
@@ -1097,15 +1097,15 @@ export interface Product {
   /**
    * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
    */
-  placements?: Placement[] | null;
+  placements?: Placement[];
   delivery_type: DeliveryType;
-  exclusivity?: Exclusivity | null;
+  exclusivity?: Exclusivity;
   /**
    * Available pricing models for this product
    */
   pricing_options: PricingOption[];
-  forecast?: DeliveryForecast | null;
-  outcome_measurement?: OutcomeMeasurement | null;
+  forecast?: DeliveryForecast;
+  outcome_measurement?: OutcomeMeasurement;
   /**
    * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. When absent, buyers should apply their own measurement defaults.
    */
@@ -1117,36 +1117,36 @@ export interface Product {
     /**
      * Additional details about measurement methodology in plain language (e.g., 'MRC-accredited viewability. 50% in-view for 1s display / 2s video', 'Panel-based demographic measurement updated monthly')
      */
-    notes?: string | null;
+    notes?: string;
   };
-  measurement_terms?: MeasurementTerms | null;
+  measurement_terms?: MeasurementTerms;
   /**
    * Seller's default performance standards for this product: viewability, IVT, completion rate, brand safety, attention score. Buyers may propose different standards at media buy creation. When absent, no structured performance standards apply.
    */
-  performance_standards?: PerformanceStandard[] | null;
-  cancellation_policy?: CancellationPolicy | null;
+  performance_standards?: PerformanceStandard[];
+  cancellation_policy?: CancellationPolicy;
   reporting_capabilities: ReportingCapabilities;
-  creative_policy?: CreativePolicy | null;
+  creative_policy?: CreativePolicy;
   /**
    * Whether this is a custom product
    */
-  is_custom?: boolean | null;
+  is_custom?: boolean;
   /**
    * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
    */
-  property_targeting_allowed?: boolean | null;
+  property_targeting_allowed?: boolean;
   /**
    * Data provider signals available for this product. Buyers fetch signal definitions from each data provider's adagents.json and can verify agent authorization.
    */
-  data_provider_signals?: DataProviderSignalSelector[] | null;
+  data_provider_signals?: DataProviderSignalSelector[];
   /**
    * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
    */
-  signal_targeting_allowed?: boolean | null;
+  signal_targeting_allowed?: boolean;
   /**
    * Catalog types this product supports for catalog-driven campaigns. A sponsored product listing declares ["product"], a job board declares ["job", "offering"]. Buyers match synced catalogs to products via this field.
    */
-  catalog_types?: CatalogType[] | null;
+  catalog_types?: CatalogType[];
   /**
    * Metric optimization capabilities for this product. Presence indicates the product supports optimization_goals with kind: 'metric'. No event source or conversion tracking setup required — the seller tracks these metrics natively.
    */
@@ -1170,21 +1170,21 @@ export interface Product {
     /**
      * Reach units this product can optimize for. Required when supported_metrics includes 'reach'. Buyers must set reach_unit to a value in this list on reach optimization goals — sellers reject unsupported values.
      */
-    supported_reach_units?: ReachUnit[] | null;
+    supported_reach_units?: ReachUnit[];
     /**
      * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
      */
-    supported_view_durations?: number[] | null;
+    supported_view_durations?: number[];
     /**
      * Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.
      */
-    supported_targets?: ('cost_per' | 'threshold_rate')[] | null;
+    supported_targets?: ('cost_per' | 'threshold_rate')[];
   };
   /**
    * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
    */
-  max_optimization_goals?: number | null;
-  measurement_readiness?: MeasurementReadiness | null;
+  max_optimization_goals?: number;
+  measurement_readiness?: MeasurementReadiness;
   /**
    * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
    */
@@ -1192,15 +1192,15 @@ export interface Product {
     /**
      * Action sources relevant to this product (e.g. a retail media product might have 'in_store' and 'website', while a display product might only have 'website')
      */
-    action_sources?: ActionSource[] | null;
+    action_sources?: ActionSource[];
     /**
      * Target kinds available for event goals on this product. Values match target.kind on the optimization goal. cost_per: target cost per conversion event. per_ad_spend: target return on ad spend (requires value_field on event sources). maximize_value: maximize total conversion value without a specific ratio target (requires value_field). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes conversion count within budget — no declaration needed for that mode. When omitted, buyers can still set target-less event goals.
      */
-    supported_targets?: ('cost_per' | 'per_ad_spend' | 'maximize_value')[] | null;
+    supported_targets?: ('cost_per' | 'per_ad_spend' | 'maximize_value')[];
     /**
      * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
      */
-    platform_managed?: boolean | null;
+    platform_managed?: boolean;
   };
   /**
    * When the buyer provides a catalog on get_products, indicates which catalog items are eligible for this product. Only present for products where catalog matching is relevant (e.g., sponsored product listings, job boards, hotel ads).
@@ -1209,15 +1209,15 @@ export interface Product {
     /**
      * GTINs from the buyer's catalog that are eligible on this product's inventory. Standard GTIN formats (GTIN-8 through GTIN-14). Only present for product-type catalogs with GTIN matching.
      */
-    matched_gtins?: string[] | null;
+    matched_gtins?: string[];
     /**
      * Item IDs from the buyer's catalog that matched this product's inventory. The ID type depends on the catalog type and content_id_type (e.g., SKUs for product catalogs, job_ids for job catalogs, offering_ids for offering catalogs).
      */
-    matched_ids?: string[] | null;
+    matched_ids?: string[];
     /**
      * Number of catalog items that matched this product's inventory.
      */
-    matched_count?: number | null;
+    matched_count?: number;
     /**
      * Total catalog items evaluated from the buyer's catalog.
      */
@@ -1226,11 +1226,11 @@ export interface Product {
   /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */
-  brief_relevance?: string | null;
+  brief_relevance?: string;
   /**
    * Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it.
    */
-  expires_at?: string | null;
+  expires_at?: string;
   /**
    * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
    */
@@ -1254,19 +1254,19 @@ export interface Product {
   /**
    * Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Buyers resolve full collection objects from the referenced adagents.json.
    */
-  collections?: CollectionSelector[] | null;
+  collections?: CollectionSelector[];
   /**
    * Whether buyers can target a subset of this product's collections. When false (default), the product is a bundle — buyers get all listed collections. When true, buyers can select specific collections in the media buy.
    */
-  collection_targeting_allowed?: boolean | null;
+  collection_targeting_allowed?: boolean;
   /**
    * Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).
    */
-  installments?: Installment[] | null;
+  installments?: Installment[];
   /**
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
-  enforced_policies?: string[] | null;
+  enforced_policies?: string[];
   /**
    * Trusted Match Protocol capabilities for this product. When present, the product supports real-time contextual and/or identity matching via TMP. Buyers use this to determine what response types the publisher can accept and whether brands can be selected dynamically at match time.
    */
@@ -1278,15 +1278,15 @@ export interface Product {
     /**
      * Whether this product supports Identity Match requests. When true, the publisher's TMP router will send identity match requests to evaluate user eligibility.
      */
-    identity_match?: boolean | null;
+    identity_match?: boolean;
     /**
      * What the publisher can accept back from context match.
      */
-    response_types?: TMPResponseType[] | null;
+    response_types?: TMPResponseType[];
     /**
      * Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.
      */
-    dynamic_brands?: boolean | null;
+    dynamic_brands?: boolean;
     /**
      * TMP providers integrated with this product's inventory. Each entry identifies a provider by agent_url (from the registry) and declares what match types it supports for this product. The product-level context_match and identity_match booleans declare what the product supports overall; the per-provider booleans declare which provider handles each match type. Enables buyer discovery: 'find products where a specific provider does context matching.'
      */
@@ -1298,11 +1298,11 @@ export interface Product {
       /**
        * Whether this provider handles context match for this product.
        */
-      context_match?: boolean | null;
+      context_match?: boolean;
       /**
        * Whether this provider handles identity match for this product.
        */
-      identity_match?: boolean | null;
+      identity_match?: boolean;
     }[];
   };
   /**
@@ -1312,18 +1312,18 @@ export interface Product {
     /**
      * HTTPS URL for uploading or submitting physical creative materials
      */
-    url?: string | null;
+    url?: string;
     /**
      * Email address for creative material submission
      */
-    email?: string | null;
+    email?: string;
     /**
      * Human-readable instructions for material submission (file naming conventions, shipping address, etc.)
      */
-    instructions?: string | null;
-    ext?: ExtensionObject | null;
+    instructions?: string;
+    ext?: ExtensionObject;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Represents a specific ad placement within a product's inventory. When the publisher declares a placement registry in adagents.json, products SHOULD reuse those placement_id values. Reusing a registered placement_id preserves the registry's semantic identity; product-level placement objects may narrow format_ids or add operational detail, but SHOULD NOT redefine the placement's meaning incompatibly.
@@ -1340,15 +1340,15 @@ export interface Placement {
   /**
    * Detailed description of where and how the placement appears
    */
-  description?: string | null;
+  description?: string;
   /**
    * Optional tags for grouping placements within a product (e.g., 'homepage', 'native', 'premium'). When the placement_id comes from the publisher registry, these should align with the registry tags unless the product is narrowing scope.
    */
-  tags?: string[] | null;
+  tags?: string[];
   /**
    * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
    */
-  format_ids?: FormatID[] | null;
+  format_ids?: FormatID[];
 }
 /**
  * Cost Per Mille (cost per 1,000 impressions) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1369,25 +1369,25 @@ export interface CPMPricingOption {
   /**
    * Fixed price per unit. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
+  floor_price?: number;
   /**
    * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
    */
-  max_bid?: boolean | null;
-  price_guidance?: PriceGuidance | null;
+  max_bid?: boolean;
+  price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1396,19 +1396,19 @@ export interface PriceGuidance {
   /**
    * 25th percentile of recent winning bids
    */
-  p25?: number | null;
+  p25?: number;
   /**
    * Median of recent winning bids
    */
-  p50?: number | null;
+  p50?: number;
   /**
    * 75th percentile of recent winning bids
    */
-  p75?: number | null;
+  p75?: number;
   /**
    * 90th percentile of recent winning bids
    */
-  p90?: number | null;
+  p90?: number;
 }
 /**
  * Breakdown of how fixed_price was derived from the list (rate card) price. Only meaningful when fixed_price is present.
@@ -1422,7 +1422,7 @@ export interface PriceBreakdown {
    * Ordered list of price adjustments. Fee and discount adjustments walk list_price to fixed_price — fees increase the running price, discounts reduce it. Commission and settlement adjustments are disclosed for transparency but do not affect the buyer's committed price.
    */
   adjustments: {
-    [k: string]: unknown | null | undefined;
+    [k: string]: unknown | undefined;
   }[];
 }
 /**
@@ -1444,25 +1444,25 @@ export interface VCPMPricingOption {
   /**
    * Fixed price per unit. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
+  floor_price?: number;
   /**
    * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
    */
-  max_bid?: boolean | null;
-  price_guidance?: PriceGuidance | null;
+  max_bid?: boolean;
+  price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Click pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1483,25 +1483,25 @@ export interface CPCPricingOption {
   /**
    * Fixed price per click. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
+  floor_price?: number;
   /**
    * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
    */
-  max_bid?: boolean | null;
-  price_guidance?: PriceGuidance | null;
+  max_bid?: boolean;
+  price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Completed View (100% video/audio completion) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1522,25 +1522,25 @@ export interface CPCVPricingOption {
   /**
    * Fixed price per completed view. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
+  floor_price?: number;
   /**
    * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
    */
-  max_bid?: boolean | null;
-  price_guidance?: PriceGuidance | null;
+  max_bid?: boolean;
+  price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per View (at publisher-defined threshold) pricing for video/audio. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1561,16 +1561,16 @@ export interface CPVPricingOption {
   /**
    * Fixed price per view. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
+  floor_price?: number;
   /**
    * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
    */
-  max_bid?: boolean | null;
-  price_guidance?: PriceGuidance | null;
+  max_bid?: boolean;
+  price_guidance?: PriceGuidance;
   /**
    * CPV-specific parameters defining the view threshold
    */
@@ -1587,12 +1587,12 @@ export interface CPVPricingOption {
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Point (Gross Rating Point) pricing for TV and audio campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1613,17 +1613,17 @@ export interface CPPPricingOption {
   /**
    * Fixed price per rating point. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
-  price_guidance?: PriceGuidance | null;
+  floor_price?: number;
+  price_guidance?: PriceGuidance;
   /**
    * CPP-specific parameters for demographic targeting
    */
   parameters: {
-    demographic_system?: DemographicSystem | null;
+    demographic_system?: DemographicSystem;
     /**
      * Target demographic code within the specified demographic_system (e.g., P18-49 for Nielsen, ABC1 Adults for BARB)
      */
@@ -1631,17 +1631,17 @@ export interface CPPPricingOption {
     /**
      * Minimum GRPs/TRPs required
      */
-    min_points?: number | null;
+    min_points?: number;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
@@ -1662,11 +1662,11 @@ export interface CPAPricingOption {
   /**
    * Name of the custom event when event_type is 'custom'. Required when event_type is 'custom', ignored otherwise.
    */
-  custom_event_name?: string | null;
+  custom_event_name?: string;
   /**
    * When present, only events from this specific event source count toward billing. Allows different CPA rates for different sources (e.g., online vs in-store purchases). Must match an event source configured via sync_event_sources.
    */
-  event_source_id?: string | null;
+  event_source_id?: string;
   /**
    * ISO 4217 currency code
    */
@@ -1678,12 +1678,12 @@ export interface CPAPricingOption {
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Flat rate pricing for sponsorships, takeovers, and DOOH exclusive placements. A fixed total cost regardless of delivery volume. For duration-scaled pricing (rate × time units), use the `time` model instead. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1704,22 +1704,22 @@ export interface FlatRatePricingOption {
   /**
    * Flat rate cost. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
-  price_guidance?: PriceGuidance | null;
-  parameters?: DoohParameters | null;
+  floor_price?: number;
+  price_guidance?: PriceGuidance;
+  parameters?: DoohParameters;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * DOOH inventory allocation parameters. Sponsorship and takeover flat_rate options omit this field entirely — only include for digital out-of-home inventory.
@@ -1732,31 +1732,31 @@ export interface DoohParameters {
   /**
    * Guaranteed share of voice as a percentage (0-100)
    */
-  sov_percentage?: number | null;
+  sov_percentage?: number;
   /**
    * Duration of the ad loop rotation in seconds
    */
-  loop_duration_seconds?: number | null;
+  loop_duration_seconds?: number;
   /**
    * Minimum number of plays per hour guaranteed
    */
-  min_plays_per_hour?: number | null;
+  min_plays_per_hour?: number;
   /**
    * Named collection of screens included in this buy
    */
-  venue_package?: string | null;
+  venue_package?: string;
   /**
    * Duration of the DOOH slot in hours (e.g., 24 for a full-day takeover)
    */
-  duration_hours?: number | null;
+  duration_hours?: number;
   /**
    * Named daypart for this slot (e.g., morning_commute, evening_rush)
    */
-  daypart?: string | null;
+  daypart?: string;
   /**
    * Estimated audience impressions for this slot (informational, not a delivery guarantee)
    */
-  estimated_impressions?: number | null;
+  estimated_impressions?: number;
 }
 /**
  * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1777,12 +1777,12 @@ export interface TimeBasedPricingOption {
   /**
    * Cost per time unit. If present, this is fixed pricing. If absent, auction-based.
    */
-  fixed_price?: number | null;
+  fixed_price?: number;
   /**
    * Minimum acceptable bid per time unit for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
-  floor_price?: number | null;
-  price_guidance?: PriceGuidance | null;
+  floor_price?: number;
+  price_guidance?: PriceGuidance;
   /**
    * Time-based pricing parameters
    */
@@ -1794,21 +1794,21 @@ export interface TimeBasedPricingOption {
     /**
      * Minimum booking duration in time_units
      */
-    min_duration?: number | null;
+    min_duration?: number;
     /**
      * Maximum booking duration in time_units. Must be >= min_duration when both are present.
      */
-    max_duration?: number | null;
+    max_duration?: number;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
-  min_spend_per_package?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
-  eligible_adjustments?: PriceAdjustmentKind[] | null;
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal.
@@ -1818,31 +1818,31 @@ export interface DeliveryForecast {
    * Forecasted delivery data points. For spend curves (default), points at ascending budget levels show how metrics scale with spend. For availability forecasts, points represent total available inventory independent of budget. See forecast_range_unit for interpretation.
    */
   points: ForecastPoint[];
-  forecast_range_unit?: ForecastRangeUnit | null;
+  forecast_range_unit?: ForecastRangeUnit;
   method: ForecastMethod;
   /**
    * ISO 4217 currency code for monetary values in this forecast (spend, budget)
    */
   currency: string;
-  demographic_system?: DemographicSystem | null;
+  demographic_system?: DemographicSystem;
   /**
    * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
    */
-  demographic?: string | null;
+  demographic?: string;
   /**
    * Third-party measurement provider whose data was used to produce this forecast. Distinct from demographic_system, which specifies demographic notation — measurement_source identifies whose data produced the forecast numbers. Should be present when measured_impressions is used. Lowercase slug format.
    */
-  measurement_source?: string | null;
-  reach_unit?: ReachUnit | null;
+  measurement_source?: string;
+  reach_unit?: ReachUnit;
   /**
    * When this forecast was computed
    */
-  generated_at?: string | null;
+  generated_at?: string;
   /**
    * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
    */
-  valid_until?: string | null;
-  ext?: ExtensionObject | null;
+  valid_until?: string;
+  ext?: ExtensionObject;
 }
 /**
  * A forecast data point. When budget is present, the point pairs a spend level with expected delivery — multiple points at ascending budgets form a curve. When budget is omitted, the point represents total available inventory for the requested targeting and dates, independent of spend.
@@ -1851,32 +1851,32 @@ export interface ForecastPoint {
   /**
    * Human-readable name for this forecast point. Required when forecast_range_unit is 'package' so buyer agents can identify and reference individual packages. Optional for other forecast types.
    */
-  label?: string | null;
+  label?: string;
   /**
    * Budget amount for this forecast point. Required for spend curves; omit for availability forecasts where the metrics represent total available inventory. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget. When omitted, use metrics.spend to express the estimated cost of the available inventory.
    */
-  budget?: number | null;
+  budget?: number;
   /**
    * Forecasted metric values. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. When budget is present, these are the expected metrics at that spend level. When budget is omitted, these represent total available inventory — use spend to express the estimated cost. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
    */
   metrics: {
-    audience_size?: ForecastRange | null;
-    reach?: ForecastRange | null;
-    frequency?: ForecastRange | null;
-    impressions?: ForecastRange | null;
-    clicks?: ForecastRange | null;
-    spend?: ForecastRange | null;
-    views?: ForecastRange | null;
-    completed_views?: ForecastRange | null;
-    grps?: ForecastRange | null;
-    engagements?: ForecastRange | null;
-    follows?: ForecastRange | null;
-    saves?: ForecastRange | null;
-    profile_visits?: ForecastRange | null;
-    measured_impressions?: ForecastRange | null;
-    downloads?: ForecastRange | null;
-    plays?: ForecastRange | null;
-    [k: string]: ForecastRange | null | undefined;
+    audience_size?: ForecastRange;
+    reach?: ForecastRange;
+    frequency?: ForecastRange;
+    impressions?: ForecastRange;
+    clicks?: ForecastRange;
+    spend?: ForecastRange;
+    views?: ForecastRange;
+    completed_views?: ForecastRange;
+    grps?: ForecastRange;
+    engagements?: ForecastRange;
+    follows?: ForecastRange;
+    saves?: ForecastRange;
+    profile_visits?: ForecastRange;
+    measured_impressions?: ForecastRange;
+    downloads?: ForecastRange;
+    plays?: ForecastRange;
+    [k: string]: ForecastRange | undefined;
   };
 }
 /**
@@ -1894,7 +1894,7 @@ export interface OutcomeMeasurement {
   /**
    * Attribution window as a structured duration (e.g., {"interval": 30, "unit": "days"}).
    */
-  window?: Duration | null;
+  window?: Duration;
   /**
    * Reporting frequency and format
    */
@@ -1912,11 +1912,11 @@ export interface MeasurementTerms {
     /**
      * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
      */
-    max_variance_percent?: number | null;
+    max_variance_percent?: number;
     /**
      * Which measurement window the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. For broadcast TV, this is typically 'c7' (live + 7 days DVR). When absent, billing is based on the seller's standard reporting without windowed maturation.
      */
-    measurement_window?: string | null;
+    measurement_window?: string;
   };
   /**
    * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.
@@ -1944,11 +1944,11 @@ export interface CancellationPolicy {
     /**
      * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
      */
-    rate?: number | null;
+    rate?: number;
     /**
      * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
      */
-    amount?: number | null;
+    amount?: number;
   };
 }
 /**
@@ -1978,28 +1978,28 @@ export interface ReportingCapabilities {
   /**
    * Whether this product supports creative-level metric breakdowns in delivery reporting (by_creative within by_package)
    */
-  supports_creative_breakdown?: boolean | null;
+  supports_creative_breakdown?: boolean;
   /**
    * Whether this product supports keyword-level metric breakdowns in delivery reporting (by_keyword within by_package)
    */
-  supports_keyword_breakdown?: boolean | null;
-  supports_geo_breakdown?: GeographicBreakdownSupport | null;
+  supports_keyword_breakdown?: boolean;
+  supports_geo_breakdown?: GeographicBreakdownSupport;
   /**
    * Whether this product supports device type breakdowns in delivery reporting (by_device_type within by_package)
    */
-  supports_device_type_breakdown?: boolean | null;
+  supports_device_type_breakdown?: boolean;
   /**
    * Whether this product supports device platform breakdowns in delivery reporting (by_device_platform within by_package)
    */
-  supports_device_platform_breakdown?: boolean | null;
+  supports_device_platform_breakdown?: boolean;
   /**
    * Whether this product supports audience segment breakdowns in delivery reporting (by_audience within by_package)
    */
-  supports_audience_breakdown?: boolean | null;
+  supports_audience_breakdown?: boolean;
   /**
    * Whether this product supports placement breakdowns in delivery reporting (by_placement within by_package)
    */
-  supports_placement_breakdown?: boolean | null;
+  supports_placement_breakdown?: boolean;
   /**
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
@@ -2007,7 +2007,7 @@ export interface ReportingCapabilities {
   /**
    * Measurement maturation windows available for this product. Used by broadcast and linear TV sellers where measurement accumulates over time (Live, C3, C7). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Digital-only sellers typically omit this.
    */
-  measurement_windows?: MeasurementWindow[] | null;
+  measurement_windows?: MeasurementWindow[];
 }
 /**
  * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
@@ -2016,22 +2016,22 @@ export interface GeographicBreakdownSupport {
   /**
    * Supports country-level geo breakdown (ISO 3166-1 alpha-2)
    */
-  country?: boolean | null;
+  country?: boolean;
   /**
    * Supports region/state-level geo breakdown (ISO 3166-2)
    */
-  region?: boolean | null;
+  region?: boolean;
   /**
    * Metro area breakdown support. Keys are metro-system enum values; true means supported.
    */
   metro?: {
-    [k: string]: boolean | null | undefined;
+    [k: string]: boolean | undefined;
   };
   /**
    * Postal area breakdown support. Keys are postal-system enum values; true means supported.
    */
   postal_area?: {
-    [k: string]: boolean | null | undefined;
+    [k: string]: boolean | undefined;
   };
 }
 /**
@@ -2045,7 +2045,7 @@ export interface MeasurementWindow {
   /**
    * Human-readable description of what this window measures
    */
-  description?: string | null;
+  description?: string;
   /**
    * Number of days after live broadcast included in this window. 0 = live only, 3 = live + 3 days DVR, 7 = live + 7 days DVR.
    */
@@ -2053,11 +2053,11 @@ export interface MeasurementWindow {
   /**
    * Expected number of days after broadcast before this window's data is available from the measurement vendor. For example, C7 window data from VideoAmp typically arrives ~22 days after broadcast (7-day accumulation + ~15-day processing).
    */
-  expected_availability_days?: number | null;
+  expected_availability_days?: number;
   /**
    * Whether this window is the basis for delivery guarantees and reconciliation. A product typically has one guarantee basis window (e.g., C7 for most US broadcast). Buyers reconcile against the guarantee basis window's final numbers.
    */
-  is_guarantee_basis?: boolean | null;
+  is_guarantee_basis?: boolean;
 }
 /**
  * Creative requirements and restrictions for a product
@@ -2072,7 +2072,7 @@ export interface CreativePolicy {
   /**
    * Whether creatives must include provenance metadata. When true, the seller requires buyers to attach provenance declarations to creative submissions. The seller may independently verify claims via get_creative_features.
    */
-  provenance_required?: boolean | null;
+  provenance_required?: boolean;
 }
 /**
  * Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals.
@@ -2082,19 +2082,19 @@ export interface MeasurementReadiness {
   /**
    * Event types this product needs for effective optimization. Buyers should ensure their event sources cover these types.
    */
-  required_event_types?: EventType[] | null;
+  required_event_types?: EventType[];
   /**
    * Event types this product requires that the buyer has not configured. Empty or absent when all required types are covered.
    */
-  missing_event_types?: EventType[] | null;
+  missing_event_types?: EventType[];
   /**
    * Actionable issues preventing full measurement readiness. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
    */
-  issues?: DiagnosticIssue[] | null;
+  issues?: DiagnosticIssue[];
   /**
    * Seller explanation of the readiness assessment, recommendations for improvement, or context about what the buyer needs to change.
    */
-  notes?: string | null;
+  notes?: string;
 }
 /**
  * An actionable issue detected during a health or readiness assessment. Used by event source health and measurement readiness to surface problems and recommendations.
@@ -2133,48 +2133,48 @@ export interface Installment {
   /**
    * Parent collection reference. Required when the product spans multiple collections. Maps to a collection_id declared in one of the publishers' adagents.json files referenced by the product's collection selectors.
    */
-  collection_id?: string | null;
+  collection_id?: string;
   /**
    * Installment title
    */
-  name?: string | null;
+  name?: string;
   /**
    * Season identifier (e.g., '1', '2024', 'spring_2026')
    */
-  season?: string | null;
+  season?: string;
   /**
    * Installment number within the season (e.g., '3', '47')
    */
-  installment_number?: string | null;
+  installment_number?: string;
   /**
    * When the installment airs or publishes (ISO 8601)
    */
-  scheduled_at?: string | null;
-  status?: InstallmentStatus | null;
+  scheduled_at?: string;
+  status?: InstallmentStatus;
   /**
    * Expected duration of the installment in seconds
    */
-  duration_seconds?: number | null;
+  duration_seconds?: number;
   /**
    * Whether the end time is approximate (live events, sports)
    */
-  flexible_end?: boolean | null;
+  flexible_end?: boolean;
   /**
    * When this installment data expires and should be re-queried. Agents should re-query before committing budget to products with tentative installments.
    */
-  valid_until?: string | null;
-  content_rating?: ContentRating | null;
+  valid_until?: string;
+  content_rating?: ContentRating;
   /**
    * Content topics for this installment. Uses the same taxonomy as the collection's genre_taxonomy when present. Enables installment-level brand safety evaluation beyond content_rating.
    */
-  topics?: string[] | null;
-  special?: Special | null;
+  topics?: string[];
+  special?: Special;
   /**
    * Installment-specific guests and talent. Additive to the collection's recurring talent.
    */
-  guest_talent?: Talent[] | null;
-  ad_inventory?: AdInventoryConfiguration | null;
-  deadlines?: InstallmentDeadlines | null;
+  guest_talent?: Talent[];
+  ad_inventory?: AdInventoryConfiguration;
+  deadlines?: InstallmentDeadlines;
   /**
    * When this installment is a clip, highlight, or recap derived from a full installment. The source installment_id must reference an installment within the same response.
    */
@@ -2185,7 +2185,7 @@ export interface Installment {
     installment_id: string;
     type: DerivativeType;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Installment-specific content rating. Overrides the collection's baseline content_rating when present.
@@ -2205,15 +2205,15 @@ export interface Special {
    * Name of the event (e.g., 'Olympics 2028', 'Super Bowl LXI')
    */
   name: string;
-  category?: SpecialCategory | null;
+  category?: SpecialCategory;
   /**
    * When the event starts (ISO 8601)
    */
-  starts?: string | null;
+  starts?: string;
   /**
    * When the event ends (ISO 8601). Omit for single-day events.
    */
-  ends?: string | null;
+  ends?: string;
 }
 /**
  * A person associated with a collection or installment, with an optional link to their brand.json identity
@@ -2227,7 +2227,7 @@ export interface Talent {
   /**
    * URL to this person's brand.json entry. Enables buyer agents to evaluate the talent's brand identity and associations.
    */
-  brand_url?: string | null;
+  brand_url?: string;
 }
 /**
  * Break-based ad inventory for this installment. For non-break formats (host reads, integrations), use product placements.
@@ -2240,19 +2240,19 @@ export interface AdInventoryConfiguration {
   /**
    * Total seconds of ad time across all breaks
    */
-  total_ad_seconds?: number | null;
+  total_ad_seconds?: number;
   /**
    * Maximum duration in seconds for a single ad within a break. Buyers need this to know whether their creative fits.
    */
-  max_ad_duration_seconds?: number | null;
+  max_ad_duration_seconds?: number;
   /**
    * Whether ad breaks are dynamic and driven by live conditions (sports timeouts, election coverage). When false, all breaks are pre-defined.
    */
-  unplanned_breaks?: boolean | null;
+  unplanned_breaks?: boolean;
   /**
    * Ad format types supported in breaks (e.g., 'video', 'audio', 'display')
    */
-  supported_formats?: string[] | null;
+  supported_formats?: string[];
 }
 /**
  * Booking, cancellation, and material submission deadlines for this installment. Present when the installment has time-sensitive inventory that requires advance commitment or material delivery.
@@ -2261,15 +2261,15 @@ export interface InstallmentDeadlines {
   /**
    * Last date/time to book a placement in this installment (ISO 8601). After this point, the seller will not accept new bookings.
    */
-  booking_deadline?: string | null;
+  booking_deadline?: string;
   /**
    * Last date/time to cancel without penalty (ISO 8601). Cancellations after this point may incur fees per the seller's terms.
    */
-  cancellation_deadline?: string | null;
+  cancellation_deadline?: string;
   /**
    * Stages for creative material submission. Items MUST be in chronological order by due_at (earliest first). Typical pattern: 'draft' for raw materials the seller will process, 'final' for production-ready assets. Print example: draft artwork then press-ready PDF. Influencer example: talking points then approved script.
    */
-  material_deadlines?: MaterialDeadline[] | null;
+  material_deadlines?: MaterialDeadline[];
 }
 /**
  * A deadline for creative material submission. Sellers declare stages to distinguish draft materials (e.g., talking points, raw artwork) from production-ready assets (e.g., approved scripts, press-ready PDFs).
@@ -2286,7 +2286,7 @@ export interface MaterialDeadline {
   /**
    * What the seller needs at this stage (e.g., 'Talking points and brand guidelines', 'Press-ready PDF with bleed')
    */
-  label?: string | null;
+  label?: string;
 }
 /**
  * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
@@ -2303,17 +2303,17 @@ export interface Proposal {
   /**
    * Explanation of the proposal strategy and what it achieves
    */
-  description?: string | null;
+  description?: string;
   /**
    * Budget allocations across products. Allocation percentages MUST sum to 100. Publishers are responsible for ensuring the sum equals 100; buyers SHOULD validate this before execution.
    */
   allocations: ProductAllocation[];
-  proposal_status?: ProposalStatus | null;
+  proposal_status?: ProposalStatus;
   /**
    * When this proposal expires and can no longer be executed. For draft proposals, indicates when indicative pricing becomes stale. For committed proposals, indicates when the inventory hold lapses — the buyer must call create_media_buy before this time.
    */
-  expires_at?: string | null;
-  insertion_order?: InsertionOrder | null;
+  expires_at?: string;
+  insertion_order?: InsertionOrder;
   /**
    * Optional budget guidance for this proposal
    */
@@ -2321,26 +2321,26 @@ export interface Proposal {
     /**
      * Minimum recommended budget
      */
-    min?: number | null;
+    min?: number;
     /**
      * Recommended budget for optimal performance
      */
-    recommended?: number | null;
+    recommended?: number;
     /**
      * Maximum budget before diminishing returns
      */
-    max?: number | null;
+    max?: number;
     /**
      * ISO 4217 currency code
      */
-    currency?: string | null;
+    currency?: string;
   };
   /**
    * Explanation of how this proposal aligns with the campaign brief
    */
-  brief_alignment?: string | null;
-  forecast?: DeliveryForecast | null;
-  ext?: ExtensionObject | null;
+  brief_alignment?: string;
+  forecast?: DeliveryForecast;
+  ext?: ExtensionObject;
 }
 /**
  * A budget allocation for a specific product within a proposal. Percentages across all allocations in a proposal should sum to 100.
@@ -2357,33 +2357,33 @@ export interface ProductAllocation {
   /**
    * Recommended pricing option ID from the product's pricing_options array
    */
-  pricing_option_id?: string | null;
+  pricing_option_id?: string;
   /**
    * Explanation of why this product and allocation are recommended
    */
-  rationale?: string | null;
+  rationale?: string;
   /**
    * Optional ordering hint for multi-line-item plans (1-based)
    */
-  sequence?: number | null;
+  sequence?: number;
   /**
    * Categorical tags for this allocation (e.g., 'desktop', 'german', 'mobile') - useful for grouping/filtering allocations by dimension
    */
-  tags?: string[] | null;
+  tags?: string[];
   /**
    * Recommended flight start date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
    */
-  start_time?: string | null;
+  start_time?: string;
   /**
    * Recommended flight end date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
    */
-  end_time?: string | null;
+  end_time?: string;
   /**
    * Recommended time windows for this allocation in spot-plan proposals.
    */
-  daypart_targets?: DaypartTarget[] | null;
-  forecast?: DeliveryForecast | null;
-  ext?: ExtensionObject | null;
+  daypart_targets?: DaypartTarget[];
+  forecast?: DeliveryForecast;
+  ext?: ExtensionObject;
 }
 /**
  * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
@@ -2404,7 +2404,7 @@ export interface DaypartTarget {
   /**
    * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
    */
-  label?: string | null;
+  label?: string;
 }
 /**
  * Formal insertion order attached to a committed proposal. Present when the seller requires a signed agreement before the media buy can proceed. The buyer references the io_id in io_acceptance on create_media_buy.
@@ -2421,11 +2421,11 @@ export interface InsertionOrder {
     /**
      * Advertiser name or identifier
      */
-    advertiser?: string | null;
+    advertiser?: string;
     /**
      * Publisher name or identifier
      */
-    publisher?: string | null;
+    publisher?: string;
     /**
      * Total committed budget
      */
@@ -2439,24 +2439,24 @@ export interface InsertionOrder {
     /**
      * Campaign start date
      */
-    flight_start?: string | null;
+    flight_start?: string;
     /**
      * Campaign end date
      */
-    flight_end?: string | null;
+    flight_end?: string;
     /**
      * Payment terms
      */
-    payment_terms?: 'net_30' | 'net_60' | 'net_90' | 'prepaid' | 'due_on_receipt' | null;
+    payment_terms?: 'net_30' | 'net_60' | 'net_90' | 'prepaid' | 'due_on_receipt';
   };
   /**
    * URL to a human-readable document containing the full insertion order terms
    */
-  terms_url?: string | null;
+  terms_url?: string;
   /**
    * URL to an electronic signing service (e.g., DocuSign) for human signature workflows. When present, a human must sign before the buyer agent can proceed with create_media_buy.
    */
-  signing_url?: string | null;
+  signing_url?: string;
   /**
    * Whether the buyer must accept this IO before creating a media buy. When true, create_media_buy requires an io_acceptance referencing this io_id.
    */
@@ -2477,23 +2477,23 @@ export interface Error {
   /**
    * Field path associated with the error (e.g., 'packages[0].targeting')
    */
-  field?: string | null;
+  field?: string;
   /**
    * Suggested fix for the error
    */
-  suggestion?: string | null;
+  suggestion?: string;
   /**
    * Seconds to wait before retrying the operation. Sellers MUST return values between 1 and 3600. Clients MUST clamp values outside this range.
    */
-  retry_after?: number | null;
+  retry_after?: number;
   /**
    * Additional task-specific error details
    */
-  details?: {} | null;
+  details?: {};
   /**
    * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found).
    */
-  recovery?: 'transient' | 'correctable' | 'terminal' | null;
+  recovery?: 'transient' | 'correctable' | 'terminal';
 }
 /**
  * Standard cursor-based pagination metadata for list responses
@@ -2506,11 +2506,11 @@ export interface PaginationResponse {
   /**
    * Opaque cursor to pass in the next request to fetch the next page. Only present when has_more is true.
    */
-  cursor?: string | null;
+  cursor?: string;
   /**
    * Total number of items matching the query across all pages. Optional because not all backends can efficiently compute this.
    */
-  total_count?: number | null;
+  total_count?: number;
 }
 
 // list_creative_formats parameters
@@ -2560,59 +2560,59 @@ export interface ListCreativeFormatsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Return only these specific format IDs (e.g., from get_products response)
    */
-  format_ids?: FormatID[] | null;
+  format_ids?: FormatID[];
   /**
    * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
-  asset_types?: AssetContentType[] | null;
+  asset_types?: AssetContentType[];
   /**
    * Maximum width in pixels (inclusive). Returns formats where ANY render has width <= this value. For multi-render formats, matches if at least one render fits.
    */
-  max_width?: number | null;
+  max_width?: number;
   /**
    * Maximum height in pixels (inclusive). Returns formats where ANY render has height <= this value. For multi-render formats, matches if at least one render fits.
    */
-  max_height?: number | null;
+  max_height?: number;
   /**
    * Minimum width in pixels (inclusive). Returns formats where ANY render has width >= this value.
    */
-  min_width?: number | null;
+  min_width?: number;
   /**
    * Minimum height in pixels (inclusive). Returns formats where ANY render has height >= this value.
    */
-  min_height?: number | null;
+  min_height?: number;
   /**
    * Filter for responsive formats that adapt to container size. When true, returns formats without fixed dimensions.
    */
-  is_responsive?: boolean | null;
+  is_responsive?: boolean;
   /**
    * Search for formats by name (case-insensitive partial match)
    */
-  name_search?: string | null;
-  wcag_level?: WCAGLevel | null;
+  name_search?: string;
+  wcag_level?: WCAGLevel;
   /**
    * Filter to formats that support all of these disclosure positions. When a format has disclosure_capabilities, match against those positions. Otherwise fall back to supported_disclosure_positions. Use to find formats compatible with a brief's compliance requirements.
    */
-  disclosure_positions?: DisclosurePosition[] | null;
+  disclosure_positions?: DisclosurePosition[];
   /**
    * Filter to formats where each requested persistence mode is supported by at least one position in disclosure_capabilities. Different positions may satisfy different modes. Use to find formats compatible with jurisdiction-specific persistence requirements (e.g., continuous for EU AI Act).
    */
-  disclosure_persistence?: DisclosurePersistence[] | null;
+  disclosure_persistence?: DisclosurePersistence[];
   /**
    * Filter to formats whose output_format_ids includes any of these format IDs. Returns formats that can produce these outputs — inspect each result's input_format_ids to see what inputs they accept.
    */
-  output_format_ids?: FormatID[] | null;
+  output_format_ids?: FormatID[];
   /**
    * Filter to formats whose input_format_ids includes any of these format IDs. Returns formats that accept these creatives as input — inspect each result's output_format_ids to see what they can produce.
    */
-  input_format_ids?: FormatID[] | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  input_format_ids?: FormatID[];
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // list_creative_formats response
@@ -2729,23 +2729,23 @@ export interface ListCreativeFormatsResponse {
     /**
      * Human-readable name for the creative agent
      */
-    agent_name?: string | null;
+    agent_name?: string;
     /**
      * Capabilities this creative agent provides
      */
-    capabilities?: CreativeAgentCapability[] | null;
+    capabilities?: CreativeAgentCapability[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., format availability issues)
    */
-  errors?: Error[] | null;
-  pagination?: PaginationResponse | null;
+  errors?: Error[];
+  pagination?: PaginationResponse;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Represents a creative format with its requirements
@@ -2759,21 +2759,21 @@ export interface Format {
   /**
    * Plain text explanation of what this format does and what assets it requires
    */
-  description?: string | null;
+  description?: string;
   /**
    * Optional URL to showcase page with examples and interactive demos of this format
    */
-  example_url?: string | null;
+  example_url?: string;
   /**
    * List of parameters this format accepts in format_id. Template formats define which parameters (dimensions, duration, etc.) can be specified when instantiating the format. Empty or omitted means this is a concrete format with fixed parameters.
    */
-  accepts_parameters?: FormatIDParameter[] | null;
+  accepts_parameters?: FormatIDParameter[];
   /**
    * Specification of rendered pieces for this format. Most formats produce a single render. Companion ad formats (video + banner), adaptive formats, and multi-placement formats produce multiple renders. Each render specifies its role and dimensions.
    */
   renders?: (
     | {
-        [k: string]: unknown | null | undefined;
+        [k: string]: unknown | undefined;
       }
     | {
         parameters_from_format_id: true;
@@ -2808,7 +2808,7 @@ export interface Format {
         /**
          * How the platform uses repetitions of this group. 'sequential' means all items display in order (carousels, playlists). 'optimize' means the platform selects the best-performing combination from alternatives (asset group optimization like Meta Advantage+ or Google Pmax).
          */
-        selection_mode?: 'sequential' | 'optimize' | null;
+        selection_mode?: 'sequential' | 'optimize';
         /**
          * Assets within each repetition of this group
          */
@@ -2818,19 +2818,19 @@ export interface Format {
   /**
    * Delivery method specifications (e.g., hosted, VAST, third-party tags)
    */
-  delivery?: {} | null;
+  delivery?: {};
   /**
    * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling. See docs/creative/universal-macros.mdx for full documentation.
    */
-  supported_macros?: (UniversalMacro | string)[] | null;
+  supported_macros?: (UniversalMacro | string)[];
   /**
    * Array of format IDs this format accepts as input creative manifests. When present, indicates this format can take existing creatives in these formats as input. Omit for formats that work from raw assets (images, text, etc.) rather than existing creatives.
    */
-  input_format_ids?: FormatID[] | null;
+  input_format_ids?: FormatID[];
   /**
    * Array of format IDs that this format can produce as output. When present, indicates this format can build creatives in these output formats (e.g., a multi-publisher template format might produce standard display formats across many publishers). Omit for formats that produce a single fixed output (the format itself).
    */
-  output_format_ids?: FormatID[] | null;
+  output_format_ids?: FormatID[];
   /**
    * Optional standard visual card (300x400px) for displaying this format in user interfaces. Can be rendered via preview_creative or pre-generated.
    */
@@ -2849,12 +2849,12 @@ export interface Format {
     /**
      * When true, all assets with x-accessibility fields must include those fields. For inspectable assets (image, video, audio), this means providing accessibility metadata like alt_text or captions. For opaque assets (HTML, JavaScript), this means providing self-declared accessibility properties.
      */
-    requires_accessible_assets?: boolean | null;
+    requires_accessible_assets?: boolean;
   };
   /**
    * Disclosure positions this format can render. Buyers use this to determine whether a format can satisfy their compliance requirements before submitting a creative. When omitted, the format makes no disclosure rendering guarantees — creative agents SHOULD treat this as incompatible with briefs that require specific disclosure positions. Values correspond to positions on creative-brief.json required_disclosures.
    */
-  supported_disclosure_positions?: DisclosurePosition[] | null;
+  supported_disclosure_positions?: DisclosurePosition[];
   /**
    * Structured disclosure capabilities per position with persistence modes. Declares which persistence behaviors each disclosure position supports, enabling persistence-aware matching against provenance render guidance and brief requirements. When present, supersedes supported_disclosure_positions for persistence-aware queries. The flat supported_disclosure_positions field is retained for backward compatibility. Each position MUST appear at most once; validators and agents SHOULD reject duplicates.
    */
@@ -2878,11 +2878,11 @@ export interface Format {
   /**
    * Metrics this format can produce in delivery reporting. Buyers receive the intersection of format reported_metrics and product available_metrics. If omitted, the format defers entirely to product-level metric declarations.
    */
-  reported_metrics?: AvailableMetric[] | null;
+  reported_metrics?: AvailableMetric[];
   /**
    * Pricing options for this format. Used by transformation and generation agents that charge per format adapted, per image generated, or per unit of work. Present when the request included include_pricing=true and account. Ad servers and library-based agents expose pricing on list_creatives instead.
    */
-  pricing_options?: VendorPricingOption[] | null;
+  pricing_options?: VendorPricingOption[];
 }
 export interface BaseIndividualAsset {
   /**
@@ -2896,7 +2896,7 @@ export interface BaseIndividualAsset {
   /**
    * Descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). For documentation and UI display only — manifests key assets by asset_id, not asset_role.
    */
-  asset_role?: string | null;
+  asset_role?: string;
   /**
    * Whether this asset is required (true) or optional (false). Required assets must be provided for a valid creative. Optional assets enhance the creative but are not mandatory.
    */
@@ -2904,7 +2904,7 @@ export interface BaseIndividualAsset {
   /**
    * Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., video player controls, publisher logos). Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
    */
-  overlays?: Overlay[] | null;
+  overlays?: Overlay[];
 }
 /**
  * A publisher-controlled element that renders on top of buyer creative content within the ad placement. Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
@@ -2917,7 +2917,7 @@ export interface Overlay {
   /**
    * Human-readable explanation of what this overlay is and how buyers should account for it
    */
-  description?: string | null;
+  description?: string;
   /**
    * Optional visual reference for this overlay element. Useful for creative agents compositing previews and for buyers understanding what will appear over their content. Must include at least one of: url, light, or dark.
    */
@@ -2925,15 +2925,15 @@ export interface Overlay {
     /**
      * URL to a theme-neutral overlay graphic (SVG or PNG). Use when a single file works for all backgrounds, e.g. an SVG using CSS custom properties or currentColor.
      */
-    url?: string | null;
+    url?: string;
     /**
      * URL to the overlay graphic for use on light/bright backgrounds (SVG or PNG)
      */
-    light?: string | null;
+    light?: string;
     /**
      * URL to the overlay graphic for use on dark backgrounds (SVG or PNG)
      */
-    dark?: string | null;
+    dark?: string;
   };
   /**
    * Position and size of the overlay relative to the asset's own top-left corner. See 'unit' for coordinate interpretation.
@@ -2969,7 +2969,7 @@ export interface BaseGroupAsset {
   /**
    * Descriptive label for this asset's purpose. For documentation and UI display only — manifests key assets by asset_id, not asset_role.
    */
-  asset_role?: string | null;
+  asset_role?: string;
   /**
    * Whether this asset is required within each repetition of the group
    */
@@ -2977,7 +2977,7 @@ export interface BaseGroupAsset {
   /**
    * Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., carousel navigation arrows, slide indicators). Creative agents should avoid placing critical content within overlay bounds.
    */
-  overlays?: Overlay[] | null;
+  overlays?: Overlay[];
 }
 /**
  * Fixed cost per thousand impressions
@@ -2992,7 +2992,7 @@ export interface CpmPricing {
    * ISO 4217 currency code
    */
   currency: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
@@ -3006,12 +3006,12 @@ export interface PercentOfMediaPricing {
   /**
    * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
    */
-  max_cpm?: number | null;
+  max_cpm?: number;
   /**
    * ISO 4217 currency code for the resulting charge
    */
   currency: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Fixed charge per billing period, regardless of impressions or spend. Used for licensed data bundles and audience subscriptions.
@@ -3030,7 +3030,7 @@ export interface FlatFeePricing {
    * ISO 4217 currency code
    */
   currency: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Fixed price per unit of work. Used for creative transformation (per format), AI generation (per image, per token), and rendering (per variant). The unit field describes what is counted; unit_price is the cost per one unit.
@@ -3049,7 +3049,7 @@ export interface PerUnitPricing {
    * ISO 4217 currency code
    */
   currency: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // create_media_buy parameters
@@ -3081,17 +3081,17 @@ export type OptimizationGoal =
       /**
        * Unit for reach measurement. Required when metric is 'reach'. Must be a value declared in the product's metric_optimization.supported_reach_units.
        */
-      reach_unit?: ReachUnit | null;
+      reach_unit?: ReachUnit;
       /**
        * Target frequency band for reach optimization. Only applicable when metric is 'reach'. Frames frequency as an optimization signal: the seller should treat impressions toward entities already within the [min, max] band as lower-value, and impressions toward unreached entities as higher-value. This shifts budget toward fresh reach rather than re-reaching known users. When omitted, the seller maximizes unique reach without a frequency constraint. A hard cap can still be layered via targeting_overlay.frequency_cap if a ceiling is needed.
        */
       target_frequency?: {
-        [k: string]: unknown | null | undefined;
+        [k: string]: unknown | undefined;
       };
       /**
        * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
        */
-      view_duration_seconds?: number | null;
+      view_duration_seconds?: number;
       /**
        * Target for this metric. When omitted, the seller optimizes for maximum metric volume within budget.
        */
@@ -3113,7 +3113,7 @@ export type OptimizationGoal =
       /**
        * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
        */
-      priority?: number | null;
+      priority?: number;
     }
   | {
       kind: 'event';
@@ -3129,15 +3129,15 @@ export type OptimizationGoal =
         /**
          * Required when event_type is 'custom'. Platform-specific name for the custom event.
          */
-        custom_event_name?: string | null;
+        custom_event_name?: string;
         /**
          * Which field in the event's custom_data carries the monetary value. The seller must use this field for value extraction and aggregation when computing ROAS and conversion value metrics. Required on at least one entry when target.kind is 'per_ad_spend' or 'maximize_value' — sellers must reject these target kinds when no event source entry includes value_field. When present without a value-oriented target, the seller may use it for delivery reporting (conversion_value, roas) but must not change the optimization objective. Common values: 'value', 'order_total', 'profit_margin'. This is not passed as a parameter to underlying platform APIs — the seller maps it to their platform's value ingestion mechanism.
          */
-        value_field?: string | null;
+        value_field?: string;
         /**
          * Multiplier the seller must apply to value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1. This is not passed as a parameter to underlying platform APIs — the seller applies it when computing aggregated value metrics.
          */
-        value_factor?: number | null;
+        value_factor?: number;
       }[];
       /**
        * Target cost or return for this event goal. When omitted, the seller optimizes for maximum conversion count within budget — regardless of whether value_field is present on event sources. The presence of value_field alone does not change the optimization objective; it only makes value available for reporting. An explicit target of maximize_value or per_ad_spend is required to steer toward value.
@@ -3171,39 +3171,39 @@ export type OptimizationGoal =
         /**
          * Post-view attribution window. Conversions within this duration after an ad impression (without click) are attributed to the ad (e.g. {"interval": 1, "unit": "days"}).
          */
-        post_view?: Duration | null;
+        post_view?: Duration;
       };
       /**
        * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
        */
-      priority?: number | null;
+      priority?: number;
     };
 /**
  * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.
  */
 export type FrequencyCap = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {"interval": 60, "unit": "minutes"} for a 1-hour cooldown). Preferred over suppress_minutes.
    */
-  suppress?: Duration | null;
+  suppress?: Duration;
   /**
    * Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).
    */
-  suppress_minutes?: number | null;
+  suppress_minutes?: number;
   /**
    * Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.
    */
-  max_impressions?: number | null;
+  max_impressions?: number;
   /**
    * Entity granularity for impression counting. Required when max_impressions is set.
    */
-  per?: ReachUnit | null;
+  per?: ReachUnit;
   /**
    * Time window for the max_impressions cap (e.g. {"interval": 7, "unit": "days"} or {"interval": 1, "unit": "campaign"} for the full flight). Required when max_impressions is set.
    */
-  window?: Duration | null;
+  window?: Duration;
 };
 /**
  * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
@@ -3255,28 +3255,28 @@ export type VASTAsset =
        * URL endpoint that returns VAST XML
        */
       url: string;
-      vast_version?: VASTVersion | null;
+      vast_version?: VASTVersion;
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
-      vpaid_enabled?: boolean | null;
+      vpaid_enabled?: boolean;
       /**
        * Expected video duration in milliseconds (if known)
        */
-      duration_ms?: number | null;
+      duration_ms?: number;
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: VASTTrackingEvent[] | null;
+      tracking_events?: VASTTrackingEvent[];
       /**
        * URL to captions file (WebVTT, SRT, etc.)
        */
-      captions_url?: string | null;
+      captions_url?: string;
       /**
        * URL to audio description track for visually impaired users
        */
-      audio_description_url?: string | null;
-      provenance?: Provenance | null;
+      audio_description_url?: string;
+      provenance?: Provenance;
     }
   | {
       /**
@@ -3287,28 +3287,28 @@ export type VASTAsset =
        * Inline VAST XML content
        */
       content: string;
-      vast_version?: VASTVersion | null;
+      vast_version?: VASTVersion;
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
-      vpaid_enabled?: boolean | null;
+      vpaid_enabled?: boolean;
       /**
        * Expected video duration in milliseconds (if known)
        */
-      duration_ms?: number | null;
+      duration_ms?: number;
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: VASTTrackingEvent[] | null;
+      tracking_events?: VASTTrackingEvent[];
       /**
        * URL to captions file (WebVTT, SRT, etc.)
        */
-      captions_url?: string | null;
+      captions_url?: string;
       /**
        * URL to audio description track for visually impaired users
        */
-      audio_description_url?: string | null;
-      provenance?: Provenance | null;
+      audio_description_url?: string;
+      provenance?: Provenance;
     };
 /**
  * VAST specification version
@@ -3367,24 +3367,24 @@ export type DAASTAsset =
        * URL endpoint that returns DAAST XML
        */
       url: string;
-      daast_version?: DAASTVersion | null;
+      daast_version?: DAASTVersion;
       /**
        * Expected audio duration in milliseconds (if known)
        */
-      duration_ms?: number | null;
+      duration_ms?: number;
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: DAASTTrackingEvent[] | null;
+      tracking_events?: DAASTTrackingEvent[];
       /**
        * Whether companion display ads are included
        */
-      companion_ads?: boolean | null;
+      companion_ads?: boolean;
       /**
        * URL to text transcript of the audio content
        */
-      transcript_url?: string | null;
-      provenance?: Provenance | null;
+      transcript_url?: string;
+      provenance?: Provenance;
     }
   | {
       /**
@@ -3395,24 +3395,24 @@ export type DAASTAsset =
        * Inline DAAST XML content
        */
       content: string;
-      daast_version?: DAASTVersion | null;
+      daast_version?: DAASTVersion;
       /**
        * Expected audio duration in milliseconds (if known)
        */
-      duration_ms?: number | null;
+      duration_ms?: number;
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: DAASTTrackingEvent[] | null;
+      tracking_events?: DAASTTrackingEvent[];
       /**
        * Whether companion display ads are included
        */
-      companion_ads?: boolean | null;
+      companion_ads?: boolean;
       /**
        * URL to text transcript of the audio content
        */
-      transcript_url?: string | null;
-      provenance?: Provenance | null;
+      transcript_url?: string;
+      provenance?: Provenance;
     };
 /**
  * DAAST specification version
@@ -3553,20 +3553,20 @@ export interface CreateMediaBuyRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Client-generated unique key for this request. If a request with the same idempotency_key and account has already been processed, the seller returns the existing media buy rather than creating a duplicate. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
   /**
    * Campaign governance plan identifier. Required when the account has governance_agents. The seller includes this in the committed check_governance request so the governance agent can validate against the correct plan.
    */
-  plan_id?: string | null;
+  plan_id?: string;
   account: AccountReference;
   /**
    * ID of a proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array.
    */
-  proposal_id?: string | null;
+  proposal_id?: string;
   /**
    * Total budget for the media buy when executing a proposal. The publisher applies the proposal's allocation percentages to this amount to derive package budgets.
    */
@@ -3583,10 +3583,10 @@ export interface CreateMediaBuyRequest {
   /**
    * Array of package configurations. Required when not using proposal_id. When executing a proposal, this can be omitted and packages will be derived from the proposal's allocations.
    */
-  packages?: PackageRequest[] | null;
+  packages?: PackageRequest[];
   brand: BrandReference;
-  advertiser_industry?: AdvertiserIndustry | null;
-  invoice_recipient?: BusinessEntity | null;
+  advertiser_industry?: AdvertiserIndustry;
+  invoice_recipient?: BusinessEntity;
   /**
    * Acceptance of an insertion order from a committed proposal. Required when the proposal's insertion_order has requires_signature: true. References the io_id from the proposal's insertion_order.
    */
@@ -3606,23 +3606,23 @@ export interface CreateMediaBuyRequest {
     /**
      * Reference to the electronic signature from the signing service, when signing_url was used
      */
-    signature_id?: string | null;
+    signature_id?: string;
   };
   /**
    * Purchase order number for tracking
    */
-  po_number?: string | null;
+  po_number?: string;
   /**
    * Agency estimate or authorization number. Primary financial reference for broadcast buys — links the order to the agency's media plan and billing system. Travels with the order and Ad-IDs through the transaction lifecycle.
    */
-  agency_estimate_number?: string | null;
+  agency_estimate_number?: string;
   start_time: StartTiming;
   /**
    * Campaign end date/time in ISO 8601 format
    */
   end_time: string;
-  push_notification_config?: PushNotificationConfig | null;
-  reporting_webhook?: ReportingWebhook | null;
+  push_notification_config?: PushNotificationConfig;
+  reporting_webhook?: ReportingWebhook;
   /**
    * Optional webhook configuration for content artifact delivery. Used by governance agents to validate content adjacency. Seller pushes artifacts to this endpoint; orchestrator forwards to governance agent for validation.
    */
@@ -3634,7 +3634,7 @@ export interface CreateMediaBuyRequest {
     /**
      * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
      */
-    token?: string | null;
+    token?: string;
     /**
      * Authentication configuration for webhook delivery (A2A-compatible)
      */
@@ -3655,14 +3655,14 @@ export interface CreateMediaBuyRequest {
     /**
      * For batched delivery, how often to push artifacts. Required when delivery_mode is 'batched'.
      */
-    batch_frequency?: 'hourly' | 'daily' | null;
+    batch_frequency?: 'hourly' | 'daily';
     /**
      * Fraction of impressions to include (0-1). 1.0 = all impressions, 0.1 = 10% sample. Default: 1.0
      */
-    sampling_rate?: number | null;
+    sampling_rate?: number;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Package configuration for media buy creation
@@ -3671,7 +3671,7 @@ export interface PackageRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Product ID for this package
    */
@@ -3679,12 +3679,12 @@ export interface PackageRequest {
   /**
    * Array of format IDs that will be used for this package - must be supported by the product. If omitted, defaults to all formats supported by the product.
    */
-  format_ids?: FormatID[] | null;
+  format_ids?: FormatID[];
   /**
    * Budget allocation for this package in the media buy's currency
    */
   budget: number;
-  pacing?: Pacing | null;
+  pacing?: Pacing;
   /**
    * ID of the selected pricing option from the product's pricing_options array
    */
@@ -3692,51 +3692,51 @@ export interface PackageRequest {
   /**
    * Bid price for auction-based pricing options. This is the exact bid/price to honor unless selected pricing_option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
-  bid_price?: number | null;
+  bid_price?: number;
   /**
    * Impression goal for this package
    */
-  impressions?: number | null;
+  impressions?: number;
   /**
    * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Must fall within the media buy's date range.
    */
-  start_time?: string | null;
+  start_time?: string;
   /**
    * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Must fall within the media buy's date range.
    */
-  end_time?: string | null;
+  end_time?: string;
   /**
    * Whether this package should be created in a paused state. Paused packages do not deliver impressions. Defaults to false.
    */
-  paused?: boolean | null;
+  paused?: boolean;
   /**
    * Catalogs this package promotes. Each catalog MUST have a distinct type (e.g., one product catalog, one store catalog). This constraint is enforced at the application level — sellers MUST reject requests containing multiple catalogs of the same type with a validation_error. Makes the package catalog-driven: one budget envelope, platform optimizes across items.
    */
-  catalogs?: Catalog[] | null;
+  catalogs?: Catalog[];
   /**
    * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
    */
-  optimization_goals?: OptimizationGoal[] | null;
-  targeting_overlay?: TargetingOverlay | null;
-  measurement_terms?: MeasurementTerms | null;
+  optimization_goals?: OptimizationGoal[];
+  targeting_overlay?: TargetingOverlay;
+  measurement_terms?: MeasurementTerms;
   /**
    * Buyer's proposed performance standards for this package. Overrides product defaults. Seller accepts, rejects with TERMS_REJECTED, or adjusts. When absent, product's performance_standards apply.
    */
-  performance_standards?: PerformanceStandard[] | null;
+  performance_standards?: PerformanceStandard[];
   /**
    * Assign existing library creatives to this package with optional weights and placement targeting
    */
-  creative_assignments?: CreativeAssignment[] | null;
+  creative_assignments?: CreativeAssignment[];
   /**
    * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
    */
-  creatives?: CreativeAsset[] | null;
+  creatives?: CreativeAsset[];
   /**
    * Agency estimate or authorization number for this package. Overrides the media buy-level estimate number when different packages correspond to different agency estimates (e.g., different stations or flights within the same buy).
    */
-  agency_estimate_number?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  agency_estimate_number?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance, proximity targeting), age verification (alcohol, gambling), device platform (app compatibility), language (localization), and keyword targeting (search/retail media).
@@ -3745,19 +3745,19 @@ export interface TargetingOverlay {
   /**
    * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
    */
-  geo_countries?: string[] | null;
+  geo_countries?: string[];
   /**
    * Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
    */
-  geo_countries_exclude?: string[] | null;
+  geo_countries_exclude?: string[];
   /**
    * Restrict delivery to specific regions/states. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
    */
-  geo_regions?: string[] | null;
+  geo_regions?: string[];
   /**
    * Exclude specific regions/states from delivery. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
    */
-  geo_regions_exclude?: string[] | null;
+  geo_regions_exclude?: string[];
   /**
    * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
    */
@@ -3801,29 +3801,29 @@ export interface TargetingOverlay {
   /**
    * Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.
    */
-  daypart_targets?: DaypartTarget[] | null;
+  daypart_targets?: DaypartTarget[];
   /**
    * @deprecated
    * Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.
    */
-  axe_include_segment?: string | null;
+  axe_include_segment?: string;
   /**
    * @deprecated
    * Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.
    */
-  axe_exclude_segment?: string | null;
+  axe_exclude_segment?: string;
   /**
    * Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.
    */
-  audience_include?: string[] | null;
+  audience_include?: string[];
   /**
    * Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.
    */
-  audience_exclude?: string[] | null;
-  frequency_cap?: FrequencyCap | null;
-  property_list?: PropertyListReference | null;
-  collection_list?: CollectionListReference | null;
-  collection_list_exclude?: CollectionListReference | null;
+  audience_exclude?: string[];
+  frequency_cap?: FrequencyCap;
+  property_list?: PropertyListReference;
+  collection_list?: CollectionListReference;
+  collection_list_exclude?: CollectionListReference;
   /**
    * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
    */
@@ -3835,24 +3835,24 @@ export interface TargetingOverlay {
     /**
      * Whether verified age (not inferred) is required for compliance
      */
-    verification_required?: boolean | null;
+    verification_required?: boolean;
     /**
      * Accepted verification methods. If omitted, any method the platform supports is acceptable.
      */
-    accepted_methods?: AgeVerificationMethod[] | null;
+    accepted_methods?: AgeVerificationMethod[];
   };
   /**
    * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
    */
-  device_platform?: DevicePlatform[] | null;
+  device_platform?: DevicePlatform[];
   /**
    * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
    */
-  device_type?: DeviceType[] | null;
+  device_type?: DeviceType[];
   /**
    * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
    */
-  device_type_exclude?: DeviceType[] | null;
+  device_type_exclude?: DeviceType[];
   /**
    * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
    */
@@ -3864,22 +3864,22 @@ export interface TargetingOverlay {
     /**
      * Filter to specific stores within the catalog. Omit to target all stores.
      */
-    store_ids?: string[] | null;
+    store_ids?: string[];
     /**
      * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
      */
-    catchment_ids?: string[] | null;
+    catchment_ids?: string[];
   }[];
   /**
    * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
    */
   geo_proximity?: {
-    [k: string]: unknown | null | undefined;
+    [k: string]: unknown | undefined;
   }[];
   /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
    */
-  language?: string[] | null;
+  language?: string[];
   /**
    * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
    */
@@ -3895,7 +3895,7 @@ export interface TargetingOverlay {
     /**
      * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
      */
-    bid_price?: number | null;
+    bid_price?: number;
   }[];
   /**
    * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
@@ -3926,7 +3926,7 @@ export interface CollectionListReference {
   /**
    * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
    */
-  auth_token?: string | null;
+  auth_token?: string;
 }
 /**
  * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
@@ -3939,11 +3939,11 @@ export interface CreativeAssignment {
   /**
    * Relative delivery weight for this creative (0–100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally — a creative with weight 2 gets twice the delivery of weight 1. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
    */
-  weight?: number | null;
+  weight?: number;
   /**
    * Optional array of placement IDs where this creative should run. When omitted, the creative runs on all placements in the package. References placement_id values from the product's placements array.
    */
-  placement_ids?: string[] | null;
+  placement_ids?: string[];
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -3994,31 +3994,31 @@ export interface CreativeAsset {
      * Macro values to apply for this preview
      */
     macros?: {
-      [k: string]: string | null | undefined;
+      [k: string]: string | undefined;
     };
     /**
      * Natural language description of the context for AI-generated content
      */
-    context_description?: string | null;
+    context_description?: string;
   }[];
   /**
    * User-defined tags for organization and searchability
    */
-  tags?: string[] | null;
-  status?: CreativeStatus | null;
+  tags?: string[];
+  status?: CreativeStatus;
   /**
    * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
    */
-  weight?: number | null;
+  weight?: number;
   /**
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
    */
-  placement_ids?: string[] | null;
+  placement_ids?: string[];
   /**
    * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
    */
-  industry_identifiers?: IndustryIdentifier[] | null;
-  provenance?: Provenance | null;
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
 }
 /**
  * Image asset with URL and dimensions
@@ -4039,18 +4039,18 @@ export interface ImageAsset {
   /**
    * Image file format (jpg, png, gif, webp, etc.)
    */
-  format?: string | null;
+  format?: string;
   /**
    * Alternative text for accessibility
    */
-  alt_text?: string | null;
-  provenance?: Provenance | null;
+  alt_text?: string;
+  provenance?: Provenance;
 }
 /**
  * Provenance metadata for this asset, overrides manifest-level provenance
  */
 export interface Provenance {
-  digital_source_type?: DigitalSourceType | null;
+  digital_source_type?: DigitalSourceType;
   /**
    * AI system used to generate or modify this content. Aligns with IPTC 2025.1 AI metadata fields and C2PA claim_generator.
    */
@@ -4062,16 +4062,16 @@ export interface Provenance {
     /**
      * Version identifier for the AI tool or model (e.g., '25.1', '0125', '2.1'). For generative models, use the model version rather than the API version.
      */
-    version?: string | null;
+    version?: string;
     /**
      * Organization that provides the AI tool (e.g., 'OpenAI', 'Stability AI', 'Google')
      */
-    provider?: string | null;
+    provider?: string;
   };
   /**
    * Level of human involvement in the AI-assisted creation process
    */
-  human_oversight?: 'none' | 'prompt_only' | 'selected' | 'edited' | 'directed' | null;
+  human_oversight?: 'none' | 'prompt_only' | 'selected' | 'edited' | 'directed';
   /**
    * Party declaring this provenance. Identifies who attached the provenance claim, enabling receiving parties to assess trust.
    */
@@ -4079,7 +4079,7 @@ export interface Provenance {
     /**
      * URL of the agent or service that declared this provenance
      */
-    agent_url?: string | null;
+    agent_url?: string;
     /**
      * Role of the declaring party in the supply chain
      */
@@ -4088,11 +4088,11 @@ export interface Provenance {
   /**
    * When this provenance claim was made (ISO 8601). Distinct from created_time, which records when the content itself was produced. A provenance claim may be attached well after content creation, for example when retroactively declaring AI involvement for regulatory compliance.
    */
-  declared_at?: string | null;
+  declared_at?: string;
   /**
    * When this content was created or generated (ISO 8601)
    */
-  created_time?: string | null;
+  created_time?: string;
   /**
    * C2PA Content Credentials reference. Links to the cryptographic provenance manifest for this content. Because file-level C2PA bindings break during ad-tech transcoding, this URL reference preserves the chain of provenance through the supply chain.
    */
@@ -4121,7 +4121,7 @@ export interface Provenance {
       /**
        * Sub-national region code (e.g., 'CA' for California, 'BY' for Bavaria)
        */
-      region?: string | null;
+      region?: string;
       /**
        * Regulation identifier (e.g., 'eu_ai_act_article_50', 'ca_sb_942', 'cn_deep_synthesis')
        */
@@ -4129,21 +4129,21 @@ export interface Provenance {
       /**
        * Required disclosure label text for this jurisdiction, in the local language
        */
-      label_text?: string | null;
+      label_text?: string;
       /**
        * How the disclosure should be rendered for this jurisdiction. Expresses the declaring party's intent for persistence and position based on regulatory requirements. Publishers control actual rendering but governance agents can audit whether guidance was followed.
        */
       render_guidance?: {
-        persistence?: DisclosurePersistence | null;
+        persistence?: DisclosurePersistence;
         /**
          * Minimum display duration in milliseconds for initial persistence. Recommended when persistence is initial — without it, the duration is at the publisher's discretion. At serve time the publisher reads this from provenance since the brief is not available.
          */
-        min_duration_ms?: number | null;
+        min_duration_ms?: number;
         /**
          * Preferred disclosure positions in priority order. The first position a format supports should be used.
          */
-        positions?: DisclosurePosition[] | null;
-        ext?: ExtensionObject | null;
+        positions?: DisclosurePosition[];
+        ext?: ExtensionObject;
       };
     }[];
   };
@@ -4158,7 +4158,7 @@ export interface Provenance {
     /**
      * When the verification was performed (ISO 8601)
      */
-    verified_time?: string | null;
+    verified_time?: string;
     /**
      * Verification outcome
      */
@@ -4166,13 +4166,13 @@ export interface Provenance {
     /**
      * Confidence score of the verification result (0.0 to 1.0)
      */
-    confidence?: number | null;
+    confidence?: number;
     /**
      * URL to the full verification report
      */
-    details_url?: string | null;
+    details_url?: string;
   }[];
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Video asset with URL and technical specifications including audio track properties
@@ -4193,108 +4193,108 @@ export interface VideoAsset {
   /**
    * Video duration in milliseconds
    */
-  duration_ms?: number | null;
+  duration_ms?: number;
   /**
    * File size in bytes
    */
-  file_size_bytes?: number | null;
+  file_size_bytes?: number;
   /**
    * Video container format (mp4, webm, mov, etc.)
    */
-  container_format?: string | null;
+  container_format?: string;
   /**
    * Video codec used (h264, h265, vp9, av1, prores, etc.)
    */
-  video_codec?: string | null;
+  video_codec?: string;
   /**
    * Video stream bitrate in kilobits per second
    */
-  video_bitrate_kbps?: number | null;
+  video_bitrate_kbps?: number;
   /**
    * Frame rate as string to preserve precision (e.g., '23.976', '29.97', '30')
    */
-  frame_rate?: string | null;
+  frame_rate?: string;
   /**
    * Whether the video uses constant (CFR) or variable (VFR) frame rate
    */
-  frame_rate_type?: 'constant' | 'variable' | null;
+  frame_rate_type?: 'constant' | 'variable';
   /**
    * Scan type of the video
    */
-  scan_type?: 'progressive' | 'interlaced' | null;
+  scan_type?: 'progressive' | 'interlaced';
   /**
    * Color space of the video
    */
-  color_space?: 'rec709' | 'rec2020' | 'rec2100' | 'srgb' | 'dci_p3' | null;
+  color_space?: 'rec709' | 'rec2020' | 'rec2100' | 'srgb' | 'dci_p3';
   /**
    * HDR format if applicable, or 'sdr' for standard dynamic range
    */
-  hdr_format?: 'sdr' | 'hdr10' | 'hdr10_plus' | 'hlg' | 'dolby_vision' | null;
+  hdr_format?: 'sdr' | 'hdr10' | 'hdr10_plus' | 'hlg' | 'dolby_vision';
   /**
    * Chroma subsampling format
    */
-  chroma_subsampling?: '4:2:0' | '4:2:2' | '4:4:4' | null;
+  chroma_subsampling?: '4:2:0' | '4:2:2' | '4:4:4';
   /**
    * Video bit depth
    */
-  video_bit_depth?: 8 | 10 | 12 | null;
+  video_bit_depth?: 8 | 10 | 12;
   /**
    * GOP/keyframe interval in seconds
    */
-  gop_interval_seconds?: number | null;
+  gop_interval_seconds?: number;
   /**
    * GOP structure type
    */
-  gop_type?: 'closed' | 'open' | null;
+  gop_type?: 'closed' | 'open';
   /**
    * Position of moov atom in MP4 container
    */
-  moov_atom_position?: 'start' | 'end' | null;
+  moov_atom_position?: 'start' | 'end';
   /**
    * Whether the video contains an audio track
    */
-  has_audio?: boolean | null;
+  has_audio?: boolean;
   /**
    * Audio codec used (aac, aac_lc, he_aac, pcm, mp3, ac3, eac3, etc.)
    */
-  audio_codec?: string | null;
+  audio_codec?: string;
   /**
    * Audio sampling rate in Hz (e.g., 44100, 48000)
    */
-  audio_sampling_rate_hz?: number | null;
+  audio_sampling_rate_hz?: number;
   /**
    * Audio channel configuration
    */
-  audio_channels?: 'mono' | 'stereo' | '5.1' | '7.1' | null;
+  audio_channels?: 'mono' | 'stereo' | '5.1' | '7.1';
   /**
    * Audio bit depth
    */
-  audio_bit_depth?: 16 | 24 | 32 | null;
+  audio_bit_depth?: 16 | 24 | 32;
   /**
    * Audio bitrate in kilobits per second
    */
-  audio_bitrate_kbps?: number | null;
+  audio_bitrate_kbps?: number;
   /**
    * Integrated loudness in LUFS
    */
-  audio_loudness_lufs?: number | null;
+  audio_loudness_lufs?: number;
   /**
    * True peak level in dBFS
    */
-  audio_true_peak_dbfs?: number | null;
+  audio_true_peak_dbfs?: number;
   /**
    * URL to captions file (WebVTT, SRT, etc.)
    */
-  captions_url?: string | null;
+  captions_url?: string;
   /**
    * URL to text transcript of the video content
    */
-  transcript_url?: string | null;
+  transcript_url?: string;
   /**
    * URL to audio description track for visually impaired users
    */
-  audio_description_url?: string | null;
-  provenance?: Provenance | null;
+  audio_description_url?: string;
+  provenance?: Provenance;
 }
 /**
  * Audio asset with URL and technical specifications
@@ -4307,48 +4307,48 @@ export interface AudioAsset {
   /**
    * Audio duration in milliseconds
    */
-  duration_ms?: number | null;
+  duration_ms?: number;
   /**
    * File size in bytes
    */
-  file_size_bytes?: number | null;
+  file_size_bytes?: number;
   /**
    * Audio container/file format (mp3, m4a, aac, wav, ogg, flac, etc.)
    */
-  container_format?: string | null;
+  container_format?: string;
   /**
    * Audio codec used (aac, aac_lc, he_aac, pcm, mp3, vorbis, opus, flac, ac3, eac3, etc.)
    */
-  codec?: string | null;
+  codec?: string;
   /**
    * Sampling rate in Hz (e.g., 44100, 48000, 96000)
    */
-  sampling_rate_hz?: number | null;
+  sampling_rate_hz?: number;
   /**
    * Channel configuration
    */
-  channels?: 'mono' | 'stereo' | '5.1' | '7.1' | null;
+  channels?: 'mono' | 'stereo' | '5.1' | '7.1';
   /**
    * Bit depth
    */
-  bit_depth?: 16 | 24 | 32 | null;
+  bit_depth?: 16 | 24 | 32;
   /**
    * Bitrate in kilobits per second
    */
-  bitrate_kbps?: number | null;
+  bitrate_kbps?: number;
   /**
    * Integrated loudness in LUFS
    */
-  loudness_lufs?: number | null;
+  loudness_lufs?: number;
   /**
    * True peak level in dBFS
    */
-  true_peak_dbfs?: number | null;
+  true_peak_dbfs?: number;
   /**
    * URL to text transcript of the audio content
    */
-  transcript_url?: string | null;
-  provenance?: Provenance | null;
+  transcript_url?: string;
+  provenance?: Provenance;
 }
 /**
  * Text content asset
@@ -4361,8 +4361,8 @@ export interface TextAsset {
   /**
    * Language code (e.g., 'en', 'es', 'fr')
    */
-  language?: string | null;
-  provenance?: Provenance | null;
+  language?: string;
+  provenance?: Provenance;
 }
 /**
  * URL reference asset
@@ -4372,12 +4372,12 @@ export interface URLAsset {
    * URL reference
    */
   url: string;
-  url_type?: URLAssetType | null;
+  url_type?: URLAssetType;
   /**
    * Description of what this URL points to
    */
-  description?: string | null;
-  provenance?: Provenance | null;
+  description?: string;
+  provenance?: Provenance;
 }
 /**
  * HTML content asset
@@ -4390,7 +4390,7 @@ export interface HTMLAsset {
   /**
    * HTML version (e.g., 'HTML5')
    */
-  version?: string | null;
+  version?: string;
   /**
    * Self-declared accessibility properties for this opaque creative
    */
@@ -4398,21 +4398,21 @@ export interface HTMLAsset {
     /**
      * Text alternative describing the creative content
      */
-    alt_text?: string | null;
+    alt_text?: string;
     /**
      * Whether the creative can be fully operated via keyboard
      */
-    keyboard_navigable?: boolean | null;
+    keyboard_navigable?: boolean;
     /**
      * Whether the creative respects prefers-reduced-motion or provides pause/stop controls
      */
-    motion_control?: boolean | null;
+    motion_control?: boolean;
     /**
      * Whether the creative has been tested with screen readers
      */
-    screen_reader_tested?: boolean | null;
+    screen_reader_tested?: boolean;
   };
-  provenance?: Provenance | null;
+  provenance?: Provenance;
 }
 /**
  * JavaScript code asset
@@ -4422,7 +4422,7 @@ export interface JavaScriptAsset {
    * JavaScript content
    */
   content: string;
-  module_type?: JavaScriptModuleType | null;
+  module_type?: JavaScriptModuleType;
   /**
    * Self-declared accessibility properties for this opaque creative
    */
@@ -4430,21 +4430,21 @@ export interface JavaScriptAsset {
     /**
      * Text alternative describing the creative content
      */
-    alt_text?: string | null;
+    alt_text?: string;
     /**
      * Whether the creative can be fully operated via keyboard
      */
-    keyboard_navigable?: boolean | null;
+    keyboard_navigable?: boolean;
     /**
      * Whether the creative respects prefers-reduced-motion or provides pause/stop controls
      */
-    motion_control?: boolean | null;
+    motion_control?: boolean;
     /**
      * Whether the creative has been tested with screen readers
      */
-    screen_reader_tested?: boolean | null;
+    screen_reader_tested?: boolean;
   };
-  provenance?: Provenance | null;
+  provenance?: Provenance;
 }
 /**
  * Webhook for server-side dynamic content rendering (DCO)
@@ -4454,19 +4454,19 @@ export interface WebhookAsset {
    * Webhook URL to call for dynamic content
    */
   url: string;
-  method?: HTTPMethod | null;
+  method?: HTTPMethod;
   /**
    * Maximum time to wait for response in milliseconds
    */
-  timeout_ms?: number | null;
+  timeout_ms?: number;
   /**
    * Universal macros that can be passed to webhook (e.g., DEVICE_TYPE, COUNTRY). See docs/creative/universal-macros.mdx for full list.
    */
-  supported_macros?: (UniversalMacro | string)[] | null;
+  supported_macros?: (UniversalMacro | string)[];
   /**
    * Universal macros that must be provided for webhook to function
    */
-  required_macros?: (UniversalMacro | string)[] | null;
+  required_macros?: (UniversalMacro | string)[];
   response_type: WebhookResponseType;
   /**
    * Security configuration for webhook calls
@@ -4476,13 +4476,13 @@ export interface WebhookAsset {
     /**
      * Header name for HMAC signature (e.g., 'X-Signature')
      */
-    hmac_header?: string | null;
+    hmac_header?: string;
     /**
      * Header name for API key (e.g., 'X-API-Key')
      */
-    api_key_header?: string | null;
+    api_key_header?: string;
   };
-  provenance?: Provenance | null;
+  provenance?: Provenance;
 }
 /**
  * CSS stylesheet asset
@@ -4495,8 +4495,8 @@ export interface CSSAsset {
   /**
    * CSS media query context (e.g., 'screen', 'print')
    */
-  media?: string | null;
-  provenance?: Provenance | null;
+  media?: string;
+  provenance?: Provenance;
 }
 /**
  * Markdown-formatted text content following CommonMark specification
@@ -4509,12 +4509,12 @@ export interface MarkdownAsset {
   /**
    * Language code (e.g., 'en', 'es', 'fr')
    */
-  language?: string | null;
-  markdown_flavor?: MarkdownFlavor | null;
+  language?: string;
+  markdown_flavor?: MarkdownFlavor;
   /**
    * Whether raw HTML blocks are allowed in the markdown. False recommended for security.
    */
-  allow_raw_html?: boolean | null;
+  allow_raw_html?: boolean;
 }
 /**
  * Campaign-level creative context for AI-powered creative generation. Provides the layer between brand identity (stable across campaigns) and individual creative execution (per-request). A brand has one identity (defined in brand.json) but different creative briefs for each campaign or flight.
@@ -4527,19 +4527,19 @@ export interface CreativeBrief {
   /**
    * Campaign objective that guides creative tone and call-to-action strategy
    */
-  objective?: 'awareness' | 'consideration' | 'conversion' | 'retention' | 'engagement' | null;
+  objective?: 'awareness' | 'consideration' | 'conversion' | 'retention' | 'engagement';
   /**
    * Desired tone for this campaign, modulating the brand's base tone (e.g., 'playful and festive', 'premium and aspirational')
    */
-  tone?: string | null;
+  tone?: string;
   /**
    * Target audience description for this campaign
    */
-  audience?: string | null;
+  audience?: string;
   /**
    * Creative territory or positioning the campaign should occupy
    */
-  territory?: string | null;
+  territory?: string;
   /**
    * Messaging framework for the campaign
    */
@@ -4547,24 +4547,24 @@ export interface CreativeBrief {
     /**
      * Primary headline
      */
-    headline?: string | null;
+    headline?: string;
     /**
      * Supporting tagline or sub-headline
      */
-    tagline?: string | null;
+    tagline?: string;
     /**
      * Call-to-action text
      */
-    cta?: string | null;
+    cta?: string;
     /**
      * Key messages to communicate in priority order
      */
-    key_messages?: string[] | null;
+    key_messages?: string[];
   };
   /**
    * Visual and strategic reference materials such as mood boards, product shots, example creatives, and strategy documents
    */
-  reference_assets?: ReferenceAsset[] | null;
+  reference_assets?: ReferenceAsset[];
   /**
    * Regulatory and legal compliance requirements for this campaign. Campaign-specific, regional, and product-based — distinct from brand-level disclaimers in brand.json.
    */
@@ -4577,29 +4577,29 @@ export interface CreativeBrief {
        * The disclosure text that must appear in the creative
        */
       text: string;
-      position?: DisclosurePosition | null;
+      position?: DisclosurePosition;
       /**
        * Jurisdictions where this disclosure is required. ISO 3166-1 alpha-2 country codes or ISO 3166-2 subdivision codes (e.g., 'US', 'GB', 'US-NJ', 'CA-QC'). If omitted, the disclosure applies to all jurisdictions in the campaign.
        */
-      jurisdictions?: string[] | null;
+      jurisdictions?: string[];
       /**
        * The regulation or legal authority requiring this disclosure (e.g., 'SEC Rule 156', 'FCA COBS 4.5', 'FDA 21 CFR 202')
        */
-      regulation?: string | null;
+      regulation?: string;
       /**
        * Minimum display duration in milliseconds. For video/audio disclosures, how long the disclosure must be visible or audible. For static formats, how long the disclosure must remain on screen before any auto-advance.
        */
-      min_duration_ms?: number | null;
+      min_duration_ms?: number;
       /**
        * Language of the disclosure text as a BCP 47 language tag (e.g., 'en', 'fr-CA', 'es'). When omitted, the disclosure is assumed to match the creative's language.
        */
-      language?: string | null;
-      persistence?: DisclosurePersistence | null;
+      language?: string;
+      persistence?: DisclosurePersistence;
     }[];
     /**
      * Claims that must not appear in creatives for this campaign. Creative agents should ensure generated content avoids these claims.
      */
-    prohibited_claims?: string[] | null;
+    prohibited_claims?: string[];
   };
 }
 /**
@@ -4617,7 +4617,7 @@ export interface ReferenceAsset {
   /**
    * Human-readable description of the asset and how it should inform creative generation
    */
-  description?: string | null;
+  description?: string;
 }
 /**
  * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
@@ -4640,15 +4640,15 @@ export interface BusinessEntity {
   /**
    * VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.
    */
-  vat_id?: string | null;
+  vat_id?: string;
   /**
    * Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)
    */
-  tax_id?: string | null;
+  tax_id?: string;
   /**
    * Company registration number (e.g., HRB 12345 for German Handelsregister)
    */
-  registration_number?: string | null;
+  registration_number?: string;
   /**
    * Postal address for invoicing and legal correspondence
    */
@@ -4662,7 +4662,7 @@ export interface BusinessEntity {
     /**
      * State, province, or region
      */
-    region?: string | null;
+    region?: string;
     /**
      * ISO 3166-1 alpha-2 country code
      */
@@ -4679,9 +4679,9 @@ export interface BusinessEntity {
     /**
      * Full name of the contact
      */
-    name?: string | null;
-    email?: string | null;
-    phone?: string | null;
+    name?: string;
+    email?: string;
+    phone?: string;
   }[];
   /**
    * Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.
@@ -4694,21 +4694,21 @@ export interface BusinessEntity {
     /**
      * International Bank Account Number (SEPA markets)
      */
-    iban?: string | null;
+    iban?: string;
     /**
      * Bank Identifier Code / SWIFT code (SEPA markets)
      */
-    bic?: string | null;
+    bic?: string;
     /**
      * Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)
      */
-    routing_number?: string | null;
+    routing_number?: string;
     /**
      * Bank account number for non-SEPA markets
      */
-    account_number?: string | null;
+    account_number?: string;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Optional webhook configuration for async task status notifications. Publisher will send webhooks when status changes (working, input-required, completed, failed). The client generates an operation_id and embeds it in the URL before sending — the publisher echoes it back in webhook payloads for correlation.
@@ -4721,7 +4721,7 @@ export interface PushNotificationConfig {
   /**
    * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
    */
-  token?: string | null;
+  token?: string;
   /**
    * Authentication configuration for webhook delivery (A2A-compatible)
    */
@@ -4747,7 +4747,7 @@ export interface ReportingWebhook {
   /**
    * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
    */
-  token?: string | null;
+  token?: string;
   /**
    * Authentication configuration for webhook delivery (A2A-compatible)
    */
@@ -4768,7 +4768,7 @@ export interface ReportingWebhook {
   /**
    * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included. Must be subset of product's available_metrics.
    */
-  requested_metrics?: AvailableMetric[] | null;
+  requested_metrics?: AvailableMetric[];
 }
 
 
@@ -4843,11 +4843,11 @@ export type AudienceSelector =
       /**
        * Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided.
        */
-      min_value?: number | null;
+      min_value?: number;
       /**
        * Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided.
        */
-      max_value?: number | null;
+      max_value?: number;
     }
   | {
       /**
@@ -4861,7 +4861,7 @@ export type AudienceSelector =
       /**
        * Optional grouping hint for the governance agent (e.g., 'demographic', 'behavioral', 'contextual', 'financial')
        */
-      category?: string | null;
+      category?: string;
     };
 /**
  * Success response - media buy created successfully
@@ -4871,21 +4871,21 @@ export interface CreateMediaBuySuccess {
    * Seller's unique identifier for the created media buy
    */
   media_buy_id: string;
-  account?: Account | null;
-  invoice_recipient?: BusinessEntity | null;
-  status?: MediaBuyStatus | null;
+  account?: Account;
+  invoice_recipient?: BusinessEntity;
+  status?: MediaBuyStatus;
   /**
    * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
    */
-  confirmed_at?: string | null;
+  confirmed_at?: string;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
-  creative_deadline?: string | null;
+  creative_deadline?: string;
   /**
    * Initial revision number for this media buy. Use in subsequent update_media_buy requests for optimistic concurrency.
    */
-  revision?: number | null;
+  revision?: number;
   /**
    * Actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys.
    */
@@ -4903,13 +4903,13 @@ export interface CreateMediaBuySuccess {
    * Array of created packages with complete state information
    */
   packages: Package[];
-  planned_delivery?: PlannedDelivery | null;
+  planned_delivery?: PlannedDelivery;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Account billed for this media buy. Includes advertiser, billing proxy (if any), and rate card applied.
@@ -4926,30 +4926,30 @@ export interface Account {
   /**
    * The advertiser whose rates apply to this account
    */
-  advertiser?: string | null;
+  advertiser?: string;
   /**
    * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
    */
-  billing_proxy?: string | null;
+  billing_proxy?: string;
   status: AccountStatus;
-  brand?: BrandReference | null;
+  brand?: BrandReference;
   /**
    * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
    */
-  operator?: string | null;
+  operator?: string;
   /**
    * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. See billing_entity for the invoiced party's business details.
    */
-  billing?: 'operator' | 'agent' | 'advertiser' | null;
-  billing_entity?: BusinessEntity | null;
+  billing?: 'operator' | 'agent' | 'advertiser';
+  billing_entity?: BusinessEntity;
   /**
    * Identifier for the rate card applied to this account
    */
-  rate_card?: string | null;
+  rate_card?: string;
   /**
    * Payment terms agreed for this account. Binding for all invoices when the account is active.
    */
-  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay' | null;
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
   /**
    * Maximum outstanding balance allowed
    */
@@ -4964,7 +4964,7 @@ export interface Account {
     /**
      * URL where the human can complete the required action (credit application, legal agreement, add funds).
      */
-    url?: string | null;
+    url?: string;
     /**
      * Human-readable description of what's needed.
      */
@@ -4972,12 +4972,12 @@ export interface Account {
     /**
      * When this setup link expires.
      */
-    expires_at?: string | null;
+    expires_at?: string;
   };
   /**
    * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to a specific operator+brand combination. agent: the agent's default account with no brand or operator association.
    */
-  account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent' | null;
+  account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
   /**
    * Governance agent endpoints registered on this account. Authentication credentials are write-only and not included in responses — use sync_governance to set or update credentials.
    */
@@ -4989,13 +4989,13 @@ export interface Account {
     /**
      * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
      */
-    categories?: string[] | null;
+    categories?: string[];
   }[];
   /**
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
-  sandbox?: boolean | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  ext?: ExtensionObject;
 }
 /**
  * A specific product within a media buy (line item)
@@ -5008,67 +5008,67 @@ export interface Package {
   /**
    * ID of the product this package is based on
    */
-  product_id?: string | null;
+  product_id?: string;
   /**
    * Budget allocation for this package in the currency specified by the pricing option
    */
-  budget?: number | null;
-  pacing?: Pacing | null;
+  budget?: number;
+  pacing?: Pacing;
   /**
    * ID of the selected pricing option from the product's pricing_options array
    */
-  pricing_option_id?: string | null;
+  pricing_option_id?: string;
   /**
    * Bid price for auction-based pricing. This is the exact bid/price to honor unless the selected pricing option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
-  bid_price?: number | null;
-  price_breakdown?: PriceBreakdown | null;
+  bid_price?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Impression goal for this package
    */
-  impressions?: number | null;
+  impressions?: number;
   /**
    * Catalogs this package promotes. Each catalog MUST have a distinct type (e.g., one product catalog, one store catalog). This constraint is enforced at the application level — sellers MUST reject requests containing multiple catalogs of the same type with a validation_error. Echoed from the create_media_buy request.
    */
-  catalogs?: Catalog[] | null;
+  catalogs?: Catalog[];
   /**
    * Format IDs active for this package. Echoed from the create_media_buy request; omitted means all formats for the product are active.
    */
-  format_ids?: FormatID[] | null;
-  targeting_overlay?: TargetingOverlay | null;
-  measurement_terms?: MeasurementTerms | null;
+  format_ids?: FormatID[];
+  targeting_overlay?: TargetingOverlay;
+  measurement_terms?: MeasurementTerms;
   /**
    * Agreed performance standards for this package. When any entry specifies a vendor, creatives assigned to this package MUST include corresponding tracker_script or tracker_pixel assets from that vendor.
    */
-  performance_standards?: PerformanceStandard[] | null;
+  performance_standards?: PerformanceStandard[];
   /**
    * Creative assets assigned to this package
    */
-  creative_assignments?: CreativeAssignment[] | null;
+  creative_assignments?: CreativeAssignment[];
   /**
    * Format IDs that creative assets will be provided for this package
    */
-  format_ids_to_provide?: FormatID[] | null;
+  format_ids_to_provide?: FormatID[];
   /**
    * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
    */
-  optimization_goals?: OptimizationGoal[] | null;
+  optimization_goals?: OptimizationGoal[];
   /**
    * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
    */
-  start_time?: string | null;
+  start_time?: string;
   /**
    * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
    */
-  end_time?: string | null;
+  end_time?: string;
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
-  paused?: boolean | null;
+  paused?: boolean;
   /**
    * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated. Defaults to false.
    */
-  canceled?: boolean | null;
+  canceled?: boolean;
   /**
    * Cancellation metadata. Present only when canceled is true.
    */
@@ -5081,22 +5081,22 @@ export interface Package {
     /**
      * Reason the package was canceled.
      */
-    reason?: string | null;
+    reason?: string;
     /**
      * ISO 8601 timestamp when the seller acknowledged the cancellation. Confirms inventory has been released and billing stopped. Absent until the seller processes the cancellation.
      */
-    acknowledged_at?: string | null;
+    acknowledged_at?: string;
   };
   /**
    * Agency estimate or authorization number for this package. Echoed from the buyer's request. When present on the package, takes precedence over the media buy-level estimate number.
    */
-  agency_estimate_number?: string | null;
+  agency_estimate_number?: string;
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
    */
-  creative_deadline?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  creative_deadline?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * The seller's interpreted delivery parameters. Describes what the seller will actually run -- geo, channels, flight dates, frequency caps, and budget. Present when the account has governance_agents or when the seller chooses to provide delivery transparency.
@@ -5109,46 +5109,46 @@ export interface PlannedDelivery {
     /**
      * ISO 3166-1 alpha-2 country codes where ads will deliver.
      */
-    countries?: string[] | null;
+    countries?: string[];
     /**
      * ISO 3166-2 subdivision codes where ads will deliver.
      */
-    regions?: string[] | null;
+    regions?: string[];
   };
   /**
    * Channels the seller will deliver on.
    */
-  channels?: MediaChannel[] | null;
+  channels?: MediaChannel[];
   /**
    * Actual flight start the seller will use.
    */
-  start_time?: string | null;
+  start_time?: string;
   /**
    * Actual flight end the seller will use.
    */
-  end_time?: string | null;
-  frequency_cap?: FrequencyCap | null;
+  end_time?: string;
+  frequency_cap?: FrequencyCap;
   /**
    * Human-readable summary of the audience the seller will target.
    */
-  audience_summary?: string | null;
+  audience_summary?: string;
   /**
    * Structured audience targeting the seller will activate. Each entry is either a signal reference or a descriptive criterion. When present, governance agents MUST use this for bias/fairness validation and SHOULD ignore audience_summary for validation purposes. The audience_summary field is a human-readable rendering of this array, not an independent declaration.
    */
-  audience_targeting?: AudienceSelector[] | null;
+  audience_targeting?: AudienceSelector[];
   /**
    * Total budget the seller will deliver against.
    */
-  total_budget?: number | null;
+  total_budget?: number;
   /**
    * ISO 4217 currency code for the budget.
    */
-  currency?: string | null;
+  currency?: string;
   /**
    * Registry policy IDs the seller will enforce for this delivery.
    */
-  enforced_policies?: string[] | null;
-  ext?: ExtensionObject | null;
+  enforced_policies?: string[];
+  ext?: ExtensionObject;
 }
 /**
  * Error response - operation failed, no media buy created
@@ -5158,8 +5158,8 @@ export interface CreateMediaBuyError {
    * Array of errors explaining why the operation failed
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // update_media_buy parameters
@@ -5170,7 +5170,7 @@ export interface UpdateMediaBuyRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Seller's ID of the media buy to update
    */
@@ -5178,41 +5178,41 @@ export interface UpdateMediaBuyRequest {
   /**
    * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
    */
-  revision?: number | null;
+  revision?: number;
   /**
    * Pause/resume the entire media buy (true = paused, false = active)
    */
-  paused?: boolean | null;
+  paused?: boolean;
   /**
    * Cancel the entire media buy. Cancellation is irreversible — canceled media buys cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE if the media buy cannot be canceled in its current state.
    */
-  canceled?: true | null;
+  canceled?: true;
   /**
    * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
    */
-  cancellation_reason?: string | null;
-  start_time?: StartTiming | null;
+  cancellation_reason?: string;
+  start_time?: StartTiming;
   /**
    * New end date/time in ISO 8601 format
    */
-  end_time?: string | null;
+  end_time?: string;
   /**
    * Package-specific updates for existing packages
    */
-  packages?: PackageUpdate[] | null;
-  invoice_recipient?: BusinessEntity | null;
+  packages?: PackageUpdate[];
+  invoice_recipient?: BusinessEntity;
   /**
    * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
    */
-  new_packages?: PackageRequest[] | null;
-  reporting_webhook?: ReportingWebhook | null;
-  push_notification_config?: PushNotificationConfig | null;
+  new_packages?: PackageRequest[];
+  reporting_webhook?: ReportingWebhook;
+  push_notification_config?: PushNotificationConfig;
   /**
    * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
@@ -5225,45 +5225,45 @@ export interface PackageUpdate {
   /**
    * Updated budget allocation for this package in the currency specified by the pricing option
    */
-  budget?: number | null;
-  pacing?: Pacing | null;
+  budget?: number;
+  pacing?: Pacing;
   /**
    * Updated bid price for auction-based pricing options. This is the exact bid/price to honor unless selected pricing_option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
-  bid_price?: number | null;
+  bid_price?: number;
   /**
    * Updated impression goal for this package
    */
-  impressions?: number | null;
+  impressions?: number;
   /**
    * Updated flight start date/time for this package in ISO 8601 format. Must fall within the media buy's date range.
    */
-  start_time?: string | null;
+  start_time?: string;
   /**
    * Updated flight end date/time for this package in ISO 8601 format. Must fall within the media buy's date range.
    */
-  end_time?: string | null;
+  end_time?: string;
   /**
    * Pause/resume specific package (true = paused, false = active)
    */
-  paused?: boolean | null;
+  paused?: boolean;
   /**
    * Cancel this specific package. Cancellation is irreversible — canceled packages stop delivery and cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE.
    */
-  canceled?: true | null;
+  canceled?: true;
   /**
    * Reason for canceling this package.
    */
-  cancellation_reason?: string | null;
+  cancellation_reason?: string;
   /**
    * Replace the catalogs this package promotes. Uses replacement semantics — the provided array replaces the current list. Omit to leave catalogs unchanged.
    */
-  catalogs?: Catalog[] | null;
+  catalogs?: Catalog[];
   /**
    * Replace all optimization goals for this package. Uses replacement semantics — omit to leave goals unchanged.
    */
-  optimization_goals?: OptimizationGoal[] | null;
-  targeting_overlay?: TargetingOverlay | null;
+  optimization_goals?: OptimizationGoal[];
+  targeting_overlay?: TargetingOverlay;
   /**
    * Keyword targets to add or update on this package. Upserts by (keyword, match_type) identity: if the pair already exists, its bid_price is updated; if not, a new keyword target is added. Use targeting_overlay.keyword_targets in create_media_buy to set the initial list.
    */
@@ -5279,7 +5279,7 @@ export interface PackageUpdate {
     /**
      * Per-keyword bid price. Inherits currency and max_bid interpretation from the package's pricing option.
      */
-    bid_price?: number | null;
+    bid_price?: number;
   }[];
   /**
    * Keyword targets to remove from this package. Removes matching (keyword, match_type) pairs. If a specified pair is not present, sellers SHOULD treat it as a no-op for that entry.
@@ -5323,13 +5323,13 @@ export interface PackageUpdate {
   /**
    * Replace creative assignments for this package with optional weights and placement targeting. Uses replacement semantics - omit to leave assignments unchanged.
    */
-  creative_assignments?: CreativeAssignment[] | null;
+  creative_assignments?: CreativeAssignment[];
   /**
    * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
    */
-  creatives?: CreativeAsset[] | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  creatives?: CreativeAsset[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
@@ -5343,20 +5343,20 @@ export interface UpdateMediaBuySuccess {
    * Seller's identifier for the media buy
    */
   media_buy_id: string;
-  status?: MediaBuyStatus | null;
+  status?: MediaBuyStatus;
   /**
    * Revision number after this update. Use this value in subsequent update_media_buy requests for optimistic concurrency.
    */
-  revision?: number | null;
+  revision?: number;
   /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
   implementation_date?: string | null;
-  invoice_recipient?: BusinessEntity | null;
+  invoice_recipient?: BusinessEntity;
   /**
    * Array of packages that were modified with complete state information
    */
-  affected_packages?: Package[] | null;
+  affected_packages?: Package[];
   /**
    * Actions the buyer can perform after this update. Saves a round-trip to get_media_buys.
    */
@@ -5373,9 +5373,9 @@ export interface UpdateMediaBuySuccess {
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - operation failed, no changes applied
@@ -5385,8 +5385,8 @@ export interface UpdateMediaBuyError {
    * Array of errors explaining why the operation failed
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_media_buys parameters
@@ -5397,27 +5397,27 @@ export interface GetMediaBuysRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
-  account?: AccountReference | null;
+  adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Array of media buy IDs to retrieve. When omitted, returns a paginated set of accessible media buys matching status_filter.
    */
-  media_buy_ids?: string[] | null;
+  media_buy_ids?: string[];
   /**
    * Filter by status. Can be a single status or array of statuses. Defaults to ["active"] when media_buy_ids is omitted. When media_buy_ids is provided, no implicit status filter is applied.
    */
-  status_filter?: MediaBuyStatus | MediaBuyStatus[] | null;
+  status_filter?: MediaBuyStatus | MediaBuyStatus[];
   /**
    * When true, include a near-real-time delivery snapshot for each package. Snapshots reflect the latest available entity-level stats from the platform (e.g., updated every ~15 minutes on GAM, ~1 hour on batch-only platforms). The staleness_seconds field on each snapshot indicates data freshness. If a snapshot cannot be returned, package.snapshot_unavailable_reason explains why. Defaults to false.
    */
-  include_snapshot?: boolean | null;
+  include_snapshot?: boolean;
   /**
    * When present, include the last N revision history entries for each media buy (returns min(N, available entries)). Each entry contains revision number, timestamp, actor, and a summary of what changed. Omit or set to 0 to exclude history (default). Recommended: 5-10 for monitoring, 50+ for audit.
    */
-  include_history?: number | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  include_history?: number;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_media_buys response
@@ -5438,8 +5438,8 @@ export interface GetMediaBuysResponse {
      * Seller's unique identifier for the media buy
      */
     media_buy_id: string;
-    account?: Account | null;
-    invoice_recipient?: BusinessEntity | null;
+    account?: Account;
+    invoice_recipient?: BusinessEntity;
     status: MediaBuyStatus;
     /**
      * ISO 4217 currency code (e.g., USD, EUR, GBP) for monetary values at this media buy level. total_budget is always denominated in this currency. Package-level fields may override with package.currency.
@@ -5448,23 +5448,23 @@ export interface GetMediaBuysResponse {
     /**
      * Total budget amount across all packages, denominated in media_buy.currency
      */
-    total_budget?: number | null;
+    total_budget?: number;
     /**
      * ISO 8601 flight start time for this media buy (earliest package start_time). Avoids requiring buyers to compute min(packages[].start_time).
      */
-    start_time?: string | null;
+    start_time?: string;
     /**
      * ISO 8601 flight end time for this media buy (latest package end_time). Avoids requiring buyers to compute max(packages[].end_time).
      */
-    end_time?: string | null;
+    end_time?: string;
     /**
      * ISO 8601 timestamp for creative upload deadline
      */
-    creative_deadline?: string | null;
+    creative_deadline?: string;
     /**
      * ISO 8601 timestamp when the seller confirmed this media buy. A successful create_media_buy response constitutes order confirmation.
      */
-    confirmed_at?: string | null;
+    confirmed_at?: string;
     /**
      * Cancellation metadata. Present only when status is 'canceled'.
      */
@@ -5477,20 +5477,20 @@ export interface GetMediaBuysResponse {
       /**
        * Reason the media buy was canceled.
        */
-      reason?: string | null;
+      reason?: string;
     };
     /**
      * Current revision number. Pass this in update_media_buy for optimistic concurrency.
      */
-    revision?: number | null;
+    revision?: number;
     /**
      * Creation timestamp
      */
-    created_at?: string | null;
+    created_at?: string;
     /**
      * Last update timestamp
      */
-    updated_at?: string | null;
+    updated_at?: string;
     /**
      * Actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now.
      */
@@ -5519,7 +5519,7 @@ export interface GetMediaBuysResponse {
       /**
        * Identity of who made the change — derived from authentication context, not caller-provided. Format is seller-defined (e.g., agent URL, user email, API key label).
        */
-      actor?: string | null;
+      actor?: string;
       /**
        * What happened. Standard actions: created, activated, paused, resumed, canceled, rejected, completed, updated_budget, updated_dates, updated_packages, package_canceled, package_paused, package_resumed. Sellers MAY use additional platform-specific actions (e.g., creative_approved, targeting_updated) — use ext on the history entry for structured metadata about custom actions.
        */
@@ -5527,30 +5527,30 @@ export interface GetMediaBuysResponse {
       /**
        * Human-readable summary of the change (e.g., 'Budget increased from $5,000 to $7,500 on pkg_abc').
        */
-      summary?: string | null;
+      summary?: string;
       /**
        * Package affected, when the change targeted a specific package.
        */
-      package_id?: string | null;
-      ext?: ExtensionObject | null;
+      package_id?: string;
+      ext?: ExtensionObject;
     }[];
     /**
      * Packages within this media buy, augmented with creative approval status and optional delivery snapshots
      */
     packages: PackageStatus[];
-    ext?: ExtensionObject | null;
+    ext?: ExtensionObject;
   }[];
   /**
    * Task-specific errors (e.g., media buy not found)
    */
-  errors?: Error[] | null;
-  pagination?: PaginationResponse | null;
+  errors?: Error[];
+  pagination?: PaginationResponse;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Current status of a package within a media buy — includes creative approval state and optional delivery snapshot. For the creation input shape, see PackageRequest. For the creation output shape, see Package.
@@ -5563,39 +5563,39 @@ export interface PackageStatus {
   /**
    * Product identifier this package is purchased from
    */
-  product_id?: string | null;
+  product_id?: string;
   /**
    * Package budget amount, denominated in package.currency when present, otherwise media_buy.currency
    */
-  budget?: number | null;
+  budget?: number;
   /**
    * ISO 4217 currency code for monetary values at this package level (budget, bid_price, snapshot.spend). When absent, inherit media_buy.currency.
    */
-  currency?: string | null;
+  currency?: string;
   /**
    * Current bid price for auction-based packages. Denominated in package.currency when present, otherwise media_buy.currency. Relevant for automated price optimization loops.
    */
-  bid_price?: number | null;
+  bid_price?: number;
   /**
    * Goal impression count for impression-based packages
    */
-  impressions?: number | null;
+  impressions?: number;
   /**
    * ISO 8601 flight start time for this package. Use to determine whether the package is within its scheduled flight before interpreting delivery status.
    */
-  start_time?: string | null;
+  start_time?: string;
   /**
    * ISO 8601 flight end time for this package
    */
-  end_time?: string | null;
+  end_time?: string;
   /**
    * Whether this package is currently paused by the buyer
    */
-  paused?: boolean | null;
+  paused?: boolean;
   /**
    * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated.
    */
-  canceled?: boolean | null;
+  canceled?: boolean;
   /**
    * Cancellation metadata. Present only when canceled is true.
    */
@@ -5608,12 +5608,12 @@ export interface PackageStatus {
     /**
      * Reason the package was canceled.
      */
-    reason?: string | null;
+    reason?: string;
   };
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
    */
-  creative_deadline?: string | null;
+  creative_deadline?: string;
   /**
    * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
    */
@@ -5622,16 +5622,16 @@ export interface PackageStatus {
      * Creative identifier
      */
     creative_id: string;
-    approval_status?: CreativeApprovalStatus | null;
+    approval_status?: CreativeApprovalStatus;
     /**
      * Human-readable explanation of why the creative was rejected. Present only when approval_status is 'rejected'.
      */
-    rejection_reason?: string | null;
+    rejection_reason?: string;
   }[];
   /**
    * Format IDs from the original create_media_buy format_ids_to_provide that have not yet been uploaded via sync_creatives. When empty or absent, all required formats have been provided.
    */
-  format_ids_pending?: FormatID[] | null;
+  format_ids_pending?: FormatID[];
   /**
    * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot is unavailable for this package.
    */
@@ -5662,22 +5662,22 @@ export interface PackageStatus {
     /**
      * ISO 4217 currency code for spend in this snapshot. Optional when unchanged from package.currency or media_buy.currency.
      */
-    currency?: string | null;
+    currency?: string;
     /**
      * Total clicks since package start (when available)
      */
-    clicks?: number | null;
+    clicks?: number;
     /**
      * Current delivery pace relative to expected (1.0 = on track, <1.0 = behind, >1.0 = ahead). Absent when pacing cannot be determined.
      */
-    pacing_index?: number | null;
+    pacing_index?: number;
     /**
      * Operational delivery state of this package. 'not_delivering' means the package is within its scheduled flight but has delivered zero impressions for at least one full staleness cycle — the signal for automated price adjustments or buyer alerts. Implementers must not return 'not_delivering' until at least staleness_seconds have elapsed since package activation.
      */
-    delivery_status?: 'delivering' | 'not_delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met' | null;
-    ext?: ExtensionObject | null;
+    delivery_status?: 'delivering' | 'not_delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met';
+    ext?: ExtensionObject;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Attribution model to use. When omitted, the seller applies their default model.
@@ -5716,28 +5716,28 @@ export interface GetMediaBuyDeliveryRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
-  account?: AccountReference | null;
+  adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Array of media buy IDs to get delivery data for
    */
-  media_buy_ids?: string[] | null;
+  media_buy_ids?: string[];
   /**
    * Filter by status. Can be a single status or array of statuses
    */
-  status_filter?: MediaBuyStatus | MediaBuyStatus[] | null;
+  status_filter?: MediaBuyStatus | MediaBuyStatus[];
   /**
    * Start date for reporting period (YYYY-MM-DD). When omitted along with end_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
    */
-  start_date?: string | null;
+  start_date?: string;
   /**
    * End date for reporting period (YYYY-MM-DD). When omitted along with start_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
    */
-  end_date?: string | null;
+  end_date?: string;
   /**
    * When true, include daily_breakdown arrays within each package in by_package. Useful for per-package pacing analysis and line-item monitoring. Omit or set false to reduce response size — package daily data can be large for multi-package buys over long flights.
    */
-  include_package_daily_breakdown?: boolean | null;
+  include_package_daily_breakdown?: boolean;
   /**
    * Attribution window to apply for conversion metrics. When provided, the seller returns conversion data using the requested lookback windows instead of their platform default. The seller echoes the applied window in the response. Sellers that do not support configurable windows ignore this field and return their default. Check get_adcp_capabilities conversion_tracking.attribution_windows for available options.
    */
@@ -5745,12 +5745,12 @@ export interface GetMediaBuyDeliveryRequest {
     /**
      * Post-click attribution window to apply.
      */
-    post_click?: Duration | null;
+    post_click?: Duration;
     /**
      * Post-view attribution window to apply.
      */
-    post_view?: Duration | null;
-    model?: AttributionModel | null;
+    post_view?: Duration;
+    model?: AttributionModel;
   };
   /**
    * Request dimensional breakdowns in delivery reporting. Each key enables a specific breakdown dimension within by_package — include as an empty object (e.g., "device_type": {}) to activate with defaults. Omit entirely for no breakdowns (backward compatible). Unsupported dimensions are silently omitted from the response. Note: keyword, catalog_item, and creative breakdowns are returned automatically when the seller supports them and are not controlled by this object.
@@ -5764,12 +5764,12 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Required when geo_level is 'metro' or 'postal_area'.
        */
-      system?: MetroAreaSystem | PostalCodeSystem | null;
+      system?: MetroAreaSystem | PostalCodeSystem;
       /**
        * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
        */
-      limit?: number | null;
-      sort_by?: SortMetric | null;
+      limit?: number;
+      sort_by?: SortMetric;
     };
     /**
      * Request device type breakdown.
@@ -5778,8 +5778,8 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
        */
-      limit?: number | null;
-      sort_by?: SortMetric | null;
+      limit?: number;
+      sort_by?: SortMetric;
     };
     /**
      * Request device platform breakdown.
@@ -5788,8 +5788,8 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
        */
-      limit?: number | null;
-      sort_by?: SortMetric | null;
+      limit?: number;
+      sort_by?: SortMetric;
     };
     /**
      * Request audience segment breakdown.
@@ -5798,8 +5798,8 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. Defaults to 25.
        */
-      limit?: number | null;
-      sort_by?: SortMetric | null;
+      limit?: number;
+      sort_by?: SortMetric;
     };
     /**
      * Request placement breakdown.
@@ -5808,12 +5808,12 @@ export interface GetMediaBuyDeliveryRequest {
       /**
        * Maximum number of entries to return. Defaults to 25.
        */
-      limit?: number | null;
-      sort_by?: SortMetric | null;
+      limit?: number;
+      sort_by?: SortMetric;
     };
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_media_buy_delivery response
@@ -5833,23 +5833,23 @@ export interface GetMediaBuyDeliveryResponse {
   /**
    * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with corrected data (same window), window_update = resending period with a wider measurement window (e.g., C3 superseding live, C7 superseding C3)
    */
-  notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update' | null;
+  notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
   /**
    * Indicates if any media buys in this webhook have missing/delayed data (only present in webhook deliveries)
    */
-  partial_data?: boolean | null;
+  partial_data?: boolean;
   /**
    * Number of media buys with reporting_delayed or failed status (only present in webhook deliveries when partial_data is true)
    */
-  unavailable_count?: number | null;
+  unavailable_count?: number;
   /**
    * Sequential notification number (only present in webhook deliveries, starts at 1)
    */
-  sequence_number?: number | null;
+  sequence_number?: number;
   /**
    * ISO 8601 timestamp for next expected notification (only present in webhook deliveries when notification_type is not 'final')
    */
-  next_expected_at?: string | null;
+  next_expected_at?: string;
   /**
    * Date range for the report. All periods use UTC timezone.
    */
@@ -5866,8 +5866,8 @@ export interface GetMediaBuyDeliveryResponse {
   /**
    * ISO 4217 currency code
    */
-  currency?: string | null;
-  attribution_window?: AttributionWindow | null;
+  currency?: string;
+  attribution_window?: AttributionWindow;
   /**
    * Combined metrics across all returned media buys. Only included in API responses (get_media_buy_delivery), not in webhook notifications.
    */
@@ -5883,51 +5883,51 @@ export interface GetMediaBuyDeliveryResponse {
     /**
      * Total clicks across all media buys (if applicable)
      */
-    clicks?: number | null;
+    clicks?: number;
     /**
      * Total audio/video completions across all media buys (if applicable)
      */
-    completed_views?: number | null;
+    completed_views?: number;
     /**
      * Total views across all media buys (if applicable)
      */
-    views?: number | null;
+    views?: number;
     /**
      * Total conversions across all media buys (if applicable)
      */
-    conversions?: number | null;
+    conversions?: number;
     /**
      * Total conversion value across all media buys (if applicable)
      */
-    conversion_value?: number | null;
+    conversion_value?: number;
     /**
      * Aggregate return on ad spend across all media buys (total conversion_value / total spend)
      */
-    roas?: number | null;
+    roas?: number;
     /**
      * Fraction of total conversions across all media buys from first-time brand buyers (weighted by conversion volume, not a simple average of per-buy rates)
      */
-    new_to_brand_rate?: number | null;
+    new_to_brand_rate?: number;
     /**
      * Aggregate cost per conversion across all media buys (total spend / total conversions)
      */
-    cost_per_acquisition?: number | null;
+    cost_per_acquisition?: number;
     /**
      * Aggregate completion rate across all media buys (weighted by impressions, not a simple average of per-buy rates)
      */
-    completion_rate?: number | null;
+    completion_rate?: number;
     /**
      * Deduplicated reach across all media buys (if the seller can deduplicate across buys; otherwise sum of per-buy reach). Only present when all media buys share the same reach_unit. Omitted when reach units are heterogeneous — use per-buy reach values instead.
      */
-    reach?: number | null;
+    reach?: number;
     /**
      * Unit of measurement for reach. Only present when all aggregated media buys use the same reach_unit.
      */
-    reach_unit?: ReachUnit | null;
+    reach_unit?: ReachUnit;
     /**
      * Average frequency per reach unit across all media buys (impressions / reach when cross-buy deduplication is available). Only present when reach is present.
      */
-    frequency?: number | null;
+    frequency?: number;
     /**
      * Number of media buys included in the response
      */
@@ -5958,17 +5958,17 @@ export interface GetMediaBuyDeliveryResponse {
     /**
      * When delayed data is expected to be available (only present when status is reporting_delayed)
      */
-    expected_availability?: string | null;
+    expected_availability?: string;
     /**
      * Indicates this delivery contains updated data for a previously reported period. Buyer should replace previous period data with these totals.
      */
-    is_adjusted?: boolean | null;
-    pricing_model?: PricingModel | null;
+    is_adjusted?: boolean;
+    pricing_model?: PricingModel;
     totals: DeliveryMetrics & {
       /**
        * Effective rate paid per unit based on pricing_model (e.g., actual CPM for 'cpm', actual cost per completed view for 'cpcv', actual cost per point for 'cpp')
        */
-      effective_rate?: number | null;
+      effective_rate?: number;
     };
     /**
      * Metrics broken down by package
@@ -5981,36 +5981,36 @@ export interface GetMediaBuyDeliveryResponse {
       /**
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
-      pacing_index?: number | null;
-      pricing_model?: PricingModel | null;
+      pacing_index?: number;
+      pricing_model?: PricingModel;
       /**
        * The pricing rate for this package in the specified currency. For fixed-rate pricing, this is the agreed rate (e.g., CPM rate of 12.50 means $12.50 per 1,000 impressions). For auction-based pricing, this represents the effective rate based on actual delivery.
        */
-      rate?: number | null;
+      rate?: number;
       /**
        * ISO 4217 currency code (e.g., USD, EUR, GBP) for this package's pricing. Indicates the currency in which the rate and spend values are denominated. Different packages can use different currencies when supported by the publisher.
        */
-      currency?: string | null;
+      currency?: string;
       /**
        * System-reported operational state of this package. Reflects actual delivery state independent of buyer pause control.
        */
-      delivery_status?: 'delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met' | null;
+      delivery_status?: 'delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met';
       /**
        * Whether this package is currently paused by the buyer
        */
-      paused?: boolean | null;
+      paused?: boolean;
       /**
        * Whether this delivery data is final for the reporting period. When false, the data may be updated as measurement matures (e.g., broadcast C7 window accumulating DVR playback) or as processing completes (e.g., IVT filtering, deduplication). When true, the seller considers this data closed — no further updates for this period. Absent means the seller does not distinguish provisional from final data.
        */
-      is_final?: boolean | null;
+      is_final?: boolean;
       /**
        * Which measurement window this data represents, referencing a window_id from the product's reporting_capabilities.measurement_windows. For broadcast: 'live', 'c3', 'c7'. When absent, the data is not windowed (standard digital reporting). When present with is_final: false, a later report for the same period will provide a wider window or more complete data.
        */
-      measurement_window?: string | null;
+      measurement_window?: string;
       /**
        * Which measurement window this data replaces. Present on window_update notifications to indicate progression (e.g., 'live' when reporting C3 data that supersedes live-only numbers). Absent on the first report for a period. Buyers should replace stored data for the superseded window with this report's data.
        */
-      supersedes_window?: string | null;
+      supersedes_window?: string;
       /**
        * Delivery by catalog item within this package. Available for catalog-driven packages when the seller supports item-level reporting.
        */
@@ -6018,8 +6018,8 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
          */
-        content_id?: string | null;
-        content_id_type?: ContentIDType | null;
+        content_id?: string;
+        content_id_type?: ContentIDType;
       })[];
       /**
        * Metrics broken down by creative within this package. Available when the seller supports creative-level reporting.
@@ -6032,7 +6032,7 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Observed delivery share for this creative within the package during the reporting period, expressed as a percentage (0-100). Reflects actual delivery distribution, not a configured setting.
          */
-        weight?: number | null;
+        weight?: number;
       })[];
       /**
        * Metrics broken down by keyword within this package. One row per (keyword, match_type) pair — the same keyword with different match types appears as separate rows. Keyword-grain only: rows reflect aggregate performance of each targeted keyword, not individual search queries. Rows may not sum to package totals when a single impression is attributed to the triggering keyword only. Available for search and retail media packages when the seller supports keyword-level reporting.
@@ -6041,54 +6041,54 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * The targeted keyword
          */
-        keyword?: string | null;
+        keyword?: string;
         /**
          * Match type for this keyword
          */
-        match_type?: 'broad' | 'phrase' | 'exact' | null;
+        match_type?: 'broad' | 'phrase' | 'exact';
       })[];
       /**
        * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
        */
       by_geo?: (DeliveryMetrics & {
-        geo_level?: GeographicTargetingLevel | null;
+        geo_level?: GeographicTargetingLevel;
         /**
          * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
          */
-        system?: string | null;
+        system?: string;
         /**
          * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
          */
-        geo_code?: string | null;
+        geo_code?: string;
         /**
          * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
          */
-        geo_name?: string | null;
+        geo_name?: string;
       })[];
       /**
        * Whether by_geo was truncated due to the requested limit or a seller-imposed maximum. Sellers MUST return this flag whenever by_geo is present (false means the list is complete).
        */
-      by_geo_truncated?: boolean | null;
+      by_geo_truncated?: boolean;
       /**
        * Delivery by device form factor within this package. Available when the buyer requests device_type breakdown via reporting_dimensions and the seller supports it.
        */
       by_device_type?: (DeliveryMetrics & {
-        device_type?: DeviceType | null;
+        device_type?: DeviceType;
       })[];
       /**
        * Whether by_device_type was truncated. Sellers MUST return this flag whenever by_device_type is present (false means the list is complete).
        */
-      by_device_type_truncated?: boolean | null;
+      by_device_type_truncated?: boolean;
       /**
        * Delivery by operating system within this package. Available when the buyer requests device_platform breakdown via reporting_dimensions and the seller supports it. Useful for CTV campaigns where tvOS vs Roku OS vs Fire OS matters.
        */
       by_device_platform?: (DeliveryMetrics & {
-        device_platform?: DevicePlatform | null;
+        device_platform?: DevicePlatform;
       })[];
       /**
        * Whether by_device_platform was truncated. Sellers MUST return this flag whenever by_device_platform is present (false means the list is complete).
        */
-      by_device_platform_truncated?: boolean | null;
+      by_device_platform_truncated?: boolean;
       /**
        * Delivery by audience segment within this package. Available when the buyer requests audience breakdown via reporting_dimensions and the seller supports it. Only 'synced' audiences are directly targetable via the targeting overlay; other sources are informational.
        */
@@ -6096,17 +6096,17 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Audience segment identifier. For 'synced' source, matches audience_id from sync_audiences. For other sources, seller-defined.
          */
-        audience_id?: string | null;
-        audience_source?: AudienceSource | null;
+        audience_id?: string;
+        audience_source?: AudienceSource;
         /**
          * Human-readable audience segment name
          */
-        audience_name?: string | null;
+        audience_name?: string;
       })[];
       /**
        * Whether by_audience was truncated. Sellers MUST return this flag whenever by_audience is present (false means the list is complete).
        */
-      by_audience_truncated?: boolean | null;
+      by_audience_truncated?: boolean;
       /**
        * Delivery by placement within this package. Available when the buyer requests placement breakdown via reporting_dimensions and the seller supports it. Placement IDs reference the product's placements array.
        */
@@ -6114,16 +6114,16 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Placement identifier from the product's placements array
          */
-        placement_id?: string | null;
+        placement_id?: string;
         /**
          * Human-readable placement name
          */
-        placement_name?: string | null;
+        placement_name?: string;
       })[];
       /**
        * Whether by_placement was truncated. Sellers MUST return this flag whenever by_placement is present (false means the list is complete).
        */
-      by_placement_truncated?: boolean | null;
+      by_placement_truncated?: boolean;
       /**
        * Day-by-day delivery for this package. Only present when include_package_daily_breakdown is true in the request. Enables per-package pacing analysis and line-item monitoring.
        */
@@ -6143,19 +6143,19 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Daily conversions for this package
          */
-        conversions?: number | null;
+        conversions?: number;
         /**
          * Daily conversion value for this package
          */
-        conversion_value?: number | null;
+        conversion_value?: number;
         /**
          * Daily return on ad spend (conversion_value / spend)
          */
-        roas?: number | null;
+        roas?: number;
         /**
          * Daily fraction of conversions from first-time brand buyers (0 = none, 1 = all)
          */
-        new_to_brand_rate?: number | null;
+        new_to_brand_rate?: number;
       }[];
     })[];
     /**
@@ -6177,31 +6177,31 @@ export interface GetMediaBuyDeliveryResponse {
       /**
        * Daily conversions
        */
-      conversions?: number | null;
+      conversions?: number;
       /**
        * Daily conversion value
        */
-      conversion_value?: number | null;
+      conversion_value?: number;
       /**
        * Daily return on ad spend (conversion_value / spend)
        */
-      roas?: number | null;
+      roas?: number;
       /**
        * Daily fraction of conversions from first-time brand buyers (0 = none, 1 = all)
        */
-      new_to_brand_rate?: number | null;
+      new_to_brand_rate?: number;
     }[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., missing delivery data, reporting platform issues)
    */
-  errors?: Error[] | null;
+  errors?: Error[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Attribution methodology and lookback windows used for conversion metrics in this response. All media buys from a single seller share the same attribution methodology. Enables cross-platform comparison (e.g., Amazon 14-day click vs. Criteo 30-day click).
@@ -6210,11 +6210,11 @@ export interface AttributionWindow {
   /**
    * Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.
    */
-  post_click?: Duration | null;
+  post_click?: Duration;
   /**
    * Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.
    */
-  post_view?: Duration | null;
+  post_view?: Duration;
   model: AttributionModel;
 }
 /**
@@ -6224,55 +6224,55 @@ export interface DeliveryMetrics {
   /**
    * Impressions delivered
    */
-  impressions?: number | null;
+  impressions?: number;
   /**
    * Amount spent
    */
-  spend?: number | null;
+  spend?: number;
   /**
    * Total clicks
    */
-  clicks?: number | null;
+  clicks?: number;
   /**
    * Click-through rate (clicks/impressions)
    */
-  ctr?: number | null;
+  ctr?: number;
   /**
    * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
    */
-  views?: number | null;
+  views?: number;
   /**
    * Video/audio completions. When the package has a completed_views optimization goal with view_duration_seconds, completions are counted at that threshold rather than 100% completion.
    */
-  completed_views?: number | null;
+  completed_views?: number;
   /**
    * Completion rate (completed_views/impressions)
    */
-  completion_rate?: number | null;
+  completion_rate?: number;
   /**
    * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
    */
-  conversions?: number | null;
+  conversions?: number;
   /**
    * Total monetary value of attributed conversions (in the reporting currency)
    */
-  conversion_value?: number | null;
+  conversion_value?: number;
   /**
    * Return on ad spend (conversion_value / spend)
    */
-  roas?: number | null;
+  roas?: number;
   /**
    * Cost per conversion (spend / conversions)
    */
-  cost_per_acquisition?: number | null;
+  cost_per_acquisition?: number;
   /**
    * Fraction of conversions from first-time brand buyers (0 = none, 1 = all)
    */
-  new_to_brand_rate?: number | null;
+  new_to_brand_rate?: number;
   /**
    * Leads generated (convenience alias for by_event_type where event_type='lead')
    */
-  leads?: number | null;
+  leads?: number;
   /**
    * Conversion metrics broken down by event type. Spend-derived metrics (ROAS, CPA) are only available at the package/totals level since spend cannot be attributed to individual event types.
    */
@@ -6281,7 +6281,7 @@ export interface DeliveryMetrics {
     /**
      * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
      */
-    event_source_id?: string | null;
+    event_source_id?: string;
     /**
      * Number of events of this type
      */
@@ -6289,24 +6289,24 @@ export interface DeliveryMetrics {
     /**
      * Total monetary value of events of this type
      */
-    value?: number | null;
+    value?: number;
   }[];
   /**
    * Gross Rating Points delivered (for CPP)
    */
-  grps?: number | null;
+  grps?: number;
   /**
    * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit.
    */
-  reach?: number | null;
+  reach?: number;
   /**
    * Unit of measurement for the reach field. Aligns with the reach_unit declared on optimization goals and delivery forecasts. Required when reach is present to enable cross-platform comparison.
    */
-  reach_unit?: ReachUnit | null;
+  reach_unit?: ReachUnit;
   /**
    * Average frequency per reach unit (typically measured over campaign duration, but can vary by measurement provider). When reach_unit is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc.
    */
-  frequency?: number | null;
+  frequency?: number;
   /**
    * Audio/video quartile completion data
    */
@@ -6314,19 +6314,19 @@ export interface DeliveryMetrics {
     /**
      * 25% completion views
      */
-    q1_views?: number | null;
+    q1_views?: number;
     /**
      * 50% completion views
      */
-    q2_views?: number | null;
+    q2_views?: number;
     /**
      * 75% completion views
      */
-    q3_views?: number | null;
+    q3_views?: number;
     /**
      * 100% completion views
      */
-    q4_views?: number | null;
+    q4_views?: number;
   };
   /**
    * DOOH-specific metrics (only included for DOOH campaigns)
@@ -6335,23 +6335,23 @@ export interface DeliveryMetrics {
     /**
      * Number of times ad played in rotation
      */
-    loop_plays?: number | null;
+    loop_plays?: number;
     /**
      * Number of unique screens displaying the ad
      */
-    screens_used?: number | null;
+    screens_used?: number;
     /**
      * Total display time in seconds
      */
-    screen_time_seconds?: number | null;
+    screen_time_seconds?: number;
     /**
      * Actual share of voice delivered (0.0 to 1.0)
      */
-    sov_achieved?: number | null;
+    sov_achieved?: number;
     /**
      * Explanation of how DOOH impressions were calculated
      */
-    calculation_notes?: string | null;
+    calculation_notes?: string;
     /**
      * Per-venue performance breakdown
      */
@@ -6363,11 +6363,11 @@ export interface DeliveryMetrics {
       /**
        * Human-readable venue name
        */
-      venue_name?: string | null;
+      venue_name?: string;
       /**
        * Venue type (e.g., 'airport', 'transit', 'retail', 'billboard')
        */
-      venue_type?: string | null;
+      venue_type?: string;
       /**
        * Impressions delivered at this venue
        */
@@ -6375,11 +6375,11 @@ export interface DeliveryMetrics {
       /**
        * Loop plays at this venue
        */
-      loop_plays?: number | null;
+      loop_plays?: number;
       /**
        * Number of screens used at this venue
        */
-      screens_used?: number | null;
+      screens_used?: number;
     }[];
   };
   /**
@@ -6389,41 +6389,41 @@ export interface DeliveryMetrics {
     /**
      * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments).
      */
-    measurable_impressions?: number | null;
+    measurable_impressions?: number;
     /**
      * Impressions that met the viewability threshold defined by the measurement standard.
      */
-    viewable_impressions?: number | null;
+    viewable_impressions?: number;
     /**
      * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
      */
-    viewable_rate?: number | null;
-    standard?: ViewabilityStandard | null;
+    viewable_rate?: number;
+    standard?: ViewabilityStandard;
   };
   /**
    * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric.
    */
-  engagements?: number | null;
+  engagements?: number;
   /**
    * New followers, page likes, artist/podcast/channel subscribes attributed to this delivery.
    */
-  follows?: number | null;
+  follows?: number;
   /**
    * Saves, bookmarks, playlist adds, pins attributed to this delivery.
    */
-  saves?: number | null;
+  saves?: number;
   /**
    * Visits to the brand's in-platform page (profile, artist page, channel, or storefront) attributed to this delivery. Does not include external website clicks.
    */
-  profile_visits?: number | null;
+  profile_visits?: number;
   /**
    * Platform-specific engagement rate (0.0 to 1.0). Typically engagements/impressions, but definition varies by platform.
    */
-  engagement_rate?: number | null;
+  engagement_rate?: number;
   /**
    * Cost per click (spend / clicks)
    */
-  cost_per_click?: number | null;
+  cost_per_click?: number;
   /**
    * Conversion metrics broken down by action source (website, app, in_store, etc.). Useful for omnichannel sellers where conversions occur across digital and physical channels.
    */
@@ -6432,7 +6432,7 @@ export interface DeliveryMetrics {
     /**
      * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
      */
-    event_source_id?: string | null;
+    event_source_id?: string;
     /**
      * Number of conversions from this action source
      */
@@ -6440,7 +6440,7 @@ export interface DeliveryMetrics {
     /**
      * Total monetary value of conversions from this action source
      */
-    value?: number | null;
+    value?: number;
   }[];
 }
 
@@ -6473,7 +6473,7 @@ export interface ProvidePerformanceFeedbackRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Seller's media buy identifier
    */
@@ -6481,7 +6481,7 @@ export interface ProvidePerformanceFeedbackRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate feedback submissions on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
   measurement_period: DatetimeRange;
   /**
    * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
@@ -6490,15 +6490,15 @@ export interface ProvidePerformanceFeedbackRequest {
   /**
    * Specific package within the media buy (if feedback is package-specific)
    */
-  package_id?: string | null;
+  package_id?: string;
   /**
    * Specific creative asset (if feedback is creative-specific)
    */
-  creative_id?: string | null;
-  metric_type?: MetricType | null;
-  feedback_source?: FeedbackSource | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  creative_id?: string;
+  metric_type?: MetricType;
+  feedback_source?: FeedbackSource;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Time period for performance measurement
@@ -6531,9 +6531,9 @@ export interface ProvidePerformanceFeedbackSuccess {
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - feedback rejected or could not be processed
@@ -6543,8 +6543,8 @@ export interface ProvidePerformanceFeedbackError {
    * Array of errors explaining why feedback was rejected (e.g., invalid measurement period, missing campaign data)
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_event_sources parameters
@@ -6555,7 +6555,7 @@ export interface SyncEventSourcesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Event sources to sync (create or update). When omitted, the call is discovery-only and returns all existing event sources on the account without modification.
@@ -6568,22 +6568,22 @@ export interface SyncEventSourcesRequest {
     /**
      * Human-readable name for this event source
      */
-    name?: string | null;
+    name?: string;
     /**
      * Event types this source handles (e.g. purchase, lead). If omitted, accepts all event types.
      */
-    event_types?: EventType[] | null;
+    event_types?: EventType[];
     /**
      * Domains authorized to send events for this event source
      */
-    allowed_domains?: string[] | null;
+    allowed_domains?: string[];
   }[];
   /**
    * When true, event sources not included in this sync will be removed
    */
-  delete_missing?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  delete_missing?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_event_sources response
@@ -6606,20 +6606,20 @@ export interface SyncEventSourcesSuccess {
     /**
      * Name of the event source
      */
-    name?: string | null;
+    name?: string;
     /**
      * Seller-assigned identifier for this event source (the ID in the seller's ad platform)
      */
-    seller_id?: string | null;
+    seller_id?: string;
     /**
      * Event types this source handles
      */
-    event_types?: EventType[] | null;
-    action_source?: ActionSource | null;
+    event_types?: EventType[];
+    action_source?: ActionSource;
     /**
      * Who manages this event source. 'buyer' = configured via this sync. 'seller' = always-on, managed by the seller (e.g. Amazon sales attribution for Amazon advertisers).
      */
-    managed_by?: 'buyer' | 'seller' | null;
+    managed_by?: 'buyer' | 'seller';
     /**
      * Implementation details for activating this event source (e.g. JavaScript tag, pixel URL)
      */
@@ -6627,32 +6627,32 @@ export interface SyncEventSourcesSuccess {
       /**
        * Code snippet to place on the site (JavaScript, HTML pixel, etc.)
        */
-      snippet?: string | null;
+      snippet?: string;
       /**
        * Type of implementation. 'server_only' means no client-side tag is needed.
        */
-      snippet_type?: 'javascript' | 'html' | 'pixel_url' | 'server_only' | null;
+      snippet_type?: 'javascript' | 'html' | 'pixel_url' | 'server_only';
       /**
        * Human/agent-readable setup instructions
        */
-      instructions?: string | null;
+      instructions?: string;
     };
     /**
      * Action taken for this event source
      */
     action: 'created' | 'updated' | 'unchanged' | 'deleted' | 'failed';
-    health?: EventSourceHealth | null;
+    health?: EventSourceHealth;
     /**
      * Errors for this event source (only present when action='failed')
      */
-    errors?: Error[] | null;
+    errors?: Error[];
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Health assessment for this event source. Reflects event volume, data quality, and parameter completeness. Sellers that support health scoring include this on every source (buyer-managed and seller-managed). Absent when the seller does not evaluate event source health.
@@ -6674,28 +6674,28 @@ export interface EventSourceHealth {
     /**
      * Seller's name for this score (e.g., 'Event Quality Score', 'Event Match Quality').
      */
-    label?: string | null;
+    label?: string;
   };
   /**
    * Fraction of events from this source that the seller successfully matched to ad interactions (0.0-1.0). Low match rates indicate weak user_match identifiers. Absent when the seller does not compute match rates.
    */
-  match_rate?: number | null;
+  match_rate?: number;
   /**
    * ISO 8601 timestamp of the most recent event received from this source. Absent when no events have been received.
    */
-  last_event_at?: string | null;
+  last_event_at?: string;
   /**
    * ISO 8601 timestamp of when this health assessment was computed. When health is derived from reporting data, this may lag real-time. Buyer agents can use this to decide whether to trust stale assessments or re-request.
    */
-  evaluated_at?: string | null;
+  evaluated_at?: string;
   /**
    * Number of events received from this source in the last 24 hours. Zero indicates the source is configured but not firing.
    */
-  events_received_24h?: number | null;
+  events_received_24h?: number;
   /**
    * Actionable issues detected with this event source. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
    */
-  issues?: DiagnosticIssue[] | null;
+  issues?: DiagnosticIssue[];
 }
 /**
  * Error response - operation failed completely
@@ -6705,8 +6705,8 @@ export interface SyncEventSourcesError {
    * Operation-level errors that prevented processing
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 
@@ -6715,7 +6715,7 @@ export interface SyncEventSourcesError {
  * User identifiers for attribution matching
  */
 export type UserMatch = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * Universal ID values for user matching
@@ -6730,28 +6730,28 @@ export type UserMatch = {
   /**
    * SHA-256 hash of lowercase, trimmed email address. Buyer must normalize before hashing: lowercase, trim whitespace.
    */
-  hashed_email?: string | null;
+  hashed_email?: string;
   /**
    * SHA-256 hash of E.164-formatted phone number (e.g. +12065551234). Buyer must normalize to E.164 before hashing.
    */
-  hashed_phone?: string | null;
+  hashed_phone?: string;
   /**
    * Platform click identifier (fbclid, gclid, ttclid, ScCid, etc.)
    */
-  click_id?: string | null;
+  click_id?: string;
   /**
    * Type of click identifier (e.g. fbclid, gclid, ttclid, msclkid, ScCid)
    */
-  click_id_type?: string | null;
+  click_id_type?: string;
   /**
    * Client IP address for probabilistic matching
    */
-  client_ip?: string | null;
+  client_ip?: string;
   /**
    * Client user agent string for probabilistic matching
    */
-  client_user_agent?: string | null;
-  ext?: ExtensionObject | null;
+  client_user_agent?: string;
+  ext?: ExtensionObject;
 };
 /**
  * Universal ID type
@@ -6773,7 +6773,7 @@ export interface LogEventRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Event source configured on the account via sync_event_sources
    */
@@ -6781,7 +6781,7 @@ export interface LogEventRequest {
   /**
    * Test event code for validation without affecting production data. Events with this code appear in the platform's test events UI.
    */
-  test_event_code?: string | null;
+  test_event_code?: string;
   /**
    * Events to log
    */
@@ -6789,9 +6789,9 @@ export interface LogEventRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate event logging on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * A marketing event (conversion, engagement, or custom) for attribution and optimization
@@ -6806,18 +6806,18 @@ export interface Event {
    * ISO 8601 timestamp when the event occurred
    */
   event_time: string;
-  user_match?: UserMatch | null;
-  custom_data?: EventCustomData | null;
-  action_source?: ActionSource | null;
+  user_match?: UserMatch;
+  custom_data?: EventCustomData;
+  action_source?: ActionSource;
   /**
    * URL where the event occurred (required when action_source is 'website')
    */
-  event_source_url?: string | null;
+  event_source_url?: string;
   /**
    * Name for custom events (used when event_type is 'custom')
    */
-  custom_event_name?: string | null;
-  ext?: ExtensionObject | null;
+  custom_event_name?: string;
+  ext?: ExtensionObject;
 }
 /**
  * Event-specific data (value, currency, items, etc.)
@@ -6826,39 +6826,39 @@ export interface EventCustomData {
   /**
    * Monetary value of the event (should be accompanied by currency)
    */
-  value?: number | null;
+  value?: number;
   /**
    * ISO 4217 currency code
    */
-  currency?: string | null;
+  currency?: string;
   /**
    * Unique order or transaction identifier
    */
-  order_id?: string | null;
+  order_id?: string;
   /**
    * Item identifiers for catalog attribution. Values are matched against catalog items using the identifier type declared by the catalog's content_id_type field (e.g., SKUs, GTINs, or vertical-specific IDs like job_id).
    */
-  content_ids?: string[] | null;
+  content_ids?: string[];
   /**
    * Category of content associated with the event (e.g., 'product', 'job', 'hotel'). Corresponds to the catalog type when used for catalog attribution.
    */
-  content_type?: string | null;
+  content_type?: string;
   /**
    * Name of the product or content
    */
-  content_name?: string | null;
+  content_name?: string;
   /**
    * Category of the product or content
    */
-  content_category?: string | null;
+  content_category?: string;
   /**
    * Number of items in the event
    */
-  num_items?: number | null;
+  num_items?: number;
   /**
    * Search query for search events
    */
-  search_string?: string | null;
+  search_string?: string;
   /**
    * Per-item details for e-commerce events
    */
@@ -6870,17 +6870,17 @@ export interface EventCustomData {
     /**
      * Quantity of this item
      */
-    quantity?: number | null;
+    quantity?: number;
     /**
      * Price per unit of this item
      */
-    price?: number | null;
+    price?: number;
     /**
      * Brand name of this item
      */
-    brand?: string | null;
+    brand?: string;
   }[];
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // log_event response
@@ -6921,17 +6921,17 @@ export interface LogEventSuccess {
   /**
    * Non-fatal issues (low match quality, missing recommended fields, deprecation notices)
    */
-  warnings?: string[] | null;
+  warnings?: string[];
   /**
    * Overall match quality score for the batch (0.0 = no matches, 1.0 = all matched)
    */
-  match_quality?: number | null;
+  match_quality?: number;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - request failed entirely
@@ -6941,8 +6941,8 @@ export interface LogEventError {
    * Operation-level errors
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_audiences parameters
@@ -6950,7 +6950,7 @@ export interface LogEventError {
  * A CRM audience member identified by a buyer-assigned external_id and at least one matchable identifier. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
  */
 export type AudienceMember = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * Buyer-assigned stable identifier for this audience member (e.g. CRM record ID, loyalty ID). Used for deduplication, removal, and cross-referencing with buyer systems. Adapters for CDPs that don't natively assign IDs can derive one (e.g. hash of the member's identifiers).
@@ -6959,11 +6959,11 @@ export type AudienceMember = {
   /**
    * SHA-256 hash of lowercase, trimmed email address.
    */
-  hashed_email?: string | null;
+  hashed_email?: string;
   /**
    * SHA-256 hash of E.164-formatted phone number (e.g. +12065551234).
    */
-  hashed_phone?: string | null;
+  hashed_phone?: string;
   /**
    * Universal ID values (MAIDs, RampID, UID2, etc.) for user matching.
    */
@@ -6974,7 +6974,7 @@ export type AudienceMember = {
      */
     value: string;
   }[];
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 };
 /**
  * GDPR lawful basis for processing this audience list. Informational — not validated by the protocol, but required by some sellers operating in regulated markets (e.g. EU). When omitted, the buyer asserts they have a lawful basis appropriate to their jurisdiction.
@@ -6988,7 +6988,7 @@ export interface SyncAudiencesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Audiences to sync (create or update). When omitted, the call is discovery-only and returns all existing audiences on the account without modification.
@@ -7001,39 +7001,39 @@ export interface SyncAudiencesRequest {
     /**
      * Human-readable name for this audience
      */
-    name?: string | null;
+    name?: string;
     /**
      * Human-readable description of this audience's composition or purpose (e.g., 'High-value customers who purchased in the last 90 days').
      */
-    description?: string | null;
+    description?: string;
     /**
      * Intended use for this audience. 'crm': target these users. 'suppression': exclude these users from delivery. 'lookalike_seed': use as a seed for the seller's lookalike modeling. Sellers may handle audiences differently based on type (e.g., suppression lists bypass minimum size requirements on some platforms).
      */
-    audience_type?: 'crm' | 'suppression' | 'lookalike_seed' | null;
+    audience_type?: 'crm' | 'suppression' | 'lookalike_seed';
     /**
      * Buyer-defined tags for organizing and filtering audiences (e.g., 'holiday_2026', 'high_ltv'). Tags are stored by the seller and returned in discovery-only calls.
      */
-    tags?: string[] | null;
+    tags?: string[];
     /**
      * Members to add to this audience. Hashed before sending — normalize emails to lowercase+trim, phones to E.164.
      */
-    add?: AudienceMember[] | null;
+    add?: AudienceMember[];
     /**
      * Members to remove from this audience. If the same identifier appears in both add and remove in a single request, remove takes precedence.
      */
-    remove?: AudienceMember[] | null;
+    remove?: AudienceMember[];
     /**
      * When true, delete this audience from the account entirely. All other fields on this audience object are ignored. Use this to delete a specific audience without affecting others.
      */
-    delete?: boolean | null;
-    consent_basis?: ConsentBasis | null;
+    delete?: boolean;
+    consent_basis?: ConsentBasis;
   }[];
   /**
    * When true, buyer-managed audiences on the account not included in this sync will be removed. Does not affect seller-managed audiences. Do not combine with an omitted audiences array or all buyer-managed audiences will be deleted.
    */
-  delete_missing?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  delete_missing?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_audiences response
@@ -7070,11 +7070,11 @@ export interface SyncAudiencesSuccess {
     /**
      * Name of the audience
      */
-    name?: string | null;
+    name?: string;
     /**
      * Seller-assigned identifier for this audience in their ad platform
      */
-    seller_id?: string | null;
+    seller_id?: string;
     /**
      * Action taken for this audience. 'status' is present when action is created, updated, or unchanged. 'status' is absent when action is deleted or failed.
      */
@@ -7082,23 +7082,23 @@ export interface SyncAudiencesSuccess {
     /**
      * Matching status. Present when action is created, updated, or unchanged; absent when action is deleted or failed. 'processing': platform is still matching members against its user base. 'ready': audience is available for targeting, matched_count is populated. 'too_small': matched audience is below the platform's minimum size — add more members and re-sync.
      */
-    status?: 'processing' | 'ready' | 'too_small' | null;
+    status?: 'processing' | 'ready' | 'too_small';
     /**
      * Number of members submitted in this sync operation (delta, not cumulative). In discovery-only calls (no audiences array), this is 0.
      */
-    uploaded_count?: number | null;
+    uploaded_count?: number;
     /**
      * Cumulative number of members uploaded across all syncs for this audience. Compare with matched_count to calculate match rate (matched_count / total_uploaded_count). Populated when the seller tracks cumulative upload counts.
      */
-    total_uploaded_count?: number | null;
+    total_uploaded_count?: number;
     /**
      * Total members matched to platform users across all syncs (cumulative, not just this call). Populated when status is 'ready'.
      */
-    matched_count?: number | null;
+    matched_count?: number;
     /**
      * Deduplicated match rate across all identifier types (matched_count / total_uploaded_count after deduplication). A single number for reach estimation. Populated when status is 'ready'.
      */
-    effective_match_rate?: number | null;
+    effective_match_rate?: number;
     /**
      * Per-identifier-type match results. Shows which ID types are resolving and at what rate. Helps buyers decide which identifiers to prioritize. Populated when the seller can report per-type matching. Omitted when the seller only supports aggregate match counts.
      */
@@ -7120,22 +7120,22 @@ export interface SyncAudiencesSuccess {
     /**
      * ISO 8601 timestamp of when the most recent sync operation was accepted by the platform. Useful for agents reasoning about audience freshness. Omitted if the seller does not track this.
      */
-    last_synced_at?: string | null;
+    last_synced_at?: string;
     /**
      * Minimum matched audience size required for targeting on this platform. Populated when status is 'too_small'. Helps agents know how many more members are needed.
      */
-    minimum_size?: number | null;
+    minimum_size?: number;
     /**
      * Errors for this audience (only present when action='failed')
      */
-    errors?: Error[] | null;
+    errors?: Error[];
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - operation failed completely
@@ -7145,8 +7145,8 @@ export interface SyncAudiencesError {
    * Operation-level errors that prevented processing
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 
@@ -7162,28 +7162,28 @@ export interface SyncCatalogsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Array of catalog feeds to sync (create or update). When omitted, the call is discovery-only and returns all existing catalogs on the account without modification.
    */
-  catalogs?: Catalog[] | null;
+  catalogs?: Catalog[];
   /**
    * Optional filter to limit sync scope to specific catalog IDs. When provided, only these catalogs will be created/updated. Other catalogs on the account are unaffected.
    */
-  catalog_ids?: string[] | null;
+  catalog_ids?: string[];
   /**
    * When true, buyer-managed catalogs on the account not included in this sync will be removed. Does not affect seller-managed catalogs. Do not combine with an omitted catalogs array or all buyer-managed catalogs will be deleted.
    */
-  delete_missing?: boolean | null;
+  delete_missing?: boolean;
   /**
    * When true, preview changes without applying them. Returns what would be created/updated/deleted.
    */
-  dry_run?: boolean | null;
-  validation_mode?: ValidationMode | null;
-  push_notification_config?: PushNotificationConfig | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  dry_run?: boolean;
+  validation_mode?: ValidationMode;
+  push_notification_config?: PushNotificationConfig;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_catalogs response
@@ -7207,7 +7207,7 @@ export interface SyncCatalogsSuccess {
   /**
    * Whether this was a dry run (no actual changes made)
    */
-  dry_run?: boolean | null;
+  dry_run?: boolean;
   /**
    * Results for each catalog processed. Items with action='failed' indicate per-catalog validation/processing failures, not operation-level failures.
    */
@@ -7220,23 +7220,23 @@ export interface SyncCatalogsSuccess {
     /**
      * Platform-specific ID assigned to the catalog
      */
-    platform_id?: string | null;
+    platform_id?: string;
     /**
      * Total number of items in the catalog after sync
      */
-    item_count?: number | null;
+    item_count?: number;
     /**
      * Number of items approved by the platform. Populated when the platform performs item-level review.
      */
-    items_approved?: number | null;
+    items_approved?: number;
     /**
      * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
      */
-    items_pending?: number | null;
+    items_pending?: number;
     /**
      * Number of items rejected by the platform. Check item_issues for rejection reasons.
      */
-    items_rejected?: number | null;
+    items_rejected?: number;
     /**
      * Per-item issues reported by the platform (rejections, warnings). Only present when the platform performs item-level review.
      */
@@ -7249,35 +7249,35 @@ export interface SyncCatalogsSuccess {
       /**
        * Reasons for rejection or warning
        */
-      reasons?: string[] | null;
+      reasons?: string[];
     }[];
     /**
      * ISO 8601 timestamp of when the most recent sync was accepted by the platform
      */
-    last_synced_at?: string | null;
+    last_synced_at?: string;
     /**
      * ISO 8601 timestamp of when the platform will next fetch the feed URL. Only present for URL-based catalogs with update_frequency.
      */
-    next_fetch_at?: string | null;
+    next_fetch_at?: string;
     /**
      * Field names that were modified (only present when action='updated')
      */
-    changes?: string[] | null;
+    changes?: string[];
     /**
      * Validation or processing errors (only present when action='failed')
      */
-    errors?: Error[] | null;
+    errors?: Error[];
     /**
      * Non-fatal warnings about this catalog
      */
-    warnings?: string[] | null;
+    warnings?: string[];
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - operation failed completely, no catalogs were processed
@@ -7287,8 +7287,8 @@ export interface SyncCatalogsError {
    * Operation-level errors that prevented processing any catalogs (e.g., authentication failure, service unavailable, invalid request format)
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 
@@ -7328,44 +7328,44 @@ export interface BuildCreativeRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative. For refinement, this describes the desired changes.
    */
-  message?: string | null;
-  creative_manifest?: CreativeManifest | null;
+  message?: string;
+  creative_manifest?: CreativeManifest;
   /**
    * Reference to a creative in the agent's library. The creative agent resolves this to a manifest from its library. Use this instead of creative_manifest when retrieving an existing creative for tag generation or format adaptation.
    */
-  creative_id?: string | null;
+  creative_id?: string;
   /**
    * Creative concept containing the creative. Creative agents SHOULD assign globally unique creative_id values; when they cannot guarantee uniqueness, concept_id is REQUIRED to disambiguate.
    */
-  concept_id?: string | null;
+  concept_id?: string;
   /**
    * Media buy identifier for tag generation context. When the creative agent is also the ad server, this provides the trafficking context needed to generate placement-specific tags (e.g., CM360 placement ID). Not needed when tags are generated at the creative level (most creative platforms).
    */
-  media_buy_id?: string | null;
+  media_buy_id?: string;
   /**
    * Package identifier within the media buy. Used with media_buy_id when the creative agent needs line-item-level context for tag generation. Omit to get a tag not scoped to a specific package.
    */
-  package_id?: string | null;
-  target_format_id?: FormatID | null;
+  package_id?: string;
+  target_format_id?: FormatID;
   /**
    * Array of format IDs to generate in a single call. Mutually exclusive with target_format_id. The creative agent produces one manifest per format. Each format definition specifies its own required input assets and output structure.
    */
-  target_format_ids?: FormatID[] | null;
-  account?: AccountReference | null;
-  brand?: BrandReference | null;
-  quality?: CreativeQuality | null;
+  target_format_ids?: FormatID[];
+  account?: AccountReference;
+  brand?: BrandReference;
+  quality?: CreativeQuality;
   /**
    * Maximum number of catalog items to use when generating. When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets.
    */
-  item_limit?: number | null;
+  item_limit?: number;
   /**
    * When true, requests the creative agent to include preview renders in the response alongside the manifest. Agents that support this return a 'preview' object in the response using the same structure as preview_creative. Agents that do not support inline preview simply omit the field. This avoids a separate preview_creative round trip for platforms that generate previews as a byproduct of building.
    */
-  include_preview?: boolean | null;
+  include_preview?: boolean;
   /**
    * Input sets for preview generation when include_preview is true. Each input set defines macros and context values for one preview variant. If include_preview is true but this is omitted, the agent generates a single default preview. Only supported with target_format_id (single-format requests). Ignored when using target_format_ids — multi-format requests generate one default preview per format. Ignored when include_preview is false or omitted.
    */
@@ -7378,27 +7378,27 @@ export interface BuildCreativeRequest {
      * Macro values to use for this preview variant
      */
     macros?: {
-      [k: string]: string | null | undefined;
+      [k: string]: string | undefined;
     };
     /**
      * Natural language description of the context for AI-generated content
      */
-    context_description?: string | null;
+    context_description?: string;
   }[];
-  preview_quality?: CreativeQuality | null;
-  preview_output_format?: PreviewOutputFormat | null;
+  preview_quality?: CreativeQuality;
+  preview_output_format?: PreviewOutputFormat;
   /**
    * Macro values to pre-substitute into the output manifest's assets. Keys are universal macro names (e.g., CLICK_URL, CACHEBUSTER); values are the substitution strings. The creative agent translates universal macros to its platform's native syntax. Substitution is literal — all occurrences of each macro in output assets are replaced with the provided value. The caller is responsible for URL-encoding values if the output context requires it. Macros not provided here remain as {MACRO} placeholders for the sales agent to resolve at serve time. Creative agents MUST ignore keys they do not recognize — unknown macro names are not an error.
    */
   macro_values?: {
-    [k: string]: string | null | undefined;
+    [k: string]: string | undefined;
   };
   /**
    * Client-generated unique key for this request. Prevents duplicate creative generation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
@@ -7434,13 +7434,13 @@ export interface CreativeManifest {
   /**
    * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
    */
-  rights?: RightsConstraint[] | null;
+  rights?: RightsConstraint[];
   /**
    * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
    */
-  industry_identifiers?: IndustryIdentifier[] | null;
-  provenance?: Provenance | null;
-  ext?: ExtensionObject | null;
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
+  ext?: ExtensionObject;
 }
 /**
  * Rights metadata attached to a creative manifest. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
@@ -7466,11 +7466,11 @@ export interface RightsConstraint {
   /**
    * Start of the rights validity period
    */
-  valid_from?: string | null;
+  valid_from?: string;
   /**
    * End of the rights validity period. Creative should not be served after this time.
    */
-  valid_until?: string | null;
+  valid_until?: string;
   /**
    * Rights uses covered by this constraint
    */
@@ -7478,25 +7478,25 @@ export interface RightsConstraint {
   /**
    * Countries where this creative may be served under these rights (ISO 3166-1 alpha-2). If omitted, no country restriction. When both countries and excluded_countries are present, the effective set is countries minus excluded_countries.
    */
-  countries?: string[] | null;
+  countries?: string[];
   /**
    * Countries excluded from rights availability (ISO 3166-1 alpha-2). Use when the grant is worldwide except specific markets.
    */
-  excluded_countries?: string[] | null;
+  excluded_countries?: string[];
   /**
    * Maximum total impressions allowed for the full validity period (valid_from to valid_until). This is the absolute cap across all creatives using this rights grant, not a per-creative or per-period limit.
    */
-  impression_cap?: number | null;
-  right_type?: RightType | null;
+  impression_cap?: number;
+  right_type?: RightType;
   /**
    * Approval status from the rights holder at manifest creation time (snapshot, not a live value)
    */
-  approval_status?: 'pending' | 'approved' | 'rejected' | null;
+  approval_status?: 'pending' | 'approved' | 'rejected';
   /**
    * URL where downstream supply chain participants can verify this rights grant is active. Returns HTTP 200 with the current grant status, or 404 if revoked. Enables SSPs and verification vendors to confirm rights before serving.
    */
-  verification_url?: string | null;
-  ext?: ExtensionObject | null;
+  verification_url?: string;
+  ext?: ExtensionObject;
 }
 
 // build_creative response
@@ -7539,19 +7539,19 @@ export type PreviewRender =
         /**
          * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
          */
-        recommended_sandbox?: string | null;
+        recommended_sandbox?: string;
         /**
          * Whether this output requires HTTPS for secure embedding
          */
-        requires_https?: boolean | null;
+        requires_https?: boolean;
         /**
          * Whether this output supports fullscreen mode
          */
-        supports_fullscreen?: boolean | null;
+        supports_fullscreen?: boolean;
         /**
          * Content Security Policy requirements for embedding
          */
-        csp_policy?: string | null;
+        csp_policy?: string;
       };
     }
   | {
@@ -7585,19 +7585,19 @@ export type PreviewRender =
         /**
          * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
          */
-        recommended_sandbox?: string | null;
+        recommended_sandbox?: string;
         /**
          * Whether this output requires HTTPS for secure embedding
          */
-        requires_https?: boolean | null;
+        requires_https?: boolean;
         /**
          * Whether this output supports fullscreen mode
          */
-        supports_fullscreen?: boolean | null;
+        supports_fullscreen?: boolean;
         /**
          * Content Security Policy requirements for embedding
          */
-        csp_policy?: string | null;
+        csp_policy?: string;
       };
     }
   | {
@@ -7635,19 +7635,19 @@ export type PreviewRender =
         /**
          * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
          */
-        recommended_sandbox?: string | null;
+        recommended_sandbox?: string;
         /**
          * Whether this output requires HTTPS for secure embedding
          */
-        requires_https?: boolean | null;
+        requires_https?: boolean;
         /**
          * Whether this output supports fullscreen mode
          */
-        supports_fullscreen?: boolean | null;
+        supports_fullscreen?: boolean;
         /**
          * Content Security Policy requirements for embedding
          */
-        csp_policy?: string | null;
+        csp_policy?: string;
       };
     };
 
@@ -7659,11 +7659,11 @@ export interface BuildCreativeSuccess {
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
+  sandbox?: boolean;
   /**
    * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
    */
-  expires_at?: string | null;
+  expires_at?: string;
   /**
    * Preview renders included when the request set include_preview to true and the agent supports it. Contains the same content fields as a preview_creative single response (previews, interactive_url, expires_at) minus the response_type discriminator, so clients can reuse the same preview rendering logic.
    */
@@ -7692,39 +7692,39 @@ export interface BuildCreativeSuccess {
          * Macro values applied to this variant
          */
         macros?: {
-          [k: string]: string | null | undefined;
+          [k: string]: string | undefined;
         };
         /**
          * Context description applied to this variant
          */
-        context_description?: string | null;
+        context_description?: string;
       };
     }[];
     /**
      * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them.
      */
-    interactive_url?: string | null;
+    interactive_url?: string;
     /**
      * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
      */
     expires_at: string;
   };
-  preview_error?: Error | null;
+  preview_error?: Error;
   /**
    * Which rate card pricing option was applied for this build. Present when the creative agent charges for its services. Pass this in report_usage to identify which pricing option was applied.
    */
-  pricing_option_id?: string | null;
+  pricing_option_id?: string;
   /**
    * Cost incurred for this build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time rather than build time.
    */
-  vendor_cost?: number | null;
+  vendor_cost?: number;
   /**
    * ISO 4217 currency code for vendor_cost.
    */
-  currency?: string | null;
-  consumption?: CreativeConsumption | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  currency?: string;
+  consumption?: CreativeConsumption;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Structured consumption details for this build. Informational — lets the buyer verify that vendor_cost is consistent with the rate card. vendor_cost is the billing source of truth.
@@ -7733,19 +7733,19 @@ export interface CreativeConsumption {
   /**
    * LLM or generation tokens consumed during creative generation.
    */
-  tokens?: number | null;
+  tokens?: number;
   /**
    * Number of images produced during generation.
    */
-  images_generated?: number | null;
+  images_generated?: number;
   /**
    * Number of render passes performed (video, animation).
    */
-  renders?: number | null;
+  renders?: number;
   /**
    * Processing time billed, in seconds. For compute-time pricing models.
    */
-  duration_seconds?: number | null;
+  duration_seconds?: number;
 }
 /**
  * Multi-format success response. Returned when the request used target_format_ids. Contains one manifest per requested format. Multi-format requests are atomic — all formats must succeed or the entire request fails with an error response. Array order corresponds to the target_format_ids request order.
@@ -7758,11 +7758,11 @@ export interface BuildCreativeMultiSuccess {
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
+  sandbox?: boolean;
   /**
    * ISO 8601 timestamp when the earliest generated asset URL expires across all manifests. Re-build after this time to get fresh URLs.
    */
-  expires_at?: string | null;
+  expires_at?: string;
   /**
    * Preview renders included when the request set include_preview to true and the agent supports it. Contains one default preview per requested format. preview_inputs is ignored for multi-format requests.
    */
@@ -7792,39 +7792,39 @@ export interface BuildCreativeMultiSuccess {
          * Macro values applied to this preview
          */
         macros?: {
-          [k: string]: string | null | undefined;
+          [k: string]: string | undefined;
         };
         /**
          * Context description applied to this preview
          */
-        context_description?: string | null;
+        context_description?: string;
       };
     }[];
     /**
      * Optional URL to an interactive testing page that shows all format previews with controls to switch between them.
      */
-    interactive_url?: string | null;
+    interactive_url?: string;
     /**
      * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
      */
     expires_at: string;
   };
-  preview_error?: Error | null;
+  preview_error?: Error;
   /**
    * Which rate card pricing option was applied for this build. Represents the total cost of the entire multi-format build call. Present when the creative agent charges for its services.
    */
-  pricing_option_id?: string | null;
+  pricing_option_id?: string;
   /**
    * Total cost incurred for this multi-format build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time.
    */
-  vendor_cost?: number | null;
+  vendor_cost?: number;
   /**
    * ISO 4217 currency code for vendor_cost.
    */
-  currency?: string | null;
-  consumption?: CreativeConsumption | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  currency?: string;
+  consumption?: CreativeConsumption;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - creative generation failed
@@ -7834,8 +7834,8 @@ export interface BuildCreativeError {
    * Array of errors explaining why creative generation failed
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // preview_creative parameters
@@ -7847,12 +7847,12 @@ export type PreviewCreativeRequest =
       /**
        * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
        */
-      adcp_major_version?: number | null;
+      adcp_major_version?: number;
       /**
        * Discriminator indicating this is a single preview request
        */
       request_type: 'single';
-      format_id?: FormatID | null;
+      format_id?: FormatID;
       creative_manifest: CreativeManifest;
       /**
        * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
@@ -7866,31 +7866,31 @@ export type PreviewCreativeRequest =
          * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/creative/universal-macros.md for available macros.
          */
         macros?: {
-          [k: string]: string | null | undefined;
+          [k: string]: string | undefined;
         };
         /**
          * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
          */
-        context_description?: string | null;
+        context_description?: string;
       }[];
       /**
        * Specific template ID for custom format rendering
        */
-      template_id?: string | null;
-      quality?: CreativeQuality | null;
-      output_format?: PreviewOutputFormat | null;
+      template_id?: string;
+      quality?: CreativeQuality;
+      output_format?: PreviewOutputFormat;
       /**
        * Maximum number of catalog items to render in the preview. For catalog-driven generative formats, caps how many items are rendered per preview variant. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
        */
-      item_limit?: number | null;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      item_limit?: number;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
        * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
        */
-      adcp_major_version?: number | null;
+      adcp_major_version?: number;
       /**
        * Discriminator indicating this is a batch preview request
        */
@@ -7899,7 +7899,7 @@ export type PreviewCreativeRequest =
        * Array of preview requests (1-50 items). Each follows the single request structure.
        */
       requests: {
-        format_id?: FormatID | null;
+        format_id?: FormatID;
         creative_manifest: CreativeManifest;
         /**
          * Array of input sets for generating multiple preview variants
@@ -7913,34 +7913,34 @@ export type PreviewCreativeRequest =
            * Macro values to use for this preview
            */
           macros?: {
-            [k: string]: string | null | undefined;
+            [k: string]: string | undefined;
           };
           /**
            * Natural language description of the context for AI-generated content
            */
-          context_description?: string | null;
+          context_description?: string;
         }[];
         /**
          * Specific template ID for custom format rendering
          */
-        template_id?: string | null;
-        quality?: CreativeQuality | null;
-        output_format?: PreviewOutputFormat | null;
+        template_id?: string;
+        quality?: CreativeQuality;
+        output_format?: PreviewOutputFormat;
         /**
          * Maximum number of catalog items to render in this preview.
          */
-        item_limit?: number | null;
+        item_limit?: number;
       }[];
-      quality?: CreativeQuality | null;
-      output_format?: PreviewOutputFormat | null;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      quality?: CreativeQuality;
+      output_format?: PreviewOutputFormat;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
        * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
        */
-      adcp_major_version?: number | null;
+      adcp_major_version?: number;
       /**
        * Discriminator indicating this is a variant preview request
        */
@@ -7952,10 +7952,10 @@ export type PreviewCreativeRequest =
       /**
        * Creative identifier for context
        */
-      creative_id?: string | null;
-      output_format?: PreviewOutputFormat | null;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      creative_id?: string;
+      output_format?: PreviewOutputFormat;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 // preview_creative response
@@ -7998,24 +7998,24 @@ export interface PreviewCreativeSingleResponse {
        * Macro values applied to this variant
        */
       macros?: {
-        [k: string]: string | null | undefined;
+        [k: string]: string | undefined;
       };
       /**
        * Context description applied to this variant
        */
-      context_description?: string | null;
+      context_description?: string;
     };
   }[];
   /**
    * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
    */
-  interactive_url?: string | null;
+  interactive_url?: string;
   /**
    * ISO 8601 timestamp when preview links expire
    */
   expires_at: string;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Batch preview response - contains results for multiple creative requests
@@ -8029,20 +8029,20 @@ export interface PreviewCreativeBatchResponse {
    * Array of preview results corresponding to each request in the same order. results[0] is the result for requests[0], results[1] for requests[1], etc. Order is guaranteed even when some requests fail. Each result contains either a successful preview response or an error.
    */
   results: (PreviewBatchResultSuccess | PreviewBatchResultError)[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 export interface PreviewBatchResultSuccess {
   /**
    * Indicates this preview request succeeded
    */
-  success?: true | null;
+  success?: true;
 }
 export interface PreviewBatchResultError {
   /**
    * Indicates this preview request failed
    */
-  success?: false | null;
+  success?: false;
 }
 /**
  * Variant preview response - shows what a specific creative variant looked like when served during delivery
@@ -8059,7 +8059,7 @@ export interface PreviewCreativeVariantResponse {
   /**
    * Creative identifier this variant belongs to
    */
-  creative_id?: string | null;
+  creative_id?: string;
   /**
    * Array of rendered pieces for this variant. Most formats render as a single piece.
    */
@@ -8073,13 +8073,13 @@ export interface PreviewCreativeVariantResponse {
      */
     renders: PreviewRender[];
   }[];
-  manifest?: CreativeManifest | null;
+  manifest?: CreativeManifest;
   /**
    * ISO 8601 timestamp when preview links expire
    */
-  expires_at?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  expires_at?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_creative_delivery parameters
@@ -8087,36 +8087,36 @@ export interface PreviewCreativeVariantResponse {
  * Request parameters for retrieving creative delivery data including variant-level metrics from a creative agent. At least one scoping filter (media_buy_ids or creative_ids) is required.
  */
 export type GetCreativeDeliveryRequest = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
-  account?: AccountReference | null;
+  adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Filter to specific media buys by publisher ID. If omitted, returns creative delivery across all matching media buys.
    */
-  media_buy_ids?: string[] | null;
+  media_buy_ids?: string[];
   /**
    * Filter to specific creatives by ID. If omitted, returns delivery for all creatives matching the other filters.
    */
-  creative_ids?: string[] | null;
+  creative_ids?: string[];
   /**
    * Start date for delivery period (YYYY-MM-DD). Interpreted in the platform's reporting timezone.
    */
-  start_date?: string | null;
+  start_date?: string;
   /**
    * End date for delivery period (YYYY-MM-DD). Interpreted in the platform's reporting timezone.
    */
-  end_date?: string | null;
+  end_date?: string;
   /**
    * Maximum number of variants to return per creative. When omitted, the agent returns all variants. Use this to limit response size for generative creatives that may produce large numbers of variants.
    */
-  max_variants?: number | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  max_variants?: number;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 };
 
 // get_creative_delivery response
@@ -8128,7 +8128,7 @@ export type CreativeVariant = DeliveryMetrics & {
    * Platform-assigned identifier for this variant
    */
   variant_id: string;
-  manifest?: CreativeManifest | null;
+  manifest?: CreativeManifest;
   /**
    * Input signals that triggered generation of this variant (Tier 3). Describes why the platform created this specific variant. Platforms should provide summarized or anonymized signals rather than raw user input. For web contexts, may include page topic or URL. For conversational contexts, an anonymized content signal. For search, query category or intent. When the content context is managed through AdCP content standards, reference the artifact directly via the artifact field.
    */
@@ -8136,7 +8136,7 @@ export type CreativeVariant = DeliveryMetrics & {
     /**
      * Type of context that triggered generation (e.g., 'web_page', 'conversational', 'search', 'app', 'dooh')
      */
-    context_type?: string | null;
+    context_type?: string;
     /**
      * Reference to the content-standards artifact that provided the generation context. Links this variant to the specific piece of content (article, video, podcast segment, etc.) where the ad was placed.
      */
@@ -8147,7 +8147,7 @@ export type CreativeVariant = DeliveryMetrics & {
        */
       artifact_id: string;
     };
-    ext?: ExtensionObject | null;
+    ext?: ExtensionObject;
   };
 };
 /**
@@ -8183,11 +8183,11 @@ export interface GetCreativeDeliveryResponse {
   /**
    * Account identifier. Present when the response spans or is scoped to a specific account.
    */
-  account_id?: string | null;
+  account_id?: string;
   /**
    * Publisher's media buy identifier. Present when the request was scoped to a single media buy.
    */
-  media_buy_id?: string | null;
+  media_buy_id?: string;
   /**
    * ISO 4217 currency code for monetary values in this response (e.g., 'USD', 'EUR')
    */
@@ -8207,7 +8207,7 @@ export interface GetCreativeDeliveryResponse {
     /**
      * IANA timezone identifier for the reporting period (e.g., 'America/New_York', 'UTC'). Platforms report in their native timezone.
      */
-    timezone?: string | null;
+    timezone?: string;
   };
   /**
    * Creative delivery data with variant breakdowns
@@ -8220,13 +8220,13 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Publisher's media buy identifier for this creative. Present when the request spanned multiple media buys, so the buyer can correlate each creative to its media buy.
      */
-    media_buy_id?: string | null;
-    format_id?: FormatID | null;
-    totals?: DeliveryMetrics | null;
+    media_buy_id?: string;
+    format_id?: FormatID;
+    totals?: DeliveryMetrics;
     /**
      * Total number of variants for this creative. When max_variants was specified in the request, this may exceed the number of items in the variants array.
      */
-    variant_count?: number | null;
+    variant_count?: number;
     /**
      * Variant-level delivery breakdown. Each variant includes the rendered manifest and delivery metrics. For standard creatives, contains a single variant. For asset group optimization, one per combination. For generative creative, one per generated execution. Empty when a creative has no variants yet.
      */
@@ -8251,14 +8251,14 @@ export interface GetCreativeDeliveryResponse {
     /**
      * Total number of creatives matching the request filters
      */
-    total?: number | null;
+    total?: number;
   };
   /**
    * Task-specific errors and warnings
    */
-  errors?: Error[] | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Property where the artifact appears
@@ -8287,37 +8287,37 @@ export interface ListCreativesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
-  filters?: CreativeFilters | null;
+  adcp_major_version?: number;
+  filters?: CreativeFilters;
   /**
    * Sorting parameters
    */
   sort?: {
-    field?: CreativeSortField | null;
-    direction?: SortDirection | null;
+    field?: CreativeSortField;
+    direction?: SortDirection;
   };
-  pagination?: PaginationRequest | null;
+  pagination?: PaginationRequest;
   /**
    * Include package assignment information in response
    */
-  include_assignments?: boolean | null;
+  include_assignments?: boolean;
   /**
    * Include a lightweight delivery snapshot per creative (lifetime impressions and last-served date). For detailed performance analytics, use get_creative_delivery.
    */
-  include_snapshot?: boolean | null;
+  include_snapshot?: boolean;
   /**
    * Include items for multi-asset formats like carousels and native ads
    */
-  include_items?: boolean | null;
+  include_items?: boolean;
   /**
    * Include dynamic content variable definitions (DCO slots) for each creative
    */
-  include_variables?: boolean | null;
+  include_variables?: boolean;
   /**
    * Include pricing_options on each creative. Requires account to be provided. When false or omitted, pricing is not computed.
    */
-  include_pricing?: boolean | null;
-  account?: AccountReference | null;
+  include_pricing?: boolean;
+  account?: AccountReference;
   /**
    * Specific fields to include in response (omit for all fields). The 'concept' value returns both concept_id and concept_name.
    */
@@ -8336,8 +8336,8 @@ export interface ListCreativesRequest {
     | 'concept'
     | 'pricing_options'
   )[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Filter criteria for querying creatives from a creative library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
@@ -8346,71 +8346,71 @@ export interface CreativeFilters {
   /**
    * Filter creatives by owning accounts. Useful for agencies managing multiple client accounts.
    */
-  accounts?: AccountReference[] | null;
+  accounts?: AccountReference[];
   /**
    * Filter by creative approval statuses
    */
-  statuses?: CreativeStatus[] | null;
+  statuses?: CreativeStatus[];
   /**
    * Filter by creative tags (all tags must match)
    */
-  tags?: string[] | null;
+  tags?: string[];
   /**
    * Filter by creative tags (any tag must match)
    */
-  tags_any?: string[] | null;
+  tags_any?: string[];
   /**
    * Filter by creative names containing this text (case-insensitive)
    */
-  name_contains?: string | null;
+  name_contains?: string;
   /**
    * Filter by specific creative IDs
    */
-  creative_ids?: string[] | null;
+  creative_ids?: string[];
   /**
    * Filter creatives created after this date (ISO 8601)
    */
-  created_after?: string | null;
+  created_after?: string;
   /**
    * Filter creatives created before this date (ISO 8601)
    */
-  created_before?: string | null;
+  created_before?: string;
   /**
    * Filter creatives last updated after this date (ISO 8601)
    */
-  updated_after?: string | null;
+  updated_after?: string;
   /**
    * Filter creatives last updated before this date (ISO 8601)
    */
-  updated_before?: string | null;
+  updated_before?: string;
   /**
    * Filter creatives assigned to any of these packages. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
    */
-  assigned_to_packages?: string[] | null;
+  assigned_to_packages?: string[];
   /**
    * Filter creatives assigned to any of these media buys. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
    */
-  media_buy_ids?: string[] | null;
+  media_buy_ids?: string[];
   /**
    * Filter for unassigned creatives when true, assigned creatives when false. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
    */
-  unassigned?: boolean | null;
+  unassigned?: boolean;
   /**
    * When true, return only creatives that have served at least one impression. When false, return only creatives that have never served.
    */
-  has_served?: boolean | null;
+  has_served?: boolean;
   /**
    * Filter by creative concept IDs. Concepts group related creatives across sizes and formats (e.g., Flashtalking concepts, Celtra campaign folders, CM360 creative groups).
    */
-  concept_ids?: string[] | null;
+  concept_ids?: string[];
   /**
    * Filter by structured format IDs. Returns creatives that match any of these formats.
    */
-  format_ids?: FormatID[] | null;
+  format_ids?: FormatID[];
   /**
    * When true, return only creatives with dynamic variables (DCO). When false, return only static creatives.
    */
-  has_variables?: boolean | null;
+  has_variables?: boolean;
 }
 
 // list_creatives response
@@ -8473,13 +8473,13 @@ export interface ListCreativesResponse {
     /**
      * List of filters that were applied to the query
      */
-    filters_applied?: string[] | null;
+    filters_applied?: string[];
     /**
      * Sort order that was applied
      */
     sort_applied?: {
-      field?: string | null;
-      direction?: SortDirection | null;
+      field?: string;
+      direction?: SortDirection;
     };
   };
   pagination: PaginationResponse;
@@ -8491,7 +8491,7 @@ export interface ListCreativesResponse {
      * Unique identifier for the creative
      */
     creative_id: string;
-    account?: Account | null;
+    account?: Account;
     /**
      * Human-readable creative name
      */
@@ -8533,19 +8533,19 @@ export interface ListCreativesResponse {
     /**
      * User-defined tags for organization and searchability
      */
-    tags?: string[] | null;
+    tags?: string[];
     /**
      * Creative concept this creative belongs to. Concepts group related creatives across sizes and formats.
      */
-    concept_id?: string | null;
+    concept_id?: string;
     /**
      * Human-readable concept name
      */
-    concept_name?: string | null;
+    concept_name?: string;
     /**
      * Dynamic content variables (DCO slots) for this creative. Included when include_variables=true.
      */
-    variables?: CreativeVariable[] | null;
+    variables?: CreativeVariable[];
     /**
      * Current package assignments (included when include_assignments=true)
      */
@@ -8587,7 +8587,7 @@ export interface ListCreativesResponse {
       /**
        * Last time this creative served an impression. Absent when the creative has never served.
        */
-      last_served?: string | null;
+      last_served?: string;
     };
     /**
      * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot data is unavailable for this creative.
@@ -8599,11 +8599,11 @@ export interface ListCreativesResponse {
     /**
      * Items for multi-asset formats like carousels and native ads (included when include_items=true)
      */
-    items?: CreativeItem[] | null;
+    items?: CreativeItem[];
     /**
      * Pricing options for using this creative (serving, delivery). Used by ad servers and library agents. Transformation agents expose format-level pricing on list_creative_formats instead. Present when include_pricing=true and account provided. The buyer passes the applied pricing_option_id in report_usage.
      */
-    pricing_options?: VendorPricingOption[] | null;
+    pricing_options?: VendorPricingOption[];
   }[];
   /**
    * Breakdown of creatives by format. Keys are agent-defined format identifiers, optionally including dimensions (e.g., 'display_static_300x250', 'video_30s_vast'). Key construction is platform-specific — there is no required format.
@@ -8615,7 +8615,7 @@ export interface ListCreativesResponse {
      * This interface was referenced by `undefined`'s JSON-Schema definition
      * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
      */
-    [k: string]: number | null | undefined;
+    [k: string]: number | undefined;
   };
   /**
    * Breakdown of creatives by status
@@ -8624,34 +8624,34 @@ export interface ListCreativesResponse {
     /**
      * Number of creatives being processed
      */
-    processing?: number | null;
+    processing?: number;
     /**
      * Number of approved creatives
      */
-    approved?: number | null;
+    approved?: number;
     /**
      * Number of creatives pending review
      */
-    pending_review?: number | null;
+    pending_review?: number;
     /**
      * Number of rejected creatives
      */
-    rejected?: number | null;
+    rejected?: number;
     /**
      * Number of archived creatives
      */
-    archived?: number | null;
+    archived?: number;
   };
   /**
    * Task-specific errors (e.g., invalid filters, account not found)
    */
-  errors?: Error[] | null;
+  errors?: Error[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * A dynamic content variable (DCO slot) on a creative. Variables represent content that can change at serve time — headlines, images, product data, etc.
@@ -8672,11 +8672,11 @@ export interface CreativeVariable {
   /**
    * Default value used when no dynamic value is provided at serve time. All types are string-encoded: text/image/video/audio/url as literal strings, number as decimal (e.g., "42.99"), boolean as "true"/"false", color as "#RRGGBB", date as ISO 8601 (e.g., "2026-12-25T00:00:00Z").
    */
-  default_value?: string | null;
+  default_value?: string;
   /**
    * Whether this variable must have a value for the creative to serve
    */
-  required?: boolean | null;
+  required?: boolean;
 }
 
 // sync_creatives parameters
@@ -8687,7 +8687,7 @@ export interface SyncCreativesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Array of creative assets to sync (create or update)
@@ -8696,7 +8696,7 @@ export interface SyncCreativesRequest {
   /**
    * Optional filter to limit sync scope to specific creative IDs. When provided, only these creatives will be created/updated. Other creatives in the library are unaffected. Useful for partial updates and error recovery.
    */
-  creative_ids?: string[] | null;
+  creative_ids?: string[];
   /**
    * Optional bulk assignment of creatives to packages. Each entry maps one creative to one package with optional weight and placement targeting. Standalone creative agents that do not manage media buys ignore this field.
    */
@@ -8712,28 +8712,28 @@ export interface SyncCreativesRequest {
     /**
      * Relative delivery weight (0-100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
      */
-    weight?: number | null;
+    weight?: number;
     /**
      * Restrict this creative to specific placements within the package. When omitted, the creative is eligible for all placements.
      */
-    placement_ids?: string[] | null;
+    placement_ids?: string[];
   }[];
   /**
    * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
   /**
    * When true, creatives not included in this sync will be archived. Use with caution for full library replacement. Invalid when creative_ids is provided — delete_missing applies to the entire library scope, not a filtered subset.
    */
-  delete_missing?: boolean | null;
+  delete_missing?: boolean;
   /**
    * When true, preview changes without applying them. Returns what would be created/updated/deleted.
    */
-  dry_run?: boolean | null;
-  validation_mode?: ValidationMode | null;
-  push_notification_config?: PushNotificationConfig | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  dry_run?: boolean;
+  validation_mode?: ValidationMode;
+  push_notification_config?: PushNotificationConfig;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_creatives response
@@ -8753,7 +8753,7 @@ export interface SyncCreativesSuccess {
   /**
    * Whether this was a dry run (no actual changes made)
    */
-  dry_run?: boolean | null;
+  dry_run?: boolean;
   /**
    * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
    */
@@ -8762,36 +8762,36 @@ export interface SyncCreativesSuccess {
      * Creative ID from the request
      */
     creative_id: string;
-    account?: Account | null;
+    account?: Account;
     action: CreativeAction;
     /**
      * Platform-specific ID assigned to the creative
      */
-    platform_id?: string | null;
+    platform_id?: string;
     /**
      * Field names that were modified (only present when action='updated')
      */
-    changes?: string[] | null;
+    changes?: string[];
     /**
      * Validation or processing errors (only present when action='failed')
      */
-    errors?: Error[] | null;
+    errors?: Error[];
     /**
      * Non-fatal warnings about this creative
      */
-    warnings?: string[] | null;
+    warnings?: string[];
     /**
      * Preview URL for generative creatives (only present for generative formats)
      */
-    preview_url?: string | null;
+    preview_url?: string;
     /**
      * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
      */
-    expires_at?: string | null;
+    expires_at?: string;
     /**
      * Package IDs this creative was successfully assigned to (only present when assignments were requested)
      */
-    assigned_to?: string[] | null;
+    assigned_to?: string[];
     /**
      * Assignment errors by package ID (only present when assignment failures occurred)
      */
@@ -8802,15 +8802,15 @@ export interface SyncCreativesSuccess {
        * This interface was referenced by `undefined`'s JSON-Schema definition
        * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
        */
-      [k: string]: string | null | undefined;
+      [k: string]: string | undefined;
     };
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - operation failed completely, no creatives were processed
@@ -8820,8 +8820,8 @@ export interface SyncCreativesError {
    * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 
@@ -8830,37 +8830,37 @@ export interface SyncCreativesError {
  * Request parameters for discovering and refining signals. Use signal_spec for natural language discovery, signal_ids for exact lookups, or both to refine previous results (signal_ids anchor the starting set, signal_spec guides adjustments).
  */
 export type GetSignalsRequest = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
-  account?: AccountReference | null;
+  adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first.
    */
-  signal_spec?: string | null;
+  signal_spec?: string;
   /**
    * Specific signals to look up by data provider and ID. Returns exact matches from the data provider's catalog. When combined with signal_spec, these signals anchor the starting set and signal_spec guides adjustments.
    */
-  signal_ids?: SignalID[] | null;
+  signal_ids?: SignalID[];
   /**
    * Filter signals to those activatable on specific agents/platforms. When omitted, returns all signals available on the current agent. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
    */
-  destinations?: Destination[] | null;
+  destinations?: Destination[];
   /**
    * Countries where signals will be used (ISO 3166-1 alpha-2 codes). When omitted, no geographic filter is applied.
    */
-  countries?: string[] | null;
-  filters?: SignalFilters | null;
+  countries?: string[];
+  filters?: SignalFilters;
   /**
    * Maximum number of results to return
    */
-  max_results?: number | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  max_results?: number;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 };
 /**
  * A deployment target where signals can be activated (DSP, sales agent, etc.)
@@ -8878,7 +8878,7 @@ export type Destination =
       /**
        * Optional account identifier on the platform
        */
-      account?: string | null;
+      account?: string;
     }
   | {
       /**
@@ -8892,7 +8892,7 @@ export type Destination =
       /**
        * Optional account identifier on the agent
        */
-      account?: string | null;
+      account?: string;
     };
 /**
  * Types of signal catalogs available for audience targeting
@@ -8906,23 +8906,23 @@ export interface SignalFilters {
   /**
    * Filter by catalog type
    */
-  catalog_types?: SignalCatalogType[] | null;
+  catalog_types?: SignalCatalogType[];
   /**
    * Filter by specific data providers
    */
-  data_providers?: string[] | null;
+  data_providers?: string[];
   /**
    * Maximum CPM filter. Applies only to signals with model='cpm'.
    */
-  max_cpm?: number | null;
+  max_cpm?: number;
   /**
    * Maximum percent-of-media rate filter. Signals where all percent_of_media pricing options exceed this value are excluded. Does not account for max_cpm caps.
    */
-  max_percent?: number | null;
+  max_percent?: number;
   /**
    * Minimum coverage requirement
    */
-  min_coverage_percentage?: number | null;
+  min_coverage_percentage?: number;
 }
 
 // get_signals response
@@ -8946,20 +8946,20 @@ export type Deployment =
       /**
        * Account identifier if applicable
        */
-      account?: string | null;
+      account?: string;
       /**
        * Whether signal is currently active on this deployment
        */
       is_live: boolean;
-      activation_key?: ActivationKey | null;
+      activation_key?: ActivationKey;
       /**
        * Estimated time to activate if not live, or to complete activation if in progress
        */
-      estimated_activation_duration_minutes?: number | null;
+      estimated_activation_duration_minutes?: number;
       /**
        * Timestamp when activation completed (if is_live=true)
        */
-      deployed_at?: string | null;
+      deployed_at?: string;
     }
   | {
       /**
@@ -8973,20 +8973,20 @@ export type Deployment =
       /**
        * Account identifier if applicable
        */
-      account?: string | null;
+      account?: string;
       /**
        * Whether signal is currently active on this deployment
        */
       is_live: boolean;
-      activation_key?: ActivationKey | null;
+      activation_key?: ActivationKey;
       /**
        * Estimated time to activate if not live, or to complete activation if in progress
        */
-      estimated_activation_duration_minutes?: number | null;
+      estimated_activation_duration_minutes?: number;
       /**
        * Timestamp when activation completed (if is_live=true)
        */
-      deployed_at?: string | null;
+      deployed_at?: string;
     };
 /**
  * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
@@ -9024,7 +9024,7 @@ export interface GetSignalsResponse {
    * Array of matching signals
    */
   signals: {
-    signal_id?: SignalID | null;
+    signal_id?: SignalID;
     /**
      * Opaque identifier used for activation. This is the signals agent's internal segment ID.
      */
@@ -9037,11 +9037,11 @@ export interface GetSignalsResponse {
      * Detailed signal description
      */
     description: string;
-    value_type?: SignalValueType | null;
+    value_type?: SignalValueType;
     /**
      * Valid values for categorical signals. Present when value_type is 'categorical'. Buyers must use one of these values in SignalTargeting.values.
      */
-    categories?: string[] | null;
+    categories?: string[];
     /**
      * Valid range for numeric signals. Present when value_type is 'numeric'.
      */
@@ -9076,14 +9076,14 @@ export interface GetSignalsResponse {
   /**
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
    */
-  errors?: Error[] | null;
-  pagination?: PaginationResponse | null;
+  errors?: Error[];
+  pagination?: PaginationResponse;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // activate_signal parameters
@@ -9094,11 +9094,11 @@ export interface ActivateSignalRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Whether to activate or deactivate the signal. Deactivating removes the segment from downstream platforms, required when campaigns end to comply with data governance policies (GDPR, CCPA). Defaults to 'activate' when omitted.
    */
-  action?: 'activate' | 'deactivate' | null;
+  action?: 'activate' | 'deactivate';
   /**
    * The universal identifier for the signal to activate
    */
@@ -9110,14 +9110,14 @@ export interface ActivateSignalRequest {
   /**
    * The pricing option selected from the signal's pricing_options in the get_signals response. Required when the signal has pricing options. Records the buyer's pricing commitment at activation time; pass this same value in report_usage for billing verification.
    */
-  pricing_option_id?: string | null;
-  account?: AccountReference | null;
+  pricing_option_id?: string;
+  account?: AccountReference;
   /**
    * Client-generated unique key for this request. Prevents duplicate activations on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // activate_signal response
@@ -9136,9 +9136,9 @@ export interface ActivateSignalSuccess {
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Error response - operation failed, signal not activated
@@ -9148,8 +9148,8 @@ export interface ActivateSignalError {
    * Array of errors explaining why activation failed (e.g., platform connectivity issues, signal definition problems, authentication failures)
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // create_property_list parameters
@@ -9178,7 +9178,7 @@ export interface CreatePropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Human-readable name for the list
    */
@@ -9186,19 +9186,19 @@ export interface CreatePropertyListRequest {
   /**
    * Description of the list's purpose
    */
-  description?: string | null;
+  description?: string;
   /**
    * Array of property sources to evaluate. Each entry is a discriminated union: publisher_tags (publisher_domain + tags), publisher_ids (publisher_domain + property_ids), or identifiers (direct identifiers). If omitted, queries the agent's entire property database.
    */
-  base_properties?: BasePropertySource[] | null;
-  filters?: PropertyListFilters | null;
-  brand?: BrandReference | null;
+  base_properties?: BasePropertySource[];
+  filters?: PropertyListFilters;
+  brand?: BrandReference;
   /**
    * Client-generated unique key for this request. Prevents duplicate property list creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Select properties from a publisher by tag membership
@@ -9254,23 +9254,23 @@ export interface PropertyListFilters {
   /**
    * Property must have feature data for ALL listed countries (ISO codes). When omitted, no country restriction is applied.
    */
-  countries_all?: string[] | null;
+  countries_all?: string[];
   /**
    * Property must support ANY of the listed channels. When omitted, no channel restriction is applied.
    */
-  channels_any?: MediaChannel[] | null;
+  channels_any?: MediaChannel[];
   /**
    * Filter to these property types
    */
-  property_types?: PropertyType[] | null;
+  property_types?: PropertyType[];
   /**
    * Feature-based requirements. Property must pass ALL requirements (AND logic).
    */
-  feature_requirements?: FeatureRequirement[] | null;
+  feature_requirements?: FeatureRequirement[];
   /**
    * Identifiers to always exclude from results
    */
-  exclude_identifiers?: Identifier[] | null;
+  exclude_identifiers?: Identifier[];
 }
 /**
  * A feature-based requirement for property filtering. Use min_value/max_value for quantitative features, allowed_values for binary/categorical features.
@@ -9283,19 +9283,19 @@ export interface FeatureRequirement {
   /**
    * Minimum numeric value required (for quantitative features)
    */
-  min_value?: number | null;
+  min_value?: number;
   /**
    * Maximum numeric value allowed (for quantitative features)
    */
-  max_value?: number | null;
+  max_value?: number;
   /**
    * Values that pass the requirement (for binary/categorical features)
    */
-  allowed_values?: unknown[] | null;
+  allowed_values?: unknown[];
   /**
    * How to handle properties where this feature is not covered. 'exclude' (default): property is removed from the list. 'include': property passes this requirement (fail-open).
    */
-  if_not_covered?: 'exclude' | 'include' | null;
+  if_not_covered?: 'exclude' | 'include';
 }
 
 // create_property_list response
@@ -9308,7 +9308,7 @@ export interface CreatePropertyListResponse {
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * The created property list
@@ -9325,41 +9325,41 @@ export interface PropertyList {
   /**
    * Description of the list's purpose
    */
-  description?: string | null;
+  description?: string;
   /**
    * Principal identity that owns this list
    */
-  principal?: string | null;
+  principal?: string;
   /**
    * Array of property sources to evaluate. Each entry is a discriminated union: publisher_tags (publisher_domain + tags), publisher_ids (publisher_domain + property_ids), or identifiers (direct identifiers). If omitted, queries the agent's entire property database.
    */
-  base_properties?: BasePropertySource[] | null;
-  filters?: PropertyListFilters | null;
-  brand?: BrandReference | null;
+  base_properties?: BasePropertySource[];
+  filters?: PropertyListFilters;
+  brand?: BrandReference;
   /**
    * URL to receive notifications when the resolved list changes
    */
-  webhook_url?: string | null;
+  webhook_url?: string;
   /**
    * Recommended cache duration for resolved list. Consumers should re-fetch after this period.
    */
-  cache_duration_hours?: number | null;
+  cache_duration_hours?: number;
   /**
    * When the list was created
    */
-  created_at?: string | null;
+  created_at?: string;
   /**
    * When the list was last modified
    */
-  updated_at?: string | null;
+  updated_at?: string;
   /**
    * Number of properties in the resolved list (at time of last resolution)
    */
-  property_count?: number | null;
+  property_count?: number;
   /**
    * Pricing options for this property list. Present when the requesting account has a billing relationship with the list provider. The buyer passes the selected pricing_option_id in report_usage.
    */
-  pricing_options?: VendorPricingOption[] | null;
+  pricing_options?: VendorPricingOption[];
 }
 
 // update_property_list parameters
@@ -9370,7 +9370,7 @@ export interface UpdatePropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * ID of the property list to update
    */
@@ -9378,27 +9378,27 @@ export interface UpdatePropertyListRequest {
   /**
    * New name for the list
    */
-  name?: string | null;
+  name?: string;
   /**
    * New description
    */
-  description?: string | null;
+  description?: string;
   /**
    * Complete replacement for the base properties list (not a patch). Each entry is a discriminated union: publisher_tags (publisher_domain + tags), publisher_ids (publisher_domain + property_ids), or identifiers (direct identifiers).
    */
-  base_properties?: BasePropertySource[] | null;
-  filters?: PropertyListFilters | null;
-  brand?: BrandReference | null;
+  base_properties?: BasePropertySource[];
+  filters?: PropertyListFilters;
+  brand?: BrandReference;
   /**
    * Update the webhook URL for list change notifications (set to empty string to remove)
    */
-  webhook_url?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  webhook_url?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
 }
 
 // update_property_list response
@@ -9407,7 +9407,7 @@ export interface UpdatePropertyListRequest {
  */
 export interface UpdatePropertyListResponse {
   list: PropertyList;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // get_property_list parameters
@@ -9418,7 +9418,7 @@ export interface GetPropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * ID of the property list to retrieve
    */
@@ -9426,7 +9426,7 @@ export interface GetPropertyListRequest {
   /**
    * Whether to apply filters and return resolved identifiers (default: true)
    */
-  resolve?: boolean | null;
+  resolve?: boolean;
   /**
    * Pagination parameters. Uses higher limits than standard pagination because property lists can contain tens of thousands of identifiers.
    */
@@ -9434,14 +9434,14 @@ export interface GetPropertyListRequest {
     /**
      * Maximum number of identifiers to return per page
      */
-    max_results?: number | null;
+    max_results?: number;
     /**
      * Opaque cursor from a previous response to fetch the next page
      */
-    cursor?: string | null;
+    cursor?: string;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_property_list response
@@ -9453,23 +9453,23 @@ export interface GetPropertyListResponse {
   /**
    * Resolved identifiers that passed filters (if resolve=true). Cache these locally for real-time use.
    */
-  identifiers?: Identifier[] | null;
-  pagination?: PaginationResponse | null;
+  identifiers?: Identifier[];
+  pagination?: PaginationResponse;
   /**
    * When the list was resolved
    */
-  resolved_at?: string | null;
+  resolved_at?: string;
   /**
    * Cache expiration timestamp. Re-fetch the list after this time to get updated identifiers.
    */
-  cache_valid_until?: string | null;
+  cache_valid_until?: string;
   /**
    * Properties included in the list despite missing feature data. Only present when a feature_requirement has if_not_covered='include'. Maps feature_id to list of identifiers not covered for that feature.
    */
   coverage_gaps?: {
-    [k: string]: Identifier[] | null | undefined;
+    [k: string]: Identifier[] | undefined;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // list_property_lists parameters
@@ -9480,18 +9480,18 @@ export interface ListPropertyListsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Filter to lists owned by this principal
    */
-  principal?: string | null;
+  principal?: string;
   /**
    * Filter to lists whose name contains this string
    */
-  name_contains?: string | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  name_contains?: string;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // list_property_lists response
@@ -9503,8 +9503,8 @@ export interface ListPropertyListsResponse {
    * Array of property lists (metadata only, not resolved properties)
    */
   lists: PropertyList[];
-  pagination?: PaginationResponse | null;
-  ext?: ExtensionObject | null;
+  pagination?: PaginationResponse;
+  ext?: ExtensionObject;
 }
 
 // delete_property_list parameters
@@ -9515,17 +9515,17 @@ export interface DeletePropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * ID of the property list to delete
    */
   list_id: string;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
 }
 
 // delete_property_list response
@@ -9541,7 +9541,7 @@ export interface DeletePropertyListResponse {
    * ID of the deleted list
    */
   list_id: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // create_collection_list parameters
@@ -9598,7 +9598,7 @@ export interface CreateCollectionListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Human-readable name for the list
    */
@@ -9606,19 +9606,19 @@ export interface CreateCollectionListRequest {
   /**
    * Description of the list's purpose
    */
-  description?: string | null;
+  description?: string;
   /**
    * Array of collection sources to evaluate. Each entry is a discriminated union: distribution_ids (platform-independent identifiers), publisher_collections (publisher_domain + collection_ids), or publisher_genres (publisher_domain + genres). If omitted, queries the agent's entire collection database.
    */
-  base_collections?: BaseCollectionSource[] | null;
-  filters?: CollectionListFilters | null;
-  brand?: BrandReference | null;
+  base_collections?: BaseCollectionSource[];
+  filters?: CollectionListFilters;
+  brand?: BrandReference;
   /**
    * Client-generated unique key for this request. Prevents duplicate collection list creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Select collections by platform-independent distribution identifiers. The primary mechanism for cross-publisher collection matching.
@@ -9681,24 +9681,24 @@ export interface CollectionListFilters {
   /**
    * Exclude collections with any of these content ratings (OR logic). This is a metadata filter on the collection's declared content_rating field — it does not evaluate episode content.
    */
-  content_ratings_exclude?: ContentRating[] | null;
+  content_ratings_exclude?: ContentRating[];
   /**
    * Include only collections with any of these content ratings (OR logic). Collections without a declared content_rating are excluded.
    */
-  content_ratings_include?: ContentRating[] | null;
+  content_ratings_include?: ContentRating[];
   /**
    * Exclude collections tagged with any of these genres (OR logic). Values are interpreted against genre_taxonomy when present.
    */
-  genres_exclude?: string[] | null;
+  genres_exclude?: string[];
   /**
    * Include only collections with any of these genres (OR logic). Collections without genre metadata are excluded. Values are interpreted against genre_taxonomy when present.
    */
-  genres_include?: string[] | null;
-  genre_taxonomy?: GenreTaxonomy | null;
+  genres_include?: string[];
+  genre_taxonomy?: GenreTaxonomy;
   /**
    * Filter to these collection kinds
    */
-  kinds?: ('series' | 'publication' | 'event_series' | 'rotation')[] | null;
+  kinds?: ('series' | 'publication' | 'event_series' | 'rotation')[];
   /**
    * Always exclude collections with these distribution identifiers
    */
@@ -9712,7 +9712,7 @@ export interface CollectionListFilters {
   /**
    * Filter by production quality tier
    */
-  production_quality?: ProductionQuality[] | null;
+  production_quality?: ProductionQuality[];
 }
 
 // create_collection_list response
@@ -9725,7 +9725,7 @@ export interface CreateCollectionListResponse {
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * The created collection list
@@ -9742,37 +9742,37 @@ export interface CollectionList {
   /**
    * Description of the list's purpose
    */
-  description?: string | null;
+  description?: string;
   /**
    * Principal identity that owns this list
    */
-  principal?: string | null;
+  principal?: string;
   /**
    * Array of collection sources to evaluate. Each entry is a discriminated union: distribution_ids (platform-independent identifiers), publisher_collections (publisher_domain + collection_ids), or publisher_genres (publisher_domain + genres). If omitted, queries the agent's entire collection database.
    */
-  base_collections?: BaseCollectionSource[] | null;
-  filters?: CollectionListFilters | null;
-  brand?: BrandReference | null;
+  base_collections?: BaseCollectionSource[];
+  filters?: CollectionListFilters;
+  brand?: BrandReference;
   /**
    * URL to receive notifications when the resolved list changes
    */
-  webhook_url?: string | null;
+  webhook_url?: string;
   /**
    * Recommended cache duration for resolved list. Consumers should re-fetch after this period. Defaults to 168 (one week) because collection metadata changes less frequently than property metadata.
    */
-  cache_duration_hours?: number | null;
+  cache_duration_hours?: number;
   /**
    * When the list was created
    */
-  created_at?: string | null;
+  created_at?: string;
   /**
    * When the list was last modified
    */
-  updated_at?: string | null;
+  updated_at?: string;
   /**
    * Number of collections in the resolved list (at time of last resolution)
    */
-  collection_count?: number | null;
+  collection_count?: number;
 }
 
 // update_collection_list parameters
@@ -9783,7 +9783,7 @@ export interface UpdateCollectionListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * ID of the collection list to update
    */
@@ -9791,27 +9791,27 @@ export interface UpdateCollectionListRequest {
   /**
    * New name for the list
    */
-  name?: string | null;
+  name?: string;
   /**
    * New description
    */
-  description?: string | null;
+  description?: string;
   /**
    * Complete replacement for the base collections list (not a patch). Each entry is a discriminated union: distribution_ids (platform-independent identifiers), publisher_collections (publisher_domain + collection_ids), or publisher_genres (publisher_domain + genres).
    */
-  base_collections?: BaseCollectionSource[] | null;
-  filters?: CollectionListFilters | null;
-  brand?: BrandReference | null;
+  base_collections?: BaseCollectionSource[];
+  filters?: CollectionListFilters;
+  brand?: BrandReference;
   /**
    * Update the webhook URL for list change notifications (set to empty string to remove)
    */
-  webhook_url?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  webhook_url?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
 }
 
 // update_collection_list response
@@ -9820,7 +9820,7 @@ export interface UpdateCollectionListRequest {
  */
 export interface UpdateCollectionListResponse {
   list: CollectionList;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // get_collection_list parameters
@@ -9831,7 +9831,7 @@ export interface GetCollectionListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * ID of the collection list to retrieve
    */
@@ -9839,7 +9839,7 @@ export interface GetCollectionListRequest {
   /**
    * Whether to apply filters and return resolved collections (default: true)
    */
-  resolve?: boolean | null;
+  resolve?: boolean;
   /**
    * Pagination parameters. Uses higher limits than standard pagination because collection lists can contain thousands of entries.
    */
@@ -9847,14 +9847,14 @@ export interface GetCollectionListRequest {
     /**
      * Maximum number of collections to return per page
      */
-    max_results?: number | null;
+    max_results?: number;
     /**
      * Opaque cursor from a previous response to fetch the next page
      */
-    cursor?: string | null;
+    cursor?: string;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_collection_list response
@@ -9870,7 +9870,7 @@ export interface GetCollectionListResponse {
     /**
      * Registry-assigned stable identifier for this collection. Present when the collection has been registered in the collection registry.
      */
-    collection_rid?: string | null;
+    collection_rid?: string;
     /**
      * Human-readable collection name
      */
@@ -9885,26 +9885,26 @@ export interface GetCollectionListResponse {
        */
       value: string;
     }[];
-    content_rating?: ContentRating | null;
+    content_rating?: ContentRating;
     /**
      * Genre tags for this collection
      */
-    genre?: string[] | null;
-    genre_taxonomy?: GenreTaxonomy | null;
+    genre?: string[];
+    genre_taxonomy?: GenreTaxonomy;
     /**
      * What kind of content program this is
      */
-    kind?: 'series' | 'publication' | 'event_series' | 'rotation' | null;
+    kind?: 'series' | 'publication' | 'event_series' | 'rotation';
   }[];
-  pagination?: PaginationResponse | null;
+  pagination?: PaginationResponse;
   /**
    * When the list was resolved
    */
-  resolved_at?: string | null;
+  resolved_at?: string;
   /**
    * Cache expiration timestamp. Re-fetch the list after this time to get updated collections.
    */
-  cache_valid_until?: string | null;
+  cache_valid_until?: string;
   /**
    * Collections included in the list despite missing metadata for a filtered dimension. Maps dimension name (e.g., 'genre', 'content_rating') to arrays of distribution identifiers for collections not covered. Only present when filters are applied and some collections lack the filtered metadata.
    */
@@ -9919,7 +9919,7 @@ export interface GetCollectionListResponse {
         }[]
       | undefined;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 /**
  * Request parameters for listing collection lists
@@ -9928,18 +9928,18 @@ export interface ListCollectionListsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Filter to lists owned by this principal
    */
-  principal?: string | null;
+  principal?: string;
   /**
    * Filter to lists whose name contains this string
    */
-  name_contains?: string | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  name_contains?: string;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // list_collection_lists response
@@ -9951,8 +9951,8 @@ export interface ListCollectionListsResponse {
    * Array of collection lists (metadata only, not resolved collections)
    */
   lists: CollectionList[];
-  pagination?: PaginationResponse | null;
-  ext?: ExtensionObject | null;
+  pagination?: PaginationResponse;
+  ext?: ExtensionObject;
 }
 
 // delete_collection_list parameters
@@ -9963,17 +9963,17 @@ export interface DeleteCollectionListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * ID of the collection list to delete
    */
   list_id: string;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
 }
 
 // delete_collection_list response
@@ -9989,7 +9989,7 @@ export interface DeleteCollectionListResponse {
    * ID of the deleted list
    */
   list_id: string;
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // list_content_standards parameters
@@ -10000,22 +10000,22 @@ export interface ListContentStandardsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Filter by channel
    */
-  channels?: MediaChannel[] | null;
+  channels?: MediaChannel[];
   /**
    * Filter by BCP 47 language tags
    */
-  languages?: string[] | null;
+  languages?: string[];
   /**
    * Filter by ISO 3166-1 alpha-2 country codes
    */
-  countries?: string[] | null;
-  pagination?: PaginationRequest | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  countries?: string[];
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // list_content_standards response
@@ -10028,14 +10028,14 @@ export type ListContentStandardsResponse =
        * Array of content standards configurations matching the filter criteria
        */
       standards: ContentStandards[];
-      pagination?: PaginationResponse | null;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      pagination?: PaginationResponse;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
  * Authentication for secured URLs
@@ -10057,7 +10057,7 @@ export type AssetAccess =
       /**
        * Service account credentials
        */
-      credentials?: {} | null;
+      credentials?: {};
     }
   | {
       method: 'signed_url';
@@ -10073,23 +10073,23 @@ export interface ContentStandards {
   /**
    * Human-readable name for this standards configuration
    */
-  name?: string | null;
+  name?: string;
   /**
    * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
    */
-  countries_all?: string[] | null;
+  countries_all?: string[];
   /**
    * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
    */
-  channels_any?: MediaChannel[] | null;
+  channels_any?: MediaChannel[];
   /**
    * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
    */
-  languages_any?: string[] | null;
+  languages_any?: string[];
   /**
    * Natural language policy describing acceptable and unacceptable content contexts. Used by LLMs and human reviewers to make judgments.
    */
-  policy?: string | null;
+  policy?: string;
   /**
    * Training/test set to calibrate policy interpretation. Provides concrete examples of pass/fail decisions.
    */
@@ -10097,17 +10097,17 @@ export interface ContentStandards {
     /**
      * Artifacts that pass the content standards
      */
-    pass?: Artifact[] | null;
+    pass?: Artifact[];
     /**
      * Artifacts that fail the content standards
      */
-    fail?: Artifact[] | null;
+    fail?: Artifact[];
   };
   /**
    * Pricing options for this content standards service. The buyer passes the selected pricing_option_id in report_usage for billing verification.
    */
-  pricing_options?: VendorPricingOption[] | null;
-  ext?: ExtensionObject | null;
+  pricing_options?: VendorPricingOption[];
+  ext?: ExtensionObject;
 }
 /**
  * Content artifact for safety and suitability evaluation. An artifact represents content adjacent to an ad placement - a news article, podcast segment, video chapter, or social post. Artifacts are collections of assets (text, images, video, audio) plus metadata and signals.
@@ -10124,20 +10124,20 @@ export interface Artifact {
   /**
    * Identifies a specific variant of this artifact. Use for A/B tests, translations, or temporal versions. Examples: 'en', 'es-MX', 'v2', 'headline_test_b'. The combination of artifact_id + variant_id must be unique.
    */
-  variant_id?: string | null;
-  format_id?: FormatID | null;
+  variant_id?: string;
+  format_id?: FormatID;
   /**
    * Optional URL for this artifact (web page, podcast feed, video page). Not all artifacts have URLs (e.g., Instagram content, podcast segments, TV scenes).
    */
-  url?: string | null;
+  url?: string;
   /**
    * When the artifact was published (ISO 8601 format)
    */
-  published_time?: string | null;
+  published_time?: string;
   /**
    * When the artifact was last modified (ISO 8601 format)
    */
-  last_update_time?: string | null;
+  last_update_time?: string;
   /**
    * Artifact assets in document flow order - text blocks, images, video, audio
    */
@@ -10147,7 +10147,7 @@ export interface Artifact {
         /**
          * Role of this text in the document. Use 'title' for the main artifact title, 'description' for summaries.
          */
-        role?: 'title' | 'paragraph' | 'heading' | 'caption' | 'quote' | 'list_item' | 'description' | null;
+        role?: 'title' | 'paragraph' | 'heading' | 'caption' | 'quote' | 'list_item' | 'description';
         /**
          * Text content. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
@@ -10155,16 +10155,16 @@ export interface Artifact {
         /**
          * MIME type indicating how to parse the content field. Default: text/plain.
          */
-        content_format?: 'text/plain' | 'text/markdown' | 'text/html' | 'application/json' | null;
+        content_format?: 'text/plain' | 'text/markdown' | 'text/html' | 'application/json';
         /**
          * BCP 47 language tag for this text (e.g., 'en', 'es-MX'). Useful when artifact contains mixed-language content.
          */
-        language?: string | null;
+        language?: string;
         /**
          * Heading level (1-6), only for role=heading
          */
-        heading_level?: number | null;
-        provenance?: Provenance | null;
+        heading_level?: number;
+        provenance?: Provenance;
       }
     | {
         type: 'image';
@@ -10172,24 +10172,24 @@ export interface Artifact {
          * Image URL
          */
         url: string;
-        access?: AssetAccess | null;
+        access?: AssetAccess;
         /**
          * Alt text or image description
          */
-        alt_text?: string | null;
+        alt_text?: string;
         /**
          * Image caption
          */
-        caption?: string | null;
+        caption?: string;
         /**
          * Image width in pixels
          */
-        width?: number | null;
+        width?: number;
         /**
          * Image height in pixels
          */
-        height?: number | null;
-        provenance?: Provenance | null;
+        height?: number;
+        provenance?: Provenance;
       }
     | {
         type: 'video';
@@ -10197,28 +10197,28 @@ export interface Artifact {
          * Video URL
          */
         url: string;
-        access?: AssetAccess | null;
+        access?: AssetAccess;
         /**
          * Video duration in milliseconds
          */
-        duration_ms?: number | null;
+        duration_ms?: number;
         /**
          * Video transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
-        transcript?: string | null;
+        transcript?: string;
         /**
          * MIME type indicating how to parse the transcript field. Default: text/plain.
          */
-        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json' | null;
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
         /**
          * How the transcript was generated
          */
-        transcript_source?: 'original_script' | 'subtitles' | 'closed_captions' | 'dub' | 'generated' | null;
+        transcript_source?: 'original_script' | 'subtitles' | 'closed_captions' | 'dub' | 'generated';
         /**
          * Video thumbnail URL
          */
-        thumbnail_url?: string | null;
-        provenance?: Provenance | null;
+        thumbnail_url?: string;
+        provenance?: Provenance;
       }
     | {
         type: 'audio';
@@ -10226,24 +10226,24 @@ export interface Artifact {
          * Audio URL
          */
         url: string;
-        access?: AssetAccess | null;
+        access?: AssetAccess;
         /**
          * Audio duration in milliseconds
          */
-        duration_ms?: number | null;
+        duration_ms?: number;
         /**
          * Audio transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
-        transcript?: string | null;
+        transcript?: string;
         /**
          * MIME type indicating how to parse the transcript field. Default: text/plain.
          */
-        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json' | null;
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
         /**
          * How the transcript was generated
          */
-        transcript_source?: 'original_script' | 'closed_captions' | 'generated' | null;
-        provenance?: Provenance | null;
+        transcript_source?: 'original_script' | 'closed_captions' | 'generated';
+        provenance?: Provenance;
       }
   )[];
   /**
@@ -10253,29 +10253,29 @@ export interface Artifact {
     /**
      * Canonical URL
      */
-    canonical?: string | null;
+    canonical?: string;
     /**
      * Artifact author name
      */
-    author?: string | null;
+    author?: string;
     /**
      * Artifact keywords
      */
-    keywords?: string | null;
+    keywords?: string;
     /**
      * Open Graph protocol metadata
      */
-    open_graph?: {} | null;
+    open_graph?: {};
     /**
      * Twitter Card metadata
      */
-    twitter_card?: {} | null;
+    twitter_card?: {};
     /**
      * JSON-LD structured data (schema.org)
      */
-    json_ld?: {}[] | null;
+    json_ld?: {}[];
   };
-  provenance?: Provenance | null;
+  provenance?: Provenance;
   /**
    * Platform-specific identifiers for this artifact
    */
@@ -10283,23 +10283,23 @@ export interface Artifact {
     /**
      * Apple Podcasts ID
      */
-    apple_podcast_id?: string | null;
+    apple_podcast_id?: string;
     /**
      * Spotify collection ID
      */
-    spotify_collection_id?: string | null;
+    spotify_collection_id?: string;
     /**
      * Podcast GUID (from RSS feed)
      */
-    podcast_guid?: string | null;
+    podcast_guid?: string;
     /**
      * YouTube video ID
      */
-    youtube_video_id?: string | null;
+    youtube_video_id?: string;
     /**
      * RSS feed URL
      */
-    rss_url?: string | null;
+    rss_url?: string;
   };
 }
 
@@ -10311,13 +10311,13 @@ export interface GetContentStandardsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Identifier for the standards configuration to retrieve
    */
   standards_id: string;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_content_standards response
@@ -10328,8 +10328,8 @@ export type GetContentStandardsResponse =
   | ContentStandards
   | {
       errors: Error[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 // create_content_standards parameters
@@ -10340,7 +10340,7 @@ export interface CreateContentStandardsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Where this standards configuration applies
    */
@@ -10348,11 +10348,11 @@ export interface CreateContentStandardsRequest {
     /**
      * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
      */
-    countries_all?: string[] | null;
+    countries_all?: string[];
     /**
      * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
      */
-    channels_any?: MediaChannel[] | null;
+    channels_any?: MediaChannel[];
     /**
      * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
      */
@@ -10360,12 +10360,12 @@ export interface CreateContentStandardsRequest {
     /**
      * Human-readable description of this scope
      */
-    description?: string | null;
+    description?: string;
   };
   /**
    * Registry policy IDs to use as the evaluation basis for this content standard. When provided, the agent resolves policies from the registry and uses their policy text and exemplars as the evaluation criteria. The 'policy' field becomes optional when registry_policy_ids is provided.
    */
-  registry_policy_ids?: string[] | null;
+  registry_policy_ids?: string[];
   /**
    * Natural language policy describing acceptable and unacceptable content contexts. Used by LLMs and human reviewers to make judgments. Optional when registry_policy_ids is provided.
    */
@@ -10390,7 +10390,7 @@ export interface CreateContentStandardsRequest {
           /**
            * BCP 47 language tag for content at this URL
            */
-          language?: string | null;
+          language?: string;
         }
       | Artifact
     )[];
@@ -10410,7 +10410,7 @@ export interface CreateContentStandardsRequest {
           /**
            * BCP 47 language tag for content at this URL
            */
-          language?: string | null;
+          language?: string;
         }
       | Artifact
     )[];
@@ -10418,9 +10418,9 @@ export interface CreateContentStandardsRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate content standards creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Response payload for creating a content standards configuration
@@ -10431,17 +10431,17 @@ export type CreateContentStandardsResponse =
        * Unique identifier for the created standards configuration
        */
       standards_id: string;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       errors: Error[];
       /**
        * If the error is a scope conflict, the ID of the existing standards that conflict
        */
-      conflicting_standards_id?: string | null;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      conflicting_standards_id?: string;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 
@@ -10453,7 +10453,7 @@ export interface UpdateContentStandardsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * ID of the standards configuration to update
    */
@@ -10465,28 +10465,28 @@ export interface UpdateContentStandardsRequest {
     /**
      * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
      */
-    countries_all?: string[] | null;
+    countries_all?: string[];
     /**
      * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
      */
-    channels_any?: MediaChannel[] | null;
+    channels_any?: MediaChannel[];
     /**
      * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
      */
-    languages_any?: string[] | null;
+    languages_any?: string[];
     /**
      * Human-readable description of this scope
      */
-    description?: string | null;
+    description?: string;
   };
   /**
    * Registry policy IDs to use as the evaluation basis. When provided, the agent resolves policies from the registry and uses their policy text and exemplars as the evaluation criteria.
    */
-  registry_policy_ids?: string[] | null;
+  registry_policy_ids?: string[];
   /**
    * Updated natural language policy describing acceptable and unacceptable content contexts.
    */
-  policy?: string | null;
+  policy?: string;
   /**
    * Updated training/test set to calibrate policy interpretation. Use URL references for pages to be fetched and analyzed, or full artifacts for pre-extracted content.
    */
@@ -10507,7 +10507,7 @@ export interface UpdateContentStandardsRequest {
           /**
            * BCP 47 language tag for content at this URL
            */
-          language?: string | null;
+          language?: string;
         }
       | Artifact
     )[];
@@ -10527,17 +10527,17 @@ export interface UpdateContentStandardsRequest {
           /**
            * BCP 47 language tag for content at this URL
            */
-          language?: string | null;
+          language?: string;
         }
       | Artifact
     )[];
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
 }
 
 // update_content_standards response
@@ -10555,8 +10555,8 @@ export interface UpdateContentStandardsSuccess {
    * ID of the updated standards configuration
    */
   standards_id: string;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 export interface UpdateContentStandardsError {
   /**
@@ -10570,9 +10570,9 @@ export interface UpdateContentStandardsError {
   /**
    * If scope change conflicts with another configuration, the ID of the conflicting standards
    */
-  conflicting_standards_id?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  conflicting_standards_id?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // calibrate_content parameters
@@ -10583,7 +10583,7 @@ export interface CalibrateContentRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Standards configuration to calibrate against
    */
@@ -10592,7 +10592,7 @@ export interface CalibrateContentRequest {
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
 }
 
 // calibrate_content response
@@ -10608,11 +10608,11 @@ export type CalibrateContentResponse =
       /**
        * Model confidence in the verdict (0-1)
        */
-      confidence?: number | null;
+      confidence?: number;
       /**
        * Detailed natural language explanation of the decision
        */
-      explanation?: string | null;
+      explanation?: string;
       /**
        * Per-feature breakdown with explanations
        */
@@ -10628,15 +10628,15 @@ export type CalibrateContentResponse =
         /**
          * Human-readable explanation of why this feature passed or failed
          */
-        explanation?: string | null;
+        explanation?: string;
       }[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 
@@ -10648,7 +10648,7 @@ export interface ValidateContentDeliveryRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Standards configuration to validate against
    */
@@ -10664,20 +10664,20 @@ export interface ValidateContentDeliveryRequest {
     /**
      * Media buy this record belongs to (when batching across multiple buys)
      */
-    media_buy_id?: string | null;
+    media_buy_id?: string;
     /**
      * When the delivery occurred
      */
-    timestamp?: string | null;
+    timestamp?: string;
     artifact: Artifact;
     /**
      * ISO 3166-1 alpha-2 country code where delivery occurred
      */
-    country?: string | null;
+    country?: string;
     /**
      * Channel type (e.g., display, video, audio, social)
      */
-    channel?: string | null;
+    channel?: string;
     /**
      * Brand information for policy evaluation. Schema TBD - placeholder for brand identifiers.
      */
@@ -10685,23 +10685,23 @@ export interface ValidateContentDeliveryRequest {
       /**
        * Brand identifier
        */
-      brand_id?: string | null;
+      brand_id?: string;
       /**
        * Product/SKU identifier if applicable
        */
-      sku_id?: string | null;
+      sku_id?: string;
     };
   }[];
   /**
    * Specific features to evaluate (defaults to all)
    */
-  feature_ids?: string[] | null;
+  feature_ids?: string[];
   /**
    * Include passed records in results
    */
-  include_passed?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  include_passed?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // validate_content_delivery response
@@ -10736,21 +10736,21 @@ export type ValidateContentDeliveryResponse =
         features?: {
           feature_id: string;
           status: 'passed' | 'failed' | 'warning' | 'unevaluated';
-          value?: unknown | null;
-          message?: string | null;
+          value?: unknown;
+          message?: string;
           /**
            * Which rule triggered this result (e.g., GARM category, Scope3 standard)
            */
-          rule_id?: string | null;
+          rule_id?: string;
         }[];
       }[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 
@@ -10762,8 +10762,8 @@ export interface GetMediaBuyArtifactsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
-  account?: AccountReference | null;
+  adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Media buy to get artifacts from
    */
@@ -10771,11 +10771,11 @@ export interface GetMediaBuyArtifactsRequest {
   /**
    * Filter to specific packages within the media buy
    */
-  package_ids?: string[] | null;
+  package_ids?: string[];
   /**
    * When true, only return artifacts where the seller's local model returned local_verdict: 'fail'. Useful for auditing false positives. Not useful when the seller does not run a local evaluation model (all verdicts are 'unevaluated').
    */
-  failures_only?: boolean | null;
+  failures_only?: boolean;
   /**
    * Filter to specific time period
    */
@@ -10783,11 +10783,11 @@ export interface GetMediaBuyArtifactsRequest {
     /**
      * Start of time range (inclusive)
      */
-    start?: string | null;
+    start?: string;
     /**
      * End of time range (exclusive)
      */
-    end?: string | null;
+    end?: string;
   };
   /**
    * Pagination parameters. Uses higher limits than standard pagination because artifact result sets can be very large.
@@ -10796,14 +10796,14 @@ export interface GetMediaBuyArtifactsRequest {
     /**
      * Maximum number of artifacts to return per page
      */
-    max_results?: number | null;
+    max_results?: number;
     /**
      * Opaque cursor from a previous response to fetch the next page
      */
-    cursor?: string | null;
+    cursor?: string;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_media_buy_artifacts response
@@ -10827,20 +10827,20 @@ export type GetMediaBuyArtifactsResponse =
         /**
          * When the delivery occurred
          */
-        timestamp?: string | null;
+        timestamp?: string;
         /**
          * Which package this delivery belongs to
          */
-        package_id?: string | null;
+        package_id?: string;
         artifact: Artifact;
         /**
          * ISO 3166-1 alpha-2 country code where delivery occurred
          */
-        country?: string | null;
+        country?: string;
         /**
          * Channel type (e.g., display, video, audio, social)
          */
-        channel?: string | null;
+        channel?: string;
         /**
          * Brand information for policy evaluation. Schema TBD - placeholder for brand identifiers.
          */
@@ -10848,16 +10848,16 @@ export type GetMediaBuyArtifactsResponse =
           /**
            * Brand identifier
            */
-          brand_id?: string | null;
+          brand_id?: string;
           /**
            * Product/SKU identifier if applicable
            */
-          sku_id?: string | null;
+          sku_id?: string;
         };
         /**
          * Seller's local model verdict for this artifact
          */
-        local_verdict?: 'pass' | 'fail' | 'unevaluated' | null;
+        local_verdict?: 'pass' | 'fail' | 'unevaluated';
       }[];
       /**
        * Information about artifact collection for this media buy. Sampling is configured at buy creation time — this reports what was actually collected.
@@ -10866,28 +10866,28 @@ export type GetMediaBuyArtifactsResponse =
         /**
          * Total deliveries in the requested time range
          */
-        total_deliveries?: number | null;
+        total_deliveries?: number;
         /**
          * Total artifacts collected (per the buy's sampling configuration)
          */
-        total_collected?: number | null;
+        total_collected?: number;
         /**
          * Number of artifacts in this response (may be less than total_collected due to pagination or filters)
          */
-        returned_count?: number | null;
+        returned_count?: number;
         /**
          * Actual collection rate achieved (total_collected / total_deliveries)
          */
-        effective_rate?: number | null;
+        effective_rate?: number;
       };
-      pagination?: PaginationResponse | null;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      pagination?: PaginationResponse;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 // get_creative_features parameters
@@ -10898,15 +10898,15 @@ export interface GetCreativeFeaturesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   creative_manifest: CreativeManifest;
   /**
    * Optional filter to specific features. If omitted, returns all available features.
    */
-  feature_ids?: string[] | null;
-  account?: AccountReference | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  feature_ids?: string[];
+  account?: AccountReference;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_creative_features response
@@ -10922,27 +10922,27 @@ export type GetCreativeFeaturesResponse =
       /**
        * URL to the vendor's full assessment report. The vendor controls what information is disclosed and access control.
        */
-      detail_url?: string | null;
+      detail_url?: string;
       /**
        * Which rate card pricing option was applied for this evaluation. Present when the governance agent charges for evaluations and account was provided in the request.
        */
-      pricing_option_id?: string | null;
+      pricing_option_id?: string;
       /**
        * Cost incurred for this evaluation, denominated in currency.
        */
-      vendor_cost?: number | null;
+      vendor_cost?: number;
       /**
        * ISO 4217 currency code for vendor_cost.
        */
-      currency?: string | null;
-      consumption?: CreativeConsumption | null;
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      currency?: string;
+      consumption?: CreativeConsumption;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      context?: ContextObject | null;
-      ext?: ExtensionObject | null;
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 /**
@@ -10960,28 +10960,28 @@ export interface CreativeFeatureResult {
   /**
    * Unit of measurement for quantitative values (e.g., 'percentage', 'score')
    */
-  unit?: string | null;
+  unit?: string;
   /**
    * Confidence score for this value (0-1)
    */
-  confidence?: number | null;
+  confidence?: number;
   /**
    * When this feature was evaluated
    */
-  measured_at?: string | null;
+  measured_at?: string;
   /**
    * When this evaluation expires and should be refreshed
    */
-  expires_at?: string | null;
+  expires_at?: string;
   /**
    * Version of the methodology used to evaluate this feature
    */
-  methodology_version?: string | null;
+  methodology_version?: string;
   /**
    * Additional vendor-specific details about this evaluation
    */
-  details?: {} | null;
-  ext?: ExtensionObject | null;
+  details?: {};
+  ext?: ExtensionObject;
 }
 
 // sync_plans parameters
@@ -11013,7 +11013,7 @@ export interface SyncPlansRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * One or more campaign plans to sync.
    */
@@ -11043,11 +11043,11 @@ export interface SyncPlansRequest {
       /**
        * Maximum percentage of budget that can go to a single seller.
        */
-      per_seller_max_pct?: number | null;
+      per_seller_max_pct?: number;
       /**
        * Amount above which reallocations require escalation (for agent_limited).
        */
-      reallocation_threshold?: number | null;
+      reallocation_threshold?: number;
       /**
        * Optional budget partition across purchase types. Keys are purchase-type enum values (media_buy, rights_license, signal_activation, creative_services). When present, the governance agent validates spend against both the total and the per-type allocation. When absent, all spend counts against the single total regardless of purchase type.
        */
@@ -11057,11 +11057,11 @@ export interface SyncPlansRequest {
               /**
                * Maximum budget for this purchase type.
                */
-              amount?: number | null;
+              amount?: number;
               /**
                * Maximum percentage of total budget for this purchase type.
                */
-              max_pct?: number | null;
+              max_pct?: number;
             }
           | undefined;
       };
@@ -11073,19 +11073,19 @@ export interface SyncPlansRequest {
       /**
        * Channels that must be included in the media mix.
        */
-      required?: MediaChannel[] | null;
+      required?: MediaChannel[];
       /**
        * Channels the orchestrator may use.
        */
-      allowed?: MediaChannel[] | null;
+      allowed?: MediaChannel[];
       /**
        * Target allocation ranges per channel, keyed by channel ID.
        */
       mix_targets?: {
         [k: string]:
           | {
-              min_pct?: number | null;
-              max_pct?: number | null;
+              min_pct?: number;
+              max_pct?: number;
             }
           | undefined;
       };
@@ -11106,36 +11106,36 @@ export interface SyncPlansRequest {
     /**
      * ISO 3166-1 alpha-2 country codes for authorized markets (e.g., ['US', 'GB']). The governance agent rejects governed actions targeting outside these countries and resolves applicable policies by matching against policy jurisdictions.
      */
-    countries?: string[] | null;
+    countries?: string[];
     /**
      * ISO 3166-2 subdivision codes for authorized sub-national markets (e.g., ['US-MA', 'US-CA']). When present, the governance agent restricts governed actions to these specific regions rather than the full country. Use for plans limited to specific states or provinces (e.g., cannabis in legal states). Policy resolution matches against both the subdivision and its parent country.
      */
-    regions?: string[] | null;
+    regions?: string[];
     /**
      * Registry policy IDs to enforce for this plan. The governance agent resolves full policy definitions from the registry and evaluates actions against them. Intersected with the plan's countries/regions to activate only geographically relevant policies.
      */
-    policy_ids?: string[] | null;
+    policy_ids?: string[];
     /**
      * Regulatory categories that apply to this campaign. Determines which policy regimes the governance agent enforces (e.g., 'children_directed' activates COPPA/AADC, 'political_advertising' activates disclosure requirements). The governance agent resolves categories to specific policies based on the plan's jurisdictions. When omitted, governance agents MAY infer categories from the brand's industries and the plan's objectives. Values are registry-defined category IDs (intentionally freeform strings, not an enum — new categories are added as regulations evolve).
      */
-    policy_categories?: string[] | null;
-    audience?: AudienceConstraints | null;
+    policy_categories?: string[];
+    audience?: AudienceConstraints;
     /**
      * Personal data categories that must not be used for targeting in this campaign. Applies horizontally across all audience criteria. Used for EU DSA Article 26 compliance (prohibits targeting on GDPR Article 9 special categories) and similar regulations. The governance agent flags any audience targeting that references these attributes.
      */
-    restricted_attributes?: RestrictedAttribute[] | null;
+    restricted_attributes?: RestrictedAttribute[];
     /**
      * Additional restricted attributes not covered by the restricted-attribute enum. Freeform strings for jurisdiction-specific or brand-specific restrictions beyond GDPR Article 9 categories (e.g., 'financial_status', 'immigration_status'). Governance agents use semantic matching for these.
      */
-    restricted_attributes_custom?: string[] | null;
+    restricted_attributes_custom?: string[];
     /**
      * Minimum audience segment size. Prevents micro-targeting by ensuring segments meet a k-anonymity threshold. Applies to the estimated combined (intersection) audience when multiple criteria are used, not just individual criterion sizes. The governance agent validates this by querying signal catalog metadata or seller-reported segment sizes. When segment size data is unavailable, the governance agent SHOULD produce a finding with reduced confidence rather than silently passing.
      */
-    min_audience_size?: number | null;
+    min_audience_size?: number;
     /**
      * Natural language policy statements specific to this campaign (e.g., 'No advertising adjacent to competitor content'). Applied regardless of geography.
      */
-    custom_policies?: string[] | null;
+    custom_policies?: string[];
     /**
      * List of approved seller agent URLs. null means any seller.
      */
@@ -11159,11 +11159,11 @@ export interface SyncPlansRequest {
       /**
        * ISO 3166-1/3166-2 codes this agent is authorized for. When omitted, the agent can operate in all plan markets.
        */
-      markets?: string[] | null;
+      markets?: string[];
       /**
        * When this delegation expires. After expiration, the governance agent denies actions from this agent.
        */
-      expires_at?: string | null;
+      expires_at?: string;
     }[];
     /**
      * Portfolio-level governance constraints. When present, this plan acts as a portfolio plan that governs member plans. Portfolio plans define cross-brand constraints that no individual brand plan can override.
@@ -11183,13 +11183,13 @@ export interface SyncPlansRequest {
       /**
        * Registry policy IDs enforced across all member plans, regardless of individual brand configuration.
        */
-      shared_policy_ids?: string[] | null;
+      shared_policy_ids?: string[];
       /**
        * Natural language exclusion rules applied across all member plans (e.g., 'No advertising on properties owned by competitor holding companies').
        */
-      shared_exclusions?: string[] | null;
+      shared_exclusions?: string[];
     };
-    ext?: ExtensionObject | null;
+    ext?: ExtensionObject;
   }[];
 }
 /**
@@ -11199,11 +11199,11 @@ export interface AudienceConstraints {
   /**
    * Desired audience criteria. The seller's targeting should align with these. Each criterion is evaluated independently — the combined targeting should satisfy at least one inclusion criterion.
    */
-  include?: AudienceSelector[] | null;
+  include?: AudienceSelector[];
   /**
    * Excluded audience criteria. The seller's targeting must not overlap with these. Exclusions take precedence over inclusions. Used for protected groups, vulnerable communities, regulatory restrictions, or brand safety.
    */
-  exclude?: AudienceSelector[] | null;
+  exclude?: AudienceSelector[];
 }
 
 // sync_plans response
@@ -11261,7 +11261,7 @@ export interface SyncPlansResponse {
       /**
        * Why this policy was included (e.g., 'Matched jurisdiction US and policy category pharmaceutical_advertising').
        */
-      reason?: string | null;
+      reason?: string;
     }[];
   }[];
 }
@@ -11283,7 +11283,7 @@ export interface ReportPlanOutcomeRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * The plan this outcome is for.
    */
@@ -11291,12 +11291,12 @@ export interface ReportPlanOutcomeRequest {
   /**
    * The check_id from check_governance. Links the outcome to the governance check that authorized it. Required for 'completed' and 'failed' outcomes.
    */
-  check_id?: string | null;
+  check_id?: string;
   /**
    * Client-generated unique key for this request. Prevents duplicate outcome reports on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  purchase_type?: PurchaseType | null;
+  idempotency_key?: string;
+  purchase_type?: PurchaseType;
   outcome: OutcomeType;
   /**
    * The seller's full response. Required when outcome is 'completed'.
@@ -11305,22 +11305,22 @@ export interface ReportPlanOutcomeRequest {
     /**
      * The seller's identifier for the created resource (e.g., media_buy_id, rights_grant_id, deployment_id). Not interpreted by the governance agent — included in audit logs for human-readable traceability alongside the opaque governance_context.
      */
-    seller_reference?: string | null;
+    seller_reference?: string;
     /**
      * Total budget committed across all confirmed packages. When present, the governance agent uses this directly instead of summing package budgets.
      */
-    committed_budget?: number | null;
+    committed_budget?: number;
     /**
      * Confirmed packages with actual budget and targeting.
      */
     packages?: {
-      budget?: number | null;
+      budget?: number;
     }[];
-    planned_delivery?: PlannedDelivery | null;
+    planned_delivery?: PlannedDelivery;
     /**
      * ISO 8601 deadline for creative submission.
      */
-    creative_deadline?: string | null;
+    creative_deadline?: string;
   };
   /**
    * Delivery metrics. Required when outcome is 'delivery'.
@@ -11336,23 +11336,23 @@ export interface ReportPlanOutcomeRequest {
     /**
      * Impressions delivered in the period.
      */
-    impressions?: number | null;
+    impressions?: number;
     /**
      * Spend in the period.
      */
-    spend?: number | null;
+    spend?: number;
     /**
      * Effective CPM for the period.
      */
-    cpm?: number | null;
+    cpm?: number;
     /**
      * Viewability rate (0-1).
      */
-    viewability_rate?: number | null;
+    viewability_rate?: number;
     /**
      * Video completion rate (0-1).
      */
-    completion_rate?: number | null;
+    completion_rate?: number;
   };
   /**
    * Error details. Required when outcome is 'failed'.
@@ -11361,11 +11361,11 @@ export interface ReportPlanOutcomeRequest {
     /**
      * Error code from the seller.
      */
-    code?: string | null;
+    code?: string;
     /**
      * Human-readable error description.
      */
-    message?: string | null;
+    message?: string;
   };
   /**
    * Opaque governance context from the check_governance response that authorized this action. Enables the governance agent to correlate the outcome to the original check.
@@ -11394,7 +11394,7 @@ export interface ReportPlanOutcomeResponse {
   /**
    * Budget committed from this outcome. Present for 'completed' and 'failed' outcomes.
    */
-  committed_budget?: number | null;
+  committed_budget?: number;
   /**
    * Issues detected. Present only when status is 'findings'.
    */
@@ -11411,7 +11411,7 @@ export interface ReportPlanOutcomeResponse {
     /**
      * Structured details for programmatic consumption.
      */
-    details?: {} | null;
+    details?: {};
   }[];
   /**
    * Updated plan budget state. Present for 'completed' and 'failed' outcomes.
@@ -11420,11 +11420,11 @@ export interface ReportPlanOutcomeResponse {
     /**
      * Total budget committed across all campaigns in the plan.
      */
-    total_committed?: number | null;
+    total_committed?: number;
     /**
      * Authorized budget minus total committed.
      */
-    budget_remaining?: number | null;
+    budget_remaining?: number;
   };
 }
 
@@ -11434,32 +11434,32 @@ export interface ReportPlanOutcomeResponse {
  * Retrieve governance state and audit trail for one or more plans.
  */
 export type GetPlanAuditLogsRequest = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Plan IDs to retrieve. For a single plan, pass a one-element array.
    */
-  plan_ids?: string[] | null;
+  plan_ids?: string[];
   /**
    * Portfolio plan IDs. The governance agent expands each to its member_plan_ids and returns combined audit data.
    */
-  portfolio_plan_ids?: string[] | null;
+  portfolio_plan_ids?: string[];
   /**
    * Filter audit entries by governance context. Returns only checks and outcomes that share these governance contexts, enabling lifecycle tracing across purchase types.
    */
-  governance_contexts?: string[] | null;
+  governance_contexts?: string[];
   /**
    * Filter audit entries by purchase type. Returns only checks and outcomes matching these purchase types (e.g., ['rights_license'] to see all rights activity).
    */
-  purchase_types?: PurchaseType[] | null;
+  purchase_types?: PurchaseType[];
   /**
    * Include the full audit trail. Default: false.
    */
-  include_entries?: boolean | null;
+  include_entries?: boolean;
 };
 
 // get_plan_audit_logs response
@@ -11490,19 +11490,19 @@ export interface GetPlanAuditLogsResponse {
       /**
        * Total authorized budget from the plan.
        */
-      authorized?: number | null;
+      authorized?: number;
       /**
        * Total budget committed from confirmed outcomes.
        */
-      committed?: number | null;
+      committed?: number;
       /**
        * Authorized minus committed.
        */
-      remaining?: number | null;
+      remaining?: number;
       /**
        * Committed as a percentage of authorized.
        */
-      utilization_pct?: number | null;
+      utilization_pct?: number;
     };
     /**
      * Current channel mix. Keyed by channel ID.
@@ -11513,11 +11513,11 @@ export interface GetPlanAuditLogsResponse {
             /**
              * Budget committed to this channel.
              */
-            committed?: number | null;
+            committed?: number;
             /**
              * Channel's share of the authorized total budget.
              */
-            pct?: number | null;
+            pct?: number;
           }
         | undefined;
     };
@@ -11528,27 +11528,27 @@ export interface GetPlanAuditLogsResponse {
       /**
        * Total governance checks performed.
        */
-      checks_performed?: number | null;
+      checks_performed?: number;
       /**
        * Total outcomes reported.
        */
-      outcomes_reported?: number | null;
+      outcomes_reported?: number;
       /**
        * Count of each governance check status.
        */
       statuses?: {
-        approved?: number | null;
-        denied?: number | null;
-        conditions?: number | null;
+        approved?: number;
+        denied?: number;
+        conditions?: number;
         /**
          * Supplementary count of checks that went through internal human review. These checks are also counted in approved or denied.
          */
-        human_reviewed?: number | null;
+        human_reviewed?: number;
       };
       /**
        * Total findings across all checks and outcomes.
        */
-      findings_count?: number | null;
+      findings_count?: number;
       /**
        * All escalations and their resolutions.
        */
@@ -11564,11 +11564,11 @@ export interface GetPlanAuditLogsResponse {
         /**
          * How it was resolved (e.g., 'approved_by_human', 'rejected_by_human').
          */
-        resolution?: string | null;
+        resolution?: string;
         /**
          * ISO 8601 resolution timestamp.
          */
-        resolved_at?: string | null;
+        resolved_at?: string;
       }[];
       /**
        * Aggregate governance metrics for detecting oversight drift. A declining escalation rate may indicate well-calibrated governance or eroding human oversight -- surfacing the trend lets the organization make that judgment.
@@ -11577,23 +11577,23 @@ export interface GetPlanAuditLogsResponse {
         /**
          * Fraction of checks that resulted in escalation.
          */
-        escalation_rate?: number | null;
+        escalation_rate?: number;
         /**
          * Direction of escalation rate over the plan's lifetime.
          */
-        escalation_rate_trend?: 'increasing' | 'stable' | 'declining' | null;
+        escalation_rate_trend?: 'increasing' | 'stable' | 'declining';
         /**
          * Fraction of checks approved without human intervention.
          */
-        auto_approval_rate?: number | null;
+        auto_approval_rate?: number;
         /**
          * Fraction of escalations where the human overrode the governance agent's recommendation.
          */
-        human_override_rate?: number | null;
+        human_override_rate?: number;
         /**
          * Average confidence score across all findings. Present when findings include confidence scores.
          */
-        mean_confidence?: number | null;
+        mean_confidence?: number;
         /**
          * Organization-defined thresholds for drift metrics. When a metric crosses its threshold, the governance agent SHOULD include a finding on the next check. Set by the organization in governance agent configuration, echoed here for visibility.
          */
@@ -11601,19 +11601,19 @@ export interface GetPlanAuditLogsResponse {
           /**
            * Maximum acceptable escalation rate. A rate above this suggests policy miscalibration.
            */
-          escalation_rate_max?: number | null;
+          escalation_rate_max?: number;
           /**
            * Minimum acceptable escalation rate. A rate below this may indicate eroding oversight.
            */
-          escalation_rate_min?: number | null;
+          escalation_rate_min?: number;
           /**
            * Maximum acceptable auto-approval rate.
            */
-          auto_approval_rate_max?: number | null;
+          auto_approval_rate_max?: number;
           /**
            * Maximum acceptable human override rate. A high rate suggests the governance agent's recommendations are poorly calibrated.
            */
-          human_override_rate_max?: number | null;
+          human_override_rate_max?: number;
         };
       };
     };
@@ -11636,59 +11636,59 @@ export interface GetPlanAuditLogsResponse {
       /**
        * Plan this entry belongs to. Present when querying multiple plans or a portfolio.
        */
-      plan_id?: string | null;
+      plan_id?: string;
       /**
        * URL of the agent that made the request. Resolved from the credentials used on the governance callback.
        */
-      caller?: string | null;
+      caller?: string;
       /**
        * The AdCP tool (present for check entries).
        */
-      tool?: string | null;
+      tool?: string;
       /**
        * Governance check status (present for check entries).
        */
-      status?: 'approved' | 'denied' | 'conditions' | null;
+      status?: 'approved' | 'denied' | 'conditions';
       /**
        * Whether the check was an intent check (orchestrator) or execution check (seller). Inferred from the fields present on the original check request. Present for check entries.
        */
-      check_type?: 'intent' | 'execution' | null;
+      check_type?: 'intent' | 'execution';
       /**
        * Human-readable explanation of the governance decision (present for check entries).
        */
-      explanation?: string | null;
+      explanation?: string;
       /**
        * Registry policy IDs evaluated during this check (present for check entries).
        */
-      policies_evaluated?: string[] | null;
+      policies_evaluated?: string[];
       /**
        * Governance categories evaluated (e.g., 'budget_authority', 'regulatory_compliance'). Present for check entries.
        */
-      categories_evaluated?: string[] | null;
+      categories_evaluated?: string[];
       /**
        * Findings from this check or outcome. Same structure as check_governance response findings.
        */
       findings?: {
         category_id: string;
-        policy_id?: string | null;
+        policy_id?: string;
         severity: EscalationSeverity;
         explanation: string;
-        confidence?: number | null;
+        confidence?: number;
       }[];
-      outcome?: OutcomeType | null;
+      outcome?: OutcomeType;
       /**
        * Budget committed (present for completed outcome entries).
        */
-      committed_budget?: number | null;
+      committed_budget?: number;
       /**
        * Governance context for this entry (present for check and outcome entries).
        */
-      governance_context?: string | null;
-      purchase_type?: PurchaseType | null;
+      governance_context?: string;
+      purchase_type?: PurchaseType;
       /**
        * Outcome status (present for outcome entries).
        */
-      outcome_status?: string | null;
+      outcome_status?: string;
     }[];
     /**
      * Per-action breakdown grouped by governance context.
@@ -11714,7 +11714,7 @@ export interface GetPlanAuditLogsResponse {
       /**
        * The seller's identifier for the resource (e.g., media_buy_id, rights_grant_id). Present when reported via report_plan_outcome.
        */
-      seller_reference?: string | null;
+      seller_reference?: string;
     }[];
   }[];
 }
@@ -11732,7 +11732,7 @@ export interface CheckGovernanceRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Campaign governance plan identifier.
    */
@@ -11741,21 +11741,21 @@ export interface CheckGovernanceRequest {
    * URL of the agent making the request.
    */
   caller: string;
-  purchase_type?: PurchaseType | null;
+  purchase_type?: PurchaseType;
   /**
    * The AdCP tool being checked (e.g., 'create_media_buy', 'acquire_rights', 'activate_signal'). Present on intent checks (orchestrator). The governance agent uses the presence of tool+payload to identify an intent check.
    */
-  tool?: string | null;
+  tool?: string;
   /**
    * The full tool arguments as they would be sent to the seller. Present on intent checks. The governance agent can inspect any field to validate against the plan.
    */
-  payload?: {} | null;
+  payload?: {};
   /**
    * Opaque governance context from a prior check_governance response. Pass this on subsequent checks for the same governed action so the governance agent can maintain continuity across the lifecycle. Issued by the governance agent, never interpreted by callers.
    */
-  governance_context?: string | null;
-  phase?: GovernancePhase | null;
-  planned_delivery?: PlannedDelivery | null;
+  governance_context?: string;
+  phase?: GovernancePhase;
+  planned_delivery?: PlannedDelivery;
   /**
    * Actual delivery performance data. MUST be present for 'delivery' phase. The governance agent compares these metrics against the planned delivery to detect drift.
    */
@@ -11770,35 +11770,35 @@ export interface CheckGovernanceRequest {
     /**
      * Total spend during the reporting period.
      */
-    spend?: number | null;
+    spend?: number;
     /**
      * Total spend since the governed action started.
      */
-    cumulative_spend?: number | null;
+    cumulative_spend?: number;
     /**
      * Impressions delivered during the reporting period.
      */
-    impressions?: number | null;
+    impressions?: number;
     /**
      * Total impressions since the governed action started.
      */
-    cumulative_impressions?: number | null;
+    cumulative_impressions?: number;
     /**
      * Actual geographic distribution. Keys are ISO 3166-1 alpha-2 codes, values are percentages.
      */
     geo_distribution?: {
-      [k: string]: number | null | undefined;
+      [k: string]: number | undefined;
     };
     /**
      * Actual channel distribution. Keys are channel enum values, values are percentages.
      */
     channel_distribution?: {
-      [k: string]: number | null | undefined;
+      [k: string]: number | undefined;
     };
     /**
      * Whether delivery is ahead of, on track with, or behind the planned pace.
      */
-    pacing?: 'ahead' | 'on_track' | 'behind' | null;
+    pacing?: 'ahead' | 'on_track' | 'behind';
     /**
      * Actual audience composition during the reporting period. Enables mid-flight drift detection when actual delivery skews from planned audience targeting.
      */
@@ -11810,26 +11810,26 @@ export interface CheckGovernanceRequest {
       /**
        * Description of the baseline when baseline is 'custom' (e.g., 'US adults 18+ with broadband access').
        */
-      baseline_description?: string | null;
+      baseline_description?: string;
       /**
        * Audience index values for the current reporting period. Keys are seller-defined dimension:value strings (e.g., 'age:25-34', 'gender:female', 'income:high'). The protocol does not mandate a taxonomy — dimensions and value labels vary by seller. Values are index relative to the declared baseline (1.0 = at parity, >1.0 = over-indexed, <1.0 = under-indexed).
        */
       indices: {
-        [k: string]: number | null | undefined;
+        [k: string]: number | undefined;
       };
       /**
        * Cumulative audience index values since the governed action started. Same key format as indices (dimension:value). Use for detecting sustained bias drift that may not appear in a single reporting period.
        */
       cumulative_indices?: {
-        [k: string]: number | null | undefined;
+        [k: string]: number | undefined;
       };
     };
   };
   /**
    * Human-readable summary of what changed. SHOULD be present for 'modification' phase.
    */
-  modification_summary?: string | null;
-  invoice_recipient?: BusinessEntity | null;
+  modification_summary?: string;
+  invoice_recipient?: BusinessEntity;
 }
 
 // check_governance response
@@ -11864,7 +11864,7 @@ export interface CheckGovernanceResponse {
     /**
      * Registry policy ID that triggered this finding. Present when the finding originates from a specific registry policy. Enables programmatic routing of compliance failures.
      */
-    policy_id?: string | null;
+    policy_id?: string;
     severity: EscalationSeverity;
     /**
      * Human-readable description of the issue.
@@ -11873,15 +11873,15 @@ export interface CheckGovernanceResponse {
     /**
      * Structured details for programmatic consumption.
      */
-    details?: {} | null;
+    details?: {};
     /**
      * Confidence score (0-1) in this finding. Distinguishes 'this definitely violates the policy' (0.95) from 'this might violate depending on how audience segments resolve' (0.6). When absent, the finding is presented without a confidence qualifier.
      */
-    confidence?: number | null;
+    confidence?: number;
     /**
      * Explanation of why confidence is below 1.0 (e.g., 'Targeting includes regions that partially overlap jurisdiction boundaries'). Present when confidence is below a governance-agent-defined threshold.
      */
-    uncertainty_reason?: string | null;
+    uncertainty_reason?: string;
   }[];
   /**
    * Present when status is 'conditions'. Specific adjustments the caller must make. After applying conditions, the caller MUST re-call check_governance with the adjusted parameters before proceeding.
@@ -11895,7 +11895,7 @@ export interface CheckGovernanceResponse {
      * The value the field must have for approval. When present, the condition is machine-actionable. When absent, the condition is advisory.
      */
     required_value?: {
-      [k: string]: unknown | null | undefined;
+      [k: string]: unknown | undefined;
     };
     /**
      * Why this condition is required.
@@ -11905,23 +11905,23 @@ export interface CheckGovernanceResponse {
   /**
    * When this approval expires. Present when status is 'approved' or 'conditions'. The caller must act before this time or re-call check_governance. A lapsed approval is no approval.
    */
-  expires_at?: string | null;
+  expires_at?: string;
   /**
    * When the seller should next call check_governance with delivery metrics. Present when the governance agent expects ongoing delivery reporting.
    */
-  next_check?: string | null;
+  next_check?: string;
   /**
    * Governance categories evaluated during this check.
    */
-  categories_evaluated?: string[] | null;
+  categories_evaluated?: string[];
   /**
    * Registry policy IDs evaluated during this check.
    */
-  policies_evaluated?: string[] | null;
+  policies_evaluated?: string[];
   /**
    * Opaque governance context for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle. Only the issuing governance agent interprets this value. This is the primary correlation key for audit and reporting across the governance lifecycle.
    */
-  governance_context?: string | null;
+  governance_context?: string;
 }
 
 
@@ -11933,7 +11933,7 @@ export interface SIGetOfferingRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Offering identifier from the catalog to get details for
    */
@@ -11941,16 +11941,16 @@ export interface SIGetOfferingRequest {
   /**
    * Optional natural language context about user intent for personalized results (e.g., 'mens size 14 near Cincinnati'). Must be anonymous - no PII.
    */
-  context?: string | null;
+  context?: string;
   /**
    * Whether to include matching products in the response
    */
-  include_products?: boolean | null;
+  include_products?: boolean;
   /**
    * Maximum number of matching products to return
    */
-  product_limit?: number | null;
-  ext?: ExtensionObject | null;
+  product_limit?: number;
+  ext?: ExtensionObject;
 }
 
 // si_get_offering response
@@ -11965,15 +11965,15 @@ export interface SIGetOfferingResponse {
   /**
    * Token to pass to si_initiate_session for session continuity. Brand stores the full query context server-side (products shown, order, context) so they can resolve references like 'the second one' when the session starts.
    */
-  offering_token?: string | null;
+  offering_token?: string;
   /**
    * How long this offering information is valid (seconds). Host should re-fetch after TTL expires.
    */
-  ttl_seconds?: number | null;
+  ttl_seconds?: number;
   /**
    * When this offering information was retrieved
    */
-  checked_at?: string | null;
+  checked_at?: string;
   /**
    * Offering details
    */
@@ -11981,35 +11981,35 @@ export interface SIGetOfferingResponse {
     /**
      * Offering identifier
      */
-    offering_id?: string | null;
+    offering_id?: string;
     /**
      * Offering title
      */
-    title?: string | null;
+    title?: string;
     /**
      * Brief summary of the offering
      */
-    summary?: string | null;
+    summary?: string;
     /**
      * Short promotional tagline
      */
-    tagline?: string | null;
+    tagline?: string;
     /**
      * When this offering expires
      */
-    expires_at?: string | null;
+    expires_at?: string;
     /**
      * Price indication (e.g., 'from $199', '50% off')
      */
-    price_hint?: string | null;
+    price_hint?: string;
     /**
      * Hero image for the offering
      */
-    image_url?: string | null;
+    image_url?: string;
     /**
      * Landing page URL
      */
-    landing_url?: string | null;
+    landing_url?: string;
   };
   /**
    * Products matching the request context. Only included if include_products was true.
@@ -12026,41 +12026,41 @@ export interface SIGetOfferingResponse {
     /**
      * Display price (e.g., '$129', '$89.99')
      */
-    price?: string | null;
+    price?: string;
     /**
      * Original price if on sale
      */
-    original_price?: string | null;
+    original_price?: string;
     /**
      * Product image
      */
-    image_url?: string | null;
+    image_url?: string;
     /**
      * Brief availability info (e.g., 'In stock', 'Size 14 available', '3 left')
      */
-    availability_summary?: string | null;
+    availability_summary?: string;
     /**
      * Product detail page URL
      */
-    url?: string | null;
+    url?: string;
   }[];
   /**
    * Total number of products matching the context (may be more than returned in matching_products)
    */
-  total_matching?: number | null;
+  total_matching?: number;
   /**
    * If not available, why (e.g., 'expired', 'sold_out', 'region_restricted')
    */
-  unavailable_reason?: string | null;
+  unavailable_reason?: string;
   /**
    * Alternative offerings to consider if this one is unavailable
    */
-  alternative_offering_ids?: string[] | null;
+  alternative_offering_ids?: string[];
   /**
    * Errors during offering lookup
    */
-  errors?: Error[] | null;
-  ext?: ExtensionObject | null;
+  errors?: Error[];
+  ext?: ExtensionObject;
 }
 
 // si_initiate_session parameters
@@ -12071,7 +12071,7 @@ export interface SIInitiateSessionRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Conversation handoff from the host describing what the user needs
    */
@@ -12080,25 +12080,25 @@ export interface SIInitiateSessionRequest {
   /**
    * AdCP media buy ID if session was triggered by advertising
    */
-  media_buy_id?: string | null;
+  media_buy_id?: string;
   /**
    * Where this session was triggered (e.g., 'chatgpt_search', 'claude_chat')
    */
-  placement?: string | null;
+  placement?: string;
   /**
    * Brand-specific offering identifier to apply
    */
-  offering_id?: string | null;
-  supported_capabilities?: SICapabilities | null;
+  offering_id?: string;
+  supported_capabilities?: SICapabilities;
   /**
    * Token from si_get_offering response for session continuity. Brand uses this to recall what products were shown to the user, enabling natural references like 'the second one' or 'that blue shoe'.
    */
-  offering_token?: string | null;
+  offering_token?: string;
   /**
    * Client-generated unique key for this request. Prevents duplicate session creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string | null;
-  ext?: ExtensionObject | null;
+  idempotency_key?: string;
+  ext?: ExtensionObject;
 }
 /**
  * User identity shared with brand agent (with explicit consent)
@@ -12111,11 +12111,11 @@ export interface SIIdentity {
   /**
    * When consent was granted (ISO 8601)
    */
-  consent_timestamp?: string | null;
+  consent_timestamp?: string;
   /**
    * What data was consented to share
    */
-  consent_scope?: ('name' | 'email' | 'shipping_address' | 'phone' | 'locale')[] | null;
+  consent_scope?: ('name' | 'email' | 'shipping_address' | 'phone' | 'locale')[];
   /**
    * Brand privacy policy acknowledgment
    */
@@ -12123,11 +12123,11 @@ export interface SIIdentity {
     /**
      * URL to brand's privacy policy
      */
-    brand_policy_url?: string | null;
+    brand_policy_url?: string;
     /**
      * Version of policy acknowledged
      */
-    brand_policy_version?: string | null;
+    brand_policy_version?: string;
   };
   /**
    * User data (only present if consent_granted is true)
@@ -12136,34 +12136,34 @@ export interface SIIdentity {
     /**
      * User's email address
      */
-    email?: string | null;
+    email?: string;
     /**
      * User's display name
      */
-    name?: string | null;
+    name?: string;
     /**
      * User's locale (e.g., en-US)
      */
-    locale?: string | null;
+    locale?: string;
     /**
      * User's phone number
      */
-    phone?: string | null;
+    phone?: string;
     /**
      * User's shipping address for accurate pricing
      */
     shipping_address?: {
-      street?: string | null;
-      city?: string | null;
-      state?: string | null;
-      postal_code?: string | null;
-      country?: string | null;
+      street?: string;
+      city?: string;
+      state?: string;
+      postal_code?: string;
+      country?: string;
     };
   };
   /**
    * Session ID for anonymous users (when consent_granted is false)
    */
-  anonymous_session_id?: string | null;
+  anonymous_session_id?: string;
 }
 /**
  * What capabilities the host supports
@@ -12176,7 +12176,7 @@ export interface SICapabilities {
     /**
      * Pure text exchange - the baseline modality
      */
-    conversational?: boolean | null;
+    conversational?: boolean;
     /**
      * Audio-based interaction using brand voice
      */
@@ -12186,11 +12186,11 @@ export interface SICapabilities {
           /**
            * TTS provider (elevenlabs, openai, etc.)
            */
-          provider?: string | null;
+          provider?: string;
           /**
            * Brand voice identifier
            */
-          voice_id?: string | null;
+          voice_id?: string;
         };
     /**
      * Brand video content playback
@@ -12201,11 +12201,11 @@ export interface SICapabilities {
           /**
            * Supported video formats (mp4, webm, etc.)
            */
-          formats?: string[] | null;
+          formats?: string[];
           /**
            * Maximum video duration
            */
-          max_duration_seconds?: number | null;
+          max_duration_seconds?: number;
         };
     /**
      * Animated video presence with brand avatar
@@ -12216,11 +12216,11 @@ export interface SICapabilities {
           /**
            * Avatar provider (d-id, heygen, synthesia, etc.)
            */
-          provider?: string | null;
+          provider?: string;
           /**
            * Brand avatar identifier
            */
-          avatar_id?: string | null;
+          avatar_id?: string;
         };
   };
   /**
@@ -12230,11 +12230,11 @@ export interface SICapabilities {
     /**
      * Standard components that all SI hosts must render
      */
-    standard?: ('text' | 'link' | 'image' | 'product_card' | 'carousel' | 'action_button')[] | null;
+    standard?: ('text' | 'link' | 'image' | 'product_card' | 'carousel' | 'action_button')[];
     /**
      * Platform-specific extensions (chatgpt_apps_sdk, maps, forms, etc.)
      */
-    extensions?: {} | null;
+    extensions?: {};
   };
   /**
    * Commerce capabilities
@@ -12243,7 +12243,7 @@ export interface SICapabilities {
     /**
      * Supports ACP (Agentic Commerce Protocol) checkout handoff
      */
-    acp_checkout?: boolean | null;
+    acp_checkout?: boolean;
   };
   /**
    * A2UI (Agent-to-UI) capabilities
@@ -12252,16 +12252,16 @@ export interface SICapabilities {
     /**
      * Supports A2UI surface rendering
      */
-    supported?: boolean | null;
+    supported?: boolean;
     /**
      * Supported A2UI component catalogs (e.g., 'si-standard', 'standard')
      */
-    catalogs?: string[] | null;
+    catalogs?: string[];
   };
   /**
    * Supports MCP Apps for rendering A2UI surfaces in iframes
    */
-  mcp_apps?: boolean | null;
+  mcp_apps?: boolean;
 }
 
 // si_initiate_session response
@@ -12269,7 +12269,7 @@ export interface SICapabilities {
  * Standard visual component that brand returns and host renders
  */
 export type SIUIElement = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * Component type
@@ -12286,7 +12286,7 @@ export type SIUIElement = {
   /**
    * Component-specific data
    */
-  data?: {} | null;
+  data?: {};
 };
 /**
  * Current session lifecycle state. Returned in initiation, message, and termination responses.
@@ -12308,23 +12308,23 @@ export interface SIInitiateSessionResponse {
     /**
      * Conversational message from brand agent
      */
-    message?: string | null;
+    message?: string;
     /**
      * Visual components to render
      */
-    ui_elements?: SIUIElement[] | null;
+    ui_elements?: SIUIElement[];
   };
-  negotiated_capabilities?: SICapabilities | null;
+  negotiated_capabilities?: SICapabilities;
   session_status: SISessionStatus;
   /**
    * Session inactivity timeout in seconds. After this duration without a message, the brand agent may terminate the session. Hosts SHOULD warn users before timeout when possible.
    */
-  session_ttl_seconds?: number | null;
+  session_ttl_seconds?: number;
   /**
    * Errors during session initiation
    */
-  errors?: Error[] | null;
-  ext?: ExtensionObject | null;
+  errors?: Error[];
+  ext?: ExtensionObject;
 }
 
 // si_send_message parameters
@@ -12332,12 +12332,12 @@ export interface SIInitiateSessionResponse {
  * Send a message to the brand agent within an active session
  */
 export type SISendMessageRequest = {
-  [k: string]: unknown | null | undefined;
+  [k: string]: unknown | undefined;
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Active session identifier
    */
@@ -12345,7 +12345,7 @@ export type SISendMessageRequest = {
   /**
    * User's message to the brand agent
    */
-  message?: string | null;
+  message?: string;
   /**
    * Response to a previous action_button (e.g., user clicked checkout)
    */
@@ -12353,13 +12353,13 @@ export type SISendMessageRequest = {
     /**
      * The action that was triggered
      */
-    action?: string | null;
+    action?: string;
     /**
      * Action-specific response data
      */
-    payload?: {} | null;
+    payload?: {};
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 };
 
 
@@ -12379,18 +12379,18 @@ export interface SISendMessageResponse {
     /**
      * Conversational message from brand agent
      */
-    message?: string | null;
-    surface?: A2UISurface | null;
+    message?: string;
+    surface?: A2UISurface;
     /**
      * @deprecated
      * Visual components to render (DEPRECATED: use surface instead)
      */
-    ui_elements?: SIUIElement[] | null;
+    ui_elements?: SIUIElement[];
   };
   /**
    * MCP resource URI for hosts with MCP Apps support (e.g., ui://si/session-abc123)
    */
-  mcp_resource_uri?: string | null;
+  mcp_resource_uri?: string;
   session_status: SISessionStatus;
   /**
    * Handoff request when session_status is pending_handoff
@@ -12399,7 +12399,7 @@ export interface SISendMessageResponse {
     /**
      * Type of handoff: transaction (ready for ACP checkout) or complete (conversation done)
      */
-    type?: 'transaction' | 'complete' | null;
+    type?: 'transaction' | 'complete';
     /**
      * For transaction handoffs: what the user wants to purchase
      */
@@ -12407,17 +12407,17 @@ export interface SISendMessageResponse {
       /**
        * The commerce action (e.g., 'purchase')
        */
-      action?: string | null;
+      action?: string;
       /**
        * Product details for checkout
        */
-      product?: {} | null;
+      product?: {};
       /**
        * Price information
        */
       price?: {
-        amount?: number | null;
-        currency?: string | null;
+        amount?: number;
+        currency?: string;
       };
     };
     /**
@@ -12427,15 +12427,15 @@ export interface SISendMessageResponse {
       /**
        * Summary of the conversation leading to purchase
        */
-      conversation_summary?: string | null;
+      conversation_summary?: string;
       /**
        * Offer IDs that were applied during the conversation
        */
-      applied_offers?: string[] | null;
+      applied_offers?: string[];
     };
   };
-  errors?: Error[] | null;
-  ext?: ExtensionObject | null;
+  errors?: Error[];
+  ext?: ExtensionObject;
 }
 /**
  * A2UI surface with interactive components
@@ -12448,7 +12448,7 @@ export interface A2UISurface {
   /**
    * Component catalog to use for rendering
    */
-  catalogId?: string | null;
+  catalogId?: string;
   /**
    * Flat list of components (adjacency list structure)
    */
@@ -12456,11 +12456,11 @@ export interface A2UISurface {
   /**
    * ID of the root component (if not specified, first component is root)
    */
-  rootId?: string | null;
+  rootId?: string;
   /**
    * Application data that components can bind to
    */
-  dataModel?: {} | null;
+  dataModel?: {};
 }
 /**
  * A component in an A2UI surface
@@ -12473,7 +12473,7 @@ export interface A2UIComponent {
   /**
    * ID of the parent component (null for root)
    */
-  parentId?: string | null;
+  parentId?: string;
   /**
    * Component definition (keyed by component type)
    */
@@ -12481,7 +12481,7 @@ export interface A2UIComponent {
     /**
      * Component properties
      */
-    [k: string]: {} | null | undefined;
+    [k: string]: {} | undefined;
   };
 }
 
@@ -12493,7 +12493,7 @@ export interface SITerminateSessionRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Session identifier to terminate
    */
@@ -12509,23 +12509,23 @@ export interface SITerminateSessionRequest {
     /**
      * Summary of the conversation
      */
-    summary?: string | null;
+    summary?: string;
     /**
      * For handoff_transaction - what user wants to buy
      */
     transaction_intent?: {
-      action?: 'purchase' | 'subscribe' | null;
+      action?: 'purchase' | 'subscribe';
       /**
        * Product/service details
        */
-      product?: {} | null;
+      product?: {};
     };
     /**
      * For host_terminated - why host ended session
      */
-    cause?: string | null;
+    cause?: string;
   };
-  ext?: ExtensionObject | null;
+  ext?: ExtensionObject;
 }
 
 // si_terminate_session response
@@ -12541,7 +12541,7 @@ export interface SITerminateSessionResponse {
    * Whether session was successfully terminated
    */
   terminated: boolean;
-  session_status?: SISessionStatus | null;
+  session_status?: SISessionStatus;
   /**
    * ACP checkout handoff data. Present when reason is handoff_transaction.
    */
@@ -12549,32 +12549,32 @@ export interface SITerminateSessionResponse {
     /**
      * Brand's ACP checkout endpoint. Hosts MUST validate this is HTTPS before opening.
      */
-    checkout_url?: string | null;
+    checkout_url?: string;
     /**
      * Opaque token for the checkout flow. The host passes this to the checkout endpoint to correlate the SI session with the transaction.
      */
-    checkout_token?: string | null;
+    checkout_token?: string;
     /**
      * Rich checkout context to pass to the ACP endpoint (product details, applied offers, pricing). Alternative to checkout_token for integrations that need structured data.
      */
-    payload?: {} | null;
+    payload?: {};
     /**
      * When this handoff data expires. Hosts should initiate checkout before this time.
      */
-    expires_at?: string | null;
+    expires_at?: string;
   };
   /**
    * Suggested follow-up actions
    */
   follow_up?: {
-    action?: 'save_for_later' | 'set_reminder' | 'subscribe_updates' | 'none' | null;
+    action?: 'save_for_later' | 'set_reminder' | 'subscribe_updates' | 'none';
     /**
      * Data for follow-up action
      */
-    data?: {} | null;
+    data?: {};
   };
-  errors?: Error[] | null;
-  ext?: ExtensionObject | null;
+  errors?: Error[];
+  ext?: ExtensionObject;
 }
 
 // get_adcp_capabilities parameters
@@ -12585,13 +12585,13 @@ export interface GetAdCPCapabilitiesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. When provided, the seller validates this against its supported major_versions and returns VERSION_UNSUPPORTED if the version is not in range. When omitted, the seller assumes the highest major version it supports.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Specific protocols to query capabilities for. If omitted, returns capabilities for all supported protocols.
    */
-  protocols?: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative')[] | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  protocols?: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative')[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_adcp_capabilities response
@@ -12631,11 +12631,11 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Whether the seller requires operator-level credentials. When true (explicit accounts), operators authenticate independently with the seller and the buyer discovers accounts via list_accounts. When false (default, implicit accounts), the seller trusts the agent's identity claims — the agent authenticates once and declares brands/operators via sync_accounts.
      */
-    require_operator_auth?: boolean | null;
+    require_operator_auth?: boolean;
     /**
      * OAuth authorization endpoint for obtaining operator-level credentials. Present when the seller supports OAuth for operator authentication. The agent directs the operator to this URL to authenticate and obtain a bearer token. If absent and require_operator_auth is true, operators obtain credentials out-of-band (e.g., seller portal, API key).
      */
-    authorization_endpoint?: string | null;
+    authorization_endpoint?: string;
     /**
      * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The buyer must pass one of these values in sync_accounts.
      */
@@ -12643,15 +12643,15 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
-    required_for_products?: boolean | null;
+    required_for_products?: boolean;
     /**
      * Whether this seller supports the get_account_financials task for querying account-level financial status (spend, credit, invoices). Only applicable to operator-billed accounts.
      */
-    account_financials?: boolean | null;
+    account_financials?: boolean;
     /**
      * Whether this seller supports sandbox accounts for testing. Buyers can provision a sandbox account via sync_accounts with sandbox: true, and all requests using that account_id will be treated as sandbox — no real platform calls or spend.
      */
-    sandbox?: boolean | null;
+    sandbox?: boolean;
   };
   /**
    * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy should also include account with supported_billing.
@@ -12660,8 +12660,8 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Pricing models this seller supports across its product portfolio. Buyers can use this for pre-flight filtering before querying individual products. Individual products may support a subset of these models.
      */
-    supported_pricing_models?: PricingModel[] | null;
-    features?: MediaBuyFeatures | null;
+    supported_pricing_models?: PricingModel[];
+    features?: MediaBuyFeatures;
     /**
      * Technical execution capabilities for media buying
      */
@@ -12688,7 +12688,7 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Deprecated. Legacy AXE integrations. Use trusted_match for new integrations.
        */
-      axe_integrations?: string[] | null;
+      axe_integrations?: string[];
       /**
        * Creative specification support
        */
@@ -12696,19 +12696,19 @@ export interface GetAdCPCapabilitiesResponse {
         /**
          * VAST versions supported for video creatives
          */
-        vast_versions?: string[] | null;
+        vast_versions?: string[];
         /**
          * MRAID versions supported for rich media mobile creatives
          */
-        mraid_versions?: string[] | null;
+        mraid_versions?: string[];
         /**
          * VPAID support for interactive video ads
          */
-        vpaid?: boolean | null;
+        vpaid?: boolean;
         /**
          * SIMID support for interactive video ads
          */
-        simid?: boolean | null;
+        simid?: boolean;
       };
       /**
        * Targeting capabilities. If declared true/supported, buyer can use these targeting parameters and seller MUST honor them.
@@ -12717,35 +12717,35 @@ export interface GetAdCPCapabilitiesResponse {
         /**
          * Country-level targeting using ISO 3166-1 alpha-2 codes
          */
-        geo_countries?: boolean | null;
+        geo_countries?: boolean;
         /**
          * Region/state-level targeting using ISO 3166-2 codes (e.g., US-NY, GB-SCT)
          */
-        geo_regions?: boolean | null;
+        geo_regions?: boolean;
         /**
          * Metro area targeting. Properties indicate which classification systems are supported.
          */
         geo_metros?: {
-          nielsen_dma?: boolean | null;
-          uk_itl1?: boolean | null;
-          uk_itl2?: boolean | null;
-          eurostat_nuts2?: boolean | null;
+          nielsen_dma?: boolean;
+          uk_itl1?: boolean;
+          uk_itl2?: boolean;
+          eurostat_nuts2?: boolean;
         };
         /**
          * Postal area targeting. Properties indicate which postal code systems are supported.
          */
         geo_postal_areas?: {
-          us_zip?: boolean | null;
-          us_zip_plus_four?: boolean | null;
-          gb_outward?: boolean | null;
-          gb_full?: boolean | null;
-          ca_fsa?: boolean | null;
-          ca_full?: boolean | null;
-          de_plz?: boolean | null;
-          fr_code_postal?: boolean | null;
-          au_postcode?: boolean | null;
-          ch_plz?: boolean | null;
-          at_plz?: boolean | null;
+          us_zip?: boolean;
+          us_zip_plus_four?: boolean;
+          gb_outward?: boolean;
+          gb_full?: boolean;
+          ca_fsa?: boolean;
+          ca_full?: boolean;
+          de_plz?: boolean;
+          fr_code_postal?: boolean;
+          au_postcode?: boolean;
+          ch_plz?: boolean;
+          at_plz?: boolean;
         };
         /**
          * Age restriction capabilities for compliance (alcohol, gambling)
@@ -12754,16 +12754,16 @@ export interface GetAdCPCapabilitiesResponse {
           /**
            * Whether seller supports age restrictions
            */
-          supported?: boolean | null;
+          supported?: boolean;
           /**
            * Age verification methods this seller supports
            */
-          verification_methods?: AgeVerificationMethod[] | null;
+          verification_methods?: AgeVerificationMethod[];
         };
         /**
          * Whether seller supports language targeting (ISO 639-1 codes)
          */
-        language?: boolean | null;
+        language?: boolean;
         /**
          * Keyword targeting capabilities. Presence indicates support for targeting_overlay.keyword_targets and keyword_targets_add/remove in update_media_buy.
          */
@@ -12789,19 +12789,19 @@ export interface GetAdCPCapabilitiesResponse {
           /**
            * Whether seller supports simple radius targeting (distance circle from a point)
            */
-          radius?: boolean | null;
+          radius?: boolean;
           /**
            * Whether seller supports travel time isochrone targeting (requires a routing engine)
            */
-          travel_time?: boolean | null;
+          travel_time?: boolean;
           /**
            * Whether seller supports pre-computed GeoJSON geometry (buyer provides the polygon)
            */
-          geometry?: boolean | null;
+          geometry?: boolean;
           /**
            * Transport modes supported for travel_time isochrones. Only relevant when travel_time is true.
            */
-          transport_modes?: TransportMode[] | null;
+          transport_modes?: TransportMode[];
         };
       };
     };
@@ -12816,11 +12816,11 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Whether the seller accepts the buyer's CRM/loyalty ID as a matchable identifier. Only applicable when the seller operates a closed ecosystem with a shared ID namespace (e.g., a retailer matching against their loyalty program). When true, buyers can include platform_customer_id values in AudienceMember.identifiers for matching against the seller's identity graph. Reporting on matched platform_customer_ids typically requires a clean room or the seller's own reporting surface.
        */
-      supports_platform_customer_id?: boolean | null;
+      supports_platform_customer_id?: boolean;
       /**
        * Universal ID types accepted for audience matching (MAIDs, RampID, UID2, etc.). MAID support varies significantly by platform — check this field before sending uids with type: maid.
        */
-      supported_uid_types?: UIDType[] | null;
+      supported_uid_types?: UIDType[];
       /**
        * Minimum matched audience size required for targeting. Audiences below this threshold will have status: too_small. Varies by platform (100–1000 is typical).
        */
@@ -12829,8 +12829,8 @@ export interface GetAdCPCapabilitiesResponse {
        * Expected matching latency range in hours after upload. Use to calibrate polling cadence and set appropriate expectations before configuring push_notification_config.
        */
       matching_latency_hours?: {
-        min?: number | null;
-        max?: number | null;
+        min?: number;
+        max?: number;
       };
     };
     /**
@@ -12840,28 +12840,28 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Whether this seller can deduplicate conversion events across multiple event sources within a single goal. When true, the seller honors the deduplication semantics in optimization_goals event_sources arrays — the same event_id from multiple sources counts once. When false or absent, buyers should use a single event source per goal; multi-source arrays will be treated as first-source-wins. Most social platforms cannot deduplicate across independently-managed pixel and CAPI sources.
        */
-      multi_source_event_dedup?: boolean | null;
+      multi_source_event_dedup?: boolean;
       /**
        * Event types this seller can track and attribute. If omitted, all standard event types are supported.
        */
-      supported_event_types?: EventType[] | null;
+      supported_event_types?: EventType[];
       /**
        * Universal ID types accepted for user matching
        */
-      supported_uid_types?: UIDType[] | null;
+      supported_uid_types?: UIDType[];
       /**
        * Hashed PII types accepted for user matching. Buyers must hash before sending (SHA-256, normalized).
        */
-      supported_hashed_identifiers?: ('hashed_email' | 'hashed_phone')[] | null;
+      supported_hashed_identifiers?: ('hashed_email' | 'hashed_phone')[];
       /**
        * Action sources this seller accepts events from
        */
-      supported_action_sources?: ActionSource[] | null;
+      supported_action_sources?: ActionSource[];
       /**
        * Attribution windows available from this seller. Single-element arrays indicate fixed windows; multi-element arrays indicate configurable options the buyer can choose from via attribution_window on optimization goals.
        */
       attribution_windows?: {
-        event_type?: EventType | null;
+        event_type?: EventType;
         /**
          * Available post-click attribution windows (e.g. [{"interval": 7, "unit": "days"}])
          */
@@ -12869,7 +12869,7 @@ export interface GetAdCPCapabilitiesResponse {
         /**
          * Available post-view attribution windows (e.g. [{"interval": 1, "unit": "days"}])
          */
-        post_view?: Duration[] | null;
+        post_view?: Duration[];
       }[];
     };
     /**
@@ -12879,15 +12879,15 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Whether the seller runs a local evaluation model. When false, all artifacts will have local_verdict: 'unevaluated' and the failures_only filter on get_media_buy_artifacts is not useful.
        */
-      supports_local_evaluation?: boolean | null;
+      supports_local_evaluation?: boolean;
       /**
        * Channels for which the seller can provide content artifacts. Helps buyers understand which parts of a mixed-channel buy will have content standards coverage.
        */
-      supported_channels?: MediaChannel[] | null;
+      supported_channels?: MediaChannel[];
       /**
        * Whether the seller supports push-based artifact delivery via artifact_webhook configured at buy creation time.
        */
-      supports_webhook_delivery?: boolean | null;
+      supports_webhook_delivery?: boolean;
     };
     /**
      * Information about the seller's media inventory portfolio. Expected for media_buy sellers — buyers use this to understand inventory coverage and verify authorization via adagents.json.
@@ -12900,19 +12900,19 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Primary advertising channels in this portfolio
        */
-      primary_channels?: MediaChannel[] | null;
+      primary_channels?: MediaChannel[];
       /**
        * Primary countries (ISO 3166-1 alpha-2) where inventory is concentrated
        */
-      primary_countries?: string[] | null;
+      primary_countries?: string[];
       /**
        * Markdown-formatted description of the inventory portfolio
        */
-      description?: string | null;
+      description?: string;
       /**
        * Advertising content policies, restrictions, and guidelines
        */
-      advertising_policies?: string | null;
+      advertising_policies?: string;
     };
   };
   /**
@@ -12922,7 +12922,7 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for signal catalog definitions and to verify authorization.
      */
-    data_provider_domains?: string[] | null;
+    data_provider_domains?: string[];
     /**
      * Optional signals features supported
      */
@@ -12930,8 +12930,8 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Supports signals from data provider catalogs with structured signal_id references
        */
-      catalog_signals?: boolean | null;
-      [k: string]: boolean | null | undefined;
+      catalog_signals?: boolean;
+      [k: string]: boolean | undefined;
     };
   };
   /**
@@ -12966,15 +12966,15 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * For categorical features, the valid values
        */
-      categories?: string[] | null;
+      categories?: string[];
       /**
        * Human-readable description of what this feature measures
        */
-      description?: string | null;
+      description?: string;
       /**
        * URL to documentation explaining how this feature is calculated or measured. Helps buyers understand and compare methodologies across vendors.
        */
-      methodology_url?: string | null;
+      methodology_url?: string;
     }[];
     /**
      * Creative features this governance agent can evaluate. Each feature describes a score, rating, or assessment the agent can provide for creatives (e.g., security scanning, creative quality, content categorization).
@@ -13004,15 +13004,15 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * For categorical features, the valid values
        */
-      categories?: string[] | null;
+      categories?: string[];
       /**
        * Human-readable description of what this feature measures
        */
-      description?: string | null;
+      description?: string;
       /**
        * URL to documentation explaining how this feature is calculated or measured.
        */
-      methodology_url?: string | null;
+      methodology_url?: string;
     }[];
   };
   /**
@@ -13039,13 +13039,13 @@ export interface GetAdCPCapabilitiesResponse {
       /**
        * Preferred transport when host supports multiple
        */
-      preferred?: 'mcp' | 'a2a' | null;
+      preferred?: 'mcp' | 'a2a';
     };
     capabilities: SICapabilities;
     /**
      * URL to brand.json with colors, fonts, logos, tone
      */
-    brand_url?: string | null;
+    brand_url?: string;
   };
   /**
    * Brand protocol capabilities. Only present if brand is in supported_protocols. Brand agents provide identity data (logos, colors, tone, assets) and optionally rights clearance for licensable content (talent, music, stock media).
@@ -13054,23 +13054,23 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Supports get_rights and acquire_rights for rights discovery and clearance
      */
-    rights?: boolean | null;
+    rights?: boolean;
     /**
      * Types of rights available through this agent
      */
-    right_types?: RightType[] | null;
+    right_types?: RightType[];
     /**
      * Rights uses available across this agent's roster
      */
-    available_uses?: RightUse[] | null;
+    available_uses?: RightUse[];
     /**
      * LLM/generation providers this agent can issue credentials for
      */
-    generation_providers?: string[] | null;
+    generation_providers?: string[];
     /**
      * Description of the agent's brand protocol capabilities
      */
-    description?: string | null;
+    description?: string;
   };
   /**
    * Creative protocol capabilities. Only present if creative is in supported_protocols.
@@ -13079,19 +13079,19 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * When true, this creative agent can process briefs with compliance requirements (required_disclosures, prohibited_claims) and will validate that disclosures can be satisfied by the target format.
      */
-    supports_compliance?: boolean | null;
+    supports_compliance?: boolean;
     /**
      * When true, this agent hosts a creative library and supports list_creatives and creative_id references in build_creative. Creative agents with a library should also implement the accounts protocol (sync_accounts / list_accounts) so buyers can establish access.
      */
-    has_creative_library?: boolean | null;
+    has_creative_library?: boolean;
     /**
      * When true, this agent can generate creatives from natural language briefs via build_creative. The buyer provides a message with creative direction, and the agent produces a manifest with generated assets. When false, build_creative only supports transformation or library retrieval.
      */
-    supports_generation?: boolean | null;
+    supports_generation?: boolean;
     /**
      * When true, this agent can transform or resize existing manifests via build_creative. The buyer provides a creative_manifest and a target_format_id, and the agent adapts the creative to the new format.
      */
-    supports_transformation?: boolean | null;
+    supports_transformation?: boolean;
   };
   /**
    * Compliance testing capabilities. Only present if compliance_testing is in supported_protocols. Indicates this agent supports deterministic testing via comply_test_controller for lifecycle state machine validation.
@@ -13112,17 +13112,17 @@ export interface GetAdCPCapabilitiesResponse {
   /**
    * Extension namespaces this agent supports. Buyers can expect meaningful data in ext.{namespace} fields on responses from this agent. Extension schemas are published in the AdCP extension registry.
    */
-  extensions_supported?: string[] | null;
+  extensions_supported?: string[];
   /**
    * ISO 8601 timestamp of when capabilities were last updated. Buyers can use this for cache invalidation.
    */
-  last_updated?: string | null;
+  last_updated?: string;
   /**
    * Task-specific errors and warnings
    */
-  errors?: Error[] | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // list_accounts parameters
@@ -13133,18 +13133,18 @@ export interface ListAccountsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Filter accounts by status. Omit to return accounts in all statuses.
    */
-  status?: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed' | null;
-  pagination?: PaginationRequest | null;
+  status?: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
+  pagination?: PaginationRequest;
   /**
    * Filter by sandbox status. true returns only sandbox accounts, false returns only production accounts. Omit to return all accounts. Primarily used with explicit accounts (require_operator_auth: true) where sandbox accounts are pre-existing test accounts on the platform.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // list_accounts response
@@ -13159,10 +13159,10 @@ export interface ListAccountsResponse {
   /**
    * Task-specific errors and warnings
    */
-  errors?: Error[] | null;
-  pagination?: PaginationResponse | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  errors?: Error[];
+  pagination?: PaginationResponse;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_accounts parameters
@@ -13173,7 +13173,7 @@ export interface SyncAccountsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Advertiser accounts to sync
    */
@@ -13187,27 +13187,27 @@ export interface SyncAccountsRequest {
      * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The seller must either accept this billing model or reject the request.
      */
     billing: 'operator' | 'agent' | 'advertiser';
-    billing_entity?: BusinessEntity | null;
+    billing_entity?: BusinessEntity;
     /**
      * Payment terms for this account. The seller must either accept these terms or reject the account — terms are never silently remapped. When omitted, the seller applies its default terms.
      */
-    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay' | null;
+    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
     /**
      * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
-    sandbox?: boolean | null;
+    sandbox?: boolean;
   }[];
   /**
    * When true, accounts previously synced by this agent but not included in this request will be deactivated. Scoped to the authenticated agent — does not affect accounts managed by other agents. Use with caution.
    */
-  delete_missing?: boolean | null;
+  delete_missing?: boolean;
   /**
    * When true, preview what would change without applying. Returns what would be created/updated/deactivated.
    */
-  dry_run?: boolean | null;
-  push_notification_config?: PushNotificationConfig | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  dry_run?: boolean;
+  push_notification_config?: PushNotificationConfig;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_accounts response
@@ -13222,7 +13222,7 @@ export interface SyncAccountsSuccess {
   /**
    * Whether this was a dry run (no actual changes made)
    */
-  dry_run?: boolean | null;
+  dry_run?: boolean;
   /**
    * Results for each account processed
    */
@@ -13230,7 +13230,7 @@ export interface SyncAccountsSuccess {
     /**
      * Seller-assigned account identifier. Use this in subsequent create_media_buy and other account-scoped operations.
      */
-    account_id?: string | null;
+    account_id?: string;
     brand: BrandReference;
     /**
      * Operator domain, echoed from request
@@ -13239,7 +13239,7 @@ export interface SyncAccountsSuccess {
     /**
      * Human-readable account name assigned by the seller
      */
-    name?: string | null;
+    name?: string;
     /**
      * Action taken for this account. created: new account provisioned. updated: existing account modified. unchanged: no changes needed. failed: could not process (see errors).
      */
@@ -13251,12 +13251,12 @@ export interface SyncAccountsSuccess {
     /**
      * Who is invoiced on this account. Matches the requested billing model.
      */
-    billing?: 'operator' | 'agent' | 'advertiser' | null;
-    billing_entity?: BusinessEntity | null;
+    billing?: 'operator' | 'agent' | 'advertiser';
+    billing_entity?: BusinessEntity;
     /**
      * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to this operator+brand pair. agent: the agent's default account.
      */
-    account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent' | null;
+    account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
     /**
      * Setup information for pending accounts. Provides the agent (or human) with next steps to complete account activation.
      */
@@ -13264,7 +13264,7 @@ export interface SyncAccountsSuccess {
       /**
        * URL where the human can complete the required action (credit application, legal agreement, add funds)
        */
-      url?: string | null;
+      url?: string;
       /**
        * Human-readable description of what's needed
        */
@@ -13272,16 +13272,16 @@ export interface SyncAccountsSuccess {
       /**
        * When this setup link expires
        */
-      expires_at?: string | null;
+      expires_at?: string;
     };
     /**
      * Rate card applied to this account
      */
-    rate_card?: string | null;
+    rate_card?: string;
     /**
      * Payment terms agreed for this account. When the account is active, these are the binding terms for all invoices on this account.
      */
-    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay' | null;
+    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
     credit_limit?: {
       amount: number;
       currency: string;
@@ -13289,18 +13289,18 @@ export interface SyncAccountsSuccess {
     /**
      * Per-account errors (only present when action is 'failed')
      */
-    errors?: Error[] | null;
+    errors?: Error[];
     /**
      * Non-fatal warnings about this account
      */
-    warnings?: string[] | null;
+    warnings?: string[];
     /**
      * Whether this is a sandbox account, echoed from the request. Only present for implicit accounts.
      */
-    sandbox?: boolean | null;
+    sandbox?: boolean;
   }[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Operation failed completely, no accounts were processed
@@ -13310,8 +13310,8 @@ export interface SyncAccountsError {
    * Operation-level errors (e.g., authentication failure, service unavailable)
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 
@@ -13323,7 +13323,7 @@ export interface SyncGovernanceRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Per-account governance agent configuration. Each entry pairs an account reference with the governance agents for that account.
    */
@@ -13350,11 +13350,11 @@ export interface SyncGovernanceRequest {
       /**
        * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
        */
-      categories?: string[] | null;
+      categories?: string[];
     }[];
   }[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // sync_governance response
@@ -13386,15 +13386,15 @@ export interface SyncGovernanceSuccess {
       /**
        * Governance categories this agent handles.
        */
-      categories?: string[] | null;
+      categories?: string[];
     }[];
     /**
      * Per-account errors (only present when status is 'failed')
      */
-    errors?: Error[] | null;
+    errors?: Error[];
   }[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Operation failed completely, no accounts were processed
@@ -13404,8 +13404,8 @@ export interface SyncGovernanceError {
    * Operation-level errors (e.g., authentication failure, service unavailable)
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 
@@ -13417,11 +13417,11 @@ export interface ReportUsageRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   /**
    * Client-generated unique key for this request. If a request with the same key has already been accepted, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request. Prevents duplicate billing on retries.
    */
-  idempotency_key?: string | null;
+  idempotency_key?: string;
   reporting_period: DatetimeRange;
   /**
    * One or more usage records. Each record is self-contained: it carries its own account, allowing a single request to span multiple accounts.
@@ -13431,7 +13431,7 @@ export interface ReportUsageRequest {
     /**
      * Seller-assigned media buy identifier. Links this usage record to a specific media buy.
      */
-    media_buy_id?: string | null;
+    media_buy_id?: string;
     /**
      * Amount owed to the vendor for this record, denominated in currency.
      */
@@ -13443,38 +13443,38 @@ export interface ReportUsageRequest {
     /**
      * Pricing option identifier from the vendor's discovery response (e.g., get_signals, list_content_standards). The vendor uses this to verify the correct rate was applied.
      */
-    pricing_option_id?: string | null;
+    pricing_option_id?: string;
     /**
      * Impressions delivered using this vendor service.
      */
-    impressions?: number | null;
+    impressions?: number;
     /**
      * Media spend in currency for the period. Required when a percent_of_media pricing model was used, so the vendor can verify the applied rate.
      */
-    media_spend?: number | null;
+    media_spend?: number;
     /**
      * Signal identifier from get_signals. Required for signals agents.
      */
-    signal_agent_segment_id?: string | null;
+    signal_agent_segment_id?: string;
     /**
      * Content standards configuration identifier. Required for governance agents.
      */
-    standards_id?: string | null;
+    standards_id?: string;
     /**
      * Rights grant identifier from acquire_rights. Required for brand/rights agents. Links usage records to specific rights grants for cap tracking, billing verification, and overage calculation.
      */
-    rights_id?: string | null;
+    rights_id?: string;
     /**
      * Creative identifier from build_creative or list_creatives. Required for creative agents. Links usage records to specific creatives for billing verification.
      */
-    creative_id?: string | null;
+    creative_id?: string;
     /**
      * Property list identifier from list_property_lists. Required for property list agents. Links usage records to specific property lists for billing verification.
      */
-    property_list_id?: string | null;
+    property_list_id?: string;
   }[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // report_usage response
@@ -13489,13 +13489,13 @@ export interface ReportUsageResponse {
   /**
    * Validation errors for individual records. The field property identifies which record failed (e.g., 'usage[1].pricing_option_id').
    */
-  errors?: Error[] | null;
+  errors?: Error[];
   /**
    * When true, the account is a sandbox account and no billing occurred.
    */
-  sandbox?: boolean | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_account_financials parameters
@@ -13506,11 +13506,11 @@ export interface GetAccountFinancialsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
-  adcp_major_version?: number | null;
+  adcp_major_version?: number;
   account: AccountReference;
-  period?: DateRange | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  period?: DateRange;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Date range for the spend summary. Defaults to the current billing cycle if omitted.
@@ -13556,7 +13556,7 @@ export interface GetAccountFinancialsSuccess {
     /**
      * Number of active media buys in the period
      */
-    media_buy_count?: number | null;
+    media_buy_count?: number;
   };
   /**
    * Credit status. Present for credit-based accounts (payment_terms like net_30).
@@ -13573,7 +13573,7 @@ export interface GetAccountFinancialsSuccess {
     /**
      * Credit utilization as a percentage (0-100)
      */
-    utilization_percent?: number | null;
+    utilization_percent?: number;
   };
   /**
    * Prepay balance. Present for prepay accounts.
@@ -13600,11 +13600,11 @@ export interface GetAccountFinancialsSuccess {
   /**
    * Overall payment status. current: all obligations met. past_due: one or more invoices overdue. suspended: account suspended due to payment issues.
    */
-  payment_status?: 'current' | 'past_due' | 'suspended' | null;
+  payment_status?: 'current' | 'past_due' | 'suspended';
   /**
    * Payment terms in effect for this account
    */
-  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay' | null;
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
   /**
    * Recent invoices. Sellers may limit the number returned.
    */
@@ -13613,7 +13613,7 @@ export interface GetAccountFinancialsSuccess {
      * Seller-assigned invoice identifier
      */
     invoice_id: string;
-    period?: DateRange | null;
+    period?: DateRange;
     /**
      * Invoice total in currency
      */
@@ -13625,14 +13625,14 @@ export interface GetAccountFinancialsSuccess {
     /**
      * Payment due date
      */
-    due_date?: string | null;
+    due_date?: string;
     /**
      * Date payment was received. Present when status is 'paid'.
      */
-    paid_date?: string | null;
+    paid_date?: string;
   }[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Operation failed — financials not available
@@ -13642,8 +13642,8 @@ export interface GetAccountFinancialsError {
    * Operation-level errors
    */
   errors: Error[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // comply_test_controller parameters
@@ -13663,8 +13663,8 @@ export type ComplyTestControllerRequest =
  */
 export interface ListScenarios {
   scenario: 'list_scenarios';
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Transition a creative to the specified status
@@ -13680,10 +13680,10 @@ export interface ForceCreativeStatus {
     /**
      * Reason for rejection. Required when status = rejected.
      */
-    rejection_reason?: string | null;
+    rejection_reason?: string;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Transition an account to the specified status
@@ -13697,8 +13697,8 @@ export interface ForceAccountStatus {
     account_id: string;
     status: AccountStatus;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Transition a media buy to the specified status
@@ -13714,10 +13714,10 @@ export interface ForceMediaBuyStatus {
     /**
      * Reason for rejection. Required when status = rejected.
      */
-    rejection_reason?: string | null;
+    rejection_reason?: string;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Transition an SI session to a terminal status
@@ -13736,10 +13736,10 @@ export interface ForceSessionStatus {
     /**
      * Reason for termination (e.g., session_timeout, host_terminated, policy_violation). Required when status = terminated.
      */
-    termination_reason?: string | null;
+    termination_reason?: string;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Inject synthetic delivery data for a media buy
@@ -13754,11 +13754,11 @@ export interface SimulateDelivery {
     /**
      * Impressions to simulate
      */
-    impressions?: number | null;
+    impressions?: number;
     /**
      * Clicks to simulate
      */
-    clicks?: number | null;
+    clicks?: number;
     /**
      * Spend as reported in delivery data. Does not affect budget.
      */
@@ -13769,10 +13769,10 @@ export interface SimulateDelivery {
     /**
      * Conversions to simulate
      */
-    conversions?: number | null;
+    conversions?: number;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Simulate budget consumption to a specified percentage
@@ -13780,10 +13780,10 @@ export interface SimulateDelivery {
 export interface SimulateBudgetSpend {
   scenario: 'simulate_budget_spend';
   params: {
-    [k: string]: unknown | null | undefined;
+    [k: string]: unknown | undefined;
   };
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 
@@ -13813,8 +13813,8 @@ export interface ListScenariosSuccess {
     | 'simulate_delivery'
     | 'simulate_budget_spend'
   )[];
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * A force_* scenario successfully transitioned the entity to the target state
@@ -13832,9 +13832,9 @@ export interface StateTransitionSuccess {
   /**
    * Human-readable description of the transition
    */
-  message?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * A simulate_delivery or simulate_budget_spend scenario succeeded. For delivery: simulated contains impressions/clicks/reported_spend/conversions and cumulative contains running totals. For budget: simulated contains spend_percentage/computed_spend/budget.
@@ -13848,10 +13848,10 @@ export interface SimulationSuccess {
   /**
    * Running totals across all simulation calls (simulate_delivery only)
    */
-  cumulative?: {} | null;
-  message?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  cumulative?: {};
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * The scenario failed — invalid transition, unknown entity, unsupported scenario, or invalid params
@@ -13872,12 +13872,12 @@ export interface ControllerError {
   /**
    * Human-readable explanation of the failure
    */
-  error_detail?: string | null;
+  error_detail?: string;
   /**
    * Current state of the entity, or null if not found
    */
   current_state?: string | null;
-  context?: ContextObject | null;
-  ext?: ExtensionObject | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
