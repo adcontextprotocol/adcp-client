@@ -181,5 +181,7 @@ export {
   type SandboxAgent,
   type SandboxEntities,
   type BrandJson,
+  type AdagentsJson,
   BrandJsonSchema,
+  AdagentsJsonSchema,
 } from './storyboard';

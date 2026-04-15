@@ -58,7 +58,8 @@ export { runValidations } from './validations';
 
 // Sandbox entities
 export type { SandboxBrand, SandboxAgent, SandboxEntities, BrandJson } from './sandbox-entities';
-export { BrandJsonSchema } from './brand-json-schema';
+export { BrandJsonSchema, AdagentsJsonSchema } from '../../types/wellknown-schemas.generated';
+export type { AdagentsJson } from '../../types/wellknown-schemas.generated';
 export {
   getSandboxEntities,
   getSandboxBrands,

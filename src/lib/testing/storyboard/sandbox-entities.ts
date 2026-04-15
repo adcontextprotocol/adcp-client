@@ -10,9 +10,9 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { parse } from 'yaml';
-import { BrandJsonSchema, type BrandJson } from './brand-json-schema';
+import { BrandJsonSchema, type BrandJson } from '../../types/wellknown-schemas.generated';
 
-export type { BrandJson } from './brand-json-schema';
+export type { BrandJson } from '../../types/wellknown-schemas.generated';
 
 // ====== Public types ======
 

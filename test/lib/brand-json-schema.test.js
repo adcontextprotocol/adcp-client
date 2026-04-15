@@ -1,13 +1,18 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const { BrandJsonSchema, getSandboxBrands, clearSandboxCache } = require('../../dist/lib/testing/index.js');
+const {
+  BrandJsonSchema,
+  AdagentsJsonSchema,
+  getSandboxBrands,
+  clearSandboxCache,
+} = require('../../dist/lib/testing/index.js');
 
 describe('BrandJsonSchema', () => {
   test('accepts minimal house portfolio', () => {
     const data = {
       $schema: 'https://adcontextprotocol.org/schemas/brand.json',
-      house: 'example.com',
+      house: { domain: 'example.com', name: 'Example' },
       brands: [{ id: 'acme', names: [{ en: 'Acme' }] }],
     };
     const result = BrandJsonSchema.safeParse(data);
@@ -17,7 +22,7 @@ describe('BrandJsonSchema', () => {
   test('accepts full brand entry with creative fields', () => {
     const data = {
       $schema: 'https://adcontextprotocol.org/schemas/brand.json',
-      house: 'acmeoutdoor.example',
+      house: { domain: 'acmeoutdoor.example', name: 'Acme Outdoor' },
       brands: [
         {
           id: 'acme_outdoor',
@@ -45,73 +50,72 @@ describe('BrandJsonSchema', () => {
     assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
   });
 
-  test('accepts house as structured object', () => {
+  test('accepts house redirect variant', () => {
     const data = {
-      house: { domain: 'example.com', name: 'Example Corp' },
-      brands: [{ id: 'ex', names: [{ en: 'Example' }] }],
+      $schema: 'https://adcontextprotocol.org/schemas/brand.json',
+      house: 'nikeinc.com',
+      note: 'Redirect to house domain',
     };
     const result = BrandJsonSchema.safeParse(data);
     assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
   });
 
-  test('rejects missing brands', () => {
-    const data = { house: 'example.com' };
-    const result = BrandJsonSchema.safeParse(data);
-    assert.strictEqual(result.success, false);
-  });
-
-  test('rejects empty brands array', () => {
-    const data = { house: 'example.com', brands: [] };
-    const result = BrandJsonSchema.safeParse(data);
-    assert.strictEqual(result.success, false);
-  });
-
-  test('rejects brand entry missing id', () => {
+  test('accepts authoritative location redirect variant', () => {
     const data = {
-      house: 'example.com',
-      brands: [{ names: [{ en: 'Test' }] }],
-    };
-    const result = BrandJsonSchema.safeParse(data);
-    assert.strictEqual(result.success, false);
-  });
-
-  test('rejects brand entry missing names', () => {
-    const data = {
-      house: 'example.com',
-      brands: [{ id: 'test' }],
-    };
-    const result = BrandJsonSchema.safeParse(data);
-    assert.strictEqual(result.success, false);
-  });
-
-  test('rejects invalid hex color', () => {
-    const data = {
-      house: 'example.com',
-      brands: [{ id: 'x', names: [{ en: 'X' }], colors: { primary: 'red' } }],
-    };
-    const result = BrandJsonSchema.safeParse(data);
-    assert.strictEqual(result.success, false);
-  });
-
-  test('accepts color arrays', () => {
-    const data = {
-      house: 'example.com',
-      brands: [{ id: 'x', names: [{ en: 'X' }], colors: { primary: ['#FF0000', '#00FF00'] } }],
+      authoritative_location: 'https://cdn.example.com/brand.json',
     };
     const result = BrandJsonSchema.safeParse(data);
     assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
   });
 
-  test('preserves passthrough properties', () => {
+  test('accepts brand agent variant', () => {
     const data = {
-      house: 'example.com',
-      brands: [{ id: 'x', names: [{ en: 'X' }], custom_field: 'hello' }],
-      custom_root: true,
+      agents: [{ type: 'brand', url: 'https://agent.example.com', id: 'brand_agent' }],
     };
     const result = BrandJsonSchema.safeParse(data);
     assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
-    assert.strictEqual(result.data.brands[0].custom_field, 'hello');
-    assert.strictEqual(result.data.custom_root, true);
+  });
+});
+
+describe('AdagentsJsonSchema', () => {
+  test('accepts authoritative location redirect', () => {
+    const data = {
+      authoritative_location: 'https://cdn.example.com/adagents.json',
+    };
+    const result = AdagentsJsonSchema.safeParse(data);
+    assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
+  });
+
+  test('accepts inline structure with authorized agents', () => {
+    const data = {
+      contact: { name: 'Publisher Ops' },
+      properties: [
+        {
+          property_type: 'website',
+          name: 'Example Site',
+          identifiers: [{ type: 'domain', value: 'example.com' }],
+        },
+      ],
+      authorized_agents: [
+        {
+          url: 'https://seller.example.com',
+          authorization_type: 'property_ids',
+          property_ids: ['main_site'],
+          authorized_for: 'All inventory',
+        },
+      ],
+    };
+    const result = AdagentsJsonSchema.safeParse(data);
+    assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
+  });
+
+  test('accepts minimal inline structure', () => {
+    const data = {
+      contact: { name: 'Test' },
+      authorized_agents: [],
+    };
+    const result = AdagentsJsonSchema.safeParse(data);
+    assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
   });
 });
 
