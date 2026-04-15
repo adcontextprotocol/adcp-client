@@ -7,6 +7,12 @@ track: media_buy
 required_tools:
   - get_products
   - create_media_buy
+requires_scenarios:
+  - media_buy_seller/governance_approved
+  - media_buy_seller/governance_denied
+  - media_buy_seller/governance_conditions
+  - media_buy_seller/refine_products
+  - media_buy_seller/delivery_reporting
 
 narrative: |
   You run a platform that supports catalog-driven advertising — think Snap Dynamic Ads,

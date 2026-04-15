@@ -120,6 +120,16 @@ phases:
 
           context:
             correlation_id: "signal_marketplace--search_by_spec"
+
+        context_outputs:
+          - name: first_signal_id
+            path: "signals[0].signal_id"
+          - name: first_signal_agent_segment_id
+            path: "signals[0].signal_agent_segment_id"
+          - name: first_signal_pricing_option_id
+            path: "signals[0].pricing_options[0].pricing_option_id"
+          - name: second_signal_id
+            path: "signals[1].signal_id"
         validations:
           - check: response_schema
             description: "Response matches get-signals-response.json schema"
@@ -152,27 +162,21 @@ phases:
       - id: search_by_ids
         title: "Look up specific signals by ID"
         narrative: |
-          The buyer already knows which signals they want — maybe from a previous
-          campaign or a provider's documentation. They pass signal_ids directly
-          instead of a natural language query.
+          The buyer already knows which signals they want — discovered in the prior
+          step. They pass signal_ids directly instead of a natural language query.
         task: get_signals
         schema_ref: "signals/get-signals-request.json"
         response_schema_ref: "signals/get-signals-response.json"
         doc_ref: "/signals/tasks/get_signals"
         comply_scenario: signals_flow
-        stateful: false
+        stateful: true
         expected: |
           Return the exact signals requested, with full metadata and pricing.
           If a signal_id doesn't exist, omit it from results — don't error.
 
         sample_request:
           signal_ids:
-            - source: "catalog"
-              data_provider_domain: "tridentauto.example"
-              id: "likely_ev_buyers"
-            - source: "catalog"
-              data_provider_domain: "meridiangeo.example"
-              id: "competitor_visitors"
+            - "$context.first_signal_id"
 
           context:
             correlation_id: "signal_marketplace--search_by_ids"
@@ -206,9 +210,9 @@ phases:
       - id: verify_provenance_metadata
         title: "Confirm signals carry verifiable provenance"
         narrative: |
-          The buyer looks up a specific signal by ID and checks that the response
-          includes the metadata needed for independent verification — source is
-          "catalog" and data_provider_domain points to a fetchable adagents.json.
+          The buyer looks up a specific signal by ID (discovered earlier) and checks
+          that the response includes the metadata needed for independent verification —
+          source is "catalog" and data_provider_domain points to a fetchable adagents.json.
           The actual HTTP fetch of adagents.json is the buyer's responsibility, but
           your agent must provide the domain to fetch from.
         task: get_signals
@@ -216,7 +220,7 @@ phases:
         response_schema_ref: "signals/get-signals-response.json"
         doc_ref: "/signals/data-providers"
         comply_scenario: signals_flow
-        stateful: false
+        stateful: true
         expected: |
           Return the requested signal with verifiable provenance metadata:
           - signal_id.source is "catalog"
@@ -226,9 +230,7 @@ phases:
 
         sample_request:
           signal_ids:
-            - source: "catalog"
-              data_provider_domain: "shopgrid.example"
-              id: "new_to_brand"
+            - "$context.first_signal_id"
 
           context:
             correlation_id: "signal_marketplace--verify_provenance_metadata"
@@ -283,8 +285,8 @@ phases:
           - deployed_at timestamp
 
         sample_request:
-          signal_agent_segment_id: "trident_likely_ev_buyers"
-          pricing_option_id: "po_trident_ev_cpm"
+          signal_agent_segment_id: "$context.first_signal_agent_segment_id"
+          pricing_option_id: "$context.first_signal_pricing_option_id"
           destinations:
             - type: "platform"
               platform: "the-trade-desk"
@@ -353,8 +355,8 @@ phases:
           in place.
 
         sample_request:
-          signal_agent_segment_id: "shopgrid_new_to_brand"
-          pricing_option_id: "po_shopgrid_retail_cpm"
+          signal_agent_segment_id: "$context.first_signal_agent_segment_id"
+          pricing_option_id: "$context.first_signal_pricing_option_id"
           destinations:
             - type: "agent"
               agent_url: "https://wonderstruck.salesagents.example"

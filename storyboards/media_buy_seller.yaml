@@ -7,19 +7,25 @@ track: media_buy
 required_tools:
   - get_products
   - create_media_buy
+requires_scenarios:
+  - media_buy_seller/governance_approved
+  - media_buy_seller/governance_denied
+  - media_buy_seller/governance_conditions
+  - media_buy_seller/refine_products
+  - media_buy_seller/delivery_reporting
 
 narrative: |
   You run a sell-side platform — a publisher, SSP, retail media network, or any system that
-  sells advertising inventory. A buyer agent connects to discover your products, negotiate
-  proposals, create media buys, and monitor delivery. Your agent handles the full lifecycle
+  sells advertising inventory. A buyer agent connects to discover your products, create
+  media buys, sync creatives, and monitor delivery. Your agent handles the full lifecycle
   from brief to reporting.
 
-  The buyer starts by setting up an account and optionally registering governance agents.
-  Then they send a natural-language brief, refine the resulting products, create a media buy,
-  sync creatives, and monitor delivery — all through AdCP tasks.
+  This storyboard walks through the core media buy flow: account setup, product discovery,
+  buy creation, creative sync, and delivery monitoring.
 
-  This storyboard walks through the complete media buy flow from the buyer's perspective,
-  including async operations and human-in-the-loop approval gates.
+  Governance integration, product refinement, and proposal finalization are tested by
+  required scenarios that run alongside this storyboard. See requires_scenarios for the
+  full set of seller behaviors validated.
 
 agent:
   interaction_model: media_buy_seller
@@ -152,35 +158,24 @@ phases:
     title: "Governance agent registration"
     narrative: |
       The buyer registers their governance agent with your platform. This tells your
-      platform where to call check_governance before confirming media buys. The
-      governance agent validates budget authority, brand safety, and compliance
-      independently of both the buyer and seller.
-
-      This step is optional but strongly recommended. Platforms that support governance
-      will call the registered agent during create_media_buy to validate the buy before
-      confirming it.
+      platform where to call check_governance before confirming media buys.
 
     steps:
       - id: sync_governance
         title: "Register governance agents"
         narrative: |
           The buyer tells your platform: "Before you confirm any media buy for this
-          account, call this governance agent to validate it." Your platform stores
-          the governance agent URL and will call it during create_media_buy.
-
-          This uses replace semantics — each sync_governance call replaces any
-          previously registered agents for the account.
+          account, call this governance agent to validate it."
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
         doc_ref: "/accounts/tasks/sync_governance"
-        # No TestScenario exists for governance registration
+        requires_tool: sync_governance
         stateful: true
         expected: |
           Acknowledge the governance agents. Your platform should:
           - Store the governance agent URLs for the specified accounts
           - Return confirmation that agents were registered
-          - Use these agents during create_media_buy validation
 
         sample_request:
           accounts:
@@ -306,68 +301,6 @@ phases:
           - check: field_present
             path: "products[0].publisher_properties"
             description: "Products include publisher_properties"
-  - id: proposal_refinement
-    title: "Proposal refinement"
-    narrative: |
-      The buyer reviews the products from the brief and wants to narrow down. They
-      switch to refine mode, layering constraints without starting over. Each refinement
-      narrows the previous result set.
-
-      This is iterative negotiation. The buyer might say "only guaranteed packages" or
-      "increase the CTV allocation to 60%" or "drop the audio product and redistribute
-      that budget." Your platform adjusts the products and proposals accordingly.
-
-    steps:
-      - id: get_products_refine
-        title: "Refine the proposal"
-        narrative: |
-          The buyer has reviewed the initial products and wants adjustments. They call
-          get_products with buying_mode: refine and a refine array describing what to
-          change. Your platform applies the refinements and returns updated products.
-        task: get_products
-        schema_ref: "media-buy/get-products-request.json"
-        response_schema_ref: "media-buy/get-products-response.json"
-        doc_ref: "/media-buy/task-reference/get_products"
-        comply_scenario: full_sales_flow
-        stateful: true
-        expected: |
-          Return updated products reflecting the refinements. The response should:
-          - Apply each refinement to the relevant scope (request, product, or proposal)
-          - Include refinement_applied showing how each request was handled
-          - Preserve products that weren't targeted by refinements
-          - Update pricing and forecasts to reflect the changes
-
-        sample_request:
-          buying_mode: "refine"
-          refine:
-            - scope: "request"
-              ask: "Only guaranteed packages. Must include completion rate SLA above 80%."
-            - scope: "product"
-              product_id: "sports_preroll_q2"
-              ask: "Increase budget allocation to $30K"
-          brand:
-            domain: "acmeoutdoor.com"
-          account:
-            brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
-
-          context:
-            correlation_id: "media_buy_seller--get_products_refine"
-        validations:
-          - check: response_schema
-            description: "Response matches get-products-response.json schema"
-          - check: field_present
-            path: "products"
-            description: "Response contains updated products"
-
-          - check: field_present
-            path: "context"
-            description: "Response echoes back the context object"
-          - check: field_value
-            path: "context.correlation_id"
-            value: "media_buy_seller--get_products_refine"
-            description: "Context correlation_id returned unchanged"
   - id: create_buy
     title: "Create the media buy"
     narrative: |
