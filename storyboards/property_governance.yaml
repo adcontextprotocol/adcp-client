@@ -61,7 +61,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring governance in supported_protocols, confirming the agent provides governance services.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "property_governance--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -69,6 +71,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "property_governance--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: create_list
     title: "Create property lists"
     narrative: |
@@ -108,10 +117,25 @@ phases:
                 - type: "domain"
                   value: "campinggear.example"
 
+          context:
+            correlation_id: "property_governance--create_inclusion_list"
+        context_outputs:
+          - name: list_id
+            path: 'list.list_id'
         validations:
           - check: response_schema
             description: "Response matches create-property-list-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "property_governance--create_inclusion_list"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "list.list_id"
+            description: "Governance agent assigns list_id — must be echoed in get/update/delete"
   - id: list_and_get
     title: "Query property lists"
     narrative: |
@@ -139,10 +163,19 @@ phases:
           principal: "acmeoutdoor.example"
           name_contains: "Acme Outdoor"
 
+          context:
+            correlation_id: "property_governance--list_property_lists"
         validations:
           - check: response_schema
             description: "Response matches list-property-lists-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "property_governance--list_property_lists"
+            description: "Context correlation_id returned unchanged"
       - id: get_property_list
         title: "Get a specific property list"
         narrative: |
@@ -160,12 +193,21 @@ phases:
           - All properties in the list with their details
 
         sample_request:
-          list_id: "pl_acme_inclusion_001"
+          list_id: "$context.list_id"
 
+          context:
+            correlation_id: "property_governance--get_property_list"
         validations:
           - check: response_schema
             description: "Response matches get-property-list-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "property_governance--get_property_list"
+            description: "Context correlation_id returned unchanged"
   - id: update_list
     title: "Update property lists"
     narrative: |
@@ -189,7 +231,7 @@ phases:
           - Confirmation of the replaced base properties
 
         sample_request:
-          list_id: "pl_acme_inclusion_001"
+          list_id: "$context.list_id"
           base_properties:
             - selection_type: "identifiers"
               identifiers:
@@ -200,10 +242,19 @@ phases:
                 - type: "domain"
                   value: "mountaineering.example"
 
+          context:
+            correlation_id: "property_governance--update_property_list"
         validations:
           - check: response_schema
             description: "Response matches update-property-list-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "property_governance--update_property_list"
+            description: "Context correlation_id returned unchanged"
   - id: delete_list
     title: "Delete a property list"
     narrative: |
@@ -228,12 +279,21 @@ phases:
           - status: deleted
 
         sample_request:
-          list_id: "pl_acme_inclusion_001"
+          list_id: "$context.list_id"
 
+          context:
+            correlation_id: "property_governance--delete_property_list"
         validations:
           - check: response_schema
             description: "Response matches delete-property-list-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "property_governance--delete_property_list"
+            description: "Context correlation_id returned unchanged"
   - id: delivery_validation
     title: "Validate delivery compliance"
     narrative: |
@@ -263,7 +323,7 @@ phases:
         sample_request:
           brand:
             domain: "acmeoutdoor.example"
-          list_id: "pl_acme_inclusion_001"
+          list_id: "$context.list_id"
           records:
             - record_id: "delivery_outdoor_001"
               property:
@@ -276,6 +336,16 @@ phases:
                 value: "randomsite.example"
               impressions: 200
 
+          context:
+            correlation_id: "property_governance--validate_property_delivery"
         validations:
           - check: response_schema
             description: "Response matches validate-property-delivery-response.json schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "property_governance--validate_property_delivery"
+            description: "Context correlation_id returned unchanged"

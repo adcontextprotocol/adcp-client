@@ -57,7 +57,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "campaign_governance_delivery--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -65,6 +67,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_delivery--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: plan_registration
     title: "Register governance plan with delivery monitoring"
     narrative: |
@@ -102,10 +111,25 @@ phases:
               conditions:
                 - "Re-evaluate governance if any line item drifts >20% from plan"
 
+          context:
+            correlation_id: "campaign_governance_delivery--sync_plans"
+        context_outputs:
+          - name: plan_id
+            path: 'plans[0].plan_id'
         validations:
           - check: response_schema
             description: "Response matches sync-plans-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_delivery--sync_plans"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "plans[0].plan_id"
+            description: "Governance agent assigns plan_id — must be echoed in check_governance"
   - id: initial_approval
     title: "Initial governance check — approved"
     narrative: |
@@ -132,7 +156,7 @@ phases:
           - monitoring: delivery phase governance is active
 
         sample_request:
-          plan_id: "gov_acme_delivery"
+          plan_id: "$context.plan_id"
           binding:
             type: "media_buy"
             account:
@@ -146,6 +170,8 @@ phases:
               - product_id: "outdoor_video_q2"
                 budget: 20000
 
+          context:
+            correlation_id: "campaign_governance_delivery--check_governance_approved"
         validations:
           - check: response_schema
             description: "Response matches check-governance-response.json schema"
@@ -153,6 +179,13 @@ phases:
             path: "status"
             description: "Response contains a governance decision"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_delivery--check_governance_approved"
+            description: "Context correlation_id returned unchanged"
   - id: delivery_monitoring
     title: "Delivery metrics show budget drift"
     narrative: |
@@ -187,6 +220,8 @@ phases:
             - "mb_acme_q2_2026"
           include_package_daily_breakdown: true
 
+          context:
+            correlation_id: "campaign_governance_delivery--get_delivery"
         validations:
           - check: response_schema
             description: "Response matches get-media-buy-delivery-response.json schema"
@@ -194,6 +229,13 @@ phases:
             path: "media_buy_deliveries"
             description: "Response contains media buy delivery data"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_delivery--get_delivery"
+            description: "Context correlation_id returned unchanged"
   - id: drift_recheck
     title: "Governance re-check — drift detected"
     narrative: |
@@ -226,7 +268,7 @@ phases:
           - conditions: if approved, conditions for rebalancing (e.g., "Reallocate $5K from CTV to video")
 
         sample_request:
-          plan_id: "gov_acme_delivery"
+          plan_id: "$context.plan_id"
           governance_phase: "delivery"
           governance_context: "gov_ctx_acme_delivery_approved"
           binding:
@@ -247,6 +289,8 @@ phases:
                   spend_to_date: 6000
                   flight_progress: 0.50
 
+          context:
+            correlation_id: "campaign_governance_delivery--check_governance_drift"
         validations:
           - check: response_schema
             description: "Response matches check-governance-response.json schema"
@@ -256,3 +300,11 @@ phases:
           - check: field_present
             path: "findings"
             description: "Response contains findings about the drift"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_delivery--check_governance_drift"
+            description: "Context correlation_id returned unchanged"

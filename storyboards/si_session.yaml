@@ -62,7 +62,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring sponsored_intelligence in supported_protocols, confirming the agent supports conversational ad experiences.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "si_session--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -70,6 +72,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "si_session--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: offering_discovery
     title: "Discover SI offerings"
     narrative: |
@@ -97,12 +106,24 @@ phases:
           - Targeting and context options
           - Format specifications for sponsored content
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "si_session--si_get_offering"
 
+        context_outputs:
+          - name: offering_id
+            path: 'offering_id'
         validations:
           - check: response_schema
             description: "Response matches si-get-offering-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "si_session--si_get_offering"
+            description: "Context correlation_id returned unchanged"
   - id: session_lifecycle
     title: "Session lifecycle"
     narrative: |
@@ -136,10 +157,25 @@ phases:
             domain: "novamotors.example"
           campaign_context: "Nova EV launch — targeting environmentally conscious drivers interested in electric vehicles"
 
+          context:
+            correlation_id: "si_session--si_initiate_session"
+        context_outputs:
+          - name: session_id
+            path: 'session_id'
         validations:
           - check: response_schema
             description: "Response matches si-initiate-session-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "si_session--si_initiate_session"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "session_id"
+            description: "Platform assigns session_id — must be echoed in si_send_message and si_terminate_session"
       - id: si_send_message
         title: "Exchange messages"
         narrative: |
@@ -159,13 +195,22 @@ phases:
           - Session state (active, waiting, etc.)
 
         sample_request:
-          session_id: "si_nova_ev_001"
+          session_id: "$context.session_id"
           message: "What are the best electric vehicles for long road trips?"
 
+          context:
+            correlation_id: "si_session--si_send_message"
         validations:
           - check: response_schema
             description: "Response matches si-send-message-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "si_session--si_send_message"
+            description: "Context correlation_id returned unchanged"
       - id: si_terminate_session
         title: "End the session"
         narrative: |
@@ -186,8 +231,18 @@ phases:
           - Sponsored content delivery summary
 
         sample_request:
-          session_id: "si_nova_ev_001"
+          session_id: "$context.session_id"
 
+          context:
+            correlation_id: "si_session--si_terminate_session"
         validations:
           - check: response_schema
             description: "Response matches si-terminate-session-response.json schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "si_session--si_terminate_session"
+            description: "Context correlation_id returned unchanged"

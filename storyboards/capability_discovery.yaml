@@ -69,7 +69,9 @@ phases:
           - governance: property and creative features the governance agent can evaluate
           - account: auth model, billing support, sandbox mode
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "capability_discovery--get_capabilities"
 
         validations:
           - check: response_schema
@@ -81,6 +83,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares which protocol domains it supports"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "capability_discovery--get_capabilities"
+            description: "Context correlation_id returned unchanged"
       - id: get_capabilities_filtered
         title: "Discover capabilities filtered by protocol"
         narrative: |
@@ -101,6 +110,16 @@ phases:
           protocols:
             - "media_buy"
 
+          context:
+            correlation_id: "capability_discovery--get_capabilities_filtered"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "capability_discovery--get_capabilities_filtered"
+            description: "Context correlation_id returned unchanged"

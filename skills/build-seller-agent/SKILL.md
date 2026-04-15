@@ -206,6 +206,25 @@ deliveryResponse({
 })
 ```
 
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
+Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_governance`, `provide_performance_feedback`, `sync_event_sources`.
+
 ## Compliance Testing (Optional)
 
 Add `registerTestController` so the comply framework can deterministically test your state machines. Without it, compliance testing relies on observational storyboards that can't force state transitions.
@@ -380,7 +399,9 @@ When storyboard output shows failures, fix each one:
 | `sandbox: false` on mock data                        | Buyers may treat mock data as real                            |
 | Returns raw JSON for validation failures             | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure    |
 | Missing `publisher_properties` or `format_ids` on Product | Both are required — see product example in `get_products` section |
+| format_ids in products don't match list_creative_formats  | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements |
 | Missing `@types/node` in devDependencies             | `process.env` doesn't resolve without it — see Setup section  |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Reference
 

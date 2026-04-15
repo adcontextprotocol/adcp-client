@@ -64,7 +64,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "social_platform--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -72,6 +74,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "social_platform--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: account_setup
     title: "Account setup"
     narrative: |
@@ -103,6 +112,8 @@ phases:
               operator: "pinnacle-agency.example"
               billing: "operator"
 
+          context:
+            correlation_id: "social_platform--sync_accounts"
         validations:
           - check: response_schema
             description: "Response matches sync-accounts-response.json schema"
@@ -110,6 +121,13 @@ phases:
             path: "accounts[0].account_id"
             description: "Account has a platform-assigned ID"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "social_platform--sync_accounts"
+            description: "Context correlation_id returned unchanged"
       - id: list_accounts
         title: "Verify account status"
         narrative: |
@@ -130,6 +148,8 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
 
+          context:
+            correlation_id: "social_platform--list_accounts"
         validations:
           - check: response_schema
             description: "Response matches list-accounts-response.json schema"
@@ -137,6 +157,13 @@ phases:
             path: "accounts"
             description: "Response contains accounts array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "social_platform--list_accounts"
+            description: "Context correlation_id returned unchanged"
   - id: audience_sync
     title: "Audience activation"
     narrative: |
@@ -173,10 +200,19 @@ phases:
               name: "Outdoor enthusiasts 25-54"
               description: "Adults 25-54 interested in hiking, camping, and outdoor gear"
 
+          context:
+            correlation_id: "social_platform--sync_audiences"
         validations:
           - check: response_schema
             description: "Response matches sync-audiences-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "social_platform--sync_audiences"
+            description: "Context correlation_id returned unchanged"
   - id: creative_push
     title: "Native creative sync"
     narrative: |
@@ -222,10 +258,19 @@ phases:
                   asset_type: "text"
                   content: "Trail Pro 3000 — Built for the Summit"
 
+          context:
+            correlation_id: "social_platform--sync_creatives"
         validations:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "social_platform--sync_creatives"
+            description: "Context correlation_id returned unchanged"
   - id: event_logging
     title: "Conversion event tracking"
     narrative: |
@@ -262,10 +307,19 @@ phases:
               value: 149.99
               currency: "USD"
 
+          context:
+            correlation_id: "social_platform--log_event"
         validations:
           - check: response_schema
             description: "Response matches log-event-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "social_platform--log_event"
+            description: "Context correlation_id returned unchanged"
   - id: financials
     title: "Account financials"
     narrative: |
@@ -296,6 +350,16 @@ phases:
               domain: "acmeoutdoor.example"
             operator: "pinnacle-agency.example"
 
+          context:
+            correlation_id: "social_platform--get_account_financials"
         validations:
           - check: response_schema
             description: "Response matches get-account-financials-response.json schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "social_platform--get_account_financials"
+            description: "Context correlation_id returned unchanged"

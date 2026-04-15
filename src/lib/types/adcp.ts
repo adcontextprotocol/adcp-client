@@ -1,6 +1,20 @@
 // AdCP Types - Based on official AdCP specification
 // https://adcontextprotocol.org/docs/reference/data-models
 
+/**
+ * Protocol-level fields that bypass per-tool schema stripping.
+ * These fields live at the AdCP envelope layer, not in individual tool schemas,
+ * and must always be preserved when sending requests to agents.
+ */
+export const ADCP_ENVELOPE_FIELDS = new Set([
+  'context',                   // Opaque pass-through for correlation and workflow state
+  'ext',                       // Vendor-namespaced extensions
+  'governance_context',        // Governance approval token
+  'push_notification_config',  // Webhook configuration for async operations
+  'context_id',                // Legacy context identifier
+  'idempotency_key',           // Prevents duplicate processing on retries
+]);
+
 // Import structured FormatID from generated core types
 import type {
   CreateMediaBuyAsyncInputRequired,

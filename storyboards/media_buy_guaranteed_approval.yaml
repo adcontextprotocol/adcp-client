@@ -63,7 +63,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "media_buy_guaranteed_approval--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -71,6 +73,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: account_setup
     title: "Account setup"
     narrative: |
@@ -108,6 +117,8 @@ phases:
               billing: "operator"
               payment_terms: "net_30"
 
+          context:
+            correlation_id: "media_buy_guaranteed_approval--sync_accounts"
         validations:
           - check: response_schema
             description: "Response matches sync-accounts-response.json schema"
@@ -118,6 +129,13 @@ phases:
             path: "accounts[0].status"
             description: "Account has a status (active or pending_approval)"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--sync_accounts"
+            description: "Context correlation_id returned unchanged"
   - id: product_discovery
     title: "Discover guaranteed products"
     narrative: |
@@ -159,6 +177,8 @@ phases:
               domain: "acmeoutdoor.com"
             operator: "pinnacle-agency.com"
 
+          context:
+            correlation_id: "media_buy_guaranteed_approval--get_products_brief"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
@@ -172,6 +192,22 @@ phases:
             path: "products[0].delivery_type"
             description: "Each product declares delivery_type: guaranteed"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--get_products_brief"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
   - id: create_buy_submitted
     title: "Create guaranteed buy (submitted for approval)"
     narrative: |
@@ -231,10 +267,19 @@ phases:
             authentication:
               scheme: "HMAC-SHA256"
 
+          context:
+            correlation_id: "media_buy_guaranteed_approval--create_media_buy"
         validations:
           - check: response_schema
             description: "Response matches create-media-buy-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--create_media_buy"
+            description: "Context correlation_id returned unchanged"
   - id: poll_approval
     title: "Poll for IO approval"
     narrative: |
@@ -273,6 +318,8 @@ phases:
           media_buy_ids:
             - "mb_acme_q2_2026_guaranteed"
 
+          context:
+            correlation_id: "media_buy_guaranteed_approval--get_media_buys_pending"
         validations:
           - check: response_schema
             description: "Response matches get-media-buys-response.json schema"
@@ -283,6 +330,13 @@ phases:
             path: "media_buys[0].valid_actions"
             description: "Pending approval buy includes valid actions"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--get_media_buys_pending"
+            description: "Context correlation_id returned unchanged"
   - id: confirm_active
     title: "Confirm active after IO signing"
     narrative: |
@@ -320,6 +374,8 @@ phases:
           media_buy_ids:
             - "mb_acme_q2_2026_guaranteed"
 
+          context:
+            correlation_id: "media_buy_guaranteed_approval--get_media_buys_active"
         validations:
           - check: response_schema
             description: "Response matches get-media-buys-response.json schema"
@@ -330,6 +386,13 @@ phases:
             path: "media_buys[0].confirmed_at"
             description: "Active buy includes a confirmed_at timestamp"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--get_media_buys_active"
+            description: "Context correlation_id returned unchanged"
   - id: creative_sync
     title: "Creative sync"
     narrative: |
@@ -372,6 +435,8 @@ phases:
                   url: "https://cdn.pinnacle-agency.example/trail-pro-30s.mp4"
                   mime_type: "video/mp4"
 
+          context:
+            correlation_id: "media_buy_guaranteed_approval--sync_creatives"
         validations:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
@@ -379,6 +444,13 @@ phases:
             path: "creatives[0].action"
             description: "Each creative has an action (created/updated)"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--sync_creatives"
+            description: "Context correlation_id returned unchanged"
   - id: delivery_monitoring
     title: "Delivery and reporting"
     narrative: |
@@ -414,9 +486,19 @@ phases:
             - "mb_acme_q2_2026_guaranteed"
           include_package_daily_breakdown: true
 
+          context:
+            correlation_id: "media_buy_guaranteed_approval--get_delivery"
         validations:
           - check: response_schema
             description: "Response matches get-media-buy-delivery-response.json schema"
           - check: field_present
             path: "media_buy_deliveries"
             description: "Response contains media buy delivery data"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_guaranteed_approval--get_delivery"
+            description: "Context correlation_id returned unchanged"

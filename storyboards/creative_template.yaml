@@ -59,7 +59,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring creative in supported_protocols, confirming the agent handles creative operations.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "creative_template--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -67,6 +69,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_template--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: format_exposure
     title: "Format discovery"
     narrative: |
@@ -101,7 +110,9 @@ phases:
           - Render dimensions (width/height per render)
           - Variables array if the format supports dynamic fields (text, colors, images)
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "creative_template--discover_formats"
 
         validations:
           - check: response_schema
@@ -119,6 +130,13 @@ phases:
             path: "formats[0].renders"
             description: "Each format defines its render dimensions"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_template--discover_formats"
+            description: "Context correlation_id returned unchanged"
       - id: filter_by_type
         title: "Filter formats by type"
         narrative: |
@@ -140,10 +158,25 @@ phases:
           max_width: 728
           max_height: 90
 
+          context:
+            correlation_id: "creative_template--filter_by_type"
         validations:
           - check: response_schema
             description: "Response matches schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_template--filter_by_type"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "formats[0].format_id.agent_url"
+            description: "Format IDs include agent_url"
+          - check: field_present
+            path: "formats[0].format_id.id"
+            description: "Format IDs include id — must match those in get_products"
   - id: preview
     title: "Preview with real assets"
     narrative: |
@@ -202,6 +235,8 @@ phases:
           output_format: "url"
           quality: "draft"
 
+          context:
+            correlation_id: "creative_template--preview_creative"
         validations:
           - check: response_schema
             description: "Response matches preview-creative-response.json schema"
@@ -209,6 +244,13 @@ phases:
             path: "previews[0].renders[0].preview_url"
             description: "Preview includes a renderable URL"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_template--preview_creative"
+            description: "Context correlation_id returned unchanged"
   - id: build
     title: "Full build (transformation)"
     narrative: |
@@ -269,6 +311,8 @@ phases:
           brand:
             domain: "acme-outdoor.example.com"
 
+          context:
+            correlation_id: "creative_template--build_creative"
         validations:
           - check: response_schema
             description: "Response matches build-creative-response.json schema"
@@ -279,6 +323,13 @@ phases:
             path: "creative_manifest.format_id"
             description: "Output manifest includes format_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_template--build_creative"
+            description: "Context correlation_id returned unchanged"
       - id: build_multi_format
         title: "Build for multiple formats"
         narrative: |
@@ -321,6 +372,16 @@ phases:
           brand:
             domain: "acme-outdoor.example.com"
 
+          context:
+            correlation_id: "creative_template--build_multi_format"
         validations:
           - check: response_schema
             description: "Response matches schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_template--build_multi_format"
+            description: "Context correlation_id returned unchanged"

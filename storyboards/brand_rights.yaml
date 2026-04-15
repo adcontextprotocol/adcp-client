@@ -62,7 +62,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring brand in supported_protocols, confirming the agent serves brand identity and rights.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "brand_rights--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -70,6 +72,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "brand_rights--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: identity_discovery
     title: "Brand identity discovery"
     narrative: |
@@ -102,6 +111,8 @@ phases:
         sample_request:
           brand_id: "acme_outdoor"
 
+          context:
+            correlation_id: "brand_rights--get_brand_identity"
         context_outputs:
           - path: "brand_id"
             key: "brand_id"
@@ -113,6 +124,13 @@ phases:
             path: "brand_id"
             description: "Response includes brand_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "brand_rights--get_brand_identity"
+            description: "Context correlation_id returned unchanged"
   - id: rights_search
     title: "Browse available rights"
     narrative: |
@@ -145,6 +163,8 @@ phases:
             - "ai_generated_image"
           brand_id: "$context.brand_id"
 
+          context:
+            correlation_id: "brand_rights--get_rights"
         context_outputs:
           - path: "rights.0.rights_id"
             key: "rights_id"
@@ -156,6 +176,13 @@ phases:
             path: "rights"
             description: "Response includes rights array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "brand_rights--get_rights"
+            description: "Context correlation_id returned unchanged"
   - id: rights_acquisition
     title: "Acquire a rights license"
     narrative: |
@@ -202,6 +229,8 @@ phases:
                 - "Bearer"
               credentials: "pinnacle-revocation-webhook-secret-token"
 
+          context:
+            correlation_id: "brand_rights--acquire_rights"
         context_outputs:
           - path: "rights_grant_id"
             key: "rights_grant_id"
@@ -213,6 +242,13 @@ phases:
             path: "rights_id"
             description: "Response includes rights_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "brand_rights--acquire_rights"
+            description: "Context correlation_id returned unchanged"
   - id: rights_management
     title: "Manage rights"
     narrative: |
@@ -243,6 +279,8 @@ phases:
             end_date: "2026-09-30"
             impression_cap: 5000000
 
+          context:
+            correlation_id: "brand_rights--update_rights"
         validations:
           - check: response_schema
             description: "Response matches update_rights schema"
@@ -250,6 +288,13 @@ phases:
             path: "rights_id"
             description: "Response includes rights_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "brand_rights--update_rights"
+            description: "Context correlation_id returned unchanged"
   - id: creative_approval
     title: "Creative approval"
     narrative: |
@@ -284,9 +329,19 @@ phases:
               - asset_type: "image"
                 url: "https://cdn.pinnacle-agency.example/gen-trail-pro-300x250.png"
 
+          context:
+            correlation_id: "brand_rights--creative_approval"
         validations:
           - check: response_schema
             description: "Response matches creative_approval schema"
           - check: field_present
             path: "decision"
             description: "Response includes approval decision"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "brand_rights--creative_approval"
+            description: "Context correlation_id returned unchanged"

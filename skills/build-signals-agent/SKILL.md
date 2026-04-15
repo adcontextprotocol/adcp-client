@@ -142,6 +142,25 @@ activateSignalResponse({
 })
 ```
 
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
+Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `activate_signal`.
+
 ## SDK Quick Reference
 
 | SDK piece                                               | Usage                                                               |
@@ -228,6 +247,7 @@ npx tsc --noEmit agent.ts
 | `is_live: true` in get_signals deployments   | Signals aren't live until `activate_signal` — use empty `deployments: []`                                   |
 | Activation doesn't match destination type    | If request has `type: "platform"`, deployment must be `type: "platform"`                                    |
 | `sandbox: false` on mock data                | Buyers may treat mock data as real                                                                          |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Reference
 

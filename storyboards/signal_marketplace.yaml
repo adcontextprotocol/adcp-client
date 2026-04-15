@@ -65,7 +65,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring signals in supported_protocols, confirming the agent serves audience signals.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "signal_marketplace--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -73,6 +75,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_marketplace--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: discovery
     title: "Signal discovery"
     narrative: |
@@ -109,6 +118,8 @@ phases:
         sample_request:
           signal_spec: "In-market EV buyers with high purchase propensity, near auto dealerships"
 
+          context:
+            correlation_id: "signal_marketplace--search_by_spec"
         validations:
           - check: response_schema
             description: "Response matches get-signals-response.json schema"
@@ -125,6 +136,19 @@ phases:
             path: "signals[0].coverage_percentage"
             description: "Each signal has a coverage estimate"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_marketplace--search_by_spec"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "signals[0].signal_id.source"
+            description: "Signal ID includes source discriminator"
+          - check: field_present
+            path: "signals[0].signal_id.data_provider_domain"
+            description: "Signal ID includes data_provider_domain for provenance"
       - id: search_by_ids
         title: "Look up specific signals by ID"
         narrative: |
@@ -150,6 +174,8 @@ phases:
               data_provider_domain: "meridiangeo.example"
               id: "competitor_visitors"
 
+          context:
+            correlation_id: "signal_marketplace--search_by_ids"
         validations:
           - check: response_schema
             description: "Response matches schema"
@@ -157,6 +183,13 @@ phases:
             path: "signals"
             description: "Response contains a signals array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_marketplace--search_by_ids"
+            description: "Context correlation_id returned unchanged"
   - id: verification
     title: "Catalog verification"
     narrative: |
@@ -197,6 +230,8 @@ phases:
               data_provider_domain: "shopgrid.example"
               id: "new_to_brand"
 
+          context:
+            correlation_id: "signal_marketplace--verify_provenance_metadata"
         validations:
           - check: field_value
             path: "signals[0].signal_id.source"
@@ -206,6 +241,13 @@ phases:
             path: "signals[0].signal_id.data_provider_domain"
             description: "Data provider domain is present for independent verification"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_marketplace--verify_provenance_metadata"
+            description: "Context correlation_id returned unchanged"
   - id: platform_activation
     title: "Activate on a DSP"
     narrative: |
@@ -248,6 +290,11 @@ phases:
               platform: "the-trade-desk"
               account: "agency-123-ttd"
 
+          context:
+            correlation_id: "signal_marketplace--activate_on_platform"
+          ext:
+            test_platform:
+              test_run: true
         validations:
           - check: response_schema
             description: "Response matches activate-signal-response.json schema"
@@ -259,6 +306,16 @@ phases:
             value: "platform"
             description: "Deployment type is 'platform'"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_marketplace--activate_on_platform"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "deployments[0].activation_key"
+            description: "Deployment includes activation_key for targeting"
   - id: agent_activation
     title: "Activate on a sales agent"
     narrative: |
@@ -302,6 +359,11 @@ phases:
             - type: "agent"
               agent_url: "https://wonderstruck.salesagents.example"
 
+          context:
+            correlation_id: "signal_marketplace--activate_on_agent"
+          ext:
+            test_platform:
+              test_run: true
         validations:
           - check: response_schema
             description: "Response matches activate-signal-response.json schema"
@@ -312,3 +374,11 @@ phases:
             path: "deployments[0].type"
             value: "agent"
             description: "Deployment type is 'agent'"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_marketplace--activate_on_agent"
+            description: "Context correlation_id returned unchanged"

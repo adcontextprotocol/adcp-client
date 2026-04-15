@@ -21,6 +21,12 @@ narrative: |
   the correct error code, recovery classification, and transport binding. Agents that use the
   adcpError() helper from @adcp/client get L3 compliance automatically.
 
+  Context echo is required on error responses — the correlation ID is even more important for
+  error diagnosis than for success cases. Every error response must include the caller's context
+  object unchanged. This contract applies to application-level errors (your tool handler returns
+  an error). MCP transport errors (unknown tool, malformed request) are outside the agent's
+  control and do not carry AdCP context.
+
 agent:
   interaction_model: media_buy_seller
   capabilities:
@@ -58,7 +64,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "error_compliance--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -66,6 +74,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "error_compliance--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: error_responses
     title: "Error responses for invalid input"
     narrative: |
@@ -84,6 +99,7 @@ phases:
         response_schema_ref: "media-buy/create-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_handling
+        expect_error: true
         stateful: false
         expected: |
           Reject the request with an error containing:
@@ -100,17 +116,27 @@ phases:
               budget: -500
               pricing_option_id: "test-pricing"
 
+          context:
+            correlation_id: "error_compliance--negative_budget"
         validations:
           - check: field_present
             path: "errors"
             description: "Response contains an error for negative budget"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "error_compliance--negative_budget"
+            description: "Context correlation_id returned unchanged"
       - id: nonexistent_product
         title: "Reject nonexistent product ID"
         narrative: |
           The buyer references a product ID that does not exist on this platform.
           The agent should return PRODUCT_NOT_FOUND or INVALID_REQUEST.
         task: create_media_buy
+        expect_error: true
         schema_ref: "media-buy/create-media-buy-request.json"
         response_schema_ref: "media-buy/create-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/create_media_buy"
@@ -130,11 +156,20 @@ phases:
               budget: 10000
               pricing_option_id: "test-pricing"
 
+          context:
+            correlation_id: "error_compliance--nonexistent_product"
         validations:
           - check: field_present
             path: "errors"
             description: "Response contains an error for nonexistent product"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "error_compliance--nonexistent_product"
+            description: "Context correlation_id returned unchanged"
       - id: missing_fields
         title: "Reject empty get_products request"
         narrative: |
@@ -155,16 +190,26 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
 
+          context:
+            correlation_id: "error_compliance--missing_fields"
         validations:
           - check: response_schema
             description: "Response is either valid products or a structured error"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "error_compliance--missing_fields"
+            description: "Context correlation_id returned unchanged"
       - id: reversed_dates_error
         title: "Reject reversed dates with error code"
         narrative: |
           Send a create_media_buy with end_time before start_time and verify the error
           response includes the correct code and recovery classification.
         task: create_media_buy
+        expect_error: true
         schema_ref: "media-buy/create-media-buy-request.json"
         response_schema_ref: "media-buy/create-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/create_media_buy"
@@ -182,11 +227,20 @@ phases:
               budget: 10000
               pricing_option_id: "test-pricing"
 
+          context:
+            correlation_id: "error_compliance--reversed_dates_error"
         validations:
           - check: field_present
             path: "errors"
             description: "Response contains an error for reversed dates"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "error_compliance--reversed_dates_error"
+            description: "Context correlation_id returned unchanged"
   - id: error_structure
     title: "Error structure compliance"
     narrative: |
@@ -205,6 +259,7 @@ phases:
         response_schema_ref: "media-buy/create-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_codes
+        expect_error: true
         stateful: false
         expected: |
           Error response with:
@@ -220,6 +275,20 @@ phases:
             - product_id: "test-product"
               budget: -1
               pricing_option_id: "test-pricing"
+
+          context:
+            correlation_id: "error_compliance--validate_error_shape"
+        validations:
+          - check: field_present
+            path: "errors"
+            description: "Response contains errors array"
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object even on errors"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "error_compliance--validate_error_shape"
+            description: "Context correlation_id returned unchanged"
 
   - id: error_transport
     title: "Error transport bindings"
@@ -239,6 +308,7 @@ phases:
         response_schema_ref: "media-buy/create-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: error_transport
+        expect_error: true
         stateful: false
         expected: |
           MCP response with:
@@ -253,3 +323,17 @@ phases:
             - product_id: "nonexistent"
               budget: -1
               pricing_option_id: "bad-pricing"
+
+          context:
+            correlation_id: "error_compliance--validate_transport_binding"
+        validations:
+          - check: field_present
+            path: "errors"
+            description: "Response contains errors array"
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object even on errors"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "error_compliance--validate_transport_binding"
+            description: "Context correlation_id returned unchanged"
