@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-15T04:03:45.018Z
+// Generated at: 2026-04-15T04:10:44.458Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1051,6 +1051,10 @@ export interface MeasurementTerms {
      * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
      */
     max_variance_percent?: number;
+    /**
+     * Which measurement window the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. For broadcast TV, this is typically 'c7' (live + 7 days DVR). When absent, billing is based on the seller's standard reporting without windowed maturation.
+     */
+    measurement_window?: string;
   };
   /**
    * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.
@@ -2334,7 +2338,18 @@ export type InstallmentStatus = 'scheduled' | 'tentative' | 'live' | 'postponed'
 /**
  * Rating system used
  */
-export type ContentRatingSystem = 'tv_parental' | 'mpaa' | 'podcast' | 'esrb' | 'bbfc' | 'fsk' | 'acb' | 'custom';
+export type ContentRatingSystem =
+  | 'tv_parental'
+  | 'mpaa'
+  | 'podcast'
+  | 'esrb'
+  | 'bbfc'
+  | 'fsk'
+  | 'acb'
+  | 'chvrs'
+  | 'csa'
+  | 'pegi'
+  | 'custom';
 /**
  * Category of the event
  */
@@ -3268,6 +3283,10 @@ export interface ReportingCapabilities {
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
+  /**
+   * Measurement maturation windows available for this product. Used by broadcast and linear TV sellers where measurement accumulates over time (Live, C3, C7). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Digital-only sellers typically omit this.
+   */
+  measurement_windows?: MeasurementWindow[];
 }
 /**
  * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
@@ -3293,6 +3312,31 @@ export interface GeographicBreakdownSupport {
   postal_area?: {
     [k: string]: boolean | undefined;
   };
+}
+/**
+ * A measurement maturation window for broadcast and linear TV. Broadcast measurement is not delayed data — it matures over time as time-shifted (DVR) viewing accumulates. Each window represents a defined accumulation period after the live broadcast.
+ */
+export interface MeasurementWindow {
+  /**
+   * Identifier for this measurement window. Standard values: 'live' (real-time viewers only), 'c3' (live + 3 days time-shifted), 'c7' (live + 7 days time-shifted). Sellers may define custom windows for other accumulation periods.
+   */
+  window_id: string;
+  /**
+   * Human-readable description of what this window measures
+   */
+  description?: string;
+  /**
+   * Number of days after live broadcast included in this window. 0 = live only, 3 = live + 3 days DVR, 7 = live + 7 days DVR.
+   */
+  duration_days: number;
+  /**
+   * Expected number of days after broadcast before this window's data is available from the measurement vendor. For example, C7 window data from VideoAmp typically arrives ~22 days after broadcast (7-day accumulation + ~15-day processing).
+   */
+  expected_availability_days?: number;
+  /**
+   * Whether this window is the basis for delivery guarantees and reconciliation. A product typically has one guarantee basis window (e.g., C7 for most US broadcast). Buyers reconcile against the guarantee basis window's final numbers.
+   */
+  is_guarantee_basis?: boolean;
 }
 /**
  * Creative requirements and restrictions for a product
@@ -4387,6 +4431,10 @@ export interface MeasurementTerms1 {
      * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
      */
     max_variance_percent?: number;
+    /**
+     * Which measurement window the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. For broadcast TV, this is typically 'c7' (live + 7 days DVR). When absent, billing is based on the seller's standard reporting without windowed maturation.
+     */
+    measurement_window?: string;
   };
   /**
    * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-15T04:10:06.742Z
+// Generated at: 2026-04-15T04:10:46.205Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -145,7 +145,8 @@ export const FormatIDSchema = z.object({
 export const MeasurementTermsSchema = z.object({
     billing_measurement: z.object({
         vendor: BrandReferenceSchema,
-        max_variance_percent: z.number().nullish()
+        max_variance_percent: z.number().nullish(),
+        measurement_window: z.string().nullish()
     }).passthrough().nullish(),
     makegood_policy: z.object({
         available_remedies: z.array(MakegoodRemedySchema)
@@ -529,7 +530,7 @@ export const ActionSourceSchema = z.union([z.literal("website"), z.literal("app"
 
 export const InstallmentStatusSchema = z.union([z.literal("scheduled"), z.literal("tentative"), z.literal("live"), z.literal("postponed"), z.literal("cancelled"), z.literal("aired"), z.literal("published")]);
 
-export const ContentRatingSystemSchema = z.union([z.literal("tv_parental"), z.literal("mpaa"), z.literal("podcast"), z.literal("esrb"), z.literal("bbfc"), z.literal("fsk"), z.literal("acb"), z.literal("custom")]);
+export const ContentRatingSystemSchema = z.union([z.literal("tv_parental"), z.literal("mpaa"), z.literal("podcast"), z.literal("esrb"), z.literal("bbfc"), z.literal("fsk"), z.literal("acb"), z.literal("chvrs"), z.literal("csa"), z.literal("pegi"), z.literal("custom")]);
 
 export const SpecialCategorySchema = z.union([z.literal("awards"), z.literal("championship"), z.literal("concert"), z.literal("conference"), z.literal("election"), z.literal("festival"), z.literal("gala"), z.literal("holiday"), z.literal("premiere"), z.literal("product_launch"), z.literal("reunion"), z.literal("tribute")]);
 
@@ -738,6 +739,14 @@ export const GeographicBreakdownSupportSchema = z.object({
     region: z.boolean().nullish(),
     metro: z.record(z.string(), z.boolean()).nullish(),
     postal_area: z.record(z.string(), z.boolean()).nullish()
+}).passthrough();
+
+export const MeasurementWindowSchema = z.object({
+    window_id: z.string(),
+    description: z.string().nullish(),
+    duration_days: z.number(),
+    expected_availability_days: z.number().nullish(),
+    is_guarantee_basis: z.boolean().nullish()
 }).passthrough();
 
 export const DiagnosticIssueSchema = z.object({
@@ -1074,7 +1083,8 @@ export const AccountSchema = z.object({
 export const MeasurementTerms1Schema = z.object({
     billing_measurement: z.object({
         vendor: BrandReferenceSchema,
-        max_variance_percent: z.number().nullish()
+        max_variance_percent: z.number().nullish(),
+        measurement_window: z.string().nullish()
     }).passthrough().nullish(),
     makegood_policy: z.object({
         available_remedies: z.array(MakegoodRemedySchema)
@@ -1344,7 +1354,8 @@ export const ReportingCapabilitiesSchema = z.object({
     supports_device_platform_breakdown: z.boolean().nullish(),
     supports_audience_breakdown: z.boolean().nullish(),
     supports_placement_breakdown: z.boolean().nullish(),
-    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")])
+    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")]),
+    measurement_windows: z.array(MeasurementWindowSchema).nullish()
 }).passthrough();
 
 export const MeasurementReadinessSchema = z.object({
@@ -3978,6 +3989,7 @@ export const PackageRequestSchema = z.object({
     performance_standards: z.array(PerformanceStandardSchema).nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     creatives: z.array(CreativeAssetSchema).nullish(),
+    agency_estimate_number: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
