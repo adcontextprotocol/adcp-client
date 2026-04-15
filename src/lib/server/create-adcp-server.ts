@@ -693,6 +693,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           try {
             const result = await handler(params, ctx);
             if (isFormattedResponse(result)) return result;
+            // Inject context passthrough — echo params.context into response
+            if (params.context !== undefined && params.context !== null && typeof result === 'object' && result !== null && !('context' in result)) {
+              (result as Record<string, unknown>).context = params.context;
+            }
             return wrap(result);
           } catch (err) {
             logger.error('Handler failed', {
@@ -767,8 +771,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     (capabilitiesData as any).extensions_supported = capConfig.extensions_supported;
   }
 
-  server.tool('get_adcp_capabilities', {}, async () => {
-    return capabilitiesResponse(capabilitiesData);
+  const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;
+  server.tool('get_adcp_capabilities', capSchema?.shape ?? {}, async (params: any) => {
+    const data = { ...capabilitiesData };
+    if (params?.context != null) {
+      (data as any).context = params.context;
+    }
+    return capabilitiesResponse(data);
   });
 
   logger.info('AdCP server created', {
