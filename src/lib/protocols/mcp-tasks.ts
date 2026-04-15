@@ -270,13 +270,38 @@ export async function callMCPToolWithTasks(
                 return result;
               }
 
-              case 'error':
+              case 'error': {
                 debugLogs.push({
                   type: 'error',
                   message: `MCP Tasks: Error for ${toolName}: ${message.error.message}`,
                   timestamp: new Date().toISOString(),
                 });
+                // The SDK's error event strips adcpError content from the task result.
+                // If we have a taskId, fetch the result to recover it so extractErrorData
+                // in the storyboard runner can parse error codes from expect_error steps.
+                if (capturedTaskId) {
+                  try {
+                    const taskResult = await client.experimental.tasks.getTaskResult(capturedTaskId);
+                    const content = taskResult?.content as Array<{ type: string; text?: string }> | undefined;
+                    const text = content?.find(c => c.type === 'text')?.text;
+                    if (text) {
+                      try {
+                        const parsed = JSON.parse(text) as Record<string, unknown>;
+                        if (parsed?.adcp_error) {
+                          throw new Error(`${message.error.message}\n${text}`);
+                        }
+                      } catch (jsonError) {
+                        // Re-throw if we built an error with adcp_error content
+                        if (jsonError instanceof Error && jsonError !== message.error) throw jsonError;
+                      }
+                    }
+                  } catch (fetchError) {
+                    // Re-throw if we extracted adcp_error; otherwise fall through
+                    if (fetchError !== message.error) throw fetchError;
+                  }
+                }
                 throw message.error;
+              }
             }
           }
         } catch (error) {
