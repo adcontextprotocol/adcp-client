@@ -59,50 +59,24 @@ import {
   type McpToolResponse,
 } from './responses';
 
-import {
-  GetProductsRequestSchema,
-  CreateMediaBuyRequestSchema,
-  UpdateMediaBuyRequestSchema,
-  GetMediaBuysRequestSchema,
-  GetMediaBuyDeliveryRequestSchema,
-  ListAccountsRequestSchema,
-  SyncAccountsRequestSchema,
-  ListCreativeFormatsRequestSchema,
-  ProvidePerformanceFeedbackRequestSchema,
-  BuildCreativeRequestSchema,
-  GetCreativeDeliveryRequestSchema,
-  ListCreativesRequestSchema,
-  SyncCreativesRequestSchema,
-  GetSignalsRequestSchema,
-  ActivateSignalRequestSchema,
-  CreatePropertyListRequestSchema,
-  UpdatePropertyListRequestSchema,
-  GetPropertyListRequestSchema,
-  ListPropertyListsRequestSchema,
-  DeletePropertyListRequestSchema,
-  ListContentStandardsRequestSchema,
-  GetContentStandardsRequestSchema,
-  CreateContentStandardsRequestSchema,
-  UpdateContentStandardsRequestSchema,
-  CalibrateContentRequestSchema,
-  ValidateContentDeliveryRequestSchema,
-  GetMediaBuyArtifactsRequestSchema,
-  GetCreativeFeaturesRequestSchema,
-  SyncPlansRequestSchema,
-  CheckGovernanceRequestSchema,
-  ReportPlanOutcomeRequestSchema,
-  GetPlanAuditLogsRequestSchema,
-  SIGetOfferingRequestSchema,
-  SIInitiateSessionRequestSchema,
-  SISendMessageRequestSchema,
-  SITerminateSessionRequestSchema,
-  SyncEventSourcesRequestSchema,
-  LogEventRequestSchema,
-  SyncAudiencesRequestSchema,
-  SyncCatalogsRequestSchema,
-  GetAccountFinancialsRequestSchema,
-  ReportUsageRequestSchema,
-  SyncGovernanceRequestSchema,
+import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
+
+// Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
+import type {
+  GetProductsRequestSchema, CreateMediaBuyRequestSchema, UpdateMediaBuyRequestSchema,
+  GetMediaBuysRequestSchema, GetMediaBuyDeliveryRequestSchema, ProvidePerformanceFeedbackRequestSchema,
+  ListCreativeFormatsRequestSchema, BuildCreativeRequestSchema, GetCreativeDeliveryRequestSchema,
+  ListCreativesRequestSchema, SyncCreativesRequestSchema, GetSignalsRequestSchema, ActivateSignalRequestSchema,
+  ListAccountsRequestSchema, SyncAccountsRequestSchema, SyncGovernanceRequestSchema,
+  GetAccountFinancialsRequestSchema, ReportUsageRequestSchema, SyncEventSourcesRequestSchema,
+  LogEventRequestSchema, SyncAudiencesRequestSchema, SyncCatalogsRequestSchema,
+  CreatePropertyListRequestSchema, UpdatePropertyListRequestSchema, GetPropertyListRequestSchema,
+  ListPropertyListsRequestSchema, DeletePropertyListRequestSchema, ListContentStandardsRequestSchema,
+  GetContentStandardsRequestSchema, CreateContentStandardsRequestSchema, UpdateContentStandardsRequestSchema,
+  CalibrateContentRequestSchema, ValidateContentDeliveryRequestSchema, GetMediaBuyArtifactsRequestSchema,
+  GetCreativeFeaturesRequestSchema, SyncPlansRequestSchema, CheckGovernanceRequestSchema,
+  ReportPlanOutcomeRequestSchema, GetPlanAuditLogsRequestSchema, SIGetOfferingRequestSchema,
+  SIInitiateSessionRequestSchema, SISendMessageRequestSchema, SITerminateSessionRequestSchema,
 } from '../types/schemas.generated';
 
 import type {
@@ -395,14 +369,8 @@ interface ToolAnnotation {
 }
 
 interface ToolMeta {
-  schema: { shape: Record<string, unknown> };
   wrap: ((data: any, summary?: string) => McpToolResponse) | null;
   annotations?: ToolAnnotation;
-}
-
-/** Derived from the Zod schema at init time — no hand-coded flags. */
-function hasAccountField(meta: ToolMeta): boolean {
-  return 'account' in meta.schema.shape;
 }
 
 function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
@@ -427,67 +395,67 @@ const IDEMP: ToolAnnotation = { readOnlyHint: false, idempotentHint: true };
 
 const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
-  get_products:                   { schema: GetProductsRequestSchema,                   wrap: productsResponse,              annotations: RO },
-  create_media_buy:               { schema: CreateMediaBuyRequestSchema,                wrap: mediaBuyResponse,              annotations: MUT },
-  update_media_buy:               { schema: UpdateMediaBuyRequestSchema,                wrap: updateMediaBuyResponse,        annotations: MUT },
-  get_media_buys:                 { schema: GetMediaBuysRequestSchema,                  wrap: getMediaBuysResponse,          annotations: RO },
-  get_media_buy_delivery:         { schema: GetMediaBuyDeliveryRequestSchema,            wrap: deliveryResponse,              annotations: RO },
-  provide_performance_feedback:   { schema: ProvidePerformanceFeedbackRequestSchema,    wrap: performanceFeedbackResponse,   annotations: MUT },
+  get_products:                   { wrap: productsResponse,              annotations: RO },
+  create_media_buy:               { wrap: mediaBuyResponse,              annotations: MUT },
+  update_media_buy:               { wrap: updateMediaBuyResponse,        annotations: MUT },
+  get_media_buys:                 { wrap: getMediaBuysResponse,          annotations: RO },
+  get_media_buy_delivery:         { wrap: deliveryResponse,              annotations: RO },
+  provide_performance_feedback:   { wrap: performanceFeedbackResponse,   annotations: MUT },
 
   // Creative
-  list_creative_formats:          { schema: ListCreativeFormatsRequestSchema,            wrap: listCreativeFormatsResponse,   annotations: RO },
-  build_creative:                 { schema: BuildCreativeRequestSchema,                 wrap: wrapBuildCreative,             annotations: MUT },
-  get_creative_delivery:          { schema: GetCreativeDeliveryRequestSchema,            wrap: creativeDeliveryResponse,      annotations: RO },
-  list_creatives:                 { schema: ListCreativesRequestSchema,                 wrap: listCreativesResponse,         annotations: RO },
-  sync_creatives:                 { schema: SyncCreativesRequestSchema,                 wrap: syncCreativesResponse,         annotations: IDEMP },
+  list_creative_formats:          { wrap: listCreativeFormatsResponse,   annotations: RO },
+  build_creative:                 { wrap: wrapBuildCreative,             annotations: MUT },
+  get_creative_delivery:          { wrap: creativeDeliveryResponse,      annotations: RO },
+  list_creatives:                 { wrap: listCreativesResponse,         annotations: RO },
+  sync_creatives:                 { wrap: syncCreativesResponse,         annotations: IDEMP },
 
   // Signals
-  get_signals:                    { schema: GetSignalsRequestSchema,                    wrap: getSignalsResponse,            annotations: RO },
-  activate_signal:                { schema: ActivateSignalRequestSchema,                wrap: activateSignalResponse,        annotations: MUT },
+  get_signals:                    { wrap: getSignalsResponse,            annotations: RO },
+  activate_signal:                { wrap: activateSignalResponse,        annotations: MUT },
 
   // Accounts
-  list_accounts:                  { schema: ListAccountsRequestSchema,                  wrap: listAccountsResponse,          annotations: RO },
-  sync_accounts:                  { schema: SyncAccountsRequestSchema,                  wrap: null,                          annotations: IDEMP },
-  sync_governance:                { schema: SyncGovernanceRequestSchema,                wrap: null,                          annotations: IDEMP },
-  get_account_financials:         { schema: GetAccountFinancialsRequestSchema,          wrap: null,                          annotations: RO },
-  report_usage:                   { schema: ReportUsageRequestSchema,                   wrap: null,                          annotations: MUT },
+  list_accounts:                  { wrap: listAccountsResponse,          annotations: RO },
+  sync_accounts:                  { wrap: null,                          annotations: IDEMP },
+  sync_governance:                { wrap: null,                          annotations: IDEMP },
+  get_account_financials:         { wrap: null,                          annotations: RO },
+  report_usage:                   { wrap: null,                          annotations: MUT },
 
   // Event Tracking
-  sync_event_sources:             { schema: SyncEventSourcesRequestSchema,              wrap: null,                          annotations: IDEMP },
-  log_event:                      { schema: LogEventRequestSchema,                      wrap: null,                          annotations: MUT },
+  sync_event_sources:             { wrap: null,                          annotations: IDEMP },
+  log_event:                      { wrap: null,                          annotations: MUT },
 
   // Audiences & Catalogs
-  sync_audiences:                 { schema: SyncAudiencesRequestSchema,                 wrap: null,                          annotations: IDEMP },
-  sync_catalogs:                  { schema: SyncCatalogsRequestSchema,                  wrap: null,                          annotations: IDEMP },
+  sync_audiences:                 { wrap: null,                          annotations: IDEMP },
+  sync_catalogs:                  { wrap: null,                          annotations: IDEMP },
 
   // Governance - Property Lists
-  create_property_list:           { schema: CreatePropertyListRequestSchema,            wrap: null,                          annotations: MUT },
-  update_property_list:           { schema: UpdatePropertyListRequestSchema,            wrap: null,                          annotations: MUT },
-  get_property_list:              { schema: GetPropertyListRequestSchema,               wrap: null,                          annotations: RO },
-  list_property_lists:            { schema: ListPropertyListsRequestSchema,             wrap: null,                          annotations: RO },
-  delete_property_list:           { schema: DeletePropertyListRequestSchema,            wrap: null,                          annotations: DEST },
+  create_property_list:           { wrap: null,                          annotations: MUT },
+  update_property_list:           { wrap: null,                          annotations: MUT },
+  get_property_list:              { wrap: null,                          annotations: RO },
+  list_property_lists:            { wrap: null,                          annotations: RO },
+  delete_property_list:           { wrap: null,                          annotations: DEST },
 
   // Governance - Content Standards
-  list_content_standards:         { schema: ListContentStandardsRequestSchema,          wrap: null,                          annotations: RO },
-  get_content_standards:          { schema: GetContentStandardsRequestSchema,           wrap: null,                          annotations: RO },
-  create_content_standards:       { schema: CreateContentStandardsRequestSchema,        wrap: null,                          annotations: MUT },
-  update_content_standards:       { schema: UpdateContentStandardsRequestSchema,        wrap: null,                          annotations: MUT },
-  calibrate_content:              { schema: CalibrateContentRequestSchema,              wrap: null,                          annotations: MUT },
-  validate_content_delivery:      { schema: ValidateContentDeliveryRequestSchema,       wrap: null,                          annotations: RO },
-  get_media_buy_artifacts:        { schema: GetMediaBuyArtifactsRequestSchema,          wrap: null,                          annotations: RO },
+  list_content_standards:         { wrap: null,                          annotations: RO },
+  get_content_standards:          { wrap: null,                          annotations: RO },
+  create_content_standards:       { wrap: null,                          annotations: MUT },
+  update_content_standards:       { wrap: null,                          annotations: MUT },
+  calibrate_content:              { wrap: null,                          annotations: MUT },
+  validate_content_delivery:      { wrap: null,                          annotations: RO },
+  get_media_buy_artifacts:        { wrap: null,                          annotations: RO },
 
   // Governance - Campaign
-  get_creative_features:          { schema: GetCreativeFeaturesRequestSchema,           wrap: null,                          annotations: RO },
-  sync_plans:                     { schema: SyncPlansRequestSchema,                     wrap: null,                          annotations: IDEMP },
-  check_governance:               { schema: CheckGovernanceRequestSchema,               wrap: null,                          annotations: RO },
-  report_plan_outcome:            { schema: ReportPlanOutcomeRequestSchema,             wrap: null,                          annotations: MUT },
-  get_plan_audit_logs:            { schema: GetPlanAuditLogsRequestSchema,              wrap: null,                          annotations: RO },
+  get_creative_features:          { wrap: null,                          annotations: RO },
+  sync_plans:                     { wrap: null,                          annotations: IDEMP },
+  check_governance:               { wrap: null,                          annotations: RO },
+  report_plan_outcome:            { wrap: null,                          annotations: MUT },
+  get_plan_audit_logs:            { wrap: null,                          annotations: RO },
 
   // Sponsored Intelligence
-  si_get_offering:                { schema: SIGetOfferingRequestSchema,                 wrap: null,                          annotations: RO },
-  si_initiate_session:            { schema: SIInitiateSessionRequestSchema,             wrap: null,                          annotations: MUT },
-  si_send_message:                { schema: SISendMessageRequestSchema,                 wrap: null,                          annotations: MUT },
-  si_terminate_session:           { schema: SITerminateSessionRequestSchema,            wrap: null,                          annotations: DEST },
+  si_get_offering:                { wrap: null,                          annotations: RO },
+  si_initiate_session:            { wrap: null,                          annotations: MUT },
+  si_send_message:                { wrap: null,                          annotations: MUT },
+  si_terminate_session:           { wrap: null,                          annotations: DEST },
 };
 
 // ---------------------------------------------------------------------------
@@ -686,14 +654,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
 
       const meta = TOOL_META[toolName];
-      if (!meta) continue;
+      const schema = TOOL_REQUEST_SCHEMAS[toolName] as { shape: Record<string, unknown> } | undefined;
+      if (!schema) {
+        logger.warn(`No schema found for tool "${toolName}" in TOOL_REQUEST_SCHEMAS, skipping`);
+        continue;
+      }
+      const hasAccount = 'account' in schema.shape;
 
-      const wrap = meta.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
+      const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, _extra: any) => {
           const ctx: HandlerContext<TAccount> = { store: stateStore };
 
           // --- Account resolution ---
-          if (hasAccountField(meta) && params.account != null && resolveAccount) {
+          if (hasAccount && params.account != null && resolveAccount) {
             try {
               const account = await resolveAccount(params.account);
               if (account == null) {
@@ -732,8 +705,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         };
 
-      server.tool(toolName, meta.schema.shape as any, toolHandler);
-      if (meta.annotations) {
+      server.tool(toolName, schema.shape as any, toolHandler);
+      if (meta?.annotations) {
         const registered = (server as any)._registeredTools[toolName];
         if (registered?.update) {
           registered.update({ annotations: meta.annotations });
