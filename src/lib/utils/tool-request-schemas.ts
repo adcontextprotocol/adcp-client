@@ -22,9 +22,7 @@ export const TOOL_REQUEST_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Creative
   list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
   build_creative: schemas.BuildCreativeRequestSchema,
-  // preview_creative is a z.union() (single/batch/variant) — not compatible with
-  // server.tool(name, schema.shape). Use the variant exports from index.ts instead:
-  // PreviewCreativeSingleRequestSchema, PreviewCreativeBatchRequestSchema, etc.
+  preview_creative: schemas.PreviewCreativeRequestSchema,
   sync_creatives: schemas.SyncCreativesRequestSchema,
   list_creatives: schemas.ListCreativesRequestSchema,
   get_creative_delivery: schemas.GetCreativeDeliveryRequestSchema,
