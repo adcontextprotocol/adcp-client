@@ -8,14 +8,20 @@ required_tools:
   - sync_governance
   - get_products
   - create_media_buy
-  - comply_test_controller
 
 narrative: |
   When a buyer registers a governance agent and creates a media buy, the seller must call
-  governance during buy creation. When governance approves, the buy should succeed normally.
+  the governance agent during buy creation. When governance approves, the buy should
+  succeed normally.
 
-  This scenario uses the test controller to force governance to return an approved outcome,
-  then verifies the buy completes successfully.
+  This is a multi-agent test. The test harness acts as the governance agent — it registers
+  its own URL via sync_governance, and when the seller calls check_governance during
+  create_media_buy, the harness responds with an approved decision. This tests the real
+  integration path: the seller actually makes the governance call and handles the response.
+
+  NOTE: This scenario requires the test harness to provide a governance agent endpoint.
+  Until that capability exists, this scenario defines the expected behavior but cannot
+  be executed automatically.
 
 agent:
   interaction_model: media_buy_seller
@@ -31,8 +37,8 @@ caller:
 
 prerequisites:
   description: |
-    The seller must support sync_governance and comply_test_controller with
-    force_governance_outcome scenario.
+    The test harness must provide a governance agent endpoint that responds to
+    check_governance with an approved decision.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
@@ -63,7 +69,11 @@ phases:
             description: "Account has a platform-assigned ID"
 
       - id: sync_governance
-        title: "Register governance agent"
+        title: "Register test harness as governance agent"
+        narrative: |
+          The test harness registers itself as the governance agent. The URL points to
+          the harness's governance endpoint, which will respond with an approved decision
+          when the seller calls check_governance.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -78,20 +88,21 @@ phases:
                   domain: "acmeoutdoor.com"
                 operator: "pinnacle-agency.com"
               governance_agents:
-                - url: "https://governance.pinnacle-agency.example"
+                - url: "$harness.governance_url"
                   authentication:
                     schemes: ["Bearer"]
-                    credentials: "gov-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    credentials: "$harness.governance_token"
                   categories: ["budget_authority", "brand_policy"]
         validations:
           - check: response_schema
             description: "Response matches sync-governance-response.json schema"
 
-  - id: force_and_buy
-    title: "Force governance approved and create buy"
+  - id: buy_with_governance
+    title: "Create buy (governance approves)"
     narrative: |
-      Use the test controller to set governance to return approved for the next
-      create_media_buy call, then verify the buy succeeds.
+      Discover products and create a media buy. The seller calls check_governance on
+      the registered harness URL. The harness responds with approved. The seller
+      confirms the buy.
 
     steps:
       - id: get_products_brief
@@ -120,23 +131,6 @@ phases:
             path: "products"
             description: "Response contains products"
 
-      - id: force_governance_approved
-        title: "Force governance to approve"
-        task: comply_test_controller
-        requires_tool: comply_test_controller
-        stateful: true
-        expected: |
-          The test controller acknowledges the governance outcome override.
-        sample_request:
-          scenario: "force_governance_outcome"
-          params:
-            outcome: "approved"
-        validations:
-          - check: field_value
-            path: "success"
-            allowed_values: [true]
-            description: "Controller accepts governance override"
-
       - id: create_media_buy
         title: "Create buy (governance approves)"
         task: create_media_buy
@@ -149,7 +143,7 @@ phases:
           The buy succeeds because governance approved:
           - media_buy_id: present
           - status: active or pending_creatives
-          - The buy was not rejected
+          - The seller called check_governance and received approved
         sample_request:
           account:
             brand:

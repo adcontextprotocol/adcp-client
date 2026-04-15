@@ -8,16 +8,21 @@ required_tools:
   - sync_governance
   - get_products
   - create_media_buy
-  - comply_test_controller
 
 narrative: |
   When governance approves a media buy with conditions, the seller must attach those
   conditions to the buy response. The buyer needs to see the conditions so they can
   comply with them (e.g., "weekly delivery reporting required for CTV buys").
 
-  This scenario uses the test controller to force governance to return an
-  approved_with_conditions outcome, then verifies the seller creates the buy
-  and includes the governance conditions in the response.
+  This is a multi-agent test. The test harness acts as the governance agent — it registers
+  its own URL via sync_governance, and when the seller calls check_governance during
+  create_media_buy, the harness responds with an approved decision that includes
+  conditions and a governance_context token. The seller must create the buy and include
+  the conditions in its response.
+
+  NOTE: This scenario requires the test harness to provide a governance agent endpoint.
+  Until that capability exists, this scenario defines the expected behavior but cannot
+  be executed automatically.
 
 agent:
   interaction_model: media_buy_seller
@@ -33,8 +38,8 @@ caller:
 
 prerequisites:
   description: |
-    The seller must support sync_governance and comply_test_controller with
-    force_governance_outcome scenario.
+    The test harness must provide a governance agent endpoint that responds to
+    check_governance with an approved decision including conditions.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
@@ -65,7 +70,11 @@ phases:
             description: "Account has a platform-assigned ID"
 
       - id: sync_governance
-        title: "Register governance agent"
+        title: "Register test harness as governance agent (with conditions)"
+        narrative: |
+          The test harness registers itself as the governance agent. The URL points to
+          the harness's governance endpoint, configured to approve with conditions
+          when the seller calls check_governance.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -80,21 +89,21 @@ phases:
                   domain: "acmeoutdoor.com"
                 operator: "pinnacle-agency.com"
               governance_agents:
-                - url: "https://governance.pinnacle-agency.example"
+                - url: "$harness.governance_url"
                   authentication:
                     schemes: ["Bearer"]
-                    credentials: "gov-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    credentials: "$harness.governance_token"
                   categories: ["budget_authority", "brand_policy"]
         validations:
           - check: response_schema
             description: "Response matches sync-governance-response.json schema"
 
-  - id: force_and_buy
-    title: "Force governance conditions and create buy"
+  - id: buy_with_conditions
+    title: "Create buy (governance approves with conditions)"
     narrative: |
-      Use the test controller to set governance to return approved_with_conditions
-      for the next create_media_buy call, then verify the buy succeeds and conditions
-      are attached.
+      Discover products and create a media buy. The seller calls check_governance on
+      the registered harness URL. The harness responds with approved including conditions.
+      The seller creates the buy and attaches the conditions.
 
     steps:
       - id: get_products_brief
@@ -123,27 +132,6 @@ phases:
             path: "products"
             description: "Response contains products"
 
-      - id: force_governance_conditions
-        title: "Force governance to approve with conditions"
-        task: comply_test_controller
-        requires_tool: comply_test_controller
-        stateful: true
-        expected: |
-          The test controller acknowledges the governance outcome override.
-        sample_request:
-          scenario: "force_governance_outcome"
-          params:
-            outcome: "approved_with_conditions"
-            conditions:
-              - "CTV buys require weekly delivery reporting"
-              - "UGC placements require brand safety review before activation"
-            governance_context: "gov-ctx-test-conditions"
-        validations:
-          - check: field_value
-            path: "success"
-            allowed_values: [true]
-            description: "Controller accepts governance override"
-
       - id: create_media_buy_conditions
         title: "Create buy (governance approves with conditions)"
         task: create_media_buy
@@ -156,7 +144,7 @@ phases:
           The buy succeeds with governance conditions attached:
           - media_buy_id: present
           - status: active or pending_creatives
-          - governance_context: echoed from governance approval
+          - governance_context: token from the governance agent
           - conditions: governance conditions visible to the buyer
         sample_request:
           account:

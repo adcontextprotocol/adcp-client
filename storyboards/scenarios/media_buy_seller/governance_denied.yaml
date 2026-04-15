@@ -8,16 +8,20 @@ required_tools:
   - sync_governance
   - get_products
   - create_media_buy
-  - comply_test_controller
 
 narrative: |
   When governance denies a media buy, the seller must reject the buy and propagate the
   denial back to the buyer. The seller must not override governance — if the governance
   agent says no, the buy does not proceed.
 
-  This scenario uses the test controller to force governance to return a denied outcome
-  with a spending authority violation, then verifies the seller rejects the buy and
-  includes the governance denial details in the response.
+  This is a multi-agent test. The test harness acts as the governance agent — it registers
+  its own URL via sync_governance, and when the seller calls check_governance during
+  create_media_buy, the harness responds with a denied decision including a
+  SPENDING_AUTHORITY_EXCEEDED finding. The seller must propagate the denial to the buyer.
+
+  NOTE: This scenario requires the test harness to provide a governance agent endpoint.
+  Until that capability exists, this scenario defines the expected behavior but cannot
+  be executed automatically.
 
 agent:
   interaction_model: media_buy_seller
@@ -33,8 +37,8 @@ caller:
 
 prerequisites:
   description: |
-    The seller must support sync_governance and comply_test_controller with
-    force_governance_outcome scenario.
+    The test harness must provide a governance agent endpoint that responds to
+    check_governance with a denied decision.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
@@ -65,7 +69,11 @@ phases:
             description: "Account has a platform-assigned ID"
 
       - id: sync_governance
-        title: "Register governance agent"
+        title: "Register test harness as governance agent (denying)"
+        narrative: |
+          The test harness registers itself as the governance agent. The URL points to
+          the harness's governance endpoint, configured to deny with a spending authority
+          violation when the seller calls check_governance.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -80,21 +88,21 @@ phases:
                   domain: "acmeoutdoor.com"
                 operator: "pinnacle-agency.com"
               governance_agents:
-                - url: "https://governance.pinnacle-agency.example"
+                - url: "$harness.governance_url"
                   authentication:
                     schemes: ["Bearer"]
-                    credentials: "gov-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    credentials: "$harness.governance_token"
                   categories: ["budget_authority", "brand_policy"]
         validations:
           - check: response_schema
             description: "Response matches sync-governance-response.json schema"
 
-  - id: force_and_buy
-    title: "Force governance denied and attempt buy"
+  - id: buy_governance_denied
+    title: "Create buy (governance denies)"
     narrative: |
-      Use the test controller to set governance to return denied for the next
-      create_media_buy call, then verify the seller rejects the buy and propagates
-      the denial.
+      Discover products and attempt a media buy. The seller calls check_governance on
+      the registered harness URL. The harness responds with denied. The seller must
+      reject the buy and propagate the denial to the buyer.
 
     steps:
       - id: get_products_brief
@@ -123,27 +131,6 @@ phases:
             path: "products"
             description: "Response contains products"
 
-      - id: force_governance_denied
-        title: "Force governance to deny"
-        task: comply_test_controller
-        requires_tool: comply_test_controller
-        stateful: true
-        expected: |
-          The test controller acknowledges the governance outcome override.
-        sample_request:
-          scenario: "force_governance_outcome"
-          params:
-            outcome: "denied"
-            findings:
-              - severity: "must"
-                code: "SPENDING_AUTHORITY_EXCEEDED"
-                message: "Transaction of $50,000 exceeds per-transaction limit of $10,000"
-        validations:
-          - check: field_value
-            path: "success"
-            allowed_values: [true]
-            description: "Controller accepts governance override"
-
       - id: create_media_buy_denied
         title: "Create buy (governance denies — should fail)"
         task: create_media_buy
@@ -156,8 +143,8 @@ phases:
         expected: |
           The buy is rejected because governance denied the transaction:
           - The seller propagates the governance denial to the buyer
-          - The error should indicate governance rejected the buy
-          - The denial findings should be accessible to the buyer
+          - The error indicates governance rejected the buy
+          - The denial findings are accessible to the buyer
         sample_request:
           account:
             brand:
