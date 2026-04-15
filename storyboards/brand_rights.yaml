@@ -123,14 +123,39 @@ phases:
           - check: field_present
             path: "brand_id"
             description: "Response includes brand_id"
-
-          - check: field_present
-            path: "context"
-            description: "Response echoes back the context object"
           - check: field_value
-            path: "context.correlation_id"
-            value: "brand_rights--get_brand_identity"
-            description: "Context correlation_id returned unchanged"
+            path: "brand_id"
+            value: "acme_outdoor"
+            description: "Returned brand_id matches the requested brand"
+          - check: field_present
+            path: "names"
+            description: "Response includes brand names"
+
+      - id: get_brand_identity_invalid
+        title: "Reject invalid brand ID"
+        narrative: |
+          The buyer requests identity for a brand that does not exist. The agent must
+          return an error rather than generating default identity data — an agent that
+          silently returns placeholder identity would pass schema checks but fail this
+          behavioral test.
+        task: get_brand_identity
+        schema_ref: "brand/get-brand-identity-request.json"
+        response_schema_ref: "brand/get-brand-identity-response.json"
+        doc_ref: "/brand-protocol/tasks/get_brand_identity"
+        stateful: false
+        expect_error: true
+        expected: |
+          Reject the request with an error:
+          - Error indicates the brand was not found
+          - No default or placeholder identity data returned
+
+        sample_request:
+          brand_id: "nonexistent_brand_xyz"
+
+        validations:
+          - check: error_code
+            description: "Error code present for unknown brand"
+
   - id: rights_search
     title: "Browse available rights"
     narrative: |
@@ -337,6 +362,10 @@ phases:
           - check: field_present
             path: "decision"
             description: "Response includes approval decision"
+          - check: field_value
+            path: "decision"
+            allowed_values: ["approved", "changes_requested", "rejected"]
+            description: "Approval decision is a valid status"
 
           - check: field_present
             path: "context"
@@ -345,3 +374,79 @@ phases:
             path: "context.correlation_id"
             value: "brand_rights--creative_approval"
             description: "Context correlation_id returned unchanged"
+
+  - id: rights_enforcement
+    title: "Rights enforcement"
+    narrative: |
+      These steps test that the brand agent enforces rights constraints — expired
+      licenses, impression cap violations, and geographic restrictions. An agent that
+      only implements the happy path would pass the phases above but fail here.
+
+    steps:
+      - id: acquire_expired_rights
+        title: "Reject acquisition with expired campaign dates"
+        narrative: |
+          The buyer attempts to acquire rights for a campaign with dates entirely in
+          the past. The brand agent must reject this — a compliant agent does not issue
+          licenses for expired campaigns.
+        task: acquire_rights
+        schema_ref: "brand/acquire-rights-request.json"
+        response_schema_ref: "brand/acquire-rights-response.json"
+        doc_ref: "/brand-protocol/tasks/acquire_rights"
+        stateful: true
+        expect_error: true
+        expected: |
+          Reject the request:
+          - Campaign dates are in the past
+          - Error indicates the rights period is invalid or expired
+
+        sample_request:
+          rights_id: "$context.rights_id"
+          pricing_option_id: "standard_monthly"
+          buyer:
+            domain: "pinnacle-agency.example"
+          campaign:
+            description: "Expired campaign test"
+            uses:
+              - "commercial"
+            start_date: "2024-01-01"
+            end_date: "2024-03-31"
+          revocation_webhook:
+            url: "https://pinnacle-agency.example/webhooks/revocation"
+            authentication:
+              schemes:
+                - "Bearer"
+              credentials: "test-revocation-token"
+
+        validations:
+          - check: error_code
+            description: "Error code present for expired campaign dates"
+
+      - id: creative_approval_wrong_grant
+        title: "Reject creative submitted against nonexistent grant"
+        narrative: |
+          The buyer submits a creative for approval referencing a rights_grant_id that
+          does not exist. The agent must reject this rather than approving by default.
+        task: creative_approval
+        schema_ref: "brand/creative-approval-request.json"
+        response_schema_ref: "brand/creative-approval-response.json"
+        doc_ref: "/brand-protocol/walkthrough-rights-licensing"
+        stateful: false
+        expect_error: true
+        expected: |
+          Reject the request:
+          - rights_grant_id is not recognized
+          - Error indicates the grant was not found
+
+        sample_request:
+          rights_grant_id: "nonexistent_grant_xyz"
+          creative:
+            creative_id: "gen_unauthorized_display"
+            format: "display_300x250"
+            assets:
+              - asset_type: "image"
+                url: "https://cdn.pinnacle-agency.example/unauthorized-300x250.png"
+
+        validations:
+          - check: error_code
+            description: "Error code present for nonexistent rights grant"

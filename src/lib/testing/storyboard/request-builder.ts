@@ -68,19 +68,19 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Brand & Rights ───────────────────────────────────────
 
-  get_brand_identity(_step, context, options) {
+  get_brand_identity(step, context, options) {
     const brand = resolveBrand(options);
     return {
-      brand_id: context.brand_id ?? brand.brand_id ?? brand.domain,
+      brand_id: context.brand_id ?? (step.sample_request?.brand_id as string) ?? brand.brand_id ?? brand.domain,
     };
   },
 
-  get_rights(_step, context, options) {
+  get_rights(step, context, options) {
     const brand = resolveBrand(options);
     return {
       query: 'available rights for advertising',
       uses: ['ai_generated_image'],
-      brand_id: context.brand_id ?? brand.brand_id ?? brand.domain,
+      brand_id: context.brand_id ?? (step.sample_request?.brand_id as string) ?? brand.brand_id ?? brand.domain,
     };
   },
 
@@ -395,16 +395,18 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  get_property_list(_step, context, _options) {
+  get_property_list(_step, context, options) {
     return {
       list_id: context.property_list_id ?? 'unknown',
+      brand: resolveBrand(options),
       resolve: true,
     };
   },
 
-  update_property_list(_step, context, _options) {
+  update_property_list(_step, context, options) {
     return {
       list_id: context.property_list_id ?? 'unknown',
+      brand: resolveBrand(options),
       description: 'Updated by storyboard testing',
       base_properties: [
         {
@@ -418,13 +420,16 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  list_property_lists() {
-    return {};
+  list_property_lists(_step, _context, options) {
+    return {
+      brand: resolveBrand(options),
+    };
   },
 
-  delete_property_list(_step, context, _options) {
+  delete_property_list(_step, context, options) {
     return {
       list_id: context.property_list_id ?? 'unknown',
+      brand: resolveBrand(options),
     };
   },
 

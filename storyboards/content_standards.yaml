@@ -275,6 +275,125 @@ phases:
         validations:
           - check: response_schema
             description: "Response matches calibrate-content-response.json schema"
+          - check: field_present
+            path: "verdict"
+            description: "Response includes calibration verdict"
+
+  - id: must_rule_violation
+    title: "Must-rule violation"
+    narrative: |
+      The buyer submits content that violates a "must" severity rule in the content
+      standards. The governance agent must reject it — this tests that the agent
+      distinguishes between "must" (blocking) and "should" (advisory) severity levels.
+
+    steps:
+      - id: calibrate_must_violation
+        title: "Calibrate content that violates a must rule"
+        narrative: |
+          The buyer submits creative content containing violent imagery, which violates
+          the "No violent or controversial imagery (must)" rule. The agent must return
+          a failing verdict with a reference to the violated rule.
+        task: calibrate_content
+        schema_ref: "content-standards/calibrate-content-request.json"
+        response_schema_ref: "content-standards/calibrate-content-response.json"
+        doc_ref: "/governance/content-standards/tasks/calibrate_content"
+        comply_scenario: governance_content_standards
+        stateful: true
+        expected: |
+          Return a failing calibration:
+          - verdict: fail
+          - At least one rule failure referencing the violent imagery must-rule
+          - Remediation guidance explaining why the content was rejected
+
+        sample_request:
+          standards_id: "$context.content_standards_id"
+          artifact:
+            property_rid: "test-publisher.example"
+            artifact_id: "display_violent_imagery_300x250"
+            description: "Display ad featuring graphic hunting scene with violent imagery"
+            assets:
+              - type: "image"
+                url: "https://cdn.pinnacle-agency.example/violent-hunting-scene-300x250.png"
+                width: 300
+                height: 250
+
+        validations:
+          - check: response_schema
+            description: "Response matches calibrate-content-response.json schema"
+          - check: field_value
+            path: "verdict"
+            value: "fail"
+            description: "Content that violates a must-rule receives fail verdict"
+
+  - id: standards_version_change
+    title: "Policy version change"
+    narrative: |
+      The buyer updates the content standards to add a stricter rule, then re-calibrates
+      previously passing content. This tests that the agent applies the updated policy
+      rather than caching the old version.
+
+    steps:
+      - id: update_stricter_standards
+        title: "Add stricter must-rule to content standards"
+        narrative: |
+          The buyer updates the content standards to require alt text on all images
+          as a must-severity rule (previously "should"). Content that previously passed
+          calibration may now fail.
+        task: update_content_standards
+        schema_ref: "content-standards/update-content-standards-request.json"
+        response_schema_ref: "content-standards/update-content-standards-response.json"
+        doc_ref: "/governance/content-standards/tasks/update_content_standards"
+        comply_scenario: governance_content_standards
+        stateful: true
+        expected: |
+          Return the updated content standard:
+          - Updated policy with stricter alt text rule
+          - Confirmation of changes applied
+
+        sample_request:
+          standards_id: "$context.content_standards_id"
+          policy: "No violent or controversial imagery (must). Minimum 72 DPI (should). Brand colors within 5% tolerance (must). All images must have alt text (must). No stock photography (must)."
+
+        validations:
+          - check: response_schema
+            description: "Response matches update-content-standards-response.json schema"
+
+      - id: calibrate_after_policy_change
+        title: "Re-calibrate content against updated standards"
+        narrative: |
+          The buyer re-calibrates the same sample content against the updated standards.
+          If the agent is properly applying the current policy version, content without
+          alt text or using stock photography should now fail.
+        task: calibrate_content
+        schema_ref: "content-standards/calibrate-content-request.json"
+        response_schema_ref: "content-standards/calibrate-content-response.json"
+        doc_ref: "/governance/content-standards/tasks/calibrate_content"
+        comply_scenario: governance_content_standards
+        stateful: true
+        expected: |
+          Return calibration results reflecting the updated policy:
+          - verdict reflects evaluation against current (not cached) standards
+          - Rule results reference the updated policy rules
+
+        sample_request:
+          standards_id: "$context.content_standards_id"
+          artifact:
+            property_rid: "test-publisher.example"
+            artifact_id: "display_stock_photo_300x250"
+            description: "Display ad using stock photography without alt text"
+            assets:
+              - type: "image"
+                url: "https://cdn.pinnacle-agency.example/stock-photo-300x250.png"
+                width: 300
+                height: 250
+
+        validations:
+          - check: response_schema
+            description: "Response matches calibrate-content-response.json schema"
+          - check: field_value
+            path: "verdict"
+            value: "fail"
+            description: "Content violating updated must-rules receives fail verdict"
 
           - check: field_present
             path: "context"
@@ -335,6 +454,12 @@ phases:
         validations:
           - check: response_schema
             description: "Response matches validate-content-delivery-response.json schema"
+          - check: field_present
+            path: "summary"
+            description: "Response includes validation summary with pass/fail counts"
+          - check: field_present
+            path: "results"
+            description: "Response includes per-record validation results"
 
           - check: field_present
             path: "context"
