@@ -2,9 +2,13 @@
  * Declarative AdCP server builder.
  *
  * `createAdcpServer` wires domain-grouped handler functions to Zod input
- * schemas, response builders, account resolution, and governance checks.
+ * schemas, response builders, and account resolution.
  * Handlers only run when preconditions pass. `get_adcp_capabilities` is
  * auto-generated from the tools you register.
+ *
+ * For governance on financial tools (create_media_buy, update_media_buy,
+ * activate_signal), use the composable `checkGovernance()` helper inside
+ * your handler — see `governance.ts`.
  *
  * @example
  * ```typescript
@@ -15,11 +19,6 @@
  *   version: '1.0.0',
  *
  *   resolveAccount: async (ref) => db.findAccount(ref),
- *   resolveGovernance: async (account, { tool, params }) => {
- *     if (!account.governanceAgentUrl) return null; // no governance
- *     const result = await callGovernanceAgent(account.governanceAgentUrl, tool, params);
- *     return result;
- *   },
  *
  *   mediaBuy: {
  *     getProducts: async (params, ctx) => ({ products: catalog.search(params) }),
@@ -398,13 +397,17 @@ interface ToolAnnotation {
 interface ToolMeta {
   schema: { shape: Record<string, unknown> };
   wrap: ((data: any, summary?: string) => McpToolResponse) | null;
-  hasAccount: boolean;
   annotations?: ToolAnnotation;
 }
 
-function genericResponse(data: object, summary?: string): McpToolResponse {
+/** Derived from the Zod schema at init time — no hand-coded flags. */
+function hasAccountField(meta: ToolMeta): boolean {
+  return 'account' in meta.schema.shape;
+}
+
+function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? 'OK' }],
+    content: [{ type: 'text', text: summary ?? `${toolName} completed` }],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -424,67 +427,67 @@ const IDEMP: ToolAnnotation = { readOnlyHint: false, idempotentHint: true };
 
 const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
-  get_products:                   { schema: GetProductsRequestSchema,                   wrap: productsResponse,              hasAccount: true,  annotations: RO },
-  create_media_buy:               { schema: CreateMediaBuyRequestSchema,                wrap: mediaBuyResponse,              hasAccount: true,  annotations: MUT },
-  update_media_buy:               { schema: UpdateMediaBuyRequestSchema,                wrap: updateMediaBuyResponse,        hasAccount: true,  annotations: MUT },
-  get_media_buys:                 { schema: GetMediaBuysRequestSchema,                  wrap: getMediaBuysResponse,          hasAccount: true,  annotations: RO },
-  get_media_buy_delivery:         { schema: GetMediaBuyDeliveryRequestSchema,            wrap: deliveryResponse,              hasAccount: true,  annotations: RO },
-  provide_performance_feedback:   { schema: ProvidePerformanceFeedbackRequestSchema,    wrap: performanceFeedbackResponse,   hasAccount: false, annotations: MUT },
+  get_products:                   { schema: GetProductsRequestSchema,                   wrap: productsResponse,              annotations: RO },
+  create_media_buy:               { schema: CreateMediaBuyRequestSchema,                wrap: mediaBuyResponse,              annotations: MUT },
+  update_media_buy:               { schema: UpdateMediaBuyRequestSchema,                wrap: updateMediaBuyResponse,        annotations: MUT },
+  get_media_buys:                 { schema: GetMediaBuysRequestSchema,                  wrap: getMediaBuysResponse,          annotations: RO },
+  get_media_buy_delivery:         { schema: GetMediaBuyDeliveryRequestSchema,            wrap: deliveryResponse,              annotations: RO },
+  provide_performance_feedback:   { schema: ProvidePerformanceFeedbackRequestSchema,    wrap: performanceFeedbackResponse,   annotations: MUT },
 
   // Creative
-  list_creative_formats:          { schema: ListCreativeFormatsRequestSchema,            wrap: listCreativeFormatsResponse,   hasAccount: false, annotations: RO },
-  build_creative:                 { schema: BuildCreativeRequestSchema,                 wrap: wrapBuildCreative,             hasAccount: true,  annotations: MUT },
-  get_creative_delivery:          { schema: GetCreativeDeliveryRequestSchema,            wrap: creativeDeliveryResponse,      hasAccount: false, annotations: RO },
-  list_creatives:                 { schema: ListCreativesRequestSchema,                 wrap: listCreativesResponse,         hasAccount: true,  annotations: RO },
-  sync_creatives:                 { schema: SyncCreativesRequestSchema,                 wrap: syncCreativesResponse,         hasAccount: true,  annotations: IDEMP },
+  list_creative_formats:          { schema: ListCreativeFormatsRequestSchema,            wrap: listCreativeFormatsResponse,   annotations: RO },
+  build_creative:                 { schema: BuildCreativeRequestSchema,                 wrap: wrapBuildCreative,             annotations: MUT },
+  get_creative_delivery:          { schema: GetCreativeDeliveryRequestSchema,            wrap: creativeDeliveryResponse,      annotations: RO },
+  list_creatives:                 { schema: ListCreativesRequestSchema,                 wrap: listCreativesResponse,         annotations: RO },
+  sync_creatives:                 { schema: SyncCreativesRequestSchema,                 wrap: syncCreativesResponse,         annotations: IDEMP },
 
   // Signals
-  get_signals:                    { schema: GetSignalsRequestSchema,                    wrap: getSignalsResponse,            hasAccount: false, annotations: RO },
-  activate_signal:                { schema: ActivateSignalRequestSchema,                wrap: activateSignalResponse,        hasAccount: true,  annotations: MUT },
+  get_signals:                    { schema: GetSignalsRequestSchema,                    wrap: getSignalsResponse,            annotations: RO },
+  activate_signal:                { schema: ActivateSignalRequestSchema,                wrap: activateSignalResponse,        annotations: MUT },
 
   // Accounts
-  list_accounts:                  { schema: ListAccountsRequestSchema,                  wrap: listAccountsResponse,          hasAccount: false, annotations: RO },
-  sync_accounts:                  { schema: SyncAccountsRequestSchema,                  wrap: null,                          hasAccount: false, annotations: IDEMP },
-  sync_governance:                { schema: SyncGovernanceRequestSchema,                wrap: null,                          hasAccount: true,  annotations: IDEMP },
-  get_account_financials:         { schema: GetAccountFinancialsRequestSchema,          wrap: null,                          hasAccount: true,  annotations: RO },
-  report_usage:                   { schema: ReportUsageRequestSchema,                   wrap: null,                          hasAccount: true,  annotations: MUT },
+  list_accounts:                  { schema: ListAccountsRequestSchema,                  wrap: listAccountsResponse,          annotations: RO },
+  sync_accounts:                  { schema: SyncAccountsRequestSchema,                  wrap: null,                          annotations: IDEMP },
+  sync_governance:                { schema: SyncGovernanceRequestSchema,                wrap: null,                          annotations: IDEMP },
+  get_account_financials:         { schema: GetAccountFinancialsRequestSchema,          wrap: null,                          annotations: RO },
+  report_usage:                   { schema: ReportUsageRequestSchema,                   wrap: null,                          annotations: MUT },
 
   // Event Tracking
-  sync_event_sources:             { schema: SyncEventSourcesRequestSchema,              wrap: null,                          hasAccount: true,  annotations: IDEMP },
-  log_event:                      { schema: LogEventRequestSchema,                      wrap: null,                          hasAccount: false, annotations: MUT },
+  sync_event_sources:             { schema: SyncEventSourcesRequestSchema,              wrap: null,                          annotations: IDEMP },
+  log_event:                      { schema: LogEventRequestSchema,                      wrap: null,                          annotations: MUT },
 
   // Audiences & Catalogs
-  sync_audiences:                 { schema: SyncAudiencesRequestSchema,                 wrap: null,                          hasAccount: true,  annotations: IDEMP },
-  sync_catalogs:                  { schema: SyncCatalogsRequestSchema,                  wrap: null,                          hasAccount: true,  annotations: IDEMP },
+  sync_audiences:                 { schema: SyncAudiencesRequestSchema,                 wrap: null,                          annotations: IDEMP },
+  sync_catalogs:                  { schema: SyncCatalogsRequestSchema,                  wrap: null,                          annotations: IDEMP },
 
   // Governance - Property Lists
-  create_property_list:           { schema: CreatePropertyListRequestSchema,            wrap: null,                          hasAccount: false, annotations: MUT },
-  update_property_list:           { schema: UpdatePropertyListRequestSchema,            wrap: null,                          hasAccount: false, annotations: MUT },
-  get_property_list:              { schema: GetPropertyListRequestSchema,               wrap: null,                          hasAccount: false, annotations: RO },
-  list_property_lists:            { schema: ListPropertyListsRequestSchema,             wrap: null,                          hasAccount: false, annotations: RO },
-  delete_property_list:           { schema: DeletePropertyListRequestSchema,            wrap: null,                          hasAccount: false, annotations: DEST },
+  create_property_list:           { schema: CreatePropertyListRequestSchema,            wrap: null,                          annotations: MUT },
+  update_property_list:           { schema: UpdatePropertyListRequestSchema,            wrap: null,                          annotations: MUT },
+  get_property_list:              { schema: GetPropertyListRequestSchema,               wrap: null,                          annotations: RO },
+  list_property_lists:            { schema: ListPropertyListsRequestSchema,             wrap: null,                          annotations: RO },
+  delete_property_list:           { schema: DeletePropertyListRequestSchema,            wrap: null,                          annotations: DEST },
 
   // Governance - Content Standards
-  list_content_standards:         { schema: ListContentStandardsRequestSchema,          wrap: null,                          hasAccount: false, annotations: RO },
-  get_content_standards:          { schema: GetContentStandardsRequestSchema,           wrap: null,                          hasAccount: false, annotations: RO },
-  create_content_standards:       { schema: CreateContentStandardsRequestSchema,        wrap: null,                          hasAccount: false, annotations: MUT },
-  update_content_standards:       { schema: UpdateContentStandardsRequestSchema,        wrap: null,                          hasAccount: false, annotations: MUT },
-  calibrate_content:              { schema: CalibrateContentRequestSchema,              wrap: null,                          hasAccount: false, annotations: MUT },
-  validate_content_delivery:      { schema: ValidateContentDeliveryRequestSchema,       wrap: null,                          hasAccount: false, annotations: RO },
-  get_media_buy_artifacts:        { schema: GetMediaBuyArtifactsRequestSchema,          wrap: null,                          hasAccount: true,  annotations: RO },
+  list_content_standards:         { schema: ListContentStandardsRequestSchema,          wrap: null,                          annotations: RO },
+  get_content_standards:          { schema: GetContentStandardsRequestSchema,           wrap: null,                          annotations: RO },
+  create_content_standards:       { schema: CreateContentStandardsRequestSchema,        wrap: null,                          annotations: MUT },
+  update_content_standards:       { schema: UpdateContentStandardsRequestSchema,        wrap: null,                          annotations: MUT },
+  calibrate_content:              { schema: CalibrateContentRequestSchema,              wrap: null,                          annotations: MUT },
+  validate_content_delivery:      { schema: ValidateContentDeliveryRequestSchema,       wrap: null,                          annotations: RO },
+  get_media_buy_artifacts:        { schema: GetMediaBuyArtifactsRequestSchema,          wrap: null,                          annotations: RO },
 
   // Governance - Campaign
-  get_creative_features:          { schema: GetCreativeFeaturesRequestSchema,           wrap: null,                          hasAccount: true,  annotations: RO },
-  sync_plans:                     { schema: SyncPlansRequestSchema,                     wrap: null,                          hasAccount: false, annotations: IDEMP },
-  check_governance:               { schema: CheckGovernanceRequestSchema,               wrap: null,                          hasAccount: false, annotations: RO },
-  report_plan_outcome:            { schema: ReportPlanOutcomeRequestSchema,             wrap: null,                          hasAccount: false, annotations: MUT },
-  get_plan_audit_logs:            { schema: GetPlanAuditLogsRequestSchema,              wrap: null,                          hasAccount: false, annotations: RO },
+  get_creative_features:          { schema: GetCreativeFeaturesRequestSchema,           wrap: null,                          annotations: RO },
+  sync_plans:                     { schema: SyncPlansRequestSchema,                     wrap: null,                          annotations: IDEMP },
+  check_governance:               { schema: CheckGovernanceRequestSchema,               wrap: null,                          annotations: RO },
+  report_plan_outcome:            { schema: ReportPlanOutcomeRequestSchema,             wrap: null,                          annotations: MUT },
+  get_plan_audit_logs:            { schema: GetPlanAuditLogsRequestSchema,              wrap: null,                          annotations: RO },
 
   // Sponsored Intelligence
-  si_get_offering:                { schema: SIGetOfferingRequestSchema,                 wrap: null,                          hasAccount: false, annotations: RO },
-  si_initiate_session:            { schema: SIInitiateSessionRequestSchema,             wrap: null,                          hasAccount: false, annotations: MUT },
-  si_send_message:                { schema: SISendMessageRequestSchema,                 wrap: null,                          hasAccount: false, annotations: MUT },
-  si_terminate_session:           { schema: SITerminateSessionRequestSchema,            wrap: null,                          hasAccount: false, annotations: DEST },
+  si_get_offering:                { schema: SIGetOfferingRequestSchema,                 wrap: null,                          annotations: RO },
+  si_initiate_session:            { schema: SIInitiateSessionRequestSchema,             wrap: null,                          annotations: MUT },
+  si_send_message:                { schema: SISendMessageRequestSchema,                 wrap: null,                          annotations: MUT },
+  si_terminate_session:           { schema: SITerminateSessionRequestSchema,            wrap: null,                          annotations: DEST },
 };
 
 // ---------------------------------------------------------------------------
@@ -685,12 +688,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const meta = TOOL_META[toolName];
       if (!meta) continue;
 
-      const wrap = meta.wrap ?? genericResponse;
+      const wrap = meta.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, _extra: any) => {
           const ctx: HandlerContext<TAccount> = { store: stateStore };
 
           // --- Account resolution ---
-          if (meta.hasAccount && params.account != null && resolveAccount) {
+          if (hasAccountField(meta) && params.account != null && resolveAccount) {
             try {
               const account = await resolveAccount(params.account);
               if (account == null) {

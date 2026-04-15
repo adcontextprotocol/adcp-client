@@ -117,8 +117,16 @@ export async function checkGovernance(options: CheckGovernanceOptions): Promise<
   if (governanceContext != null) args.governance_context = governanceContext;
   if (purchaseType != null) args.purchase_type = purchaseType;
 
-  const raw = await callMCPTool(agentUrl, 'check_governance', args, authToken);
-  const response = raw as CheckGovernanceResponse;
+  const raw = await callMCPTool(agentUrl, 'check_governance', args, authToken) as Record<string, unknown>;
+
+  // Validate required fields from governance response
+  if (!raw || typeof raw !== 'object' || !('status' in raw) || !('check_id' in raw) || !('explanation' in raw)) {
+    throw new Error(
+      `Invalid check_governance response from ${agentUrl}: ` +
+      `missing required fields (status, check_id, explanation). Got: ${JSON.stringify(raw)?.slice(0, 200)}`
+    );
+  }
+  const response = raw as unknown as CheckGovernanceResponse;
 
   if (response.status === 'approved') {
     return {

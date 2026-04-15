@@ -202,7 +202,7 @@ describe('createAdcpServer', () => {
         },
       });
       const result = await callToolRaw(server, 'create_property_list', { name: 'My List' });
-      assert.strictEqual(result.content[0].text, 'OK');
+      assert.strictEqual(result.content[0].text, 'create_property_list completed');
       assert.strictEqual(result.structuredContent.list_id, 'pl_1');
     });
 
@@ -316,6 +316,30 @@ describe('createAdcpServer', () => {
 
       await callToolRaw(server, 'update_media_buy', { media_buy_id: 'mb1' });
       assert.strictEqual(resolveAccountCalled, false);
+    });
+
+    it('resolves account on create_media_buy (required account field)', async () => {
+      let resolvedRef;
+      const server = createAdcpServer({
+        name: 'Test', version: '1.0.0',
+        resolveAccount: async (ref) => { resolvedRef = ref; return { id: 'resolved' }; },
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+          createMediaBuy: async (params, ctx) => {
+            assert.ok(ctx.account);
+            return { media_buy_id: 'mb1', packages: [] };
+          },
+        },
+      });
+
+      await callToolRaw(server, 'create_media_buy', {
+        account: { account_id: 'acct_1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.ok(resolvedRef);
+      assert.strictEqual(resolvedRef.account_id, 'acct_1');
     });
 
     it('returns SERVICE_UNAVAILABLE when resolveAccount throws', async () => {
