@@ -173,6 +173,25 @@ Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 - HTML: `{ content: string }` (not `{ html: string }`)
 - Text: `{ text: string }`
 
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
+Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `get_creative_delivery`, `get_creative_features`.
+
 ## SDK Quick Reference
 
 | SDK piece                                               | Usage                                                               |
@@ -270,6 +289,8 @@ npx tsc --noEmit agent.ts
 | `creative_manifest` includes `name` field            | `CreativeManifest` has no `name` — only `format_id` and `assets`                  |
 | HTML asset uses `{ html: '...' }`                    | Use `{ content: '...' }` — the schema field is `content`, not `html`              |
 | No in-memory store for synced creatives              | `list_creatives` and `build_creative` need to find previously synced creatives    |
+| format_ids in list_creative_formats don't match what sellers reference | Sellers include your format_ids in their products — if the buyer can't look them up via list_creative_formats, creative sync breaks |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Storyboards
 

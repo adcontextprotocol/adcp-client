@@ -237,6 +237,20 @@ async function executeStep(
     request = injectContext({ ...step.sample_request }, context);
   } else if (hasRequestBuilder(step.task)) {
     request = buildRequest(step, context, options);
+    // Merge pass-through envelope fields from sample_request — builders
+    // don't include these, but storyboards define them for compliance testing.
+    // Only context and ext are merged: they are opaque pass-through fields with
+    // no schema validation. Other envelope fields (push_notification_config,
+    // governance_context, idempotency_key) have structured schemas and are
+    // handled by the request builder when needed.
+    if (step.sample_request) {
+      if (step.sample_request.context !== undefined && request.context === undefined) {
+        request.context = injectContext({ context: step.sample_request.context }, context).context;
+      }
+      if (step.sample_request.ext !== undefined && request.ext === undefined) {
+        request.ext = step.sample_request.ext;
+      }
+    }
   } else if (step.sample_request) {
     request = injectContext({ ...step.sample_request }, context);
   } else {

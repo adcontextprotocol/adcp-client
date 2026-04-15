@@ -71,7 +71,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "behavioral_analysis--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -79,6 +81,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "behavioral_analysis--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: behavior_analysis
     title: "Brief filtering behavior"
     narrative: |
@@ -109,6 +118,8 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
 
+          context:
+            correlation_id: "behavioral_analysis--get_products_narrow"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
@@ -116,6 +127,22 @@ phases:
             path: "products"
             description: "Response contains a products array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "behavioral_analysis--get_products_narrow"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
       - id: get_products_broad
         title: "Get products with broad brief"
         narrative: |
@@ -138,10 +165,28 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
 
+          context:
+            correlation_id: "behavioral_analysis--get_products_broad"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "behavioral_analysis--get_products_broad"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
   - id: response_consistency
     title: "Response consistency"
     narrative: |
@@ -170,10 +215,28 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
 
+          context:
+            correlation_id: "behavioral_analysis--get_products_first"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "behavioral_analysis--get_products_first"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
       - id: get_products_second
         title: "Second request with identical brief"
         narrative: |
@@ -195,10 +258,28 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
 
+          context:
+            correlation_id: "behavioral_analysis--get_products_second"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "behavioral_analysis--get_products_second"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
   - id: pricing_edge_cases
     title: "Pricing structure validation"
     narrative: |
@@ -228,6 +309,8 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
 
+          context:
+            correlation_id: "behavioral_analysis--get_products_pricing"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
@@ -237,3 +320,20 @@ phases:
           - check: field_present
             path: "products[0].pricing_options"
             description: "Products include pricing_options"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "behavioral_analysis--get_products_pricing"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"

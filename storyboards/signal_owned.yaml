@@ -62,7 +62,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring signals in supported_protocols, confirming the agent serves audience signals.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "signal_owned--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -70,6 +72,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_owned--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: discovery
     title: "Signal discovery"
     narrative: |
@@ -109,6 +118,8 @@ phases:
         sample_request:
           signal_spec: "High-value customers likely to purchase electronics, with loyalty program data"
 
+          context:
+            correlation_id: "signal_owned--search_owned_signals"
         validations:
           - check: response_schema
             description: "Response matches get-signals-response.json schema"
@@ -119,6 +130,16 @@ phases:
             path: "signals[0].pricing_options"
             description: "Each signal has pricing options"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_owned--search_owned_signals"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "signals[0].signal_id.source"
+            description: "Signal ID includes source discriminator"
       - id: filter_by_criteria
         title: "Filter signals by criteria"
         narrative: |
@@ -140,6 +161,8 @@ phases:
           filters:
             max_cpm: 5.00
 
+          context:
+            correlation_id: "signal_owned--filter_by_criteria"
         validations:
           - check: response_schema
             description: "Response matches schema"
@@ -147,6 +170,13 @@ phases:
             path: "signals"
             description: "Response contains a signals array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_owned--filter_by_criteria"
+            description: "Context correlation_id returned unchanged"
   - id: platform_activation
     title: "Activate on a DSP"
     narrative: |
@@ -183,6 +213,11 @@ phases:
               platform: "the-trade-desk"
               account: "agency-123-ttd"
 
+          context:
+            correlation_id: "signal_owned--activate_on_platform"
+          ext:
+            test_platform:
+              test_run: true
         validations:
           - check: response_schema
             description: "Response matches activate-signal-response.json schema"
@@ -190,6 +225,13 @@ phases:
             path: "deployments[0].type"
             description: "Deployment includes type"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_owned--activate_on_platform"
+            description: "Context correlation_id returned unchanged"
   - id: agent_activation
     title: "Activate on a sales agent"
     narrative: |
@@ -227,6 +269,11 @@ phases:
             - type: "agent"
               agent_url: "https://wonderstruck.salesagents.example"
 
+          context:
+            correlation_id: "signal_owned--activate_on_agent"
+          ext:
+            test_platform:
+              test_run: true
         validations:
           - check: response_schema
             description: "Response matches activate-signal-response.json schema"
@@ -237,3 +284,11 @@ phases:
             path: "deployments[0].type"
             value: "agent"
             description: "Deployment type is 'agent'"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "signal_owned--activate_on_agent"
+            description: "Context correlation_id returned unchanged"

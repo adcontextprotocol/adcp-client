@@ -60,7 +60,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring creative in supported_protocols, confirming the agent handles creative operations.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "creative_generative--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -68,6 +70,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_generative--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: format_discovery
     title: "Discover generative formats"
     narrative: |
@@ -98,7 +107,9 @@ phases:
           - Render dimensions for the output
           - Variables for any dynamic fields the buyer can control
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "creative_generative--discover_formats"
 
         validations:
           - check: response_schema
@@ -110,6 +121,13 @@ phases:
             path: "formats[0].format_id.agent_url"
             description: "Each format has a format_id with agent_url"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_generative--discover_formats"
+            description: "Context correlation_id returned unchanged"
   - id: generate_from_brief
     title: "Generate from brief"
     narrative: |
@@ -155,6 +173,8 @@ phases:
           quality: "draft"
           include_preview: true
 
+          context:
+            correlation_id: "creative_generative--build_draft"
         validations:
           - check: response_schema
             description: "Response matches build-creative-response.json schema"
@@ -165,6 +185,13 @@ phases:
             path: "creative_manifest.format_id"
             description: "Output manifest includes format_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_generative--build_draft"
+            description: "Context correlation_id returned unchanged"
   - id: refine
     title: "Refine the creative"
     narrative: |
@@ -213,6 +240,8 @@ phases:
           quality: "draft"
           include_preview: true
 
+          context:
+            correlation_id: "creative_generative--refine_creative"
         validations:
           - check: response_schema
             description: "Response matches build-creative-response.json schema"
@@ -220,6 +249,13 @@ phases:
             path: "creative_manifest.assets"
             description: "Refined manifest includes assets"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_generative--refine_creative"
+            description: "Context correlation_id returned unchanged"
   - id: multi_format
     title: "Multi-format generation"
     narrative: |
@@ -278,6 +314,8 @@ phases:
             domain: "acme-outdoor.example.com"
           quality: "production"
 
+          context:
+            correlation_id: "creative_generative--build_multi_format"
         validations:
           - check: response_schema
             description: "Response matches build-creative-response.json schema"
@@ -285,6 +323,13 @@ phases:
             path: "creative_manifests"
             description: "Response contains creative_manifests array (plural)"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_generative--build_multi_format"
+            description: "Context correlation_id returned unchanged"
   - id: production_build
     title: "Production build"
     narrative: |
@@ -335,6 +380,8 @@ phases:
           quality: "production"
           include_preview: true
 
+          context:
+            correlation_id: "creative_generative--build_production"
         validations:
           - check: response_schema
             description: "Response matches build-creative-response.json schema"
@@ -344,3 +391,11 @@ phases:
           - check: field_present
             path: "creative_manifest.format_id"
             description: "Production manifest includes format_id"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_generative--build_production"
+            description: "Context correlation_id returned unchanged"

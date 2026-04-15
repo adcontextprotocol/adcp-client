@@ -69,7 +69,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "deterministic_testing--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -77,6 +79,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: controller_validation
     title: 'Controller validation'
     narrative: |
@@ -105,6 +114,8 @@ phases:
         sample_request:
           scenario: 'list_scenarios'
 
+          context:
+            correlation_id: "deterministic_testing--list_scenarios"
         validations:
           - check: field_present
             path: 'scenarios'
@@ -115,6 +126,13 @@ phases:
               - true
             description: 'list_scenarios succeeds'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--list_scenarios"
+            description: "Context correlation_id returned unchanged"
       - id: unknown_scenario
         title: 'Unknown scenario returns error'
         requires_tool: comply_test_controller
@@ -134,6 +152,8 @@ phases:
           scenario: 'nonexistent_scenario'
           params: {}
 
+          context:
+            correlation_id: "deterministic_testing--unknown_scenario"
         validations:
           - check: field_value
             path: 'success'
@@ -146,6 +166,13 @@ phases:
               - 'UNKNOWN_SCENARIO'
             description: 'Error code is UNKNOWN_SCENARIO'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--unknown_scenario"
+            description: "Context correlation_id returned unchanged"
       - id: missing_params
         title: 'Missing params returns error'
         requires_tool: comply_test_controller
@@ -165,6 +192,8 @@ phases:
           scenario: 'force_creative_status'
           params: {}
 
+          context:
+            correlation_id: "deterministic_testing--missing_params"
         validations:
           - check: field_value
             path: 'success'
@@ -177,6 +206,13 @@ phases:
               - 'INVALID_PARAMS'
             description: 'Error code is INVALID_PARAMS'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--missing_params"
+            description: "Context correlation_id returned unchanged"
       - id: not_found_entity
         title: 'Nonexistent entity returns NOT_FOUND'
         requires_tool: comply_test_controller
@@ -198,6 +234,8 @@ phases:
             creative_id: 'comply-test-nonexistent-000000000000'
             status: 'approved'
 
+          context:
+            correlation_id: "deterministic_testing--not_found_entity"
         validations:
           - check: field_value
             path: 'success'
@@ -210,6 +248,13 @@ phases:
               - 'NOT_FOUND'
             description: 'Error code is NOT_FOUND'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--not_found_entity"
+            description: "Context correlation_id returned unchanged"
   - id: deterministic_account
     title: 'Deterministic account state machine'
     narrative: |
@@ -234,11 +279,20 @@ phases:
           operator: 'test.example'
           sandbox: true
 
+          context:
+            correlation_id: "deterministic_testing--sync_accounts_for_state"
         validations:
           - check: field_present
             path: 'accounts[0].account_id'
             description: 'Account sync returns account_id'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--sync_accounts_for_state"
+            description: "Context correlation_id returned unchanged"
       - id: list_accounts_for_state
         title: 'Find account for state machine test'
         requires_tool: comply_test_controller
@@ -253,13 +307,22 @@ phases:
         expected: |
           Return at least one account with an account_id.
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "deterministic_testing--list_accounts_for_state"
 
         validations:
           - check: field_present
             path: 'accounts[0].account_id'
             description: 'At least one account exists'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--list_accounts_for_state"
+            description: "Context correlation_id returned unchanged"
       - id: force_account_suspended
         title: 'Force account to suspended'
         requires_tool: comply_test_controller
@@ -281,6 +344,8 @@ phases:
             account_id: '$context.account_id'
             status: 'suspended'
 
+          context:
+            correlation_id: "deterministic_testing--force_account_suspended"
         validations:
           - check: field_value
             path: 'success'
@@ -293,6 +358,13 @@ phases:
               - 'suspended'
             description: 'Account is now suspended'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_account_suspended"
+            description: "Context correlation_id returned unchanged"
       - id: force_account_active
         title: 'Reactivate account'
         requires_tool: comply_test_controller
@@ -314,6 +386,8 @@ phases:
             account_id: '$context.account_id'
             status: 'active'
 
+          context:
+            correlation_id: "deterministic_testing--force_account_active"
         validations:
           - check: field_value
             path: 'success'
@@ -326,6 +400,13 @@ phases:
               - 'active'
             description: 'Account is now active'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_account_active"
+            description: "Context correlation_id returned unchanged"
       - id: force_account_payment_required
         title: 'Force account to payment_required'
         requires_tool: comply_test_controller
@@ -344,6 +425,8 @@ phases:
             account_id: '$context.account_id'
             status: 'payment_required'
 
+          context:
+            correlation_id: "deterministic_testing--force_account_payment_required"
         validations:
           - check: field_value
             path: 'success'
@@ -351,6 +434,13 @@ phases:
               - true
             description: 'Transition to payment_required succeeds'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_account_payment_required"
+            description: "Context correlation_id returned unchanged"
       - id: restore_account_active
         title: 'Restore account to active'
         requires_tool: comply_test_controller
@@ -368,6 +458,8 @@ phases:
             account_id: '$context.account_id'
             status: 'active'
 
+          context:
+            correlation_id: "deterministic_testing--restore_account_active"
         validations:
           - check: field_value
             path: 'success'
@@ -375,6 +467,13 @@ phases:
               - true
             description: 'Account restored to active'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--restore_account_active"
+            description: "Context correlation_id returned unchanged"
   - id: deterministic_media_buy
     title: 'Deterministic media buy state machine'
     narrative: |
@@ -415,10 +514,19 @@ phases:
               budget: 5000
               pricing_option_id: 'test-pricing'
 
+          context:
+            correlation_id: "deterministic_testing--create_media_buy"
         validations:
           - check: response_schema
             description: 'Response matches create-media-buy-response.json schema'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--create_media_buy"
+            description: "Context correlation_id returned unchanged"
       - id: force_media_buy_active
         title: 'Force media buy to active'
         requires_tool: comply_test_controller
@@ -436,6 +544,8 @@ phases:
             media_buy_id: '$context.media_buy_id'
             status: 'active'
 
+          context:
+            correlation_id: "deterministic_testing--force_media_buy_active"
         validations:
           - check: field_value
             path: 'success'
@@ -448,6 +558,13 @@ phases:
               - 'active'
             description: 'Media buy is now active'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_media_buy_active"
+            description: "Context correlation_id returned unchanged"
       - id: verify_media_buy_active
         title: 'Verify media buy status via get_media_buys'
         requires_tool: comply_test_controller
@@ -471,6 +588,8 @@ phases:
           media_buy_ids:
             - '$context.media_buy_id'
 
+          context:
+            correlation_id: "deterministic_testing--verify_media_buy_active"
         validations:
           - check: response_schema
             description: 'Response matches get-media-buys-response.json schema'
@@ -478,6 +597,13 @@ phases:
             path: 'media_buys[0].status'
             description: 'Media buy has a status field'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--verify_media_buy_active"
+            description: "Context correlation_id returned unchanged"
       - id: force_media_buy_completed
         title: 'Force media buy to completed (terminal)'
         requires_tool: comply_test_controller
@@ -496,6 +622,8 @@ phases:
             media_buy_id: '$context.media_buy_id'
             status: 'completed'
 
+          context:
+            correlation_id: "deterministic_testing--force_media_buy_completed"
         validations:
           - check: field_value
             path: 'success'
@@ -508,6 +636,13 @@ phases:
               - 'completed'
             description: 'Media buy is now completed'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_media_buy_completed"
+            description: "Context correlation_id returned unchanged"
       - id: invalid_transition_from_terminal
         title: 'Reject transition from terminal state'
         requires_tool: comply_test_controller
@@ -529,6 +664,8 @@ phases:
             media_buy_id: '$context.media_buy_id'
             status: 'active'
 
+          context:
+            correlation_id: "deterministic_testing--invalid_transition_from_terminal"
         validations:
           - check: field_value
             path: 'success'
@@ -541,6 +678,13 @@ phases:
               - 'INVALID_TRANSITION'
             description: 'Error code is INVALID_TRANSITION'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--invalid_transition_from_terminal"
+            description: "Context correlation_id returned unchanged"
   - id: deterministic_creative
     title: 'Deterministic creative state machine'
     narrative: |
@@ -584,10 +728,19 @@ phases:
                   url: 'https://via.placeholder.com/300x250'
                   mime_type: 'image/png'
 
+          context:
+            correlation_id: "deterministic_testing--sync_creative_for_state"
         validations:
           - check: response_schema
             description: 'Response matches sync-creatives-response.json schema'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--sync_creative_for_state"
+            description: "Context correlation_id returned unchanged"
       - id: force_creative_approved
         title: 'Force creative to approved'
         requires_tool: comply_test_controller
@@ -605,6 +758,8 @@ phases:
             creative_id: '$context.creative_id'
             status: 'approved'
 
+          context:
+            correlation_id: "deterministic_testing--force_creative_approved"
         validations:
           - check: field_value
             path: 'success'
@@ -617,6 +772,13 @@ phases:
               - 'approved'
             description: 'Creative is now approved'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_creative_approved"
+            description: "Context correlation_id returned unchanged"
       - id: force_creative_archived
         title: 'Force creative to archived (terminal)'
         requires_tool: comply_test_controller
@@ -634,6 +796,8 @@ phases:
             creative_id: '$context.creative_id'
             status: 'archived'
 
+          context:
+            correlation_id: "deterministic_testing--force_creative_archived"
         validations:
           - check: field_value
             path: 'success'
@@ -641,6 +805,13 @@ phases:
               - true
             description: 'Transition to archived succeeds'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_creative_archived"
+            description: "Context correlation_id returned unchanged"
       - id: invalid_creative_transition
         title: 'Reject archived to processing'
         requires_tool: comply_test_controller
@@ -660,6 +831,8 @@ phases:
             creative_id: '$context.creative_id'
             status: 'processing'
 
+          context:
+            correlation_id: "deterministic_testing--invalid_creative_transition"
         validations:
           - check: field_value
             path: 'success'
@@ -672,6 +845,13 @@ phases:
               - 'INVALID_TRANSITION'
             description: 'Error code is INVALID_TRANSITION'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--invalid_creative_transition"
+            description: "Context correlation_id returned unchanged"
       - id: force_creative_rejected
         title: 'Force fresh creative to rejected with reason'
         requires_tool: comply_test_controller
@@ -691,6 +871,8 @@ phases:
             status: 'rejected'
             rejection_reason: 'Brand safety policy violation (comply test)'
 
+          context:
+            correlation_id: "deterministic_testing--force_creative_rejected"
         validations:
           - check: field_value
             path: 'success'
@@ -698,6 +880,13 @@ phases:
               - true
             description: 'Creative rejection succeeds'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_creative_rejected"
+            description: "Context correlation_id returned unchanged"
   - id: deterministic_session
     title: 'Deterministic SI session state machine'
     narrative: |
@@ -727,11 +916,20 @@ phases:
             response_formats:
               - 'text'
 
+          context:
+            correlation_id: "deterministic_testing--initiate_session"
         validations:
           - check: field_present
             path: 'session_id'
             description: 'Session has a session_id'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--initiate_session"
+            description: "Context correlation_id returned unchanged"
       - id: force_session_terminated
         title: 'Force session timeout'
         requires_tool: comply_test_controller
@@ -751,6 +949,8 @@ phases:
             status: 'terminated'
             termination_reason: 'session_timeout'
 
+          context:
+            correlation_id: "deterministic_testing--force_session_terminated"
         validations:
           - check: field_value
             path: 'success'
@@ -758,6 +958,13 @@ phases:
               - true
             description: 'Session termination succeeds'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--force_session_terminated"
+            description: "Context correlation_id returned unchanged"
       - id: verify_terminated_session
         title: 'Verify messaging fails on terminated session'
         requires_tool: comply_test_controller
@@ -775,6 +982,8 @@ phases:
           session_id: '$context.session_id'
           message: 'comply test — session should be terminated'
 
+          context:
+            correlation_id: "deterministic_testing--verify_terminated_session"
         validations:
           - check: field_value
             path: 'success'
@@ -782,6 +991,13 @@ phases:
               - false
             description: 'Message on terminated session fails'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--verify_terminated_session"
+            description: "Context correlation_id returned unchanged"
   - id: deterministic_delivery
     title: 'Deterministic delivery simulation'
     narrative: |
@@ -820,10 +1036,19 @@ phases:
               budget: 5000
               pricing_option_id: 'test-pricing'
 
+          context:
+            correlation_id: "deterministic_testing--create_media_buy_for_delivery"
         validations:
           - check: response_schema
             description: 'Response matches create-media-buy-response.json schema'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--create_media_buy_for_delivery"
+            description: "Context correlation_id returned unchanged"
       - id: simulate_delivery
         title: 'Simulate delivery data'
         requires_tool: comply_test_controller
@@ -846,6 +1071,8 @@ phases:
               amount: 150.00
               currency: 'USD'
 
+          context:
+            correlation_id: "deterministic_testing--simulate_delivery"
         validations:
           - check: field_value
             path: 'success'
@@ -853,6 +1080,13 @@ phases:
               - true
             description: 'Delivery simulation succeeds'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--simulate_delivery"
+            description: "Context correlation_id returned unchanged"
       - id: verify_delivery
         title: 'Verify delivery via get_media_buy_delivery'
         requires_tool: comply_test_controller
@@ -878,6 +1112,8 @@ phases:
           media_buy_ids:
             - '$context.delivery_media_buy_id'
 
+          context:
+            correlation_id: "deterministic_testing--verify_delivery"
         validations:
           - check: response_schema
             description: 'Response matches get-media-buy-delivery-response.json schema'
@@ -885,6 +1121,13 @@ phases:
             path: 'media_buy_deliveries'
             description: 'Response contains delivery data'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--verify_delivery"
+            description: "Context correlation_id returned unchanged"
   - id: deterministic_budget
     title: 'Deterministic budget simulation'
     narrative: |
@@ -923,10 +1166,19 @@ phases:
               budget: 10000
               pricing_option_id: 'test-pricing'
 
+          context:
+            correlation_id: "deterministic_testing--create_media_buy_for_budget"
         validations:
           - check: response_schema
             description: 'Response matches create-media-buy-response.json schema'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--create_media_buy_for_budget"
+            description: "Context correlation_id returned unchanged"
       - id: simulate_budget_95
         title: 'Simulate 95% budget spend'
         requires_tool: comply_test_controller
@@ -945,6 +1197,8 @@ phases:
             media_buy_id: '$context.budget_media_buy_id'
             spend_percentage: 95
 
+          context:
+            correlation_id: "deterministic_testing--simulate_budget_95"
         validations:
           - check: field_value
             path: 'success'
@@ -952,6 +1206,13 @@ phases:
               - true
             description: '95% budget simulation succeeds'
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--simulate_budget_95"
+            description: "Context correlation_id returned unchanged"
       - id: simulate_budget_100
         title: 'Simulate 100% budget depletion'
         requires_tool: comply_test_controller
@@ -970,9 +1231,19 @@ phases:
             media_buy_id: '$context.budget_media_buy_id'
             spend_percentage: 100
 
+          context:
+            correlation_id: "deterministic_testing--simulate_budget_100"
         validations:
           - check: field_value
             path: 'success'
             allowed_values:
               - true
             description: '100% budget depletion simulation succeeds'
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "deterministic_testing--simulate_budget_100"
+            description: "Context correlation_id returned unchanged"

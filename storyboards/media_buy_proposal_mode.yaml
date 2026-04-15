@@ -64,7 +64,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "media_buy_proposal_mode--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -72,6 +74,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: account_setup
     title: "Account setup"
     narrative: |
@@ -103,6 +112,8 @@ phases:
               billing: "operator"
               payment_terms: "net_30"
 
+          context:
+            correlation_id: "media_buy_proposal_mode--sync_accounts"
         validations:
           - check: response_schema
             description: "Response matches sync-accounts-response.json schema"
@@ -110,6 +121,13 @@ phases:
             path: "accounts[0].account_id"
             description: "Account has a platform-assigned ID"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--sync_accounts"
+            description: "Context correlation_id returned unchanged"
   - id: brief_with_proposals
     title: "Brief with proposals"
     narrative: |
@@ -155,6 +173,8 @@ phases:
               domain: "acmeoutdoor.com"
             operator: "pinnacle-agency.com"
 
+          context:
+            correlation_id: "media_buy_proposal_mode--get_products_brief"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
@@ -168,6 +188,22 @@ phases:
             path: "proposals[0].proposal_id"
             description: "Each proposal has a proposal_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--get_products_brief"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
   - id: review_refine
     title: "Refine a proposal"
     narrative: |
@@ -211,6 +247,8 @@ phases:
               domain: "acmeoutdoor.com"
             operator: "pinnacle-agency.com"
 
+          context:
+            correlation_id: "media_buy_proposal_mode--get_products_refine"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
@@ -218,6 +256,22 @@ phases:
             path: "proposals"
             description: "Response contains updated proposals"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--get_products_refine"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
   - id: accept_proposal
     title: "Accept the proposal"
     narrative: |
@@ -264,10 +318,19 @@ phases:
           start_time: "2026-04-01T00:00:00Z"
           end_time: "2026-06-30T23:59:59Z"
 
+          context:
+            correlation_id: "media_buy_proposal_mode--create_media_buy"
         validations:
           - check: response_schema
             description: "Response matches create-media-buy-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--create_media_buy"
+            description: "Context correlation_id returned unchanged"
   - id: creative_sync
     title: "Creative sync"
     narrative: |
@@ -293,7 +356,9 @@ phases:
           - Asset requirements (dimensions, file sizes, mime types)
           - Render dimensions
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "media_buy_proposal_mode--list_formats"
 
         validations:
           - check: response_schema
@@ -302,6 +367,19 @@ phases:
             path: "formats"
             description: "Response contains formats array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--list_formats"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "formats[0].format_id.agent_url"
+            description: "Format IDs include agent_url"
+          - check: field_present
+            path: "formats[0].format_id.id"
+            description: "Format IDs include id — must match those in get_products"
       - id: sync_creatives
         title: "Push creative assets"
         narrative: |
@@ -347,6 +425,8 @@ phases:
                   url: "https://cdn.pinnacle-agency.example/trail-pro-15s.mp4"
                   mime_type: "video/mp4"
 
+          context:
+            correlation_id: "media_buy_proposal_mode--sync_creatives"
         validations:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
@@ -354,6 +434,13 @@ phases:
             path: "creatives[0].action"
             description: "Each creative has an action (created/updated)"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--sync_creatives"
+            description: "Context correlation_id returned unchanged"
   - id: delivery
     title: "Delivery and reporting"
     narrative: |
@@ -389,9 +476,19 @@ phases:
             - "mb_acme_q2_2026_proposal"
           include_package_daily_breakdown: true
 
+          context:
+            correlation_id: "media_buy_proposal_mode--get_delivery"
         validations:
           - check: response_schema
             description: "Response matches get-media-buy-delivery-response.json schema"
           - check: field_present
             path: "media_buy_deliveries"
             description: "Response contains media buy delivery data"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_proposal_mode--get_delivery"
+            description: "Context correlation_id returned unchanged"

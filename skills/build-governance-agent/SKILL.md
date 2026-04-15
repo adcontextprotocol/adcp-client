@@ -271,6 +271,25 @@ taskToolResponse({
 })
 ```
 
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
+Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_governance`.
+
 ## SDK Quick Reference
 
 | SDK piece                                               | Usage                                                               |
@@ -358,6 +377,7 @@ npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --js
 | `sync_plans` response missing `version`          | Each plan needs `version: 1` (integer) — required field                                  |
 | `delete_property_list` missing `deleted: true`   | Boolean `deleted` field is required in response                                          |
 | `create_property_list` missing `auth_token`      | `auth_token` is required — generate a token string                                       |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Storyboards
 

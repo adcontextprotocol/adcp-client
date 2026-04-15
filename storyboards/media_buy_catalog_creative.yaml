@@ -67,7 +67,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "media_buy_catalog_creative--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -75,6 +77,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: account_setup
     title: "Account setup"
     narrative: |
@@ -104,6 +113,8 @@ phases:
               billing: "operator"
               sandbox: true
 
+          context:
+            correlation_id: "media_buy_catalog_creative--sync_accounts"
         validations:
           - check: response_schema
             description: "Response matches sync-accounts-response.json schema"
@@ -111,6 +122,13 @@ phases:
             path: "accounts[0].account_id"
             description: "Account has a platform-assigned ID"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--sync_accounts"
+            description: "Context correlation_id returned unchanged"
   - id: catalog_sync
     title: "Product catalog sync"
     narrative: |
@@ -146,6 +164,8 @@ phases:
         sample_request:
           channels: ["display", "native"]
 
+          context:
+            correlation_id: "media_buy_catalog_creative--discover_catalog_formats"
         validations:
           - check: response_schema
             description: "Response matches list-creative-formats-response.json schema"
@@ -153,6 +173,19 @@ phases:
             path: "formats"
             description: "Response contains formats array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--discover_catalog_formats"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "formats[0].format_id.agent_url"
+            description: "Format IDs include agent_url"
+          - check: field_present
+            path: "formats[0].format_id.id"
+            description: "Format IDs include id — must match those in get_products"
       - id: sync_catalogs
         title: "Push product catalog"
         narrative: |
@@ -211,6 +244,8 @@ phases:
                     amount: 195.00
                     currency: "USD"
 
+          context:
+            correlation_id: "media_buy_catalog_creative--sync_catalogs"
         validations:
           - check: response_schema
             description: "Response matches sync-catalogs-response.json schema"
@@ -224,6 +259,13 @@ phases:
             path: "catalogs[0].items_approved"
             description: "Catalog reports approved item count"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--sync_catalogs"
+            description: "Context correlation_id returned unchanged"
   - id: create_buy
     title: "Create catalog-driven media buy"
     narrative: |
@@ -261,6 +303,8 @@ phases:
               domain: "amsterdam-steakhouse.com"
             operator: "pinnacle-agency.com"
 
+          context:
+            correlation_id: "media_buy_catalog_creative--get_products"
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
@@ -268,6 +312,22 @@ phases:
             path: "products"
             description: "Response contains products"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--get_products"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
       - id: create_media_buy
         title: "Create media buy with catalog packages"
         narrative: |
@@ -307,10 +367,19 @@ phases:
                 - catalog_id: "menu_spring_2026"
                   catalog_type: "product"
 
+          context:
+            correlation_id: "media_buy_catalog_creative--create_media_buy"
         validations:
           - check: response_schema
             description: "Response matches create-media-buy-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--create_media_buy"
+            description: "Context correlation_id returned unchanged"
   - id: event_setup
     title: "Conversion tracking setup"
     narrative: |
@@ -351,6 +420,11 @@ phases:
               event_types: ["purchase", "add_to_cart", "page_view", "lead"]
               allowed_domains: ["amsterdam-steakhouse.com", "book.amsterdam-steakhouse.com"]
 
+          context:
+            correlation_id: "media_buy_catalog_creative--sync_event_sources"
+          ext:
+            test_platform:
+              test_run: true
         validations:
           - check: response_schema
             description: "Response matches sync-event-sources-response.json schema"
@@ -358,6 +432,13 @@ phases:
             path: "event_sources[0].setup.snippet"
             description: "Event source includes setup snippet"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--sync_event_sources"
+            description: "Context correlation_id returned unchanged"
   - id: conversion_tracking
     title: "Log conversions"
     narrative: |
@@ -406,6 +487,8 @@ phases:
               timestamp: "2026-04-15T20:45:00Z"
               content_ids: ["seafood_tower"]
 
+          context:
+            correlation_id: "media_buy_catalog_creative--log_events"
         validations:
           - check: response_schema
             description: "Response matches log-event-response.json schema"
@@ -416,6 +499,13 @@ phases:
             path: "match_quality"
             description: "Response includes match quality score"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--log_events"
+            description: "Context correlation_id returned unchanged"
   - id: optimization_loop
     title: "Performance feedback and optimization"
     narrative: |
@@ -450,6 +540,11 @@ phases:
           metric_type: "conversion_rate"
           feedback_source: "buyer_attribution"
 
+          context:
+            correlation_id: "media_buy_catalog_creative--provide_feedback"
+          ext:
+            test_platform:
+              test_run: true
         validations:
           - check: response_schema
             description: "Response matches provide-performance-feedback-response.json schema"
@@ -458,6 +553,13 @@ phases:
             value: true
             description: "Feedback accepted"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--provide_feedback"
+            description: "Context correlation_id returned unchanged"
       - id: check_delivery
         title: "Monitor delivery with catalog attribution"
         narrative: |
@@ -482,6 +584,16 @@ phases:
             - "mb_amsterdam_spring_2026"
           include_package_daily_breakdown: true
 
+          context:
+            correlation_id: "media_buy_catalog_creative--check_delivery"
         validations:
           - check: response_schema
             description: "Response matches get-media-buy-delivery-response.json schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_catalog_creative--check_delivery"
+            description: "Context correlation_id returned unchanged"

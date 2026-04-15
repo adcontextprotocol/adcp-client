@@ -170,6 +170,25 @@ deliveryResponse({
 })
 ```
 
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
+Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_event_sources`, `provide_performance_feedback`.
+
 ## Compliance Testing (Optional)
 
 Add `registerTestController` so the comply framework can deterministically test your state machines. One function call — the SDK handles request parsing, status validation, and response formatting.
@@ -275,8 +294,10 @@ npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_catalog_crea
 | Skip `get_adcp_capabilities`                             | Must be the first tool registered              |
 | Pass `Schema` instead of `Schema.shape`                  | MCP SDK needs unwrapped Zod fields             |
 | sync_catalogs missing `item_count` / `items_approved`    | Optional but recommended for catalog validation results |
+| format_ids in products don't match list_creative_formats  | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements |
 | log_event missing `events_received` / `events_processed` | Required counters                              |
 | `sandbox: false` on mock data                            | Buyers may treat mock data as real             |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Reference
 

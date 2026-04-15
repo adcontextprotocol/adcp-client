@@ -62,7 +62,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring creative in supported_protocols, confirming the agent handles creative operations.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "creative_lifecycle--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -70,6 +72,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_lifecycle--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: discover_formats
     title: "Discover accepted formats"
     narrative: |
@@ -96,7 +105,9 @@ phases:
           - Render dimensions
           - At least two formats (e.g., display and video)
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "creative_lifecycle--list_formats"
 
         validations:
           - check: response_schema
@@ -105,6 +116,19 @@ phases:
             path: "formats"
             description: "Response contains formats array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_lifecycle--list_formats"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "formats[0].format_id.agent_url"
+            description: "Format IDs include agent_url"
+          - check: field_present
+            path: "formats[0].format_id.id"
+            description: "Format IDs include id — must match those in get_products"
   - id: sync_multiple
     title: "Sync multiple creatives"
     narrative: |
@@ -172,6 +196,8 @@ phases:
                   asset_type: "text"
                   content: "Trail Pro 3000 — Built for the Summit"
 
+          context:
+            correlation_id: "creative_lifecycle--sync_creatives"
         validations:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
@@ -179,6 +205,13 @@ phases:
             path: "creatives"
             description: "Response contains per-creative results"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_lifecycle--sync_creatives"
+            description: "Context correlation_id returned unchanged"
   - id: list_and_filter
     title: "List creatives with filtering"
     narrative: |
@@ -211,6 +244,8 @@ phases:
               domain: "acmeoutdoor.example"
             operator: "pinnacle-agency.example"
 
+          context:
+            correlation_id: "creative_lifecycle--list_all"
         validations:
           - check: response_schema
             description: "Response matches list-creatives-response.json schema"
@@ -218,6 +253,13 @@ phases:
             path: "creatives"
             description: "Response contains creatives array"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_lifecycle--list_all"
+            description: "Context correlation_id returned unchanged"
       - id: list_filtered
         title: "List creatives filtered by format"
         narrative: |
@@ -244,6 +286,8 @@ phases:
               - agent_url: "https://your-platform.example.com"
                 id: "display_300x250"
 
+          context:
+            correlation_id: "creative_lifecycle--list_filtered"
         validations:
           - check: response_schema
             description: "Response matches list-creatives-response.json schema"
@@ -251,6 +295,13 @@ phases:
             path: "creatives"
             description: "Response contains filtered creatives"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_lifecycle--list_filtered"
+            description: "Context correlation_id returned unchanged"
   - id: build_and_preview
     title: "Build and preview across formats"
     narrative: |
@@ -279,10 +330,19 @@ phases:
         sample_request:
           creative_id: "display_trail_pro_300x250"
 
+          context:
+            correlation_id: "creative_lifecycle--preview_display"
         validations:
           - check: response_schema
             description: "Response matches preview-creative-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_lifecycle--preview_display"
+            description: "Context correlation_id returned unchanged"
       - id: build_video_tag
         title: "Build a VAST tag for the video creative"
         narrative: |
@@ -306,6 +366,16 @@ phases:
             agent_url: "https://your-platform.example.com"
             id: "vast_30s"
 
+          context:
+            correlation_id: "creative_lifecycle--build_video_tag"
         validations:
           - check: response_schema
             description: "Response matches build-creative-response.json schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_lifecycle--build_video_tag"
+            description: "Context correlation_id returned unchanged"

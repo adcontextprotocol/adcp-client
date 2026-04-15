@@ -139,6 +139,23 @@ taskToolResponse({
 })
 ```
 
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
 ## SDK Quick Reference
 
 | SDK piece                                               | Usage                                                               |
@@ -205,6 +222,7 @@ npx @adcp/client storyboard run http://localhost:3001/mcp brand_rights --json
 | `update_rights` missing `rights_id` in response  | Same — echo `rights_id` back                                    |
 | `creative_approval` returns `status` not `decision` | Field name is `decision`, values: `approved`, `rejected`, `review` |
 | Using typed schemas for brand rights tools       | No generated schemas — use `{}` for all input schemas            |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Storyboards
 
