@@ -1324,35 +1324,40 @@ EXAMPLES:
     : undefined;
 
   const { NetworkConsistencyChecker } = require('../dist/lib/index.js');
+
+  const progressHandler = jsonOutput
+    ? undefined
+    : ({ phase, completed, total }) => {
+        process.stderr.write(`\r  ${phase}: ${completed}/${total}`);
+        if (completed === total) process.stderr.write('\n');
+      };
+
   const checker = new NetworkConsistencyChecker({
     authoritativeUrl: url,
     domains,
     concurrency,
     timeoutMs: timeout,
     logLevel: 'warn',
+    onProgress: progressHandler,
   });
 
   try {
     const report = await checker.check();
 
-    const totalIssues =
-      report.schemaErrors.length +
-      report.missingPointers.length +
-      report.stalePointers.length +
-      report.orphanedPointers.length +
-      report.agentHealth.filter(a => !a.reachable).length;
-
     if (jsonOutput) {
       console.log(JSON.stringify(report, null, 2));
-      process.exit(totalIssues > 0 ? 1 : 0);
+      process.exit(report.summary.totalIssues > 0 ? 1 : 0);
       return;
     }
 
     // Pretty-print report
     console.log(`\nNetwork Consistency Report`);
     console.log(`${'='.repeat(50)}`);
+    console.log(`Checked at: ${report.checkedAt}`);
     console.log(`Authoritative URL: ${report.authoritativeUrl}`);
-    console.log(`Coverage: ${(report.coverage * 100).toFixed(1)}%`);
+    console.log(
+      `Coverage: ${(report.coverage * 100).toFixed(1)}% (${report.summary.validPointers}/${report.summary.totalDomains})`
+    );
 
     if (report.schemaErrors.length > 0) {
       console.log(`\nSchema Errors (${report.schemaErrors.length}):`);
@@ -1391,13 +1396,13 @@ EXAMPLES:
       }
     }
 
-    if (totalIssues === 0) {
+    if (report.summary.totalIssues === 0) {
       console.log(`\nAll checks passed.`);
     } else {
-      console.log(`\n${totalIssues} issue(s) found.`);
+      console.log(`\n${report.summary.totalIssues} issue(s) found.`);
     }
 
-    process.exit(totalIssues > 0 ? 1 : 0);
+    process.exit(report.summary.totalIssues > 0 ? 1 : 0);
   } catch (error) {
     console.error(`ERROR: ${error.message}`);
     process.exit(2);

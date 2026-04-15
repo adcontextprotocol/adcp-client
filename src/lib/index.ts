@@ -73,6 +73,8 @@ export {
   NetworkConsistencyChecker,
   type NetworkConsistencyCheckerConfig,
   type NetworkCheckReport,
+  type CheckSummary,
+  type CheckProgress,
   type OrphanedPointer,
   type StalePointer,
   type MissingPointer,

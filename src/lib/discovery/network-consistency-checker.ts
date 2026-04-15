@@ -16,6 +16,14 @@ import type { AdAgentsJson, AuthorizedAgent, Property } from './types';
 
 // ====== Configuration ======
 
+/** Progress update emitted after each domain or agent check completes. */
+export interface CheckProgress {
+  phase: 'pointers' | 'orphans' | 'agents';
+  completed: number;
+  total: number;
+  domain?: string;
+}
+
 export interface NetworkConsistencyCheckerConfig {
   /** URL of the authoritative adagents.json file */
   authoritativeUrl?: string;
@@ -27,6 +35,8 @@ export interface NetworkConsistencyCheckerConfig {
   timeoutMs?: number;
   logLevel?: LogLevel;
   userAgent?: string;
+  /** Called after each domain/agent check completes. */
+  onProgress?: (progress: CheckProgress) => void;
 }
 
 // ====== Report types ======
@@ -68,9 +78,22 @@ export interface DomainDetail {
   errors: string[];
 }
 
+export interface CheckSummary {
+  totalDomains: number;
+  validPointers: number;
+  orphanedPointers: number;
+  stalePointers: number;
+  missingPointers: number;
+  schemaErrors: number;
+  unreachableAgents: number;
+  totalIssues: number;
+}
+
 export interface NetworkCheckReport {
+  checkedAt: string;
   authoritativeUrl: string;
   coverage: number;
+  summary: CheckSummary;
   orphanedPointers: OrphanedPointer[];
   stalePointers: StalePointer[];
   missingPointers: MissingPointer[];
@@ -100,6 +123,7 @@ export class NetworkConsistencyChecker {
   private readonly logger: ReturnType<typeof createLogger>;
   private readonly userAgentHeader: string;
   private readonly fromHeader: string;
+  private readonly onProgress?: (progress: CheckProgress) => void;
 
   constructor(config: NetworkConsistencyCheckerConfig) {
     if (!config.authoritativeUrl && (!config.domains || config.domains.length === 0)) {
@@ -120,12 +144,24 @@ export class NetworkConsistencyChecker {
     this.fromHeader = config.userAgent
       ? `adcp-network-checker@adcontextprotocol.org (${config.userAgent}; v${LIBRARY_VERSION})`
       : `adcp-network-checker@adcontextprotocol.org (v${LIBRARY_VERSION})`;
+    this.onProgress = config.onProgress;
   }
 
   async check(): Promise<NetworkCheckReport> {
     const report: NetworkCheckReport = {
+      checkedAt: new Date().toISOString(),
       authoritativeUrl: '',
       coverage: 0,
+      summary: {
+        totalDomains: 0,
+        validPointers: 0,
+        orphanedPointers: 0,
+        stalePointers: 0,
+        missingPointers: 0,
+        schemaErrors: 0,
+        unreachableAgents: 0,
+        totalIssues: 0,
+      },
       orphanedPointers: [],
       stalePointers: [],
       missingPointers: [],
@@ -139,6 +175,7 @@ export class NetworkConsistencyChecker {
     report.authoritativeUrl = resolvedUrl;
 
     if (!authData) {
+      this.computeSummary(report, 0);
       return report;
     }
 
@@ -162,12 +199,32 @@ export class NetworkConsistencyChecker {
       await this.checkOrphanedPointers(resolvedUrl, extraDomains, report);
     }
 
-    // Step 7: Compute coverage
+    // Step 7: Compute coverage and summary
     const total = authoritativeDomains.size;
     const valid = report.domains.filter(d => d.status === 'ok').length;
     report.coverage = total > 0 ? valid / total : 0;
+    this.computeSummary(report, total);
 
     return report;
+  }
+
+  private computeSummary(report: NetworkCheckReport, totalDomains: number): void {
+    const unreachableAgents = report.agentHealth.filter(a => !a.reachable).length;
+    report.summary = {
+      totalDomains,
+      validPointers: report.domains.filter(d => d.status === 'ok').length,
+      orphanedPointers: report.orphanedPointers.length,
+      stalePointers: report.stalePointers.length,
+      missingPointers: report.missingPointers.length,
+      schemaErrors: report.schemaErrors.length,
+      unreachableAgents,
+      totalIssues:
+        report.schemaErrors.length +
+        report.missingPointers.length +
+        report.stalePointers.length +
+        report.orphanedPointers.length +
+        unreachableAgents,
+    };
   }
 
   // ---- Internal methods ----
@@ -292,46 +349,54 @@ export class NetworkConsistencyChecker {
   }
 
   private async checkAgentHealth(agents: AuthorizedAgent[]): Promise<AgentHealthResult[]> {
+    let completed = 0;
     return this.runConcurrent(agents, async agent => {
-      try {
-        validateAgentUrl(agent.url);
-      } catch (error) {
-        return {
-          url: agent.url,
-          reachable: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-        try {
-          const response = await fetch(agent.url, {
-            method: 'HEAD',
-            signal: controller.signal,
-            redirect: 'error',
-            headers: {
-              ...FETCH_HEADERS,
-              'User-Agent': this.userAgentHeader,
-              From: this.fromHeader,
-            },
-          });
-          return {
-            url: agent.url,
-            reachable: response.ok || response.status === 405, // 405 = HEAD rejected but server is alive
-            statusCode: response.status,
-          };
-        } finally {
-          clearTimeout(timeout);
-        }
-      } catch (error) {
-        return {
-          url: agent.url,
-          reachable: false,
-          error: this.sanitizeError(error),
-        };
-      }
+      const result = await this.probeAgent(agent);
+      completed++;
+      this.onProgress?.({ phase: 'agents', completed, total: agents.length });
+      return result;
     });
+  }
+
+  private async probeAgent(agent: AuthorizedAgent): Promise<AgentHealthResult> {
+    try {
+      validateAgentUrl(agent.url);
+    } catch (error) {
+      return {
+        url: agent.url,
+        reachable: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const response = await fetch(agent.url, {
+          method: 'HEAD',
+          signal: controller.signal,
+          redirect: 'error',
+          headers: {
+            ...FETCH_HEADERS,
+            'User-Agent': this.userAgentHeader,
+            From: this.fromHeader,
+          },
+        });
+        return {
+          url: agent.url,
+          reachable: response.ok || response.status === 405, // 405 = HEAD rejected but server is alive
+          statusCode: response.status,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (error) {
+      return {
+        url: agent.url,
+        reachable: false,
+        error: this.sanitizeError(error),
+      };
+    }
   }
 
   private async checkPointers(
@@ -341,8 +406,12 @@ export class NetworkConsistencyChecker {
   ): Promise<void> {
     const domains = Array.from(authoritativeDomains);
 
+    let completed = 0;
     const results = await this.runConcurrent(domains, async domain => {
-      return this.checkDomainPointer(domain, authoritativeUrl);
+      const result = await this.checkDomainPointer(domain, authoritativeUrl);
+      completed++;
+      this.onProgress?.({ phase: 'pointers', completed, total: domains.length, domain });
+      return result;
     });
 
     for (const result of results) {
@@ -426,6 +495,7 @@ export class NetworkConsistencyChecker {
     extraDomains: string[],
     report: NetworkCheckReport
   ): Promise<void> {
+    let completed = 0;
     const results = await this.runConcurrent(
       extraDomains,
       async (
@@ -437,12 +507,16 @@ export class NetworkConsistencyChecker {
       } | null> => {
         try {
           const data = await this.fetchJson<AdAgentsJson>(`https://${domain}/.well-known/adagents.json`);
-          if (data.authoritative_location === authoritativeUrl) {
-            return { domain, orphaned: true, pointerUrl: data.authoritative_location };
-          }
-          return null;
+          const result =
+            data.authoritative_location === authoritativeUrl
+              ? { domain, orphaned: true, pointerUrl: data.authoritative_location }
+              : null;
+          return result;
         } catch {
           return null;
+        } finally {
+          completed++;
+          this.onProgress?.({ phase: 'orphans', completed, total: extraDomains.length, domain });
         }
       }
     );
@@ -479,6 +553,10 @@ export class NetworkConsistencyChecker {
       });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const contentLength = response.headers.get?.('content-length');
+      if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
+        throw new Error('Response too large');
       }
       const text = await response.text();
       if (Buffer.byteLength(text, 'utf-8') > MAX_RESPONSE_BYTES) {

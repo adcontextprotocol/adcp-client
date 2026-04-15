@@ -97,6 +97,8 @@ describe('NetworkConsistencyChecker', () => {
       const report = await checker.check();
 
       assert.strictEqual(report.authoritativeUrl, AUTH_URL);
+      assert.ok(report.checkedAt, 'checkedAt should be set');
+      assert.ok(!isNaN(Date.parse(report.checkedAt)), 'checkedAt should be valid ISO 8601');
       assert.strictEqual(report.coverage, 1);
       assert.strictEqual(report.orphanedPointers.length, 0);
       assert.strictEqual(report.stalePointers.length, 0);
@@ -107,6 +109,10 @@ describe('NetworkConsistencyChecker', () => {
       assert.strictEqual(report.domains.length, 2);
       assert.ok(report.domains.every(d => d.status === 'ok'));
       assert.ok(report.domains.every(d => d.errors.length === 0));
+      // Summary
+      assert.strictEqual(report.summary.totalDomains, 2);
+      assert.strictEqual(report.summary.validPointers, 2);
+      assert.strictEqual(report.summary.totalIssues, 0);
     });
 
     test('orphaned pointer — domain points here but not in properties', async () => {
@@ -260,6 +266,11 @@ describe('NetworkConsistencyChecker', () => {
       assert.strictEqual(report.missingPointers.length, 1);
       assert.strictEqual(report.stalePointers.length, 1);
       assert.ok(Math.abs(report.coverage - 1 / 3) < 0.01, `Expected ~33% coverage, got ${report.coverage}`);
+      assert.strictEqual(report.summary.totalDomains, 3);
+      assert.strictEqual(report.summary.validPointers, 1);
+      assert.strictEqual(report.summary.missingPointers, 1);
+      assert.strictEqual(report.summary.stalePointers, 1);
+      assert.strictEqual(report.summary.totalIssues, 2);
     });
   });
 
@@ -551,6 +562,37 @@ describe('NetworkConsistencyChecker', () => {
       assert.strictEqual(report.coverage, 1);
       assert.strictEqual(report.domains.length, 1);
       assert.strictEqual(report.domains[0].status, 'ok');
+    });
+  });
+
+  describe('progress callback', () => {
+    test('onProgress is called for each domain check', async () => {
+      const authFile = makeAuthoritativeFile();
+
+      routedFetch({
+        'network.example.com/adagents.json': { data: authFile },
+        'cookingdaily.com/.well-known/adagents.json': { data: makePointer(AUTH_URL) },
+        'gardenweekly.com/.well-known/adagents.json': { data: makePointer(AUTH_URL) },
+        'seller.example.com/mcp': { data: {} },
+      });
+
+      const events = [];
+      const { NetworkConsistencyChecker } = require('../../dist/lib/index.js');
+      const checker = new NetworkConsistencyChecker({
+        authoritativeUrl: AUTH_URL,
+        logLevel: 'silent',
+        onProgress: progress => events.push(progress),
+      });
+
+      await checker.check();
+
+      const pointerEvents = events.filter(e => e.phase === 'pointers');
+      const agentEvents = events.filter(e => e.phase === 'agents');
+      assert.strictEqual(pointerEvents.length, 2);
+      assert.strictEqual(agentEvents.length, 1);
+      assert.ok(pointerEvents.every(e => e.total === 2));
+      assert.ok(pointerEvents.some(e => e.completed === 1));
+      assert.ok(pointerEvents.some(e => e.completed === 2));
     });
   });
 
