@@ -69,6 +69,20 @@ export {
   type CrawlResult,
   type PropertyCrawlerConfig,
 } from './discovery/property-crawler';
+export {
+  NetworkConsistencyChecker,
+  type NetworkConsistencyCheckerConfig,
+  type NetworkCheckReport,
+  type CheckSummary,
+  type CheckProgress,
+  type OrphanedPointer,
+  type StalePointer,
+  type MissingPointer,
+  type SchemaError,
+  type AgentHealthResult,
+  type DomainDetail,
+  type DomainStatus,
+} from './discovery/network-consistency-checker';
 export type {
   Property,
   PropertyIdentifier,
@@ -547,6 +561,11 @@ export const PreviewCreativeVariantRequestSchema = _variant;
 // ====== AUTHENTICATION ======
 // Auth utilities for custom integrations
 export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
+
+// ====== TOOL SCHEMA MAPS ======
+// Zod schemas keyed by tool name — use with server.tool(name, schema.shape, handler)
+export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';
+export { TOOL_RESPONSE_SCHEMAS } from './utils/response-schemas';
 
 // ====== VALIDATION ======
 // Schema validation for requests/responses
