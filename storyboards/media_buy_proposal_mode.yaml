@@ -12,6 +12,7 @@ requires_scenarios:
   - media_buy_seller/governance_denied
   - media_buy_seller/governance_conditions
   - media_buy_seller/proposal_finalize
+  - media_buy_seller/delivery_reporting
 
 narrative: |
   Your seller generates curated media plan proposals. The buyer sends a brief, your platform

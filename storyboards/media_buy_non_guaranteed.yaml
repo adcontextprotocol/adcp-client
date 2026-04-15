@@ -11,6 +11,7 @@ requires_scenarios:
   - media_buy_seller/governance_approved
   - media_buy_seller/governance_denied
   - media_buy_seller/governance_conditions
+  - media_buy_seller/delivery_reporting
 
 narrative: |
   You run a sell-side platform with auction-based inventory. Non-guaranteed buys don't

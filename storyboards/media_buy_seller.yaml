@@ -12,6 +12,7 @@ requires_scenarios:
   - media_buy_seller/governance_denied
   - media_buy_seller/governance_conditions
   - media_buy_seller/refine_products
+  - media_buy_seller/delivery_reporting
 
 narrative: |
   You run a sell-side platform — a publisher, SSP, retail media network, or any system that
