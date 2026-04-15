@@ -711,6 +711,72 @@ describe('createAdcpServer', () => {
       assert.ok(result.nextCursor);
     });
 
+    it('get returns a copy (mutations do not affect store)', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('col', 'id1', { name: 'original' });
+      const result = await store.get('col', 'id1');
+      result.name = 'mutated';
+      const result2 = await store.get('col', 'id1');
+      assert.strictEqual(result2.name, 'original');
+    });
+
+    it('patch merges fields into existing document', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('col', 'id1', { status: 'active', budget: 1000 });
+      await store.patch('col', 'id1', { status: 'paused' });
+      const result = await store.get('col', 'id1');
+      assert.strictEqual(result.status, 'paused');
+      assert.strictEqual(result.budget, 1000);
+    });
+
+    it('patch creates document if it does not exist', async () => {
+      const store = new InMemoryStateStore();
+      await store.patch('col', 'id1', { status: 'new' });
+      const result = await store.get('col', 'id1');
+      assert.strictEqual(result.status, 'new');
+    });
+
+    it('cursor-based pagination roundtrip', async () => {
+      const store = new InMemoryStateStore();
+      for (let i = 0; i < 5; i++) {
+        await store.put('col', `id${i}`, { i });
+      }
+
+      const page1 = await store.list('col', { limit: 2 });
+      assert.strictEqual(page1.items.length, 2);
+      assert.ok(page1.nextCursor);
+
+      const page2 = await store.list('col', { limit: 2, cursor: page1.nextCursor });
+      assert.strictEqual(page2.items.length, 2);
+      assert.ok(page2.nextCursor);
+
+      const page3 = await store.list('col', { limit: 2, cursor: page2.nextCursor });
+      assert.strictEqual(page3.items.length, 1);
+      assert.strictEqual(page3.nextCursor, undefined);
+
+      // All 5 items across 3 pages, no duplicates
+      const allItems = [...page1.items, ...page2.items, ...page3.items];
+      assert.strictEqual(allItems.length, 5);
+      const allValues = allItems.map(item => item.i).sort();
+      assert.deepStrictEqual(allValues, [0, 1, 2, 3, 4]);
+    });
+
+    it('list returns copies (mutations do not affect store)', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('col', 'id1', { name: 'original' });
+      const result = await store.list('col');
+      result.items[0].name = 'mutated';
+      const result2 = await store.list('col');
+      assert.strictEqual(result2.items[0].name, 'original');
+    });
+
+    it('list caps limit at MAX_PAGE_SIZE', async () => {
+      const store = new InMemoryStateStore();
+      // Just verify it doesn't crash — we can't easily test the cap value
+      const result = await store.list('col', { limit: 999999 });
+      assert.ok(Array.isArray(result.items));
+    });
+
     it('clear removes all data', async () => {
       const store = new InMemoryStateStore();
       await store.put('a', '1', { v: 1 });

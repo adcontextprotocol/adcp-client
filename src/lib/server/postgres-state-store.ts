@@ -42,6 +42,7 @@ export interface PostgresStateStoreOptions {
 const DEFAULT_TABLE = 'adcp_state';
 const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 500;
 
 /**
  * Generate the SQL DDL for the state store table.
@@ -111,6 +112,20 @@ export class PostgresStateStore implements AdcpStateStore {
     );
   }
 
+  async patch(
+    collection: string,
+    id: string,
+    partial: Record<string, unknown>
+  ): Promise<void> {
+    await this.db.query(
+      `INSERT INTO ${this.table} (collection, id, data)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (collection, id)
+       DO UPDATE SET data = ${this.table}.data || $3, updated_at = NOW()`,
+      [collection, id, JSON.stringify(partial)]
+    );
+  }
+
   async delete(collection: string, id: string): Promise<boolean> {
     const { rowCount } = await this.db.query(
       `DELETE FROM ${this.table} WHERE collection = $1 AND id = $2`,
@@ -123,7 +138,7 @@ export class PostgresStateStore implements AdcpStateStore {
     collection: string,
     options?: ListOptions
   ): Promise<ListResult<T>> {
-    const limit = options?.limit ?? PAGE_SIZE;
+    const limit = Math.min(options?.limit ?? PAGE_SIZE, MAX_PAGE_SIZE);
     const conditions = ['collection = $1'];
     const values: unknown[] = [collection];
     let paramIndex = 2;
@@ -137,7 +152,11 @@ export class PostgresStateStore implements AdcpStateStore {
 
     // Cursor-based pagination (cursor = "updated_at|id")
     if (options?.cursor) {
-      const [cursorTime, cursorId] = options.cursor.split('|', 2);
+      const parts = options.cursor.split('|', 2);
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        throw new Error(`Invalid cursor format: expected "timestamp|id"`);
+      }
+      const [cursorTime, cursorId] = parts;
       conditions.push(`(updated_at, id) > ($${paramIndex}::timestamptz, $${paramIndex + 1})`);
       values.push(cursorTime, cursorId);
       paramIndex += 2;

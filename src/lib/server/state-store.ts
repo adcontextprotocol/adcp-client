@@ -64,11 +64,21 @@ export interface AdcpStateStore {
     id: string
   ): Promise<T | null>;
 
-  /** Create or replace a document. */
+  /** Create or replace a document (upsert semantics). */
   put(
     collection: string,
     id: string,
     data: Record<string, unknown>
+  ): Promise<void>;
+
+  /**
+   * Merge fields into an existing document. Creates the document if it doesn't exist.
+   * Only top-level fields are merged — nested objects are replaced, not deep-merged.
+   */
+  patch(
+    collection: string,
+    id: string,
+    partial: Record<string, unknown>
   ): Promise<void>;
 
   /** Delete a document. Returns true if it existed. */
@@ -86,6 +96,7 @@ export interface AdcpStateStore {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 500;
 
 /**
  * In-memory state store for development and testing.
@@ -109,7 +120,7 @@ export class InMemoryStateStore implements AdcpStateStore {
     id: string
   ): Promise<T | null> {
     const doc = this.getCollection(collection).get(id);
-    return (doc as T) ?? null;
+    return doc ? ({ ...doc } as T) : null;
   }
 
   async put(
@@ -118,6 +129,16 @@ export class InMemoryStateStore implements AdcpStateStore {
     data: Record<string, unknown>
   ): Promise<void> {
     this.getCollection(collection).set(id, { ...data });
+  }
+
+  async patch(
+    collection: string,
+    id: string,
+    partial: Record<string, unknown>
+  ): Promise<void> {
+    const col = this.getCollection(collection);
+    const existing = col.get(id);
+    col.set(id, { ...(existing ?? {}), ...partial });
   }
 
   async delete(collection: string, id: string): Promise<boolean> {
@@ -129,45 +150,35 @@ export class InMemoryStateStore implements AdcpStateStore {
     options?: ListOptions
   ): Promise<ListResult<T>> {
     const col = this.getCollection(collection);
-    let items = [...col.values()] as T[];
+
+    // Build id+data entries for stable cursor tracking
+    let entries = [...col.entries()].map(([id, data]) => ({ id, data: data as T }));
 
     // Apply filter (exact match on fields)
     if (options?.filter) {
       for (const [key, value] of Object.entries(options.filter)) {
-        items = items.filter(item => item[key] === value);
+        entries = entries.filter(e => e.data[key] === value);
       }
     }
 
-    // Apply cursor (skip items before cursor id)
+    // Apply cursor (skip entries at or before cursor id)
     if (options?.cursor) {
-      const cursorIndex = items.findIndex((_, i) => {
-        const keys = [...col.keys()];
-        return keys[i] === options.cursor;
-      });
-      if (cursorIndex >= 0) {
-        items = items.slice(cursorIndex + 1);
+      const idx = entries.findIndex(e => e.id === options.cursor);
+      if (idx >= 0) {
+        entries = entries.slice(idx + 1);
       }
     }
 
     // Apply limit
-    const limit = options?.limit ?? DEFAULT_PAGE_SIZE;
-    const hasMore = items.length > limit;
-    items = items.slice(0, limit);
+    const limit = Math.min(options?.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+    const hasMore = entries.length > limit;
+    entries = entries.slice(0, limit);
 
-    // Build next cursor from last item
-    let nextCursor: string | undefined;
-    if (hasMore && items.length > 0) {
-      // Find the id of the last returned item
-      const lastItem = items[items.length - 1];
-      for (const [id, data] of col) {
-        if (data === lastItem || data === (lastItem as unknown)) {
-          nextCursor = id;
-          break;
-        }
-      }
-    }
+    const nextCursor = hasMore && entries.length > 0
+      ? entries[entries.length - 1]!.id
+      : undefined;
 
-    return { items, nextCursor };
+    return { items: entries.map(e => ({ ...e.data })), nextCursor };
   }
 
   /** Clear all data. Useful in tests. */
