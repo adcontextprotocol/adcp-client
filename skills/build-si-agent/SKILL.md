@@ -120,15 +120,14 @@ Do not modify, inspect, or omit the context — treat it as opaque. If the reque
 
 | SDK piece                                               | Usage                                                               |
 | ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
-| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod                                |
-| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
-| `taskToolResponse(data, summary)`                       | Build tool response (used for all SI tools)                         |
+| `createAdcpServer({ name, sponsoredIntelligence })`   | Create server with domain-grouped handlers and auto-generated capabilities |
+| `serve(() => createAdcpServer(...))`                    | Start HTTP server on `:3001/mcp`                                    |
+| `ctx.store`                                             | State persistence — `get/put/patch/delete/list` domain objects      |
+| `adcpError(code, { message })`                          | Structured error                                                    |
 
-Schemas: `SIGetOfferingRequestSchema`, `SIInitiateSessionRequestSchema`, `SISendMessageRequestSchema`, `SITerminateSessionRequestSchema`.
+Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
 
 ## Setup
 
@@ -157,12 +156,55 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-1. Single `.ts` file — all tools in one file
-2. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
-3. Use `Schema.shape` (not `Schema`) when registering tools
-4. Use an in-memory Map to store active sessions
-5. Track session state: active → terminated
-6. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)`
+1. Single `.ts` file — use `createAdcpServer` with the `sponsoredIntelligence` domain group
+2. Do not register `get_adcp_capabilities` — the framework generates it from registered handlers
+3. Return raw data objects from handlers — the framework wraps responses automatically
+4. Use `ctx.store` to persist active sessions — track state: active → terminated
+5. Handlers receive `(params, ctx)` — `ctx.store` for state, `ctx.account` for resolved account
+
+```typescript
+import { createAdcpServer, serve, adcpError } from '@adcp/client';
+
+serve(() => createAdcpServer({
+  name: 'SI Agent',
+  version: '1.0.0',
+
+  sponsoredIntelligence: {
+    getOffering: async (params, ctx) => ({
+      available: true,
+      offering_token: `tok_${Date.now()}`,
+      ttl_seconds: 300,
+    }),
+    initiateSession: async (params, ctx) => {
+      const sessionId = `sess_${Date.now()}`;
+      await ctx.store.put('session', sessionId, { status: 'active' });
+      return {
+        session_id: sessionId,
+        session_status: 'active',
+      };
+    },
+    sendMessage: async (params, ctx) => {
+      const session = await ctx.store.get('session', params.session_id);
+      if (!session) throw adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
+      return {
+        session_id: params.session_id,
+        session_status: 'active',
+        response: {
+          content: 'Sponsored content response',
+          content_type: 'text',
+        },
+      };
+    },
+    terminateSession: async (params, ctx) => {
+      await ctx.store.delete('session', params.session_id);
+      return {
+        session_id: params.session_id,
+        terminated: true,
+      };
+    },
+  },
+}));
+```
 
 The skill contains everything you need. Do not read additional docs before writing code.
 
@@ -179,6 +221,9 @@ npx @adcp/client storyboard run http://localhost:3001/mcp si_session --json
 
 | Mistake                                              | Fix                                                                    |
 | ---------------------------------------------------- | ---------------------------------------------------------------------- |
+| Manually registering `get_adcp_capabilities`         | Framework auto-generates it from registered handlers — do not register it yourself |
+| Using `server.tool()` instead of domain groups       | Use `sponsoredIntelligence: { getOffering, initiateSession, ... }` — framework wires schemas and response builders |
+| Using in-memory Maps for session state               | Use `ctx.store.put/get/delete` — built-in state persistence            |
 | Returns `status` instead of `session_status`         | Field name is `session_status` — `status` will fail schema validation  |
 | Returns `status: 'terminated'` instead of `terminated: true` | Termination response uses boolean `terminated` field          |
 | Missing `session_id` in si_send_message response     | Echo `session_id` back from request — required                         |

@@ -272,12 +272,12 @@ export class GovernanceMiddleware {
       return {
         outcomeId: responseData.outcome_id,
         status: responseData.status as GovernanceOutcome['status'],
-        committedBudget: responseData.committed_budget,
+        committedBudget: responseData.committed_budget ?? undefined,
         findings: responseData.findings?.map(f => ({
           categoryId: f.category_id,
           severity: f.severity,
           explanation: f.explanation,
-          details: f.details,
+          details: f.details ?? undefined,
         })),
         planSummary:
           responseData.plan_summary?.total_committed != null && responseData.plan_summary?.budget_remaining != null

@@ -119,14 +119,26 @@ describe('Discriminated Union Validation', () => {
       assert.strictEqual(result.success, false, 'Expected validation to fail for invalid request_type');
     });
 
-    test('should enforce field requirements based on discriminator - single', () => {
-      // Single request should have format_id, not requests array
-      const invalidSingle = {
+    test('flat schema accepts single mode with creative_manifest', () => {
+      // With the flat schema, mode-specific fields are optional at the schema level.
+      // Conditional requirements (single needs creative_manifest, batch needs requests)
+      // are enforced at the application level, not the schema level.
+      const singleWithManifest = {
         request_type: 'single',
+        creative_manifest: {
+          format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
+          assets: {},
+        },
+      };
+      const result = PreviewCreativeRequestSchema.safeParse(singleWithManifest);
+      assert.strictEqual(result.success, true);
+    });
+
+    test('flat schema accepts batch mode with requests array', () => {
+      const batchWithRequests = {
+        request_type: 'batch',
         requests: [
-          // Wrong field for single
           {
-            format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
             creative_manifest: {
               format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
               assets: {},
@@ -134,24 +146,8 @@ describe('Discriminated Union Validation', () => {
           },
         ],
       };
-
-      const result = PreviewCreativeRequestSchema.safeParse(invalidSingle);
-      assert.strictEqual(result.success, false, 'Expected validation to fail when single request uses batch fields');
-    });
-
-    test('should enforce field requirements based on discriminator - batch', () => {
-      // Batch request should have requests array, not format_id
-      const invalidBatch = {
-        request_type: 'batch',
-        format_id: { agent_url: 'https://test.com', id: 'fmt-1' }, // Wrong field for batch
-        creative_manifest: {
-          format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-          assets: {},
-        },
-      };
-
-      const result = PreviewCreativeRequestSchema.safeParse(invalidBatch);
-      assert.strictEqual(result.success, false, 'Expected validation to fail when batch request uses single fields');
+      const result = PreviewCreativeRequestSchema.safeParse(batchWithRequests);
+      assert.strictEqual(result.success, true);
     });
   });
 
@@ -310,7 +306,6 @@ describe('Discriminated Union Validation', () => {
         // TypeScript knows this is the 'single' branch
         if (result.data.request_type === 'single') {
           assert.ok('format_id' in result.data, 'Single request should have format_id field');
-          assert.ok(!('requests' in result.data), 'Single request should not have requests field');
         }
       }
     });
@@ -381,39 +376,24 @@ describe('Discriminated Union Validation', () => {
       assert.strictEqual(result.success, false, 'Ambiguous data without discriminator should fail validation');
     });
 
-    test('discriminators enforce correct field structure per variant', () => {
-      // Test that each variant requires its specific fields
-      // Single variant requires format_id and creative_manifest, NOT requests
-      const missingSingleFields = {
+    test('flat schema accepts any field combination with valid request_type', () => {
+      // With the flat schema (adcp#2175), mode-specific fields are optional at
+      // the schema level. Conditional requirements are application-level concerns.
+      const singleWithoutManifest = {
         request_type: 'single',
-        // Missing format_id and creative_manifest - only has requests
-        requests: [
-          {
-            format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-            creative_manifest: {
-              format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-              assets: {},
-            },
-          },
-        ],
+        // No creative_manifest — schema allows it, application validates
       };
 
-      const singleResult = PreviewCreativeRequestSchema.safeParse(missingSingleFields);
-      assert.strictEqual(singleResult.success, false, 'Single request_type must have format_id and creative_manifest');
+      const singleResult = PreviewCreativeRequestSchema.safeParse(singleWithoutManifest);
+      assert.strictEqual(singleResult.success, true, 'Flat schema accepts single without creative_manifest');
 
-      // Batch variant requires requests array, NOT format_id
-      const missingBatchFields = {
+      const batchWithoutRequests = {
         request_type: 'batch',
-        // Missing requests - only has format_id
-        format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-        creative_manifest: {
-          format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-          assets: {},
-        },
+        // No requests array — schema allows it, application validates
       };
 
-      const batchResult = PreviewCreativeRequestSchema.safeParse(missingBatchFields);
-      assert.strictEqual(batchResult.success, false, 'Batch request_type must have requests array');
+      const batchResult = PreviewCreativeRequestSchema.safeParse(batchWithoutRequests);
+      assert.strictEqual(batchResult.success, true, 'Flat schema accepts batch without requests');
     });
   });
 });

@@ -83,7 +83,7 @@ export async function testSISessionLifecycle(
       const data = result.data as SIGetOfferingResponse;
       const dataRecord = result.data as unknown as Record<string, unknown>;
       offeringAvailable = data.available === true;
-      offeringToken = data.offering_token;
+      offeringToken = data.offering_token ?? undefined;
       step.details = offeringAvailable
         ? `Offering available${offeringToken ? ' (token received)' : ''}`
         : `Offering unavailable: ${data.unavailable_reason || 'no reason provided'}`;
@@ -436,7 +436,7 @@ export async function testSIHandoff(
     );
 
     if (result?.success && result?.data) {
-      offeringToken = (result.data as SIGetOfferingResponse).offering_token;
+      offeringToken = (result.data as SIGetOfferingResponse).offering_token ?? undefined;
       step.details = 'Offering retrieved for handoff test';
     }
     steps.push(step);

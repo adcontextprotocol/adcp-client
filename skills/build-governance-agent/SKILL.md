@@ -292,18 +292,16 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 ## SDK Quick Reference
 
-| SDK piece                                               | Usage                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
-| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod                                |
-| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
-| `taskToolResponse(data, summary)`                       | Build tool response (used for all governance tools)                 |
-| `adcpError(code, { message })`                          | Structured error                                                    |
+| SDK piece                                  | Usage                                                                   |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `createAdcpServer({ name, governance })` | Create server with domain-grouped handlers and auto-generated capabilities |
+| `serve(() => createAdcpServer(...))`       | Start HTTP server on `:3001/mcp`                                        |
+| `ctx.store`                                | State persistence — `get/put/patch/delete/list` domain objects          |
+| `adcpError(code, { message })`             | Structured error                                                        |
 
-Schemas: `SyncPlansRequestSchema`, `CheckGovernanceRequestSchema`, `GetPlanAuditLogsRequestSchema`, `CreatePropertyListRequestSchema`, `GetPropertyListRequestSchema`, `UpdatePropertyListRequestSchema`, `ListPropertyListsRequestSchema`, `DeletePropertyListRequestSchema`, `ListContentStandardsRequestSchema`, `GetContentStandardsRequestSchema`, `CreateContentStandardsRequestSchema`, `UpdateContentStandardsRequestSchema`, `CalibrateContentRequestSchema`, `ValidateContentDeliveryRequestSchema`.
+Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
 
 ## Setup
 
@@ -332,13 +330,47 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-1. Single `.ts` file — all tools in one file
-2. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
-3. Use `Schema.shape` (not `Schema`) when registering tools
-4. For `validate_property_delivery`, use `{}` as the schema (no generated schema)
+1. Single `.ts` file — use `createAdcpServer` with the `governance` domain group
+2. Do not register `get_adcp_capabilities` — the framework generates it from registered handlers
+3. Return raw data objects from handlers — the framework wraps responses automatically
+4. Use `ctx.store` to persist plans, property lists, and content standards
 5. Set `sandbox: true` on all mock/demo responses
-6. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)`
-7. Use in-memory Maps to store plans, property lists, and content standards
+6. Handlers receive `(params, ctx)` — `ctx.store` for state, `ctx.account` for resolved account
+
+```typescript
+import { createAdcpServer, serve } from '@adcp/client';
+
+serve(() => createAdcpServer({
+  name: 'Governance Agent',
+  version: '1.0.0',
+
+  governance: {
+    syncPlans: async (params, ctx) => {
+      for (const plan of params.plans) {
+        await ctx.store.put('plan', plan.plan_id, plan);
+      }
+      return {
+        plans: params.plans.map(p => ({
+          plan_id: p.plan_id,
+          status: 'active' as const,
+          version: 1,
+        })),
+      };
+    },
+    checkGovernance: async (params, ctx) => {
+      const plan = await ctx.store.get('plan', params.plan_id);
+      // ... decision logic ...
+      return {
+        check_id: `chk_${Date.now()}`,
+        status: 'approved',
+        plan_id: params.plan_id,
+        explanation: 'Within spending authority',
+      };
+    },
+    // ... other governance handlers
+  },
+}));
+```
 
 **Decision logic for check_governance:**
 
@@ -368,8 +400,9 @@ npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --js
 
 | Mistake                                          | Fix                                                                                      |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| Pass `Schema` instead of `Schema.shape`          | MCP SDK needs unwrapped Zod fields                                                       |
-| Skip `get_adcp_capabilities`                     | Must be the first tool registered                                                        |
+| Manually registering `get_adcp_capabilities`     | Framework auto-generates it from registered handlers — do not register it yourself        |
+| Using `server.tool()` instead of domain groups   | Use `governance: { syncPlans, checkGovernance, ... }` — framework wires schemas and response builders |
+| Using in-memory Maps for state                   | Use `ctx.store.put/get/patch/delete/list` — built-in state persistence                   |
 | `check_governance` missing `check_id`            | Generate a unique ID per check — required field                                          |
 | `check_governance` returns `decision` not `status` | Field is `status`, not `decision`. Values: `approved`, `denied`, `escalate`            |
 | Conditions use `description` instead of `reason`   | Condition schema requires `field` and `reason`, not `condition_id` and `description`  |

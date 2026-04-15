@@ -108,7 +108,7 @@ export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string):
   if (withDefaults.confirmed_at === undefined) {
     withDefaults.confirmed_at = new Date().toISOString();
   }
-  if (withDefaults.valid_actions === undefined && withDefaults.status !== undefined) {
+  if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
     withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
   }
   return {
@@ -162,7 +162,7 @@ export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, s
  */
 export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: string): McpToolResponse {
   const withDefaults = { ...data };
-  if (withDefaults.valid_actions === undefined && withDefaults.status !== undefined) {
+  if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
     withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
   }
   return {
