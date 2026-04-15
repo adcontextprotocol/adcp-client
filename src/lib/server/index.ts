@@ -60,3 +60,29 @@ export type { TestControllerStore, ControllerScenario } from './test-controller'
 
 export { serve } from './serve';
 export type { ServeContext, ServeOptions } from './serve';
+
+export { createAdcpServer } from './create-adcp-server';
+export type {
+  AdcpServerConfig,
+  AdcpToolMap,
+  AdcpServerToolName,
+  AdcpCapabilitiesConfig,
+  AdcpLogger,
+  HandlerContext,
+  MediaBuyHandlers,
+  SignalsHandlers,
+  CreativeHandlers,
+  GovernanceHandlers,
+  AccountHandlers,
+  EventTrackingHandlers,
+  SponsoredIntelligenceHandlers,
+} from './create-adcp-server';
+
+export { checkGovernance, governanceDeniedError } from './governance';
+export type {
+  CheckGovernanceOptions,
+  GovernanceCallResult,
+  GovernanceApproved,
+  GovernanceDenied,
+  GovernanceConditions,
+} from './governance';

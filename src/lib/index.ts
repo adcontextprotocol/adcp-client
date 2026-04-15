@@ -446,6 +446,9 @@ export {
   cleanupExpiredTasks,
   getMcpTasksMigration,
   MCP_TASKS_MIGRATION,
+  createAdcpServer,
+  checkGovernance,
+  governanceDeniedError,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -469,6 +472,24 @@ export type {
   PostgresTaskStoreOptions,
   TestControllerStore,
   ControllerScenario,
+  AdcpServerConfig,
+  AdcpToolMap,
+  AdcpServerToolName,
+  AdcpCapabilitiesConfig,
+  AdcpLogger,
+  HandlerContext,
+  MediaBuyHandlers,
+  SignalsHandlers,
+  CreativeHandlers,
+  GovernanceHandlers,
+  AccountHandlers,
+  EventTrackingHandlers,
+  SponsoredIntelligenceHandlers,
+  CheckGovernanceOptions,
+  GovernanceCallResult,
+  GovernanceApproved,
+  GovernanceDenied,
+  GovernanceConditions,
 } from './server';
 
 // ====== ERROR EXTRACTION ======
