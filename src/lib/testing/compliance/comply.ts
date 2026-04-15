@@ -509,13 +509,13 @@ function expandScenarios(storyboards: Storyboard[]): Storyboard[] {
         if (!scenario) {
           throw new Error(
             `Storyboard "${sb.id}" requires unknown scenario "${scenarioId}". ` +
-            `Check requires_scenarios in ${sb.id} for typos.`
+              `Check requires_scenarios in ${sb.id} for typos.`
           );
         }
         if (scenario.requires_scenarios?.length) {
           throw new Error(
             `Scenario "${scenarioId}" has requires_scenarios, but nested scenario ` +
-            `dependencies are not supported. Only top-level storyboards may declare requires_scenarios.`
+              `dependencies are not supported. Only top-level storyboards may declare requires_scenarios.`
           );
         }
         seen.add(scenarioId);

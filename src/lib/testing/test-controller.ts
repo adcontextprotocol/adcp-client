@@ -162,7 +162,12 @@ export function supportsScenario(controller: ControllerDetection, scenario: Cont
  */
 export async function forceStatus(
   client: TestClient,
-  scenario: 'force_creative_status' | 'force_account_status' | 'force_media_buy_status' | 'force_session_status' | 'force_governance_outcome',
+  scenario:
+    | 'force_creative_status'
+    | 'force_account_status'
+    | 'force_media_buy_status'
+    | 'force_session_status'
+    | 'force_governance_outcome',
   params: Record<string, unknown>,
   options?: TestOptions
 ): Promise<StateTransitionSuccess | ControllerError> {

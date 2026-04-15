@@ -153,7 +153,9 @@ export function resolveRequiredScenarios(storyboard: Storyboard): Storyboard[] {
     if (!scenario) {
       throw new Error(
         `Storyboard "${storyboard.id}" requires unknown scenario "${id}". ` +
-        `Available scenarios: [${loadBundledScenarios().map(s => s.id).join(', ')}]`
+          `Available scenarios: [${loadBundledScenarios()
+            .map(s => s.id)
+            .join(', ')}]`
       );
     }
     scenarios.push(scenario);
@@ -166,8 +168,7 @@ export function resolveRequiredScenarios(storyboard: Storyboard): Storyboard[] {
  * in the top-level storyboard set.
  */
 export function getStoryboardById(id: string): Storyboard | undefined {
-  return loadBundledStoryboards().find(s => s.id === id)
-    ?? getScenarioById(id);
+  return loadBundledStoryboards().find(s => s.id === id) ?? getScenarioById(id);
 }
 
 /**
