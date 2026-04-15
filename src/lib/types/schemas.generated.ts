@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-15T19:45:32.634Z
+// Generated at: 2026-04-15T21:05:30.220Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3467,9 +3467,21 @@ export const BuildCreativeMultiSuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const PreviewCreativeRequestSchema = z.union([z.object({
-        adcp_major_version: z.number().optional(),
-        request_type: z.literal("single"),
+export const PreviewCreativeRequestSchema = z.object({
+    adcp_major_version: z.number().optional(),
+    request_type: z.union([z.literal("single"), z.literal("batch"), z.literal("variant")]),
+    creative_manifest: CreativeManifestSchema.optional(),
+    format_id: FormatIDSchema.optional(),
+    inputs: z.array(z.object({
+        name: z.string(),
+        macros: z.record(z.string(), z.string()).optional(),
+        context_description: z.string().optional()
+    }).passthrough()).optional(),
+    template_id: z.string().optional(),
+    quality: CreativeQualitySchema.optional(),
+    output_format: PreviewOutputFormatSchema.optional(),
+    item_limit: z.number().optional(),
+    requests: z.array(z.object({
         format_id: FormatIDSchema.optional(),
         creative_manifest: CreativeManifestSchema,
         inputs: z.array(z.object({
@@ -3480,38 +3492,13 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         template_id: z.string().optional(),
         quality: CreativeQualitySchema.optional(),
         output_format: PreviewOutputFormatSchema.optional(),
-        item_limit: z.number().optional(),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough(), z.object({
-        adcp_major_version: z.number().optional(),
-        request_type: z.literal("batch"),
-        requests: z.array(z.object({
-            format_id: FormatIDSchema.optional(),
-            creative_manifest: CreativeManifestSchema,
-            inputs: z.array(z.object({
-                name: z.string(),
-                macros: z.record(z.string(), z.string()).optional(),
-                context_description: z.string().optional()
-            }).passthrough()).optional(),
-            template_id: z.string().optional(),
-            quality: CreativeQualitySchema.optional(),
-            output_format: PreviewOutputFormatSchema.optional(),
-            item_limit: z.number().optional()
-        }).passthrough()),
-        quality: CreativeQualitySchema.optional(),
-        output_format: PreviewOutputFormatSchema.optional(),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough(), z.object({
-        adcp_major_version: z.number().optional(),
-        request_type: z.literal("variant"),
-        variant_id: z.string(),
-        creative_id: z.string().optional(),
-        output_format: PreviewOutputFormatSchema.optional(),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough()]);
+        item_limit: z.number().optional()
+    }).passthrough()).optional(),
+    variant_id: z.string().optional(),
+    creative_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const PreviewCreativeSingleResponseSchema = z.object({
     response_type: z.literal("single"),
@@ -5631,6 +5618,7 @@ export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema
 
 export const UpdateMediaBuyRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    account: AccountReferenceSchema,
     media_buy_id: z.string(),
     revision: z.number().optional(),
     paused: z.boolean().optional(),

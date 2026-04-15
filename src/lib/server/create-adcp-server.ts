@@ -77,6 +77,7 @@ import type {
   GetCreativeFeaturesRequestSchema, SyncPlansRequestSchema, CheckGovernanceRequestSchema,
   ReportPlanOutcomeRequestSchema, GetPlanAuditLogsRequestSchema, SIGetOfferingRequestSchema,
   SIInitiateSessionRequestSchema, SISendMessageRequestSchema, SITerminateSessionRequestSchema,
+  PreviewCreativeRequestSchema,
 } from '../types/schemas.generated';
 
 import type {
@@ -118,6 +119,7 @@ import type {
   GetAccountFinancialsSuccess,
   GetCreativeFeaturesResponse,
   ReportUsageResponse,
+  PreviewCreativeResponse,
   AccountReference,
   ListContentStandardsResponse,
   GetContentStandardsResponse,
@@ -185,6 +187,7 @@ export interface AdcpToolMap {
   provide_performance_feedback: { params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>; result: ProvidePerformanceFeedbackSuccess };
   list_creative_formats: { params: z.input<typeof ListCreativeFormatsRequestSchema>; result: ListCreativeFormatsResponse };
   build_creative: { params: z.input<typeof BuildCreativeRequestSchema>; result: BuildCreativeSuccess | BuildCreativeMultiSuccess };
+  preview_creative: { params: z.input<typeof PreviewCreativeRequestSchema>; result: PreviewCreativeResponse };
   get_creative_delivery: { params: z.input<typeof GetCreativeDeliveryRequestSchema>; result: GetCreativeDeliveryResponse };
   list_creatives: { params: z.input<typeof ListCreativesRequestSchema>; result: ListCreativesResponse };
   sync_creatives: { params: z.input<typeof SyncCreativesRequestSchema>; result: SyncCreativesSuccess };
@@ -261,6 +264,7 @@ export interface SignalsHandlers<TAccount = unknown> {
 export interface CreativeHandlers<TAccount = unknown> {
   listCreativeFormats?: DomainHandler<'list_creative_formats', TAccount>;
   buildCreative?: DomainHandler<'build_creative', TAccount>;
+  previewCreative?: DomainHandler<'preview_creative', TAccount>;
   listCreatives?: DomainHandler<'list_creatives', TAccount>;
   syncCreatives?: DomainHandler<'sync_creatives', TAccount>;
   getCreativeDelivery?: DomainHandler<'get_creative_delivery', TAccount>;
@@ -405,6 +409,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   // Creative
   list_creative_formats:          { wrap: listCreativeFormatsResponse,   annotations: RO },
   build_creative:                 { wrap: wrapBuildCreative,             annotations: MUT },
+  preview_creative:               { wrap: null,                          annotations: RO },
   get_creative_delivery:          { wrap: creativeDeliveryResponse,      annotations: RO },
   list_creatives:                 { wrap: listCreativesResponse,         annotations: RO },
   sync_creatives:                 { wrap: syncCreativesResponse,         annotations: IDEMP },
@@ -491,6 +496,7 @@ const SIGNALS_ENTRIES: HandlerEntry[] = [
 const CREATIVE_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'listCreativeFormats', toolName: 'list_creative_formats' },
   { handlerKey: 'buildCreative', toolName: 'build_creative' },
+  { handlerKey: 'previewCreative', toolName: 'preview_creative' },
   { handlerKey: 'listCreatives', toolName: 'list_creatives' },
   { handlerKey: 'syncCreatives', toolName: 'sync_creatives' },
   { handlerKey: 'getCreativeDelivery', toolName: 'get_creative_delivery' },
