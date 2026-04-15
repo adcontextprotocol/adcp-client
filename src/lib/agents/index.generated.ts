@@ -52,6 +52,16 @@ import type {
   ListPropertyListsResponse,
   DeletePropertyListRequest,
   DeletePropertyListResponse,
+  CreateCollectionListRequest,
+  CreateCollectionListResponse,
+  UpdateCollectionListRequest,
+  UpdateCollectionListResponse,
+  GetCollectionListRequest,
+  GetCollectionListResponse,
+  ListCollectionListsRequest,
+  ListCollectionListsResponse,
+  DeleteCollectionListRequest,
+  DeleteCollectionListResponse,
   ListContentStandardsRequest,
   ListContentStandardsResponse,
   GetContentStandardsRequest,
@@ -298,6 +308,41 @@ export class Agent {
    */
   async deletePropertyList(params: DeletePropertyListRequest): Promise<DeletePropertyListResponse> {
     return this.callTool<DeletePropertyListResponse>('delete_property_list', params);
+  }
+
+  /**
+   * Official AdCP create_collection_list tool schema
+   */
+  async createCollectionList(params: CreateCollectionListRequest): Promise<CreateCollectionListResponse> {
+    return this.callTool<CreateCollectionListResponse>('create_collection_list', params);
+  }
+
+  /**
+   * Official AdCP update_collection_list tool schema
+   */
+  async updateCollectionList(params: UpdateCollectionListRequest): Promise<UpdateCollectionListResponse> {
+    return this.callTool<UpdateCollectionListResponse>('update_collection_list', params);
+  }
+
+  /**
+   * Official AdCP get_collection_list tool schema
+   */
+  async getCollectionList(params: GetCollectionListRequest): Promise<GetCollectionListResponse> {
+    return this.callTool<GetCollectionListResponse>('get_collection_list', params);
+  }
+
+  /**
+   * Official AdCP list_collection_lists tool schema
+   */
+  async listCollectionLists(params: ListCollectionListsRequest): Promise<ListCollectionListsResponse> {
+    return this.callTool<ListCollectionListsResponse>('list_collection_lists', params);
+  }
+
+  /**
+   * Official AdCP delete_collection_list tool schema
+   */
+  async deleteCollectionList(params: DeleteCollectionListRequest): Promise<DeleteCollectionListResponse> {
+    return this.callTool<DeleteCollectionListResponse>('delete_collection_list', params);
   }
 
   /**
@@ -602,6 +647,41 @@ export class AgentCollection {
    */
   async listPropertyLists(params: ListPropertyListsRequest): Promise<ListPropertyListsResponse[]> {
     return this.callToolOnAll<ListPropertyListsResponse>('list_property_lists', params);
+  }
+
+  /**
+   * Official AdCP create_collection_list tool schema (across multiple agents)
+   */
+  async createCollectionList(params: CreateCollectionListRequest): Promise<CreateCollectionListResponse[]> {
+    return this.callToolOnAll<CreateCollectionListResponse>('create_collection_list', params);
+  }
+
+  /**
+   * Official AdCP update_collection_list tool schema (across multiple agents)
+   */
+  async updateCollectionList(params: UpdateCollectionListRequest): Promise<UpdateCollectionListResponse[]> {
+    return this.callToolOnAll<UpdateCollectionListResponse>('update_collection_list', params);
+  }
+
+  /**
+   * Official AdCP get_collection_list tool schema (across multiple agents)
+   */
+  async getCollectionList(params: GetCollectionListRequest): Promise<GetCollectionListResponse[]> {
+    return this.callToolOnAll<GetCollectionListResponse>('get_collection_list', params);
+  }
+
+  /**
+   * Official AdCP list_collection_lists tool schema (across multiple agents)
+   */
+  async listCollectionLists(params: ListCollectionListsRequest): Promise<ListCollectionListsResponse[]> {
+    return this.callToolOnAll<ListCollectionListsResponse>('list_collection_lists', params);
+  }
+
+  /**
+   * Official AdCP delete_collection_list tool schema (across multiple agents)
+   */
+  async deleteCollectionList(params: DeleteCollectionListRequest): Promise<DeleteCollectionListResponse[]> {
+    return this.callToolOnAll<DeleteCollectionListResponse>('delete_collection_list', params);
   }
 
   /**
