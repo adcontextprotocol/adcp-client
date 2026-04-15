@@ -39,7 +39,9 @@ function routedFetch(routes) {
       status: 404,
       statusText: 'Not Found',
       headers: new Map(),
-      json: async () => { throw new Error('Not Found'); },
+      json: async () => {
+        throw new Error('Not Found');
+      },
       text: async () => 'Not Found',
     };
   };
@@ -48,9 +50,7 @@ function routedFetch(routes) {
 function makeAuthoritativeFile(properties, agents) {
   return {
     $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
-    authorized_agents: agents || [
-      { url: 'https://seller.example.com/mcp', authorized_for: 'Programmatic sales' },
-    ],
+    authorized_agents: agents || [{ url: 'https://seller.example.com/mcp', authorized_for: 'Programmatic sales' }],
     properties: properties || [
       {
         property_type: 'website',
@@ -286,20 +286,21 @@ describe('NetworkConsistencyChecker', () => {
   });
 
   test('domains-only mode — discovers authoritative URL from first domain', async () => {
-    const authFile = makeAuthoritativeFile([
-      {
-        property_type: 'website',
-        name: 'site-a.com',
-        identifiers: [{ type: 'domain', value: 'site-a.com' }],
-      },
-      {
-        property_type: 'website',
-        name: 'site-b.com',
-        identifiers: [{ type: 'domain', value: 'site-b.com' }],
-      },
-    ], [
-      { url: 'https://seller.example.com/mcp', authorized_for: 'Sales' },
-    ]);
+    const authFile = makeAuthoritativeFile(
+      [
+        {
+          property_type: 'website',
+          name: 'site-a.com',
+          identifiers: [{ type: 'domain', value: 'site-a.com' }],
+        },
+        {
+          property_type: 'website',
+          name: 'site-b.com',
+          identifiers: [{ type: 'domain', value: 'site-b.com' }],
+        },
+      ],
+      [{ url: 'https://seller.example.com/mcp', authorized_for: 'Sales' }]
+    );
 
     routedFetch({
       'site-a.com/.well-known/adagents.json': { data: makePointer(AUTH_URL) },
@@ -361,7 +362,13 @@ describe('NetworkConsistencyChecker', () => {
       'standalone.com/.well-known/adagents.json': {
         data: {
           authorized_agents: [{ url: 'https://other.example.com/mcp', authorized_for: 'Sales' }],
-          properties: [{ property_type: 'website', name: 'standalone.com', identifiers: [{ type: 'domain', value: 'standalone.com' }] }],
+          properties: [
+            {
+              property_type: 'website',
+              name: 'standalone.com',
+              identifiers: [{ type: 'domain', value: 'standalone.com' }],
+            },
+          ],
         },
       },
       'seller.example.com/mcp': { data: {} },

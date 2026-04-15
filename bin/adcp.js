@@ -1316,7 +1316,12 @@ EXAMPLES:
     process.exit(2);
   }
 
-  const domains = domainsStr ? domainsStr.split(',').map(d => d.trim()).filter(Boolean) : undefined;
+  const domains = domainsStr
+    ? domainsStr
+        .split(',')
+        .map(d => d.trim())
+        .filter(Boolean)
+    : undefined;
 
   const { NetworkConsistencyChecker } = require('../dist/lib/index.js');
   const checker = new NetworkConsistencyChecker({
@@ -1330,8 +1335,11 @@ EXAMPLES:
   try {
     const report = await checker.check();
 
-    const totalIssues = report.schemaErrors.length + report.missingPointers.length +
-      report.stalePointers.length + report.orphanedPointers.length +
+    const totalIssues =
+      report.schemaErrors.length +
+      report.missingPointers.length +
+      report.stalePointers.length +
+      report.orphanedPointers.length +
       report.agentHealth.filter(a => !a.reachable).length;
 
     if (jsonOutput) {

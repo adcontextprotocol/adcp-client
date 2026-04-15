@@ -172,18 +172,14 @@ export class NetworkConsistencyChecker {
 
   // ---- Internal methods ----
 
-  private async fetchAuthoritative(
-    report: NetworkCheckReport
-  ): Promise<{ url: string; data: AdAgentsJson | null }> {
+  private async fetchAuthoritative(report: NetworkCheckReport): Promise<{ url: string; data: AdAgentsJson | null }> {
     let url = this.authoritativeUrl;
 
     // If no authoritative URL, discover it from the first domain's pointer
     if (!url) {
       const firstDomain = this.domains[0];
       try {
-        const pointerData = await this.fetchJson<AdAgentsJson>(
-          `https://${firstDomain}/.well-known/adagents.json`
-        );
+        const pointerData = await this.fetchJson<AdAgentsJson>(`https://${firstDomain}/.well-known/adagents.json`);
         if (pointerData.authoritative_location) {
           url = pointerData.authoritative_location;
         } else {
@@ -296,7 +292,7 @@ export class NetworkConsistencyChecker {
   }
 
   private async checkAgentHealth(agents: AuthorizedAgent[]): Promise<AgentHealthResult[]> {
-    return this.runConcurrent(agents, async (agent) => {
+    return this.runConcurrent(agents, async agent => {
       try {
         validateAgentUrl(agent.url);
       } catch (error) {
@@ -345,7 +341,7 @@ export class NetworkConsistencyChecker {
   ): Promise<void> {
     const domains = Array.from(authoritativeDomains);
 
-    const results = await this.runConcurrent(domains, async (domain) => {
+    const results = await this.runConcurrent(domains, async domain => {
       return this.checkDomainPointer(domain, authoritativeUrl);
     });
 
@@ -430,23 +426,26 @@ export class NetworkConsistencyChecker {
     extraDomains: string[],
     report: NetworkCheckReport
   ): Promise<void> {
-    const results = await this.runConcurrent(extraDomains, async (domain): Promise<{
-      domain: string;
-      orphaned: boolean;
-      pointerUrl: string;
-    } | null> => {
-      try {
-        const data = await this.fetchJson<AdAgentsJson>(
-          `https://${domain}/.well-known/adagents.json`
-        );
-        if (data.authoritative_location === authoritativeUrl) {
-          return { domain, orphaned: true, pointerUrl: data.authoritative_location };
+    const results = await this.runConcurrent(
+      extraDomains,
+      async (
+        domain
+      ): Promise<{
+        domain: string;
+        orphaned: boolean;
+        pointerUrl: string;
+      } | null> => {
+        try {
+          const data = await this.fetchJson<AdAgentsJson>(`https://${domain}/.well-known/adagents.json`);
+          if (data.authoritative_location === authoritativeUrl) {
+            return { domain, orphaned: true, pointerUrl: data.authoritative_location };
+          }
+          return null;
+        } catch {
+          return null;
         }
-        return null;
-      } catch {
-        return null;
       }
-    });
+    );
 
     for (const result of results) {
       if (result?.orphaned) {
@@ -526,15 +525,17 @@ export class NetworkConsistencyChecker {
         while (active < this.concurrency && nextIdx < items.length) {
           const i = nextIdx++;
           active++;
-          fn(items[i]!).then(r => {
-            results[i] = r;
-            active--;
-            if (nextIdx >= items.length && active === 0) {
-              resolve(results);
-            } else {
-              next();
-            }
-          }).catch(reject);
+          fn(items[i]!)
+            .then(r => {
+              results[i] = r;
+              active--;
+              if (nextIdx >= items.length && active === 0) {
+                resolve(results);
+              } else {
+                next();
+              }
+            })
+            .catch(reject);
         }
       };
       next();
