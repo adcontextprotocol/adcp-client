@@ -543,7 +543,13 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     return {
       brand: resolveBrand(options),
       list_id: context.property_list_id ?? 'unknown',
-      delivery: [{ property: 'test.example', impressions: 1000 }],
+      records: [
+        {
+          record_id: 'delivery_001',
+          property: { type: 'domain', value: 'test.example' },
+          impressions: 1000,
+        },
+      ],
     };
   },
 
@@ -553,7 +559,19 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     }
     return {
       rights_id: context.rights_id ?? 'unknown',
+      pricing_option_id: 'standard',
       buyer: { domain: resolveBrand(options).domain },
+      campaign: {
+        description: 'E2E storyboard test campaign',
+        uses: ['commercial'],
+      },
+      revocation_webhook: {
+        url: 'https://test.example/webhooks/revocation',
+        authentication: {
+          schemes: ['Bearer'],
+          credentials: 'test-revocation-webhook-secret-token',
+        },
+      },
     };
   },
 
