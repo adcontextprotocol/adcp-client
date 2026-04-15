@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-04-14
-> Library: @adcp/client v4.29.0
+> Library: @adcp/client v4.30.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -123,7 +123,7 @@ Optional: `format_ids: object[]`, `asset_types: object[]`, `max_width: integer`,
 Request parameters for creating a media buy.
 
 Required: `account: Account Ref`, `brand: Brand Ref`, `start_time: Start Timing`, `end_time: string`
-Optional: `idempotency_key: string`, `plan_id: string`, `proposal_id: string`, `total_budget: object`, `packages: object[]`, `advertiser_industry: Advertiser Industry`, `invoice_recipient: Business Entity`, `io_acceptance: object`, +5 more
+Optional: `idempotency_key: string`, `plan_id: string`, `proposal_id: string`, `total_budget: object`, `packages: object[]`, `advertiser_industry: Advertiser Industry`, `invoice_recipient: Business Entity`, `io_acceptance: object`, +6 more
 
 #### `update_media_buy`
 
@@ -277,6 +277,40 @@ Optional: `principal: string`, `name_contains: string`, `pagination: Pagination 
 #### `delete_property_list`
 
 Request parameters for deleting a property list.
+
+Required: `list_id: string`
+Optional: `context: Context`, `idempotency_key: string`
+
+#### `create_collection_list`
+
+Request parameters for creating a new collection list.
+
+Required: `name: string`
+Optional: `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `idempotency_key: string`, `context: Context`
+
+#### `update_collection_list`
+
+Request parameters for updating an existing collection list.
+
+Required: `list_id: string`
+Optional: `name: string`, `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `webhook_url: string`, `context: Context`, `idempotency_key: string`
+
+#### `get_collection_list`
+
+Request parameters for retrieving a collection list with resolved collections.
+
+Required: `list_id: string`
+Optional: `resolve: boolean`, `pagination: object`, `context: Context`
+
+#### `list_collection_lists`
+
+Request parameters for listing collection lists.
+
+Optional: `principal: string`, `name_contains: string`, `pagination: Pagination Request`, `context: Context`
+
+#### `delete_collection_list`
+
+Request parameters for deleting a collection list.
 
 Required: `list_id: string`
 Optional: `context: Context`, `idempotency_key: string`

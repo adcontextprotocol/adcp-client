@@ -88,6 +88,7 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
     brand,
     brand_manifest: inputManifest,
     adcp_major_version,
+    idempotency_key,
     ...rest
   } = request;
 
@@ -125,7 +126,7 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
  * Strips v3-only top-level fields and adapts packages.
  */
 export function adaptUpdateMediaBuyRequestForV2(request: any): any {
-  const { reporting_webhook, adcp_major_version, ...rest } = request;
+  const { reporting_webhook, adcp_major_version, idempotency_key, ...rest } = request;
 
   return {
     ...rest,
@@ -135,17 +136,31 @@ export function adaptUpdateMediaBuyRequestForV2(request: any): any {
 
 /**
  * Normalize a v2-style package response to v3.
- * Converts creative_ids to creative_assignments.
+ * Converts creative_ids to creative_assignments and coerces null array fields
+ * to undefined so downstream consumers can safely use optional chaining.
  */
 export function normalizePackageResponse(pkg: PackageResponseV2 | PackageResponseV3): PackageResponseV3 {
+  // Coerce null array fields to undefined — some servers (e.g. Magnite) return
+  // explicit nulls for optional array fields like creative_assignments,
+  // creative_ids, and products. Leaving them as null causes downstream .map()
+  // crashes since callers expect undefined (absent) or a real array.
+  const nullArrayFields = ['creative_assignments', 'creative_ids', 'products'] as const;
+  let cleaned: any = pkg;
+  for (const field of nullArrayFields) {
+    if (field in cleaned && cleaned[field] === null) {
+      const { [field]: _removed, ...rest } = cleaned;
+      cleaned = rest;
+    }
+  }
+
   // Already v3 format
-  if (pkg.creative_assignments) {
-    return pkg as PackageResponseV3;
+  if (cleaned.creative_assignments) {
+    return cleaned as PackageResponseV3;
   }
 
   // v2 format - convert creative_ids to creative_assignments
-  if ((pkg as PackageResponseV2).creative_ids) {
-    const { creative_ids, ...rest } = pkg as PackageResponseV2;
+  if ((cleaned as PackageResponseV2).creative_ids) {
+    const { creative_ids, ...rest } = cleaned as PackageResponseV2;
     return {
       ...rest,
       creative_assignments: creative_ids!.map(id => ({ creative_id: id })),
@@ -153,7 +168,7 @@ export function normalizePackageResponse(pkg: PackageResponseV2 | PackageRespons
   }
 
   // No creatives
-  return pkg as PackageResponseV3;
+  return cleaned as PackageResponseV3;
 }
 
 /**

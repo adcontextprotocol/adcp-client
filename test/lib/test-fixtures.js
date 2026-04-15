@@ -33,7 +33,7 @@ function createTestProduct(overrides = {}) {
     },
     reporting_capabilities: {
       available_reporting_frequencies: ['daily'],
-      expected_delay_minutes: 240,
+      expected_delay_minutes: 60,
       timezone: 'UTC',
       supports_webhooks: false,
       available_metrics: ['impressions'],

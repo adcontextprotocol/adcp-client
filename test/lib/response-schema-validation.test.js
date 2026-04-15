@@ -24,7 +24,7 @@ const validProduct = {
   pricing_options: [{ pricing_option_id: 'po1', pricing_model: 'cpm', rate: 10, currency: 'USD' }],
   reporting_capabilities: {
     available_reporting_frequencies: ['daily'],
-    expected_delay_minutes: 240,
+    expected_delay_minutes: 60,
     timezone: 'UTC',
     supports_webhooks: false,
     available_metrics: ['impressions'],

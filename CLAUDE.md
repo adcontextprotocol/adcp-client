@@ -31,6 +31,7 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 **Building a brand rights agent?** Read and follow `skills/build-brand-rights-agent/SKILL.md` — covers brand identity, rights licensing, creative approval.
 
 **Critical rules**:
+- ALWAYS create a changeset (`npm run changeset`) for ANY library/CLI code change before pushing a PR. This is mandatory — do not wait to be asked.
 - ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing
 - NEVER inject mock/fallback data — return exactly what agents provide
 - NEVER hardcode API keys, tokens, or credentials — use environment variables

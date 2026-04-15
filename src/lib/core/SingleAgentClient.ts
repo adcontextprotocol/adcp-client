@@ -224,6 +224,19 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      * @default true
      */
     logSchemaViolations?: boolean;
+    /**
+     * Filter out invalid products from get_products responses instead of rejecting the entire response (default: false)
+     *
+     * When true: Each product in a get_products response is validated individually.
+     * Valid products are kept, invalid products are dropped, and the response is
+     * returned as long as it passes full schema validation after filtering.
+     * When false: The entire response is rejected if any product fails validation.
+     *
+     * Only applies to get_products — all other tool responses use standard validation.
+     *
+     * @default false
+     */
+    filterInvalidProducts?: boolean;
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
@@ -277,6 +290,7 @@ export class SingleAgentClient {
       webhookSecret: config.webhookSecret,
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
+      filterInvalidProducts: config.validation?.filterInvalidProducts === true, // Default: false
       onActivity: config.onActivity,
       governance: config.governance,
     });
@@ -1026,58 +1040,78 @@ export class SingleAgentClient {
     // Get server version (cached after first call)
     const version = await this.detectServerVersion();
 
-    if (version === 'v3') {
-      // For v3 agents that have a cached inputSchema, strip any top-level fields
-      // not declared in the schema's properties. This handles partial v3
-      // implementations (agents that declare get_adcp_capabilities but omit some
-      // v3 fields like brand or buying_mode from their tool schema).
-      // Fails open when no schema is cached — better to send unknown fields and
-      // let the agent respond than to silently drop data that might be required.
-      // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
-      const toolSchema = this.cachedToolSchemas?.get(taskType);
-      if (!toolSchema) return params;
+    let adapted = params;
 
-      const declaredFields = new Set(Object.keys(toolSchema));
-      // Protocol envelope fields are always preserved — they live at the
-      // protocol layer, not in individual tool schemas.
-      const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id']);
-      const filtered: Record<string, unknown> = {};
-      const stripped: string[] = [];
+    if (version !== 'v3') {
+      // Adapt v3 requests for v2 servers
+      switch (taskType) {
+        case 'get_products':
+          adapted = adaptGetProductsRequestForV2(params);
+          break;
 
-      for (const [key, value] of Object.entries(params)) {
-        if (declaredFields.has(key) || envelopeFields.has(key)) {
-          filtered[key] = value;
-        } else {
-          stripped.push(key);
-        }
+        case 'create_media_buy':
+          adapted = adaptCreateMediaBuyRequestForV2(params);
+          break;
+
+        case 'update_media_buy':
+          adapted = adaptUpdateMediaBuyRequestForV2(params);
+          break;
+
+        case 'sync_creatives':
+          adapted = adaptSyncCreativesRequestForV2(params);
+          break;
       }
-
-      if (stripped.length > 0) {
-        console.warn(
-          `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${stripped.join(', ')}`
-        );
-      }
-
-      return filtered;
     }
 
-    // Adapt v3 requests for v2 servers
-    switch (taskType) {
-      case 'get_products':
-        return adaptGetProductsRequestForV2(params);
+    // Strip any top-level fields not declared in the agent's tool schema.
+    // This handles partial implementations (agents that omit some fields)
+    // and prevents unknown fields like idempotency_key from causing
+    // validation errors on the remote server.
+    // Fails open when no schema is cached — better to send unknown fields and
+    // let the agent respond than to silently drop data that might be required.
+    // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
+    const toolSchema = this.cachedToolSchemas?.get(taskType);
+    if (!toolSchema) return adapted;
 
-      case 'create_media_buy':
-        return adaptCreateMediaBuyRequestForV2(params);
+    const declaredFields = new Set(Object.keys(toolSchema));
 
-      case 'update_media_buy':
-        return adaptUpdateMediaBuyRequestForV2(params);
-
-      case 'sync_creatives':
-        return adaptSyncCreativesRequestForV2(params);
-
-      default:
-        return params;
+    // The v2 adapter may rename fields (e.g. brand → brand_manifest) that a
+    // v3 server — misdetected as v2 — doesn't declare.  Reconcile known
+    // adapter mappings so the value isn't silently dropped.
+    const adapterAliases: [string, string][] = [['brand_manifest', 'brand']];
+    for (const [adapterField, schemaField] of adapterAliases) {
+      if (
+        adapted[adapterField] !== undefined &&
+        !declaredFields.has(adapterField) &&
+        declaredFields.has(schemaField) &&
+        adapted[schemaField] === undefined
+      ) {
+        adapted[schemaField] = adapted[adapterField];
+        delete adapted[adapterField];
+      }
     }
+
+    // Protocol envelope fields are always preserved — they live at the
+    // protocol layer, not in individual tool schemas.
+    const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id', 'ext']);
+    const filtered: Record<string, unknown> = {};
+    const stripped: string[] = [];
+
+    for (const [key, value] of Object.entries(adapted)) {
+      if (declaredFields.has(key) || envelopeFields.has(key)) {
+        filtered[key] = value;
+      } else {
+        stripped.push(key);
+      }
+    }
+
+    if (stripped.length > 0) {
+      console.warn(
+        `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${stripped.join(', ')}`
+      );
+    }
+
+    return filtered;
   }
 
   /**
@@ -2481,12 +2515,20 @@ export class SingleAgentClient {
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
           return this.cachedCapabilities;
         }
-        // Log when executeTask returns but success is false
-        console.warn(`[AdCP] get_adcp_capabilities returned non-success, falling back to synthetic capabilities`, {
-          success: result.success,
-          error: result.error,
-          hasData: !!result.data,
-        });
+        // Log when executeTask returns but success is false — this causes
+        // the server to be treated as v2 even though it advertises
+        // get_adcp_capabilities, which will trigger v2 field adapters.
+        console.warn(
+          `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
+            `returned non-success — falling back to v2 synthetic capabilities. ` +
+            `This may cause v2 field adapters to run against a v3 server.`,
+          {
+            success: result.success,
+            error: result.error,
+            hasData: !!result.data,
+            data: result.data,
+          }
+        );
       } catch (error: unknown) {
         // Re-throw errors that indicate real infrastructure problems —
         // only fall through for tool-execution failures (the agent
@@ -2495,14 +2537,20 @@ export class SingleAgentClient {
           throw error;
         }
         console.warn(
-          `[AdCP] get_adcp_capabilities call failed, falling back to synthetic capabilities: ${
-            error instanceof Error ? error.message : String(error)
-          }`
+          `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
+            `threw — falling back to v2 synthetic capabilities. ` +
+            `This may cause v2 field adapters to run against a v3 server. ` +
+            `Error: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
 
     // Build synthetic capabilities from tool list (v2)
+    console.warn(
+      `[AdCP] Agent "${this.agent.id}" detected as v2` +
+        (hasCapabilitiesTool ? ' (has get_adcp_capabilities tool but call failed)' : '') +
+        `. Tools: [${tools.map(t => t.name).join(', ')}]`
+    );
     this.cachedCapabilities = buildSyntheticCapabilities(tools);
     return this.cachedCapabilities;
   }

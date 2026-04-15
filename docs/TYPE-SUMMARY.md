@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
 > Generated at: 2026-04-14
-> @adcp/client v4.29.0
+> @adcp/client v4.30.1
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -189,6 +189,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   invoice_recipient: Business Entity
   io_acceptance: object
   po_number: string
+  agency_estimate_number: string
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
   artifact_webhook: object
@@ -505,6 +506,68 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 
 **`delete_property_list`** — Request parameters for deleting a property list.
+
+```
+{
+  list_id: string  // required
+  context: Context
+  idempotency_key: string
+}
+```
+
+**`create_collection_list`** — Request parameters for creating a new collection list.
+
+```
+{
+  name: string  // required
+  description: string
+  base_collections: object[]
+  filters: Collection List Filters
+  brand: Brand Ref
+  idempotency_key: string
+  context: Context
+}
+```
+
+**`update_collection_list`** — Request parameters for updating an existing collection list.
+
+```
+{
+  list_id: string  // required
+  name: string
+  description: string
+  base_collections: object[]
+  filters: Collection List Filters
+  brand: Brand Ref
+  webhook_url: string
+  context: Context
+  idempotency_key: string
+}
+```
+
+**`get_collection_list`** — Request parameters for retrieving a collection list with resolved collections.
+
+```
+{
+  list_id: string  // required
+  resolve: boolean
+  pagination: object
+  context: Context
+}
+```
+
+**`list_collection_lists`** — Request parameters for listing collection lists.
+
+```
+{
+  principal: string
+  name_contains: string
+  pagination: Pagination Request
+  context: Context
+}
+```
+
+**`delete_collection_list`** — Request parameters for deleting a collection list.
 
 ```
 {

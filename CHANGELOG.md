@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.30.2
+
+### Patch Changes
+
+- 86d2e3d: Fix ext field being incorrectly stripped from v2 server requests. ext is a protocol-level extension field valid in all AdCP versions and should always be preserved.
+- 1a0a863: Fix crash when servers return explicit null for optional array fields (creative_assignments, creative_ids, products) on media buy packages
+- 52570f3: Fix brand field being silently stripped when a v3 server is misdetected as v2. The v2 adapter renames brand → brand_manifest, but the schema filter then drops brand_manifest when the tool schema declares brand. Added adapter alias reconciliation so brand_manifest maps back to brand when the schema expects it. Improved version detection logging to surface why get_adcp_capabilities failures cause v2 fallback.
+
+## 4.30.1
+
+### Patch Changes
+
+- b143658: Fix schema-based field stripping to apply for all server versions, not just v3. Fields like idempotency_key and ext that are not declared in the remote server's tool schema are now stripped before sending, preventing validation errors on servers that don't accept them.
+
+## 4.30.0
+
+### Minor Changes
+
+- c3dd940: Add full brand identity blocks (logos, colors, fonts, tone) and creative assets to all test kit YAMLs. New test kits for Bistro Oranje, Summit Foods, and Osei Natural. Enables loading all sandbox brands from @adcp/client instead of hardcoding them.
+
 ## 4.29.0
 
 ### Minor Changes
