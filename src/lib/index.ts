@@ -527,6 +527,11 @@ export const PreviewCreativeVariantRequestSchema = _variant;
 // Auth utilities for custom integrations
 export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
 
+// ====== TOOL SCHEMA MAPS ======
+// Zod schemas keyed by tool name — use with server.tool(name, schema.shape, handler)
+export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';
+export { TOOL_RESPONSE_SCHEMAS } from './utils/response-schemas';
+
 // ====== VALIDATION ======
 // Schema validation for requests/responses
 export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPResponse } from './validation';
