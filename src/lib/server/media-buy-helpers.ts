@@ -37,15 +37,7 @@ export function validActionsForStatus(status: MediaBuyStatus): ValidAction[] {
     case 'pending_start':
       return ['cancel', 'update_budget', 'update_dates', 'update_packages', 'add_packages', 'sync_creatives'];
     case 'active':
-      return [
-        'pause',
-        'cancel',
-        'update_budget',
-        'update_dates',
-        'update_packages',
-        'add_packages',
-        'sync_creatives',
-      ];
+      return ['pause', 'cancel', 'update_budget', 'update_dates', 'update_packages', 'add_packages', 'sync_creatives'];
     case 'paused':
       return ['resume', 'cancel', 'update_budget', 'update_dates'];
     case 'completed':
