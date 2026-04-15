@@ -25,6 +25,8 @@ export interface Storyboard {
   track?: string;
   /** Tools that make this storyboard applicable (at least one must be present) */
   required_tools?: string[];
+  /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
+  requires_scenarios?: string[];
   agent: {
     interaction_model: string;
     capabilities: string[];

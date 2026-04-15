@@ -7,6 +7,11 @@ track: media_buy
 required_tools:
   - get_products
   - create_media_buy
+requires_scenarios:
+  - media_buy_seller/governance_approved
+  - media_buy_seller/governance_denied
+  - media_buy_seller/governance_conditions
+  - media_buy_seller/refine_products
 
 narrative: |
   You run a broadcast television platform — a local TV station group, network affiliate,

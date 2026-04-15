@@ -17,6 +17,10 @@
 # summary: string (one-line description for listings)
 # narrative: string (paragraph explaining the overall flow)
 #
+# requires_scenarios: string[] (optional — scenario IDs from storyboards/scenarios/ that must pass alongside this storyboard.
+#   Scenarios are small, focused behavior tests (e.g., "media_buy_seller/accepts_governance").
+#   The compliance engine resolves and runs them alongside the main storyboard.)
+#
 # agent:
 #   interaction_model: enum (stateless_transform | stateful_preloaded | stateful_push | stateless_generate | media_buy_seller | marketplace_catalog | owned_signals | si_platform | brand_rights_holder | governance_agent)
 #   capabilities: string[] (AdCP capability flags: supports_transformation, has_creative_library, supports_generation, sells_media, accepts_briefs, supports_guaranteed, supports_non_guaranteed, catalog_signals)

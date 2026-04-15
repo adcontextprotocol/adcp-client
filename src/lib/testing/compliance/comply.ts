@@ -11,7 +11,7 @@ import { createTestClient, discoverAgentProfile } from '../client';
 import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { runStoryboard } from '../storyboard/runner';
-import { loadBundledStoryboards, getStoryboardById } from '../storyboard/loader';
+import { loadBundledStoryboards, getStoryboardById, getScenarioById } from '../storyboard/loader';
 import type { Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
 import { PLATFORM_STORYBOARDS } from './platform-storyboards';
 import type {
@@ -493,6 +493,42 @@ function filterApplicable(storyboards: Storyboard[], agentTools: string[]): Stor
 }
 
 /**
+ * Expand storyboards by resolving their requires_scenarios.
+ * Each required scenario is loaded and inserted before its parent storyboard.
+ * Scenarios are deduplicated — if multiple storyboards require the same scenario, it runs once.
+ */
+function expandScenarios(storyboards: Storyboard[]): Storyboard[] {
+  const seen = new Set<string>(storyboards.map(s => s.id));
+  const expanded: Storyboard[] = [];
+
+  for (const sb of storyboards) {
+    if (sb.requires_scenarios?.length) {
+      for (const scenarioId of sb.requires_scenarios) {
+        if (seen.has(scenarioId)) continue;
+        const scenario = getScenarioById(scenarioId);
+        if (!scenario) {
+          throw new Error(
+            `Storyboard "${sb.id}" requires unknown scenario "${scenarioId}". ` +
+            `Check requires_scenarios in ${sb.id} for typos.`
+          );
+        }
+        if (scenario.requires_scenarios?.length) {
+          throw new Error(
+            `Scenario "${scenarioId}" has requires_scenarios, but nested scenario ` +
+            `dependencies are not supported. Only top-level storyboards may declare requires_scenarios.`
+          );
+        }
+        seen.add(scenarioId);
+        expanded.push(scenario);
+      }
+    }
+    expanded.push(sb);
+  }
+
+  return expanded;
+}
+
+/**
  * Group storyboard results by track.
  */
 function groupByTrack(
@@ -675,7 +711,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     // Resolve and filter storyboard pool
     const allStoryboards = resolveStoryboards(options);
-    const applicableStoryboards = filterApplicable(allStoryboards, profile.tools);
+    const withScenarios = expandScenarios(allStoryboards);
+    const applicableStoryboards = filterApplicable(withScenarios, profile.tools);
 
     // Run storyboards
     const storyboardResults: StoryboardResult[] = [];
@@ -696,7 +733,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     // Determine which tracks had storyboards in the pool (even if filtered out by tools)
     const poolTrackSet = new Set<ComplianceTrack>();
-    for (const sb of allStoryboards) {
+    for (const sb of withScenarios) {
       if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
     }
 

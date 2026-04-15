@@ -10,6 +10,11 @@ required_tools:
   - list_creative_formats
   - sync_creatives
   - get_media_buy_delivery
+requires_scenarios:
+  - media_buy_seller/governance_approved
+  - media_buy_seller/governance_denied
+  - media_buy_seller/governance_conditions
+  - media_buy_seller/refine_products
 
 narrative: |
   You run a generative sell-side platform — an AI ad network, generative DSP, or any system that
