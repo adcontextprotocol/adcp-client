@@ -23,7 +23,7 @@
  *         payload: params,
  *       });
  *       if (!gov.approved) {
- *         return adcpError('COMPLIANCE_UNSATISFIED', { message: gov.explanation });
+ *         return adcpError('GOVERNANCE_DENIED', { message: gov.explanation });
  *       }
  *       // governance_context threads through the media buy lifecycle
  *       return { media_buy_id: '...', governance_context: gov.governanceContext };
@@ -183,7 +183,7 @@ export function governanceDeniedError(
     details.conditions = result.conditions;
   }
 
-  return adcpError('COMPLIANCE_UNSATISFIED', {
+  return adcpError('GOVERNANCE_DENIED', {
     message: result.explanation,
     details,
   });

@@ -300,7 +300,7 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 | `InMemoryStateStore`                                    | Default state store (dev/testing)                                   |
 | `PostgresStateStore`                                    | Production state store (shared across instances)                    |
 | `checkGovernance(options)`                              | Call governance agent before financial commits                      |
-| `governanceDeniedError(result)`                         | Convert governance denial to COMPLIANCE_UNSATISFIED error           |
+| `governanceDeniedError(result)`                         | Convert governance denial to GOVERNANCE_DENIED error                |
 | `mediaBuyResponse(data)`                                | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions) |
 | `adcpError(code, { message })`                          | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)      |
 | `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |

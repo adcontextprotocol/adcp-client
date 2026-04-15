@@ -360,7 +360,7 @@ describe('createAdcpServer', () => {
   });
 
   describe('governance helper', () => {
-    it('governanceDeniedError produces COMPLIANCE_UNSATISFIED adcpError', () => {
+    it('governanceDeniedError produces GOVERNANCE_DENIED adcpError', () => {
       const { governanceDeniedError } = require('../dist/lib/server/governance');
       const result = governanceDeniedError({
         approved: false,
@@ -369,7 +369,7 @@ describe('createAdcpServer', () => {
         findings: [{ category_id: 'budget_compliance', severity: 'high', explanation: 'Over budget' }],
       });
       assert.strictEqual(result.isError, true);
-      assert.strictEqual(result.structuredContent.adcp_error.code, 'COMPLIANCE_UNSATISFIED');
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'GOVERNANCE_DENIED');
       assert.ok(result.structuredContent.adcp_error.message.includes('Budget exceeds plan'));
       assert.ok(result.structuredContent.adcp_error.details.check_id);
     });
