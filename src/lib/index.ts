@@ -69,6 +69,20 @@ export {
   type CrawlResult,
   type PropertyCrawlerConfig,
 } from './discovery/property-crawler';
+export {
+  NetworkConsistencyChecker,
+  type NetworkConsistencyCheckerConfig,
+  type NetworkCheckReport,
+  type CheckSummary,
+  type CheckProgress,
+  type OrphanedPointer,
+  type StalePointer,
+  type MissingPointer,
+  type SchemaError,
+  type AgentHealthResult,
+  type DomainDetail,
+  type DomainStatus,
+} from './discovery/network-consistency-checker';
 export type {
   Property,
   PropertyIdentifier,
