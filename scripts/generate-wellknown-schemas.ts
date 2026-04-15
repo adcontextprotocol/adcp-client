@@ -46,7 +46,12 @@ function loadCachedSchema(schemaRef: string): any {
       relativePath = relativePath.substring(firstSlash + 1);
     }
   }
-  const schemaPath = path.join(latestCacheDir, relativePath);
+  const schemaPath = path.resolve(latestCacheDir, relativePath);
+  // Guard against path traversal via crafted $ref values
+  if (!schemaPath.startsWith(path.resolve(latestCacheDir) + path.sep)) {
+    console.warn(`  ⚠️  Schema ref escapes cache directory: ${schemaRef}`);
+    return null;
+  }
   if (!existsSync(schemaPath)) {
     console.warn(`  ⚠️  Schema not found: ${schemaPath}`);
     return null;
@@ -65,6 +70,14 @@ function dereferenceSchema(schema: any, rootSchema: any, visited: Set<string> = 
   if (schema.$ref && typeof schema.$ref === 'string') {
     const refPath = schema.$ref;
 
+    // Cycle detection: if we've already seen this ref in the current chain, bail
+    if (visited.has(refPath)) {
+      console.warn(`  ⚠️  Circular $ref: ${refPath}`);
+      return { type: 'object', additionalProperties: true };
+    }
+    const childVisited = new Set(visited);
+    childVisited.add(refPath);
+
     // Local definition refs (#/definitions/foo)
     if (refPath.startsWith('#/definitions/')) {
       const defName = refPath.substring('#/definitions/'.length);
@@ -73,9 +86,7 @@ function dereferenceSchema(schema: any, rootSchema: any, visited: Set<string> = 
         console.warn(`  ⚠️  Missing local definition: ${refPath}`);
         return { type: 'object', additionalProperties: true };
       }
-      // Use a fresh visited set for each local ref — reusing the same definition
-      // in sibling branches is not circular, just shared.
-      const dereferenced = dereferenceSchema(def, rootSchema, new Set());
+      const dereferenced = dereferenceSchema(def, rootSchema, childVisited);
       const { $ref, ...rest } = schema;
       return Object.keys(rest).length > 0 ? { ...dereferenced, ...rest } : dereferenced;
     }
@@ -87,8 +98,8 @@ function dereferenceSchema(schema: any, rootSchema: any, visited: Set<string> = 
       return { type: 'object', additionalProperties: true };
     }
 
-    // External schemas are their own root — fresh visited set
-    const dereferenced = dereferenceSchema(resolved, resolved, new Set());
+    // External schemas are their own root
+    const dereferenced = dereferenceSchema(resolved, resolved, childVisited);
     const { $ref, ...rest } = schema;
     return Object.keys(rest).length > 0 ? { ...dereferenced, ...rest } : dereferenced;
   }

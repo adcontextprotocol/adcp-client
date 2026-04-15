@@ -77,6 +77,34 @@ describe('BrandJsonSchema', () => {
   });
 });
 
+describe('BrandJsonSchema rejections', () => {
+  test('rejects non-object input', () => {
+    assert.strictEqual(BrandJsonSchema.safeParse(42).success, false);
+    assert.strictEqual(BrandJsonSchema.safeParse('string').success, false);
+    assert.strictEqual(BrandJsonSchema.safeParse(null).success, false);
+  });
+
+  test('rejects array input', () => {
+    assert.strictEqual(BrandJsonSchema.safeParse([]).success, false);
+  });
+});
+
+describe('AdagentsJsonSchema rejections', () => {
+  test('rejects non-object input', () => {
+    assert.strictEqual(AdagentsJsonSchema.safeParse(42).success, false);
+    assert.strictEqual(AdagentsJsonSchema.safeParse('string').success, false);
+    assert.strictEqual(AdagentsJsonSchema.safeParse(null).success, false);
+  });
+
+  test('rejects agent with invalid authorization_type', () => {
+    const data = {
+      contact: { name: 'Test' },
+      authorized_agents: [{ url: 'https://a.example.com', authorization_type: 'invalid_type' }],
+    };
+    assert.strictEqual(AdagentsJsonSchema.safeParse(data).success, false);
+  });
+});
+
 describe('AdagentsJsonSchema', () => {
   test('accepts authoritative location redirect', () => {
     const data = {
