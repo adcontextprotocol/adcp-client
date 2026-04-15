@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-14
-> Library: @adcp/client v4.30.1
+> Generated at: 2026-04-15
+> Library: @adcp/client v4.30.2
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -129,7 +129,7 @@ Optional: `idempotency_key: string`, `plan_id: string`, `proposal_id: string`, `
 
 Request parameters for updating campaign and package settings.
 
-Required: `media_buy_id: string`
+Required: `account: Account Ref`, `media_buy_id: string`
 Optional: `revision: integer`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `start_time: Start Timing`, `end_time: string`, `packages: object[]`, `invoice_recipient: Business Entity`, +5 more
 
 #### `get_media_buys`
@@ -197,6 +197,8 @@ Optional: `message: string`, `creative_manifest: Creative Manifest`, `creative_i
 
 Request parameters for generating creative previews.
 
+Required: `request_type: 'single' | 'batch' | 'variant'`
+Optional: `creative_manifest: Creative Manifest`, `format_id: Format Id`, `inputs: object[]`, `template_id: string`, `quality: Creative Quality`, `output_format: Preview Output Format`, `item_limit: integer`, `requests: object[]`, +3 more
 
 #### `list_creative_formats`
 

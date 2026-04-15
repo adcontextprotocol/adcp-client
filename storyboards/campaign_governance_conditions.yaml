@@ -59,7 +59,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "campaign_governance_conditions--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -67,6 +69,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_conditions--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: plan_registration
     title: "Register governance plan with policy conditions"
     narrative: |
@@ -104,10 +113,28 @@ phases:
                 - "CTV buys require weekly delivery reporting"
                 - "UGC placements require brand safety review before go-live"
 
+          context:
+            correlation_id: "campaign_governance_conditions--sync_plans"
+        context_outputs:
+          - name: plan_id
+            path: 'plans[0].plan_id'
         validations:
           - check: response_schema
             description: "Response matches sync-plans-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_conditions--sync_plans"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "plans[0].plan_id"
+            description: "Governance agent assigns plan_id — must be echoed in check_governance"
+          - check: field_present
+            path: "plans[0].version"
+            description: "Plan includes version for concurrency"
   - id: governance_check_conditions
     title: "Governance check — approved with conditions"
     narrative: |
@@ -137,7 +164,7 @@ phases:
           - findings: may include should-severity findings noting the conditions
 
         sample_request:
-          plan_id: "gov_acme_conditional"
+          plan_id: "$context.plan_id"
           binding:
             type: "media_buy"
             account:
@@ -151,6 +178,8 @@ phases:
               - product_id: "lifestyle_display_q2"
                 budget: 15000
 
+          context:
+            correlation_id: "campaign_governance_conditions--check_governance_conditions"
         validations:
           - check: response_schema
             description: "Response matches check-governance-response.json schema"
@@ -164,6 +193,13 @@ phases:
             path: "governance_context"
             description: "Response includes governance context for the media buy"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_conditions--check_governance_conditions"
+            description: "Context correlation_id returned unchanged"
   - id: create_buy_with_conditions
     title: "Create media buy with governance conditions"
     narrative: |
@@ -209,6 +245,16 @@ phases:
               budget: 15000
               pricing_option_id: "cpm_standard"
 
+          context:
+            correlation_id: "campaign_governance_conditions--create_media_buy"
         validations:
           - check: response_schema
             description: "Response matches create-media-buy-response.json schema"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "campaign_governance_conditions--create_media_buy"
+            description: "Context correlation_id returned unchanged"

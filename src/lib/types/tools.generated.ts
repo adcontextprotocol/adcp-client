@@ -5171,6 +5171,7 @@ export interface UpdateMediaBuyRequest {
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  account: AccountReference;
   /**
    * Seller's ID of the media buy to update
    */
@@ -7840,123 +7841,97 @@ export interface BuildCreativeError {
 
 // preview_creative parameters
 /**
- * Request to generate previews of one or more creative manifests. Accepts either a single creative request or an array of requests for batch processing.
+ * Request to generate previews of creative manifests. Uses request_type to select single, batch, or variant mode.
  */
-export type PreviewCreativeRequest =
-  | {
-      /**
-       * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-       */
-      adcp_major_version?: number;
-      /**
-       * Discriminator indicating this is a single preview request
-       */
-      request_type: 'single';
-      format_id?: FormatID;
-      creative_manifest: CreativeManifest;
-      /**
-       * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
-       */
-      inputs?: {
-        /**
-         * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
-         */
-        name: string;
-        /**
-         * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/creative/universal-macros.md for available macros.
-         */
-        macros?: {
-          [k: string]: string | undefined;
-        };
-        /**
-         * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
-         */
-        context_description?: string;
-      }[];
-      /**
-       * Specific template ID for custom format rendering
-       */
-      template_id?: string;
-      quality?: CreativeQuality;
-      output_format?: PreviewOutputFormat;
-      /**
-       * Maximum number of catalog items to render in the preview. For catalog-driven generative formats, caps how many items are rendered per preview variant. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
-       */
-      item_limit?: number;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-       */
-      adcp_major_version?: number;
-      /**
-       * Discriminator indicating this is a batch preview request
-       */
-      request_type: 'batch';
-      /**
-       * Array of preview requests (1-50 items). Each follows the single request structure.
-       */
-      requests: {
-        format_id?: FormatID;
-        creative_manifest: CreativeManifest;
-        /**
-         * Array of input sets for generating multiple preview variants
-         */
-        inputs?: {
-          /**
-           * Human-readable name for this input set
-           */
-          name: string;
-          /**
-           * Macro values to use for this preview
-           */
-          macros?: {
-            [k: string]: string | undefined;
-          };
-          /**
-           * Natural language description of the context for AI-generated content
-           */
-          context_description?: string;
-        }[];
-        /**
-         * Specific template ID for custom format rendering
-         */
-        template_id?: string;
-        quality?: CreativeQuality;
-        output_format?: PreviewOutputFormat;
-        /**
-         * Maximum number of catalog items to render in this preview.
-         */
-        item_limit?: number;
-      }[];
-      quality?: CreativeQuality;
-      output_format?: PreviewOutputFormat;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-       */
-      adcp_major_version?: number;
-      /**
-       * Discriminator indicating this is a variant preview request
-       */
-      request_type: 'variant';
-      /**
-       * Platform-assigned variant identifier from get_creative_delivery response
-       */
-      variant_id: string;
-      /**
-       * Creative identifier for context
-       */
-      creative_id?: string;
-      output_format?: PreviewOutputFormat;
-      context?: ContextObject;
-      ext?: ExtensionObject;
+export type PreviewCreativeRequest = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Preview mode. 'single' previews one creative manifest. 'batch' previews multiple creatives in one call. 'variant' replays a post-flight variant by ID.
+   */
+  request_type: 'single' | 'batch' | 'variant';
+  creative_manifest?: CreativeManifest;
+  format_id?: FormatID;
+  /**
+   * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. Used in single mode.
+   */
+  inputs?: {
+    /**
+     * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
+     */
+    name: string;
+    /**
+     * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list.
+     */
+    macros?: {
+      [k: string]: string | undefined;
     };
+    /**
+     * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns')
+     */
+    context_description?: string;
+  }[];
+  /**
+   * Specific template ID for custom format rendering. Used in single mode.
+   */
+  template_id?: string;
+  quality?: CreativeQuality;
+  output_format?: PreviewOutputFormat;
+  /**
+   * Maximum number of catalog items to render per preview variant. Used in single mode. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
+   */
+  item_limit?: number;
+  /**
+   * Array of preview requests (1-50 items). Required when request_type is 'batch'. Each item follows the single request structure.
+   */
+  requests?: {
+    format_id?: FormatID;
+    creative_manifest: CreativeManifest;
+    /**
+     * Array of input sets for generating multiple preview variants
+     */
+    inputs?: {
+      /**
+       * Human-readable name for this input set
+       */
+      name: string;
+      /**
+       * Macro values to use for this preview
+       */
+      macros?: {
+        [k: string]: string | undefined;
+      };
+      /**
+       * Natural language description of the context for AI-generated content
+       */
+      context_description?: string;
+    }[];
+    /**
+     * Specific template ID for custom format rendering
+     */
+    template_id?: string;
+    quality?: CreativeQuality;
+    output_format?: PreviewOutputFormat;
+    /**
+     * Maximum number of catalog items to render in this preview.
+     */
+    item_limit?: number;
+  }[];
+  /**
+   * Platform-assigned variant identifier from get_creative_delivery response. Required when request_type is 'variant'.
+   */
+  variant_id?: string;
+  /**
+   * Creative identifier for context. Used in variant mode.
+   */
+  creative_id?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
 
 // preview_creative response
 /**
@@ -12715,42 +12690,15 @@ export interface GetAdCPCapabilitiesResponse {
        */
       targeting?: {
         /**
-         * Geographic targeting levels this seller supports.
-         */
-        supported_geo_levels?: ('countries' | 'regions' | 'metros' | 'postal_areas')[];
-        /**
-         * Metro area classification systems this seller supports. Only meaningful when supported_geo_levels includes 'metros'.
-         */
-        supported_metro_systems?: ('nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2')[];
-        /**
-         * Postal code systems this seller supports. Only meaningful when supported_geo_levels includes 'postal_areas'.
-         */
-        supported_postal_systems?: (
-          | 'us_zip'
-          | 'us_zip_plus_four'
-          | 'gb_outward'
-          | 'gb_full'
-          | 'ca_fsa'
-          | 'ca_full'
-          | 'de_plz'
-          | 'fr_code_postal'
-          | 'au_postcode'
-          | 'ch_plz'
-          | 'at_plz'
-        )[];
-        /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_geo_levels instead.
+         * Country-level targeting using ISO 3166-1 alpha-2 codes
          */
         geo_countries?: boolean;
         /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_geo_levels instead.
+         * Region/state-level targeting using ISO 3166-2 codes (e.g., US-NY, GB-SCT)
          */
         geo_regions?: boolean;
         /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_metro_systems instead.
+         * Metro area targeting. Properties indicate which classification systems are supported.
          */
         geo_metros?: {
           nielsen_dma?: boolean;
@@ -12759,8 +12707,7 @@ export interface GetAdCPCapabilitiesResponse {
           eurostat_nuts2?: boolean;
         };
         /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_postal_systems instead.
+         * Postal area targeting. Properties indicate which postal code systems are supported.
          */
         geo_postal_areas?: {
           us_zip?: boolean;

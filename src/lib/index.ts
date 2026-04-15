@@ -69,6 +69,20 @@ export {
   type CrawlResult,
   type PropertyCrawlerConfig,
 } from './discovery/property-crawler';
+export {
+  NetworkConsistencyChecker,
+  type NetworkConsistencyCheckerConfig,
+  type NetworkCheckReport,
+  type CheckSummary,
+  type CheckProgress,
+  type OrphanedPointer,
+  type StalePointer,
+  type MissingPointer,
+  type SchemaError,
+  type AgentHealthResult,
+  type DomainDetail,
+  type DomainStatus,
+} from './discovery/network-consistency-checker';
 export type {
   Property,
   PropertyIdentifier,
@@ -432,6 +446,8 @@ export {
   syncCreativesResponse,
   getSignalsResponse,
   activateSignalResponse,
+  cancelMediaBuyResponse,
+  validActionsForStatus,
   taskToolResponse,
   registerAdcpTaskTool,
   createTaskCapableServer,
@@ -444,11 +460,20 @@ export {
   cleanupExpiredTasks,
   getMcpTasksMigration,
   MCP_TASKS_MIGRATION,
+  createAdcpServer,
+  checkGovernance,
+  governanceDeniedError,
+  InMemoryStateStore,
+  PostgresStateStore,
+  getAdcpStateMigration,
+  ADCP_STATE_MIGRATION,
 } from './server';
 export type {
   AdcpErrorOptions,
   AdcpErrorResponse,
   McpToolResponse,
+  ValidAction,
+  CancelMediaBuyInput,
   AdcpTaskToolConfig,
   TaskStore,
   TaskMessageQueue,
@@ -465,6 +490,28 @@ export type {
   PostgresTaskStoreOptions,
   TestControllerStore,
   ControllerScenario,
+  AdcpServerConfig,
+  AdcpToolMap,
+  AdcpServerToolName,
+  AdcpCapabilitiesConfig,
+  AdcpLogger,
+  HandlerContext,
+  MediaBuyHandlers,
+  SignalsHandlers,
+  CreativeHandlers,
+  GovernanceHandlers,
+  AccountHandlers,
+  EventTrackingHandlers,
+  SponsoredIntelligenceHandlers,
+  CheckGovernanceOptions,
+  GovernanceCallResult,
+  GovernanceApproved,
+  GovernanceDenied,
+  GovernanceConditions,
+  AdcpStateStore,
+  ListOptions as StateListOptions,
+  ListResult as StateListResult,
+  PostgresStateStoreOptions,
 } from './server';
 
 // ====== ERROR EXTRACTION ======
@@ -496,32 +543,18 @@ export { normalizeRequestParams, normalizePackageParams } from './utils/request-
 // Re-export all Zod schemas for user validation needs
 export * from './types/schemas.generated';
 
-// PreviewCreativeRequestSchema is a z.union() which can't be used with
-// server.tool(name, Schema.shape, handler) — MCP SDK requires z.object().
-// Export each variant so agents can register the one they support.
-import { PreviewCreativeRequestSchema } from './types/schemas.generated';
-
-const [_single, _batch, _variant] = PreviewCreativeRequestSchema.options;
-
-function assertRequestType(schema: { shape: Record<string, unknown> }, expected: string): void {
-  const lit = schema.shape.request_type as { value?: string } | undefined;
-  if (lit?.value !== expected) {
-    throw new Error(
-      `PreviewCreativeRequestSchema union order changed: expected request_type="${expected}", got "${lit?.value}"`
-    );
-  }
-}
-assertRequestType(_single, 'single');
-assertRequestType(_batch, 'batch');
-assertRequestType(_variant, 'variant');
-
-export const PreviewCreativeSingleRequestSchema = _single;
-export const PreviewCreativeBatchRequestSchema = _batch;
-export const PreviewCreativeVariantRequestSchema = _variant;
+// PreviewCreativeRequestSchema is now a flat z.object() with request_type discriminant.
+// The old variant exports (PreviewCreativeSingleRequestSchema, etc.) are no longer needed —
+// use PreviewCreativeRequestSchema.shape directly with server.tool().
 
 // ====== AUTHENTICATION ======
 // Auth utilities for custom integrations
 export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
+
+// ====== TOOL SCHEMA MAPS ======
+// Zod schemas keyed by tool name — use with server.tool(name, schema.shape, handler)
+export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';
+export { TOOL_RESPONSE_SCHEMAS } from './utils/response-schemas';
 
 // ====== VALIDATION ======
 // Schema validation for requests/responses

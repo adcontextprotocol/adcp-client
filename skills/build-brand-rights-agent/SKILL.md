@@ -139,19 +139,36 @@ taskToolResponse({
 })
 ```
 
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
 ## SDK Quick Reference
 
 | SDK piece                                               | Usage                                                               |
 | ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
-| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod                                |
-| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
+| `createAdcpServer({ name, capabilities })`            | Create server with auto-generated `get_adcp_capabilities`           |
+| `serve(() => { const server = createAdcpServer(...); ... return server; })` | Start HTTP server on `:3001/mcp` |
+| `server.tool(name, {}, handler)`                        | Register brand rights tools on the returned server                  |
 | `taskToolResponse(data, summary)`                       | Build tool response (used for all brand rights tools)               |
+| `adcpError(code, { message })`                          | Structured error                                                    |
 
-Brand rights tools use `{}` for input schemas (no generated request schemas). Register with `server.tool('get_brand_identity', {}, handler)`.
+Brand rights tools do not have a domain group in `createAdcpServer` yet. Use `createAdcpServer` for server setup and capabilities, then register brand rights tools with `server.tool()` on the returned server. All brand rights tools use `{}` for input schemas.
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import: `import { createAdcpServer, serve, taskToolResponse, adcpError } from '@adcp/client';`
 
 ## Setup
 
@@ -180,11 +197,44 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-1. Single `.ts` file — all tools in one file
-2. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
+1. Single `.ts` file — use `createAdcpServer` for server setup, then register brand tools with `server.tool()`
+2. Do not register `get_adcp_capabilities` — pass `capabilities: { ... }` to `createAdcpServer` to declare the `brand` protocol
 3. All brand rights tools use `{}` as input schema
-4. Use in-memory Maps for rights grants
-5. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)`
+4. Use `taskToolResponse()` to wrap handler responses (brand tools are not auto-wrapped by domain groups)
+
+```typescript
+import { createAdcpServer, serve, taskToolResponse } from '@adcp/client';
+
+serve(() => {
+  const server = createAdcpServer({
+    name: 'Brand Rights Agent',
+    version: '1.0.0',
+    capabilities: {
+      major_versions: [3],
+    },
+  });
+
+  server.tool('get_brand_identity', {}, async () => {
+    return taskToolResponse({
+      brand_id: 'brand_acme',
+      names: [{ name: 'Acme Corp', language: 'en' }],
+      guidelines_url: 'https://acme.com/guidelines',
+    });
+  });
+
+  server.tool('acquire_rights', {}, async (args) => {
+    return taskToolResponse({
+      rights_id: args.rights_id,
+      rights_grant_id: `grant_${Date.now()}`,
+      status: 'active',
+    });
+  });
+
+  // ... other brand rights tools
+
+  return server;
+});
+```
 
 The skill contains everything you need. Do not read additional docs before writing code.
 
@@ -201,10 +251,13 @@ npx @adcp/client storyboard run http://localhost:3001/mcp brand_rights --json
 
 | Mistake                                          | Fix                                                              |
 | ------------------------------------------------ | ---------------------------------------------------------------- |
+| Manually registering `get_adcp_capabilities`     | Pass `capabilities` to `createAdcpServer` — framework generates it |
+| Using `createTaskCapableServer` instead of `createAdcpServer` | `createAdcpServer` handles server setup and capabilities — use it even when registering tools manually |
 | `acquire_rights` missing `rights_id` in response | Echo `rights_id` from request — required for validation          |
 | `update_rights` missing `rights_id` in response  | Same — echo `rights_id` back                                    |
 | `creative_approval` returns `status` not `decision` | Field name is `decision`, values: `approved`, `rejected`, `review` |
 | Using typed schemas for brand rights tools       | No generated schemas — use `{}` for all input schemas            |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Storyboards
 

@@ -58,7 +58,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "media_buy_state_machine--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -66,6 +68,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: setup
     title: "Create a media buy"
     narrative: |
@@ -95,6 +104,13 @@ phases:
           brand:
             domain: "acmeoutdoor.com"
 
+          context:
+            correlation_id: "media_buy_state_machine--discover_products"
+        context_outputs:
+          - name: product_id
+            path: 'products[0].product_id'
+          - name: pricing_option_id
+            path: 'products[0].pricing_options[0].pricing_option_id'
         validations:
           - check: response_schema
             description: "Response matches get-products-response.json schema"
@@ -102,6 +118,22 @@ phases:
             path: "products[0].product_id"
             description: "At least one product with a product_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--discover_products"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "products[0].format_ids"
+            description: "Products include format_ids for creative requirements"
+          - check: field_present
+            path: "products[0].format_ids[0].agent_url"
+            description: "Format IDs include agent_url — must match this agent's URL"
+          - check: field_present
+            path: "products[0].format_ids[0].id"
+            description: "Format IDs include id — must be accepted back in sync_creatives"
       - id: create_buy
         title: "Create the test media buy"
         narrative: |
@@ -128,6 +160,13 @@ phases:
               budget: 10000
               pricing_option_id: "test-pricing"
 
+          context:
+            correlation_id: "media_buy_state_machine--create_buy"
+        context_outputs:
+          - name: media_buy_id
+            path: 'media_buy_id'
+          - name: package_id
+            path: 'packages[0].package_id'
         validations:
           - check: response_schema
             description: "Response matches create-media-buy-response.json schema"
@@ -135,6 +174,16 @@ phases:
             path: "media_buy_id"
             description: "Response includes a media_buy_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--create_buy"
+            description: "Context correlation_id returned unchanged"
+          - check: field_present
+            path: "packages[0].package_id"
+            description: "Seller assigns package_id — must be echoed in update_media_buy"
   - id: state_transitions
     title: "Valid state transitions"
     narrative: |
@@ -156,14 +205,23 @@ phases:
           Media buy status transitions to paused.
 
         sample_request:
-          media_buy_id: "test-media-buy"
+          media_buy_id: "$context.media_buy_id"
           paused: true
 
+          context:
+            correlation_id: "media_buy_state_machine--pause_buy"
         validations:
           - check: field_present
             path: "status"
             description: "Response includes updated status"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--pause_buy"
+            description: "Context correlation_id returned unchanged"
       - id: resume_buy
         title: "Resume the media buy"
         narrative: |
@@ -178,14 +236,23 @@ phases:
           Media buy status transitions back to active.
 
         sample_request:
-          media_buy_id: "test-media-buy"
+          media_buy_id: "$context.media_buy_id"
           paused: false
 
+          context:
+            correlation_id: "media_buy_state_machine--resume_buy"
         validations:
           - check: field_present
             path: "status"
             description: "Response includes updated status"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--resume_buy"
+            description: "Context correlation_id returned unchanged"
       - id: cancel_buy
         title: "Cancel the media buy"
         narrative: |
@@ -201,14 +268,23 @@ phases:
           Media buy status transitions to canceled. This is terminal.
 
         sample_request:
-          media_buy_id: "test-media-buy"
+          media_buy_id: "$context.media_buy_id"
           canceled: true
 
+          context:
+            correlation_id: "media_buy_state_machine--cancel_buy"
         validations:
           - check: field_present
             path: "status"
             description: "Response includes canceled status"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--cancel_buy"
+            description: "Context correlation_id returned unchanged"
   - id: terminal_enforcement
     title: "Terminal state enforcement"
     narrative: |
@@ -226,19 +302,29 @@ phases:
         response_schema_ref: "media-buy/update-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/update_media_buy"
         comply_scenario: terminal_state_enforcement
+        expect_error: true
         stateful: true
         expected: |
           Reject with INVALID_STATE_TRANSITION — cannot pause a canceled buy.
 
         sample_request:
-          media_buy_id: "test-media-buy"
+          media_buy_id: "$context.media_buy_id"
           paused: true
 
+          context:
+            correlation_id: "media_buy_state_machine--pause_canceled_buy"
         validations:
           - check: field_present
             path: "errors"
             description: "Response contains an error for invalid transition"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--pause_canceled_buy"
+            description: "Context correlation_id returned unchanged"
       - id: resume_canceled_buy
         title: "Reject resume on canceled buy"
         narrative: |
@@ -249,24 +335,36 @@ phases:
         response_schema_ref: "media-buy/update-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/update_media_buy"
         comply_scenario: terminal_state_enforcement
+        expect_error: true
         stateful: true
         expected: |
           Reject with INVALID_STATE_TRANSITION — cannot resume a canceled buy.
 
         sample_request:
-          media_buy_id: "test-media-buy"
+          media_buy_id: "$context.media_buy_id"
           paused: false
 
+          context:
+            correlation_id: "media_buy_state_machine--resume_canceled_buy"
         validations:
           - check: field_present
             path: "errors"
             description: "Response contains an error for invalid transition"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "media_buy_state_machine--resume_canceled_buy"
+            description: "Context correlation_id returned unchanged"
       - id: recancel_buy
         title: "Handle re-cancel of canceled buy"
         narrative: |
           Attempt to cancel an already-canceled media buy. The agent should either
-          return an error or accept it idempotently.
+          return an error or accept it idempotently. Both are valid, so no context
+          echo validation — the error path loses structured data without expect_error,
+          and we cannot set expect_error when success is also valid.
         task: update_media_buy
         schema_ref: "media-buy/update-media-buy-request.json"
         response_schema_ref: "media-buy/update-media-buy-response.json"
@@ -278,5 +376,8 @@ phases:
           Both behaviors are valid.
 
         sample_request:
-          media_buy_id: "test-media-buy"
+          media_buy_id: "$context.media_buy_id"
           canceled: true
+
+          context:
+            correlation_id: "media_buy_state_machine--recancel_buy"

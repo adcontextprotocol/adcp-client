@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
+import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -724,12 +725,12 @@ export class SingleAgentClient {
       const mcpPayload = payload as MCPWebhookPayload;
       return {
         operation_id: operationId || 'unknown',
-        context_id: mcpPayload.context_id,
+        context_id: mcpPayload.context_id ?? undefined,
         task_id: mcpPayload.task_id,
         task_type: taskType,
         status: mcpPayload.status,
-        result: mcpPayload.result,
-        message: mcpPayload.message,
+        result: mcpPayload.result ?? undefined,
+        message: mcpPayload.message ?? undefined,
         timestamp: mcpPayload.timestamp,
       };
     }
@@ -1065,8 +1066,8 @@ export class SingleAgentClient {
 
     // Strip any top-level fields not declared in the agent's tool schema.
     // This handles partial implementations (agents that omit some fields)
-    // and prevents unknown fields like idempotency_key from causing
-    // validation errors on the remote server.
+    // and prevents unknown fields from causing validation errors on the
+    // remote server.
     // Fails open when no schema is cached — better to send unknown fields and
     // let the agent respond than to silently drop data that might be required.
     // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
@@ -1093,7 +1094,7 @@ export class SingleAgentClient {
 
     // Protocol envelope fields are always preserved — they live at the
     // protocol layer, not in individual tool schemas.
-    const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id', 'ext']);
+    const envelopeFields = ADCP_ENVELOPE_FIELDS;
     const filtered: Record<string, unknown> = {};
     const stripped: string[] = [];
 

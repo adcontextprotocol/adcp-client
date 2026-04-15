@@ -95,6 +95,10 @@ function isPathReachable(schema, segments) {
 // here only if its validations target runtime metadata rather than tool response data.
 const HARNESS_STORYBOARDS = new Set(['deterministic_testing']);
 
+// Protocol envelope fields validated at runtime but not always declared
+// in individual tool response schemas. Skip these in schema drift checks.
+const ENVELOPE_PATHS = new Set(['context', 'context.correlation_id', 'ext']);
+
 function collectFieldValidations(storyboards) {
   const entries = [];
   for (const sb of storyboards) {
@@ -105,6 +109,7 @@ function collectFieldValidations(storyboards) {
         if (step.expect_error) continue; // error steps validate extracted error data, not response schemas
         for (const v of step.validations) {
           if ((v.check === 'field_present' || v.check === 'field_value') && v.path) {
+            if (ENVELOPE_PATHS.has(v.path)) continue; // protocol-level, not per-schema
             entries.push({
               storyboard: sb.id,
               step: step.id,

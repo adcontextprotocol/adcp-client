@@ -62,7 +62,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring media_buy in supported_protocols, confirming the agent sells media.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "audience_sync--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -70,6 +72,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "audience_sync--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: account_setup
     title: "Account setup"
     narrative: |
@@ -94,7 +103,9 @@ phases:
           - account_id: platform-assigned identifier
           - status: active (required for audience sync)
 
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "audience_sync--discover_account"
 
         validations:
           - check: response_schema
@@ -103,6 +114,13 @@ phases:
             path: "accounts[0].account_id"
             description: "At least one account exists with an account_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "audience_sync--discover_account"
+            description: "Context correlation_id returned unchanged"
   - id: audience_sync
     title: "Audience sync"
     narrative: |
@@ -135,10 +153,19 @@ phases:
               domain: "acmeoutdoor.example"
             operator: "pinnacle-agency.example"
 
+          context:
+            correlation_id: "audience_sync--discover_audiences"
         validations:
           - check: response_schema
             description: "Response matches sync-audiences-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "audience_sync--discover_audiences"
+            description: "Context correlation_id returned unchanged"
       - id: create_audience
         title: "Create test audience"
         narrative: |
@@ -172,6 +199,8 @@ phases:
                 - hashed_email: "a000000000000000000000000000000000000000000000000000000000000000"
                 - hashed_phone: "b000000000000000000000000000000000000000000000000000000000000000"
 
+          context:
+            correlation_id: "audience_sync--create_audience"
         validations:
           - check: response_schema
             description: "Response matches sync-audiences-response.json schema"
@@ -182,6 +211,13 @@ phases:
             path: "audiences[0].action"
             description: "Audience has an action (created or updated)"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "audience_sync--create_audience"
+            description: "Context correlation_id returned unchanged"
       - id: delete_audience
         title: "Delete test audience"
         narrative: |
@@ -207,9 +243,19 @@ phases:
             - audience_id: "adcp-test-audience-001"
               delete: true
 
+          context:
+            correlation_id: "audience_sync--delete_audience"
         validations:
           - check: response_schema
             description: "Response matches sync-audiences-response.json schema"
           - check: field_present
             path: "audiences[0].action"
             description: "Audience deletion acknowledged with action field"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "audience_sync--delete_audience"
+            description: "Context correlation_id returned unchanged"

@@ -59,6 +59,13 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   calibrate_content: schemas.CalibrateContentResponseSchema,
   validate_content_delivery: schemas.ValidateContentDeliveryResponseSchema,
 
+  // Collection lists
+  create_collection_list: schemas.CreateCollectionListResponseSchema,
+  update_collection_list: schemas.UpdateCollectionListResponseSchema,
+  get_collection_list: schemas.GetCollectionListResponseSchema,
+  list_collection_lists: schemas.ListCollectionListsResponseSchema,
+  delete_collection_list: schemas.DeleteCollectionListResponseSchema,
+
   // Campaign governance
   sync_plans: schemas.SyncPlansResponseSchema,
   check_governance: schemas.CheckGovernanceResponseSchema,
@@ -84,21 +91,12 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
     z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
   ]),
 
-  // Brand rights — no generated schemas yet, hand-written from protocol spec.
-  // Replace with generated schemas once the schema generator covers brand tools.
-  // .passthrough() preserves extra fields from agent responses (e.g., generation_credentials).
-  get_brand_identity: z.union([
-    z.object({ brand_id: z.string(), names: z.array(z.unknown()) }).passthrough(),
-    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
-  ]),
-  get_rights: z.union([
-    z.object({ rights: z.array(z.object({ rights_id: z.string() }).passthrough()) }).passthrough(),
-    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
-  ]),
-  acquire_rights: z.union([
-    z.object({ rights_id: z.string(), status: z.string() }).passthrough(),
-    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
-  ]),
+  // Brand rights
+  get_brand_identity: schemas.GetBrandIdentityResponseSchema,
+  get_rights: schemas.GetRightsResponseSchema,
+  acquire_rights: schemas.AcquireRightsResponseSchema,
+
+  // Brand rights — no schema definitions yet for these tools
   update_rights: z.union([
     z.object({ rights_id: z.string() }).passthrough(),
     z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),

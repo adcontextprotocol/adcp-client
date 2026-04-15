@@ -64,7 +64,9 @@ phases:
         stateful: false
         expected: |
           Return capabilities declaring creative in supported_protocols, confirming the agent handles creative operations.
-        sample_request: {}
+        sample_request:
+          context:
+            correlation_id: "creative_ad_server--get_capabilities"
         validations:
           - check: response_schema
             description: "Response matches get-adcp-capabilities-response.json schema"
@@ -72,6 +74,13 @@ phases:
             path: "supported_protocols"
             description: "Agent declares supported protocols"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_ad_server--get_capabilities"
+            description: "Context correlation_id returned unchanged"
   - id: browse_library
     title: "Browse the creative library"
     narrative: |
@@ -115,6 +124,8 @@ phases:
             statuses:
               - "approved"
 
+          context:
+            correlation_id: "creative_ad_server--list_creatives"
         validations:
           - check: response_schema
             description: "Response matches list-creatives-response.json schema"
@@ -125,6 +136,13 @@ phases:
             path: "creatives[0].pricing_options[0].pricing_option_id"
             description: "Pricing option includes pricing_option_id for billing reference"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_ad_server--list_creatives"
+            description: "Context correlation_id returned unchanged"
       - id: list_output_formats
         title: "Check available output formats"
         narrative: |
@@ -193,6 +211,8 @@ phases:
           media_buy_id: "mb_summer_campaign_001"
           package_id: "pkg_ctv_premium"
 
+          context:
+            correlation_id: "creative_ad_server--build_tag"
         validations:
           - check: response_schema
             description: "Response matches build-creative-response.json schema"
@@ -203,6 +223,13 @@ phases:
             path: "pricing_option_id"
             description: "Response includes pricing_option_id"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_ad_server--build_tag"
+            description: "Context correlation_id returned unchanged"
   - id: track_delivery
     title: "Track creative delivery"
     narrative: |
@@ -233,10 +260,22 @@ phases:
           media_buy_ids:
             - "mb_summer_campaign_001"
 
+          context:
+            correlation_id: "creative_ad_server--get_delivery"
+          ext:
+            test_platform:
+              test_run: true
         validations:
           - check: response_schema
             description: "Response matches get-creative-delivery-response.json schema"
 
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_ad_server--get_delivery"
+            description: "Context correlation_id returned unchanged"
   - id: report_billing
     title: "Report usage for billing"
     narrative: |
@@ -281,6 +320,8 @@ phases:
               vendor_cost: 1200.00
               currency: "USD"
 
+          context:
+            correlation_id: "creative_ad_server--report_usage"
         validations:
           - check: response_schema
             description: "Response matches report-usage-response.json schema"
@@ -288,3 +329,11 @@ phases:
             path: "accepted"
             value: 1
             description: "One usage record accepted"
+
+          - check: field_present
+            path: "context"
+            description: "Response echoes back the context object"
+          - check: field_value
+            path: "context.correlation_id"
+            value: "creative_ad_server--report_usage"
+            description: "Context correlation_id returned unchanged"

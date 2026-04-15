@@ -30,6 +30,8 @@ import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
 import type { GetProductsResponse } from '../types/core.generated';
 import type { CreateMediaBuySuccess } from '../types/core.generated';
 import type { GetMediaBuyDeliveryResponse } from '../types/tools.generated';
+import { validActionsForStatus } from './media-buy-helpers';
+import type { CancelMediaBuyInput } from './media-buy-helpers';
 import type {
   ListCreativeFormatsResponse,
   UpdateMediaBuySuccess,
@@ -91,11 +93,27 @@ export function productsResponse(data: GetProductsResponse, summary?: string): M
 
 /**
  * Build a successful create_media_buy response.
+ *
+ * Applies protocol defaults when not explicitly provided:
+ * - `revision` defaults to `1` (initial revision for optimistic concurrency)
+ * - `confirmed_at` defaults to the current ISO 8601 timestamp
+ * - `valid_actions` populated from status via `validActionsForStatus()` when
+ *   `status` is provided but `valid_actions` is not
  */
 export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string): McpToolResponse {
+  const withDefaults = { ...data };
+  if (withDefaults.revision === undefined) {
+    withDefaults.revision = 1;
+  }
+  if (withDefaults.confirmed_at === undefined) {
+    withDefaults.confirmed_at = new Date().toISOString();
+  }
+  if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
+    withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
+  }
   return {
-    content: [{ type: 'text', text: summary ?? `Media buy ${data.media_buy_id} created` }],
-    structuredContent: toStructuredContent(data),
+    content: [{ type: 'text', text: summary ?? `Media buy ${withDefaults.media_buy_id} created` }],
+    structuredContent: toStructuredContent(withDefaults),
   };
 }
 
@@ -138,11 +156,18 @@ export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, s
 
 /**
  * Build a successful update_media_buy response.
+ *
+ * When `status` is provided but `valid_actions` is not, auto-populates
+ * `valid_actions` from `validActionsForStatus()`.
  */
 export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: string): McpToolResponse {
+  const withDefaults = { ...data };
+  if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
+    withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
+  }
   return {
-    content: [{ type: 'text', text: summary ?? `Media buy ${data.media_buy_id} updated` }],
-    structuredContent: toStructuredContent(data),
+    content: [{ type: 'text', text: summary ?? `Media buy ${withDefaults.media_buy_id} updated` }],
+    structuredContent: toStructuredContent(withDefaults),
   };
 }
 
@@ -286,5 +311,59 @@ export function activateSignalResponse(data: ActivateSignalSuccess, summary?: st
       },
     ],
     structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a cancel response for update_media_buy with action: 'cancel'.
+ *
+ * Eliminates the cancellation metadata trap by requiring `canceled_by`
+ * and auto-setting `canceled_at`, `status: 'canceled'`, and `valid_actions: []`.
+ *
+ * Note: `cancellation` is not yet on the `UpdateMediaBuySuccess` generated type
+ * (it exists on the full `MediaBuy` entity). This builder constructs the response
+ * as a plain object to include it. When the upstream schema adds `cancellation`
+ * to the update response, this can be tightened.
+ *
+ * @example
+ * ```typescript
+ * server.tool('update_media_buy', UpdateMediaBuyRequestSchema.shape, async (params) => {
+ *   if (params.action === 'cancel') {
+ *     return cancelMediaBuyResponse({
+ *       media_buy_id: params.media_buy_id,
+ *       canceled_by: 'buyer',
+ *       revision: currentRevision + 1,
+ *     });
+ *   }
+ *   // ... handle other actions
+ * });
+ * ```
+ */
+export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: string): McpToolResponse {
+  const cancellation: Record<string, unknown> = {
+    canceled_at: input.canceled_at ?? new Date().toISOString(),
+    canceled_by: input.canceled_by,
+  };
+  if (input.reason !== undefined) {
+    cancellation.reason = input.reason;
+  }
+
+  const data: Record<string, unknown> = {
+    media_buy_id: input.media_buy_id,
+    status: 'canceled',
+    valid_actions: [],
+    revision: input.revision,
+    cancellation,
+  };
+  if (input.affected_packages !== undefined) {
+    data.affected_packages = input.affected_packages;
+  }
+  if (input.sandbox !== undefined) {
+    data.sandbox = input.sandbox;
+  }
+
+  return {
+    content: [{ type: 'text', text: summary ?? `Media buy ${input.media_buy_id} canceled` }],
+    structuredContent: data,
   };
 }

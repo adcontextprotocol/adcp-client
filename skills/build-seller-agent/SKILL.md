@@ -139,9 +139,10 @@ productsResponse({
 Validate the request before creating the buy. Return an error response (not `adcpError`) when business validation fails:
 
 ```
-// Success:
+// Success — revision, confirmed_at, and valid_actions are auto-set:
 mediaBuyResponse({
   media_buy_id: string,       // required
+  status: 'pending_creatives',// triggers valid_actions auto-population
   packages: [{                // required
     package_id: string,
     product_id: string,
@@ -204,6 +205,25 @@ deliveryResponse({
   }]
 })
 ```
+
+### Context and Ext Passthrough
+
+Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+
+```typescript
+// In every tool handler:
+const context = args.context; // may be undefined — that's fine
+
+// In every response:
+return taskToolResponse({
+  // ... your response fields ...
+  context,  // echo it back unchanged
+});
+```
+
+Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+
+Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_governance`, `provide_performance_feedback`, `sync_event_sources`.
 
 ## Compliance Testing (Optional)
 
@@ -274,22 +294,19 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 | SDK piece                                               | Usage                                                               |
 | ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `serve(createAgent)`                                    | Start HTTP server on `:3001/mcp`                                    |
-| `createTaskCapableServer(name, version, { taskStore })` | Create MCP server with task support                                 |
-| `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod for MCP SDK                    |
-| `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
-| `productsResponse(data)`                                | Build `get_products` response                                       |
-| `mediaBuyResponse(data)`                                | Build `create_media_buy` response                                   |
-| `updateMediaBuyResponse(data)`                          | Build `update_media_buy` response                                   |
-| `getMediaBuysResponse(data)`                            | Build `get_media_buys` response                                     |
-| `deliveryResponse(data)`                                | Build `get_media_buy_delivery` response                             |
-| `listAccountsResponse(data)`                            | Build `list_accounts` response                                      |
-| `listCreativeFormatsResponse(data)`                     | Build `list_creative_formats` response                              |
-| `syncCreativesResponse(data)`                           | Build `sync_creatives` response                                     |
-| `taskToolResponse(data, summary)`                       | Build generic tool response (for tools without a dedicated builder) |
+| `createAdcpServer(config)`                              | Domain-grouped server — auto-wires schemas, response builders, capabilities |
+| `serve(() => createAdcpServer(config))`                 | Start HTTP server on `:3001/mcp`                                    |
+| `ctx.store`                                             | State store in every handler — `get`, `put`, `patch`, `delete`, `list` |
+| `InMemoryStateStore`                                    | Default state store (dev/testing)                                   |
+| `PostgresStateStore`                                    | Production state store (shared across instances)                    |
+| `checkGovernance(options)`                              | Call governance agent before financial commits                      |
+| `governanceDeniedError(result)`                         | Convert governance denial to GOVERNANCE_DENIED error                |
+| `mediaBuyResponse(data)`                                | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions) |
 | `adcpError(code, { message })`                          | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)      |
 | `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |
 | `TestControllerError(code, message)`                    | Typed error from store methods                                      |
+
+Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by `createAdcpServer` — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 
 Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
 
@@ -320,12 +337,83 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-1. Single `.ts` file — all tools in one file
-2. Always register `get_adcp_capabilities` as the **first** tool with empty `{}` schema
-3. Use `Schema.shape` (not `Schema`) when registering tools
-4. Use response builders — never return raw JSON
+Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
+
+```typescript
+import { createAdcpServer, serve, adcpError, InMemoryStateStore, checkGovernance, governanceDeniedError } from '@adcp/client';
+import type { ServeContext } from '@adcp/client';
+
+const stateStore = new InMemoryStateStore(); // shared across requests
+
+function createAgent({ taskStore }: ServeContext) {
+  return createAdcpServer({
+    name: 'My Seller Agent',
+    version: '1.0.0',
+    taskStore,
+    stateStore,
+
+    resolveAccount: async (ref) => {
+      if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
+      return null; // or resolve by brand+operator
+    },
+
+    accounts: {
+      syncAccounts: async (params, ctx) => { /* ... */ },
+    },
+    mediaBuy: {
+      getProducts: async (params, ctx) => {
+        return { products: PRODUCTS, sandbox: true };
+        // productsResponse() auto-applied by framework
+      },
+      createMediaBuy: async (params, ctx) => {
+        // Governance check for financial commitment
+        if (ctx.account?.governanceUrl) {
+          const gov = await checkGovernance({
+            agentUrl: ctx.account.governanceUrl,
+            planId: params.plan_id ?? 'default',
+            caller: 'https://my-agent.com/mcp',
+            tool: 'create_media_buy',
+            payload: params,
+          });
+          if (!gov.approved) return governanceDeniedError(gov);
+        }
+        const buy = {
+          media_buy_id: `mb_${Date.now()}`,
+          status: 'pending_creatives',
+          packages: params.packages?.map((pkg, i) => ({
+            package_id: `pkg_${i}`,
+            product_id: pkg.product_id,
+            pricing_option_id: pkg.pricing_option_id,
+            budget: pkg.budget,
+          })) ?? [],
+        };
+        await ctx.store.put('media_buys', buy.media_buy_id, buy);
+        return buy; // mediaBuyResponse() auto-applied (sets revision, confirmed_at, valid_actions)
+      },
+      getMediaBuys: async (params, ctx) => {
+        const result = await ctx.store.list('media_buys');
+        return { media_buys: result.items };
+      },
+      getMediaBuyDelivery: async (params, ctx) => { /* ... */ },
+      listCreativeFormats: async (params, ctx) => { /* ... */ },
+      syncCreatives: async (params, ctx) => { /* ... */ },
+    },
+    capabilities: {
+      features: { inline_creative_management: false },
+    },
+  });
+}
+
+serve(createAgent);
+```
+
+Key points:
+1. Single `.ts` file — all domain handlers in one `createAdcpServer` call
+2. `get_adcp_capabilities` is auto-generated from your handlers — don't register it manually
+3. Response builders are auto-applied — just return the data
+4. Use `ctx.store` for state — persists across stateless HTTP requests
 5. Set `sandbox: true` on all mock/demo responses
-6. Use `ServeContext` pattern: `function createAgent({ taskStore }: ServeContext)` and pass `taskStore` to `createTaskCapableServer`
+6. Use `adcpError()` for business validation failures
 
 The skill contains everything you need. Do not read additional docs before writing code.
 
@@ -369,20 +457,23 @@ When storyboard output shows failures, fix each one:
 
 | Mistake                                              | Fix                                                           |
 | ---------------------------------------------------- | ------------------------------------------------------------- |
-| Pass `Schema` instead of `Schema.shape`              | MCP SDK needs unwrapped Zod fields                            |
-| Skip `get_adcp_capabilities`                         | Must be the first tool registered                             |
-| Return raw JSON without response builders            | LLM clients need the text content layer                       |
+| Using `createTaskCapableServer` + `server.tool()`    | Use `createAdcpServer` — handles schemas, response builders, capabilities |
+| Using module-level Maps for state                    | Use `ctx.store` — persists across HTTP requests, swappable for postgres |
+| Return raw JSON without response builders            | `createAdcpServer` auto-applies response builders — just return the data |
 | Missing `brand`/`operator` in sync_accounts response | Echo them back from the request — they're required            |
 | sync_governance returns wrong shape                  | Must include `status: 'synced'` and `governance_agents` array |
 | `sandbox: false` on mock data                        | Buyers may treat mock data as real                            |
 | Returns raw JSON for validation failures             | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure    |
 | Missing `publisher_properties` or `format_ids` on Product | Both are required — see product example in `get_products` section |
+| format_ids in products don't match list_creative_formats  | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements |
 | Missing `@types/node` in devDependencies             | `process.env` doesn't resolve without it — see Setup section  |
+| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
 
 ## Reference
 
-- `docs/guides/BUILD-AN-AGENT.md` — SDK patterns and async tools
+- `docs/guides/BUILD-AN-AGENT.md` — createAdcpServer patterns, async tools, state persistence
 - `docs/llms.txt` — full protocol reference
 - `docs/TYPE-SUMMARY.md` — curated type signatures
 - `storyboards/media_buy_seller.yaml` — full buyer interaction sequence
 - `examples/error-compliant-server.ts` — seller with error handling
+- `src/lib/server/create-adcp-server.ts` — framework source (for TypeScript autocomplete exploration)

@@ -149,19 +149,19 @@ export function parseCheckResponse(response: CheckGovernanceResponse): Governanc
     explanation: response.explanation,
     findings: response.findings?.map(f => ({
       categoryId: f.category_id,
-      policyId: f.policy_id,
+      policyId: f.policy_id ?? undefined,
       severity: f.severity,
       explanation: f.explanation,
-      confidence: f.confidence,
-      uncertaintyReason: f.uncertainty_reason,
-      details: f.details,
+      confidence: f.confidence ?? undefined,
+      uncertaintyReason: f.uncertainty_reason ?? undefined,
+      details: f.details ?? undefined,
     })),
     conditions: response.conditions?.map(c => ({
       field: c.field,
       requiredValue: c.required_value,
       reason: c.reason,
     })),
-    expiresAt: response.expires_at,
-    governanceContext: response.governance_context,
+    expiresAt: response.expires_at ?? undefined,
+    governanceContext: response.governance_context ?? undefined,
   };
 }
