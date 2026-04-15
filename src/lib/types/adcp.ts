@@ -7,12 +7,12 @@
  * and must always be preserved when sending requests to agents.
  */
 export const ADCP_ENVELOPE_FIELDS = new Set([
-  'context',                   // Opaque pass-through for correlation and workflow state
-  'ext',                       // Vendor-namespaced extensions
-  'governance_context',        // Governance approval token
-  'push_notification_config',  // Webhook configuration for async operations
-  'context_id',                // Legacy context identifier
-  'idempotency_key',           // Prevents duplicate processing on retries
+  'context', // Opaque pass-through for correlation and workflow state
+  'ext', // Vendor-namespaced extensions
+  'governance_context', // Governance approval token
+  'push_notification_config', // Webhook configuration for async operations
+  'context_id', // Legacy context identifier
+  'idempotency_key', // Prevents duplicate processing on retries
 ]);
 
 // Import structured FormatID from generated core types
