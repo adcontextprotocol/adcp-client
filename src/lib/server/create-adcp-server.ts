@@ -426,7 +426,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
   get_products:                   { schema: GetProductsRequestSchema,                   wrap: productsResponse,              hasAccount: true,  annotations: RO },
   create_media_buy:               { schema: CreateMediaBuyRequestSchema,                wrap: mediaBuyResponse,              hasAccount: true,  annotations: MUT },
-  update_media_buy:               { schema: UpdateMediaBuyRequestSchema,                wrap: updateMediaBuyResponse,        hasAccount: false, annotations: MUT },
+  update_media_buy:               { schema: UpdateMediaBuyRequestSchema,                wrap: updateMediaBuyResponse,        hasAccount: true,  annotations: MUT },
   get_media_buys:                 { schema: GetMediaBuysRequestSchema,                  wrap: getMediaBuysResponse,          hasAccount: true,  annotations: RO },
   get_media_buy_delivery:         { schema: GetMediaBuyDeliveryRequestSchema,            wrap: deliveryResponse,              hasAccount: true,  annotations: RO },
   provide_performance_feedback:   { schema: ProvidePerformanceFeedbackRequestSchema,    wrap: performanceFeedbackResponse,   hasAccount: false, annotations: MUT },
