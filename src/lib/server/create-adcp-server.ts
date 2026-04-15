@@ -37,6 +37,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
+import { InMemoryStateStore } from './state-store';
+import type { AdcpStateStore } from './state-store';
 import {
   capabilitiesResponse,
   productsResponse,
@@ -193,6 +195,8 @@ const noopLogger: AdcpLogger = {
  */
 export interface HandlerContext<TAccount = unknown> {
   account?: TAccount;
+  /** State store for persisting domain objects (media buys, accounts, creatives). */
+  store: AdcpStateStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +361,12 @@ export interface AdcpServerConfig<TAccount = unknown> {
 
   /** Logger for framework decisions. Defaults to no-op. */
   logger?: AdcpLogger;
+
+  /**
+   * State store for persisting domain objects across requests.
+   * Defaults to InMemoryStateStore. Use PostgresStateStore for production.
+   */
+  stateStore?: AdcpStateStore;
 
   // Domain handler groups — register only what you support
   mediaBuy?: MediaBuyHandlers<TAccount>;
@@ -612,10 +622,9 @@ function isFormattedResponse(value: unknown): value is McpToolResponse {
  * Before each handler runs, the framework:
  * 1. Validates the request against the tool's Zod schema (MCP SDK)
  * 2. Resolves the account (if the tool has an `account` field and `resolveAccount` is configured)
- * 3. Checks governance (if the tool is a write op, account is resolved, and `resolveGovernance` is configured)
  *
  * The handler only runs when all preconditions pass. It receives the validated
- * params and a context with the resolved account and governance approval.
+ * params and a context with the resolved account and state store.
  *
  * `get_adcp_capabilities` is auto-generated from registered tools.
  */
@@ -624,6 +633,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     name,
     version,
     resolveAccount,
+    stateStore = new InMemoryStateStore(),
     logger = noopLogger,
     capabilities: capConfig,
     instructions,
@@ -677,7 +687,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
       const wrap = meta.wrap ?? genericResponse;
       const toolHandler = async (params: any, _extra: any) => {
-          const ctx: HandlerContext<TAccount> = {};
+          const ctx: HandlerContext<TAccount> = { store: stateStore };
 
           // --- Account resolution ---
           if (meta.hasAccount && params.account != null && resolveAccount) {

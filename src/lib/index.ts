@@ -463,6 +463,10 @@ export {
   createAdcpServer,
   checkGovernance,
   governanceDeniedError,
+  InMemoryStateStore,
+  PostgresStateStore,
+  getAdcpStateMigration,
+  ADCP_STATE_MIGRATION,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -504,6 +508,10 @@ export type {
   GovernanceApproved,
   GovernanceDenied,
   GovernanceConditions,
+  AdcpStateStore,
+  ListOptions as StateListOptions,
+  ListResult as StateListResult,
+  PostgresStateStoreOptions,
 } from './server';
 
 // ====== ERROR EXTRACTION ======

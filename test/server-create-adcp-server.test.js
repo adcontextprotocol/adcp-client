@@ -1,6 +1,7 @@
 const { describe, it, mock } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
+const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { adcpError } = require('../dist/lib/server/errors');
 
 // ---------------------------------------------------------------------------
@@ -563,6 +564,160 @@ describe('createAdcpServer', () => {
         },
       });
       assert.ok(!warnings.some(w => w.includes('Unknown handler key')));
+    });
+  });
+
+  describe('state store', () => {
+    it('provides ctx.store to handlers (InMemoryStateStore by default)', async () => {
+      let receivedStore;
+      const server = createAdcpServer({
+        name: 'Test', version: '1.0.0',
+        mediaBuy: {
+          getProducts: async (params, ctx) => {
+            receivedStore = ctx.store;
+            return { products: [] };
+          },
+        },
+      });
+
+      await callTool(server, 'get_products', { buying_mode: 'brief', brief: 'test' });
+      assert.ok(receivedStore);
+      assert.strictEqual(typeof receivedStore.get, 'function');
+      assert.strictEqual(typeof receivedStore.put, 'function');
+      assert.strictEqual(typeof receivedStore.delete, 'function');
+      assert.strictEqual(typeof receivedStore.list, 'function');
+    });
+
+    it('accepts a custom state store', async () => {
+      const store = new InMemoryStateStore();
+      const server = createAdcpServer({
+        name: 'Test', version: '1.0.0',
+        stateStore: store,
+        mediaBuy: {
+          createMediaBuy: async (params, ctx) => {
+            const buy = { media_buy_id: 'mb_1', status: 'active', packages: [] };
+            await ctx.store.put('media_buys', buy.media_buy_id, buy);
+            return buy;
+          },
+          getMediaBuys: async (params, ctx) => {
+            const result = await ctx.store.list('media_buys');
+            return { media_buys: result.items };
+          },
+        },
+      });
+
+      // Create a media buy
+      await callTool(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+
+      // Verify it's in the store
+      assert.strictEqual(store.size('media_buys'), 1);
+      const stored = await store.get('media_buys', 'mb_1');
+      assert.strictEqual(stored.status, 'active');
+
+      // Read it back through the handler
+      const buys = await callTool(server, 'get_media_buys', {});
+      assert.strictEqual(buys.media_buys.length, 1);
+      assert.strictEqual(buys.media_buys[0].media_buy_id, 'mb_1');
+    });
+
+    it('shares state store across domain handlers', async () => {
+      const store = new InMemoryStateStore();
+      const server = createAdcpServer({
+        name: 'Test', version: '1.0.0',
+        stateStore: store,
+        mediaBuy: {
+          getProducts: async (params, ctx) => {
+            await ctx.store.put('shared', 'flag', { set_by: 'mediaBuy' });
+            return { products: [] };
+          },
+        },
+        signals: {
+          getSignals: async (params, ctx) => {
+            const flag = await ctx.store.get('shared', 'flag');
+            return { signals: [{ signal_id: 'test', source: flag?.set_by }] };
+          },
+        },
+      });
+
+      await callTool(server, 'get_products', { buying_mode: 'brief', brief: 'test' });
+      const result = await callTool(server, 'get_signals', {});
+      assert.strictEqual(result.signals[0].source, 'mediaBuy');
+    });
+  });
+
+  describe('InMemoryStateStore', () => {
+    it('get returns null for missing documents', async () => {
+      const store = new InMemoryStateStore();
+      const result = await store.get('col', 'missing');
+      assert.strictEqual(result, null);
+    });
+
+    it('put and get roundtrip', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('col', 'id1', { name: 'test', value: 42 });
+      const result = await store.get('col', 'id1');
+      assert.deepStrictEqual(result, { name: 'test', value: 42 });
+    });
+
+    it('put overwrites existing documents', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('col', 'id1', { v: 1 });
+      await store.put('col', 'id1', { v: 2 });
+      const result = await store.get('col', 'id1');
+      assert.strictEqual(result.v, 2);
+    });
+
+    it('delete returns true for existing, false for missing', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('col', 'id1', { v: 1 });
+      assert.strictEqual(await store.delete('col', 'id1'), true);
+      assert.strictEqual(await store.delete('col', 'id1'), false);
+      assert.strictEqual(await store.get('col', 'id1'), null);
+    });
+
+    it('list returns all documents in collection', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('buys', 'mb1', { status: 'active' });
+      await store.put('buys', 'mb2', { status: 'paused' });
+      await store.put('other', 'x', { unrelated: true });
+
+      const result = await store.list('buys');
+      assert.strictEqual(result.items.length, 2);
+    });
+
+    it('list filters by field values', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('buys', 'mb1', { status: 'active' });
+      await store.put('buys', 'mb2', { status: 'paused' });
+      await store.put('buys', 'mb3', { status: 'active' });
+
+      const result = await store.list('buys', { filter: { status: 'active' } });
+      assert.strictEqual(result.items.length, 2);
+    });
+
+    it('list respects limit', async () => {
+      const store = new InMemoryStateStore();
+      for (let i = 0; i < 10; i++) {
+        await store.put('col', `id${i}`, { i });
+      }
+
+      const result = await store.list('col', { limit: 3 });
+      assert.strictEqual(result.items.length, 3);
+      assert.ok(result.nextCursor);
+    });
+
+    it('clear removes all data', async () => {
+      const store = new InMemoryStateStore();
+      await store.put('a', '1', { v: 1 });
+      await store.put('b', '2', { v: 2 });
+      store.clear();
+      assert.strictEqual(store.size('a'), 0);
+      assert.strictEqual(store.size('b'), 0);
     });
   });
 });
