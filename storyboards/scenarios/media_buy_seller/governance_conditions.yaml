@@ -10,19 +10,16 @@ required_tools:
   - create_media_buy
 
 narrative: |
-  When governance approves a media buy with conditions, the seller must attach those
-  conditions to the buy response. The buyer needs to see the conditions so they can
-  comply with them (e.g., "weekly delivery reporting required for CTV buys").
+  This is a multi-agent test. The test harness sets up a governance plan on a governance
+  agent with custom policies that trigger conditions (e.g., "CTV buys require weekly
+  delivery reporting"). The buyer then creates a CTV media buy.
 
-  This is a multi-agent test. The test harness acts as the governance agent — it registers
-  its own URL via sync_governance, and when the seller calls check_governance during
-  create_media_buy, the harness responds with an approved decision that includes
-  conditions and a governance_context token. The seller must create the buy and include
-  the conditions in its response.
+  When the seller calls check_governance, the governance agent approves with conditions.
+  The seller must create the buy and include the governance conditions and context token
+  in its response so the buyer can see and comply with them.
 
-  NOTE: This scenario requires the test harness to provide a governance agent endpoint.
-  Until that capability exists, this scenario defines the expected behavior but cannot
-  be executed automatically.
+  By default, the governance agent is the training agent at test-agent.adcontextprotocol.org.
+  Override with --governance-agent-url to use a custom governance agent.
 
 agent:
   interaction_model: media_buy_seller
@@ -38,16 +35,48 @@ caller:
 
 prerequisites:
   description: |
-    The test harness must provide a governance agent endpoint that responds to
-    check_governance with an approved decision including conditions.
+    A governance agent that supports sync_plans and check_governance. The training
+    agent is used by default.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
-  - id: setup
-    title: "Account and governance setup"
+  - id: governance_plan_setup
+    title: "Set up conditional governance plan"
+    narrative: |
+      Create a governance plan on the governance agent with custom policies that
+      trigger conditions rather than outright denial. The plan approves CTV buys
+      but requires weekly delivery reporting.
+
+    steps:
+      - id: sync_plans
+        title: "Create conditional governance plan"
+        task: sync_plans
+        schema_ref: "governance/sync-plans-request.json"
+        response_schema_ref: "governance/sync-plans-response.json"
+        doc_ref: "/governance/campaign/tasks/sync_plans"
+        stateful: true
+        expected: |
+          The governance agent acknowledges the plan with a plan_id.
+        sample_request:
+          plans:
+            - plan_name: "Acme Outdoor conditional governance"
+              brand:
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
+              authority_level: "agent_full"
+              per_transaction_threshold: 100000
+              custom_policies:
+                - "CTV buys require weekly delivery reporting"
+                - "UGC placements require brand safety review before activation"
+        validations:
+          - check: response_schema
+            description: "Response matches sync-plans-response.json schema"
+
+  - id: seller_setup
+    title: "Account and governance registration on seller"
     steps:
       - id: sync_accounts
-        title: "Establish account"
+        title: "Establish account with seller"
         task: sync_accounts
         schema_ref: "account/sync-accounts-request.json"
         response_schema_ref: "account/sync-accounts-response.json"
@@ -70,11 +99,10 @@ phases:
             description: "Account has a platform-assigned ID"
 
       - id: sync_governance
-        title: "Register test harness as governance agent (with conditions)"
+        title: "Register governance agent with seller"
         narrative: |
-          The test harness registers itself as the governance agent. The URL points to
-          the harness's governance endpoint, configured to approve with conditions
-          when the seller calls check_governance.
+          Register the governance agent URL with the seller. The seller will call
+          check_governance on this URL during create_media_buy.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -89,25 +117,22 @@ phases:
                   domain: "acmeoutdoor.com"
                 operator: "pinnacle-agency.com"
               governance_agents:
-                - url: "$harness.governance_url"
-                  authentication:
-                    schemes: ["Bearer"]
-                    credentials: "$harness.governance_token"
+                - url: "$context.governance_agent_url"
                   categories: ["budget_authority", "brand_policy"]
         validations:
           - check: response_schema
             description: "Response matches sync-governance-response.json schema"
 
   - id: buy_with_conditions
-    title: "Create buy (governance approves with conditions)"
+    title: "Create CTV buy triggering governance conditions"
     narrative: |
-      Discover products and create a media buy. The seller calls check_governance on
-      the registered harness URL. The harness responds with approved including conditions.
-      The seller creates the buy and attaches the conditions.
+      Send a brief targeting CTV and create a buy. The governance agent approves but
+      attaches conditions from the custom policies. The seller must include the
+      conditions in its response.
 
     steps:
       - id: get_products_brief
-        title: "Discover products"
+        title: "Discover CTV products"
         task: get_products
         schema_ref: "media-buy/get-products-request.json"
         response_schema_ref: "media-buy/get-products-response.json"
@@ -115,10 +140,10 @@ phases:
         comply_scenario: full_sales_flow
         stateful: false
         expected: |
-          Return products matching the brief.
+          Return CTV/video products matching the brief.
         sample_request:
           buying_mode: "brief"
-          brief: "CTV and video inventory on outdoor lifestyle content. Q2 flight, $25K budget. Adults 25-54, US."
+          brief: "CTV and connected TV inventory on outdoor lifestyle content. Q2 flight, $25K budget. Adults 25-54, US."
           brand:
             domain: "acmeoutdoor.com"
           account:
@@ -133,7 +158,7 @@ phases:
             description: "Response contains products"
 
       - id: create_media_buy_conditions
-        title: "Create buy (governance approves with conditions)"
+        title: "Create CTV buy (governance approves with conditions)"
         task: create_media_buy
         schema_ref: "media-buy/create-media-buy-request.json"
         response_schema_ref: "media-buy/create-media-buy-response.json"
@@ -144,8 +169,8 @@ phases:
           The buy succeeds with governance conditions attached:
           - media_buy_id: present
           - status: active or pending_creatives
-          - governance_context: token from the governance agent
-          - conditions: governance conditions visible to the buyer
+          - governance_context: token from the governance agent's approval
+          - The governance conditions are visible to the buyer
         sample_request:
           account:
             brand:

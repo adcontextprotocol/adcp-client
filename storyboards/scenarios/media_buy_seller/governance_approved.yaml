@@ -10,18 +10,15 @@ required_tools:
   - create_media_buy
 
 narrative: |
-  When a buyer registers a governance agent and creates a media buy, the seller must call
-  the governance agent during buy creation. When governance approves, the buy should
-  succeed normally.
+  This is a multi-agent test. The test harness sets up a permissive governance plan on
+  a governance agent, then registers that agent with the seller. When the seller calls
+  check_governance during create_media_buy, the governance agent approves because the
+  buy falls within the plan's limits.
 
-  This is a multi-agent test. The test harness acts as the governance agent — it registers
-  its own URL via sync_governance, and when the seller calls check_governance during
-  create_media_buy, the harness responds with an approved decision. This tests the real
-  integration path: the seller actually makes the governance call and handles the response.
+  The seller must call the governance agent and, on approval, confirm the buy normally.
 
-  NOTE: This scenario requires the test harness to provide a governance agent endpoint.
-  Until that capability exists, this scenario defines the expected behavior but cannot
-  be executed automatically.
+  By default, the governance agent is the training agent at test-agent.adcontextprotocol.org.
+  Override with --governance-agent-url to use a custom governance agent.
 
 agent:
   interaction_model: media_buy_seller
@@ -37,16 +34,44 @@ caller:
 
 prerequisites:
   description: |
-    The test harness must provide a governance agent endpoint that responds to
-    check_governance with an approved decision.
+    A governance agent that supports sync_plans and check_governance. The training
+    agent is used by default.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
-  - id: setup
-    title: "Account and governance setup"
+  - id: governance_plan_setup
+    title: "Set up permissive governance plan"
+    narrative: |
+      Create a governance plan on the governance agent with a high spending threshold.
+      The subsequent buy will fall within these limits and should be approved.
+
+    steps:
+      - id: sync_plans
+        title: "Create permissive governance plan"
+        task: sync_plans
+        schema_ref: "governance/sync-plans-request.json"
+        response_schema_ref: "governance/sync-plans-response.json"
+        doc_ref: "/governance/campaign/tasks/sync_plans"
+        stateful: true
+        expected: |
+          The governance agent acknowledges the plan with a plan_id.
+        sample_request:
+          plans:
+            - plan_name: "Acme Outdoor permissive governance"
+              brand:
+                domain: "acmeoutdoor.com"
+              operator: "pinnacle-agency.com"
+              authority_level: "agent_full"
+              per_transaction_threshold: 100000
+        validations:
+          - check: response_schema
+            description: "Response matches sync-plans-response.json schema"
+
+  - id: seller_setup
+    title: "Account and governance registration on seller"
     steps:
       - id: sync_accounts
-        title: "Establish account"
+        title: "Establish account with seller"
         task: sync_accounts
         schema_ref: "account/sync-accounts-request.json"
         response_schema_ref: "account/sync-accounts-response.json"
@@ -69,11 +94,10 @@ phases:
             description: "Account has a platform-assigned ID"
 
       - id: sync_governance
-        title: "Register test harness as governance agent"
+        title: "Register governance agent with seller"
         narrative: |
-          The test harness registers itself as the governance agent. The URL points to
-          the harness's governance endpoint, which will respond with an approved decision
-          when the seller calls check_governance.
+          Register the governance agent URL with the seller. The seller will call
+          check_governance on this URL during create_media_buy.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -88,21 +112,17 @@ phases:
                   domain: "acmeoutdoor.com"
                 operator: "pinnacle-agency.com"
               governance_agents:
-                - url: "$harness.governance_url"
-                  authentication:
-                    schemes: ["Bearer"]
-                    credentials: "$harness.governance_token"
+                - url: "$context.governance_agent_url"
                   categories: ["budget_authority", "brand_policy"]
         validations:
           - check: response_schema
             description: "Response matches sync-governance-response.json schema"
 
-  - id: buy_with_governance
-    title: "Create buy (governance approves)"
+  - id: buy_approved
+    title: "Create buy within governance limits"
     narrative: |
-      Discover products and create a media buy. The seller calls check_governance on
-      the registered harness URL. The harness responds with approved. The seller
-      confirms the buy.
+      Send a brief and create a buy within the plan's spending threshold ($25K vs $100K limit).
+      The governance agent approves. The seller confirms the buy.
 
     steps:
       - id: get_products_brief
@@ -140,10 +160,8 @@ phases:
         comply_scenario: create_media_buy
         stateful: true
         expected: |
-          The buy succeeds because governance approved:
-          - media_buy_id: present
-          - status: active or pending_creatives
-          - The seller called check_governance and received approved
+          The buy succeeds — governance approved because the $25K buy is within
+          the plan's $100K per-transaction threshold.
         sample_request:
           account:
             brand:
@@ -156,6 +174,9 @@ phases:
           packages:
             - product_id: "outdoor_display_q2"
               budget: 15000
+              pricing_option_id: "cpm_standard"
+            - product_id: "outdoor_video_q2"
+              budget: 10000
               pricing_option_id: "cpm_standard"
         validations:
           - check: response_schema
