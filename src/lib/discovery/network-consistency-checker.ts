@@ -372,16 +372,40 @@ export class NetworkConsistencyChecker {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
-        const response = await fetch(agent.url, {
+        let response = await fetch(agent.url, {
           method: 'HEAD',
           signal: controller.signal,
-          redirect: 'error',
+          redirect: 'manual',
           headers: {
             ...FETCH_HEADERS,
             'User-Agent': this.userAgentHeader,
             From: this.fromHeader,
           },
         });
+
+        // Follow one redirect with SSRF validation
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get?.('location');
+          if (!location) {
+            return { url: agent.url, reachable: false, error: 'Redirect with no Location header' };
+          }
+          const redirectUrl = new URL(location, agent.url).toString();
+          if (!redirectUrl.startsWith('https://')) {
+            return { url: agent.url, reachable: false, error: 'Redirect to non-HTTPS URL' };
+          }
+          validateAgentUrl(redirectUrl);
+          response = await fetch(redirectUrl, {
+            method: 'HEAD',
+            signal: controller.signal,
+            redirect: 'error',
+            headers: {
+              ...FETCH_HEADERS,
+              'User-Agent': this.userAgentHeader,
+              From: this.fromHeader,
+            },
+          });
+        }
+
         return {
           url: agent.url,
           reachable: response.ok || response.status === 405, // 405 = HEAD rejected but server is alive
@@ -542,15 +566,38 @@ export class NetworkConsistencyChecker {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         signal: controller.signal,
-        redirect: 'error',
+        redirect: 'manual',
         headers: {
           ...FETCH_HEADERS,
           'User-Agent': this.userAgentHeader,
           From: this.fromHeader,
         },
       });
+
+      // Follow one HTTP redirect with SSRF validation
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get?.('location');
+        if (!location) {
+          throw new Error(`HTTP ${response.status} redirect with no Location header`);
+        }
+        const redirectUrl = new URL(location, url).toString();
+        if (!redirectUrl.startsWith('https://')) {
+          throw new Error('Redirect to non-HTTPS URL not allowed');
+        }
+        validateAgentUrl(redirectUrl);
+        response = await fetch(redirectUrl, {
+          signal: controller.signal,
+          redirect: 'error',
+          headers: {
+            ...FETCH_HEADERS,
+            'User-Agent': this.userAgentHeader,
+            From: this.fromHeader,
+          },
+        });
+      }
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -584,6 +631,7 @@ export class NetworkConsistencyChecker {
       if (error.message.includes('Response too large')) return 'Response too large';
       if (error.message.includes('not allowed')) return error.message;
       if (error.message.includes('must use HTTPS')) return error.message;
+      if (error.message.includes('no Location header')) return error.message;
     }
     return 'Request failed';
   }

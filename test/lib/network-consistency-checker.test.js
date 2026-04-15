@@ -22,6 +22,17 @@ function routedFetch(routes) {
       if (urlStr.includes(pattern)) {
         const config = typeof handler === 'function' ? handler(urlStr, options) : handler;
         const status = config.status || 200;
+        // Support redirect responses (301/302 with location header)
+        if (config.location) {
+          return {
+            ok: false,
+            status,
+            statusText: config.statusText || 'Moved',
+            headers: new Map([['location', config.location]]),
+            json: async () => null,
+            text: async () => '',
+          };
+        }
         const body = JSON.stringify(config.data);
         return {
           ok: status >= 200 && status < 300,
@@ -562,6 +573,101 @@ describe('NetworkConsistencyChecker', () => {
       assert.strictEqual(report.coverage, 1);
       assert.strictEqual(report.domains.length, 1);
       assert.strictEqual(report.domains[0].status, 'ok');
+    });
+  });
+
+  describe('HTTP redirect following', () => {
+    test('follows one redirect on pointer fetch (CDN www redirect)', async () => {
+      const authFile = makeAuthoritativeFile([
+        {
+          property_type: 'website',
+          name: 'example.com',
+          identifiers: [{ type: 'domain', value: 'example.com' }],
+        },
+      ]);
+
+      // Use a function handler to disambiguate bare domain vs www
+      routedFetch({
+        'network.example.com/adagents.json': { data: authFile },
+        'example.com/.well-known/adagents.json': urlStr => {
+          if (urlStr.includes('www.example.com')) {
+            return { data: makePointer(AUTH_URL) };
+          }
+          return { status: 301, location: 'https://www.example.com/.well-known/adagents.json' };
+        },
+        'seller.example.com/mcp': { data: {} },
+      });
+
+      const { NetworkConsistencyChecker } = require('../../dist/lib/index.js');
+      const checker = new NetworkConsistencyChecker({
+        authoritativeUrl: AUTH_URL,
+        logLevel: 'silent',
+      });
+
+      const report = await checker.check();
+
+      assert.strictEqual(report.coverage, 1);
+      assert.strictEqual(report.missingPointers.length, 0);
+      assert.strictEqual(report.domains[0].status, 'ok');
+    });
+
+    test('follows one redirect on agent health check', async () => {
+      const authFile = makeAuthoritativeFile(undefined, [
+        { url: 'https://agent.example.com/mcp', authorized_for: 'Sales' },
+      ]);
+
+      routedFetch({
+        'network.example.com/adagents.json': { data: authFile },
+        'cookingdaily.com/.well-known/adagents.json': { data: makePointer(AUTH_URL) },
+        'gardenweekly.com/.well-known/adagents.json': { data: makePointer(AUTH_URL) },
+        // Agent endpoint redirects
+        'agent.example.com/mcp': {
+          status: 301,
+          location: 'https://agent-v2.example.com/mcp',
+        },
+        'agent-v2.example.com/mcp': { data: {} },
+      });
+
+      const { NetworkConsistencyChecker } = require('../../dist/lib/index.js');
+      const checker = new NetworkConsistencyChecker({
+        authoritativeUrl: AUTH_URL,
+        logLevel: 'silent',
+      });
+
+      const report = await checker.check();
+
+      assert.strictEqual(report.agentHealth.length, 1);
+      assert.strictEqual(report.agentHealth[0].reachable, true);
+    });
+
+    test('rejects redirect to non-HTTPS URL on pointer fetch', async () => {
+      const authFile = makeAuthoritativeFile([
+        {
+          property_type: 'website',
+          name: 'insecure.com',
+          identifiers: [{ type: 'domain', value: 'insecure.com' }],
+        },
+      ]);
+
+      routedFetch({
+        'network.example.com/adagents.json': { data: authFile },
+        'insecure.com/.well-known/adagents.json': {
+          status: 301,
+          location: 'http://insecure.com/.well-known/adagents.json',
+        },
+        'seller.example.com/mcp': { data: {} },
+      });
+
+      const { NetworkConsistencyChecker } = require('../../dist/lib/index.js');
+      const checker = new NetworkConsistencyChecker({
+        authoritativeUrl: AUTH_URL,
+        logLevel: 'silent',
+      });
+
+      const report = await checker.check();
+
+      assert.strictEqual(report.missingPointers.length, 1);
+      assert.strictEqual(report.coverage, 0);
     });
   });
 
