@@ -12715,42 +12715,15 @@ export interface GetAdCPCapabilitiesResponse {
        */
       targeting?: {
         /**
-         * Geographic targeting levels this seller supports.
-         */
-        supported_geo_levels?: ('countries' | 'regions' | 'metros' | 'postal_areas')[];
-        /**
-         * Metro area classification systems this seller supports. Only meaningful when supported_geo_levels includes 'metros'.
-         */
-        supported_metro_systems?: ('nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2')[];
-        /**
-         * Postal code systems this seller supports. Only meaningful when supported_geo_levels includes 'postal_areas'.
-         */
-        supported_postal_systems?: (
-          | 'us_zip'
-          | 'us_zip_plus_four'
-          | 'gb_outward'
-          | 'gb_full'
-          | 'ca_fsa'
-          | 'ca_full'
-          | 'de_plz'
-          | 'fr_code_postal'
-          | 'au_postcode'
-          | 'ch_plz'
-          | 'at_plz'
-        )[];
-        /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_geo_levels instead.
+         * Country-level targeting using ISO 3166-1 alpha-2 codes
          */
         geo_countries?: boolean;
         /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_geo_levels instead.
+         * Region/state-level targeting using ISO 3166-2 codes (e.g., US-NY, GB-SCT)
          */
         geo_regions?: boolean;
         /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_metro_systems instead.
+         * Metro area targeting. Properties indicate which classification systems are supported.
          */
         geo_metros?: {
           nielsen_dma?: boolean;
@@ -12759,8 +12732,7 @@ export interface GetAdCPCapabilitiesResponse {
           eurostat_nuts2?: boolean;
         };
         /**
-         * @deprecated
-         * Deprecated in 3.0, will be removed in 4.0. Use supported_postal_systems instead.
+         * Postal area targeting. Properties indicate which postal code systems are supported.
          */
         geo_postal_areas?: {
           us_zip?: boolean;

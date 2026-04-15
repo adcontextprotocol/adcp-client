@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-14T21:55:00.553Z
+// Generated at: 2026-04-15T04:10:46.205Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3307,9 +3307,6 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                 simid: z.boolean().nullish()
             }).passthrough().nullish(),
             targeting: z.object({
-                supported_geo_levels: z.array(z.union([z.literal("countries"), z.literal("regions"), z.literal("metros"), z.literal("postal_areas")])).nullish(),
-                supported_metro_systems: z.array(z.union([z.literal("nielsen_dma"), z.literal("uk_itl1"), z.literal("uk_itl2"), z.literal("eurostat_nuts2")])).nullish(),
-                supported_postal_systems: z.array(z.union([z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode"), z.literal("ch_plz"), z.literal("at_plz")])).nullish(),
                 geo_countries: z.boolean().nullish(),
                 geo_regions: z.boolean().nullish(),
                 geo_metros: z.object({

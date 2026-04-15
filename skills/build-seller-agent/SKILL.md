@@ -139,9 +139,10 @@ productsResponse({
 Validate the request before creating the buy. Return an error response (not `adcpError`) when business validation fails:
 
 ```
-// Success:
+// Success — revision, confirmed_at, and valid_actions are auto-set:
 mediaBuyResponse({
   media_buy_id: string,       // required
+  status: 'pending_creatives',// triggers valid_actions auto-population
   packages: [{                // required
     package_id: string,
     product_id: string,
@@ -279,8 +280,10 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 | `server.tool(name, Schema.shape, handler)`              | Register tool — `.shape` unwraps Zod for MCP SDK                    |
 | `capabilitiesResponse(data)`                            | Build `get_adcp_capabilities` response                              |
 | `productsResponse(data)`                                | Build `get_products` response                                       |
-| `mediaBuyResponse(data)`                                | Build `create_media_buy` response                                   |
-| `updateMediaBuyResponse(data)`                          | Build `update_media_buy` response                                   |
+| `mediaBuyResponse(data)`                                | Build `create_media_buy` response (auto-sets revision, confirmed_at, valid_actions) |
+| `updateMediaBuyResponse(data)`                          | Build `update_media_buy` response (auto-sets valid_actions from status) |
+| `cancelMediaBuyResponse(input)`                         | Build cancel response — requires `canceled_by`, `revision`; auto-sets `canceled_at` |
+| `validActionsForStatus(status)`                         | Map `MediaBuyStatus` to valid buyer actions                         |
 | `getMediaBuysResponse(data)`                            | Build `get_media_buys` response                                     |
 | `deliveryResponse(data)`                                | Build `get_media_buy_delivery` response                             |
 | `listAccountsResponse(data)`                            | Build `list_accounts` response                                      |

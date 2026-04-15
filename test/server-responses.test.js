@@ -18,7 +18,9 @@ const {
   syncCreativesResponse,
   getSignalsResponse,
   activateSignalResponse,
+  cancelMediaBuyResponse,
 } = require('../dist/lib/server/responses');
+const { validActionsForStatus } = require('../dist/lib/server/media-buy-helpers');
 
 describe('capabilitiesResponse', () => {
   it('returns MCP-compatible shape with structuredContent', () => {
@@ -58,6 +60,52 @@ describe('mediaBuyResponse', () => {
     const result = mediaBuyResponse({ media_buy_id: 'mb_123', buyer_ref: 'br1', packages: [] });
     assert.strictEqual(result.content[0].text, 'Media buy mb_123 created');
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_123');
+  });
+
+  it('defaults revision to 1 when not provided', () => {
+    const result = mediaBuyResponse({ media_buy_id: 'mb_1', packages: [] });
+    assert.strictEqual(result.structuredContent.revision, 1);
+  });
+
+  it('preserves explicit revision', () => {
+    const result = mediaBuyResponse({ media_buy_id: 'mb_1', packages: [], revision: 5 });
+    assert.strictEqual(result.structuredContent.revision, 5);
+  });
+
+  it('defaults confirmed_at when not provided', () => {
+    const before = new Date().toISOString();
+    const result = mediaBuyResponse({ media_buy_id: 'mb_1', packages: [] });
+    const after = new Date().toISOString();
+    assert.ok(result.structuredContent.confirmed_at >= before);
+    assert.ok(result.structuredContent.confirmed_at <= after);
+  });
+
+  it('preserves explicit confirmed_at', () => {
+    const ts = '2026-01-15T12:00:00.000Z';
+    const result = mediaBuyResponse({ media_buy_id: 'mb_1', packages: [], confirmed_at: ts });
+    assert.strictEqual(result.structuredContent.confirmed_at, ts);
+  });
+
+  it('populates valid_actions from status when not provided', () => {
+    const result = mediaBuyResponse({ media_buy_id: 'mb_1', packages: [], status: 'active' });
+    assert.ok(Array.isArray(result.structuredContent.valid_actions));
+    assert.ok(result.structuredContent.valid_actions.includes('pause'));
+    assert.ok(result.structuredContent.valid_actions.includes('cancel'));
+  });
+
+  it('does not set valid_actions when status is not provided', () => {
+    const result = mediaBuyResponse({ media_buy_id: 'mb_1', packages: [] });
+    assert.strictEqual(result.structuredContent.valid_actions, undefined);
+  });
+
+  it('preserves explicit valid_actions', () => {
+    const result = mediaBuyResponse({
+      media_buy_id: 'mb_1',
+      packages: [],
+      status: 'active',
+      valid_actions: ['cancel'],
+    });
+    assert.deepStrictEqual(result.structuredContent.valid_actions, ['cancel']);
   });
 });
 
@@ -102,6 +150,27 @@ describe('updateMediaBuyResponse', () => {
     const result = updateMediaBuyResponse({ media_buy_id: 'mb_456' });
     assert.strictEqual(result.content[0].text, 'Media buy mb_456 updated');
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_456');
+  });
+
+  it('populates valid_actions from status when not provided', () => {
+    const result = updateMediaBuyResponse({ media_buy_id: 'mb_1', status: 'paused' });
+    assert.ok(Array.isArray(result.structuredContent.valid_actions));
+    assert.ok(result.structuredContent.valid_actions.includes('resume'));
+    assert.ok(!result.structuredContent.valid_actions.includes('pause'));
+  });
+
+  it('does not set valid_actions when status is not provided', () => {
+    const result = updateMediaBuyResponse({ media_buy_id: 'mb_1' });
+    assert.strictEqual(result.structuredContent.valid_actions, undefined);
+  });
+
+  it('preserves explicit valid_actions', () => {
+    const result = updateMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      status: 'active',
+      valid_actions: ['cancel'],
+    });
+    assert.deepStrictEqual(result.structuredContent.valid_actions, ['cancel']);
   });
 });
 
@@ -208,5 +277,155 @@ describe('activateSignalResponse', () => {
   it('uses custom summary when provided', () => {
     const result = activateSignalResponse({ deployments: [] }, 'Custom');
     assert.strictEqual(result.content[0].text, 'Custom');
+  });
+});
+
+describe('validActionsForStatus', () => {
+  it('returns actions including pause for active status', () => {
+    const actions = validActionsForStatus('active');
+    assert.ok(actions.includes('pause'));
+    assert.ok(actions.includes('cancel'));
+    assert.ok(actions.includes('update_budget'));
+    assert.ok(!actions.includes('resume'));
+  });
+
+  it('returns resume but not pause for paused status', () => {
+    const actions = validActionsForStatus('paused');
+    assert.ok(actions.includes('resume'));
+    assert.ok(actions.includes('cancel'));
+    assert.ok(!actions.includes('pause'));
+    assert.ok(!actions.includes('sync_creatives'));
+  });
+
+  it('returns cancel and modification actions for pending_creatives', () => {
+    const actions = validActionsForStatus('pending_creatives');
+    assert.ok(actions.includes('cancel'));
+    assert.ok(actions.includes('sync_creatives'));
+    assert.ok(!actions.includes('pause'));
+    assert.ok(!actions.includes('resume'));
+  });
+
+  it('returns cancel and modification actions for pending_start', () => {
+    const actions = validActionsForStatus('pending_start');
+    assert.ok(actions.includes('cancel'));
+    assert.ok(actions.includes('update_packages'));
+    assert.ok(!actions.includes('pause'));
+  });
+
+  it('returns empty array for canceled status', () => {
+    assert.deepStrictEqual(validActionsForStatus('canceled'), []);
+  });
+
+  it('returns empty array for completed status', () => {
+    assert.deepStrictEqual(validActionsForStatus('completed'), []);
+  });
+
+  it('returns empty array for rejected status', () => {
+    assert.deepStrictEqual(validActionsForStatus('rejected'), []);
+  });
+
+  it('returns an array for every known status', () => {
+    const allStatuses = ['pending_creatives', 'pending_start', 'active', 'paused', 'completed', 'rejected', 'canceled'];
+    for (const status of allStatuses) {
+      const result = validActionsForStatus(status);
+      assert.ok(Array.isArray(result), `Expected array for status "${status}"`);
+    }
+  });
+});
+
+describe('cancelMediaBuyResponse', () => {
+  it('sets status to canceled and valid_actions to empty', () => {
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'buyer',
+      revision: 3,
+    });
+    assert.strictEqual(result.structuredContent.status, 'canceled');
+    assert.deepStrictEqual(result.structuredContent.valid_actions, []);
+  });
+
+  it('requires canceled_by and auto-sets canceled_at', () => {
+    const before = new Date().toISOString();
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'seller',
+      revision: 2,
+    });
+    const after = new Date().toISOString();
+    const cancellation = result.structuredContent.cancellation;
+    assert.strictEqual(cancellation.canceled_by, 'seller');
+    assert.ok(cancellation.canceled_at >= before);
+    assert.ok(cancellation.canceled_at <= after);
+  });
+
+  it('preserves explicit canceled_at', () => {
+    const ts = '2026-03-01T00:00:00.000Z';
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'buyer',
+      revision: 4,
+      canceled_at: ts,
+    });
+    assert.strictEqual(result.structuredContent.cancellation.canceled_at, ts);
+  });
+
+  it('includes reason when provided', () => {
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'buyer',
+      revision: 2,
+      reason: 'Campaign ended early',
+    });
+    assert.strictEqual(result.structuredContent.cancellation.reason, 'Campaign ended early');
+  });
+
+  it('omits reason when not provided', () => {
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'buyer',
+      revision: 2,
+    });
+    assert.strictEqual(result.structuredContent.cancellation.reason, undefined);
+  });
+
+  it('returns correct default summary', () => {
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_99',
+      canceled_by: 'buyer',
+      revision: 1,
+    });
+    assert.strictEqual(result.content[0].text, 'Media buy mb_99 canceled');
+  });
+
+  it('passes through revision and sandbox', () => {
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'buyer',
+      revision: 7,
+      sandbox: true,
+    });
+    assert.strictEqual(result.structuredContent.revision, 7);
+    assert.strictEqual(result.structuredContent.sandbox, true);
+  });
+
+  it('passes through affected_packages', () => {
+    const packages = [{ package_id: 'pkg_1' }, { package_id: 'pkg_2' }];
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'buyer',
+      revision: 3,
+      affected_packages: packages,
+    });
+    assert.deepStrictEqual(result.structuredContent.affected_packages, packages);
+  });
+
+  it('omits affected_packages and sandbox when not provided', () => {
+    const result = cancelMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      canceled_by: 'buyer',
+      revision: 2,
+    });
+    assert.strictEqual(result.structuredContent.affected_packages, undefined);
+    assert.strictEqual(result.structuredContent.sandbox, undefined);
   });
 });

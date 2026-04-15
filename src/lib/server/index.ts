@@ -19,9 +19,13 @@ export {
   syncCreativesResponse,
   getSignalsResponse,
   activateSignalResponse,
+  cancelMediaBuyResponse,
   toStructuredContent,
 } from './responses';
 export type { McpToolResponse } from './responses';
+
+export { validActionsForStatus } from './media-buy-helpers';
+export type { ValidAction, CancelMediaBuyInput } from './media-buy-helpers';
 
 export {
   taskToolResponse,
