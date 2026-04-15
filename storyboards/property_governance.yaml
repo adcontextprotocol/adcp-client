@@ -97,12 +97,16 @@ phases:
         sample_request:
           brand:
             domain: "acmeoutdoor.example"
-          list_type: "inclusion"
           name: "Acme Outdoor approved properties"
-          properties:
-            - domain: "outdoormagazine.example"
-            - domain: "hikingtrails.example"
-            - domain: "campinggear.example"
+          base_properties:
+            - selection_type: "identifiers"
+              identifiers:
+                - type: "domain"
+                  value: "outdoormagazine.example"
+                - type: "domain"
+                  value: "hikingtrails.example"
+                - type: "domain"
+                  value: "campinggear.example"
 
         validations:
           - check: response_schema
@@ -132,8 +136,8 @@ phases:
           - Includes both inclusion and exclusion lists
 
         sample_request:
-          brand:
-            domain: "acmeoutdoor.example"
+          principal: "acmeoutdoor.example"
+          name_contains: "Acme Outdoor"
 
         validations:
           - check: response_schema
@@ -165,14 +169,14 @@ phases:
   - id: update_list
     title: "Update property lists"
     narrative: |
-      The buyer modifies an existing property list — adding or removing properties
+      The buyer modifies an existing property list — replacing the base properties
       as brand safety requirements evolve.
 
     steps:
       - id: update_property_list
         title: "Update a property list"
         narrative: |
-          The buyer adds new properties to or removes properties from an existing list.
+          The buyer replaces the base properties on an existing list with a new set.
         task: update_property_list
         schema_ref: "property/update-property-list-request.json"
         response_schema_ref: "property/update-property-list-response.json"
@@ -182,14 +186,19 @@ phases:
         expected: |
           Return the updated property list:
           - Updated property count
-          - Confirmation of additions and removals
+          - Confirmation of the replaced base properties
 
         sample_request:
           list_id: "pl_acme_inclusion_001"
-          add:
-            - domain: "mountaineering.example"
-          remove:
-            - domain: "campinggear.example"
+          base_properties:
+            - selection_type: "identifiers"
+              identifiers:
+                - type: "domain"
+                  value: "outdoormagazine.example"
+                - type: "domain"
+                  value: "hikingtrails.example"
+                - type: "domain"
+                  value: "mountaineering.example"
 
         validations:
           - check: response_schema
@@ -255,10 +264,16 @@ phases:
           brand:
             domain: "acmeoutdoor.example"
           list_id: "pl_acme_inclusion_001"
-          delivery:
-            - property: "outdoormagazine.example"
+          records:
+            - record_id: "delivery_outdoor_001"
+              property:
+                type: "domain"
+                value: "outdoormagazine.example"
               impressions: 50000
-            - property: "randomsite.example"
+            - record_id: "delivery_random_001"
+              property:
+                type: "domain"
+                value: "randomsite.example"
               impressions: 200
 
         validations:
