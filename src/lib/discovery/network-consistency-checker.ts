@@ -318,7 +318,7 @@ export class NetworkConsistencyChecker {
           });
           return {
             url: agent.url,
-            reachable: response.ok || response.status === 405,
+            reachable: response.ok || response.status === 405, // 405 = HEAD rejected but server is alive
             statusCode: response.status,
           };
         } finally {
@@ -481,7 +481,7 @@ export class NetworkConsistencyChecker {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const text = await response.text();
-      if (text.length > MAX_RESPONSE_BYTES) {
+      if (Buffer.byteLength(text, 'utf-8') > MAX_RESPONSE_BYTES) {
         throw new Error('Response too large');
       }
       return JSON.parse(text) as T;
