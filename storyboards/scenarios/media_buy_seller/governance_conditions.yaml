@@ -12,11 +12,11 @@ required_tools:
 narrative: |
   This is a multi-agent test. The test harness sets up a governance plan on a governance
   agent with custom policies that trigger conditions (e.g., "CTV buys require weekly
-  delivery reporting"). The buyer then creates a CTV media buy.
+  delivery reporting"). The buyer creates a CTV buy within budget but matching a policy.
 
   When the seller calls check_governance, the governance agent approves with conditions.
   The seller must create the buy and include the governance conditions and context token
-  in its response so the buyer can see and comply with them.
+  in its response.
 
   By default, the governance agent is the training agent at test-agent.adcontextprotocol.org.
   Override with --governance-agent-url to use a custom governance agent.
@@ -35,8 +35,7 @@ caller:
 
 prerequisites:
   description: |
-    A governance agent that supports sync_plans and check_governance. The training
-    agent is used by default.
+    A governance agent that supports sync_plans and check_governance.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
@@ -44,8 +43,8 @@ phases:
     title: "Set up conditional governance plan"
     narrative: |
       Create a governance plan on the governance agent with custom policies that
-      trigger conditions rather than outright denial. The plan approves CTV buys
-      but requires weekly delivery reporting.
+      trigger conditions. The plan has sufficient budget but policies that require
+      conditions on CTV buys.
 
     steps:
       - id: sync_plans
@@ -59,12 +58,18 @@ phases:
           The governance agent acknowledges the plan with a plan_id.
         sample_request:
           plans:
-            - plan_name: "Acme Outdoor conditional governance"
+            - plan_id: "comply-gov-conditions-plan"
               brand:
                 domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
-              authority_level: "agent_full"
-              per_transaction_threshold: 100000
+              objectives: "Q2 CTV campaign with reporting requirements"
+              budget:
+                total: 100000
+                currency: "USD"
+                authority_level: "agent_full"
+              flight:
+                start: "2026-04-01T00:00:00Z"
+                end: "2026-06-30T23:59:59Z"
+              countries: ["US", "CA"]
               custom_policies:
                 - "CTV buys require weekly delivery reporting"
                 - "UGC placements require brand safety review before activation"
@@ -100,9 +105,6 @@ phases:
 
       - id: sync_governance
         title: "Register governance agent with seller"
-        narrative: |
-          Register the governance agent URL with the seller. The seller will call
-          check_governance on this URL during create_media_buy.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -125,11 +127,6 @@ phases:
 
   - id: buy_with_conditions
     title: "Create CTV buy triggering governance conditions"
-    narrative: |
-      Send a brief targeting CTV and create a buy. The governance agent approves but
-      attaches conditions from the custom policies. The seller must include the
-      conditions in its response.
-
     steps:
       - id: get_products_brief
         title: "Discover CTV products"
@@ -169,8 +166,8 @@ phases:
           The buy succeeds with governance conditions attached:
           - media_buy_id: present
           - status: active or pending_creatives
-          - governance_context: token from the governance agent's approval
-          - The governance conditions are visible to the buyer
+          - governance_context: token from the governance agent
+          - conditions visible to the buyer
         sample_request:
           account:
             brand:

@@ -10,13 +10,13 @@ required_tools:
   - create_media_buy
 
 narrative: |
-  This is a multi-agent test. The test harness sets up a strict governance plan on a
-  governance agent with a low per-transaction threshold ($10K), then registers that agent
-  with the seller. The buyer then attempts a $50K media buy.
+  This is a multi-agent test. The test harness sets up a governance plan on a governance
+  agent with a strict $10K budget, then registers that agent with the seller. The buyer
+  attempts a $50K media buy which exceeds the plan's budget.
 
-  When the seller calls check_governance, the governance agent denies the buy because it
-  exceeds the threshold. The seller must reject the buy and propagate the denial back to
-  the buyer — it must not override or ignore the governance decision.
+  When the seller calls check_governance, the governance agent denies because the
+  requested budget exceeds the plan total. The seller must reject the buy and propagate
+  the denial back to the buyer.
 
   By default, the governance agent is the training agent at test-agent.adcontextprotocol.org.
   Override with --governance-agent-url to use a custom governance agent.
@@ -35,16 +35,16 @@ caller:
 
 prerequisites:
   description: |
-    A governance agent that supports sync_plans and check_governance. The training
-    agent is used by default.
+    A governance agent that supports sync_plans and check_governance.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
   - id: governance_plan_setup
     title: "Set up strict governance plan"
     narrative: |
-      Create a governance plan on the governance agent with a $10K per-transaction
-      limit and no escalation path. Any buy above this amount is denied outright.
+      Create a governance plan on the governance agent with a strict $10K budget
+      and agent_limited authority. The subsequent $50K buy will exceed the plan
+      budget and should be denied.
 
     steps:
       - id: sync_plans
@@ -58,13 +58,18 @@ phases:
           The governance agent acknowledges the plan with a plan_id.
         sample_request:
           plans:
-            - plan_name: "Acme Outdoor strict spending authority"
+            - plan_id: "comply-gov-denied-plan"
               brand:
                 domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
-              authority_level: "agent_limited"
-              per_transaction_threshold: 10000
-              escalation_path: "none"
+              objectives: "Small test campaign — limited budget authority"
+              budget:
+                total: 10000
+                currency: "USD"
+                authority_level: "agent_limited"
+              flight:
+                start: "2026-04-01T00:00:00Z"
+                end: "2026-06-30T23:59:59Z"
+              countries: ["US"]
         validations:
           - check: response_schema
             description: "Response matches sync-plans-response.json schema"
@@ -97,9 +102,6 @@ phases:
 
       - id: sync_governance
         title: "Register governance agent with seller"
-        narrative: |
-          Register the governance agent URL with the seller. The seller will call
-          check_governance on this URL during create_media_buy.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -122,10 +124,6 @@ phases:
 
   - id: buy_denied
     title: "Create buy exceeding governance limits"
-    narrative: |
-      Send a brief and attempt a $50K buy against a $10K governance limit. The governance
-      agent denies the buy. The seller must reject it and propagate the denial.
-
     steps:
       - id: get_products_brief
         title: "Discover products"
@@ -163,9 +161,8 @@ phases:
         stateful: true
         expect_error: true
         expected: |
-          The buy is rejected because governance denied the transaction — the $50K
-          buy exceeds the plan's $10K per-transaction threshold. The seller propagates
-          the denial to the buyer with the governance findings.
+          The buy is rejected because governance denied — the $50K buy exceeds
+          the plan's $10K budget. The seller propagates the denial with findings.
         sample_request:
           account:
             brand:

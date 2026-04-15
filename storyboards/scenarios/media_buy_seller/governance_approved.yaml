@@ -11,11 +11,11 @@ required_tools:
 
 narrative: |
   This is a multi-agent test. The test harness sets up a permissive governance plan on
-  a governance agent, then registers that agent with the seller. When the seller calls
-  check_governance during create_media_buy, the governance agent approves because the
-  buy falls within the plan's limits.
+  a governance agent with a $100K budget, then registers that agent with the seller.
+  The buyer creates a $25K buy which falls within limits.
 
-  The seller must call the governance agent and, on approval, confirm the buy normally.
+  When the seller calls check_governance during create_media_buy, the governance agent
+  approves. The seller must confirm the buy normally.
 
   By default, the governance agent is the training agent at test-agent.adcontextprotocol.org.
   Override with --governance-agent-url to use a custom governance agent.
@@ -34,16 +34,15 @@ caller:
 
 prerequisites:
   description: |
-    A governance agent that supports sync_plans and check_governance. The training
-    agent is used by default.
+    A governance agent that supports sync_plans and check_governance.
   test_kit: "test-kits/acme-outdoor.yaml"
 
 phases:
   - id: governance_plan_setup
     title: "Set up permissive governance plan"
     narrative: |
-      Create a governance plan on the governance agent with a high spending threshold.
-      The subsequent buy will fall within these limits and should be approved.
+      Create a governance plan on the governance agent with a high budget ($100K).
+      The subsequent $25K buy will fall within these limits and should be approved.
 
     steps:
       - id: sync_plans
@@ -57,12 +56,18 @@ phases:
           The governance agent acknowledges the plan with a plan_id.
         sample_request:
           plans:
-            - plan_name: "Acme Outdoor permissive governance"
+            - plan_id: "comply-gov-approved-plan"
               brand:
                 domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
-              authority_level: "agent_full"
-              per_transaction_threshold: 100000
+              objectives: "Q2 outdoor lifestyle campaign — display and video"
+              budget:
+                total: 100000
+                currency: "USD"
+                authority_level: "agent_full"
+              flight:
+                start: "2026-04-01T00:00:00Z"
+                end: "2026-06-30T23:59:59Z"
+              countries: ["US", "CA"]
         validations:
           - check: response_schema
             description: "Response matches sync-plans-response.json schema"
@@ -95,9 +100,6 @@ phases:
 
       - id: sync_governance
         title: "Register governance agent with seller"
-        narrative: |
-          Register the governance agent URL with the seller. The seller will call
-          check_governance on this URL during create_media_buy.
         task: sync_governance
         schema_ref: "account/sync-governance-request.json"
         response_schema_ref: "account/sync-governance-response.json"
@@ -120,10 +122,6 @@ phases:
 
   - id: buy_approved
     title: "Create buy within governance limits"
-    narrative: |
-      Send a brief and create a buy within the plan's spending threshold ($25K vs $100K limit).
-      The governance agent approves. The seller confirms the buy.
-
     steps:
       - id: get_products_brief
         title: "Discover products"
@@ -161,7 +159,7 @@ phases:
         stateful: true
         expected: |
           The buy succeeds — governance approved because the $25K buy is within
-          the plan's $100K per-transaction threshold.
+          the plan's $100K budget.
         sample_request:
           account:
             brand:
