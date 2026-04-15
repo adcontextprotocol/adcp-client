@@ -1,11 +1,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  BrandJsonSchema,
-  getSandboxBrands,
-  clearSandboxCache,
-} = require('../../dist/lib/testing/index.js');
+const { BrandJsonSchema, getSandboxBrands, clearSandboxCache } = require('../../dist/lib/testing/index.js');
 
 describe('BrandJsonSchema', () => {
   test('accepts minimal house portfolio', () => {
@@ -130,7 +126,7 @@ describe('Sandbox brand_json validation', () => {
       assert.strictEqual(
         result.success,
         true,
-        `brand_json for ${brand.domain} failed validation: ${JSON.stringify(result.error?.issues)}`,
+        `brand_json for ${brand.domain} failed validation: ${JSON.stringify(result.error?.issues)}`
       );
     }
   });

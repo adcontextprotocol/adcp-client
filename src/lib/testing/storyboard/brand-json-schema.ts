@@ -13,10 +13,11 @@ import { z } from 'zod';
 
 const BrandIdSchema = z.string().regex(/^[a-z0-9_]+$/);
 
-const LocalizedNameSchema = z.record(z.string().min(1), z.string().min(1)).refine(
-  (obj) => Object.keys(obj).length >= 1 && Object.keys(obj).length <= 1,
-  { message: 'Localized name must have exactly one locale key' },
-);
+const LocalizedNameSchema = z
+  .record(z.string().min(1), z.string().min(1))
+  .refine(obj => Object.keys(obj).length >= 1 && Object.keys(obj).length <= 1, {
+    message: 'Localized name must have exactly one locale key',
+  });
 
 const KellerTypeSchema = z.enum(['master', 'sub_brand', 'endorsed', 'independent']);
 
@@ -61,7 +62,10 @@ const FontRoleSchema = z.union([
     .object({
       family: z.string(),
       files: z.array(FontFileSchema).max(36).optional(),
-      opentype_features: z.array(z.string().regex(/^[a-z0-9]{4}$/)).max(20).optional(),
+      opentype_features: z
+        .array(z.string().regex(/^[a-z0-9]{4}$/))
+        .max(20)
+        .optional(),
       fallbacks: z.array(z.string().max(100)).max(10).optional(),
     })
     .passthrough(),
@@ -97,9 +101,7 @@ const BrandEntrySchema = z
     colors: ColorsSchema.optional(),
     fonts: FontsSchema.optional(),
     tone: ToneSchema.optional(),
-    tagline: z
-      .union([z.string(), z.array(LocalizedNameSchema).min(1)])
-      .optional(),
+    tagline: z.union([z.string(), z.array(LocalizedNameSchema).min(1)]).optional(),
   })
   .passthrough();
 
