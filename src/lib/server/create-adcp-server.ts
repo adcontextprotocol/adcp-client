@@ -160,6 +160,7 @@ import type {
 } from '../types/tools.generated';
 
 import type { AdcpProtocol, MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../utils/capabilities';
+import type { MediaChannel } from '../types/tools.generated';
 import {
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
@@ -386,8 +387,11 @@ export interface AdcpCapabilitiesConfig {
   creative?: Partial<CreativeCapabilities>;
   extensions_supported?: string[];
   portfolio?: {
-    publisher_domains?: string[];
-    channels?: string[];
+    publisher_domains: string[];
+    primary_channels?: MediaChannel[];
+    primary_countries?: string[];
+    description?: string;
+    advertising_policies?: string;
   };
 }
 
@@ -830,11 +834,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };
 
-  // Build capabilities from config. Uses `as any` on domain blocks because
-  // AccountCapabilities.supportedBilling uses 'brand' while the generated
-  // response type uses 'advertiser' — tracked as a separate config type sync.
   if (protocols.includes('media_buy') || capConfig?.features) {
-    (capabilitiesData as any).media_buy = {
+    capabilitiesData.media_buy = {
       features: {
         inline_creative_management: capConfig?.features?.inlineCreativeManagement ?? false,
         property_list_filtering: capConfig?.features?.propertyListFiltering ?? false,
@@ -847,7 +848,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   }
 
   if (capConfig?.account) {
-    (capabilitiesData as any).account = {
+    capabilitiesData.account = {
       require_operator_auth: capConfig.account.requireOperatorAuth ?? false,
       ...(capConfig.account.authorizationEndpoint && {
         authorization_endpoint: capConfig.account.authorizationEndpoint,
@@ -860,7 +861,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   }
 
   if (capConfig?.creative) {
-    (capabilitiesData as any).creative = {
+    capabilitiesData.creative = {
       supports_compliance: capConfig.creative.supportsCompliance ?? false,
       has_creative_library: capConfig.creative.hasCreativeLibrary ?? false,
       supports_generation: capConfig.creative.supportsGeneration ?? false,
@@ -869,7 +870,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   }
 
   if (capConfig?.extensions_supported?.length) {
-    (capabilitiesData as any).extensions_supported = capConfig.extensions_supported;
+    capabilitiesData.extensions_supported = capConfig.extensions_supported;
   }
 
   const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;

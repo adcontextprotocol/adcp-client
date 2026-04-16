@@ -62,12 +62,12 @@ export interface AccountCapabilities {
   /**
    * Billing models this seller supports (e.g., 'operator', 'agent').
    */
-  supportedBilling: ('brand' | 'operator' | 'agent')[];
+  supportedBilling: ('operator' | 'agent' | 'advertiser')[];
 
   /**
    * Default billing model applied when omitted from sync_accounts.
    */
-  defaultBilling?: 'brand' | 'operator' | 'agent';
+  defaultBilling?: 'operator' | 'agent' | 'advertiser';
 
   /**
    * Whether an active account is required before calling get_products.
