@@ -246,3 +246,62 @@ rights:
     description: >
       Represents talent and manages rights in the licensing ecosystem.
       Used in rights licensing scenarios alongside Bistro Oranje.
+
+# ============================================================
+# COLLECTIONS — addressable content catalogs for collection_list targeting
+# ============================================================
+#
+# These collections back the CollectionListReference fixtures used in
+# media buy targeting scenarios. Thematically consistent with the
+# advertisers above: outdoor programming for Acme Outdoor, automotive
+# content for Nova Motors.
+#
+# distribution_ids use realistic identifier types (imdb_id, gracenote_id)
+# so matching logic can be exercised against the same shapes a production
+# collection agent would return.
+
+collections:
+  # --- Outdoor programming (matches Acme Outdoor campaigns) ---
+  - id: trail_life_series
+    name: "Trail Life"
+    kind: "series"
+    genre: "outdoor"
+    collection_rid: "rid:outdoor:trail_life"
+    distribution_ids:
+      - type: imdb_id
+        value: "tt9100001"
+      - type: gracenote_id
+        value: "SH_OUTDOOR_TRAIL_LIFE"
+    description: "Multi-part outdoor adventure series. Used as matching inventory for outdoor campaigns."
+
+  - id: summit_stories_series
+    name: "Summit Stories"
+    kind: "series"
+    genre: "outdoor"
+    collection_rid: "rid:outdoor:summit_stories"
+    distribution_ids:
+      - type: imdb_id
+        value: "tt9100002"
+    description: "Mountaineering documentary series. Used as matching inventory for outdoor campaigns."
+
+  # --- Automotive programming (matches Nova Motors campaigns) ---
+  - id: ev_insider_series
+    name: "EV Insider"
+    kind: "series"
+    genre: "automotive"
+    collection_rid: "rid:auto:ev_insider"
+    distribution_ids:
+      - type: gracenote_id
+        value: "SH_AUTO_EV_INSIDER"
+    description: "Electric vehicle review series. Used as matching inventory for Nova Motors campaigns."
+
+  # --- Unrelated programming (used to validate no-match scenarios) ---
+  - id: cooking_bistros_series
+    name: "Bistro Kitchen"
+    kind: "series"
+    genre: "food"
+    collection_rid: "rid:food:bistro_kitchen"
+    distribution_ids:
+      - type: imdb_id
+        value: "tt9200001"
+    description: "Cooking show. Used to validate that unrelated collections do NOT match outdoor targeting."

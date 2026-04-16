@@ -184,15 +184,43 @@ function validateStatusCode(validation: StoryboardValidation, taskResult: TaskRe
   };
 }
 
+// Strip the "CODE: message" prefix some transports produce, leaving just the
+// code. Returns undefined when the input doesn't look like a coded error.
+function extractCodeFromErrorString(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const match = /^([A-Z][A-Z0-9_]{2,}):\s/.exec(raw);
+  return match ? match[1] : raw;
+}
+
 // ────────────────────────────────────────────────────────────
 // error_code: check error code in error response
 // ────────────────────────────────────────────────────────────
 
 function validateErrorCode(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
-  // Extract error code from various locations agents might put it
+  // Extract error code from various locations agents might put it.
+  // Prefer the L3 structured path (data.adcp_error.code) so we get a bare code
+  // instead of the "CODE: message" string materialized on taskResult.error.
   const data = taskResult.data as Record<string, unknown> | undefined;
+  const adcpError = data?.adcp_error as Record<string, unknown> | undefined;
   const errorCode =
-    data?.error_code ?? data?.code ?? (data?.error as Record<string, unknown> | undefined)?.code ?? taskResult.error;
+    adcpError?.code ??
+    data?.error_code ??
+    data?.code ??
+    (data?.error as Record<string, unknown> | undefined)?.code ??
+    extractCodeFromErrorString(taskResult.error);
+
+  if (validation.allowed_values?.length) {
+    const actual = errorCode !== undefined && errorCode !== null ? String(errorCode) : undefined;
+    const passed = actual !== undefined && validation.allowed_values.some(v => String(v) === actual);
+    return {
+      check: 'error_code',
+      passed,
+      description: validation.description,
+      error: passed
+        ? undefined
+        : `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(errorCode)}`,
+    };
+  }
 
   if (!validation.value) {
     // Just check that an error code exists

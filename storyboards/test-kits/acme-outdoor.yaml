@@ -121,3 +121,75 @@ assets:
       - "Find Your Gear"
 
   click_url: "https://acmeoutdoor.example/summer-sale"
+
+# Inventory list fixtures for property_list / collection_list targeting tests.
+#
+# These reference lists a fictional governance/inventory agent would publish.
+# They let storyboards exercise the full PropertyListReference / CollectionListReference
+# contract without needing a live list server: scenarios point at list_id values
+# and the seller's test engine returns canned contents.
+#
+# Both matching and non-matching sets are provided so a single test fixture
+# covers targeting (buy should include listed inventory) and no-match behaviour
+# (buy references a list that resolves to zero matches in this seller's catalog).
+inventory_targets:
+  # --- Matching sets (Acme Outdoor's intended audience) ---
+  matching_properties:
+    agent_url: "https://governance.pinnacle-agency.example"
+    list_id: "acme_outdoor_allowlist_v1"
+    description: "Outdoor lifestyle properties relevant to Acme Outdoor campaigns."
+    # Expected contents when the list is fetched via get_property_list.
+    expected_identifiers:
+      - type: domain
+        value: "outdoormagazine.example"
+      - type: domain
+        value: "hikingtrails.example"
+      - type: domain
+        value: "campinggear.example"
+      - type: domain
+        value: "mountaineering.example"
+
+  matching_collections:
+    agent_url: "https://governance.pinnacle-agency.example"
+    list_id: "acme_outdoor_collections_v1"
+    description: "Outdoor programming the buyer wants to run alongside."
+    # Expected collection entries when fetched via get_collection_list.
+    expected_collections:
+      - collection_rid: "rid:outdoor:trail_life"
+        name: "Trail Life"
+        kind: "series"
+        genre: "outdoor"
+        distribution_ids:
+          - type: imdb_id
+            value: "tt9100001"
+      - collection_rid: "rid:outdoor:summit_stories"
+        name: "Summit Stories"
+        kind: "series"
+        genre: "outdoor"
+        distribution_ids:
+          - type: imdb_id
+            value: "tt9100002"
+
+  # --- No-match sets (nothing in this seller's catalog matches) ---
+  no_match_properties:
+    agent_url: "https://governance.pinnacle-agency.example"
+    list_id: "acme_outdoor_no_match_v1"
+    description: "Properties outside this seller's inventory — should yield zero matches."
+    expected_identifiers:
+      - type: domain
+        value: "never-sold-here.example"
+      - type: domain
+        value: "also-not-indexed.example"
+
+  no_match_collections:
+    agent_url: "https://governance.pinnacle-agency.example"
+    list_id: "acme_outdoor_no_match_collections_v1"
+    description: "Collections not carried by this seller — should yield zero matches."
+    expected_collections:
+      - collection_rid: "rid:food:bistro_kitchen"
+        name: "Bistro Kitchen"
+        kind: "series"
+        genre: "food"
+        distribution_ids:
+          - type: imdb_id
+            value: "tt9200001"

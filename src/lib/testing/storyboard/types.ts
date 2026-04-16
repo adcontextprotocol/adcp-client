@@ -97,7 +97,7 @@ export interface StoryboardValidation {
   path?: string;
   /** Expected value for field_value and error_code checks (exact match) */
   value?: unknown;
-  /** Accepted values for field_value checks (passes if actual matches any) */
+  /** Accepted values for field_value and error_code checks (passes if actual matches any) */
   allowed_values?: unknown[];
   description: string;
 }
