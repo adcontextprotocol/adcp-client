@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-15
+> Generated at: 2026-04-16
 > Library: @adcp/client v4.30.2
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -662,7 +662,7 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | Type | Purpose |
 |------|---------|
 | `AgentConfig` | Agent connection config (uri, protocol, auth) |
-| `TaskResult<T>` | Return type of every tool call (status + data/error/deferred/submitted) |
+| `TaskResult<T>` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted) |
 | `InputHandler` | Callback for agent clarification requests |
 | `ConversationContext` | Passed to InputHandler with messages, question, helpers |
 | `Product` | Advertising inventory item with formats, pricing, targeting |
