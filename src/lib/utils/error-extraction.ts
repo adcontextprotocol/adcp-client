@@ -27,6 +27,7 @@ export interface ExtractedAdcpError {
 }
 
 /**
+ * @internal
  * Extract an AdCP error from an MCP tool response.
  *
  * Detection order (per transport error mapping spec):
@@ -96,6 +97,7 @@ export function extractAdcpErrorFromMcp(
 }
 
 /**
+ * @internal
  * Extract an AdCP error from a JSON-RPC transport error.
  * Checks error.data.adcp_error for structured transport-level errors
  * (e.g., -32029 rate limit from infrastructure).
@@ -205,4 +207,51 @@ function matchStandardCode(text: string): StandardErrorCode | null {
     if (pattern.test(text)) return code;
   }
   return null;
+}
+
+// --- TaskResult-level helpers ---
+
+import type { AdcpErrorInfo } from '../core/ConversationTypes';
+
+/**
+ * Extract normalized AdcpErrorInfo from unwrapped response data.
+ * Handles both `{ adcp_error: {...} }` and `{ errors: [...] }` shapes.
+ */
+export function extractAdcpErrorInfo(data: any): AdcpErrorInfo | undefined {
+  if (!data) return undefined;
+
+  if (data.adcp_error && typeof data.adcp_error.code === 'string') {
+    const ae = data.adcp_error;
+    const info: AdcpErrorInfo = { code: ae.code, message: ae.message || '' };
+    const recovery = resolveRecovery(ae);
+    if (recovery) info.recovery = recovery;
+    if (ae.field != null) info.field = ae.field;
+    if (ae.suggestion != null) info.suggestion = ae.suggestion;
+    if (ae.retry_after != null) {
+      info.retry_after = ae.retry_after;
+      info.retryAfterMs = ae.retry_after * 1000;
+    }
+    if (ae.details != null) info.details = ae.details;
+    if (ae.synthetic) info.synthetic = true;
+    return info;
+  }
+
+  if (Array.isArray(data.errors) && data.errors.length > 0) {
+    const first = data.errors[0];
+    if (typeof first.code === 'string') {
+      const info: AdcpErrorInfo = { code: first.code, message: first.message || '' };
+      const recovery = resolveRecovery(first);
+      if (recovery) info.recovery = recovery;
+      return info;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Extract correlation ID from response data context envelope.
+ */
+export function extractCorrelationId(data: any): string | undefined {
+  return data?.context?.correlation_id || undefined;
 }

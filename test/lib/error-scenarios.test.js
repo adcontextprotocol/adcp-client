@@ -258,9 +258,31 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       const result = await executor.executeTask(mockAgent, 'connectionFailureTask', {});
 
       assert.strictEqual(result.success, false);
-      assert.strictEqual(result.status, 'completed'); // TaskResult status
+      assert.strictEqual(result.status, 'failed'); // TaskResult status
       assert.strictEqual(result.error, 'ECONNREFUSED: Connection refused');
       assert.strictEqual(result.metadata.status, 'failed'); // Metadata status
+    });
+
+    test('should extract adcpError from transport exception with structured data', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        const err = new Error('Rate limit exceeded');
+        err.data = {
+          adcp_error: { code: 'RATE_LIMITED', message: 'Too many requests', recovery: 'transient', retry_after: 10 },
+          context: { correlation_id: 'transport-corr-789' },
+        };
+        throw err;
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'transportErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.error, 'Rate limit exceeded');
+      assert.ok(result.adcpError, 'adcpError should be populated from transport error');
+      assert.strictEqual(result.adcpError.code, 'RATE_LIMITED');
+      assert.strictEqual(result.adcpError.recovery, 'transient');
+      assert.strictEqual(result.adcpError.retryAfterMs, 10000);
+      assert.strictEqual(result.correlationId, 'transport-corr-789');
     });
 
     test('should handle network failure on initial request', async () => {
@@ -344,7 +366,7 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       // TaskExecutor should catch the error and return an error result
       // A plain string without status is not a valid ADCP response
       assert.strictEqual(result.success, false);
-      assert.strictEqual(result.status, 'completed');
+      assert.strictEqual(result.status, 'failed');
       assert(result.error.includes('Unknown status'));
       assert.strictEqual(result.metadata.status, 'failed');
     });
@@ -457,7 +479,7 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
 
       // Verify the storage error was caught and returned as an error result
       assert.strictEqual(result.success, false);
-      assert.strictEqual(result.status, 'completed');
+      assert.strictEqual(result.status, 'failed');
       assert(result.error.includes('Storage quota exceeded'));
       assert.strictEqual(result.metadata.status, 'failed');
     });
@@ -618,6 +640,59 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       assert.strictEqual(result.success, false);
       assert(result.error.includes(toolName), 'Error message should include tool name');
       assert(result.error.includes('execution failed'), 'Error message should indicate execution failed');
+    });
+  });
+
+  describe('MCP isError with Structured Data', () => {
+    test('should preserve structuredContent and populate adcpError/correlationId', async () => {
+      ProtocolClient.callTool = mock.fn(async () => ({
+        isError: true,
+        content: [{ type: 'text', text: '{"adcp_error":{"code":"INVALID_REQUEST","message":"bad"}}' }],
+        structuredContent: {
+          adcp_error: { code: 'INVALID_REQUEST', message: 'Negative budget not allowed', recovery: 'correctable', field: 'budget' },
+          context: { correlation_id: 'corr-123', request_id: 'req-456' },
+          ext: { vendor: 'test-vendor' },
+        },
+      }));
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'errorWithDataTask', {});
+
+      assert.strictEqual(result.success, false);
+      // Structured data preserved
+      assert.ok(result.data, 'TaskResult.data should be populated on error');
+      assert.strictEqual(result.data.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.data.context.correlation_id, 'corr-123');
+      assert.strictEqual(result.data.ext.vendor, 'test-vendor');
+      assert.ok(result.error.includes('INVALID_REQUEST'), 'Error string should include error code');
+      // Convenience accessors
+      assert.ok(result.adcpError, 'adcpError should be populated');
+      assert.strictEqual(result.adcpError.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.adcpError.message, 'Negative budget not allowed');
+      assert.strictEqual(result.adcpError.recovery, 'correctable');
+      assert.strictEqual(result.adcpError.field, 'budget');
+      assert.strictEqual(result.adcpError.synthetic, undefined);
+      assert.strictEqual(result.correlationId, 'corr-123');
+    });
+
+    test('should handle isError with no structuredContent (L1 fallback)', async () => {
+      ProtocolClient.callTool = mock.fn(async () => ({
+        isError: true,
+        content: [{ type: 'text', text: 'Something went wrong' }],
+      }));
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'l1ErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert.ok(result.data, 'TaskResult.data should be populated even for L1 errors');
+      assert.strictEqual(result.data.adcp_error.code, 'mcp_error');
+      assert.strictEqual(result.data.adcp_error.message, 'Something went wrong');
+      // Convenience accessors on L1
+      assert.ok(result.adcpError, 'adcpError should be populated for L1');
+      assert.strictEqual(result.adcpError.code, 'mcp_error');
+      assert.strictEqual(result.adcpError.synthetic, true, 'L1 errors should be marked synthetic');
+      assert.strictEqual(result.correlationId, undefined, 'No correlation ID on L1 errors');
     });
   });
 

@@ -3,9 +3,12 @@ const assert = require('node:assert');
 const {
   extractAdcpErrorFromMcp,
   extractAdcpErrorFromTransport,
+  extractAdcpErrorInfo,
+  extractCorrelationId,
   resolveRecovery,
   getExpectedAction,
 } = require('../dist/lib/utils/error-extraction');
+const { isRetryable, getRetryDelay } = require('../dist/lib/utils/retry');
 
 describe('extractAdcpErrorFromMcp', () => {
   it('extracts from structuredContent.adcp_error (L3)', () => {
@@ -269,5 +272,155 @@ describe('getExpectedAction', () => {
     assert.strictEqual(getExpectedAction('transient'), 'retry');
     assert.strictEqual(getExpectedAction('correctable'), 'fix_request');
     assert.strictEqual(getExpectedAction('terminal'), 'escalate');
+  });
+});
+
+describe('extractAdcpErrorInfo', () => {
+  it('extracts from adcp_error shape', () => {
+    const data = {
+      adcp_error: { code: 'RATE_LIMITED', message: 'Too fast', recovery: 'transient', retry_after: 5 },
+      context: { correlation_id: 'abc' },
+    };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.code, 'RATE_LIMITED');
+    assert.strictEqual(info.message, 'Too fast');
+    assert.strictEqual(info.recovery, 'transient');
+    assert.strictEqual(info.retry_after, 5);
+    assert.strictEqual(info.retryAfterMs, 5000);
+    assert.strictEqual(info.synthetic, undefined);
+  });
+
+  it('extracts from errors array shape', () => {
+    const data = { errors: [{ code: 'INVALID_REQUEST', message: 'Bad field' }] };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.code, 'INVALID_REQUEST');
+    assert.strictEqual(info.message, 'Bad field');
+  });
+
+  it('marks synthetic errors', () => {
+    const data = { adcp_error: { code: 'mcp_error', message: 'raw text', synthetic: true } };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.synthetic, true);
+  });
+
+  it('resolves recovery from standard code table', () => {
+    const data = { adcp_error: { code: 'RATE_LIMITED', message: 'slow' } };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.recovery, 'transient');
+  });
+
+  it('returns undefined for null/undefined', () => {
+    assert.strictEqual(extractAdcpErrorInfo(null), undefined);
+    assert.strictEqual(extractAdcpErrorInfo(undefined), undefined);
+  });
+
+  it('returns undefined for non-error data', () => {
+    assert.strictEqual(extractAdcpErrorInfo({ products: [] }), undefined);
+  });
+});
+
+describe('extractCorrelationId', () => {
+  it('extracts from context.correlation_id', () => {
+    assert.strictEqual(extractCorrelationId({ context: { correlation_id: 'abc-123' } }), 'abc-123');
+  });
+
+  it('returns undefined when no context', () => {
+    assert.strictEqual(extractCorrelationId({}), undefined);
+    assert.strictEqual(extractCorrelationId(null), undefined);
+  });
+});
+
+describe('isRetryable', () => {
+  it('returns true for transient errors', () => {
+    const result = {
+      success: false,
+      status: 'failed',
+      error: 'Rate limited',
+      adcpError: { code: 'RATE_LIMITED', recovery: 'transient', retryAfterMs: 5000 },
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+    };
+    assert.strictEqual(isRetryable(result), true);
+  });
+
+  it('returns false for correctable errors', () => {
+    const result = {
+      success: false,
+      status: 'failed',
+      error: 'Bad field',
+      adcpError: { code: 'INVALID_REQUEST', recovery: 'correctable' },
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+    };
+    assert.strictEqual(isRetryable(result), false);
+  });
+
+  it('returns false for terminal errors', () => {
+    const result = {
+      success: false,
+      status: 'failed',
+      error: 'Suspended',
+      adcpError: { code: 'ACCOUNT_SUSPENDED', recovery: 'terminal' },
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+    };
+    assert.strictEqual(isRetryable(result), false);
+  });
+
+  it('returns false for success results', () => {
+    const result = {
+      success: true,
+      status: 'completed',
+      data: {},
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'completed' },
+    };
+    assert.strictEqual(isRetryable(result), false);
+  });
+
+  it('returns false when no adcpError', () => {
+    const result = {
+      success: false,
+      status: 'failed',
+      error: 'Network error',
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+    };
+    assert.strictEqual(isRetryable(result), false);
+  });
+});
+
+describe('getRetryDelay', () => {
+  it('returns retryAfterMs when present', () => {
+    const result = {
+      success: false,
+      status: 'failed',
+      error: 'Rate limited',
+      adcpError: { code: 'RATE_LIMITED', recovery: 'transient', retryAfterMs: 10000 },
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+    };
+    assert.strictEqual(getRetryDelay(result), 10000);
+  });
+
+  it('returns default when no retryAfterMs', () => {
+    const result = {
+      success: false,
+      status: 'failed',
+      error: 'Rate limited',
+      adcpError: { code: 'RATE_LIMITED', recovery: 'transient' },
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+    };
+    assert.strictEqual(getRetryDelay(result), 5000);
+    assert.strictEqual(getRetryDelay(result, 3000), 3000);
+  });
+
+  it('returns 0 for non-retryable results', () => {
+    const result = {
+      success: false,
+      status: 'failed',
+      error: 'Terminal',
+      adcpError: { code: 'ACCOUNT_SUSPENDED', recovery: 'terminal' },
+      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+    };
+    assert.strictEqual(getRetryDelay(result), 0);
   });
 });

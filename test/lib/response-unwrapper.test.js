@@ -107,10 +107,50 @@ describe('Response Unwrapper', () => {
 
       const result = unwrapProtocolResponse(mcpErrorResponse);
 
-      assert.ok(result.errors);
-      assert.strictEqual(result.errors.length, 1);
-      assert.strictEqual(result.errors[0].code, 'mcp_error');
-      assert.strictEqual(result.errors[0].message, 'Tool execution failed');
+      assert.ok(result.adcp_error);
+      assert.strictEqual(result.adcp_error.code, 'mcp_error');
+      assert.strictEqual(result.adcp_error.message, 'Tool execution failed');
+    });
+
+    test('should preserve full structuredContent on MCP error', () => {
+      const mcpErrorResponse = {
+        isError: true,
+        content: [{ type: 'text', text: '{"adcp_error":{"code":"INVALID_REQUEST","message":"bad"}}' }],
+        structuredContent: {
+          adcp_error: { code: 'INVALID_REQUEST', message: 'bad' },
+          context: { correlation_id: 'abc-123' },
+          ext: { vendor: 'test' },
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpErrorResponse);
+
+      assert.ok(result.adcp_error);
+      assert.strictEqual(result.adcp_error.code, 'INVALID_REQUEST');
+      assert.ok(result.context);
+      assert.strictEqual(result.context.correlation_id, 'abc-123');
+      assert.ok(result.ext);
+      assert.strictEqual(result.ext.vendor, 'test');
+    });
+
+    test('should parse JSON text content on MCP error when no structuredContent', () => {
+      const mcpErrorResponse = {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            adcp_error: { code: 'RATE_LIMITED', message: 'slow down' },
+            context: { correlation_id: 'def-456' },
+          }),
+        }],
+      };
+
+      const result = unwrapProtocolResponse(mcpErrorResponse);
+
+      assert.ok(result.adcp_error);
+      assert.strictEqual(result.adcp_error.code, 'RATE_LIMITED');
+      assert.ok(result.context);
+      assert.strictEqual(result.context.correlation_id, 'def-456');
     });
 
     test('should parse stringified JSON in MCP text content', () => {
@@ -854,6 +894,18 @@ describe('Response Unwrapper', () => {
       };
 
       assert.strictEqual(isAdcpError(response), false);
+    });
+
+    test('should return true for adcp_error responses', () => {
+      assert.strictEqual(isAdcpError({ adcp_error: { code: 'RATE_LIMITED', message: 'slow' } }), true);
+    });
+
+    test('should return false for adcp_error with non-string code', () => {
+      assert.strictEqual(isAdcpError({ adcp_error: { code: 42 } }), false);
+    });
+
+    test('should return false for adcp_error without code', () => {
+      assert.strictEqual(isAdcpError({ adcp_error: {} }), false);
     });
   });
 
