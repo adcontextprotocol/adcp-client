@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-16T18:41:18.425Z
+// Generated at: 2026-04-16T22:00:56.648Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -542,7 +542,7 @@ export const DerivativeTypeSchema = z.union([z.literal("clip"), z.literal("highl
 
 export const TMPResponseTypeSchema = z.union([z.literal("activation"), z.literal("catalog_items"), z.literal("creative"), z.literal("deal")]);
 
-export const UIDTypeSchema = z.union([z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("hashed_email"), z.literal("publisher_first_party"), z.literal("other")]);
+export const UIDTypeSchema = z.union([z.literal("rampid"), z.literal("rampid_derived"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("hashed_email"), z.literal("publisher_first_party"), z.literal("other")]);
 
 export const PublisherPropertySelectorSchema = z.union([z.object({
         publisher_domain: z.string(),
@@ -1697,7 +1697,8 @@ export const AgentSigningKeySchema = z.object({
     x: z.string().optional(),
     y: z.string().optional(),
     n: z.string().optional(),
-    e: z.string().optional()
+    e: z.string().optional(),
+    revoked_at: z.string().optional()
 }).passthrough();
 
 export const AttributionModelSchema = z.union([z.literal("last_touch"), z.literal("first_touch"), z.literal("linear"), z.literal("time_decay"), z.literal("data_driven")]);

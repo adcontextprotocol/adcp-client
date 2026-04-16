@@ -992,6 +992,7 @@ export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus
  */
 export type UIDType =
   | 'rampid'
+  | 'rampid_derived'
   | 'id5'
   | 'uid2'
   | 'euid'
@@ -1935,7 +1936,7 @@ export interface MeasurementTerms {
      */
     max_variance_percent?: number;
     /**
-     * Which measurement window the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. For broadcast TV, this is typically 'c7' (live + 7 days DVR). When absent, billing is based on the seller's standard reporting without windowed maturation.
+     * Which measurement maturation stage the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. Examples: 'c7' for broadcast TV guarantees (live + 7 days DVR), 'final' for DOOH after IVT/fraud-check processing, 'post_sivt' for digital after sophisticated invalid-traffic filtering, 'downloads_30d' for podcast. When absent, billing is based on the seller's standard reporting without windowed maturation.
      */
     measurement_window?: string;
   };
@@ -2026,7 +2027,7 @@ export interface ReportingCapabilities {
    */
   date_range_support: 'date_range' | 'lifetime_only';
   /**
-   * Measurement maturation windows available for this product. Used by broadcast and linear TV sellers where measurement accumulates over time (Live, C3, C7). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Digital-only sellers typically omit this.
+   * Measurement maturation stages available for this product. Used by any channel where billing-grade data is produced in phases rather than arriving final on day one. Examples: broadcast/linear TV (Live → C3 → C7 DVR accumulation), DOOH (tentative plays → post-IVT/fraud-check final), digital with IVT filtering (raw → GIVT filtered → SIVT filtered), podcast (7-day downloads → 30-day downloads). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Sellers whose data is final on first delivery typically omit this.
    */
   measurement_windows?: MeasurementWindow[];
 }
@@ -5046,7 +5047,7 @@ export interface Account {
     categories?: string[];
   }[];
   /**
-   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped so each account can only read its own prefix. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
+   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped at the IAM layer so each account can only read its own prefix — bucket-wide grants are non-compliant even with per-account prefixes. Seller MUST revoke access when the account's status transitions to inactive, suspended, or closed. See security considerations for offline delivery in docs/media-buy/media-buys/optimization-reporting. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
    */
   reporting_bucket?: {
     protocol: CloudStorageProtocol;
@@ -5075,7 +5076,7 @@ export interface Account {
      */
     file_retention_days: number;
     /**
-     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.)
+     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.). Operator-facing documentation — buyer agents MUST NOT auto-fetch this URL; surface it to a human operator. If an implementation fetches it (for preview), apply webhook URL SSRF validation and do not pass the fetched content into an LLM context without indirect-prompt-injection guarding. See docs/media-buy/media-buys/optimization-reporting#security-considerations-for-offline-delivery.
      */
     setup_instructions?: string;
   };

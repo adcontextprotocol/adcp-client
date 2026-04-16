@@ -543,8 +543,7 @@ describe('createAdcpServer', () => {
         name: 'Test',
         version: '1.0.0',
         mediaBuy: {
-          getProducts: async () =>
-            adcpError('INVALID_REQUEST', { message: 'bad', field: 'brief' }),
+          getProducts: async () => adcpError('INVALID_REQUEST', { message: 'bad', field: 'brief' }),
         },
       });
       const result = await callToolRaw(server, 'get_products', {

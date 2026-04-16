@@ -79,12 +79,7 @@ export async function resolvePropertyList(
   };
   if (options.pageSize != null) args.page_size = options.pageSize;
 
-  const raw = (await callMCPTool(
-    ref.agent_url,
-    'get_property_list',
-    args,
-    ref.auth_token
-  )) as Record<string, unknown>;
+  const raw = (await callMCPTool(ref.agent_url, 'get_property_list', args, ref.auth_token)) as Record<string, unknown>;
 
   if (!raw || typeof raw !== 'object' || !('list' in raw)) {
     throw new Error(
@@ -118,12 +113,10 @@ export async function resolveCollectionList(
   };
   if (options.pageSize != null) args.page_size = options.pageSize;
 
-  const raw = (await callMCPTool(
-    ref.agent_url,
-    'get_collection_list',
-    args,
-    ref.auth_token
-  )) as Record<string, unknown>;
+  const raw = (await callMCPTool(ref.agent_url, 'get_collection_list', args, ref.auth_token)) as Record<
+    string,
+    unknown
+  >;
 
   if (!raw || typeof raw !== 'object' || !('list' in raw)) {
     throw new Error(
@@ -158,7 +151,7 @@ export async function resolveCollectionList(
  *   string match on both `type` and `value`.
  */
 export function matchesPropertyList(property: Identifier, list: ResolvedPropertyList): boolean {
-  return list.identifiers.some((entry) => identifiersMatch(property, entry));
+  return list.identifiers.some(entry => identifiersMatch(property, entry));
 }
 
 function identifiersMatch(property: Identifier, entry: Identifier): boolean {
@@ -195,7 +188,7 @@ export function matchesCollectionList(
   collection: { collection_rid?: string; distribution_ids?: { type: string; value: string }[] },
   list: ResolvedCollectionList
 ): boolean {
-  return list.collections.some((entry) => collectionsMatch(collection, entry));
+  return list.collections.some(entry => collectionsMatch(collection, entry));
 }
 
 function collectionsMatch(
@@ -206,7 +199,7 @@ function collectionsMatch(
     return true;
   }
   if (!a.distribution_ids?.length || !b.distribution_ids?.length) return false;
-  return a.distribution_ids.some((aid) =>
-    b.distribution_ids!.some((bid) => aid.type === bid.type && aid.value === bid.value)
+  return a.distribution_ids.some(aid =>
+    b.distribution_ids!.some(bid => aid.type === bid.type && aid.value === bid.value)
   );
 }

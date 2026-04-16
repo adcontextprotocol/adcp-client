@@ -82,27 +82,19 @@ describe('matchesCollectionList', () => {
   });
 
   it('matches when any distribution_id overlaps', () => {
-    expect(
-      matchesCollectionList(
-        { distribution_ids: [{ type: 'gracenote_id', value: 'SH_SUMMIT' }] },
-        list
-      )
-    ).toBe(true);
+    expect(matchesCollectionList({ distribution_ids: [{ type: 'gracenote_id', value: 'SH_SUMMIT' }] }, list)).toBe(
+      true
+    );
   });
 
   it('does not match when distribution_id type is same but value differs', () => {
-    expect(
-      matchesCollectionList({ distribution_ids: [{ type: 'imdb_id', value: 'tt_other' }] }, list)
-    ).toBe(false);
+    expect(matchesCollectionList({ distribution_ids: [{ type: 'imdb_id', value: 'tt_other' }] }, list)).toBe(false);
   });
 
   it('does not match when distribution_id value matches but type differs', () => {
-    expect(
-      matchesCollectionList(
-        { distribution_ids: [{ type: 'gracenote_id', value: 'tt9100001' }] },
-        list
-      )
-    ).toBe(false);
+    expect(matchesCollectionList({ distribution_ids: [{ type: 'gracenote_id', value: 'tt9100001' }] }, list)).toBe(
+      false
+    );
   });
 
   it('does not match when candidate has neither rid nor distribution_ids', () => {
