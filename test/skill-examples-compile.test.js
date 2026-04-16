@@ -10,7 +10,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 
 const SKILLS_DIR = path.resolve(__dirname, '..', 'skills');
 const AGENTS_DIR = path.resolve(__dirname, '..', 'test-agents');
@@ -81,7 +81,7 @@ describe('skill file typescript examples compile', () => {
       }
 
       // Single tsc invocation for all blocks
-      execSync(`npx tsc --noEmit --project ${TSCONFIG}`, {
+      execFileSync('npx', ['tsc', '--noEmit', '--project', TSCONFIG], {
         cwd: path.resolve(__dirname, '..'),
         stdio: 'pipe',
         timeout: 60000,
