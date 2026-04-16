@@ -481,7 +481,7 @@ export class TaskExecutor {
           success: false as const,
           status: 'failed' as const,
           data: completedData,
-          error: finalError!,
+          error: finalError ?? 'Unknown error',
           adcpError: extractAdcpErrorInfo(completedData),
           correlationId: extractCorrelationId(completedData),
           metadata: {

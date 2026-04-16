@@ -204,7 +204,9 @@ function isA2AResponse(response: any): boolean {
 function unwrapMCPResponse(response: any): AdCPResponse {
   // MCP error response — preserve full structured data (context, ext, adcp_error)
   if (response.isError === true) {
-    // L3: structuredContent has the full error payload
+    // L3: structuredContent has the full error payload.
+    // Trust boundary: this is untrusted agent content passed through as-is.
+    // Consumers must sanitize fields like suggestion/details before rendering.
     if (response.structuredContent && typeof response.structuredContent === 'object') {
       return response.structuredContent as AdCPResponse;
     }

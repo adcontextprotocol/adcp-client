@@ -222,7 +222,7 @@ export function extractAdcpErrorInfo(data: any): AdcpErrorInfo | undefined {
 
   if (data.adcp_error && typeof data.adcp_error.code === 'string') {
     const ae = data.adcp_error;
-    const info: AdcpErrorInfo = { code: ae.code, message: ae.message || '' };
+    const info: AdcpErrorInfo = { code: ae.code, message: ae.message || ae.code };
     const recovery = resolveRecovery(ae);
     if (recovery) info.recovery = recovery;
     if (ae.field != null) info.field = ae.field;
