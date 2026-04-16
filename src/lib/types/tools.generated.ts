@@ -9778,7 +9778,7 @@ export interface CollectionListFilters {
 export interface CreateCollectionListResponse {
   list: CollectionList;
   /**
-   * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
+   * Token that authorizes sellers to fetch this list via get_collection_list. Only returned at creation time — buyers MUST store it in a secret manager. Scoped to this one list_id; MUST NOT be reused across lists. Governance agents MUST issue a distinct token per seller so per-relationship revocation is possible. Tokens MUST NOT be logged, appear in cache keys, or echo in error responses. delete_collection_list MUST revoke the token immediately; compromise-driven revocation MUST also signal cache invalidation to sellers (reduced cache_valid_until or a list-changed webhook). See Security considerations in docs/governance/collection/tasks/collection_lists.
    */
   auth_token: string;
   context?: ContextObject;
@@ -9860,7 +9860,7 @@ export interface UpdateCollectionListRequest {
   filters?: CollectionListFilters;
   brand?: BrandReference;
   /**
-   * Update the webhook URL for list change notifications (set to empty string to remove)
+   * Update the webhook URL for list change notifications (set to empty string to remove). Governance agents MUST validate this URL against SSRF per docs/building/implementation/security#webhook-url-validation-ssrf.
    */
   webhook_url?: string;
   context?: ContextObject;
