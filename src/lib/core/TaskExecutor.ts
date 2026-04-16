@@ -10,6 +10,7 @@ import { is401Error } from '../errors';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
+import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import type {
   Message,
@@ -409,7 +410,7 @@ export class TaskExecutor {
     return {
       success: false,
       status,
-      error: govResult.explanation,
+      error: govResult.explanation || `Governance ${status}`,
       governance: govResult,
       metadata: {
         taskId,
@@ -458,11 +459,31 @@ export class TaskExecutor {
             : this.extractOperationError(completedData)
           : undefined;
 
+        if (finalSuccess) {
+          return {
+            success: true as const,
+            status: 'completed' as const,
+            data: completedData,
+            metadata: {
+              taskId,
+              taskName,
+              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              responseTimeMs: Date.now() - startTime,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'completed' as const,
+            },
+            conversation: messages,
+            debug_logs: debugLogs,
+          };
+        }
         return {
-          success: finalSuccess,
-          status: 'completed',
+          success: false as const,
+          status: 'failed' as const,
           data: completedData,
-          error: finalError,
+          error: finalError ?? 'Unknown error',
+          adcpError: extractAdcpErrorInfo(completedData),
+          correlationId: extractCorrelationId(completedData),
           metadata: {
             taskId,
             taskName,
@@ -470,7 +491,7 @@ export class TaskExecutor {
             responseTimeMs: Date.now() - startTime,
             timestamp: new Date().toISOString(),
             clarificationRounds: 0,
-            status: 'completed',
+            status: 'failed' as const,
           },
           conversation: messages,
           debug_logs: debugLogs,
@@ -512,8 +533,33 @@ export class TaskExecutor {
 
       case ADCP_STATUS.FAILED:
       case ADCP_STATUS.REJECTED:
-      case ADCP_STATUS.CANCELED:
-        throw new Error(`Task ${status}: ${response.error || response.message || 'Unknown error'}`);
+      case ADCP_STATUS.CANCELED: {
+        const failedData = this.extractResponseData(response, debugLogs, taskName);
+        const adcpErrorInfo = extractAdcpErrorInfo(failedData);
+        const hasStructuredError = !!adcpErrorInfo;
+        const failedError = hasStructuredError
+          ? this.extractOperationError(failedData)
+          : response.error || response.message || `Task ${status}`;
+        return {
+          success: false as const,
+          status: 'failed' as const,
+          data: hasStructuredError ? failedData : undefined,
+          error: typeof failedError === 'string' ? failedError : `Task ${status}`,
+          adcpError: adcpErrorInfo,
+          correlationId: extractCorrelationId(failedData),
+          metadata: {
+            taskId,
+            taskName,
+            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            responseTimeMs: Date.now() - startTime,
+            timestamp: new Date().toISOString(),
+            clarificationRounds: 0,
+            status: 'failed' as const,
+          },
+          conversation: messages,
+          debug_logs: debugLogs,
+        };
+      }
 
       default:
         // Unknown status - treat as completed if we have data
@@ -535,11 +581,31 @@ export class TaskExecutor {
               : this.extractOperationError(defaultData)
             : undefined;
 
+          if (defaultFinalSuccess) {
+            return {
+              success: true as const,
+              status: 'completed' as const,
+              data: defaultData,
+              metadata: {
+                taskId,
+                taskName,
+                agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+                responseTimeMs: Date.now() - startTime,
+                timestamp: new Date().toISOString(),
+                clarificationRounds: 0,
+                status: 'completed' as const,
+              },
+              conversation: messages,
+              debug_logs: debugLogs,
+            };
+          }
           return {
-            success: defaultFinalSuccess,
-            status: 'completed',
+            success: false as const,
+            status: 'failed' as const,
             data: defaultData,
-            error: defaultFinalError,
+            error: defaultFinalError!,
+            adcpError: extractAdcpErrorInfo(defaultData),
+            correlationId: extractCorrelationId(defaultData),
             metadata: {
               taskId,
               taskName,
@@ -547,7 +613,7 @@ export class TaskExecutor {
               responseTimeMs: Date.now() - startTime,
               timestamp: new Date().toISOString(),
               clarificationRounds: 0,
-              status: 'completed',
+              status: 'failed' as const,
             },
             conversation: messages,
             debug_logs: debugLogs,
@@ -564,8 +630,8 @@ export class TaskExecutor {
    * @internal Exposed for testing purposes
    */
   public extractResponseData(response: any, debugLogs?: any[], toolName?: string): any {
-    // Note: MCP error responses (isError: true) are handled in mcp.ts and thrown as exceptions
-    // They never reach this function - they're caught by the try/catch in executeTask
+    // MCP error responses (isError: true) flow through here — the response unwrapper
+    // extracts structured data (adcp_error, context, ext) from structuredContent or text
 
     // Use the shared response unwrapper utility
     // This handles MCP structuredContent, A2A artifacts (including HITL multi-artifact responses),
@@ -647,7 +713,7 @@ export class TaskExecutor {
    * Handles singular `error`, plural `errors` (AdCP schema), and `success: false`.
    */
   private isOperationSuccess(data: any): boolean {
-    return data?.success !== false && !data?.error && !isAdcpError(data);
+    return data?.success !== false && !data?.error && !data?.adcp_error && !isAdcpError(data);
   }
 
   /**
@@ -655,6 +721,10 @@ export class TaskExecutor {
    * Handles singular `error`, plural `errors` array, and `message` field.
    */
   private extractOperationError(data: any): string {
+    if (data?.adcp_error) {
+      const ae = data.adcp_error;
+      return ae.message ? `${ae.code}: ${ae.message}` : ae.code;
+    }
     return (
       data?.error ||
       (isAdcpError(data) ? data.errors.map((e: any) => e.message || e.code).join('; ') : null) ||
@@ -986,11 +1056,29 @@ export class TaskExecutor {
       if (status.status === ADCP_STATUS.COMPLETED) {
         const pollSuccess = this.isOperationSuccess(status.result);
 
+        if (pollSuccess) {
+          return {
+            success: true as const,
+            status: 'completed' as const,
+            data: status.result,
+            metadata: {
+              taskId,
+              taskName: status.taskType,
+              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              responseTimeMs: Date.now() - status.createdAt,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'completed' as const,
+            },
+          };
+        }
         return {
-          success: pollSuccess,
-          status: 'completed',
+          success: false as const,
+          status: 'failed' as const,
           data: status.result,
-          error: pollSuccess ? undefined : this.extractOperationError(status.result),
+          error: this.extractOperationError(status.result),
+          adcpError: extractAdcpErrorInfo(status.result),
+          correlationId: extractCorrelationId(status.result),
           metadata: {
             taskId,
             taskName: status.taskType,
@@ -998,13 +1086,29 @@ export class TaskExecutor {
             responseTimeMs: Date.now() - status.createdAt,
             timestamp: new Date().toISOString(),
             clarificationRounds: 0,
-            status: 'completed',
+            status: 'failed' as const,
           },
         };
       }
 
       if (status.status === ADCP_STATUS.FAILED || status.status === ADCP_STATUS.CANCELED) {
-        throw new Error(`Task ${status.status}: ${status.error}`);
+        return {
+          success: false as const,
+          status: 'failed' as const,
+          data: status.result,
+          error: status.error || `Task ${status.status}`,
+          adcpError: extractAdcpErrorInfo(status.result),
+          correlationId: extractCorrelationId(status.result),
+          metadata: {
+            taskId,
+            taskName: status.taskType,
+            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            responseTimeMs: Date.now() - status.createdAt,
+            timestamp: new Date().toISOString(),
+            clarificationRounds: 0,
+            status: 'failed' as const,
+          },
+        };
       }
 
       await this.sleep(pollInterval);
@@ -1117,10 +1221,18 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): TaskResult<T> {
+    // Try to extract structured error info from transport exceptions
+    // (e.g., JSON-RPC errors with data.adcp_error)
+    const transportData = error?.data || error?.response?.data;
+    const adcpErrorInfo = extractAdcpErrorInfo(transportData);
+    const correlationId = extractCorrelationId(transportData);
+
     return {
-      success: false,
-      status: 'completed', // TaskResult status
+      success: false as const,
+      status: 'failed' as const,
       error: error.message || String(error),
+      adcpError: adcpErrorInfo,
+      correlationId,
       metadata: {
         taskId,
         taskName: 'unknown',
@@ -1128,7 +1240,7 @@ export class TaskExecutor {
         responseTimeMs: Date.now() - startTime,
         timestamp: new Date().toISOString(),
         clarificationRounds: 0,
-        status: 'failed', // metadata status
+        status: 'failed' as const,
       },
       debug_logs: debugLogs,
     };

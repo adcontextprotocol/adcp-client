@@ -482,7 +482,7 @@ describe(
 
         const executor = new TaskExecutor();
 
-        // FAILED status throws internally but executeTask catches it and returns an error result
+        // FAILED status returns an error TaskResult directly
         const result = await executor.executeTask(mockAgent, 'failTask', {});
         assert.strictEqual(result.success, false);
         assert.ok(
@@ -501,7 +501,7 @@ describe(
 
         const executor = new TaskExecutor();
 
-        // REJECTED status throws internally but executeTask catches it and returns an error result
+        // REJECTED status returns an error TaskResult directly
         const result = await executor.executeTask(mockAgent, 'rejectTask', {});
         assert.strictEqual(result.success, false);
         assert.ok(
@@ -520,7 +520,7 @@ describe(
 
         const executor = new TaskExecutor();
 
-        // CANCELED status throws internally but executeTask catches it and returns an error result
+        // CANCELED status returns an error TaskResult directly
         const result = await executor.executeTask(mockAgent, 'cancelTask', {});
         assert.strictEqual(result.success, false);
         assert.ok(
@@ -585,7 +585,7 @@ describe(
         const result = await executor.executeTask(mockAgent, 'networkErrorTask', {});
 
         assert.strictEqual(result.success, false);
-        assert.strictEqual(result.status, 'completed');
+        assert.strictEqual(result.status, 'failed');
         assert.strictEqual(result.error, 'Network timeout');
         assert.strictEqual(result.metadata.status, 'failed');
       });

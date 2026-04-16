@@ -309,17 +309,10 @@ async function executeStep(
     };
   }
 
-  // For expect_error steps: extract error data so validations can check fields.
-  // Error data may come from a thrown exception (stepResult.error) or from a
-  // TaskResult with success: false but no data (TaskExecutor catches MCP throws).
-  if (step.expect_error && !taskResult?.data) {
-    const errorSource = stepResult.error || taskResult?.error;
-    if (errorSource) {
-      const errorData = extractErrorData(errorSource);
-      if (errorData) {
-        taskResult = { success: false, data: errorData, error: errorSource };
-      }
-    }
+  // For expect_error steps where TaskResult has no data but has an error string,
+  // wrap the error string so validations have something to check against.
+  if (step.expect_error && !taskResult?.data && taskResult?.error) {
+    taskResult = { ...taskResult, data: { error: taskResult.error } };
   }
 
   // Determine pass/fail — inverted when expect_error is set
@@ -445,50 +438,6 @@ function getNextStepPreview(
     expected: nextStep.expected,
     sample_request: previewRequest,
   };
-}
-
-/**
- * Extract adcp_error data from an error message string.
- *
- * When adcpError() responses are thrown as exceptions, the error message
- * contains JSON with the adcp_error structure. This extracts it so
- * expect_error step validations can check error fields.
- */
-function extractErrorData(errorMessage: string): Record<string, unknown> | null {
-  // Find a JSON object containing adcp_error by trying JSON.parse from each '{'
-  if (errorMessage.includes('"adcp_error"')) {
-    for (let i = errorMessage.indexOf('{'); i !== -1; i = errorMessage.indexOf('{', i + 1)) {
-      try {
-        const parsed = JSON.parse(errorMessage.slice(i)) as Record<string, unknown>;
-        if (parsed.adcp_error) return parsed;
-      } catch {
-        // Not valid JSON from this position, keep looking
-      }
-    }
-  }
-
-  // Try to find just the adcp_error object embedded in the message
-  const codeMatch = errorMessage.match(/"code"\s*:\s*"([A-Z_]+)"/);
-  if (codeMatch) {
-    return {
-      adcp_error: {
-        code: codeMatch[1],
-        message: errorMessage,
-      },
-    };
-  }
-
-  // Handle comply_test_controller error responses: "Controller error: ERROR_CODE"
-  const controllerMatch = errorMessage.match(/Controller error:\s*([A-Z_]+)/);
-  if (controllerMatch) {
-    return {
-      success: false,
-      error: controllerMatch[1],
-      error_detail: errorMessage,
-    };
-  }
-
-  return null;
 }
 
 /**

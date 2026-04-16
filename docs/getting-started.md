@@ -30,6 +30,7 @@ if (result.success && result.status === 'completed') {
   console.log('Products:', result.data?.products);
 } else {
   console.error('Error:', result.error);
+  // See result.adcpError for structured error details (code, recovery, suggestion)
 }
 ```
 
@@ -148,25 +149,68 @@ if (result.status === 'submitted') {
 ## Error Handling
 
 ```typescript
-import { isADCPError, isErrorOfType, TaskTimeoutError } from '@adcp/client';
+const result = await agent.getProducts({ brief: 'test' });
 
-try {
-  const result = await agent.getProducts({ brief: 'test' });
+if (!result.success) {
+  // Human-readable error string
+  console.error('Failed:', result.error);
+  // e.g. "INVALID_REQUEST: Negative budget not allowed"
 
-  if (!result.success) {
-    console.error('Task failed:', result.error);
-    return;
+  // Structured error info (when the agent returns adcp_error)
+  if (result.adcpError) {
+    console.log('Code:', result.adcpError.code);
+    console.log('Recovery:', result.adcpError.recovery);
+
+    if (result.adcpError.recovery === 'transient') {
+      // Retry after the suggested delay (retryAfterMs is in milliseconds)
+      await sleep(result.adcpError.retryAfterMs ?? 5000);
+    } else if (result.adcpError.recovery === 'correctable') {
+      // Fix the request using the agent's suggestion
+      console.log('Fix:', result.adcpError.suggestion);
+    }
   }
 
-  console.log('Data:', result.data);
-} catch (error) {
-  if (isErrorOfType(error, TaskTimeoutError)) {
-    console.error('Operation timed out');
-  } else if (isADCPError(error)) {
-    console.error('AdCP error:', error.message);
+  // Correlation ID for tracing across agents
+  if (result.correlationId) {
+    console.log('Correlation ID:', result.correlationId);
   }
+
+  return;
+}
+
+console.log('Data:', result.data);
+```
+
+For retry logic, use the built-in utilities:
+
+```typescript
+import { isRetryable, getRetryDelay } from '@adcp/client';
+
+async function withRetry(fn: () => Promise<TaskResult>, maxRetries = 3) {
+  for (let i = 0; i <= maxRetries; i++) {
+    const result = await fn();
+    if (result.success || !isRetryable(result)) return result;
+    await sleep(getRetryDelay(result)); // ms, defaults to 5000
+  }
+  return fn();
 }
 ```
+
+**Type narrowing:** `TaskResult` is a discriminated union on `success`. After checking `result.success`, TypeScript narrows the type:
+
+```typescript
+if (result.success && result.status === 'completed') {
+  result.data    // T (not T | undefined)
+}
+if (!result.success) {
+  result.error   // string (always present)
+  result.status  // 'failed' | 'governance-denied' | 'governance-escalated'
+}
+```
+
+Use `getExpectedAction(result.adcpError.recovery)` to map recovery to an action string (`'retry'`, `'fix_request'`, `'escalate'`). If `correlationId` is undefined, the agent did not include one — use `result.metadata.taskId` as a local trace reference.
+
+`result.adcpError.synthetic` is `true` when the SDK inferred the error from unstructured text (the agent didn't return a proper `adcp_error` object). Synthetic errors have a code of `mcp_error` and may lack recovery classification.
 
 ## Next Steps
 

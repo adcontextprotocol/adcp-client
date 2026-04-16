@@ -40,27 +40,43 @@ TSEOF
 # Copy skill
 cp "$SKILL_FILE" ./SKILL.md
 
-PROMPT="You are building an AdCP agent. Read SKILL.md in the current directory and build a complete working ${AGENT_TYPE} agent in a single file called agent.ts.
+BUILD_PROMPT="You are building an AdCP agent. Read SKILL.md in the current directory and build a complete working ${AGENT_TYPE} agent in a single file called agent.ts.
 
 For a signals agent: build a marketplace agent with 4 audience segments, CPM pricing, DSP activation.
 For a seller agent: build an SSP with non-guaranteed display + video, auction pricing.
 
 Implement ALL tools listed in the skill. Use createAdcpServer as instructed. Use ctx.store for state.
 
-After writing, compile with: npx tsc --noEmit agent.ts
+After writing, compile with: npx tsc --noEmit
 
 Fix any compilation errors. The agent must compile cleanly.
 
 Do NOT read any files besides SKILL.md before writing code."
 
+DEBRIEF_PROMPT="You just built an AdCP ${AGENT_TYPE} agent from SKILL.md. Give a short debrief (under 200 words):
+
+1. How many compile iterations did you need? What errors did you hit?
+2. What was confusing or ambiguous in the skill file?
+3. What would have saved you the most time?
+4. Any examples that were wrong or misleading?"
+
 START_TIME=$(date +%s)
 
 if [ "$TOOL" = "claude" ]; then
-  echo "Running Claude Code..."
-  claude --print --dangerously-skip-permissions -p "$PROMPT" 2>&1 | tee "$WORK_DIR/output.log"
+  echo "--- Build phase ---"
+  claude --verbose --dangerously-skip-permissions -p "$BUILD_PROMPT" 2>&1 | tee "$WORK_DIR/build.log"
+
+  BUILD_TIME=$(date +%s)
+  BUILD_DURATION=$((BUILD_TIME - START_TIME))
+  echo ""
+  echo "--- Build completed in ${BUILD_DURATION}s ---"
+  echo ""
+
+  echo "--- Debrief ---"
+  claude --print --dangerously-skip-permissions -p "$DEBRIEF_PROMPT" 2>&1 | tee "$WORK_DIR/debrief.log"
 elif [ "$TOOL" = "codex" ]; then
   echo "Running Codex..."
-  codex exec --full-auto "$PROMPT" 2>&1 | tee "$WORK_DIR/output.log"
+  codex exec --full-auto "$BUILD_PROMPT" 2>&1 | tee "$WORK_DIR/build.log"
 else
   echo "Unknown tool: $TOOL"
   exit 1
@@ -95,7 +111,8 @@ if [ -f agent.ts ]; then
     fi
 
     echo "Running storyboard: $STORYBOARD"
-    npx adcp storyboard run http://localhost:3001/mcp "$STORYBOARD" --json 2>&1 | python3 -c "
+    STORYBOARD_BIN="$REPO_ROOT/bin/adcp.js"
+    node "$STORYBOARD_BIN" storyboard run http://localhost:3001/mcp "$STORYBOARD" --json 2>/dev/null | grep -v '^\[AdCP\]' | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -105,8 +122,8 @@ try:
         for step in phase['steps']:
             status = 'PASS' if step['passed'] else 'FAIL'
             print(f'  {step[\"title\"]}: {status}')
-except:
-    print('Could not parse storyboard output')
+except Exception as e:
+    print(f'Could not parse storyboard output: {e}')
 " 2>&1 || echo "Storyboard failed to run"
 
     kill $AGENT_PID 2>/dev/null

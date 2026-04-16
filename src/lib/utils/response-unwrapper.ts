@@ -191,51 +191,34 @@ function isMCPResponse(response: any): boolean {
 }
 
 /**
- * Check if response is A2A format
+ * Check if response is A2A format.
+ * A2A errors are JSON-RPC objects ({ code, message }), not strings.
  */
 function isA2AResponse(response: any): boolean {
-  return 'result' in response || 'error' in response;
+  return 'result' in response || ('error' in response && typeof response.error === 'object' && response.error !== null);
 }
 
 /**
  * Unwrap MCP response - all MCP logic in one place
  */
 function unwrapMCPResponse(response: any): AdCPResponse {
-  // MCP error response
+  // MCP error response — preserve full structured data (context, ext, adcp_error)
   if (response.isError === true) {
-    // Check for structured AdCP error (L3)
-    const adcpError = response.structuredContent?.adcp_error;
-    if (adcpError && typeof adcpError.code === 'string') {
-      const error: Record<string, unknown> = {
-        code: adcpError.code,
-        message: adcpError.message || 'Unknown error',
-      };
-      if (adcpError.recovery) error.recovery = adcpError.recovery;
-      if (adcpError.field != null) error.field = adcpError.field;
-      if (adcpError.suggestion != null) error.suggestion = adcpError.suggestion;
-      if (adcpError.retry_after != null) error.retry_after = adcpError.retry_after;
-      if (adcpError.details != null) error.details = adcpError.details;
-      return { errors: [error] } as unknown as AdCPResponse;
+    // L3: structuredContent has the full error payload.
+    // Trust boundary: this is untrusted agent content passed through as-is.
+    // Consumers must sanitize fields like suggestion/details before rendering.
+    if (response.structuredContent && typeof response.structuredContent === 'object') {
+      return response.structuredContent as AdCPResponse;
     }
 
-    // Check for JSON text fallback (L2)
+    // L2: JSON in text content
     if (Array.isArray(response.content)) {
       for (const item of response.content) {
         if (item?.type === 'text' && item.text) {
           try {
             const parsed = JSON.parse(item.text);
             if (parsed?.adcp_error && typeof parsed.adcp_error.code === 'string') {
-              const ae = parsed.adcp_error;
-              const error: Record<string, unknown> = {
-                code: ae.code,
-                message: ae.message || 'Unknown error',
-              };
-              if (ae.recovery) error.recovery = ae.recovery;
-              if (ae.field != null) error.field = ae.field;
-              if (ae.suggestion != null) error.suggestion = ae.suggestion;
-              if (ae.retry_after != null) error.retry_after = ae.retry_after;
-              if (ae.details != null) error.details = ae.details;
-              return { errors: [error] } as unknown as AdCPResponse;
+              return parsed as AdCPResponse;
             }
           } catch {
             // not JSON, continue to raw text fallback
@@ -244,19 +227,18 @@ function unwrapMCPResponse(response: any): AdCPResponse {
       }
     }
 
-    // Raw text fallback (L1)
+    // L1: Raw text fallback — no structured data available
     const errorContent = Array.isArray(response.content)
       ? response.content.find((c: any) => c.type === 'text')?.text
       : response.content?.text || 'Unknown error';
 
     return {
-      errors: [
-        {
-          code: ERROR_CODES.MCP_ERROR,
-          message: errorContent || 'MCP tool call failed',
-        },
-      ],
-    };
+      adcp_error: {
+        code: ERROR_CODES.MCP_ERROR,
+        message: errorContent || 'MCP tool call failed',
+        synthetic: true,
+      },
+    } as unknown as AdCPResponse;
   }
 
   // MCP success response with structuredContent
@@ -392,10 +374,14 @@ function unwrapA2AResponse(response: any): AdCPResponse {
 }
 
 /**
- * Check if a response is an AdCP error response
+ * Check if a response is an AdCP error response.
+ * Recognizes both `{ adcp_error: { code: string } }` (MCP structured errors)
+ * and `{ errors: [{ code, message }] }` (legacy/A2A format).
  */
 export function isAdcpError(response: any): boolean {
-  return Array.isArray(response?.errors) && response.errors.length > 0;
+  if (Array.isArray(response?.errors) && response.errors.length > 0) return true;
+  if (response?.adcp_error && typeof response.adcp_error.code === 'string') return true;
+  return false;
 }
 
 /**

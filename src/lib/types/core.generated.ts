@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-16T16:21:49.670Z
+// Generated at: 2026-04-16T17:13:29.126Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1239,25 +1239,41 @@ export type VASTAsset =
  */
 export type VASTVersion = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
 /**
- * Standard VAST tracking events for video ad playback and interaction
+ * Tracking events for video ads. Includes IAB VAST 4.2 TrackingEvents, plus flattened representations of Impression, Error, VideoClicks, and ViewableImpression elements. fullscreen/exitFullscreen retained for VAST 2.x/3.x compatibility. measurableImpression is an AdCP extension for MRC measurability signals.
  */
 export type VASTTrackingEvent =
+  | 'impression'
+  | 'creativeView'
+  | 'loaded'
   | 'start'
   | 'firstQuartile'
   | 'midpoint'
   | 'thirdQuartile'
   | 'complete'
-  | 'impression'
-  | 'click'
-  | 'pause'
-  | 'resume'
-  | 'skip'
   | 'mute'
   | 'unmute'
+  | 'pause'
+  | 'resume'
+  | 'rewind'
+  | 'skip'
+  | 'playerExpand'
+  | 'playerCollapse'
   | 'fullscreen'
   | 'exitFullscreen'
-  | 'playerExpand'
-  | 'playerCollapse';
+  | 'progress'
+  | 'notUsed'
+  | 'otherAdInteraction'
+  | 'interactiveStart'
+  | 'clickTracking'
+  | 'customClick'
+  | 'close'
+  | 'closeLinear'
+  | 'error'
+  | 'viewable'
+  | 'notViewable'
+  | 'viewUndetermined'
+  | 'measurableImpression'
+  | 'viewableImpression';
 /**
  * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
  */
@@ -1416,20 +1432,32 @@ export type DAASTAsset =
  */
 export type DAASTVersion = '1.0' | '1.1';
 /**
- * Standard DAAST tracking events for audio ad playback and interaction
+ * Tracking events for audio ads. Includes DAAST-applicable events from IAB VAST/DAAST conventions, plus flattened Impression, Error, and ViewableImpression elements. creativeView included for companion ad tracking. measurableImpression is an AdCP extension.
  */
 export type DAASTTrackingEvent =
+  | 'impression'
+  | 'creativeView'
+  | 'loaded'
   | 'start'
   | 'firstQuartile'
   | 'midpoint'
   | 'thirdQuartile'
   | 'complete'
-  | 'impression'
+  | 'mute'
+  | 'unmute'
   | 'pause'
   | 'resume'
   | 'skip'
-  | 'mute'
-  | 'unmute';
+  | 'progress'
+  | 'clickTracking'
+  | 'customClick'
+  | 'close'
+  | 'error'
+  | 'viewable'
+  | 'notViewable'
+  | 'viewUndetermined'
+  | 'measurableImpression'
+  | 'viewableImpression';
 /**
  * Markdown flavor used. CommonMark for strict compatibility, GFM for tables/task lists/strikethrough.
  */

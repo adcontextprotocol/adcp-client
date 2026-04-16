@@ -469,11 +469,43 @@ function generateLlmsTxt(
   ln('```');
   ln();
 
+  // --- Error Handling ---
+  ln(`## Error Handling`);
+  ln();
+  ln(`When \`result.success\` is \`false\`, use \`result.adcpError\` for programmatic handling:`);
+  ln();
+  ln(`- \`result.error\` — Human-readable string (e.g., \`"RATE_LIMITED: Too many requests"\`)`);
+  ln(`- \`result.adcpError.code\` — Error code (e.g., \`RATE_LIMITED\`, \`INVALID_REQUEST\`)`);
+  ln(
+    `- \`result.adcpError.recovery\` — \`'transient'\` (retry), \`'correctable'\` (fix request), or \`'terminal'\` (give up)`
+  );
+  ln(`- \`result.adcpError.retryAfterMs\` — Milliseconds to wait before retrying`);
+  ln(`- \`result.adcpError.field\` / \`result.adcpError.suggestion\` — Hints for correctable errors`);
+  ln(`- \`result.adcpError.synthetic\` — \`true\` when inferred from unstructured text`);
+  ln(`- \`result.correlationId\` — Correlation ID for tracing across agents`);
+  ln();
+  ln(
+    `Use \`isRetryable(result)\` and \`getRetryDelay(result)\` for retry logic. \`TaskResult\` is a discriminated union — \`if (result.success)\` narrows \`data\` to \`T\`; \`if (!result.success)\` guarantees \`error: string\` and \`status: 'failed'\`.`
+  );
+  ln();
+  ln('```typescript');
+  ln('if (!result.success) {');
+  ln('  if (isRetryable(result)) {');
+  ln('    await sleep(getRetryDelay(result)); // ms, defaults to 5000');
+  ln("  } else if (result.adcpError?.recovery === 'correctable') {");
+  ln("    console.log('Fix:', result.adcpError.suggestion, 'Field:', result.adcpError.field);");
+  ln('  } else {');
+  ln("    console.error(result.error, 'Correlation:', result.correlationId);");
+  ln('  }');
+  ln('}');
+  ln('```');
+  ln();
+
   // --- Tools by domain ---
   ln(`## Tools`);
   ln();
   ln(
-    `Every tool is an MCP tool called via \`agent.<methodName>(params)\`. Returns \`TaskResult<T>\` with \`status\`, \`data\`, \`error\`, \`deferred\`, or \`submitted\`.`
+    `Every tool is an MCP tool called via \`agent.<methodName>(params)\`. Returns \`TaskResult<T>\` with \`status\`, \`data\`, \`error\`, \`adcpError\`, \`correlationId\`, \`deferred\`, or \`submitted\`.`
   );
   ln();
 
@@ -607,7 +639,9 @@ function generateLlmsTxt(
   ln(`| Type | Purpose |`);
   ln(`|------|---------|`);
   ln(`| \`AgentConfig\` | Agent connection config (uri, protocol, auth) |`);
-  ln(`| \`TaskResult<T>\` | Return type of every tool call (status + data/error/deferred/submitted) |`);
+  ln(
+    `| \`TaskResult<T>\` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted) |`
+  );
   ln(`| \`InputHandler\` | Callback for agent clarification requests |`);
   ln(`| \`ConversationContext\` | Passed to InputHandler with messages, question, helpers |`);
   ln(`| \`Product\` | Advertising inventory item with formats, pricing, targeting |`);

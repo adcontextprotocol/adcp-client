@@ -52,9 +52,35 @@ const buy = await agent.createMediaBuy({
 });
 ```
 
+## Error Handling
+
+When `result.success` is `false`, use `result.adcpError` for programmatic handling:
+
+- `result.error` — Human-readable string (e.g., `"RATE_LIMITED: Too many requests"`)
+- `result.adcpError.code` — Error code (e.g., `RATE_LIMITED`, `INVALID_REQUEST`)
+- `result.adcpError.recovery` — `'transient'` (retry), `'correctable'` (fix request), or `'terminal'` (give up)
+- `result.adcpError.retryAfterMs` — Milliseconds to wait before retrying
+- `result.adcpError.field` / `result.adcpError.suggestion` — Hints for correctable errors
+- `result.adcpError.synthetic` — `true` when inferred from unstructured text
+- `result.correlationId` — Correlation ID for tracing across agents
+
+Use `isRetryable(result)` and `getRetryDelay(result)` for retry logic. `TaskResult` is a discriminated union — `if (result.success)` narrows `data` to `T`; `if (!result.success)` guarantees `error: string` and `status: 'failed'`.
+
+```typescript
+if (!result.success) {
+  if (isRetryable(result)) {
+    await sleep(getRetryDelay(result)); // ms, defaults to 5000
+  } else if (result.adcpError?.recovery === 'correctable') {
+    console.log('Fix:', result.adcpError.suggestion, 'Field:', result.adcpError.field);
+  } else {
+    console.error(result.error, 'Correlation:', result.correlationId);
+  }
+}
+```
+
 ## Tools
 
-Every tool is an MCP tool called via `agent.<methodName>(params)`. Returns `TaskResult<T>` with `status`, `data`, `error`, `deferred`, or `submitted`.
+Every tool is an MCP tool called via `agent.<methodName>(params)`. Returns `TaskResult<T>` with `status`, `data`, `error`, `adcpError`, `correlationId`, `deferred`, or `submitted`.
 
 ### Protocol
 
@@ -637,7 +663,7 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | Type | Purpose |
 |------|---------|
 | `AgentConfig` | Agent connection config (uri, protocol, auth) |
-| `TaskResult<T>` | Return type of every tool call (status + data/error/deferred/submitted) |
+| `TaskResult<T>` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted) |
 | `InputHandler` | Callback for agent clarification requests |
 | `ConversationContext` | Passed to InputHandler with messages, question, helpers |
 | `Product` | Advertising inventory item with formats, pricing, targeting |

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-16T16:45:06.579Z
+// Generated at: 2026-04-16T19:09:39.822Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -219,7 +219,7 @@ export const DisclosurePositionSchema = z.union([z.literal("prominent"), z.liter
 
 export const VASTVersionSchema = z.union([z.literal("2.0"), z.literal("3.0"), z.literal("4.0"), z.literal("4.1"), z.literal("4.2")]);
 
-export const VASTTrackingEventSchema = z.union([z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("impression"), z.literal("click"), z.literal("pause"), z.literal("resume"), z.literal("skip"), z.literal("mute"), z.literal("unmute"), z.literal("fullscreen"), z.literal("exitFullscreen"), z.literal("playerExpand"), z.literal("playerCollapse")]);
+export const VASTTrackingEventSchema = z.union([z.literal("impression"), z.literal("creativeView"), z.literal("loaded"), z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("mute"), z.literal("unmute"), z.literal("pause"), z.literal("resume"), z.literal("rewind"), z.literal("skip"), z.literal("playerExpand"), z.literal("playerCollapse"), z.literal("fullscreen"), z.literal("exitFullscreen"), z.literal("progress"), z.literal("notUsed"), z.literal("otherAdInteraction"), z.literal("interactiveStart"), z.literal("clickTracking"), z.literal("customClick"), z.literal("close"), z.literal("closeLinear"), z.literal("error"), z.literal("viewable"), z.literal("notViewable"), z.literal("viewUndetermined"), z.literal("measurableImpression"), z.literal("viewableImpression")]);
 
 export const ProvenanceSchema = z.object({
     digital_source_type: DigitalSourceTypeSchema.optional(),
@@ -277,7 +277,7 @@ export const WebhookSecurityMethodSchema = z.union([z.literal("hmac_sha256"), z.
 
 export const DAASTVersionSchema = z.union([z.literal("1.0"), z.literal("1.1")]);
 
-export const DAASTTrackingEventSchema = z.union([z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("impression"), z.literal("pause"), z.literal("resume"), z.literal("skip"), z.literal("mute"), z.literal("unmute")]);
+export const DAASTTrackingEventSchema = z.union([z.literal("impression"), z.literal("creativeView"), z.literal("loaded"), z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("mute"), z.literal("unmute"), z.literal("pause"), z.literal("resume"), z.literal("skip"), z.literal("progress"), z.literal("clickTracking"), z.literal("customClick"), z.literal("close"), z.literal("error"), z.literal("viewable"), z.literal("notViewable"), z.literal("viewUndetermined"), z.literal("measurableImpression"), z.literal("viewableImpression")]);
 
 export const MarkdownFlavorSchema = z.union([z.literal("commonmark"), z.literal("gfm")]);
 

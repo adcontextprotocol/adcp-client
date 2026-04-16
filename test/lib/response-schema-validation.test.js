@@ -63,7 +63,7 @@ const validSignalPricingOption = {
 };
 
 const validSignal = {
-  signal_id: { source: 'catalog', data_provider_domain: 'example.com', id: 'seg-001' },
+  signal_id: { source: 'agent', agent_url: 'https://signals.example.com', id: 'sig-001' },
   signal_agent_segment_id: 'seg-001',
   name: 'Tech Enthusiasts',
   description: 'Users interested in technology',

@@ -128,19 +128,6 @@ function validateTaskId(taskId: string): void {
 }
 
 /**
- * Check for MCP isError responses and throw, matching callMCPTool behavior.
- */
-function throwOnMCPError(response: CallToolResponse, toolName: string): void {
-  if (response?.isError && response?.content && Array.isArray(response.content)) {
-    const errorText = response.content
-      .filter(item => item.type === 'text' && item.text)
-      .map(item => item.text)
-      .join('\n');
-    throw new Error(errorText || `MCP tool '${toolName}' execution failed (no error details provided)`);
-  }
-}
-
-/**
  * Call an MCP tool with Tasks protocol support.
  *
  * If the server supports MCP Tasks and the tool has `taskSupport: 'optional' | 'required'`,
@@ -211,7 +198,6 @@ export async function callMCPToolWithTasks(
             response: response,
           });
 
-          throwOnMCPError(response, toolName);
           return response;
         }
 
@@ -264,10 +250,7 @@ export async function callMCPToolWithTasks(
                   timestamp: new Date().toISOString(),
                   response: message.result,
                 });
-                // Check for isError on the final result (same as non-tasks path)
-                const result = message.result as CallToolResponse;
-                throwOnMCPError(result, toolName);
-                return result;
+                return message.result as CallToolResponse;
               }
 
               case 'error': {
@@ -276,28 +259,22 @@ export async function callMCPToolWithTasks(
                   message: `MCP Tasks: Error for ${toolName}: ${message.error.message}`,
                   timestamp: new Date().toISOString(),
                 });
-                // The SDK's error event strips adcpError content from the task result.
-                // If we have a taskId, fetch the result to recover it so extractErrorData
-                // in the storyboard runner can parse error codes from expect_error steps.
+                // The MCP Tasks SDK error event may strip structured content.
+                // If we have a taskId, fetch the full result to recover adcp_error data
+                // and return it as a proper isError response for downstream unwrapping.
                 if (capturedTaskId) {
                   try {
                     const taskResult = await client.experimental.tasks.getTaskResult(capturedTaskId);
                     const content = taskResult?.content as Array<{ type: string; text?: string }> | undefined;
-                    const text = content?.find(c => c.type === 'text')?.text;
-                    if (text) {
-                      try {
-                        const parsed = JSON.parse(text) as Record<string, unknown>;
-                        if (parsed?.adcp_error) {
-                          throw new Error(`${message.error.message}\n${text}`);
-                        }
-                      } catch (jsonError) {
-                        // Re-throw if we built an error with adcp_error content
-                        if (jsonError instanceof Error && jsonError !== message.error) throw jsonError;
-                      }
+                    if (content) {
+                      return {
+                        isError: true,
+                        content,
+                        structuredContent: taskResult?.structuredContent,
+                      } as unknown as CallToolResponse;
                     }
-                  } catch (fetchError) {
-                    // Re-throw if we extracted adcp_error; otherwise fall through
-                    if (fetchError !== message.error) throw fetchError;
+                  } catch {
+                    // Failed to fetch task result — fall through to throw
                   }
                 }
                 throw message.error;

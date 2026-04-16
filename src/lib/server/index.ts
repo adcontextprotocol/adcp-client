@@ -84,6 +84,8 @@ export type {
   SponsoredIntelligenceHandlers,
 } from './create-adcp-server';
 
+export { DEFAULT_REPORTING_CAPABILITIES } from './product-defaults';
+
 export { checkGovernance, governanceDeniedError } from './governance';
 export type {
   CheckGovernanceOptions,
