@@ -1,5 +1,18 @@
 // Unified Protocol Interface for AdCP
 export { callMCPTool, callMCPToolWithOAuth, connectMCP, closeMCPConnections, UnauthorizedError } from './mcp';
+
+import { closeMCPConnections } from './mcp';
+
+/**
+ * Close protocol connections for the given protocol.
+ * MCP uses persistent connection pooling; A2A uses ephemeral clients (no-op).
+ */
+export async function closeConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise<void> {
+  if (protocol === 'mcp') {
+    await closeMCPConnections();
+  }
+  // A2A creates ephemeral clients per call — nothing to close.
+}
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool } from './a2a';
 export {

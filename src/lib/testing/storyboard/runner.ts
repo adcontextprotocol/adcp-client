@@ -7,7 +7,7 @@
  */
 
 import { getOrCreateClient, getOrDiscoverProfile, runStep } from '../client';
-import { closeMCPConnections } from '../../protocols/mcp';
+import { closeConnections } from '../../protocols';
 import { executeStoryboardTask } from './task-map';
 import { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 import { runValidations } from './validations';
@@ -39,8 +39,7 @@ export async function runStoryboard(
   const start = Date.now();
   const client = getOrCreateClient(agentUrl, options);
 
-  // Initialize MCP session — discovers agent profile, keeps the transport alive.
-  // Without this, Streamable HTTP degrades to SSE after a few calls.
+  // Discover agent profile and (for MCP) keep the transport alive.
   if (!options._client) {
     const { profile } = await getOrDiscoverProfile(client, options);
     // Populate agentTools from discovered profile if not already set
@@ -124,9 +123,9 @@ export async function runStoryboard(
     tested_at: new Date().toISOString(),
   };
 
-  // Close MCP connections when the runner created its own client
+  // Close protocol connections when the runner created its own client
   if (!options._client) {
-    await closeMCPConnections();
+    await closeConnections(options.protocol);
   }
 
   return result;
@@ -150,7 +149,7 @@ export async function runStoryboardStep(
 ): Promise<StoryboardStepResult> {
   const client = getOrCreateClient(agentUrl, options);
 
-  // Initialize MCP session for standalone step execution
+  // Discover agent profile for standalone step execution
   if (!options._client) {
     await getOrDiscoverProfile(client, options);
   }
@@ -170,7 +169,7 @@ export async function runStoryboardStep(
   const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options);
 
   if (!options._client) {
-    await closeMCPConnections();
+    await closeConnections(options.protocol);
   }
 
   return result;
