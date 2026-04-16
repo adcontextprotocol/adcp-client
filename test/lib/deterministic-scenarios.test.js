@@ -257,6 +257,8 @@ describe('Generated comply test controller types', () => {
     const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
     // The comply test controller uses a single request type with a scenario discriminant
     assert.ok(typesContent.includes('ComplyTestControllerRequest'));
+    assert.ok(typesContent.includes("'list_scenarios'"));
+    assert.ok(typesContent.includes("'force_creative_status'"));
     assert.ok(typesContent.includes("'force_account_status'"));
     assert.ok(typesContent.includes("'force_media_buy_status'"));
     assert.ok(typesContent.includes("'force_session_status'"));
