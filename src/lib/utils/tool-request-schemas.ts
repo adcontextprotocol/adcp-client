@@ -10,11 +10,21 @@
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 
+/**
+ * Make `account` optional for MCP tool registration so requests missing it
+ * reach the handler, which can return a proper adcpError('INVALID_REQUEST')
+ * instead of a raw MCP schema validation error. The schema_validation
+ * storyboard sends create_media_buy without account to test error handling.
+ */
+function withOptionalAccount<T extends z.ZodObject<any>>(schema: T) {
+  return schema.extend({ account: schema.shape.account.optional() });
+}
+
 export const TOOL_REQUEST_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
   get_products: schemas.GetProductsRequestSchema,
-  create_media_buy: schemas.CreateMediaBuyRequestSchema,
-  update_media_buy: schemas.UpdateMediaBuyRequestSchema,
+  create_media_buy: withOptionalAccount(schemas.CreateMediaBuyRequestSchema),
+  update_media_buy: withOptionalAccount(schemas.UpdateMediaBuyRequestSchema),
   get_media_buys: schemas.GetMediaBuysRequestSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
