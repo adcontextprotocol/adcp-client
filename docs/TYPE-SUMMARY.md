@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-04-15
+> Generated at: 2026-04-16
 > @adcp/client v4.30.2
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -649,6 +649,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   standards_id: string  // required
   artifact: Artifact  // required
   idempotency_key: string
+  context: Context
 }
 ```
 
@@ -694,6 +695,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   plans: object[]  // required
+  context: Context
 }
 ```
 
@@ -710,6 +712,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   seller_response: object
   delivery: object
   error: object
+  context: Context
 }
 ```
 
@@ -722,6 +725,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   governance_contexts: string[]
   purchase_types: object[]
   include_entries: boolean
+  context: Context
 }
 ```
 
@@ -740,6 +744,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   delivery_metrics: object
   modification_summary: string
   invoice_recipient: Business Entity
+  context: Context
 }
 ```
 
@@ -778,6 +783,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   session_id: string  // required
   message: string
   action_response: object
+  context: Context
 }
 ```
 
@@ -788,6 +794,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   session_id: string  // required
   reason: 'handoff_transaction' | 'handoff_complete' | 'user_exit' | 'session_timeout' | 'host_terminated'  // required
   termination_context: object
+  context: Context
 }
 ```
 

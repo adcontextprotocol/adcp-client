@@ -215,59 +215,115 @@ export interface SubmittedContinuation<T> {
 }
 
 /**
- * Result of a task execution
+ * Structured AdCP error information extracted from a failed task response.
+ * Present on `TaskResult.adcpError` when the agent returns a recognized error.
  */
-export interface TaskResult<T = any> {
-  /** Whether the task is progressing without errors (true for all intermediate states and successful completion) */
-  success: boolean;
-  /** Task execution status */
-  status:
-    | 'completed'
-    | 'deferred'
-    | 'submitted'
-    | 'input-required'
-    | 'working'
-    | 'governance-denied'
-    | 'governance-escalated';
-  /** Task result data (if successful) */
-  data?: T;
-  /** Error message (if failed) */
-  error?: string;
-  /** Deferred continuation (client needs time for input) */
-  deferred?: DeferredContinuation<T>;
-  /** Submitted continuation (server needs time for processing) */
-  submitted?: SubmittedContinuation<T>;
+export interface AdcpErrorInfo {
+  /** AdCP error code (e.g., 'RATE_LIMITED', 'PRODUCT_NOT_FOUND') */
+  code: string;
+  /** Human-readable error message */
+  message: string;
+  /** Recovery classification: retry, fix the request, or give up */
+  recovery?: 'transient' | 'correctable' | 'terminal';
+  /** Field that caused the error */
+  field?: string;
+  /** Suggested fix from the agent. Untrusted — sanitize before rendering in HTML. */
+  suggestion?: string;
+  /** Seconds to wait before retrying (transient errors). See also `retryAfterMs`. */
+  retry_after?: number;
+  /** Milliseconds to wait before retrying — convenience conversion of `retry_after * 1000`. */
+  retryAfterMs?: number;
+  /** Additional error details. Untrusted agent-controlled content — sanitize before rendering. */
+  details?: Record<string, unknown>;
+  /** True when the SDK inferred this error from unstructured text (L1 compliance) */
+  synthetic?: boolean;
+}
+
+/**
+ * Task execution metadata, shared across all result variants.
+ */
+export interface TaskResultMetadata {
+  taskId: string;
+  taskName: string;
+  agent: { id: string; name: string; protocol: 'mcp' | 'a2a' };
+  /** Total execution time in milliseconds */
+  responseTimeMs: number;
+  /** ISO timestamp of completion */
+  timestamp: string;
+  /** Number of clarification rounds */
+  clarificationRounds: number;
+  /** Final status */
+  status: TaskStatus;
+  /** Input request details (for input-required status) */
+  inputRequest?: InputRequest;
+}
+
+/** Fields shared across all TaskResult variants. */
+interface TaskResultBase {
+  metadata: TaskResultMetadata;
   /** Governance check result (present when governance is configured) */
   governance?: import('./GovernanceTypes').GovernanceCheckResult;
   /** Governance outcome (present after successful execution with governance) */
   governanceOutcome?: import('./GovernanceTypes').GovernanceOutcome;
-  /** Error message when governance outcome reporting failed (distinguishes from "not configured") */
+  /** Error message when governance outcome reporting failed */
   governanceOutcomeError?: string;
-  /** Task execution metadata */
-  metadata: {
-    taskId: string;
-    taskName: string;
-    agent: {
-      id: string;
-      name: string;
-      protocol: 'mcp' | 'a2a';
-    };
-    /** Total execution time in milliseconds */
-    responseTimeMs: number;
-    /** ISO timestamp of completion */
-    timestamp: string;
-    /** Number of clarification rounds */
-    clarificationRounds: number;
-    /** Final status */
-    status: TaskStatus;
-    /** Input request details (for input-required status) */
-    inputRequest?: InputRequest;
-  };
   /** Full conversation history */
   conversation?: Message[];
   /** Debug logs (if debug enabled) */
   debug_logs?: any[];
 }
+
+/** Successful completion — `data` is always present. */
+export interface TaskResultCompleted<T> extends TaskResultBase {
+  success: true;
+  status: 'completed';
+  data: T;
+  error?: undefined;
+  adcpError?: undefined;
+  correlationId?: undefined;
+  deferred?: undefined;
+  submitted?: undefined;
+}
+
+/** Task is still progressing (working, submitted, input-required, deferred). */
+export interface TaskResultIntermediate<T> extends TaskResultBase {
+  success: true;
+  status: 'working' | 'submitted' | 'input-required' | 'deferred';
+  data?: T;
+  error?: undefined;
+  adcpError?: undefined;
+  correlationId?: undefined;
+  /** Deferred continuation (client needs time for input) */
+  deferred?: DeferredContinuation<T>;
+  /** Submitted continuation (server needs time for processing) */
+  submitted?: SubmittedContinuation<T>;
+}
+
+/** Task failed — `error` is always present. */
+export interface TaskResultFailure<T> extends TaskResultBase {
+  success: false;
+  status: 'failed' | 'governance-denied' | 'governance-escalated';
+  /** Response payload with structured error details (adcp_error, context, ext) */
+  data?: T;
+  /** Human-readable error message */
+  error: string;
+  /** Structured AdCP error (code, recovery, suggestion, retryAfterMs) */
+  adcpError?: AdcpErrorInfo;
+  /** Correlation ID from the error response context, for tracing across agents */
+  correlationId?: string;
+  deferred?: undefined;
+  submitted?: undefined;
+}
+
+/**
+ * Result of a task execution.
+ *
+ * Discriminated union on `success`:
+ * - `success: true` + `status: 'completed'` → `data` is `T`
+ * - `success: true` + intermediate status → task is progressing, `data` may be partial
+ * - `success: false` → `error` is always a string, `adcpError` has structured details
+ */
+export type TaskResult<T = any> = TaskResultCompleted<T> | TaskResultIntermediate<T> | TaskResultFailure<T>;
 
 /**
  * Configuration for conversation management

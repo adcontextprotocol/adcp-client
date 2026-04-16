@@ -64,8 +64,10 @@ All operations return a [`TaskResult<T>`](./interfaces/TaskResult.html) with sta
 interface TaskResult<T> {
   success: boolean;
   status: 'completed' | 'deferred' | 'submitted' | 'input-required' | 'working';
-  data?: T;              // Present when status === 'completed'
-  error?: string;        // Present when success is false
+  data?: T;              // Response payload (present on success and structured errors)
+  error?: string;        // Human-readable error message
+  adcpError?: AdcpErrorInfo;  // Structured error (code, recovery, field, suggestion)
+  correlationId?: string;     // Correlation ID from agent context
   deferred?: {...};      // Present when status === 'deferred'
   submitted?: {...};     // Present when status === 'submitted'
   metadata: {
@@ -163,27 +165,36 @@ See [`PropertyCrawler`](./classes/PropertyCrawler.html) and [`PropertyIndex`](./
 
 ## Error Handling
 
-The library provides specific error types for different failure modes:
-
-- [`ADCPError`](./classes/ADCPError.html) - Base error class
-- [`ProtocolError`](./classes/ProtocolError.html) - Protocol-level failures
-- [`TaskTimeoutError`](./classes/TaskTimeoutError.html) - Operation timeouts
-- [`AgentNotFoundError`](./classes/AgentNotFoundError.html) - Invalid agent ID
-- [`ValidationError`](./classes/ADCPValidationError.html) - Schema validation failures
+When a task fails, `TaskResult` provides structured error information:
 
 ```typescript
-import { isADCPError, isErrorOfType, TaskTimeoutError } from '@adcp/client';
+const result = await agent.getProducts(params);
 
-try {
-  const result = await agent.getProducts(params);
-} catch (error) {
-  if (isErrorOfType(error, TaskTimeoutError)) {
-    console.error('Operation timed out');
-  } else if (isADCPError(error)) {
-    console.error('AdCP error:', error.message);
+if (!result.success) {
+  // Human-readable summary
+  console.error(result.error);
+
+  // Structured error (when the agent returns adcp_error)
+  if (result.adcpError) {
+    const { code, recovery, field, suggestion, retry_after } = result.adcpError;
+
+    if (recovery === 'transient') {
+      // Retry after delay
+    } else if (recovery === 'correctable' && suggestion) {
+      // Fix the request using the suggestion
+    }
   }
+
+  // Correlation ID for cross-agent tracing
+  console.log('Correlation:', result.correlationId);
 }
 ```
+
+The library also provides exception classes for transport-level failures:
+
+- [`TaskTimeoutError`](./classes/TaskTimeoutError.html) - Operation timeouts
+- [`AgentNotFoundError`](./classes/AgentNotFoundError.html) - Invalid agent ID
+- [`AuthenticationRequiredError`](./classes/AuthenticationRequiredError.html) - OAuth required
 
 ## Type Safety
 

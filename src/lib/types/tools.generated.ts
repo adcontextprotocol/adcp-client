@@ -988,6 +988,19 @@ export type TalentRole =
  */
 export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus';
 /**
+ * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver which identity graph to resolve against.
+ */
+export type UIDType =
+  | 'rampid'
+  | 'id5'
+  | 'uid2'
+  | 'euid'
+  | 'pairid'
+  | 'maid'
+  | 'hashed_email'
+  | 'publisher_first_party'
+  | 'other';
+/**
  * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
@@ -1303,6 +1316,14 @@ export interface Product {
        * Whether this provider handles identity match for this product.
        */
       identity_match?: boolean;
+      /**
+       * ISO 3166-1 alpha-2 country codes this provider serves for identity match. The router uses this to select the correct regional provider based on the request's country field. Required when identity_match is true.
+       */
+      countries?: string[];
+      /**
+       * Identity types this regional provider can resolve. The router filters providers whose uid_types includes the request's uid_type. Required when identity_match is true.
+       */
+      uid_types?: UIDType[];
     }[];
   };
   /**
@@ -2677,6 +2698,7 @@ export type UniversalMacro =
   | 'COLLECTION_NAME'
   | 'INSTALLMENT_ID'
   | 'AUDIO_DURATION'
+  | 'TMPX'
   | 'AXEM'
   | 'CATALOG_ID'
   | 'SKU'
@@ -3315,25 +3337,41 @@ export type VASTAsset =
  */
 export type VASTVersion = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
 /**
- * Standard VAST tracking events for video ad playback and interaction
+ * Tracking events for video ads. Includes IAB VAST 4.2 TrackingEvents, plus flattened representations of Impression, Error, VideoClicks, and ViewableImpression elements. fullscreen/exitFullscreen retained for VAST 2.x/3.x compatibility. measurableImpression is an AdCP extension for MRC measurability signals.
  */
 export type VASTTrackingEvent =
+  | 'impression'
+  | 'creativeView'
+  | 'loaded'
   | 'start'
   | 'firstQuartile'
   | 'midpoint'
   | 'thirdQuartile'
   | 'complete'
-  | 'impression'
-  | 'click'
-  | 'pause'
-  | 'resume'
-  | 'skip'
   | 'mute'
   | 'unmute'
+  | 'pause'
+  | 'resume'
+  | 'rewind'
+  | 'skip'
+  | 'playerExpand'
+  | 'playerCollapse'
   | 'fullscreen'
   | 'exitFullscreen'
-  | 'playerExpand'
-  | 'playerCollapse';
+  | 'progress'
+  | 'notUsed'
+  | 'otherAdInteraction'
+  | 'interactiveStart'
+  | 'clickTracking'
+  | 'customClick'
+  | 'close'
+  | 'closeLinear'
+  | 'error'
+  | 'viewable'
+  | 'notViewable'
+  | 'viewUndetermined'
+  | 'measurableImpression'
+  | 'viewableImpression';
 /**
  * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
  */
@@ -3419,20 +3457,32 @@ export type DAASTAsset =
  */
 export type DAASTVersion = '1.0' | '1.1';
 /**
- * Standard DAAST tracking events for audio ad playback and interaction
+ * Tracking events for audio ads. Includes DAAST-applicable events from IAB VAST/DAAST conventions, plus flattened Impression, Error, and ViewableImpression elements. creativeView included for companion ad tracking. measurableImpression is an AdCP extension.
  */
 export type DAASTTrackingEvent =
+  | 'impression'
+  | 'creativeView'
+  | 'loaded'
   | 'start'
   | 'firstQuartile'
   | 'midpoint'
   | 'thirdQuartile'
   | 'complete'
-  | 'impression'
+  | 'mute'
+  | 'unmute'
   | 'pause'
   | 'resume'
   | 'skip'
-  | 'mute'
-  | 'unmute';
+  | 'progress'
+  | 'clickTracking'
+  | 'customClick'
+  | 'close'
+  | 'error'
+  | 'viewable'
+  | 'notViewable'
+  | 'viewUndetermined'
+  | 'measurableImpression'
+  | 'viewableImpression';
 /**
  * Markdown flavor used. CommonMark for strict compatibility, GFM for tables/task lists/strikethrough.
  */
@@ -4782,6 +4832,10 @@ export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError
  */
 export type AccountStatus = 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
 /**
+ * Cloud storage protocol
+ */
+export type CloudStorageProtocol = 's3' | 'gcs' | 'azure_blob';
+/**
  * Initial media buy status. Either 'pending_creatives' (awaiting creative assets), 'pending_start' (ready to serve, waiting for flight date), or 'active' (immediate activation).
  */
 export type MediaBuyStatus =
@@ -4991,6 +5045,40 @@ export interface Account {
      */
     categories?: string[];
   }[];
+  /**
+   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped so each account can only read its own prefix. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
+   */
+  reporting_bucket?: {
+    protocol: CloudStorageProtocol;
+    /**
+     * Bucket or container name
+     */
+    bucket: string;
+    /**
+     * Path prefix within the bucket. Seller appends date-based partitioning beneath this prefix.
+     */
+    prefix?: string;
+    /**
+     * Cloud region for the bucket
+     */
+    region?: string;
+    /**
+     * File format for delivered files. Parquet, Avro, and ORC use internal compression (the top-level compression field is ignored for these formats).
+     */
+    format?: 'jsonl' | 'csv' | 'parquet' | 'avro' | 'orc';
+    /**
+     * Compression applied to delivered files
+     */
+    compression?: 'gzip' | 'none';
+    /**
+     * How long reporting files are retained in the bucket before deletion. Buyers must read files within this window. Minimum recommended: 14 days.
+     */
+    file_retention_days: number;
+    /**
+     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.)
+     */
+    setup_instructions?: string;
+  };
   /**
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
@@ -6754,19 +6842,6 @@ export type UserMatch = {
   client_user_agent?: string;
   ext?: ExtensionObject;
 };
-/**
- * Universal ID type
- */
-export type UIDType =
-  | 'rampid'
-  | 'id5'
-  | 'uid2'
-  | 'euid'
-  | 'pairid'
-  | 'maid'
-  | 'hashed_email'
-  | 'publisher_first_party'
-  | 'other';
 /**
  * Request parameters for logging marketing events
  */
@@ -8999,7 +9074,7 @@ export interface GetSignalsResponse {
    * Array of matching signals
    */
   signals: {
-    signal_id?: SignalID;
+    signal_id: SignalID;
     /**
      * Opaque identifier used for activation. This is the signals agent's internal segment ID.
      */
@@ -9283,6 +9358,7 @@ export interface CreatePropertyListResponse {
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -9382,6 +9458,7 @@ export interface UpdatePropertyListRequest {
  */
 export interface UpdatePropertyListResponse {
   list: PropertyList;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -9444,6 +9521,7 @@ export interface GetPropertyListResponse {
   coverage_gaps?: {
     [k: string]: Identifier[] | undefined;
   };
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -9479,6 +9557,7 @@ export interface ListPropertyListsResponse {
    */
   lists: PropertyList[];
   pagination?: PaginationResponse;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -9516,6 +9595,7 @@ export interface DeletePropertyListResponse {
    * ID of the deleted list
    */
   list_id: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -9700,6 +9780,7 @@ export interface CreateCollectionListResponse {
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -9795,6 +9876,7 @@ export interface UpdateCollectionListRequest {
  */
 export interface UpdateCollectionListResponse {
   list: CollectionList;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -9894,6 +9976,7 @@ export interface GetCollectionListResponse {
         }[]
       | undefined;
   };
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -9927,6 +10010,7 @@ export interface ListCollectionListsResponse {
    */
   lists: CollectionList[];
   pagination?: PaginationResponse;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -9964,6 +10048,7 @@ export interface DeleteCollectionListResponse {
    * ID of the deleted list
    */
   list_id: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -10568,6 +10653,8 @@ export interface CalibrateContentRequest {
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
   idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // calibrate_content response
@@ -11166,6 +11253,8 @@ export interface SyncPlansRequest {
     };
     ext?: ExtensionObject;
   }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Audience targeting constraints. Defines who the campaign should reach (include) and must not reach (exclude). The governance agent evaluates seller targeting against these constraints.
@@ -11239,8 +11328,9 @@ export interface SyncPlansResponse {
       reason?: string;
     }[];
   }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
 
 // report_plan_outcome parameters
 /**
@@ -11346,6 +11436,8 @@ export interface ReportPlanOutcomeRequest {
    * Opaque governance context from the check_governance response that authorized this action. Enables the governance agent to correlate the outcome to the original check.
    */
   governance_context: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // report_plan_outcome response
@@ -11401,8 +11493,9 @@ export interface ReportPlanOutcomeResponse {
      */
     budget_remaining?: number;
   };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
 
 // get_plan_audit_logs parameters
 /**
@@ -11435,6 +11528,8 @@ export type GetPlanAuditLogsRequest = {
    * Include the full audit trail. Default: false.
    */
   include_entries?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 };
 
 // get_plan_audit_logs response
@@ -11692,8 +11787,9 @@ export interface GetPlanAuditLogsResponse {
       seller_reference?: string;
     }[];
   }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
 
 // check_governance parameters
 /**
@@ -11805,6 +11901,8 @@ export interface CheckGovernanceRequest {
    */
   modification_summary?: string;
   invoice_recipient?: BusinessEntity;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // check_governance response
@@ -11897,8 +11995,9 @@ export interface CheckGovernanceResponse {
    * Opaque governance context for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle. Only the issuing governance agent interprets this value. This is the primary correlation key for audit and reporting across the governance lifecycle.
    */
   governance_context?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
 
 // si_get_offering parameters
 /**
@@ -12035,6 +12134,7 @@ export interface SIGetOfferingResponse {
    * Errors during offering lookup
    */
   errors?: Error[];
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -12299,6 +12399,7 @@ export interface SIInitiateSessionResponse {
    * Errors during session initiation
    */
   errors?: Error[];
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -12334,6 +12435,7 @@ export type SISendMessageRequest = {
      */
     payload?: {};
   };
+  context?: ContextObject;
   ext?: ExtensionObject;
 };
 
@@ -12410,6 +12512,7 @@ export interface SISendMessageResponse {
     };
   };
   errors?: Error[];
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -12500,6 +12603,7 @@ export interface SITerminateSessionRequest {
      */
     cause?: string;
   };
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -12549,6 +12653,7 @@ export interface SITerminateSessionResponse {
     data?: {};
   };
   errors?: Error[];
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -12636,6 +12741,14 @@ export interface GetAdCPCapabilitiesResponse {
      * Pricing models this seller supports across its product portfolio. Buyers can use this for pre-flight filtering before querying individual products. Individual products may support a subset of these models.
      */
     supported_pricing_models?: PricingModel[];
+    /**
+     * How this seller delivers reporting data to buyers. Polling via get_media_buy_delivery is always available as a baseline regardless of this field. This array declares additional push-based delivery methods the seller supports. 'webhook': seller pushes to buyer-provided URL (configured per buy via reporting_webhook). 'offline': seller pushes batch files to a cloud storage bucket (seller-provisioned per account via reporting_bucket on the account object). When absent, only polling is available.
+     */
+    reporting_delivery_methods?: ('webhook' | 'offline')[];
+    /**
+     * Cloud storage protocols this seller supports for offline file delivery. Only meaningful when reporting_delivery_methods includes 'offline'. Buyers express a protocol preference in sync_accounts; the seller provisions the account's reporting_bucket using a supported protocol.
+     */
+    offline_delivery_protocols?: CloudStorageProtocol[];
     features?: MediaBuyFeatures;
     /**
      * Technical execution capabilities for media buying
@@ -13171,6 +13284,7 @@ export interface SyncAccountsRequest {
      * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
     sandbox?: boolean;
+    preferred_reporting_protocol?: CloudStorageProtocol;
   }[];
   /**
    * When true, accounts previously synced by this agent but not included in this request will be deactivated. Scoped to the authenticated agent — does not affect accounts managed by other agents. Use with caution.
@@ -13625,141 +13739,79 @@ export interface GetAccountFinancialsError {
 /**
  * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production.
  */
-export type ComplyTestControllerRequest =
-  | ListScenarios
-  | ForceCreativeStatus
-  | ForceAccountStatus
-  | ForceMediaBuyStatus
-  | ForceSessionStatus
-  | SimulateDelivery
-  | SimulateBudgetSpend;
-/**
- * Discover which scenarios this seller supports
- */
-export interface ListScenarios {
-  scenario: 'list_scenarios';
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Transition a creative to the specified status
- */
-export interface ForceCreativeStatus {
-  scenario: 'force_creative_status';
-  params: {
+export type ComplyTestControllerRequest = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. Others trigger state transitions for the specified domain.
+   */
+  scenario:
+    | 'list_scenarios'
+    | 'force_creative_status'
+    | 'force_account_status'
+    | 'force_media_buy_status'
+    | 'force_session_status'
+    | 'simulate_delivery'
+    | 'simulate_budget_spend';
+  /**
+   * Scenario-specific parameters. Required for all scenarios except list_scenarios.
+   */
+  params?: {
     /**
-     * Creative to transition
+     * Creative to transition. Used by force_creative_status.
      */
-    creative_id: string;
-    status: CreativeStatus;
+    creative_id?: string;
     /**
-     * Reason for rejection. Required when status = rejected.
+     * Account to transition. Used by force_account_status and simulate_budget_spend.
      */
-    rejection_reason?: string;
-  };
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Transition an account to the specified status
- */
-export interface ForceAccountStatus {
-  scenario: 'force_account_status';
-  params: {
+    account_id?: string;
     /**
-     * Account to transition
+     * Media buy to transition. Used by force_media_buy_status, simulate_delivery, and simulate_budget_spend.
      */
-    account_id: string;
-    status: AccountStatus;
-  };
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Transition a media buy to the specified status
- */
-export interface ForceMediaBuyStatus {
-  scenario: 'force_media_buy_status';
-  params: {
+    media_buy_id?: string;
     /**
-     * Media buy to transition
+     * Session to transition. Used by force_session_status.
      */
-    media_buy_id: string;
-    status: MediaBuyStatus;
+    session_id?: string;
     /**
-     * Reason for rejection. Required when status = rejected.
+     * Target status for the resource. Type depends on scenario: creative-status for force_creative_status, account-status for force_account_status, media-buy-status for force_media_buy_status. For force_session_status, must be 'complete' or 'terminated'.
+     */
+    status?: string;
+    /**
+     * Reason for rejection. Used by force_creative_status and force_media_buy_status when status = rejected.
      */
     rejection_reason?: string;
-  };
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Transition an SI session to a terminal status
- */
-export interface ForceSessionStatus {
-  scenario: 'force_session_status';
-  params: {
     /**
-     * Session to transition
-     */
-    session_id: string;
-    /**
-     * Target terminal status. Only terminal statuses are valid — active and pending_handoff are session-internal transitions.
-     */
-    status: 'complete' | 'terminated';
-    /**
-     * Reason for termination (e.g., session_timeout, host_terminated, policy_violation). Required when status = terminated.
+     * Reason for termination (e.g., session_timeout, host_terminated, policy_violation). Used by force_session_status when status = terminated.
      */
     termination_reason?: string;
-  };
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Inject synthetic delivery data for a media buy
- */
-export interface SimulateDelivery {
-  scenario: 'simulate_delivery';
-  params: {
     /**
-     * Media buy to add delivery to
-     */
-    media_buy_id: string;
-    /**
-     * Impressions to simulate
+     * Impressions to simulate. Used by simulate_delivery.
      */
     impressions?: number;
     /**
-     * Clicks to simulate
+     * Clicks to simulate. Used by simulate_delivery.
      */
     clicks?: number;
     /**
-     * Spend as reported in delivery data. Does not affect budget.
+     * Conversions to simulate. Used by simulate_delivery.
+     */
+    conversions?: number;
+    /**
+     * Spend as reported in delivery data. Does not affect budget. Used by simulate_delivery.
      */
     reported_spend?: {
       amount: number;
       currency: string;
     };
     /**
-     * Conversions to simulate
+     * Spend to this percentage of budget (0–100). Used by simulate_budget_spend.
      */
-    conversions?: number;
+    spend_percentage?: number;
   };
   context?: ContextObject;
   ext?: ExtensionObject;
-}
-/**
- * Simulate budget consumption to a specified percentage
- */
-export interface SimulateBudgetSpend {
-  scenario: 'simulate_budget_spend';
-  params: {
-    [k: string]: unknown | undefined;
-  };
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
+};
 
 
 // comply_test_controller response

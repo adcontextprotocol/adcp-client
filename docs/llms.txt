@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-15
+> Generated at: 2026-04-16
 > Library: @adcp/client v4.30.2
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -52,9 +52,35 @@ const buy = await agent.createMediaBuy({
 });
 ```
 
+## Error Handling
+
+When `result.success` is `false`, use `result.adcpError` for programmatic handling:
+
+- `result.error` — Human-readable string (e.g., `"RATE_LIMITED: Too many requests"`)
+- `result.adcpError.code` — Error code (e.g., `RATE_LIMITED`, `INVALID_REQUEST`)
+- `result.adcpError.recovery` — `'transient'` (retry), `'correctable'` (fix request), or `'terminal'` (give up)
+- `result.adcpError.retryAfterMs` — Milliseconds to wait before retrying
+- `result.adcpError.field` / `result.adcpError.suggestion` — Hints for correctable errors
+- `result.adcpError.synthetic` — `true` when inferred from unstructured text
+- `result.correlationId` — Correlation ID for tracing across agents
+
+Use `isRetryable(result)` and `getRetryDelay(result)` for retry logic. `TaskResult` is a discriminated union — `if (result.success)` narrows `data` to `T`; `if (!result.success)` guarantees `error: string` and `status: 'failed'`.
+
+```typescript
+if (!result.success) {
+  if (isRetryable(result)) {
+    await sleep(getRetryDelay(result)); // ms, defaults to 5000
+  } else if (result.adcpError?.recovery === 'correctable') {
+    console.log('Fix:', result.adcpError.suggestion, 'Field:', result.adcpError.field);
+  } else {
+    console.error(result.error, 'Correlation:', result.correlationId);
+  }
+}
+```
+
 ## Tools
 
-Every tool is an MCP tool called via `agent.<methodName>(params)`. Returns `TaskResult<T>` with `status`, `data`, `error`, `deferred`, or `submitted`.
+Every tool is an MCP tool called via `agent.<methodName>(params)`. Returns `TaskResult<T>` with `status`, `data`, `error`, `adcpError`, `correlationId`, `deferred`, or `submitted`.
 
 ### Protocol
 
@@ -349,7 +375,7 @@ Optional: `scope: object`, `registry_policy_ids: string[]`, `policy: string`, `c
 Request parameters for collaborative calibration dialogue.
 
 Required: `standards_id: string`, `artifact: Artifact`
-Optional: `idempotency_key: string`
+Optional: `idempotency_key: string`, `context: Context`
 
 #### `validate_content_delivery`
 
@@ -377,26 +403,27 @@ Optional: `feature_ids: string[]`, `account: Account Ref`, `context: Context`
 Push campaign plans to the governance agent.
 
 Required: `plans: object[]`
+Optional: `context: Context`
 
 #### `report_plan_outcome`
 
 Report the outcome of an action to the governance agent.
 
 Required: `plan_id: string`, `outcome: Outcome Type`, `governance_context: string`
-Optional: `check_id: string`, `idempotency_key: string`, `purchase_type: Purchase Type`, `seller_response: object`, `delivery: object`, `error: object`
+Optional: `check_id: string`, `idempotency_key: string`, `purchase_type: Purchase Type`, `seller_response: object`, `delivery: object`, `error: object`, `context: Context`
 
 #### `get_plan_audit_logs`
 
 Retrieve governance state and audit trail for a plan.
 
-Optional: `plan_ids: string[]`, `portfolio_plan_ids: string[]`, `governance_contexts: string[]`, `purchase_types: object[]`, `include_entries: boolean`
+Optional: `plan_ids: string[]`, `portfolio_plan_ids: string[]`, `governance_contexts: string[]`, `purchase_types: object[]`, `include_entries: boolean`, `context: Context`
 
 #### `check_governance`
 
 Orchestrator or seller calls the governance agent to validate an action against the campaign plan.
 
 Required: `plan_id: string`, `caller: string`
-Optional: `purchase_type: Purchase Type`, `tool: string`, `payload: object`, `governance_context: string`, `phase: Governance Phase`, `planned_delivery: Planned Delivery`, `delivery_metrics: object`, `modification_summary: string`, +1 more
+Optional: `purchase_type: Purchase Type`, `tool: string`, `payload: object`, `governance_context: string`, `phase: Governance Phase`, `planned_delivery: Planned Delivery`, `delivery_metrics: object`, `modification_summary: string`, +2 more
 
 **Deep dive:**
 - docs/guides/HANDLER-PATTERNS-GUIDE.md — input handler patterns for governance flows
@@ -422,14 +449,14 @@ Optional: `media_buy_id: string`, `placement: string`, `offering_id: string`, `s
 Send a message within an active SI session.
 
 Required: `session_id: string`
-Optional: `message: string`, `action_response: object`
+Optional: `message: string`, `action_response: object`, `context: Context`
 
 #### `si_terminate_session`
 
 Terminate an SI session with reason (handoff_transaction, handoff_complete, user_exit, session_timeout, host_terminated).
 
 Required: `session_id: string`, `reason: 'handoff_transaction' | 'handoff_complete' | 'user_exit' | 'session_timeout' | 'host_terminated'`
-Optional: `termination_context: object`
+Optional: `termination_context: object`, `context: Context`
 
 **Deep dive:**
 - docs/guides/ASYNC-DEVELOPER-GUIDE.md — session lifecycle patterns
@@ -636,7 +663,7 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | Type | Purpose |
 |------|---------|
 | `AgentConfig` | Agent connection config (uri, protocol, auth) |
-| `TaskResult<T>` | Return type of every tool call (status + data/error/deferred/submitted) |
+| `TaskResult<T>` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted) |
 | `InputHandler` | Callback for agent clarification requests |
 | `ConversationContext` | Passed to InputHandler with messages, question, helpers |
 | `Product` | Advertising inventory item with formats, pricing, targeting |
