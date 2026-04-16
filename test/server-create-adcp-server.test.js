@@ -536,7 +536,7 @@ describe('createAdcpServer', () => {
         version: '1.0.0',
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
-          createMediaBuy: async (params) => {
+          createMediaBuy: async params => {
             if (!params.account) {
               return adcpError('INVALID_REQUEST', { message: 'account is required' });
             }

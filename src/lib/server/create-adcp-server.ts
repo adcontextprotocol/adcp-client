@@ -830,6 +830,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };
 
+  // Build capabilities from config. Uses `as any` on domain blocks because
+  // AccountCapabilities.supportedBilling uses 'brand' while the generated
+  // response type uses 'advertiser' — tracked as a separate config type sync.
   if (protocols.includes('media_buy') || capConfig?.features) {
     (capabilitiesData as any).media_buy = {
       features: {

@@ -109,7 +109,9 @@ describe('skill file typescript examples compile', () => {
       // If no errors from our files, other test-agents/*.ts files may have issues — not our concern
     } finally {
       for (const file of tmpFiles) {
-        try { fs.unlinkSync(file.tmpPath); } catch {}
+        try {
+          fs.unlinkSync(file.tmpPath);
+        } catch {}
       }
     }
   });
