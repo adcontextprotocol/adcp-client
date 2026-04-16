@@ -436,7 +436,7 @@ phases:
                 agent_url: "https://your-platform.example.com"
                 id: "ssai_30s"
               assets:
-                - asset_id: "video"
+                video:
                   asset_type: "video"
                   url: "https://cdn.pinnacle-agency.example/trail-pro-30s.mp4"
                   mime_type: "video/mp4"

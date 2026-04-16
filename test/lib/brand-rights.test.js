@@ -101,8 +101,8 @@ describe('hasBrandRightsTools', () => {
     assert.strictEqual(hasBrandRightsTools(['get_brand_identity', 'get_products']), true);
   });
 
-  test('returns true when agent has creative_approval', () => {
-    assert.strictEqual(hasBrandRightsTools(['creative_approval']), true);
+  test('returns true when agent has acquire_rights', () => {
+    assert.strictEqual(hasBrandRightsTools(['acquire_rights']), true);
   });
 
   test('returns true when agent has get_rights', () => {

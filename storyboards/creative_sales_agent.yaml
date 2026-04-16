@@ -140,13 +140,13 @@ phases:
                 agent_url: "https://your-platform.example.com"
                 id: "native_post"
               assets:
-                - asset_id: "headline"
+                headline:
                   asset_type: "text"
                   text: "Summer Sale — 40% Off All Gear"
-                - asset_id: "image"
+                image:
                   asset_type: "image"
                   url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg"
-                - asset_id: "click_url"
+                click_url:
                   asset_type: "url"
                   url: "https://acme-outdoor.example.com/summer-sale"
 
