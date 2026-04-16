@@ -127,7 +127,6 @@ function validateTaskId(taskId: string): void {
   }
 }
 
-
 /**
  * Call an MCP tool with Tasks protocol support.
  *

@@ -341,7 +341,15 @@ describe('isRetryable', () => {
       status: 'failed',
       error: 'Rate limited',
       adcpError: { code: 'RATE_LIMITED', recovery: 'transient', retryAfterMs: 5000 },
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'failed',
+      },
     };
     assert.strictEqual(isRetryable(result), true);
   });
@@ -352,7 +360,15 @@ describe('isRetryable', () => {
       status: 'failed',
       error: 'Bad field',
       adcpError: { code: 'INVALID_REQUEST', recovery: 'correctable' },
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'failed',
+      },
     };
     assert.strictEqual(isRetryable(result), false);
   });
@@ -363,7 +379,15 @@ describe('isRetryable', () => {
       status: 'failed',
       error: 'Suspended',
       adcpError: { code: 'ACCOUNT_SUSPENDED', recovery: 'terminal' },
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'failed',
+      },
     };
     assert.strictEqual(isRetryable(result), false);
   });
@@ -373,7 +397,15 @@ describe('isRetryable', () => {
       success: true,
       status: 'completed',
       data: {},
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'completed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'completed',
+      },
     };
     assert.strictEqual(isRetryable(result), false);
   });
@@ -383,7 +415,15 @@ describe('isRetryable', () => {
       success: false,
       status: 'failed',
       error: 'Network error',
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'failed',
+      },
     };
     assert.strictEqual(isRetryable(result), false);
   });
@@ -396,7 +436,15 @@ describe('getRetryDelay', () => {
       status: 'failed',
       error: 'Rate limited',
       adcpError: { code: 'RATE_LIMITED', recovery: 'transient', retryAfterMs: 10000 },
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'failed',
+      },
     };
     assert.strictEqual(getRetryDelay(result), 10000);
   });
@@ -407,7 +455,15 @@ describe('getRetryDelay', () => {
       status: 'failed',
       error: 'Rate limited',
       adcpError: { code: 'RATE_LIMITED', recovery: 'transient' },
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'failed',
+      },
     };
     assert.strictEqual(getRetryDelay(result), 5000);
     assert.strictEqual(getRetryDelay(result, 3000), 3000);
@@ -419,7 +475,15 @@ describe('getRetryDelay', () => {
       status: 'failed',
       error: 'Terminal',
       adcpError: { code: 'ACCOUNT_SUSPENDED', recovery: 'terminal' },
-      metadata: { taskId: 'x', taskName: 'y', agent: { id: 'a', name: 'b', protocol: 'mcp' }, responseTimeMs: 0, timestamp: '', clarificationRounds: 0, status: 'failed' },
+      metadata: {
+        taskId: 'x',
+        taskName: 'y',
+        agent: { id: 'a', name: 'b', protocol: 'mcp' },
+        responseTimeMs: 0,
+        timestamp: '',
+        clarificationRounds: 0,
+        status: 'failed',
+      },
     };
     assert.strictEqual(getRetryDelay(result), 0);
   });

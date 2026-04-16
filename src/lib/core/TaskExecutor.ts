@@ -539,7 +539,7 @@ export class TaskExecutor {
         const hasStructuredError = !!adcpErrorInfo;
         const failedError = hasStructuredError
           ? this.extractOperationError(failedData)
-          : (response.error || response.message || `Task ${status}`);
+          : response.error || response.message || `Task ${status}`;
         return {
           success: false as const,
           status: 'failed' as const,

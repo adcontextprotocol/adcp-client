@@ -649,7 +649,12 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         isError: true,
         content: [{ type: 'text', text: '{"adcp_error":{"code":"INVALID_REQUEST","message":"bad"}}' }],
         structuredContent: {
-          adcp_error: { code: 'INVALID_REQUEST', message: 'Negative budget not allowed', recovery: 'correctable', field: 'budget' },
+          adcp_error: {
+            code: 'INVALID_REQUEST',
+            message: 'Negative budget not allowed',
+            recovery: 'correctable',
+            field: 'budget',
+          },
           context: { correlation_id: 'corr-123', request_id: 'req-456' },
           ext: { vendor: 'test-vendor' },
         },

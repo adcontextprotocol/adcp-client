@@ -136,13 +136,15 @@ describe('Response Unwrapper', () => {
     test('should parse JSON text content on MCP error when no structuredContent', () => {
       const mcpErrorResponse = {
         isError: true,
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            adcp_error: { code: 'RATE_LIMITED', message: 'slow down' },
-            context: { correlation_id: 'def-456' },
-          }),
-        }],
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              adcp_error: { code: 'RATE_LIMITED', message: 'slow down' },
+              context: { correlation_id: 'def-456' },
+            }),
+          },
+        ],
       };
 
       const result = unwrapProtocolResponse(mcpErrorResponse);

@@ -523,7 +523,12 @@ export type {
 export { isRetryable, getRetryDelay } from './utils/retry';
 
 // Public API: use these for programmatic error handling
-export { extractAdcpErrorInfo, extractCorrelationId, resolveRecovery, getExpectedAction } from './utils/error-extraction';
+export {
+  extractAdcpErrorInfo,
+  extractCorrelationId,
+  resolveRecovery,
+  getExpectedAction,
+} from './utils/error-extraction';
 
 // Internal: transport-level extraction (used by SDK internals; prefer result.adcpError instead)
 export { extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from './utils/error-extraction';

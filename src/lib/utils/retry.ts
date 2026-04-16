@@ -4,9 +4,7 @@ import type { TaskResult, TaskResultFailure, AdcpErrorInfo } from '../core/Conve
  * Check if a failed TaskResult is retryable (transient error with recovery hint).
  * Always returns false for successful results.
  */
-export function isRetryable<T>(
-  result: TaskResult<T>
-): result is TaskResultFailure<T> & { adcpError: AdcpErrorInfo } {
+export function isRetryable<T>(result: TaskResult<T>): result is TaskResultFailure<T> & { adcpError: AdcpErrorInfo } {
   return !result.success && result.adcpError?.recovery === 'transient';
 }
 

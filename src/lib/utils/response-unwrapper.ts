@@ -195,10 +195,7 @@ function isMCPResponse(response: any): boolean {
  * A2A errors are JSON-RPC objects ({ code, message }), not strings.
  */
 function isA2AResponse(response: any): boolean {
-  return (
-    'result' in response ||
-    ('error' in response && typeof response.error === 'object' && response.error !== null)
-  );
+  return 'result' in response || ('error' in response && typeof response.error === 'object' && response.error !== null);
 }
 
 /**
