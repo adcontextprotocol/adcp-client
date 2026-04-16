@@ -35,7 +35,7 @@ Determine these things. Ask the user — don't guess.
 
 ### 2. Products and pricing
 
-Same as standard seller. Each product needs: `product_id`, `name`, `description`, `publisher_properties`, `format_ids`, `delivery_type`, `pricing_options`. See [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md) for full field details and `PricingOption` variants.
+Same as standard seller. Each product needs: `product_id`, `name`, `description`, `publisher_properties`, `format_ids`, `delivery_type`, `pricing_options`, `reporting_capabilities`. See [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md) for full field details and `PricingOption` variants.
 
 ### 3. Generative formats
 
@@ -95,6 +95,14 @@ productsResponse({
       fixed_price: 15.00,
       currency: 'USD',
     }],
+    reporting_capabilities: {
+      available_reporting_frequencies: ['daily'],
+      expected_delay_minutes: 240,
+      timezone: 'UTC',
+      supports_webhooks: false,
+      available_metrics: ['impressions', 'spend', 'clicks'],
+      date_range_support: 'date_range',
+    },
   }],
   sandbox: true,
 })

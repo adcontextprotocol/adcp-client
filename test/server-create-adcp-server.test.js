@@ -529,6 +529,31 @@ describe('createAdcpServer', () => {
     });
   });
 
+  describe('schema relaxation for handler-level validation', () => {
+    it('create_media_buy handler runs when account is missing', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+          createMediaBuy: async (params) => {
+            if (!params.account) {
+              return adcpError('INVALID_REQUEST', { message: 'account is required' });
+            }
+            return { media_buy_id: 'mb1', packages: [] };
+          },
+        },
+      });
+
+      // Request without account — should reach handler, not fail at MCP schema level
+      const result = await callToolRaw(server, 'create_media_buy', {
+        packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'pr1' }],
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    });
+  });
+
   describe('empty server', () => {
     it('returns empty supported_protocols for bare server', async () => {
       const server = createAdcpServer({ name: 'Test', version: '1.0.0' });

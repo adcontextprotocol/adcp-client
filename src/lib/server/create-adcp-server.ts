@@ -299,11 +299,13 @@ export type AdcpServerToolName = keyof AdcpToolMap;
 // Domain handler types
 // ---------------------------------------------------------------------------
 
-/** Handler that receives validated params and a resolved context. */
+/** Handler that receives validated params and a resolved context.
+ *  Return the exact response type for autocomplete, or a plain object —
+ *  the response builder layer handles shaping either way. */
 type DomainHandler<K extends AdcpServerToolName, TAccount> = (
   params: AdcpToolMap[K]['params'],
   ctx: HandlerContext<TAccount>
-) => Promise<AdcpToolMap[K]['result'] | McpToolResponse>;
+) => Promise<AdcpToolMap[K]['result'] | McpToolResponse | Record<string, unknown>>;
 
 export interface MediaBuyHandlers<TAccount = unknown> {
   getProducts?: DomainHandler<'get_products', TAccount>;
@@ -751,6 +753,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
       const hasAccount = 'account' in schema.shape;
 
+      // Make account optional in the registered MCP schema so requests missing
+      // it reach the handler, which can return a proper adcpError instead of a
+      // raw MCP schema validation error. The schema_validation storyboard sends
+      // create_media_buy without account to test error handling.
+      const registeredShape = { ...schema.shape };
+      if (hasAccount) {
+        const zodField = registeredShape['account'];
+        if (zodField && typeof zodField === 'object' && 'optional' in zodField && typeof (zodField as any).optional === 'function') {
+          registeredShape['account'] = (zodField as any).optional();
+        }
+      }
+
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, _extra: any) => {
         const ctx: HandlerContext<TAccount> = { store: stateStore };
@@ -805,7 +819,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
       };
 
-      server.tool(toolName, schema.shape as any, toolHandler);
+      server.tool(toolName, registeredShape as any, toolHandler);
       if (meta?.annotations) {
         const registered = (server as any)._registeredTools[toolName];
         if (registered?.update) {
