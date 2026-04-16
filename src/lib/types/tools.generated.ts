@@ -1935,7 +1935,7 @@ export interface MeasurementTerms {
      */
     max_variance_percent?: number;
     /**
-     * Which measurement window the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. For broadcast TV, this is typically 'c7' (live + 7 days DVR). When absent, billing is based on the seller's standard reporting without windowed maturation.
+     * Which measurement maturation stage the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. Examples: 'c7' for broadcast TV guarantees (live + 7 days DVR), 'final' for DOOH after IVT/fraud-check processing, 'post_sivt' for digital after sophisticated invalid-traffic filtering, 'downloads_30d' for podcast. When absent, billing is based on the seller's standard reporting without windowed maturation.
      */
     measurement_window?: string;
   };
@@ -2026,7 +2026,7 @@ export interface ReportingCapabilities {
    */
   date_range_support: 'date_range' | 'lifetime_only';
   /**
-   * Measurement maturation windows available for this product. Used by broadcast and linear TV sellers where measurement accumulates over time (Live, C3, C7). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Digital-only sellers typically omit this.
+   * Measurement maturation stages available for this product. Used by any channel where billing-grade data is produced in phases rather than arriving final on day one. Examples: broadcast/linear TV (Live → C3 → C7 DVR accumulation), DOOH (tentative plays → post-IVT/fraud-check final), digital with IVT filtering (raw → GIVT filtered → SIVT filtered), podcast (7-day downloads → 30-day downloads). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Sellers whose data is final on first delivery typically omit this.
    */
   measurement_windows?: MeasurementWindow[];
 }
@@ -2056,11 +2056,11 @@ export interface GeographicBreakdownSupport {
   };
 }
 /**
- * A measurement maturation window for broadcast and linear TV. Broadcast measurement is not delayed data — it matures over time as time-shifted (DVR) viewing accumulates. Each window represents a defined accumulation period after the live broadcast.
+ * A measurement maturation stage for any channel where billing-grade data is produced in phases rather than arriving final on day one. Each window represents an accumulation or processing stage with its own expected availability. Examples: broadcast/linear TV (live → C3 → C7 DVR accumulation), DOOH (tentative plays → post-IVT/fraud-check final), digital (raw impressions → GIVT filtered → SIVT filtered), podcast (7-day downloads → 30-day downloads), audio/radio (tentative → diary/panel-certified). Sellers whose data is final on first delivery omit this.
  */
 export interface MeasurementWindow {
   /**
-   * Identifier for this measurement window. Standard values: 'live' (real-time viewers only), 'c3' (live + 3 days time-shifted), 'c7' (live + 7 days time-shifted). Sellers may define custom windows for other accumulation periods.
+   * Identifier for this maturation stage. Standard broadcast values: 'live' (real-time viewers only), 'c3' (live + 3 days time-shifted), 'c7' (live + 7 days time-shifted). Standard values for other channels include 'tentative' (provisional data available quickly), 'final' (post-processing certified data), 'post_ivt' (digital after invalid-traffic filtering), 'post_sivt' (digital after sophisticated-IVT filtering), 'downloads_7d' / 'downloads_30d' (podcast download maturation). Sellers may define custom IDs.
    */
   window_id: string;
   /**
@@ -2068,15 +2068,15 @@ export interface MeasurementWindow {
    */
   description?: string;
   /**
-   * Number of days after live broadcast included in this window. 0 = live only, 3 = live + 3 days DVR, 7 = live + 7 days DVR.
+   * Number of days of accumulation included in this window before processing begins. For broadcast, this is DVR accumulation (0 = live only, 3 = live + 3 days DVR, 7 = live + 7 days DVR). For channels without an accumulation period (DOOH tentative→final, digital IVT filtering), this is 0 — maturation is entirely vendor processing time captured in expected_availability_days.
    */
   duration_days: number;
   /**
-   * Expected number of days after broadcast before this window's data is available from the measurement vendor. For example, C7 window data from VideoAmp typically arrives ~22 days after broadcast (7-day accumulation + ~15-day processing).
+   * Expected number of days after delivery before this window's data is available from the measurement vendor. Captures accumulation time plus vendor processing time. Examples: broadcast C7 from VideoAmp ~22 days (7-day accumulation + ~15-day processing); DOOH tentative plays same-day; DOOH final (post-IVT/fraud-check) ~1 day; digital post-SIVT ~2–3 days.
    */
   expected_availability_days?: number;
   /**
-   * Whether this window is the basis for delivery guarantees and reconciliation. A product typically has one guarantee basis window (e.g., C7 for most US broadcast). Buyers reconcile against the guarantee basis window's final numbers.
+   * Whether this window is the basis for delivery guarantees, reconciliation, and invoicing. A product typically has one guarantee basis window (e.g., C7 for most US broadcast, post-IVT final for DOOH). Buyers reconcile against the guarantee basis window's final numbers.
    */
   is_guarantee_basis?: boolean;
 }

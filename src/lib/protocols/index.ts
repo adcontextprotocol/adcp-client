@@ -1,5 +1,20 @@
 // Unified Protocol Interface for AdCP
 export { callMCPTool, callMCPToolWithOAuth, connectMCP, closeMCPConnections, UnauthorizedError } from './mcp';
+
+import { closeMCPConnections } from './mcp';
+import { closeA2AConnections } from './a2a';
+
+/**
+ * Close protocol connections for the given protocol.
+ * MCP closes persistent HTTP transports; A2A clears the agent-card client cache.
+ */
+export async function closeConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise<void> {
+  if (protocol === 'mcp') {
+    await closeMCPConnections();
+  } else {
+    closeA2AConnections();
+  }
+}
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool } from './a2a';
 export {

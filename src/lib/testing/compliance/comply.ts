@@ -27,7 +27,7 @@ import type {
 } from './types';
 import { getPlatformProfile, getAllPlatformTypes } from './profiles';
 import type { PlatformProfile } from './profiles';
-import { closeMCPConnections } from '../../protocols/mcp';
+import { closeConnections } from '../../protocols';
 import { detectController, hasTestController } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
 
@@ -415,7 +415,7 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
   try {
     return await complyImpl(agentUrl, options);
   } finally {
-    await closeMCPConnections();
+    await closeConnections(options.protocol);
   }
 }
 

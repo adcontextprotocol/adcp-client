@@ -285,7 +285,7 @@ export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, too
   if (!hasComplianceTool || capabilities.protocols.includes('compliance_testing')) {
     return capabilities;
   }
-  console.debug(
+  console.error(
     `[AdCP] Agent has comply_test_controller but does not declare compliance_testing. Adding automatically.`
   );
   return {
