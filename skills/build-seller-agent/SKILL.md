@@ -47,7 +47,8 @@ Get specific inventory. Each product needs:
 - `format_ids` — array of `{ agent_url: string, id: string }` referencing creative formats
 - `delivery_type` — `'guaranteed'` or `'non_guaranteed'`
 - `pricing_options` — at least one (see below)
-- Optional: `channels` (`display`, `olv`, `ctv`, `social`, `retail_media`, `dooh`, etc.)
+- `reporting_capabilities` — `{ available_reporting_frequencies: ['daily'], expected_delay_minutes: 240, timezone: 'UTC', supports_webhooks: false, available_metrics: ['impressions', 'spend', 'clicks'], date_range_support: 'date_range' }`
+- Optional: `channels` — use `as const` to avoid `string[]` inference: `channels: ['display', 'olv'] as const`
 
 Pricing models (all require `pricing_option_id` and `currency`):
 
@@ -129,6 +130,14 @@ productsResponse({
       fixed_price: 12.00,
       currency: 'USD',
     }],
+    reporting_capabilities: {
+      available_reporting_frequencies: ['daily'],
+      expected_delay_minutes: 240,
+      timezone: 'UTC',
+      supports_webhooks: false,
+      available_metrics: ['impressions', 'spend', 'clicks'],
+      date_range_support: 'date_range',
+    },
   }],
   sandbox: true,        // for mock data
 })
@@ -163,6 +172,7 @@ getMediaBuysResponse({
     media_buy_id: string,   // required
     status: 'active' | 'pending_start' | ...,  // required
     currency: 'USD',        // required
+    confirmed_at: string,   // required for guaranteed approval — ISO timestamp
     packages: [{
       package_id: string,   // required
     }],
@@ -252,13 +262,15 @@ const store: TestControllerStore = {
   async forceCreativeStatus(creativeId, status, rejectionReason) {
     const prev = creatives.get(creativeId);
     if (!prev) throw new TestControllerError('NOT_FOUND', `Creative ${creativeId} not found`);
-    if (prev === 'archived')
-      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from archived`, prev);
+    // archived blocks transitions to active states, but archived → rejected is valid (compliance override)
+    const activeStatuses = ['processing', 'pending_review', 'approved'];
+    if (prev === 'archived' && activeStatuses.includes(status))
+      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from archived to ${status}`, prev);
     creatives.set(creativeId, status);
     return { success: true, previous_state: prev, current_state: status };
   },
   async simulateDelivery(mediaBuyId, params) {
-    // Accumulate delivery data and return simulated + cumulative totals
+    // params: { impressions?: number, clicks?: number, reported_spend?: { amount, currency }, conversions?: number }
     return { success: true, simulated: { ...params }, cumulative: { ...params } };
   },
   async simulateBudgetSpend(params) {
@@ -283,7 +295,7 @@ Only implement the store methods for scenarios your agent supports. Unimplemente
 The storyboard tests state machine correctness:
 
 - `NOT_FOUND` when forcing transitions on unknown entities
-- `INVALID_TRANSITION` when transitioning from terminal states (completed, rejected, canceled for media buys; archived for creatives)
+- `INVALID_TRANSITION` when transitioning from terminal states (completed, rejected, canceled for media buys; archived blocks active states like processing/pending_review/approved, but archived → rejected is valid)
 - Successful transitions between valid states
 
 Throw `TestControllerError` from store methods for typed errors. The SDK validates status enum values before calling your store.
@@ -299,6 +311,7 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 | `ctx.store`                                             | State store in every handler — `get`, `put`, `patch`, `delete`, `list` |
 | `InMemoryStateStore`                                    | Default state store (dev/testing)                                   |
 | `PostgresStateStore`                                    | Production state store (shared across instances)                    |
+| `DEFAULT_REPORTING_CAPABILITIES`                        | Use as `reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES` on products |
 | `checkGovernance(options)`                              | Call governance agent before financial commits                      |
 | `governanceDeniedError(result)`                         | Convert governance denial to GOVERNANCE_DENIED error                |
 | `mediaBuyResponse(data)`                                | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions) |
@@ -340,7 +353,7 @@ Minimal `tsconfig.json`:
 Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
 
 ```typescript
-import { createAdcpServer, serve, adcpError, InMemoryStateStore, checkGovernance, governanceDeniedError } from '@adcp/client';
+import { createAdcpServer, serve, adcpError, InMemoryStateStore, checkGovernance, governanceDeniedError, DEFAULT_REPORTING_CAPABILITIES } from '@adcp/client';
 import type { ServeContext } from '@adcp/client';
 
 const stateStore = new InMemoryStateStore(); // shared across requests
@@ -399,7 +412,7 @@ function createAgent({ taskStore }: ServeContext) {
       syncCreatives: async (params, ctx) => { /* ... */ },
     },
     capabilities: {
-      features: { inline_creative_management: false },
+      features: { inlineCreativeManagement: false },
     },
   });
 }
@@ -414,6 +427,7 @@ Key points:
 4. Use `ctx.store` for state — persists across stateless HTTP requests
 5. Set `sandbox: true` on all mock/demo responses
 6. Use `adcpError()` for business validation failures
+7. Use `as const` on string literal arrays and union-typed fields in product definitions — TypeScript infers `string[]` from `['display', 'olv']` but the SDK requires specific union types like `MediaChannel[]`. Apply `as const` to `channels`, `delivery_type`, `selection_type`, and `pricing_model` values.
 
 The skill contains everything you need. Do not read additional docs before writing code.
 
@@ -431,7 +445,7 @@ npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --jso
 **Sandbox validation** (if ports are blocked):
 
 ```bash
-npx tsc --noEmit agent.ts
+npx tsc --noEmit
 ```
 
 When storyboard output shows failures, fix each one:
@@ -452,6 +466,7 @@ When storyboard output shows failures, fix each one:
 | `media_buy_proposal_mode`       | AI-generated proposals                         |
 | `media_buy_catalog_creative`    | Catalog sync + conversions                     |
 | `schema_validation`             | Schema compliance + date validation errors     |
+| `deterministic_testing`         | State machine correctness via `comply_test_controller` |
 
 ## Common Mistakes
 
@@ -468,6 +483,7 @@ When storyboard output shows failures, fix each one:
 | format_ids in products don't match list_creative_formats  | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements |
 | Missing `@types/node` in devDependencies             | `process.env` doesn't resolve without it — see Setup section  |
 | Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
+| `channels` typed as `string[]` instead of `MediaChannel[]` | Use `as const` on channel arrays: `channels: ['display', 'olv'] as const`. TypeScript infers `string[]` from array literals, but the SDK requires the `MediaChannel` union type. |
 
 ## Reference
 

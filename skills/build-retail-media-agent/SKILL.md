@@ -27,7 +27,7 @@ Same domain decisions as the seller skill, plus:
 
 ### 1. Products and pricing
 
-Same as seller. Each product needs: `product_id`, `name`, `description`, `publisher_properties`, `format_ids`, `delivery_type`, `pricing_options`. See [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md) for full field details.
+Same as seller. Each product needs: `product_id`, `name`, `description`, `publisher_properties`, `format_ids`, `delivery_type`, `pricing_options`, `reporting_capabilities`. See [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md) for full field details.
 
 ### 2. Catalog support
 

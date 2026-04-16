@@ -468,6 +468,7 @@ export {
   createAdcpServer,
   checkGovernance,
   governanceDeniedError,
+  DEFAULT_REPORTING_CAPABILITIES,
   InMemoryStateStore,
   PostgresStateStore,
   getAdcpStateMigration,
