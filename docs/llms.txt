@@ -375,7 +375,7 @@ Optional: `scope: object`, `registry_policy_ids: string[]`, `policy: string`, `c
 Request parameters for collaborative calibration dialogue.
 
 Required: `standards_id: string`, `artifact: Artifact`
-Optional: `idempotency_key: string`
+Optional: `idempotency_key: string`, `context: Context`
 
 #### `validate_content_delivery`
 
@@ -403,26 +403,27 @@ Optional: `feature_ids: string[]`, `account: Account Ref`, `context: Context`
 Push campaign plans to the governance agent.
 
 Required: `plans: object[]`
+Optional: `context: Context`
 
 #### `report_plan_outcome`
 
 Report the outcome of an action to the governance agent.
 
 Required: `plan_id: string`, `outcome: Outcome Type`, `governance_context: string`
-Optional: `check_id: string`, `idempotency_key: string`, `purchase_type: Purchase Type`, `seller_response: object`, `delivery: object`, `error: object`
+Optional: `check_id: string`, `idempotency_key: string`, `purchase_type: Purchase Type`, `seller_response: object`, `delivery: object`, `error: object`, `context: Context`
 
 #### `get_plan_audit_logs`
 
 Retrieve governance state and audit trail for a plan.
 
-Optional: `plan_ids: string[]`, `portfolio_plan_ids: string[]`, `governance_contexts: string[]`, `purchase_types: object[]`, `include_entries: boolean`
+Optional: `plan_ids: string[]`, `portfolio_plan_ids: string[]`, `governance_contexts: string[]`, `purchase_types: object[]`, `include_entries: boolean`, `context: Context`
 
 #### `check_governance`
 
 Orchestrator or seller calls the governance agent to validate an action against the campaign plan.
 
 Required: `plan_id: string`, `caller: string`
-Optional: `purchase_type: Purchase Type`, `tool: string`, `payload: object`, `governance_context: string`, `phase: Governance Phase`, `planned_delivery: Planned Delivery`, `delivery_metrics: object`, `modification_summary: string`, +1 more
+Optional: `purchase_type: Purchase Type`, `tool: string`, `payload: object`, `governance_context: string`, `phase: Governance Phase`, `planned_delivery: Planned Delivery`, `delivery_metrics: object`, `modification_summary: string`, +2 more
 
 **Deep dive:**
 - docs/guides/HANDLER-PATTERNS-GUIDE.md — input handler patterns for governance flows
@@ -448,14 +449,14 @@ Optional: `media_buy_id: string`, `placement: string`, `offering_id: string`, `s
 Send a message within an active SI session.
 
 Required: `session_id: string`
-Optional: `message: string`, `action_response: object`
+Optional: `message: string`, `action_response: object`, `context: Context`
 
 #### `si_terminate_session`
 
 Terminate an SI session with reason (handoff_transaction, handoff_complete, user_exit, session_timeout, host_terminated).
 
 Required: `session_id: string`, `reason: 'handoff_transaction' | 'handoff_complete' | 'user_exit' | 'session_timeout' | 'host_terminated'`
-Optional: `termination_context: object`
+Optional: `termination_context: object`, `context: Context`
 
 **Deep dive:**
 - docs/guides/ASYNC-DEVELOPER-GUIDE.md — session lifecycle patterns
