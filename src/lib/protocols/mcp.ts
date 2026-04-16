@@ -404,7 +404,7 @@ export async function callMCPTool(
 
 /**
  * Call an MCP tool and return the raw CallToolResult (with isError, content, structuredContent).
- * Unlike callMCPTool, this does NOT throw on isError responses — needed for error compliance testing.
+ * Raw MCP tool call — returns the CallToolResult directly, including isError responses.
  */
 export async function callMCPToolRaw(
   agentUrl: string,
@@ -475,21 +475,11 @@ async function callMCPToolImpl(
     response: response,
   });
 
-  // If MCP returns an error response, throw an error with the extracted message
-  if (response?.isError && response?.content && Array.isArray(response.content)) {
-    const errorText = response.content
-      .filter(item => item.type === 'text' && item.text)
-      .map(item => item.text)
-      .join('\n');
-
-    throw new Error(errorText || `MCP tool '${toolName}' execution failed (no error details provided)`);
-  }
-
   return response;
 }
 
 /**
- * Raw MCP tool call — returns the CallToolResult without throwing on isError.
+ * Raw MCP tool call — returns the CallToolResult directly.
  */
 async function callMCPToolRawImpl(
   agentUrl: string,
@@ -664,14 +654,6 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
       message: `MCP: Tool ${toolName} response received`,
       timestamp: new Date().toISOString(),
     });
-
-    if (response?.isError && response?.content && Array.isArray(response.content)) {
-      const errorText = response.content
-        .filter((item: { type: string; text?: string }) => item.type === 'text' && item.text)
-        .map((item: { type: string; text?: string }) => item.text)
-        .join('\n');
-      throw new Error(errorText || `MCP tool '${toolName}' execution failed`);
-    }
 
     return response;
   } finally {

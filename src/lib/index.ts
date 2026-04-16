@@ -122,9 +122,14 @@ export type {
   ConversationContext,
   TaskOptions,
   TaskResult,
+  TaskResultCompleted,
+  TaskResultIntermediate,
+  TaskResultFailure,
+  TaskResultMetadata,
   TaskState,
   TaskStatus,
   ConversationConfig,
+  AdcpErrorInfo,
 } from './core/ConversationTypes';
 
 // ====== GOVERNANCE ======
@@ -515,14 +520,19 @@ export type {
   PostgresStateStoreOptions,
 } from './server';
 
-// ====== ERROR EXTRACTION ======
-// Extract structured AdCP errors from transport responses
+// ====== ERROR HANDLING & RETRY ======
+export { isRetryable, getRetryDelay } from './utils/retry';
+
+// Public API: use these for programmatic error handling
 export {
-  extractAdcpErrorFromMcp,
-  extractAdcpErrorFromTransport,
+  extractAdcpErrorInfo,
+  extractCorrelationId,
   resolveRecovery,
   getExpectedAction,
 } from './utils/error-extraction';
+
+// Internal: transport-level extraction (used by SDK internals; prefer result.adcpError instead)
+export { extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from './utils/error-extraction';
 export type { ExtractedAdcpError } from './utils/error-extraction';
 
 // ====== BACKWARDS COMPATIBILITY ======

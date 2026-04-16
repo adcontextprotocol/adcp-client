@@ -76,8 +76,8 @@ export class AgentCollection {
       }
       const client = clients[index]!;
       return {
-        success: false,
-        status: 'completed' as const,
+        success: false as const,
+        status: 'failed' as const,
         error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         metadata: {
           taskId: '',

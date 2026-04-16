@@ -138,10 +138,15 @@ export function getStandardFormats(): CreativeFormat[] {
 export { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './response-unwrapper';
 export type { AdCPResponse } from './response-unwrapper';
 
+// Re-export retry utilities
+export { isRetryable, getRetryDelay } from './retry';
+
 // Re-export error extraction utilities
 export {
   extractAdcpErrorFromMcp,
   extractAdcpErrorFromTransport,
+  extractAdcpErrorInfo,
+  extractCorrelationId,
   resolveRecovery,
   getExpectedAction,
 } from './error-extraction';
