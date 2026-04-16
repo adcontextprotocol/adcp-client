@@ -63,6 +63,7 @@ const validSignalPricingOption = {
 };
 
 const validSignal = {
+  signal_id: { source: 'catalog', data_provider_domain: 'testprovider.com', id: 'sig-001' },
   signal_agent_segment_id: 'seg-001',
   name: 'Tech Enthusiasts',
   description: 'Users interested in technology',

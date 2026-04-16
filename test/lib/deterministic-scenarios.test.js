@@ -255,13 +255,13 @@ describe('Generated comply test controller types', () => {
     const fs = require('fs');
     const path = require('path');
     const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
-    assert.ok(typesContent.includes('interface ListScenarios'));
-    assert.ok(typesContent.includes('interface ForceCreativeStatus'));
-    assert.ok(typesContent.includes('interface ForceAccountStatus'));
-    assert.ok(typesContent.includes('interface ForceMediaBuyStatus'));
-    assert.ok(typesContent.includes('interface ForceSessionStatus'));
-    assert.ok(typesContent.includes('interface SimulateDelivery'));
-    assert.ok(typesContent.includes('interface SimulateBudgetSpend'));
+    assert.ok(typesContent.includes("'list_scenarios'"));
+    assert.ok(typesContent.includes("'force_creative_status'"));
+    assert.ok(typesContent.includes("'force_account_status'"));
+    assert.ok(typesContent.includes("'force_media_buy_status'"));
+    assert.ok(typesContent.includes("'force_session_status'"));
+    assert.ok(typesContent.includes("'simulate_delivery'"));
+    assert.ok(typesContent.includes("'simulate_budget_spend'"));
   });
 
   test('Response has all variant types', () => {

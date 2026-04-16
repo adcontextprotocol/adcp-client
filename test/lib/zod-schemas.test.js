@@ -849,6 +849,7 @@ describe('Zod Schema Validation', () => {
     const response = {
       signals: [
         {
+          signal_id: { source: 'catalog', data_provider_domain: 'healthdata.co', id: 'sig-chronic' },
           signal_agent_segment_id: 'seg-001',
           name: 'Chronic Condition Households',
           description: 'Households with modeled indicators of chronic health conditions',

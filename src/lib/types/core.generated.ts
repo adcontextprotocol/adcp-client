@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-15T19:45:28.752Z
+// Generated at: 2026-04-16T16:05:35.453Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -10,6 +10,10 @@ export type AccountStatus = 'active' | 'pending_approval' | 'rejected' | 'paymen
  * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type BrandID = string;
+/**
+ * Cloud storage protocol
+ */
+export type CloudStorageProtocol = 's3' | 'gcs' | 'azure_blob';
 /**
  * Status of a media buy.
  */
@@ -452,6 +456,40 @@ export interface Account {
      */
     categories?: string[];
   }[];
+  /**
+   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped so each account can only read its own prefix. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
+   */
+  reporting_bucket?: {
+    protocol: CloudStorageProtocol;
+    /**
+     * Bucket or container name
+     */
+    bucket: string;
+    /**
+     * Path prefix within the bucket. Seller appends date-based partitioning beneath this prefix.
+     */
+    prefix?: string;
+    /**
+     * Cloud region for the bucket
+     */
+    region?: string;
+    /**
+     * File format for delivered files. Parquet, Avro, and ORC use internal compression (the top-level compression field is ignored for these formats).
+     */
+    format?: 'jsonl' | 'csv' | 'parquet' | 'avro' | 'orc';
+    /**
+     * Compression applied to delivered files
+     */
+    compression?: 'gzip' | 'none';
+    /**
+     * How long reporting files are retained in the bucket before deletion. Buyers must read files within this window. Minimum recommended: 14 days.
+     */
+    file_retention_days: number;
+    /**
+     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.)
+     */
+    setup_instructions?: string;
+  };
   /**
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
@@ -1289,6 +1327,7 @@ export type UniversalMacro =
   | 'COLLECTION_NAME'
   | 'INSTALLMENT_ID'
   | 'AUDIO_DURATION'
+  | 'TMPX'
   | 'AXEM'
   | 'CATALOG_ID'
   | 'SKU'
@@ -2387,6 +2426,19 @@ export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus
  * What the publisher wants back from a TMP context match. Determines the richness level of the buyer's offer response.
  */
 export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'deal';
+/**
+ * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver which identity graph to resolve against.
+ */
+export type UIDType =
+  | 'rampid'
+  | 'id5'
+  | 'uid2'
+  | 'euid'
+  | 'pairid'
+  | 'maid'
+  | 'hashed_email'
+  | 'publisher_first_party'
+  | 'other';
 
 /**
  * Represents available advertising inventory
@@ -2625,6 +2677,14 @@ export interface Product {
        * Whether this provider handles identity match for this product.
        */
       identity_match?: boolean;
+      /**
+       * ISO 3166-1 alpha-2 country codes this provider serves for identity match. The router uses this to select the correct regional provider based on the request's country field. Required when identity_match is true.
+       */
+      countries?: string[];
+      /**
+       * Identity types this regional provider can resolve. The router filters providers whose uid_types includes the request's uid_type. Required when identity_match is true.
+       */
+      uid_types?: UIDType[];
     }[];
   };
   /**
@@ -5124,6 +5184,40 @@ export interface Account1 {
     categories?: string[];
   }[];
   /**
+   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped so each account can only read its own prefix. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
+   */
+  reporting_bucket?: {
+    protocol: CloudStorageProtocol;
+    /**
+     * Bucket or container name
+     */
+    bucket: string;
+    /**
+     * Path prefix within the bucket. Seller appends date-based partitioning beneath this prefix.
+     */
+    prefix?: string;
+    /**
+     * Cloud region for the bucket
+     */
+    region?: string;
+    /**
+     * File format for delivered files. Parquet, Avro, and ORC use internal compression (the top-level compression field is ignored for these formats).
+     */
+    format?: 'jsonl' | 'csv' | 'parquet' | 'avro' | 'orc';
+    /**
+     * Compression applied to delivered files
+     */
+    compression?: 'gzip' | 'none';
+    /**
+     * How long reporting files are retained in the bucket before deletion. Buyers must read files within this window. Minimum recommended: 14 days.
+     */
+    file_retention_days: number;
+    /**
+     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.)
+     */
+    setup_instructions?: string;
+  };
+  /**
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
   sandbox?: boolean;
@@ -7009,20 +7103,6 @@ export type AudienceMember = {
   }[];
   ext?: ExtensionObject;
 };
-/**
- * Universal ID type
- */
-export type UIDType =
-  | 'rampid'
-  | 'id5'
-  | 'uid2'
-  | 'euid'
-  | 'pairid'
-  | 'maid'
-  | 'hashed_email'
-  | 'publisher_first_party'
-  | 'other';
-
 
 // core/catchment.json
 /**
@@ -10300,6 +10380,7 @@ export type ErrorCode =
   | 'ACCOUNT_PAYMENT_REQUIRED'
   | 'ACCOUNT_SUSPENDED'
   | 'COMPLIANCE_UNSATISFIED'
+  | 'GOVERNANCE_DENIED'
   | 'BUDGET_EXHAUSTED'
   | 'BUDGET_EXCEEDED'
   | 'CONFLICT'
