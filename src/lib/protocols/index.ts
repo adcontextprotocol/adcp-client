@@ -2,16 +2,18 @@
 export { callMCPTool, callMCPToolWithOAuth, connectMCP, closeMCPConnections, UnauthorizedError } from './mcp';
 
 import { closeMCPConnections } from './mcp';
+import { closeA2AConnections } from './a2a';
 
 /**
  * Close protocol connections for the given protocol.
- * MCP uses persistent connection pooling; A2A uses ephemeral clients (no-op).
+ * MCP closes persistent HTTP transports; A2A clears the agent-card client cache.
  */
 export async function closeConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise<void> {
   if (protocol === 'mcp') {
     await closeMCPConnections();
+  } else {
+    closeA2AConnections();
   }
-  // A2A creates ephemeral clients per call — nothing to close.
 }
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool } from './a2a';

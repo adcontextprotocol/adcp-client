@@ -2,6 +2,8 @@
 const clientModule = require('@a2a-js/sdk/client');
 const A2AClient = clientModule.A2AClient;
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import type { DebugLogEntry } from '../types/adcp';
 import { AuthenticationRequiredError, is401Error } from '../errors';
@@ -11,6 +13,163 @@ import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
+}
+
+/**
+ * Per-call state flowed through AsyncLocalStorage so concurrent callers
+ * that share a cached A2AClient don't clobber each other's debugLogs,
+ * customHeaders, or 401 flag.
+ */
+interface A2ACallContext {
+  customHeaders?: Record<string, string>;
+  debugLogs: DebugLogEntry[];
+  got401Ref: { value: boolean };
+}
+
+const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
+
+/**
+ * Cached A2AClient keyed by (agentUrl, authToken hash). Avoids re-fetching
+ * /.well-known/agent.json on every tool call. The cached client's fetchImpl
+ * reads per-call state from callContextStorage, so concurrent calls to the
+ * same cache entry are safe.
+ *
+ * Process-global singleton — not suitable for multi-tenant servers that
+ * want per-tenant isolation (use separate processes or explicit cache keys).
+ */
+const a2aClientCache = new Map<string, InstanceType<typeof A2AClient>>();
+const pendingA2AClients = new Map<string, Promise<InstanceType<typeof A2AClient>>>();
+
+function a2aCacheKey(agentUrl: string, authToken?: string): string {
+  if (!authToken) return agentUrl;
+  // 64-bit hash prefix — cache key disambiguator, not a security boundary.
+  // The cached client closes over the full authToken; a hypothetical hash
+  // collision still sends the original token, not the colliding one.
+  const tokenHash = createHash('sha256').update(authToken).digest('hex').slice(0, 16);
+  return `${agentUrl}::${tokenHash}`;
+}
+
+/**
+ * Clear all cached A2A clients. Called by closeConnections('a2a').
+ * A2A clients hold no persistent network resources (unlike MCP), so this
+ * is just cache eviction.
+ */
+export function closeA2AConnections(): void {
+  a2aClientCache.clear();
+  pendingA2AClients.clear();
+}
+
+async function getOrCreateA2AClient(
+  agentUrl: string,
+  authToken: string | undefined
+): Promise<InstanceType<typeof A2AClient>> {
+  const cacheKey = a2aCacheKey(agentUrl, authToken);
+  const cached = a2aClientCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = pendingA2AClients.get(cacheKey);
+  if (pending) return pending;
+
+  const promise = createA2AClient(agentUrl, authToken)
+    .then(client => {
+      a2aClientCache.set(cacheKey, client);
+      return client;
+    })
+    .finally(() => {
+      pendingA2AClients.delete(cacheKey);
+    });
+
+  pendingA2AClients.set(cacheKey, promise);
+  return promise;
+}
+
+async function createA2AClient(
+  agentUrl: string,
+  authToken: string | undefined
+): Promise<InstanceType<typeof A2AClient>> {
+  const fetchImpl = buildFetchImpl(authToken);
+  const cardUrls = buildCardUrls(agentUrl);
+
+  const context = callContextStorage.getStore();
+  context?.debugLogs.push({
+    type: 'info',
+    message: `A2A: Discovering agent card at ${cardUrls.join(', ')}`,
+    timestamp: new Date().toISOString(),
+  });
+
+  let client: InstanceType<typeof A2AClient> | undefined;
+  let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
+  for (const cardUrl of cardUrls) {
+    try {
+      client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      break;
+    } catch (err: unknown) {
+      lastError = err as Error;
+      if (context?.got401Ref.value) break;
+    }
+  }
+  if (!client) throw lastError;
+
+  return client;
+}
+
+function buildFetchImpl(authToken: string | undefined) {
+  return async (url: string | URL | Request, options?: RequestInit) => {
+    const context = callContextStorage.getStore();
+
+    const existingHeaders: Record<string, string> = {};
+    if (options?.headers) {
+      if (options.headers instanceof Headers) {
+        options.headers.forEach((value, key) => {
+          existingHeaders[key] = value;
+        });
+      } else if (Array.isArray(options.headers)) {
+        for (const [key, value] of options.headers) {
+          existingHeaders[key] = value;
+        }
+      } else {
+        Object.assign(existingHeaders, options.headers);
+      }
+    }
+
+    // Only inject trace context headers for actual tool requests, not discovery.
+    // The agent card endpoint is external/untrusted — don't leak trace IDs to it.
+    const urlString = typeof url === 'string' ? url : url.toString();
+    const isDiscoveryRequest = isAgentCardPath(urlString);
+    const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
+
+    // Merge: existing < trace < custom < auth (auth always wins)
+    const headers: Record<string, string> = {
+      ...existingHeaders,
+      ...traceHeaders,
+      ...context?.customHeaders,
+      ...(authToken && {
+        Authorization: `Bearer ${authToken}`,
+        'x-adcp-auth': authToken,
+      }),
+    };
+
+    context?.debugLogs.push({
+      type: 'info',
+      message: `A2A: Fetch to ${urlString}`,
+      timestamp: new Date().toISOString(),
+      hasAuth: !!authToken,
+      headers: Object.fromEntries(
+        Object.entries(headers).map(([k, v]) => {
+          const lower = k.toLowerCase();
+          return lower === 'authorization' || lower === 'x-adcp-auth' ? [k, '***'] : [k, v];
+        })
+      ),
+    });
+
+    const response = await fetch(url, { ...options, headers });
+
+    if (response.status === 401 && context) {
+      context.got401Ref.value = true;
+    }
+
+    return response;
+  };
 }
 
 export async function callA2ATool(
@@ -29,14 +188,13 @@ export async function callA2ATool(
       'http.url': agentUrl,
     },
     async () => {
-      return callA2AToolImpl(
-        agentUrl,
-        toolName,
-        parameters,
-        authToken,
+      const context: A2ACallContext = {
+        customHeaders,
         debugLogs,
-        pushNotificationConfig,
-        customHeaders
+        got401Ref: { value: false },
+      };
+      return callContextStorage.run(context, () =>
+        callA2AToolImpl(agentUrl, toolName, parameters, authToken, debugLogs, pushNotificationConfig, context)
       );
     }
   );
@@ -46,107 +204,14 @@ async function callA2AToolImpl(
   agentUrl: string,
   toolName: string,
   parameters: Record<string, unknown>,
-  authToken?: string,
-  debugLogs: DebugLogEntry[] = [],
-  pushNotificationConfig?: PushNotificationConfig,
-  customHeaders?: Record<string, string>
+  authToken: string | undefined,
+  debugLogs: DebugLogEntry[],
+  pushNotificationConfig: PushNotificationConfig | undefined,
+  context: A2ACallContext
 ): Promise<unknown> {
-  // Track 401 errors for better error messaging
-  let got401 = false;
-
-  // Create authenticated fetch that wraps native fetch
-  // This ensures ALL requests (including agent card fetching) include auth headers
-  const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
-    // Build headers - always start with existing headers, then add auth if available
-    const existingHeaders: Record<string, string> = {};
-    if (options?.headers) {
-      if (options.headers instanceof Headers) {
-        options.headers.forEach((value, key) => {
-          existingHeaders[key] = value;
-        });
-      } else if (Array.isArray(options.headers)) {
-        for (const [key, value] of options.headers) {
-          existingHeaders[key] = value;
-        }
-      } else {
-        Object.assign(existingHeaders, options.headers);
-      }
-    }
-
-    // Only inject trace context headers for actual tool requests, not discovery
-    // The agent card endpoint is external/untrusted - don't leak trace IDs to it
-    const urlString = typeof url === 'string' ? url : url.toString();
-    const isDiscoveryRequest = isAgentCardPath(urlString);
-    const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
-
-    // Merge: existing < trace < custom < auth (auth always wins)
-    const headers: Record<string, string> = {
-      ...existingHeaders,
-      ...traceHeaders,
-      ...customHeaders,
-      ...(authToken && {
-        Authorization: `Bearer ${authToken}`,
-        'x-adcp-auth': authToken,
-      }),
-    };
-
-    debugLogs.push({
-      type: 'info',
-      message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
-      timestamp: new Date().toISOString(),
-      hasAuth: !!authToken,
-      headers: Object.fromEntries(
-        Object.entries(headers).map(([k, v]) => {
-          const lower = k.toLowerCase();
-          return lower === 'authorization' || lower === 'x-adcp-auth' ? [k, '***'] : [k, v];
-        })
-      ),
-    });
-
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
-
-    // Track 401 errors
-    if (response.status === 401) {
-      got401 = true;
-    }
-
-    return response;
-  };
-
-  // Try both well-known paths: agent.json (current spec) and agent-card.json (legacy)
-  const cardUrls = buildCardUrls(agentUrl);
-
-  debugLogs.push({
-    type: 'info',
-    message: `A2A: Discovering agent card at ${cardUrls.join(', ')}`,
-    timestamp: new Date().toISOString(),
-  });
-
   try {
-    let a2aClient: InstanceType<typeof A2AClient> | undefined;
-    let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
-    for (const cardUrl of cardUrls) {
-      try {
-        a2aClient = await A2AClient.fromCardUrl(cardUrl, {
-          fetchImpl,
-        });
-        break;
-      } catch (err: unknown) {
-        lastError = err as Error;
-        // Don't fall through to legacy path on auth errors
-        if (got401) break;
-      }
-    }
-    if (!a2aClient) {
-      throw lastError;
-    }
+    const client = await getOrCreateA2AClient(agentUrl, authToken);
 
-    // Build request payload following A2A JSON-RPC spec
-    // Per A2A SDK: pushNotificationConfig goes in params.configuration (camelCase)
-    // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
     const requestPayload: {
       message: {
         messageId: string;
@@ -159,10 +224,10 @@ async function callA2AToolImpl(
       message: {
         messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         role: 'user',
-        kind: 'message', // Required by A2A spec
+        kind: 'message',
         parts: [
           {
-            kind: 'data', // A2A spec uses "kind", not "type"
+            kind: 'data',
             data: {
               skill: toolName,
               parameters: parameters,
@@ -172,14 +237,12 @@ async function callA2AToolImpl(
       },
     };
 
-    // Add pushNotificationConfig in configuration object (A2A JSON-RPC spec)
     if (pushNotificationConfig) {
       requestPayload.configuration = {
         pushNotificationConfig: pushNotificationConfig,
       };
     }
 
-    // Add debug log for A2A call
     const payloadSize = JSON.stringify(requestPayload).length;
     debugLogs.push({
       type: 'info',
@@ -191,7 +254,6 @@ async function callA2AToolImpl(
       actualPayload: requestPayload,
     });
 
-    // Send message using A2A protocol
     debugLogs.push({
       type: 'info',
       message: `A2A: Sending message via sendMessage()`,
@@ -199,9 +261,8 @@ async function callA2AToolImpl(
       skill: toolName,
     });
 
-    const messageResponse = await a2aClient.sendMessage(requestPayload);
+    const messageResponse = await client.sendMessage(requestPayload);
 
-    // Add debug log for A2A response
     debugLogs.push({
       type: messageResponse?.error ? 'error' : 'success',
       message: `A2A: Response received (${messageResponse?.error ? 'error' : 'success'})`,
@@ -210,7 +271,6 @@ async function callA2AToolImpl(
       skill: toolName,
     });
 
-    // Check for JSON-RPC error in response
     if (messageResponse?.error || messageResponse?.result?.error) {
       const errorObj = messageResponse.error || messageResponse.result?.error;
       const errorMessage = errorObj.message || JSON.stringify(errorObj);
@@ -219,8 +279,10 @@ async function callA2AToolImpl(
 
     return messageResponse;
   } catch (error: unknown) {
-    // If we got a 401, throw AuthenticationRequiredError with OAuth metadata
-    if (is401Error(error, got401)) {
+    if (is401Error(error, context.got401Ref.value)) {
+      // Evict this cache entry — token may have expired or been revoked.
+      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken));
+
       debugLogs.push({
         type: 'error',
         message: `A2A: Authentication required for ${agentUrl}`,
@@ -231,7 +293,6 @@ async function callA2AToolImpl(
       throw new AuthenticationRequiredError(agentUrl, oauthMetadata || undefined);
     }
 
-    // Re-throw other errors
     throw error;
   }
 }
