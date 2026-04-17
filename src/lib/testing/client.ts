@@ -17,6 +17,7 @@ import type {
 } from '../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
+import { parseCapabilitiesResponse } from '../utils/capabilities';
 
 const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example' };
 
@@ -190,6 +191,10 @@ export async function runStep<T>(
 
 /**
  * Discover agent profile - what capabilities does this agent have?
+ *
+ * When the agent exposes `get_adcp_capabilities`, its response populates
+ * `supported_protocols` + `specialisms` on the profile so the compliance
+ * runner can select domain and specialism bundles.
  */
 export async function discoverAgentProfile(
   client: TestClient
@@ -213,6 +218,30 @@ export async function discoverAgentProfile(
       null,
       2
     );
+  }
+
+  if (profile.tools.includes('get_adcp_capabilities')) {
+    try {
+      const caps = (await client.getAdcpCapabilities({})) as TaskResult;
+      if (caps?.success && caps?.data) {
+        const parsed = parseCapabilitiesResponse(caps.data);
+        profile.adcp_version = parsed.version;
+        profile.supported_protocols = parsed.protocols;
+        profile.supports_governance = parsed.protocols.includes('governance');
+        profile.supports_si = parsed.protocols.includes('sponsored_intelligence');
+        const specialisms = (caps.data as { specialisms?: unknown }).specialisms;
+        if (Array.isArray(specialisms)) {
+          profile.specialisms = specialisms.filter((s): s is string => typeof s === 'string');
+        }
+      } else {
+        profile.capabilities_probe_error =
+          caps?.error || 'get_adcp_capabilities returned no data';
+      }
+    } catch (err) {
+      // Agent advertises the tool but the call failed. Don't silently downgrade —
+      // record the failure so the compliance report shows why only universal ran.
+      profile.capabilities_probe_error = (err as Error)?.message || String(err);
+    }
   }
 
   return { profile, step };

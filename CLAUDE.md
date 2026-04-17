@@ -12,7 +12,7 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Key entry points**: `src/lib/index.ts`, `examples/signals-agent.ts`
 
-**Building a server-side agent?** Read `docs/guides/BUILD-AN-AGENT.md` and the `storyboards/` directory.
+**Building a server-side agent?** Read `docs/guides/BUILD-AN-AGENT.md`. Storyboards live at `https://adcontextprotocol.org/compliance/{version}/` (pulled into `compliance/cache/{version}/` by `npm run sync-schemas`).
 
 **Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` — covers guaranteed vs non-guaranteed, pricing, approval workflows, creative management.
 

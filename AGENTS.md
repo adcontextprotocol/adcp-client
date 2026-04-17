@@ -14,7 +14,7 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 - `src/lib/types/schemas.generated.ts` (~8,000 lines) — Zod runtime schemas, rarely needed directly
 - `src/lib/agents/index.generated.ts` — generated Agent classes, use the client API instead
 
-**Building a server-side agent?** — Read `docs/guides/BUILD-AN-AGENT.md` and the `storyboards/` directory for expected tool call sequences.
+**Building a server-side agent?** — Read `docs/guides/BUILD-AN-AGENT.md` and the published compliance storyboards at `https://adcontextprotocol.org/compliance/{version}/` (mirrored locally in `compliance/cache/{version}/` after `npm run sync-schemas`).
 
 ## Project Overview
 
@@ -236,7 +236,7 @@ npm run test:all          # Full test suite
 - `src/lib/core/` - Main client classes (AdCPClient, TaskExecutor)
 - `src/lib/protocols/` - A2A/MCP protocol implementations
 - `src/lib/types/` - Generated TypeScript types from schemas (prefer TYPE-SUMMARY.md)
-- `storyboards/` - YAML definitions of tool call sequences for each agent type
+- `compliance/cache/` - Storyboards pulled from `adcontextprotocol.org/compliance/{version}/` (gitignored; populated by `npm run sync-schemas`)
 - `test/lib/` - Library unit tests
 - `test/e2e/` - Integration tests
 - `examples/` - Usage examples and demos

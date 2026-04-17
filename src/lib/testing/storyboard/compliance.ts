@@ -1,0 +1,375 @@
+/**
+ * Compliance-cache loader.
+ *
+ * Storyboards live on disk under `compliance/cache/{version}/` after
+ * `npm run sync-schemas` pulls the `/protocol/{version}.tgz` bundle.
+ * This module reads that tree, resolves `get_adcp_capabilities` →
+ * storyboards to run, and supports ad-hoc single-storyboard loads for
+ * spec evolution.
+ */
+
+import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
+import { join, resolve } from 'path';
+import { loadStoryboardFile } from './loader';
+import { ADCP_VERSION } from '../../version';
+import type { Storyboard } from './types';
+
+/**
+ * Maps the `supported_protocols` enum values (snake_case) to domain-directory
+ * names (kebab-case). `compliance_testing` is an RPC surface with no compliance
+ * baseline per the spec; callers skip it explicitly.
+ *
+ * Exported so the drift-alarm test can assert every spec enum value has a mapping.
+ */
+export const PROTOCOL_TO_DOMAIN: Readonly<Record<string, string>> = Object.freeze({
+  media_buy: 'media-buy',
+  creative: 'creative',
+  signals: 'signals',
+  governance: 'governance',
+  brand: 'brand',
+  sponsored_intelligence: 'sponsored-intelligence',
+});
+
+/** Protocol values in `supported_protocols` that intentionally have no compliance baseline. */
+export const PROTOCOLS_WITHOUT_BASELINE: ReadonlySet<string> = new Set(['compliance_testing']);
+
+export interface ComplianceIndexDomain {
+  id: string;
+  title: string | null;
+  has_baseline: boolean;
+  path: string;
+}
+
+export interface ComplianceIndexSpecialism {
+  id: string;
+  domain: string;
+  title: string | null;
+  status: string;
+  path: string;
+}
+
+export interface ComplianceIndex {
+  adcp_version: string;
+  generated_at: string;
+  universal: string[];
+  domains: ComplianceIndexDomain[];
+  specialisms: ComplianceIndexSpecialism[];
+}
+
+export type BundleKind = 'universal' | 'domain' | 'specialism';
+
+export interface BundleRef {
+  kind: BundleKind;
+  /** `capability-discovery` for universal, `media-buy` for domain, `sales-guaranteed` for specialism. */
+  id: string;
+  /** Path to the bundle directory (or YAML file, for universal bundles). */
+  path: string;
+}
+
+export interface AgentCapabilities {
+  /** AdCP domain protocols the agent implements. Snake_case per schema. */
+  supported_protocols?: string[];
+  /** Optional specialisms the agent claims. */
+  specialisms?: string[];
+}
+
+export interface ResolveOptions {
+  /** Explicit version override; defaults to the client's pinned ADCP_VERSION. */
+  version?: string;
+  /** Override the compliance cache root (tests use this to point at fixtures). */
+  complianceDir?: string;
+}
+
+export interface ResolvedBundle {
+  ref: BundleRef;
+  storyboards: Storyboard[];
+}
+
+export interface ResolvedStoryboards {
+  bundles: ResolvedBundle[];
+  storyboards: Storyboard[];
+}
+
+function getRepoRoot(): string {
+  // Walks from src/lib/testing/storyboard/ (or dist/lib/testing/storyboard/) → package root.
+  return resolve(__dirname, '..', '..', '..', '..');
+}
+
+/**
+ * Resolve the compliance cache directory.
+ *
+ * Priority:
+ *   1. `options.complianceDir` (explicit override, used by tests)
+ *   2. `ADCP_COMPLIANCE_DIR` env var (full path including version dir, for packaged consumers)
+ *   3. `{package-root}/compliance/cache/{version}` (default, ships with the npm package)
+ */
+export function getComplianceCacheDir(options: ResolveOptions = {}): string {
+  if (options.complianceDir) return options.complianceDir;
+  const envOverride = process.env.ADCP_COMPLIANCE_DIR;
+  if (envOverride) return envOverride;
+  const version = options.version || readAdcpVersion();
+  return join(getRepoRoot(), 'compliance', 'cache', version);
+}
+
+function readAdcpVersion(): string {
+  // Compile-time ADCP_VERSION from src/lib/version.ts is the single source of truth
+  // at runtime. scripts/sync-schemas.ts still reads the text file — sync-version.ts
+  // keeps them aligned so the cache directory the lib expects matches what sync wrote.
+  return ADCP_VERSION;
+}
+
+function complianceMissingMessage(what: string, path: string): string {
+  return (
+    `${what} not found at ${path}. ` +
+    `The compliance cache ships with @adcp/client — try reinstalling the package. ` +
+    `If developing locally, run \`npm run sync-schemas\` to populate the cache.`
+  );
+}
+
+/** Load and parse `index.json` from the compliance cache. */
+export function loadComplianceIndex(options: ResolveOptions = {}): ComplianceIndex {
+  const dir = getComplianceCacheDir(options);
+  const indexPath = join(dir, 'index.json');
+  if (!existsSync(indexPath)) {
+    throw new Error(complianceMissingMessage('Compliance cache', dir));
+  }
+  return JSON.parse(readFileSync(indexPath, 'utf-8')) as ComplianceIndex;
+}
+
+/**
+ * Load every storyboard YAML under a directory tree (non-recursive for files at the top
+ * level of a bundle, recursive for nested `scenarios/`). YAMLs that don't have a top-level
+ * `id:` (schema / fixture files) are skipped.
+ */
+function loadStoryboardsFromDir(dir: string): Storyboard[] {
+  if (!existsSync(dir)) return [];
+  const storyboards: Storyboard[] = [];
+  const visit = (current: string) => {
+    // Sort entries so ordering is deterministic across filesystems.
+    const entries = readdirSync(current).sort();
+    // Prefer index.yaml first so bundle-as-id lookups resolve to the main storyboard.
+    entries.sort((a, b) => {
+      if (a === 'index.yaml') return -1;
+      if (b === 'index.yaml') return 1;
+      return 0;
+    });
+    for (const entry of entries) {
+      const full = join(current, entry);
+      const stat = statSync(full);
+      if (stat.isDirectory()) {
+        visit(full);
+      } else if (entry.endsWith('.yaml') || entry.endsWith('.yml')) {
+        try {
+          storyboards.push(loadStoryboardFile(full));
+        } catch (err) {
+          // Peek at the file — if it has an `id:` line it was meant to be a
+          // storyboard and the error is a real problem; otherwise it's a schema
+          // or fixture file (e.g., storyboard-schema.yaml) and silence is fine.
+          try {
+            const text = readFileSync(full, 'utf-8');
+            if (/^id:\s*\S/m.test(text)) {
+              console.warn(
+                `[compliance] Failed to parse storyboard ${full}: ${(err as Error).message}`
+              );
+            }
+          } catch {
+            /* unreadable file — treat as non-storyboard */
+          }
+        }
+      }
+    }
+  };
+  visit(dir);
+  return storyboards;
+}
+
+/** Load storyboards for a single bundle (universal YAML file, domain dir, or specialism dir). */
+export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
+  if (ref.kind === 'universal') {
+    // Universal bundles are individual YAML files.
+    try {
+      return [loadStoryboardFile(ref.path)];
+    } catch {
+      return [];
+    }
+  }
+  return loadStoryboardsFromDir(ref.path);
+}
+
+/** Enumerate every bundle present in the cache (universal + domains + specialisms). */
+export function listBundles(options: ResolveOptions = {}): BundleRef[] {
+  const dir = getComplianceCacheDir(options);
+  const index = loadComplianceIndex(options);
+  const bundles: BundleRef[] = [];
+
+  for (const name of index.universal) {
+    bundles.push({
+      kind: 'universal',
+      id: name,
+      path: join(dir, 'universal', `${name}.yaml`),
+    });
+  }
+  for (const domain of index.domains) {
+    if (!domain.has_baseline) continue;
+    bundles.push({
+      kind: 'domain',
+      id: domain.id,
+      path: join(dir, 'domains', domain.id),
+    });
+  }
+  for (const specialism of index.specialisms) {
+    bundles.push({
+      kind: 'specialism',
+      id: specialism.id,
+      path: join(dir, 'specialisms', specialism.id),
+    });
+  }
+  return bundles;
+}
+
+/** List every storyboard the cache can produce, across all bundles. */
+export function listAllComplianceStoryboards(options: ResolveOptions = {}): Storyboard[] {
+  const seen = new Set<string>();
+  const storyboards: Storyboard[] = [];
+  for (const ref of listBundles(options)) {
+    for (const sb of loadBundleStoryboards(ref)) {
+      if (seen.has(sb.id)) continue;
+      seen.add(sb.id);
+      storyboards.push(sb);
+    }
+  }
+  return storyboards;
+}
+
+/**
+ * Find a storyboard by its internal `id` (the YAML's `id:` field).
+ * Scans every bundle in the cache. Returns undefined if no match.
+ */
+export function getComplianceStoryboardById(
+  id: string,
+  options: ResolveOptions = {}
+): Storyboard | undefined {
+  for (const sb of listAllComplianceStoryboards(options)) {
+    if (sb.id === id) return sb;
+  }
+  return undefined;
+}
+
+/** Find a bundle by its directory/file id (`media-buy`, `sales-guaranteed`, `capability-discovery`). */
+export function findBundleById(id: string, options: ResolveOptions = {}): BundleRef | undefined {
+  return listBundles(options).find(b => b.id === id);
+}
+
+/**
+ * Resolve either a bundle id or a storyboard id to a storyboard set.
+ * Bundle ids expand to every storyboard in the bundle (index + scenarios).
+ * Storyboard ids resolve to that single storyboard.
+ *
+ * Used for targeted `storyboard run <agent> <id>` invocations.
+ */
+export function resolveBundleOrStoryboard(
+  id: string,
+  options: ResolveOptions = {}
+): Storyboard[] {
+  const bundle = findBundleById(id, options);
+  if (bundle) return loadBundleStoryboards(bundle);
+  const sb = getComplianceStoryboardById(id, options);
+  return sb ? [sb] : [];
+}
+
+/**
+ * Given the agent's `get_adcp_capabilities` response, resolve the set of
+ * storyboards the compliance runner should execute:
+ *
+ *   universal  — every universal bundle (mandatory for every agent)
+ *   domains    — baseline for each declared `supported_protocols` entry
+ *   specialisms — every declared specialism
+ *
+ * Throws (fail-closed) if the agent declares a specialism whose bundle is
+ * missing from the local cache — this usually means the cache is stale and
+ * needs `npm run sync-schemas`.
+ */
+export function resolveStoryboardsForCapabilities(
+  caps: AgentCapabilities,
+  options: ResolveOptions = {}
+): ResolvedStoryboards {
+  const index = loadComplianceIndex(options);
+  const cacheDir = getComplianceCacheDir(options);
+  const bundles: ResolvedBundle[] = [];
+  const storyboards: Storyboard[] = [];
+  const seenStoryboards = new Set<string>();
+
+  const push = (ref: BundleRef) => {
+    const sbs = loadBundleStoryboards(ref);
+    bundles.push({ ref, storyboards: sbs });
+    for (const sb of sbs) {
+      if (seenStoryboards.has(sb.id)) continue;
+      seenStoryboards.add(sb.id);
+      storyboards.push(sb);
+    }
+  };
+
+  for (const name of index.universal) {
+    push({
+      kind: 'universal',
+      id: name,
+      path: join(cacheDir, 'universal', `${name}.yaml`),
+    });
+  }
+
+  const declaredProtocols = caps.supported_protocols ?? [];
+  const declaredDomainIds = new Set<string>();
+  for (const protocol of declaredProtocols) {
+    if (PROTOCOLS_WITHOUT_BASELINE.has(protocol)) continue;
+    const domainId = PROTOCOL_TO_DOMAIN[protocol];
+    if (!domainId) {
+      // Unknown protocol — could be a newer spec version or a typo. Mirror the
+      // fail-closed posture on specialisms: surface it loudly, but as a warning
+      // on stderr so a single bad entry doesn't block the full run.
+      console.warn(
+        `[resolveStoryboardsForCapabilities] Unknown supported_protocols entry "${protocol}". ` +
+          `This is ignored; compliance cache may be stale or the agent is on a newer AdCP version.`
+      );
+      continue;
+    }
+    const entry = index.domains.find(d => d.id === domainId);
+    if (!entry || !entry.has_baseline) continue;
+    declaredDomainIds.add(domainId);
+    push({
+      kind: 'domain',
+      id: domainId,
+      path: join(cacheDir, 'domains', domainId),
+    });
+  }
+
+  const declaredSpecialisms = caps.specialisms ?? [];
+  for (const specialism of declaredSpecialisms) {
+    const entry = index.specialisms.find(s => s.id === specialism);
+    if (!entry) {
+      throw new Error(
+        `Agent declared specialism "${specialism}" but no bundle exists at ` +
+          `${join(cacheDir, 'specialisms', specialism)}. ` +
+          `Known specialisms: ${index.specialisms.map(s => s.id).join(', ')}. ` +
+          `Compliance cache version: ${index.adcp_version}. ` +
+          `This usually means the cache is stale — run \`npm run sync-schemas\`.`
+      );
+    }
+    // Each specialism rolls up to one parent domain; the spec requires the parent
+    // to also be declared in supported_protocols. AAO enforces this server-side,
+    // but catching it client-side stops us from running orphan scenarios.
+    if (entry.domain && !declaredDomainIds.has(entry.domain)) {
+      throw new Error(
+        `Agent declared specialism "${specialism}" (parent domain: ${entry.domain}) ` +
+          `but did not include "${entry.domain}" in supported_protocols. ` +
+          `Every specialism must roll up to a declared domain per the AdCP spec.`
+      );
+    }
+    push({
+      kind: 'specialism',
+      id: specialism,
+      path: join(cacheDir, 'specialisms', specialism),
+    });
+  }
+
+  return { bundles, storyboards };
+}

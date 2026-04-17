@@ -6,19 +6,13 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  // Comply
   comply,
   computeOverallStatus,
   formatComplianceResults,
   formatComplianceResultsJSON,
-  // Brief library
   SAMPLE_BRIEFS,
   getBriefById,
   getBriefsByVertical,
-  // Platform profiles
-  getPlatformProfile,
-  getAllPlatformTypes,
-  getPlatformTypesWithLabels,
 } = require('../../dist/lib/testing/compliance/index.js');
 
 // ============================================================
@@ -87,361 +81,93 @@ describe('getBriefsByVertical', () => {
 });
 
 // ============================================================
-// Platform Profiles
-// ============================================================
-
-describe('getAllPlatformTypes', () => {
-  test('returns all platform types', () => {
-    const types = getAllPlatformTypes();
-    assert.ok(types.length >= 16, `Expected at least 16 types, got ${types.length}`);
-  });
-
-  test('includes all sales platform types', () => {
-    const types = getAllPlatformTypes();
-    const salesTypes = [
-      'display_ad_server',
-      'video_ad_server',
-      'social_platform',
-      'pmax_platform',
-      'dsp',
-      'retail_media',
-      'search_platform',
-      'audio_platform',
-      'linear_tv_platform',
-    ];
-    for (const st of salesTypes) {
-      assert.ok(types.includes(st), `Missing sales type: ${st}`);
-    }
-  });
-
-  test('includes all creative agent types', () => {
-    const types = getAllPlatformTypes();
-    const creativeTypes = ['creative_transformer', 'creative_library', 'creative_ad_server'];
-    for (const ct of creativeTypes) {
-      assert.ok(types.includes(ct), `Missing creative type: ${ct}`);
-    }
-  });
-
-  test('includes SI and AI-native types', () => {
-    const types = getAllPlatformTypes();
-    assert.ok(types.includes('si_platform'), 'Missing si_platform');
-    assert.ok(types.includes('ai_ad_network'), 'Missing ai_ad_network');
-    assert.ok(types.includes('ai_platform'), 'Missing ai_platform');
-    assert.ok(types.includes('generative_dsp'), 'Missing generative_dsp');
-  });
-});
-
-describe('getPlatformTypesWithLabels', () => {
-  test('returns objects with id and label for all platform types', () => {
-    const entries = getPlatformTypesWithLabels();
-    const allTypes = getAllPlatformTypes();
-    assert.strictEqual(entries.length, allTypes.length);
-    for (const entry of entries) {
-      assert.ok(entry.id, 'Entry missing id');
-      assert.ok(entry.label, `Entry missing label for ${entry.id}`);
-      assert.ok(allTypes.includes(entry.id), `Unknown type: ${entry.id}`);
-    }
-  });
-});
-
-describe('getPlatformProfile', () => {
-  test('returns profile for each type', () => {
-    const types = getAllPlatformTypes();
-    for (const type of types) {
-      const profile = getPlatformProfile(type);
-      assert.ok(profile, `No profile for ${type}`);
-      assert.strictEqual(profile.type, type);
-      assert.ok(profile.label, `${type} missing label`);
-      assert.ok(profile.expected_tracks.length > 0, `${type} has no expected tracks`);
-      assert.ok(profile.expected_tracks.includes('core'), `${type} expected_tracks should include core`);
-      assert.ok(profile.expected_tools.length > 0, `${type} has no expected tools`);
-      assert.ok(typeof profile.checkCoherence === 'function', `${type} missing checkCoherence`);
-    }
-  });
-});
-
-describe('getPlatformProfile — error handling', () => {
-  test('throws for unknown platform type', () => {
-    assert.throws(() => getPlatformProfile('not_a_real_type'), /Unknown platform type: not_a_real_type/);
-  });
-
-  test('throws for prototype pollution attempt', () => {
-    assert.throws(() => getPlatformProfile('__proto__'), /Unknown platform type: __proto__/);
-  });
-});
-
-describe('checkCoherence', () => {
-  test('returns empty findings for matching social_platform agent', () => {
-    const profile = getPlatformProfile('social_platform');
-    const agent = {
-      name: 'Social Agent',
-      tools: [
-        'get_products',
-        'create_media_buy',
-        'list_creative_formats',
-        'sync_audiences',
-        'sync_creatives',
-        'get_media_buy_delivery',
-      ],
-    };
-    const findings = profile.checkCoherence(agent);
-    // Should only have the channel suggestion (which is always present for platforms with expected_channels)
-    const nonSuggestions = findings.filter(f => f.severity !== 'suggestion');
-    assert.strictEqual(
-      nonSuggestions.length,
-      0,
-      `Unexpected non-suggestion findings: ${JSON.stringify(nonSuggestions)}`
-    );
-  });
-
-  test('returns findings for social_platform agent missing sync_audiences', () => {
-    const profile = getPlatformProfile('social_platform');
-    const agent = {
-      name: 'Incomplete Social Agent',
-      tools: ['get_products', 'create_media_buy'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const audienceFinding = findings.find(f => f.expected.includes('sync_audiences'));
-    assert.ok(audienceFinding, 'Should flag missing sync_audiences');
-    assert.strictEqual(audienceFinding.severity, 'warning');
-  });
-
-  test('returns findings for creative_transformer missing build_creative', () => {
-    const profile = getPlatformProfile('creative_transformer');
-    const agent = {
-      name: 'Incomplete Transformer',
-      tools: ['preview_creative', 'list_creative_formats'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const buildFinding = findings.find(f => f.expected.includes('build_creative'));
-    assert.ok(buildFinding, 'Should flag missing build_creative');
-  });
-
-  test('creative_transformer warns about stateful tools', () => {
-    const profile = getPlatformProfile('creative_transformer');
-    const agent = {
-      name: 'Confused Transformer',
-      tools: ['build_creative', 'preview_creative', 'list_creative_formats', 'sync_creatives', 'list_creatives'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const statefulFinding = findings.find(f => f.expected.includes('Stateless'));
-    assert.ok(statefulFinding, 'Should flag stateful tools on a transformer');
-    assert.strictEqual(statefulFinding.severity, 'suggestion');
-  });
-
-  test('creative_library warns about build_creative', () => {
-    const profile = getPlatformProfile('creative_library');
-    const agent = {
-      name: 'Library With Build',
-      tools: ['preview_creative', 'list_creative_formats', 'build_creative'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const buildFinding = findings.find(f => f.expected.includes('no creative generation'));
-    assert.ok(buildFinding, 'Should flag build_creative on a library');
-  });
-
-  test('ai_ad_network flags missing SI tools', () => {
-    const profile = getPlatformProfile('ai_ad_network');
-    const agent = {
-      name: 'AI Network Without SI',
-      tools: ['get_products', 'create_media_buy'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const siFinding = findings.find(f => f.expected.includes('si_initiate_session'));
-    assert.ok(siFinding, 'Should flag missing SI tools');
-  });
-
-  test('generative_dsp flags missing build_creative', () => {
-    const profile = getPlatformProfile('generative_dsp');
-    const agent = {
-      name: 'DSP Without Gen',
-      tools: ['get_products', 'create_media_buy', 'get_media_buy_delivery'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const genFinding = findings.find(f => f.expected.includes('build_creative'));
-    assert.ok(genFinding, 'Should flag missing build_creative on generative DSP');
-  });
-});
-
-// ============================================================
-// linear_tv_platform coherence
-// ============================================================
-
-describe('linear_tv_platform coherence', () => {
-  test('returns only suggestions for complete agent', () => {
-    const profile = getPlatformProfile('linear_tv_platform');
-    const agent = {
-      name: 'Linear TV Agent',
-      tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives', 'get_media_buy_delivery'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const nonSuggestions = findings.filter(f => f.severity !== 'suggestion');
-    assert.strictEqual(
-      nonSuggestions.length,
-      0,
-      `Unexpected non-suggestion findings: ${JSON.stringify(nonSuggestions)}`
-    );
-  });
-
-  test('flags missing tools for incomplete agent', () => {
-    const profile = getPlatformProfile('linear_tv_platform');
-    const agent = {
-      name: 'Incomplete Linear TV Agent',
-      tools: ['get_products', 'create_media_buy'],
-    };
-    const findings = profile.checkCoherence(agent);
-    const warnings = findings.filter(f => f.severity === 'warning');
-    assert.ok(warnings.length >= 3, `Expected at least 3 warnings, got ${warnings.length}`);
-    const missingTools = warnings.map(f => f.expected);
-    assert.ok(
-      missingTools.some(e => e.includes('list_creative_formats')),
-      'Should flag list_creative_formats'
-    );
-    assert.ok(
-      missingTools.some(e => e.includes('sync_creatives')),
-      'Should flag sync_creatives'
-    );
-    assert.ok(
-      missingTools.some(e => e.includes('get_media_buy_delivery')),
-      'Should flag get_media_buy_delivery'
-    );
-  });
-
-  test('has correct behavioral characteristics', () => {
-    const profile = getPlatformProfile('linear_tv_platform');
-    assert.strictEqual(profile.inventory_model, 'reserved');
-    assert.deepStrictEqual(profile.pricing_models, ['cpp', 'cpm']);
-  });
-});
-
-// ============================================================
-// Behavioral characteristics
-// ============================================================
-
-describe('behavioral characteristics', () => {
-  test('every profile has behavioral fields', () => {
-    const types = getAllPlatformTypes();
-    for (const type of types) {
-      const profile = getPlatformProfile(type);
-      assert.ok(profile.inventory_model, `${type} missing inventory_model`);
-      assert.ok(profile.pricing_models?.length > 0, `${type} missing pricing_models`);
-    }
-  });
-
-  test('inventory_model values are valid', () => {
-    const valid = ['reserved', 'auction', 'guaranteed', 'hybrid'];
-    const types = getAllPlatformTypes();
-    for (const type of types) {
-      const profile = getPlatformProfile(type);
-      assert.ok(
-        valid.includes(profile.inventory_model),
-        `${type} has invalid inventory_model: ${profile.inventory_model}`
-      );
-    }
-  });
-
-  test('pricing_models values are valid', () => {
-    const valid = ['cpm', 'cpc', 'cpp', 'flat', 'auction'];
-    const types = getAllPlatformTypes();
-    for (const type of types) {
-      const profile = getPlatformProfile(type);
-      for (const pm of profile.pricing_models) {
-        assert.ok(valid.includes(pm), `${type} has invalid pricing_model: ${pm}`);
-      }
-    }
-  });
-});
-
-// ============================================================
 // Compliance Result Formatting
 // ============================================================
 
-describe('formatComplianceResults', () => {
-  const mockResult = {
-    agent_url: 'https://example.com/mcp',
-    agent_profile: { name: 'Test Agent', tools: ['get_products', 'create_media_buy'] },
-    overall_status: 'partial',
-    tracks: [
-      {
-        track: 'core',
-        status: 'pass',
-        label: 'Core Protocol',
-        scenarios: [
-          {
-            scenario: 'health_check',
-            overall_passed: true,
-            steps: [],
-            summary: 'Passed',
-            total_duration_ms: 100,
-          },
-        ],
-        skipped_scenarios: [],
-        observations: [],
-        duration_ms: 100,
-      },
-      {
-        track: 'products',
-        status: 'fail',
-        label: 'Product Discovery',
-        scenarios: [
-          {
-            scenario: 'pricing_edge_cases',
-            overall_passed: false,
-            steps: [{ step: 'Check pricing', passed: false, duration_ms: 50, error: 'No pricing options' }],
-            summary: 'Failed',
-            total_duration_ms: 50,
-          },
-        ],
-        skipped_scenarios: [],
-        observations: [],
-        duration_ms: 50,
-      },
-      {
-        track: 'signals',
-        status: 'skip',
-        label: 'Signals',
-        scenarios: [],
-        skipped_scenarios: ['signals_flow'],
-        observations: [],
-        duration_ms: 0,
-      },
-    ],
-    tested_tracks: [
-      {
-        track: 'core',
-        status: 'pass',
-        label: 'Core Protocol',
-        scenarios: [],
-        skipped_scenarios: [],
-        observations: [],
-        duration_ms: 100,
-      },
-      {
-        track: 'products',
-        status: 'fail',
-        label: 'Product Discovery',
-        scenarios: [],
-        skipped_scenarios: [],
-        observations: [],
-        duration_ms: 50,
-      },
-    ],
-    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools: get_signals' }],
-    expected_tracks: [],
-    summary: {
-      tracks_passed: 1,
-      tracks_failed: 1,
-      tracks_skipped: 1,
-      tracks_partial: 0,
-      tracks_expected: 0,
-      headline: '1 passing, 1 failing',
+const mockResult = {
+  agent_url: 'https://example.com/mcp',
+  agent_profile: { name: 'Test Agent', tools: ['get_products', 'create_media_buy'] },
+  overall_status: 'partial',
+  tracks: [
+    {
+      track: 'core',
+      status: 'pass',
+      label: 'Core Protocol',
+      scenarios: [
+        {
+          scenario: 'health_check',
+          overall_passed: true,
+          steps: [],
+          summary: 'Passed',
+          total_duration_ms: 100,
+        },
+      ],
+      skipped_scenarios: [],
+      observations: [],
+      duration_ms: 100,
     },
-    observations: [{ category: 'completeness', severity: 'warning', message: 'Missing fields' }],
-    storyboards_executed: ['capability_discovery', 'schema_validation'],
-    tested_at: new Date().toISOString(),
-    total_duration_ms: 150,
-  };
+    {
+      track: 'products',
+      status: 'fail',
+      label: 'Product Discovery',
+      scenarios: [
+        {
+          scenario: 'pricing_edge_cases',
+          overall_passed: false,
+          steps: [{ step: 'Check pricing', passed: false, duration_ms: 50, error: 'No pricing options' }],
+          summary: 'Failed',
+          total_duration_ms: 50,
+        },
+      ],
+      skipped_scenarios: [],
+      observations: [],
+      duration_ms: 50,
+    },
+    {
+      track: 'signals',
+      status: 'skip',
+      label: 'Signals',
+      scenarios: [],
+      skipped_scenarios: ['signals_flow'],
+      observations: [],
+      duration_ms: 0,
+    },
+  ],
+  tested_tracks: [
+    {
+      track: 'core',
+      status: 'pass',
+      label: 'Core Protocol',
+      scenarios: [],
+      skipped_scenarios: [],
+      observations: [],
+      duration_ms: 100,
+    },
+    {
+      track: 'products',
+      status: 'fail',
+      label: 'Product Discovery',
+      scenarios: [],
+      skipped_scenarios: [],
+      observations: [],
+      duration_ms: 50,
+    },
+  ],
+  skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'No storyboards produced results for this track' }],
+  summary: {
+    tracks_passed: 1,
+    tracks_failed: 1,
+    tracks_skipped: 1,
+    tracks_partial: 0,
+    headline: '1 passing, 1 failing',
+  },
+  observations: [{ category: 'completeness', severity: 'warning', message: 'Missing fields' }],
+  storyboards_executed: ['capability_discovery', 'schema_validation'],
+  tested_at: new Date().toISOString(),
+  total_duration_ms: 150,
+};
 
+describe('formatComplianceResults', () => {
   test('includes agent name and URL', () => {
     const output = formatComplianceResults(mockResult);
     assert.ok(output.includes('https://example.com/mcp'), 'Should include agent URL');
@@ -469,268 +195,83 @@ describe('formatComplianceResults', () => {
     const output = formatComplianceResults(mockResult);
     assert.ok(output.includes('1 passing, 1 failing'), 'Should show headline');
   });
-
-  test('shows expected tracks with platform coherence', () => {
-    const resultWithPlatform = {
-      ...mockResult,
-      tracks: [
-        ...mockResult.tracks,
-        {
-          track: 'audiences',
-          status: 'expected',
-          label: 'Audience Management',
-          scenarios: [],
-          skipped_scenarios: ['sync_audiences'],
-          observations: [],
-          duration_ms: 0,
-        },
-      ],
-      platform_coherence: {
-        platform_type: 'social_platform',
-        label: 'Social Platform',
-        expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences'],
-        missing_tracks: ['audiences'],
-        findings: [
-          {
-            expected: 'Agent has sync_audiences',
-            actual: 'sync_audiences not found in tool list',
-            guidance: 'Social platforms need sync_audiences.',
-            severity: 'warning',
-          },
-        ],
-        coherent: false,
-      },
-    };
-    const output = formatComplianceResults(resultWithPlatform);
-    assert.ok(output.includes('expected for Social Platform'), 'Should show expected status');
-    assert.ok(output.includes('Platform Coherence'), 'Should show coherence section');
-    assert.ok(output.includes('sync_audiences'), 'Should show missing tool');
-    assert.ok(output.includes('Platform:'), 'Should show platform in header');
-  });
-
-  test('no platform coherence section without platform_type', () => {
-    const output = formatComplianceResults(mockResult);
-    assert.ok(!output.includes('Platform Coherence'), 'Should not show coherence without platform_type');
-    assert.ok(!output.includes('Platform:'), 'Should not show platform in header');
-  });
-
-  test('shows storyboards executed', () => {
-    const output = formatComplianceResults(mockResult);
-    assert.ok(
-      output.includes('Storyboards: capability_discovery, schema_validation'),
-      'Should show storyboards_executed in output'
-    );
-  });
-
-  test('no storyboards line when storyboards_executed is empty', () => {
-    const resultNoStoryboards = { ...mockResult, storyboards_executed: [] };
-    const output = formatComplianceResults(resultNoStoryboards);
-    assert.ok(!output.includes('Storyboards:'), 'Should not show Storyboards line when empty');
-  });
-
-  test('no storyboards line when storyboards_executed is undefined', () => {
-    const { storyboards_executed, ...resultWithout } = mockResult;
-    const output = formatComplianceResults(resultWithout);
-    assert.ok(!output.includes('Storyboards:'), 'Should not show Storyboards line when undefined');
-  });
-
-  test('shows How to Fix section when failures have expected text', () => {
-    const resultWithFailures = {
-      ...mockResult,
-      failures: [
-        {
-          track: 'media_buy',
-          storyboard_id: 'media_buy_seller',
-          step_id: 'sync_accounts',
-          step_title: 'Establish account',
-          task: 'sync_accounts',
-          error: 'Unknown tool: sync_accounts',
-          expected: 'Return the account with account_id and status',
-          fix_command: 'adcp storyboard step moloco media_buy_seller sync_accounts --json',
-        },
-      ],
-    };
-    const output = formatComplianceResults(resultWithFailures);
-    assert.ok(output.includes('How to Fix'), 'Should show How to Fix section');
-    assert.ok(output.includes('media_buy_seller/sync_accounts'), 'Should show storyboard/step');
-    assert.ok(output.includes('Expected: Return the account'), 'Should show expected text');
-    assert.ok(output.includes('adcp storyboard step moloco'), 'Should show fix command');
-  });
-
-  test('no How to Fix section when failures is undefined', () => {
-    const output = formatComplianceResults(mockResult);
-    assert.ok(!output.includes('How to Fix'), 'Should not show How to Fix when no failures');
-  });
-
-  test('no How to Fix section when failures have no expected text', () => {
-    const resultWithFailures = {
-      ...mockResult,
-      failures: [
-        {
-          track: 'core',
-          storyboard_id: 'capability_discovery',
-          step_id: 'get_caps',
-          step_title: 'Discover capabilities',
-          task: 'get_adcp_capabilities',
-          error: 'Connection refused',
-          fix_command: 'adcp storyboard step test capability_discovery get_caps --json',
-        },
-      ],
-    };
-    const output = formatComplianceResults(resultWithFailures);
-    assert.ok(!output.includes('How to Fix'), 'Should not show How to Fix when no expected text');
-  });
 });
 
 // ============================================================
-// computeOverallStatus (issue #401)
+// computeOverallStatus
 // ============================================================
 
 describe('computeOverallStatus', () => {
   test('returns passing when all tracks pass', () => {
-    const summary = {
-      tracks_passed: 3,
-      tracks_failed: 0,
-      tracks_skipped: 2,
-      tracks_partial: 0,
-      tracks_expected: 0,
-      headline: '',
-    };
-    assert.strictEqual(computeOverallStatus(summary), 'passing');
+    assert.strictEqual(
+      computeOverallStatus({ tracks_passed: 3, tracks_failed: 0, tracks_skipped: 2, tracks_partial: 0, headline: '' }),
+      'passing'
+    );
   });
 
   test('returns failing when all attempted tracks fail', () => {
-    const summary = {
-      tracks_passed: 0,
-      tracks_failed: 2,
-      tracks_skipped: 1,
-      tracks_partial: 0,
-      tracks_expected: 0,
-      headline: '',
-    };
-    assert.strictEqual(computeOverallStatus(summary), 'failing');
+    assert.strictEqual(
+      computeOverallStatus({ tracks_passed: 0, tracks_failed: 2, tracks_skipped: 1, tracks_partial: 0, headline: '' }),
+      'failing'
+    );
   });
 
   test('returns partial when mix of pass and fail', () => {
-    const summary = {
-      tracks_passed: 1,
-      tracks_failed: 1,
-      tracks_skipped: 0,
-      tracks_partial: 0,
-      tracks_expected: 0,
-      headline: '',
-    };
-    assert.strictEqual(computeOverallStatus(summary), 'partial');
+    assert.strictEqual(
+      computeOverallStatus({ tracks_passed: 1, tracks_failed: 1, tracks_skipped: 0, tracks_partial: 0, headline: '' }),
+      'partial'
+    );
   });
 
   test('returns partial when some tracks are partial', () => {
-    const summary = {
-      tracks_passed: 1,
-      tracks_failed: 0,
-      tracks_skipped: 0,
-      tracks_partial: 1,
-      tracks_expected: 0,
-      headline: '',
-    };
-    assert.strictEqual(computeOverallStatus(summary), 'partial');
+    assert.strictEqual(
+      computeOverallStatus({ tracks_passed: 1, tracks_failed: 0, tracks_skipped: 0, tracks_partial: 1, headline: '' }),
+      'partial'
+    );
   });
 
   test('returns partial when no tracks attempted (all skipped)', () => {
-    const summary = {
-      tracks_passed: 0,
-      tracks_failed: 0,
-      tracks_skipped: 5,
-      tracks_partial: 0,
-      tracks_expected: 0,
-      headline: '',
-    };
-    assert.strictEqual(computeOverallStatus(summary), 'partial');
-  });
-});
-
-// ============================================================
-// platform_type as string (issue #402)
-// ============================================================
-
-describe('platform_type as string', () => {
-  test('comply() rejects unknown platform_type with descriptive error', async () => {
-    await assert.rejects(
-      () => comply('http://localhost:1', { platform_type: 'not_a_type', timeout_ms: 1000 }),
-      err => {
-        assert.ok(err.message.includes('Unknown platform_type: "not_a_type"'), 'Should include the bad value');
-        assert.ok(err.message.includes('Valid types:'), 'Should list valid types');
-        return true;
-      }
-    );
-  });
-
-  test('comply() rejects prototype pollution strings', async () => {
-    await assert.rejects(
-      () => comply('http://localhost:1', { platform_type: '__proto__', timeout_ms: 1000 }),
-      /Unknown platform_type/
+    assert.strictEqual(
+      computeOverallStatus({ tracks_passed: 0, tracks_failed: 0, tracks_skipped: 5, tracks_partial: 0, headline: '' }),
+      'partial'
     );
   });
 });
 
 // ============================================================
-// Track partitioning (issue #403)
+// Track partitioning
 // ============================================================
 
 describe('track partitioning', () => {
-  const result = {
-    tracks: [
-      { track: 'core', status: 'pass', label: 'Core Protocol' },
-      { track: 'products', status: 'fail', label: 'Product Discovery' },
-      { track: 'media_buy', status: 'partial', label: 'Media Buy Lifecycle' },
-      { track: 'signals', status: 'skip', label: 'Signals' },
-      { track: 'audiences', status: 'expected', label: 'Audience Management' },
-    ],
-    tested_tracks: [
-      { track: 'core', status: 'pass', label: 'Core Protocol' },
-      { track: 'products', status: 'fail', label: 'Product Discovery' },
-      { track: 'media_buy', status: 'partial', label: 'Media Buy Lifecycle' },
-    ],
-    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools: get_signals' }],
-    expected_tracks: [{ track: 'audiences', label: 'Audience Management', reason: 'Expected for Social Platform' }],
-  };
-
   test('tested_tracks contains only pass/fail/partial tracks', () => {
-    for (const t of result.tested_tracks) {
-      assert.ok(['pass', 'fail', 'partial'].includes(t.status), `tested_tracks should not contain status: ${t.status}`);
+    for (const t of mockResult.tested_tracks) {
+      assert.ok(['pass', 'fail', 'partial'].includes(t.status));
     }
   });
 
   test('skipped_tracks has track, label, and reason', () => {
-    for (const t of result.skipped_tracks) {
-      assert.ok(t.track, 'skipped_tracks entry missing track');
-      assert.ok(t.label, 'skipped_tracks entry missing label');
-      assert.ok(t.reason, 'skipped_tracks entry missing reason');
+    for (const t of mockResult.skipped_tracks) {
+      assert.ok(t.track);
+      assert.ok(t.label);
+      assert.ok(t.reason);
     }
   });
 
-  test('expected_tracks has track, label, and reason', () => {
-    for (const t of result.expected_tracks) {
-      assert.ok(t.track, 'expected_tracks entry missing track');
-      assert.ok(t.label, 'expected_tracks entry missing label');
-      assert.ok(t.reason, 'expected_tracks entry missing reason');
-    }
-  });
-
-  test('tested_tracks + skipped_tracks + expected_tracks cover all tracks', () => {
-    const total = result.tested_tracks.length + result.skipped_tracks.length + result.expected_tracks.length;
-    assert.strictEqual(total, result.tracks.length);
+  test('tested_tracks + skipped_tracks cover all non-terminal tracks', () => {
+    const total = mockResult.tested_tracks.length + mockResult.skipped_tracks.length;
+    assert.strictEqual(total, mockResult.tracks.length);
   });
 });
 
 describe('formatComplianceResultsJSON', () => {
   test('returns valid JSON', () => {
-    const mockResult = {
+    const mock = {
       agent_url: 'https://example.com',
       tracks: [],
       summary: { headline: 'test' },
       observations: [],
     };
-    const json = formatComplianceResultsJSON(mockResult);
+    const json = formatComplianceResultsJSON(mock);
     const parsed = JSON.parse(json);
     assert.strictEqual(parsed.agent_url, 'https://example.com');
   });

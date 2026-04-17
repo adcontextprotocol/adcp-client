@@ -11,6 +11,8 @@ build/
 
 # Schema cache (downloaded by sync-schemas)
 schemas/cache/
+compliance/cache/
+.adcp-sync-*/
 
 # Environment variables
 .env

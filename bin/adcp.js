@@ -667,19 +667,8 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
 
 async function handleComplyCommand(args) {
   // 'adcp comply' is an alias for 'adcp storyboard run'
-  if (
-    !args.includes('--json') &&
-    !args.includes('--help') &&
-    !args.includes('-h') &&
-    !args.includes('--list-platform-types')
-  ) {
-    console.error('DEPRECATED: "adcp comply" will be removed in v5. Use "adcp storyboard run" instead.\n');
-  }
-
-  // Handle --list-platform-types
-  if (args.includes('--list-platform-types')) {
-    await handleStoryboardListPlatformTypes();
-    return;
+  if (!args.includes('--json') && !args.includes('--help') && !args.includes('-h')) {
+    console.error('DEPRECATED: "adcp comply" will be removed. Use "adcp storyboard run" instead.\n');
   }
 
   if (args.includes('--help') || args.length === 0) {
@@ -714,8 +703,8 @@ COMMANDS:
 QUICK START:
   adcp test-mcp                                    List tools on the test agent
   adcp test-mcp get_products '{"brief":"coffee"}'  Call a tool
-  adcp storyboard run test-mcp --platform-type dsp Run all matching storyboards
-  adcp storyboard run test-mcp media_buy_seller    Run a single storyboard
+  adcp storyboard run test-mcp                     Run capability-driven assessment
+  adcp storyboard run test-mcp media_buy_seller    Run a single storyboard or bundle
   adcp test test-mcp full_sales_flow               Run test scenario
 
 AGENT MANAGEMENT:
@@ -755,46 +744,46 @@ async function handleStoryboardCommand(args) {
 Storyboard-driven testing
 
 USAGE:
-  adcp storyboard list [--platform-type TYPE] [--json]
-  adcp storyboard show <storyboard_id> [--json]
-  adcp storyboard run <agent> [storyboard_id] [options]
+  adcp storyboard list [--json]
+  adcp storyboard show <id> [--json]
+  adcp storyboard run <agent> [id|bundle] [options]
+  adcp storyboard run <agent> --file <path.yaml> [options]
   adcp storyboard step <agent> <storyboard_id> <step_id> [options]
 
 SUBCOMMANDS:
-  list                List available storyboards
+  list                Enumerate storyboards in the compliance cache
   show <id>           Show storyboard structure (phases, steps)
-  run <agent> [id]    Run storyboard(s) against an agent (omit id to run all matching)
+  run <agent> [id]    Run storyboards. With id, run one bundle/storyboard; otherwise
+                      the agent's get_adcp_capabilities drives selection.
   step <agent> <id> <step_id>  Run a single step (stateless, LLM-friendly)
 
-RUN OPTIONS (when no storyboard_id):
-  --tracks TRACKS          Comma-separated tracks to run (default: all applicable)
-  --storyboards IDS        Comma-separated storyboard IDs to run
-  --platform-type TYPE     Declare platform type for coherence checking
-  --list-platform-types    List all available platform types
-  --timeout SECONDS        Timeout in seconds (default: 120)
-  --brief TEXT             Custom brief for product discovery
+RUN OPTIONS (full assessment):
+  --tracks TRACKS     Comma-separated tracks to include in the report
+  --storyboards IDS   Comma-separated storyboard/bundle IDs to run
+  --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
+  --timeout SECONDS   Timeout in seconds (default: 120)
+  --brief TEXT        Custom brief for product discovery
 
 OPTIONS:
-  --platform-type TYPE  Filter storyboards by platform type (list only)
-  --context JSON        Pass context from previous step (step only)
-  --request JSON        Override sample_request for the step (step only)
-  --json                JSON output (recommended for LLM consumption)
-  --auth TOKEN          Authentication token
-  --protocol PROTO      Force protocol: mcp or a2a
-  --dry-run             Preview steps without executing
-  --debug               Debug output
+  --context JSON      Pass context from previous step (step only)
+  --request JSON      Override sample_request for the step (step only)
+  --json              JSON output (recommended for LLM consumption)
+  --auth TOKEN        Authentication token
+  --protocol PROTO    Force protocol: mcp or a2a
+  --dry-run           Preview steps without executing
+  --debug             Debug output
+
+NOTE: Storyboards are pulled from the compliance cache populated by
+      \`npm run sync-schemas\` (fetches /protocol/{version}.tgz).
 
 EXAMPLES:
-  adcp storyboard run test-mcp                             # run all matching storyboards
-  adcp storyboard run test-mcp --platform-type dsp         # run with platform coherence
-  adcp storyboard run test-mcp --tracks core,products      # run specific tracks
-  adcp storyboard run test-mcp media_buy_seller --json     # run a single storyboard
+  adcp storyboard run test-mcp                         # capability-driven assessment
+  adcp storyboard run test-mcp --tracks core,products  # filter report by track
+  adcp storyboard run test-mcp sales-guaranteed        # run one specialism bundle
+  adcp storyboard run test-mcp --file ./my-wip.yaml    # test a local YAML
   adcp storyboard list
-  adcp storyboard list --platform-type retail_media --json
   adcp storyboard show media_buy_seller
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
-  adcp storyboard step test-mcp media_buy_seller get_products_brief \\
-    --context '{"account_id":"abc123"}' --json
 `);
     process.exit(0);
   }
@@ -823,68 +812,92 @@ EXAMPLES:
 }
 
 async function handleStoryboardList(args) {
-  const { listStoryboards, getStoryboardsForPlatformType } = await import('../dist/lib/testing/storyboard/index.js');
+  const { listBundles, loadBundleStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
 
-  const ptIndex = args.indexOf('--platform-type');
-  const platformType = ptIndex !== -1 ? args[ptIndex + 1] : null;
+  let bundles;
+  try {
+    bundles = listBundles();
+  } catch (err) {
+    console.error(`ERROR: ${err.message}`);
+    process.exit(1);
+  }
 
-  let storyboards;
-  if (platformType) {
-    const filtered = getStoryboardsForPlatformType(platformType);
-    storyboards = filtered.map(s => ({
-      id: s.id,
-      title: s.title,
-      category: s.category,
-      summary: s.summary,
-      track: s.track,
-      platform_types: s.platform_types,
-      step_count: s.phases.reduce((sum, p) => sum + p.steps.length, 0),
-    }));
-  } else {
-    storyboards = listStoryboards();
+  const grouped = { universal: [], domain: [], specialism: [] };
+  const flat = [];
+  for (const ref of bundles) {
+    const storyboards = loadBundleStoryboards(ref);
+    if (storyboards.length === 0) continue; // skip schema/fixture YAMLs that aren't runnable
+    const summary = {
+      bundle_kind: ref.kind,
+      bundle_id: ref.id,
+      storyboards: storyboards.map(s => ({
+        id: s.id,
+        title: s.title,
+        category: s.category,
+        summary: s.summary,
+        track: s.track,
+        step_count: s.phases.reduce((sum, p) => sum + p.steps.length, 0),
+      })),
+    };
+    grouped[ref.kind].push(summary);
+    for (const sb of summary.storyboards) {
+      flat.push({ ...sb, bundle_kind: ref.kind, bundle_id: ref.id });
+    }
   }
 
   if (jsonOutput) {
-    console.log(JSON.stringify(storyboards, null, 2));
-  } else {
-    if (platformType) {
-      console.log(`\nStoryboards for platform type: ${platformType}\n`);
-    } else {
-      console.log('\nAvailable storyboards:\n');
-    }
-    for (const s of storyboards) {
-      console.log(`  ${s.id}`);
-      console.log(`    ${s.title} (${s.step_count} steps)`);
-      console.log(`    ${s.summary}`);
-      if (s.track) console.log(`    Track: ${s.track}`);
-      if (s.platform_types?.length) {
-        console.log(`    Platform types: ${s.platform_types.join(', ')}`);
-      }
-      console.log();
-    }
-    console.log(`${storyboards.length} storyboard(s) found.`);
+    console.log(JSON.stringify({ bundles: grouped, storyboards: flat }, null, 2));
+    return;
   }
+
+  console.log('\nCompliance storyboards (from local cache)\n');
+  for (const kind of ['universal', 'domain', 'specialism']) {
+    if (grouped[kind].length === 0) continue;
+    const header =
+      kind === 'universal' ? 'Universal (required for all agents)' : kind === 'domain' ? 'Domains' : 'Specialisms';
+    console.log(`${header}:`);
+    for (const bundle of grouped[kind]) {
+      console.log(`  [${bundle.bundle_id}]`);
+      for (const sb of bundle.storyboards) {
+        console.log(`    ${sb.id}  — ${sb.title} (${sb.step_count} steps)`);
+        if (sb.track) console.log(`      Track: ${sb.track}`);
+      }
+    }
+    console.log();
+  }
+  console.log(`${flat.length} storyboard(s) across ${bundles.length} bundle(s).`);
 }
 
 async function handleStoryboardShow(args) {
-  const { getStoryboardById } = await import('../dist/lib/testing/storyboard/index.js');
+  const { resolveBundleOrStoryboard, findBundleById, listAllComplianceStoryboards } = await import(
+    '../dist/lib/testing/storyboard/index.js'
+  );
   const jsonOutput = args.includes('--json');
   const positionalArgs = args.filter(a => !a.startsWith('--'));
   const storyboardId = positionalArgs[0];
 
   if (!storyboardId) {
-    console.error('Usage: adcp storyboard show <storyboard_id>');
+    console.error('Usage: adcp storyboard show <id>');
     process.exit(2);
   }
 
-  const storyboard = getStoryboardById(storyboardId);
-  if (!storyboard) {
-    console.error(`Storyboard not found: ${storyboardId}`);
-    const { listStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
-    const all = listStoryboards();
-    console.error(`Available: ${all.map(s => s.id).join(', ')}`);
+  const matches = resolveBundleOrStoryboard(storyboardId);
+  if (matches.length === 0) {
+    console.error(`Storyboard or bundle not found: ${storyboardId}`);
+    console.error(`Available: ${listAllComplianceStoryboards().map(s => s.id).join(', ')}`);
     process.exit(2);
+  }
+
+  const storyboard = matches[0];
+  const bundle = findBundleById(storyboardId);
+  if (bundle && matches.length > 1 && !jsonOutput) {
+    console.log(
+      `\n[${bundle.kind} bundle "${bundle.id}"] contains ${matches.length} storyboards: ${matches
+        .map(s => s.id)
+        .join(', ')}`
+    );
+    console.log(`Showing first (${storyboard.id}). Run 'storyboard show <id>' for another.`);
   }
 
   if (jsonOutput) {
@@ -894,9 +907,6 @@ async function handleStoryboardShow(args) {
     console.log(`${'─'.repeat(storyboard.title.length)}`);
     console.log(`ID: ${storyboard.id}  |  Category: ${storyboard.category}  |  Version: ${storyboard.version}`);
     if (storyboard.track) console.log(`Track: ${storyboard.track}`);
-    if (storyboard.platform_types?.length) {
-      console.log(`Platform types: ${storyboard.platform_types.join(', ')}`);
-    }
     console.log(`\n${storyboard.summary}`);
     if (storyboard.narrative) {
       console.log(`\n${storyboard.narrative.trim()}`);
@@ -931,33 +941,46 @@ async function handleStoryboardShow(args) {
 }
 
 async function handleStoryboardRun(args) {
-  // Handle --list-platform-types before anything else
-  if (args.includes('--list-platform-types')) {
-    await handleStoryboardListPlatformTypes();
-    return;
-  }
-
-  const { getStoryboardById, runStoryboard } = await import('../dist/lib/testing/storyboard/index.js');
   const opts = parseAgentOptions(args);
   const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = opts;
 
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];
 
+  // --file <path>: ad-hoc storyboard load from a local YAML (spec evolution workflow)
+  const fileIndex = args.indexOf('--file');
+  const filePath = fileIndex !== -1 ? args[fileIndex + 1] : null;
+
   if (!agentArg) {
-    console.error('Usage: adcp storyboard run <agent> [storyboard_id] [options]');
+    console.error('Usage: adcp storyboard run <agent> [storyboard_id|--file path] [options]');
     process.exit(2);
   }
 
-  // No storyboard ID → run all matching storyboards (full assessment)
-  if (!storyboardId) {
+  if (filePath && storyboardId) {
+    console.error('ERROR: Cannot combine a storyboard ID with --file. Use one or the other.');
+    process.exit(2);
+  }
+
+  // No storyboard ID and no --file → capability-driven full assessment.
+  if (!storyboardId && !filePath) {
     await runFullAssessment(agentArg, args, opts);
     return;
   }
 
-  const storyboard = getStoryboardById(storyboardId);
-  if (!storyboard) {
-    console.error(`Storyboard not found: ${storyboardId}`);
+  // Passing a bundle id expands to all storyboards in that bundle; route through comply().
+  if (storyboardId) {
+    await runFullAssessment(agentArg, args, { ...opts, explicitStoryboards: [storyboardId] });
+    return;
+  }
+
+  const { loadStoryboardFile, runStoryboard } = await import(
+    '../dist/lib/testing/storyboard/index.js'
+  );
+  let storyboard;
+  try {
+    storyboard = loadStoryboardFile(filePath);
+  } catch (err) {
+    console.error(`Failed to load storyboard from ${filePath}: ${err.message}`);
     process.exit(2);
   }
 
@@ -1056,19 +1079,6 @@ async function handleStoryboardRun(args) {
   process.exit(result.overall_passed ? 0 : 3);
 }
 
-async function handleStoryboardListPlatformTypes() {
-  const { getPlatformTypesWithLabels, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
-  const types = getPlatformTypesWithLabels();
-  console.log('\nAvailable platform types:\n');
-  for (const { id, label } of types) {
-    const profile = getPlatformProfile(id);
-    console.log(`  ${id}`);
-    console.log(`    ${label}`);
-    console.log(`    Expected tracks: ${profile.expected_tracks.join(', ')}`);
-    console.log('');
-  }
-}
-
 // Shared implementation: run all matching storyboards against an agent
 async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
   const opts = parsedOpts || parseAgentOptions(rawArgs);
@@ -1086,34 +1096,28 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     tracks = rawArgs[tracksIndex + 1].split(',');
   }
 
-  // Parse --storyboards
+  // Parse --storyboards (explicit bundle or storyboard IDs); positional overrides.
   const storyboardsIndex = rawArgs.indexOf('--storyboards');
-  let storyboards;
-  if (storyboardsIndex !== -1 && storyboardsIndex + 1 < rawArgs.length) {
+  let storyboards = opts.explicitStoryboards;
+  if (!storyboards && storyboardsIndex !== -1 && storyboardsIndex + 1 < rawArgs.length) {
     storyboards = rawArgs[storyboardsIndex + 1].split(',');
-    const { listStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
-    const knownIds = new Set(listStoryboards().map(s => s.id));
-    const unknown = storyboards.filter(id => !knownIds.has(id));
-    if (unknown.length > 0) {
-      console.error(`ERROR: Unknown storyboard ID(s): ${unknown.join(', ')}`);
-      console.error(`Available: ${[...knownIds].sort().join(', ')}`);
-      console.error(`Run 'adcp storyboard list' to see all options.\n`);
-      process.exit(2);
-    }
   }
-
-  // Parse --platform-type
-  const platformTypeIndex = rawArgs.indexOf('--platform-type');
-  let platform_type;
-  if (platformTypeIndex !== -1 && platformTypeIndex + 1 < rawArgs.length) {
-    platform_type = rawArgs[platformTypeIndex + 1];
-    const { getAllPlatformTypes } = await import('../dist/lib/testing/compliance/index.js');
-    const validTypes = getAllPlatformTypes();
-    if (!validTypes.includes(platform_type)) {
-      console.error(`ERROR: Unknown platform type: ${platform_type}`);
-      console.error(`Valid types: ${validTypes.join(', ')}`);
-      console.error(`Run 'adcp storyboard run --list-platform-types' to see all options.\n`);
-      process.exit(2);
+  if (storyboards?.length) {
+    const { listAllComplianceStoryboards, listBundles } = await import(
+      '../dist/lib/testing/storyboard/index.js'
+    );
+    try {
+      const knownStoryboardIds = new Set(listAllComplianceStoryboards().map(s => s.id));
+      const knownBundleIds = new Set(listBundles().map(b => b.id));
+      const unknown = storyboards.filter(id => !knownStoryboardIds.has(id) && !knownBundleIds.has(id));
+      if (unknown.length > 0) {
+        console.error(`ERROR: Unknown storyboard or bundle ID(s): ${unknown.join(', ')}`);
+        console.error(`Run 'adcp storyboard list' to see all options.\n`);
+        process.exit(2);
+      }
+    } catch (err) {
+      console.error(`ERROR: ${err.message}`);
+      process.exit(1);
     }
   }
 
@@ -1139,7 +1143,6 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     brief: opts.brief,
     tracks,
     storyboards,
-    platform_type,
     timeout_ms: timeoutMs,
     agent_alias: agentArg !== agentUrl ? agentArg : undefined,
     ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
@@ -1149,7 +1152,6 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     console.log(`\nRunning storyboard assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
-    if (platform_type) console.log(`   Platform: ${platform_type}`);
     console.log(`   Timeout: ${timeoutMs / 1000}s`);
     console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
   }
@@ -1181,7 +1183,9 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 }
 
 async function handleStoryboardStepCmd(args) {
-  const { getStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
+  const { getComplianceStoryboardById, runStoryboardStep } = await import(
+    '../dist/lib/testing/storyboard/index.js'
+  );
   const { authToken, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
 
   const agentArg = positionalArgs[0];
@@ -1193,7 +1197,7 @@ async function handleStoryboardStepCmd(args) {
     process.exit(2);
   }
 
-  const storyboard = getStoryboardById(storyboardId);
+  const storyboard = getComplianceStoryboardById(storyboardId);
   if (!storyboard) {
     console.error(`Storyboard not found: ${storyboardId}`);
     process.exit(2);
