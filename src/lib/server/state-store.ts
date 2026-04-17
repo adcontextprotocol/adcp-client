@@ -567,7 +567,9 @@ export interface PatchWithRetryOptions {
   allowResurrection?: boolean;
 }
 
-const defaultBackoffMs = (attempt: number) => Math.random() * (1 << attempt);
+// Cap the shift so `1 << attempt` can't overflow to 0 or flip sign at attempt >= 31.
+// 20 is plenty: 2^20 = ~1 second, and maxAttempts would be absurd long before then.
+const defaultBackoffMs = (attempt: number) => Math.random() * Math.pow(2, Math.min(attempt, 20));
 
 /**
  * Error thrown when `patchWithRetry` exceeds `maxAttempts` consecutive version conflicts,
@@ -631,9 +633,11 @@ export function isPutIfMatchConflict(result: PutIfMatchResult): result is { ok: 
  *
  * Requires the store to implement both `getWithVersion` and `putIfMatch`.
  *
- * **Mutation caveat**: the object passed to `update` is a shallow copy of the
- * stored document. Mutating nested fields in place will leak into the next
- * retry attempt — build a fresh object from the current one instead.
+ * **Mutation caveat**: always build a fresh object in `update` — never mutate
+ * the `current` argument in place. In-memory stores hand out a shallow copy
+ * (nested references shared across retries) while Postgres deserializes JSONB
+ * fresh each time; the safe pattern (`{ ...current, field: newValue }`) works
+ * on both.
  *
  * **Error propagation**: if `update` throws, the exception propagates
  * immediately and no retry happens.

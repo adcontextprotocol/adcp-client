@@ -86,17 +86,17 @@ describe('putIfMatch', () => {
     assert.deepStrictEqual(await store.get('col', 'x'), { v: 2 });
   });
 
-  it('exactly one of two concurrent null-expected inserts wins', async () => {
+  it('second null-expected insert against an existing row reports the current version', async () => {
+    // Note: not a real concurrency test — InMemoryStateStore's putIfMatch is
+    // synchronous under the hood, so Promise.all serializes deterministically
+    // by microtask order. Real concurrent-insert semantics are covered by the
+    // PostgresStateStore integration test (test/lib/postgres-state-store.test.js).
     const store = new InMemoryStateStore();
-    const [r1, r2] = await Promise.all([
-      store.putIfMatch('col', 'x', { winner: 'A' }, null),
-      store.putIfMatch('col', 'x', { winner: 'B' }, null),
-    ]);
-    const wins = [r1, r2].filter(r => r.ok);
-    const losses = [r1, r2].filter(r => !r.ok);
-    assert.strictEqual(wins.length, 1, 'exactly one inserter should win');
-    assert.strictEqual(losses.length, 1);
-    assert.strictEqual(losses[0].currentVersion, 1, 'loser sees version=1');
+    const first = await store.putIfMatch('col', 'x', { winner: 'A' }, null);
+    const second = await store.putIfMatch('col', 'x', { winner: 'B' }, null);
+    assert.strictEqual(first.ok, true);
+    assert.strictEqual(second.ok, false);
+    assert.strictEqual(second.currentVersion, 1);
   });
 
   it('conflicts with currentVersion=null when expected matches a nonexistent row', async () => {

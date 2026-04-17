@@ -473,6 +473,16 @@ export {
   PostgresStateStore,
   getAdcpStateMigration,
   ADCP_STATE_MIGRATION,
+  StateError,
+  PatchConflictError,
+  SESSION_KEY_FIELD,
+  createSessionedStore,
+  scopedStore,
+  patchWithRetry,
+  isPutIfMatchConflict,
+  requireSessionKey,
+  structuredSerialize,
+  structuredDeserialize,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -518,6 +528,12 @@ export type {
   ListOptions as StateListOptions,
   ListResult as StateListResult,
   PostgresStateStoreOptions,
+  InMemoryStateStoreOptions,
+  VersionedDocument,
+  PutIfMatchResult,
+  PatchWithRetryOptions,
+  StateErrorCode,
+  SessionKeyContext,
 } from './server';
 
 // ====== ERROR HANDLING & RETRY ======
