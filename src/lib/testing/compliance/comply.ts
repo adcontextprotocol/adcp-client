@@ -487,8 +487,7 @@ function expandScenarios(storyboards: Storyboard[]): Storyboard[] {
         }
         if (scenario.requires_scenarios?.length) {
           throw new Error(
-            `Scenario "${scenarioId}" has requires_scenarios, but nested scenario ` +
-              `dependencies are not supported.`
+            `Scenario "${scenarioId}" has requires_scenarios, but nested scenario ` + `dependencies are not supported.`
           );
         }
         seen.add(scenarioId);
@@ -950,13 +949,7 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   for (const track of result.tracks) {
     const icon =
-      track.status === 'pass'
-        ? '✅'
-        : track.status === 'fail'
-          ? '❌'
-          : track.status === 'partial'
-            ? '⚠️'
-            : '⏭️';
+      track.status === 'pass' ? '✅' : track.status === 'fail' ? '❌' : track.status === 'partial' ? '⚠️' : '⏭️';
     const scenarioCount = track.scenarios.length;
     const passedCount = track.scenarios.filter(s => s.overall_passed).length;
 

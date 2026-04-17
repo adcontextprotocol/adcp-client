@@ -870,9 +870,8 @@ async function handleStoryboardList(args) {
 }
 
 async function handleStoryboardShow(args) {
-  const { resolveBundleOrStoryboard, findBundleById, listAllComplianceStoryboards } = await import(
-    '../dist/lib/testing/storyboard/index.js'
-  );
+  const { resolveBundleOrStoryboard, findBundleById, listAllComplianceStoryboards } =
+    await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
   const positionalArgs = args.filter(a => !a.startsWith('--'));
   const storyboardId = positionalArgs[0];
@@ -885,7 +884,11 @@ async function handleStoryboardShow(args) {
   const matches = resolveBundleOrStoryboard(storyboardId);
   if (matches.length === 0) {
     console.error(`Storyboard or bundle not found: ${storyboardId}`);
-    console.error(`Available: ${listAllComplianceStoryboards().map(s => s.id).join(', ')}`);
+    console.error(
+      `Available: ${listAllComplianceStoryboards()
+        .map(s => s.id)
+        .join(', ')}`
+    );
     process.exit(2);
   }
 
@@ -973,9 +976,7 @@ async function handleStoryboardRun(args) {
     return;
   }
 
-  const { loadStoryboardFile, runStoryboard } = await import(
-    '../dist/lib/testing/storyboard/index.js'
-  );
+  const { loadStoryboardFile, runStoryboard } = await import('../dist/lib/testing/storyboard/index.js');
   let storyboard;
   try {
     storyboard = loadStoryboardFile(filePath);
@@ -1103,9 +1104,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     storyboards = rawArgs[storyboardsIndex + 1].split(',');
   }
   if (storyboards?.length) {
-    const { listAllComplianceStoryboards, listBundles } = await import(
-      '../dist/lib/testing/storyboard/index.js'
-    );
+    const { listAllComplianceStoryboards, listBundles } = await import('../dist/lib/testing/storyboard/index.js');
     try {
       const knownStoryboardIds = new Set(listAllComplianceStoryboards().map(s => s.id));
       const knownBundleIds = new Set(listBundles().map(b => b.id));
@@ -1183,9 +1182,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 }
 
 async function handleStoryboardStepCmd(args) {
-  const { getComplianceStoryboardById, runStoryboardStep } = await import(
-    '../dist/lib/testing/storyboard/index.js'
-  );
+  const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
   const { authToken, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
 
   const agentArg = positionalArgs[0];

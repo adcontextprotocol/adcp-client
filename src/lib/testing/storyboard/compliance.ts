@@ -168,9 +168,7 @@ function loadStoryboardsFromDir(dir: string): Storyboard[] {
           try {
             const text = readFileSync(full, 'utf-8');
             if (/^id:\s*\S/m.test(text)) {
-              console.warn(
-                `[compliance] Failed to parse storyboard ${full}: ${(err as Error).message}`
-              );
+              console.warn(`[compliance] Failed to parse storyboard ${full}: ${(err as Error).message}`);
             }
           } catch {
             /* unreadable file — treat as non-storyboard */
@@ -245,10 +243,7 @@ export function listAllComplianceStoryboards(options: ResolveOptions = {}): Stor
  * Find a storyboard by its internal `id` (the YAML's `id:` field).
  * Scans every bundle in the cache. Returns undefined if no match.
  */
-export function getComplianceStoryboardById(
-  id: string,
-  options: ResolveOptions = {}
-): Storyboard | undefined {
+export function getComplianceStoryboardById(id: string, options: ResolveOptions = {}): Storyboard | undefined {
   for (const sb of listAllComplianceStoryboards(options)) {
     if (sb.id === id) return sb;
   }
@@ -267,10 +262,7 @@ export function findBundleById(id: string, options: ResolveOptions = {}): Bundle
  *
  * Used for targeted `storyboard run <agent> <id>` invocations.
  */
-export function resolveBundleOrStoryboard(
-  id: string,
-  options: ResolveOptions = {}
-): Storyboard[] {
+export function resolveBundleOrStoryboard(id: string, options: ResolveOptions = {}): Storyboard[] {
   const bundle = findBundleById(id, options);
   if (bundle) return loadBundleStoryboards(bundle);
   const sb = getComplianceStoryboardById(id, options);

@@ -234,8 +234,7 @@ export async function discoverAgentProfile(
           profile.specialisms = specialisms.filter((s): s is string => typeof s === 'string');
         }
       } else {
-        profile.capabilities_probe_error =
-          caps?.error || 'get_adcp_capabilities returned no data';
+        profile.capabilities_probe_error = caps?.error || 'get_adcp_capabilities returned no data';
       }
     } catch (err) {
       // Agent advertises the tool but the call failed. Don't silently downgrade —

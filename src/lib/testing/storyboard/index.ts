@@ -63,13 +63,7 @@ export { TASK_TO_METHOD, executeStoryboardTask } from './task-map';
 export { parsePath, resolvePath, setPath } from './path';
 
 // Context
-export {
-  CONTEXT_EXTRACTORS,
-  extractContext,
-  injectContext,
-  applyContextOutputs,
-  applyContextInputs,
-} from './context';
+export { CONTEXT_EXTRACTORS, extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 
 // Request builder
 export { buildRequest, hasRequestBuilder } from './request-builder';

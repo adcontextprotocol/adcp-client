@@ -137,9 +137,7 @@ async function syncFromTarball(version: string): Promise<boolean> {
   const expectedSha = shaText.trim().split(/\s+/)[0];
   const actualSha = createHash('sha256').update(tgzBuf).digest('hex');
   if (actualSha !== expectedSha) {
-    throw new Error(
-      `Tarball sha256 mismatch for ${tgzUrl}\n  expected: ${expectedSha}\n  actual:   ${actualSha}`
-    );
+    throw new Error(`Tarball sha256 mismatch for ${tgzUrl}\n  expected: ${expectedSha}\n  actual:   ${actualSha}`);
   }
   console.log(`✅ sha256 verified (${expectedSha.slice(0, 12)}…)`);
 
@@ -153,9 +151,7 @@ async function syncFromTarball(version: string): Promise<boolean> {
 
     const extractRoot = path.join(workDir, `adcp-${version}`);
     if (!existsSync(extractRoot)) {
-      throw new Error(
-        `Tarball root ${extractRoot} not found — upstream wrapping directory may have changed.`
-      );
+      throw new Error(`Tarball root ${extractRoot} not found — upstream wrapping directory may have changed.`);
     }
 
     replaceTree(path.join(extractRoot, 'schemas'), path.join(SCHEMA_CACHE_DIR, version));
@@ -196,10 +192,7 @@ async function syncSchemasPerFile(version: string): Promise<void> {
 
   const versionCacheDir = path.join(SCHEMA_CACHE_DIR, version);
   mkdirSync(versionCacheDir, { recursive: true });
-  writeFileSync(
-    path.join(versionCacheDir, 'index.json'),
-    JSON.stringify(schemaIndex, null, 2)
-  );
+  writeFileSync(path.join(versionCacheDir, 'index.json'), JSON.stringify(schemaIndex, null, 2));
 
   const allRefs = new Set<string>();
   for (const domain of Object.values(schemaIndex.schemas)) {
@@ -219,18 +212,14 @@ async function syncSchemasPerFile(version: string): Promise<void> {
   allRefs.add('/schemas/v1/adagents.json');
 
   const semanticVersion = schemaIndex.adcp_version;
-  await Promise.allSettled(
-    Array.from(allRefs).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion))
-  );
+  await Promise.allSettled(Array.from(allRefs).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion)));
 
   // Resolve transitive $refs
   const attempted = new Set<string>();
   for (let depth = 0; depth < 10; depth++) {
     const missing = findMissingRefs(versionCacheDir, attempted);
     if (missing.size === 0) break;
-    await Promise.allSettled(
-      Array.from(missing).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion))
-    );
+    await Promise.allSettled(Array.from(missing).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion)));
     missing.forEach(r => attempted.add(r));
   }
 
@@ -241,11 +230,7 @@ async function syncSchemasPerFile(version: string): Promise<void> {
   );
 }
 
-async function downloadSchema(
-  schemaRef: string,
-  cacheDir: string,
-  semanticVersion: string
-): Promise<void> {
+async function downloadSchema(schemaRef: string, cacheDir: string, semanticVersion: string): Promise<void> {
   const url = `${ADCP_BASE_URL}${schemaRef}`;
   const localPath = refToLocalPath(schemaRef, cacheDir);
   mkdirSync(path.dirname(localPath), { recursive: true });

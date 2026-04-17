@@ -19,10 +19,7 @@ const {
   loadComplianceIndex,
 } = require('../../dist/lib/testing/storyboard/index.js');
 
-const SCHEMA_PATH = join(
-  __dirname,
-  '../../schemas/cache/latest/protocol/get-adcp-capabilities-response.json'
-);
+const SCHEMA_PATH = join(__dirname, '../../schemas/cache/latest/protocol/get-adcp-capabilities-response.json');
 
 function loadSupportedProtocolsEnum() {
   const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'));
@@ -35,9 +32,7 @@ describe('protocol→domain mapping drift alarm', () => {
   const enumValues = loadSupportedProtocolsEnum();
 
   test('every supported_protocols enum value is handled', () => {
-    const unknown = enumValues.filter(
-      v => !(v in PROTOCOL_TO_DOMAIN) && !PROTOCOLS_WITHOUT_BASELINE.has(v)
-    );
+    const unknown = enumValues.filter(v => !(v in PROTOCOL_TO_DOMAIN) && !PROTOCOLS_WITHOUT_BASELINE.has(v));
     assert.deepEqual(
       unknown,
       [],
@@ -49,9 +44,7 @@ describe('protocol→domain mapping drift alarm', () => {
 
   test('every mapped domain actually has a baseline in the compliance cache', () => {
     const index = loadComplianceIndex();
-    const knownDomainIds = new Set(
-      index.domains.filter(d => d.has_baseline).map(d => d.id)
-    );
+    const knownDomainIds = new Set(index.domains.filter(d => d.has_baseline).map(d => d.id));
     const missing = Object.entries(PROTOCOL_TO_DOMAIN)
       .filter(([, domainId]) => !knownDomainIds.has(domainId))
       .map(([protocol, domainId]) => `${protocol} → ${domainId}`);
