@@ -192,8 +192,16 @@ export interface AgentProfile {
   // v3 capabilities
   adcp_version?: 'v2' | 'v3';
   supported_protocols?: string[];
+  /** Specialism claims from get_adcp_capabilities.specialisms */
+  specialisms?: string[];
   supports_governance?: boolean;
   supports_si?: boolean;
+  /**
+   * Populated when the agent advertises `get_adcp_capabilities` but the call failed
+   * or returned no data. Signals the compliance runner that the universal-only
+   * result is due to a broken caps probe, not an agent that lacks v3 support.
+   */
+  capabilities_probe_error?: string;
 }
 
 export interface TestResult {

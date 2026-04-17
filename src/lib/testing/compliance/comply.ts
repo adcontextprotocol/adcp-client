@@ -1,19 +1,23 @@
 /**
  * Compliance Engine
  *
- * Storyboard-driven compliance assessment. Storyboards are the routing
- * mechanism; tracks are a reporting layer derived from storyboard results.
+ * Storyboard-driven compliance assessment. Storyboards are pulled from the
+ * AdCP compliance cache (synced via `npm run sync-schemas`); the agent's
+ * `get_adcp_capabilities` response drives which bundles run.
  *
- * Resolution priority: storyboards > platform_type > all applicable.
+ * Resolution priority: explicit storyboards > capability-driven.
  */
 
 import { createTestClient, discoverAgentProfile } from '../client';
 import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { runStoryboard } from '../storyboard/runner';
-import { loadBundledStoryboards, getStoryboardById, getScenarioById } from '../storyboard/loader';
+import {
+  resolveStoryboardsForCapabilities,
+  resolveBundleOrStoryboard,
+  listAllComplianceStoryboards,
+} from '../storyboard/compliance';
 import type { Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
-import { PLATFORM_STORYBOARDS } from './platform-storyboards';
 import type {
   ComplianceTrack,
   ComplianceFailure,
@@ -22,11 +26,7 @@ import type {
   ComplianceSummary,
   AdvisoryObservation,
   OverallStatus,
-  PlatformType,
-  PlatformCoherenceResult,
 } from './types';
-import { getPlatformProfile, getAllPlatformTypes } from './profiles';
-import type { PlatformProfile } from './profiles';
 import { closeConnections } from '../../protocols';
 import { detectController, hasTestController } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
@@ -381,37 +381,40 @@ function collectObservations(
 
 export interface ComplyOptions extends TestOptions {
   /**
-   * Run specific storyboards by ID.
-   * Takes priority over tracks and platform_type.
-   * Example: comply(url, { storyboards: ['media_buy_seller', 'social_platform'] })
+   * Run these storyboard or bundle IDs instead of capability-driven selection.
+   * Bundle IDs (e.g., `sales-guaranteed`) or storyboard IDs (e.g., `media_buy_seller`)
+   * both work. Intended for spec evolution and targeted testing.
    */
   storyboards?: string[];
-  /** Only run specific tracks (default: all applicable). Ignored when storyboards is set. Also bypassed when platform_type is set without tracks. */
+  /** Post-filter reported tracks to only these. Applied after execution. */
   tracks?: ComplianceTrack[];
-  /** Declare the platform type for coherence checking. Accepts any string — validated internally. */
-  platform_type?: PlatformType | string;
-  /** Timeout in milliseconds — stops new storyboards from starting when exceeded */
+  /** Timeout in milliseconds — stops new storyboards from starting when exceeded. */
   timeout_ms?: number;
-  /** AbortSignal for external cancellation (e.g., graceful shutdown) */
+  /** AbortSignal for external cancellation (e.g., graceful shutdown). */
   signal?: AbortSignal;
-  /** Original agent alias or identifier (used in fix_command instead of resolved URL) */
+  /** Original agent alias or identifier (used in fix_command instead of resolved URL). */
   agent_alias?: string;
 }
 
 /**
  * Run compliance assessment against an agent.
- * Assesses all applicable storyboards and reports results grouped by track.
  *
  * Resolution priority:
- * 1. options.storyboards — run exactly these storyboard IDs
- * 2. options.platform_type (when tracks is not set) — resolve via PLATFORM_STORYBOARDS
- * 3. options.tracks — run all storyboards for these tracks
- * 4. Default — run all applicable storyboards
+ * 1. `options.storyboards` — run exactly these storyboard or bundle IDs (spec evolution / targeted testing)
+ * 2. Capability-driven — universal + domain baselines (from `supported_protocols`) + declared `specialisms`
  *
- * When platform_type is set, it always drives coherence checking regardless
- * of how the storyboard pool was resolved.
+ * The agent's `get_adcp_capabilities` response drives selection. Fails closed
+ * when an agent declares a specialism whose bundle isn't in the local cache.
  */
 export async function comply(agentUrl: string, options: ComplyOptions = {}): Promise<ComplianceResult> {
+  if ('platform_type' in options) {
+    throw new Error(
+      'comply() no longer accepts platform_type. Agent selection is now driven by ' +
+        'get_adcp_capabilities (supported_protocols + specialisms). ' +
+        'Pass `storyboards: ["<bundle-or-id>"]` to target a specific bundle. ' +
+        'See the changeset for migration notes.'
+    );
+  }
   try {
     return await complyImpl(agentUrl, options);
   } finally {
@@ -423,99 +426,68 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
 // Storyboard resolution
 // ────────────────────────────────────────────────────────────
 
-/**
- * Resolve the storyboard pool based on options.
- * Priority: storyboards > platform_type (when tracks is not set) > tracks > all bundled.
- */
-function resolveStoryboards(options: ComplyOptions): Storyboard[] {
-  // Explicit storyboard IDs — highest priority
-  if (options.storyboards?.length) {
-    const resolved: Storyboard[] = [];
-    for (const id of options.storyboards) {
-      const sb = getStoryboardById(id);
-      if (!sb) {
-        throw new Error(`Unknown storyboard ID: "${id}". Use listStoryboards() to see available IDs.`);
-      }
+function resolveExplicitStoryboards(ids: string[]): Storyboard[] {
+  const resolved: Storyboard[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    const matched = resolveBundleOrStoryboard(id);
+    if (matched.length === 0) {
+      const available = listAllComplianceStoryboards();
+      throw new Error(
+        `Unknown storyboard or bundle ID: "${id}". ` +
+          `Available IDs include: ${available
+            .slice(0, 10)
+            .map(s => s.id)
+            .join(', ')}${available.length > 10 ? ', …' : ''}.`
+      );
+    }
+    for (const sb of matched) {
+      if (seen.has(sb.id)) continue;
+      seen.add(sb.id);
       resolved.push(sb);
     }
-    return resolved;
   }
-
-  // Platform type — resolve via PLATFORM_STORYBOARDS
-  if (options.platform_type && !options.tracks) {
-    const pt = options.platform_type as PlatformType;
-    const ids = PLATFORM_STORYBOARDS[pt];
-    if (ids) {
-      const resolved: Storyboard[] = [];
-      for (const id of ids) {
-        const sb = getStoryboardById(id);
-        if (sb) {
-          resolved.push(sb);
-        } else {
-          // Data integrity issue — storyboard declared in PLATFORM_STORYBOARDS
-          // but not found in bundled set. This is a packaging bug.
-          console.warn(`PLATFORM_STORYBOARDS[${pt}] references unknown storyboard "${id}"`);
-        }
-      }
-      // Also include universal storyboards (no platform_types) not already in the set
-      const resolvedIds = new Set(resolved.map(s => s.id));
-      for (const sb of loadBundledStoryboards()) {
-        if (!sb.track) continue;
-        if (resolvedIds.has(sb.id)) continue;
-        if (!sb.platform_types?.length) {
-          resolved.push(sb);
-        }
-      }
-      return resolved;
-    }
-  }
-
-  // Track filter — run storyboards whose track field matches
-  if (options.tracks?.length) {
-    const trackSet = new Set(options.tracks);
-    return loadBundledStoryboards().filter(sb => sb.track && trackSet.has(sb.track as ComplianceTrack));
-  }
-
-  // Default — all compliance storyboards (those with a track field)
-  return loadBundledStoryboards().filter(sb => sb.track);
+  return resolved;
 }
 
-/**
- * Filter storyboards to those applicable for the agent's tools.
- * A storyboard is applicable if the agent has at least one of its required_tools,
- * or if it has no required_tools at all.
- */
-function filterApplicable(storyboards: Storyboard[], agentTools: string[]): Storyboard[] {
-  return storyboards.filter(sb => {
-    if (!sb.required_tools?.length) return true;
-    return sb.required_tools.some(tool => agentTools.includes(tool));
+function resolveFromCapabilities(profile: AgentProfile): Storyboard[] {
+  const { storyboards } = resolveStoryboardsForCapabilities({
+    supported_protocols: profile.supported_protocols,
+    specialisms: profile.specialisms,
   });
+  return storyboards;
 }
 
 /**
- * Expand storyboards by resolving their requires_scenarios.
- * Each required scenario is loaded and inserted before its parent storyboard.
- * Scenarios are deduplicated — if multiple storyboards require the same scenario, it runs once.
+ * Expand `requires_scenarios` references against the full compliance cache.
+ * A specialism bundle may reference scenarios that live in its parent domain
+ * bundle (e.g., `sales-guaranteed` → `media_buy_seller/governance_approved`),
+ * so the lookup spans every cached storyboard — not just the declared set.
  */
 function expandScenarios(storyboards: Storyboard[]): Storyboard[] {
-  const seen = new Set<string>(storyboards.map(s => s.id));
+  const seen = new Set(storyboards.map(s => s.id));
   const expanded: Storyboard[] = [];
+  let allStoryboardsCache: Storyboard[] | null = null;
+  const lookupById = (id: string): Storyboard | undefined => {
+    if (!allStoryboardsCache) allStoryboardsCache = listAllComplianceStoryboards();
+    return allStoryboardsCache.find(s => s.id === id);
+  };
 
   for (const sb of storyboards) {
     if (sb.requires_scenarios?.length) {
       for (const scenarioId of sb.requires_scenarios) {
         if (seen.has(scenarioId)) continue;
-        const scenario = getScenarioById(scenarioId);
+        const scenario = lookupById(scenarioId);
         if (!scenario) {
           throw new Error(
             `Storyboard "${sb.id}" requires unknown scenario "${scenarioId}". ` +
-              `Check requires_scenarios in ${sb.id} for typos.`
+              `Scenario not found in compliance cache — check requires_scenarios for typos or ` +
+              `run \`npm run sync-schemas\` if the cache is stale.`
           );
         }
         if (scenario.requires_scenarios?.length) {
           throw new Error(
-            `Scenario "${scenarioId}" has requires_scenarios, but nested scenario ` +
-              `dependencies are not supported. Only top-level storyboards may declare requires_scenarios.`
+            `Scenario "${scenarioId}" has requires_scenarios, but nested scenario ` + `dependencies are not supported.`
           );
         }
         seen.add(scenarioId);
@@ -524,7 +496,6 @@ function expandScenarios(storyboards: Storyboard[]): Storyboard[] {
     }
     expanded.push(sb);
   }
-
   return expanded;
 }
 
@@ -619,23 +590,12 @@ function extractFailures(
 async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {
   const start = Date.now();
   const {
-    storyboards: _storyboardIds,
-    tracks: _trackFilter,
-    platform_type,
+    storyboards: explicitStoryboards,
+    tracks: trackFilter,
     timeout_ms,
     signal: externalSignal,
     ...testOptions
   } = options;
-
-  // Validate platform_type if provided
-  let platformProfile: PlatformProfile | undefined;
-  if (platform_type) {
-    const validTypes: string[] = getAllPlatformTypes();
-    if (!validTypes.includes(platform_type)) {
-      throw new Error(`Unknown platform_type: "${platform_type}". Valid types: ${validTypes.join(', ')}`);
-    }
-    platformProfile = getPlatformProfile(platform_type as PlatformType);
-  }
 
   // Validate timeout_ms
   if (timeout_ms !== undefined) {
@@ -696,6 +656,38 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       });
     }
 
+    // Warn loudly when the runner can't make a capability-driven decision — either
+    // the agent doesn't advertise get_adcp_capabilities at all, or the call failed.
+    // Without this, an agent that just passes universal storyboards looks "compliant"
+    // when in fact none of its declared domains or specialisms were tested.
+    if (profileStep.passed && !explicitStoryboards?.length) {
+      if (profile.capabilities_probe_error) {
+        allObservations.push({
+          category: 'tool_discovery',
+          severity: 'error',
+          message:
+            `get_adcp_capabilities is advertised but the call failed: ${profile.capabilities_probe_error}. ` +
+            `Only universal storyboards ran — domain and specialism bundles were skipped.`,
+        });
+      } else if (!profile.tools.includes('get_adcp_capabilities')) {
+        allObservations.push({
+          category: 'tool_discovery',
+          severity: 'warning',
+          message:
+            'Agent does not implement get_adcp_capabilities — ran universal storyboards only. ' +
+            'Domain baselines and specialisms cannot be tested without a capabilities response.',
+        });
+      } else if (!profile.supported_protocols?.length) {
+        allObservations.push({
+          category: 'tool_discovery',
+          severity: 'warning',
+          message:
+            'get_adcp_capabilities returned no supported_protocols — ran universal storyboards only. ' +
+            'Agent must declare at least one domain protocol to be fully tested.',
+        });
+      }
+    }
+
     // Detect test controller for deterministic mode
     let controllerDetection: ControllerDetection = { detected: false };
     if (profileStep.passed && hasTestController(profile)) {
@@ -709,10 +701,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       return buildUnreachableResult(agentUrl, profile, profileStep.error, start, effectiveOptions, signal);
     }
 
-    // Resolve and filter storyboard pool
-    const allStoryboards = resolveStoryboards(options);
-    const withScenarios = expandScenarios(allStoryboards);
-    const applicableStoryboards = filterApplicable(withScenarios, profile.tools);
+    // Resolve storyboards: explicit IDs override capability-driven selection.
+    const initialStoryboards = explicitStoryboards?.length
+      ? resolveExplicitStoryboards(explicitStoryboards)
+      : resolveFromCapabilities(profile);
+    const applicableStoryboards = expandScenarios(initialStoryboards);
 
     // Run storyboards
     const storyboardResults: StoryboardResult[] = [];
@@ -731,14 +724,17 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const grouped = groupByTrack(storyboardResults, applicableStoryboards);
     const trackResults: TrackResult[] = [];
 
-    // Determine which tracks had storyboards in the pool (even if filtered out by tools)
+    // Tracks represented by the selected storyboards (used for deciding which rows to emit)
     const poolTrackSet = new Set<ComplianceTrack>();
-    for (const sb of withScenarios) {
+    for (const sb of applicableStoryboards) {
       if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
     }
 
+    const trackFilterSet = trackFilter?.length ? new Set(trackFilter) : null;
+
     for (const track of TRACK_ORDER) {
       if (!poolTrackSet.has(track)) continue;
+      if (trackFilterSet && !trackFilterSet.has(track)) continue;
 
       const results = grouped.get(track) ?? [];
 
@@ -749,11 +745,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         allObservations.push(...observations);
         trackResults.push(trackResult);
       } else {
-        // Track was in the pool but no storyboards ran (agent lacks tools)
-        const isExpected = track !== 'core' && (platformProfile?.expected_tracks.includes(track) ?? false);
         trackResults.push({
           track,
-          status: isExpected ? 'expected' : 'skip',
+          status: 'skip',
           label: TRACK_LABELS[track] || track,
           scenarios: [],
           skipped_scenarios: [],
@@ -763,36 +757,6 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       }
     }
 
-    // Build platform coherence result if platform type was declared
-    let platformCoherence: PlatformCoherenceResult | undefined;
-    if (platformProfile) {
-      const findings = platformProfile.checkCoherence(profile);
-      const applicableTrackSet = new Set(
-        trackResults.filter(t => t.status !== 'skip' && t.status !== 'expected').map(t => t.track)
-      );
-      const missingTracks = platformProfile.expected_tracks.filter(t => !applicableTrackSet.has(t) && t !== 'core');
-
-      for (const finding of findings) {
-        allObservations.push({
-          category: 'coherence',
-          severity: finding.severity,
-          message: `${finding.expected} — ${finding.actual}. ${finding.guidance}`,
-          evidence: { platform_type: platformProfile.type },
-        });
-      }
-
-      platformCoherence = {
-        platform_type: platformProfile.type,
-        label: platformProfile.label,
-        expected_tracks: platformProfile.expected_tracks,
-        missing_tracks: missingTracks,
-        findings,
-        coherent:
-          findings.filter(f => f.severity === 'error' || f.severity === 'warning').length === 0 &&
-          missingTracks.length === 0,
-      };
-    }
-
     const summary = buildSummary(trackResults);
     const testedTracks = trackResults.filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial');
     const skippedTracks = trackResults
@@ -800,19 +764,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       .map(t => ({
         track: t.track,
         label: t.label,
-        reason: 'Agent lacks required tools for applicable storyboards',
-      }));
-    const expectedTracks = trackResults
-      .filter(t => t.status === 'expected')
-      .map(t => ({
-        track: t.track,
-        label: t.label,
-        reason: `Expected for ${platformCoherence?.label ?? 'declared platform type'}`,
+        reason: 'No storyboards produced results for this track',
       }));
 
     const overallStatus = computeOverallStatus(summary);
 
-    // Build flat failures array from raw storyboard results (preserves step_id and expected)
     const agentRef = options.agent_alias || agentUrl;
     const failures = extractFailures(storyboardResults, applicableStoryboards, agentRef);
 
@@ -823,11 +779,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       tracks: trackResults,
       tested_tracks: testedTracks,
       skipped_tracks: skippedTracks,
-      expected_tracks: expectedTracks,
       summary,
       observations: allObservations,
       failures: failures.length > 0 ? failures : undefined,
-      platform_coherence: platformCoherence,
       storyboards_executed: applicableStoryboards.map(sb => sb.id),
       controller_detected: controllerDetection.detected,
       controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
@@ -908,13 +862,11 @@ async function buildUnreachableResult(
     tracks: [],
     tested_tracks: [],
     skipped_tracks: [],
-    expected_tracks: [],
     summary: {
       tracks_passed: 0,
       tracks_failed: 0,
       tracks_skipped: 0,
       tracks_partial: 0,
-      tracks_expected: 0,
       headline,
     },
     observations,
@@ -941,7 +893,6 @@ function buildSummary(tracks: TrackResult[]): ComplianceSummary {
   const failed = tracks.filter(t => t.status === 'fail').length;
   const skipped = tracks.filter(t => t.status === 'skip').length;
   const partial = tracks.filter(t => t.status === 'partial').length;
-  const expected = tracks.filter(t => t.status === 'expected').length;
 
   const attempted = passed + failed + partial;
   let headline: string;
@@ -960,16 +911,11 @@ function buildSummary(tracks: TrackResult[]): ComplianceSummary {
     headline = parts.join(', ');
   }
 
-  if (expected > 0) {
-    headline += `, ${expected} expected`;
-  }
-
   return {
     tracks_passed: passed,
     tracks_failed: failed,
     tracks_skipped: skipped,
     tracks_partial: partial,
-    tracks_expected: expected,
     headline,
   };
 }
@@ -988,9 +934,6 @@ export function formatComplianceResults(result: ComplianceResult): string {
   output += `Name:     ${result.agent_profile.name}\n`;
   output += `Tools:    ${result.agent_profile.tools.length}\n`;
   output += `Mode:     Sandbox\n`;
-  if (result.platform_coherence) {
-    output += `Platform: ${result.platform_coherence.label}\n`;
-  }
   output += `Duration: ${(result.total_duration_ms / 1000).toFixed(1)}s\n`;
   if (result.storyboards_executed?.length) {
     output += `Storyboards: ${result.storyboards_executed.join(', ')}\n`;
@@ -1006,23 +949,12 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   for (const track of result.tracks) {
     const icon =
-      track.status === 'pass'
-        ? '✅'
-        : track.status === 'fail'
-          ? '❌'
-          : track.status === 'partial'
-            ? '⚠️'
-            : track.status === 'expected'
-              ? '🔲'
-              : '⏭️';
+      track.status === 'pass' ? '✅' : track.status === 'fail' ? '❌' : track.status === 'partial' ? '⚠️' : '⏭️';
     const scenarioCount = track.scenarios.length;
     const passedCount = track.scenarios.filter(s => s.overall_passed).length;
 
     if (track.status === 'skip') {
       output += `${icon}  ${track.label}  (not applicable)\n`;
-    } else if (track.status === 'expected') {
-      const label = result.platform_coherence?.label ?? 'declared platform type';
-      output += `${icon}  ${track.label}  (expected for ${label})\n`;
     } else {
       output += `${icon}  ${track.label}  ${passedCount}/${scenarioCount} scenarios pass`;
       output += `  (${(track.duration_ms / 1000).toFixed(1)}s)\n`;
@@ -1061,36 +993,13 @@ export function formatComplianceResults(result: ComplianceResult): string {
     }
   }
 
-  // Platform coherence
-  if (result.platform_coherence) {
-    const pc = result.platform_coherence;
-    output += `\nPlatform Coherence (${pc.label})\n`;
-    output += `${'─'.repeat(50)}\n`;
-
-    if (pc.coherent) {
-      output += `✅  Agent is coherent with ${pc.label} expectations\n`;
-    } else {
-      if (pc.missing_tracks.length > 0) {
-        output += `Expected tracks: ${pc.expected_tracks.join(', ')}\n`;
-        output += `Missing tracks:  ${pc.missing_tracks.join(', ')}\n\n`;
-      }
-      for (const finding of pc.findings) {
-        const icon = finding.severity === 'error' ? '❌' : finding.severity === 'warning' ? '⚠️' : '💡';
-        output += `${icon}  ${finding.expected}\n`;
-        output += `    ${finding.actual}\n`;
-        output += `    → ${finding.guidance}\n`;
-      }
-    }
-  }
-
-  // Advisory observations (excluding coherence — shown above)
-  const nonCoherenceObs = result.observations.filter(o => o.category !== 'coherence');
-  if (nonCoherenceObs.length > 0) {
+  // Advisory observations
+  if (result.observations.length > 0) {
     output += `\nAdvisory Observations\n`;
     output += `${'─'.repeat(50)}\n`;
 
     const byCategory = new Map<string, AdvisoryObservation[]>();
-    for (const obs of nonCoherenceObs) {
+    for (const obs of result.observations) {
       const cat = obs.category;
       if (!byCategory.has(cat)) byCategory.set(cat, []);
       byCategory.get(cat)!.push(obs);

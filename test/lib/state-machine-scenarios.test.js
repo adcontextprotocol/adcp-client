@@ -120,25 +120,18 @@ describe('getApplicableScenarios with state machine scenarios', () => {
 // Comply track integration
 // ============================================================
 
-describe('State machine storyboards cover media_buy track', () => {
-  test('media_buy_state_machine storyboard exists and targets media_buy track', () => {
-    const { getStoryboardById } = require('../../dist/lib/testing/storyboard/loader.js');
-    const sb = getStoryboardById('media_buy_state_machine');
-    assert.ok(sb, 'media_buy_state_machine storyboard should exist');
-    assert.strictEqual(sb.track, 'media_buy', 'storyboard should target media_buy track');
-    assert.ok(sb.required_tools.includes('create_media_buy'), 'storyboard should require create_media_buy');
-    assert.ok(sb.required_tools.includes('update_media_buy'), 'storyboard should require update_media_buy');
-  });
-
-  test('PLATFORM_STORYBOARDS includes media_buy storyboards for sales platforms', () => {
-    const { PLATFORM_STORYBOARDS } = require('../../dist/lib/testing/compliance/platform-storyboards.js');
-    // All sales platforms should have at least one media_buy storyboard
-    const salesTypes = ['display_ad_server', 'video_ad_server', 'social_platform', 'dsp'];
-    for (const type of salesTypes) {
-      const ids = PLATFORM_STORYBOARDS[type];
-      const hasMediaBuy = ids.some(id => id.startsWith('media_buy_'));
-      assert.ok(hasMediaBuy, `${type} should include a media_buy storyboard`);
-    }
+describe('Compliance cache covers media_buy domain', () => {
+  test('media-buy domain bundle exists with media_buy-tracked storyboards', () => {
+    const { listBundles, loadBundleStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
+    const bundles = listBundles();
+    const mediaBuy = bundles.find(b => b.kind === 'domain' && b.id === 'media-buy');
+    assert.ok(mediaBuy, 'media-buy domain bundle should exist in compliance cache');
+    const storyboards = loadBundleStoryboards(mediaBuy);
+    assert.ok(storyboards.length > 0, 'media-buy bundle should contain storyboards');
+    assert.ok(
+      storyboards.some(sb => sb.track === 'media_buy' || sb.track === 'media-buy'),
+      'media-buy bundle should include at least one media_buy-tracked storyboard'
+    );
   });
 });
 

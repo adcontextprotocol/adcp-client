@@ -103,15 +103,6 @@ export {
   SAMPLE_BRIEFS,
   getBriefById,
   getBriefsByVertical,
-  // Platform profiles
-  getPlatformProfile,
-  getAllPlatformTypes,
-  getPlatformTypesWithLabels,
-  // Platform storyboard mapping
-  PLATFORM_STORYBOARDS,
-  getStoryboardIdsForPlatform,
-  extractScenariosFromStoryboard,
-  filterToKnownScenarios,
   // Types
   type ComplyOptions,
   type ComplianceTrack,
@@ -121,16 +112,6 @@ export {
   type ComplianceSummary,
   type AdvisoryObservation,
   type SampleBrief,
-  type PlatformType,
-  type SalesPlatformType,
-  type CreativeAgentType,
-  type SponsoredIntelligenceType,
-  type AINativePlatformType,
-  type PlatformProfile,
-  type CoherenceFinding,
-  type PlatformCoherenceResult,
-  type InventoryModel,
-  type PricingModel,
 } from './compliance';
 
 // Test stubs for compliance testing
@@ -143,13 +124,19 @@ export {
   runStoryboard,
   runStoryboardStep,
   getFirstStepPreview,
-  // Loader
+  // Parser (single-file load for spec evolution)
   parseStoryboard,
   loadStoryboardFile,
-  loadBundledStoryboards,
-  getStoryboardById,
-  getStoryboardsForPlatformType,
-  listStoryboards,
+  // Compliance cache: capability-driven resolution
+  getComplianceCacheDir,
+  loadComplianceIndex,
+  listBundles,
+  loadBundleStoryboards,
+  listAllComplianceStoryboards,
+  getComplianceStoryboardById,
+  findBundleById,
+  resolveBundleOrStoryboard,
+  resolveStoryboardsForCapabilities,
   // Task mapping
   TASK_TO_METHOD,
   executeStoryboardTask,
@@ -177,6 +164,15 @@ export {
   type StoryboardStepResult,
   type StoryboardPhaseResult,
   type StoryboardResult,
+  type AgentCapabilities,
+  type BundleKind,
+  type BundleRef,
+  type ComplianceIndex,
+  type ComplianceIndexDomain,
+  type ComplianceIndexSpecialism,
+  type ResolveOptions,
+  type ResolvedBundle,
+  type ResolvedStoryboards,
   type SandboxBrand,
   type SandboxAgent,
   type SandboxEntities,

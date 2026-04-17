@@ -1,15 +1,17 @@
 /**
  * Sandbox entity loader.
  *
- * Parses storyboard test-kit YAML files and fictional-entities.yaml to produce
+ * Parses compliance test-kit YAML files and fictional-entities.yaml to produce
  * structured sandbox data for the AAO registry. The registry imports this
  * function so the YAML files remain the single source of truth — no seeding,
- * no copying, no drift.
+ * no copying, no drift. YAMLs are pulled from `compliance/cache/{version}/`
+ * by `npm run sync-schemas`.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
+import { join } from 'path';
 import { parse } from 'yaml';
+import { getComplianceCacheDir } from './compliance';
 import { BrandJsonSchema, type BrandJson } from '../../types/wellknown-schemas.generated';
 
 export type { BrandJson } from '../../types/wellknown-schemas.generated';
@@ -40,17 +42,13 @@ export interface SandboxEntities {
 
 // ====== Internal helpers ======
 
-function getStoryboardsDir(): string {
-  return resolve(__dirname, '..', '..', '..', '..', 'storyboards');
-}
-
 function loadTestKit(filePath: string): Record<string, unknown> {
   const content = readFileSync(filePath, 'utf-8');
   return parse(content) as Record<string, unknown>;
 }
 
-function loadFictionalEntities(dir: string): Record<string, unknown> | null {
-  const filePath = join(dir, 'fictional-entities.yaml');
+function loadFictionalEntities(universalDir: string): Record<string, unknown> | null {
+  const filePath = join(universalDir, 'fictional-entities.yaml');
   if (!existsSync(filePath)) return null;
   const content = readFileSync(filePath, 'utf-8');
   return parse(content) as Record<string, unknown>;
@@ -103,8 +101,9 @@ let _cache: SandboxEntities | null = null;
 export function getSandboxEntities(): SandboxEntities {
   if (_cache) return _cache;
 
-  const dir = getStoryboardsDir();
-  const testKitDir = join(dir, 'test-kits');
+  const complianceDir = getComplianceCacheDir();
+  const testKitDir = join(complianceDir, 'test-kits');
+  const universalDir = join(complianceDir, 'universal');
   const brands: SandboxBrand[] = [];
   const agents: SandboxAgent[] = [];
 
@@ -131,8 +130,8 @@ export function getSandboxEntities(): SandboxEntities {
     }
   }
 
-  // Load additional brands and agents from fictional-entities.yaml
-  const entities = loadFictionalEntities(dir);
+  // Load additional brands and agents from universal/fictional-entities.yaml
+  const entities = loadFictionalEntities(universalDir);
   if (entities) {
     // Advertisers without test kits still need brand entries
     const advertisers = entities.advertisers as Array<Record<string, unknown>> | undefined;

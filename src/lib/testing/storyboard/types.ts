@@ -19,8 +19,6 @@ export interface Storyboard {
   category: string;
   summary: string;
   narrative: string;
-  /** Platform types this storyboard applies to (for backwards compat with PlatformType) */
-  platform_types?: string[];
   /** Maps to a ComplianceTrack for comply() integration */
   track?: string;
   /** Tools that make this storyboard applicable (at least one must be present) */

@@ -3,6 +3,8 @@
  *
  * Storyboards are YAML-defined workflows that map directly to
  * SingleAgentClient methods, enabling step-by-step agent testing.
+ * The canonical storyboard set lives in the AdCP compliance tarball
+ * and is pulled into `compliance/cache/{version}/` via `npm run sync-schemas`.
  */
 
 // Types
@@ -25,21 +27,34 @@ export type {
 // Runner
 export { runStoryboard, runStoryboardStep, getFirstStepPreview } from './runner';
 
-// Loader
+// Parser (single-file load for spec evolution / targeted testing)
+export { parseStoryboard, loadStoryboardFile } from './loader';
+
+// Compliance cache: capability-driven resolution
 export {
-  parseStoryboard,
-  loadStoryboardFile,
-  loadBundledStoryboards,
-  loadBundledScenarios,
-  getStoryboardById,
-  getScenarioById,
-  resolveRequiredScenarios,
-  getStoryboardsForPlatformType,
-  getComplianceStoryboards,
-  getComplianceStoryboardsForTrack,
-  getApplicableComplianceStoryboards,
-  listStoryboards,
-} from './loader';
+  getComplianceCacheDir,
+  loadComplianceIndex,
+  listBundles,
+  loadBundleStoryboards,
+  listAllComplianceStoryboards,
+  getComplianceStoryboardById,
+  findBundleById,
+  resolveBundleOrStoryboard,
+  resolveStoryboardsForCapabilities,
+  PROTOCOL_TO_DOMAIN,
+  PROTOCOLS_WITHOUT_BASELINE,
+} from './compliance';
+export type {
+  AgentCapabilities,
+  BundleKind,
+  BundleRef,
+  ComplianceIndex,
+  ComplianceIndexDomain,
+  ComplianceIndexSpecialism,
+  ResolveOptions,
+  ResolvedBundle,
+  ResolvedStoryboards,
+} from './compliance';
 
 // Task mapping
 export { TASK_TO_METHOD, executeStoryboardTask } from './task-map';
