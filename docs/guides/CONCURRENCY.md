@@ -129,8 +129,8 @@ writes. The symptom is: "a message my handler appended is missing" or
 "a media buy I just created isn't there."
 
 If you must keep the blob layout, funnel all writes through a single
-worker per `sessionKey`, or upgrade to optimistic concurrency once
-`putIfMatch` lands (see below).
+worker per `sessionKey`, or use [`patchWithRetry`](#optimistic-concurrency-patchwithretry)
+for atomic read-modify-write.
 
 ## Per-session isolation
 
@@ -169,12 +169,19 @@ const server = createAdcpServer({
 - `list()` cursors are valid **only within the session** that produced them.
   Don't pass a cursor from session A to session B.
 
-## Optimistic concurrency with `putIfMatch`
+## Optimistic concurrency: `patchWithRetry`
 
 For read-modify-write loops (counters, append-to-array, conditional state
-machines) use `putIfMatch` or the `patchWithRetry` helper. Both built-in
-stores (`InMemoryStateStore`, `PostgresStateStore`) track a monotonically
-increasing `version` per row so updates can compare-and-swap.
+machines) use `patchWithRetry`. Both built-in stores (`InMemoryStateStore`,
+`PostgresStateStore`) track a monotonically increasing `version` per row so
+updates can compare-and-swap.
+
+### Which primitive when
+
+- **Counter / accumulator** → `patchWithRetry`.
+- **Idempotent "create if not exists"** → `putIfMatch(..., null)`, ignore conflict.
+- **Guarded state transition** (e.g., "only archive if status=active") → `getWithVersion` + `putIfMatch` with custom retry logic.
+- **Independent top-level fields** → plain `patch` is simpler and atomic at the field level (see above).
 
 ### `patchWithRetry` (recommended)
 
@@ -189,9 +196,13 @@ await patchWithRetry(ctx.store, 'media_buys', 'mb_1', current => ({
 }));
 ```
 
-- Retries up to 5 times by default. Pass `{ maxAttempts: N }` to tune.
+- Retries up to 5 times by default (jittered exponential backoff between attempts).
+  Pass `{ maxAttempts: N, backoffMs: attempt => ... }` to tune.
 - If an intervening writer bumps the row between your read and write,
   the closure runs again with the new pre-state.
+- If the row is deleted between read and write, throws `PatchConflictError`
+  with `reason: 'deleted_during_retry'` to avoid silently resurrecting it.
+  Opt in to resurrection with `{ allowResurrection: true }`.
 - Throws `PatchConflictError` after exhausting attempts — almost always
   means a hot row; split it into per-entity rows.
 - Returning `null` from the update closure aborts without writing.
@@ -225,11 +236,11 @@ if (!result.ok) {
 
 The `version` column is added by `getAdcpStateMigration()`; existing
 databases pick it up via `ADD COLUMN IF NOT EXISTS`. Existing rows start
-at version 1. No data rewrite needed.
+at version 1 — a seller's first `putIfMatch` against an existing row after
+upgrade will see `currentVersion: 1`, the same shape as a freshly inserted
+row. Treat the number as opaque; `patchWithRetry` handles both paths.
 
-### Which primitive when
-
-- **Counter / accumulator** → `patchWithRetry`.
-- **Idempotent "create if not exists"** → `putIfMatch(..., null)`, ignore conflict.
-- **Guarded state transition** (e.g., "only archive if status=active") → `getWithVersion` + `putIfMatch` with custom retry logic.
-- **Independent top-level fields** → plain `patch` is still simpler and atomic at the field level (see above).
+Do not attach triggers that suppress `UPDATE` or return `OLD` for the state
+table — `putIfMatch` relies on affected-row count to detect conflicts, and
+trigger-suppressed writes look identical to real conflicts. Same for RLS
+policies that silently reject writes.

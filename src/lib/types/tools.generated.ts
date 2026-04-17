@@ -12681,6 +12681,32 @@ export interface GetAdCPCapabilitiesRequest {
  */
 export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
 /**
+ * Specialized capability claims an agent can make. Each specialism maps to a compliance storyboard bundle published at /compliance/{version}/specialisms/{id}/. An agent asserts specialisms it supports in get_adcp_capabilities; the AAO compliance runner executes the matching storyboards to verify the claim.
+ */
+export type AdCPSpecialism =
+  | 'audience-sync'
+  | 'brand-rights'
+  | 'content-standards'
+  | 'creative-ad-server'
+  | 'creative-generative'
+  | 'creative-template'
+  | 'governance-delivery-monitor'
+  | 'governance-spend-authority'
+  | 'inventory-lists'
+  | 'measurement-verification'
+  | 'sales-broadcast-tv'
+  | 'sales-catalog-driven'
+  | 'sales-exchange'
+  | 'sales-guaranteed'
+  | 'sales-non-guaranteed'
+  | 'sales-proposal-mode'
+  | 'sales-retail-media'
+  | 'sales-social'
+  | 'sales-streaming-tv'
+  | 'signal-marketplace'
+  | 'signal-owned';
+
+/**
  * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each domain protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
@@ -12694,7 +12720,7 @@ export interface GetAdCPCapabilitiesResponse {
     major_versions: number[];
   };
   /**
-   * Which AdCP domain protocols this seller supports
+   * AdCP domain protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/domains/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../domains/media-buy/). compliance_testing is an RPC surface only and has no compliance baseline.
    */
   supported_protocols: (
     | 'media_buy'
@@ -13198,6 +13224,10 @@ export interface GetAdCPCapabilitiesResponse {
       | 'simulate_budget_spend'
     )[];
   };
+  /**
+   * Optional — specialized compliance claims this agent supports. Omitting the field means the agent declares no specialism claims (it still passes the universal + domain-baseline storyboards implied by supported_protocols). Each specialism maps to a storyboard bundle at /compliance/{version}/specialisms/{id}/ that the AAO compliance runner executes to verify the claim. Each specialism rolls up to one of the protocols in supported_protocols — the runner rejects a specialism claim whose parent protocol is missing. Only list specialisms your agent actually implements — the AAO Verified badge enumerates which specialisms were demonstrably passed.
+   */
+  specialisms?: AdCPSpecialism[];
   /**
    * Extension namespaces this agent supports. Buyers can expect meaningful data in ext.{namespace} fields on responses from this agent. Extension schemas are published in the AdCP extension registry.
    */

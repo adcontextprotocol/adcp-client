@@ -7,6 +7,7 @@ const {
   PatchConflictError,
   createSessionedStore,
   patchWithRetry,
+  isPutIfMatchConflict,
 } = require('../dist/lib/server/state-store');
 
 // ---------------------------------------------------------------------------
@@ -151,17 +152,30 @@ describe('patchWithRetry', () => {
     await store.put('col', 'x', { count: 0 });
 
     let callCount = 0;
-    await patchWithRetry(store, 'col', 'x', current => {
-      callCount += 1;
-      if (callCount === 1) {
-        // Intervening writer bumps the row — the next putIfMatch will conflict
-        // and the closure will be retried against the new pre-state.
-        store.put('col', 'x', { count: (current?.count ?? 0) + 5 });
-      }
-      return { count: (current?.count ?? 0) + 1 };
-    });
+    await patchWithRetry(
+      store,
+      'col',
+      'x',
+      current => {
+        callCount += 1;
+        if (callCount === 1) {
+          // Intervening writer bumps the row — the next putIfMatch will conflict
+          // and the closure will be retried against the new pre-state.
+          store.put('col', 'x', { count: (current?.count ?? 0) + 5 });
+        }
+        return { count: (current?.count ?? 0) + 1 };
+      },
+      { backoffMs: () => 0 }
+    );
 
     assert.ok(callCount >= 2, 'update closure should have been retried');
+  });
+
+  it('isPutIfMatchConflict narrows the union', () => {
+    const ok = { ok: true, version: 3 };
+    const conflict = { ok: false, currentVersion: 2 };
+    assert.strictEqual(isPutIfMatchConflict(ok), false);
+    assert.strictEqual(isPutIfMatchConflict(conflict), true);
   });
 
   it('propagates exceptions from update without retrying', async () => {
@@ -179,7 +193,7 @@ describe('patchWithRetry', () => {
     assert.strictEqual(callCount, 1);
   });
 
-  it('throws PatchConflictError after maxAttempts', async () => {
+  it('throws PatchConflictError after maxAttempts with last observed version', async () => {
     const store = new InMemoryStateStore();
     await store.put('col', 'x', { count: 0 });
 
@@ -190,14 +204,89 @@ describe('patchWithRetry', () => {
           'col',
           'x',
           current => {
-            // Force an intervening write on every attempt — always conflict.
             store.put('col', 'x', { count: (current?.count ?? 0) + 1 });
             return { count: (current?.count ?? 0) + 100 };
           },
-          { maxAttempts: 3 }
+          { maxAttempts: 3, backoffMs: () => 0 }
         ),
-      err => err instanceof PatchConflictError && err.attempts === 3
+      err =>
+        err instanceof PatchConflictError &&
+        err.attempts === 3 &&
+        err.reason === 'max_attempts_exceeded' &&
+        typeof err.lastObservedVersion === 'number'
     );
+  });
+
+  it('throws with reason=deleted_during_retry by default when row is deleted mid-loop', async () => {
+    const store = new InMemoryStateStore();
+    await store.put('col', 'x', { count: 0 });
+
+    let callCount = 0;
+    await assert.rejects(
+      () =>
+        patchWithRetry(
+          store,
+          'col',
+          'x',
+          current => {
+            callCount += 1;
+            if (callCount === 1) {
+              // Someone deletes the row before we commit; next attempt sees null.
+              store.delete('col', 'x');
+            }
+            return { count: (current?.count ?? 0) + 1 };
+          },
+          { backoffMs: () => 0 }
+        ),
+      err => err instanceof PatchConflictError && err.reason === 'deleted_during_retry' && err.lastObservedVersion === 1
+    );
+  });
+
+  it('allowResurrection=true re-inserts after delete-during-retry', async () => {
+    const store = new InMemoryStateStore();
+    await store.put('col', 'x', { count: 0 });
+
+    let callCount = 0;
+    const result = await patchWithRetry(
+      store,
+      'col',
+      'x',
+      current => {
+        callCount += 1;
+        if (callCount === 1) store.delete('col', 'x');
+        return { count: (current?.count ?? 0) + 1 };
+      },
+      { backoffMs: () => 0, allowResurrection: true }
+    );
+    assert.deepStrictEqual(result, { count: 1 });
+    assert.deepStrictEqual(await store.get('col', 'x'), { count: 1 });
+  });
+
+  it('custom backoffMs is called between attempts', async () => {
+    const store = new InMemoryStateStore();
+    await store.put('col', 'x', { count: 0 });
+
+    const delays = [];
+    let callCount = 0;
+    await patchWithRetry(
+      store,
+      'col',
+      'x',
+      current => {
+        callCount += 1;
+        if (callCount <= 2) {
+          store.put('col', 'x', { count: (current?.count ?? 0) + 1 });
+        }
+        return { count: (current?.count ?? 0) + 100 };
+      },
+      {
+        backoffMs: attempt => {
+          delays.push(attempt);
+          return 0;
+        },
+      }
+    );
+    assert.deepStrictEqual(delays, [1, 2]);
   });
 
   it('errors clearly when store lacks getWithVersion / putIfMatch', async () => {

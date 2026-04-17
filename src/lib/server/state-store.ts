@@ -547,21 +547,66 @@ export function createSessionedStore(inner: AdcpStateStore, sessionKey: string):
 export interface PatchWithRetryOptions {
   /** Max retry attempts on version conflict. Defaults to 5. */
   maxAttempts?: number;
+
+  /**
+   * Called to compute a millisecond delay before the next attempt. Receives the
+   * attempt number that just failed (1-indexed). Defaults to jittered exponential
+   * backoff: `Math.random() * (1 << attempt)` (0–2 ms after 1, 0–4 ms after 2, …).
+   * Return `0` (or pass a function that does) to disable backoff.
+   */
+  backoffMs?: (attempt: number) => number;
+
+  /**
+   * When the row is deleted between the initial read and the write, `patchWithRetry`
+   * normally aborts with `PatchConflictError` to avoid silently resurrecting a
+   * deleted document. Set to `true` to treat the post-delete state as a fresh
+   * insert (re-running `update(null)` and inserting the result).
+   *
+   * Default: `false`.
+   */
+  allowResurrection?: boolean;
 }
 
+const defaultBackoffMs = (attempt: number) => Math.random() * (1 << attempt);
+
 /**
- * Error thrown when `patchWithRetry` exceeds `maxAttempts` consecutive version conflicts.
- * Almost always means a hot row with many concurrent writers — consider splitting the row.
+ * Error thrown when `patchWithRetry` exceeds `maxAttempts` consecutive version conflicts,
+ * or when the row was deleted between the initial read and the write and
+ * `allowResurrection` is not set.
  */
 export class PatchConflictError extends ADCPError {
   readonly code = 'PATCH_CONFLICT';
   constructor(
     readonly collection: string,
     readonly id: string,
-    readonly attempts: number
+    readonly attempts: number,
+    readonly reason: 'max_attempts_exceeded' | 'deleted_during_retry',
+    readonly lastObservedVersion: number | null
   ) {
-    super(`patchWithRetry(${collection}, ${id}) exhausted ${attempts} attempts — row has too many concurrent writers.`);
+    super(
+      reason === 'deleted_during_retry'
+        ? `patchWithRetry(${collection}, ${id}): row was deleted between read and write. ` +
+            `Pass {allowResurrection: true} if you want to re-insert it.`
+        : `patchWithRetry(${collection}, ${id}) exhausted ${attempts} attempts after version conflicts ` +
+            `(last observed version: ${lastObservedVersion ?? 'none'}). ` +
+            `Either the row has too many concurrent writers (split it), or raise {maxAttempts: N}.`
+    );
   }
+}
+
+/**
+ * Type guard for the conflict arm of {@link PutIfMatchResult}. Useful for
+ * narrowing in hand-rolled retry loops.
+ *
+ * ```ts
+ * const result = await store.putIfMatch('col', 'x', data, version);
+ * if (isPutIfMatchConflict(result)) {
+ *   // result.currentVersion is number | null here
+ * }
+ * ```
+ */
+export function isPutIfMatchConflict(result: PutIfMatchResult): result is { ok: false; currentVersion: number | null } {
+  return result.ok === false;
 }
 
 /**
@@ -580,6 +625,10 @@ export class PatchConflictError extends ADCPError {
  * ```
  *
  * Throws {@link PatchConflictError} after `maxAttempts` consecutive conflicts.
+ * Throws {@link PatchConflictError} with `reason: 'deleted_during_retry'` if
+ * the row is deleted between the initial read and the write (opt into
+ * resurrection via `allowResurrection: true`).
+ *
  * Requires the store to implement both `getWithVersion` and `putIfMatch`.
  *
  * **Mutation caveat**: the object passed to `update` is a shallow copy of the
@@ -588,6 +637,12 @@ export class PatchConflictError extends ADCPError {
  *
  * **Error propagation**: if `update` throws, the exception propagates
  * immediately and no retry happens.
+ *
+ * **Backoff**: default is jittered exponential (low single-digit ms). Override
+ * with `options.backoffMs`. Return `0` to disable.
+ *
+ * **Size**: each retry re-reads the full document. Avoid on rows close to
+ * `maxDocumentBytes` — split into per-entity rows instead.
  */
 export async function patchWithRetry<T extends Record<string, unknown> = Record<string, unknown>>(
   store: AdcpStateStore,
@@ -604,12 +659,33 @@ export async function patchWithRetry<T extends Record<string, unknown> = Record<
   }
 
   const maxAttempts = options.maxAttempts ?? 5;
+  const backoffMs = options.backoffMs ?? defaultBackoffMs;
+  const allowResurrection = options.allowResurrection ?? false;
+
+  let sawExistingRow = false;
+  let lastObservedVersion: number | null = null;
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const current = await store.getWithVersion<T>(collection, id);
+    if (current) {
+      sawExistingRow = true;
+      lastObservedVersion = current.version;
+    } else if (sawExistingRow && !allowResurrection) {
+      throw new PatchConflictError(collection, id, attempt, 'deleted_during_retry', lastObservedVersion);
+    }
+
     const nextData = update(current ? current.data : null);
     if (nextData === null) return null;
+
     const result = await store.putIfMatch(collection, id, nextData, current ? current.version : null);
     if (result.ok) return nextData;
+
+    if (result.currentVersion !== null) lastObservedVersion = result.currentVersion;
+
+    if (attempt < maxAttempts) {
+      const delay = backoffMs(attempt);
+      if (delay > 0) await new Promise(r => setTimeout(r, delay));
+    }
   }
-  throw new PatchConflictError(collection, id, maxAttempts);
+  throw new PatchConflictError(collection, id, maxAttempts, 'max_attempts_exceeded', lastObservedVersion);
 }

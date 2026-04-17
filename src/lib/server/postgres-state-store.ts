@@ -62,7 +62,14 @@ const MAX_PAGE_SIZE = 500;
  *
  * Idempotent: safe to run on existing tables. The `ADD COLUMN IF NOT EXISTS`
  * clause upgrades databases created by earlier SDK versions (no `version`
- * column) without rewriting data — existing rows start at version 1.
+ * column) without rewriting data — existing rows start at version 1. A seller's
+ * first `putIfMatch` against an existing (pre-migration) row will see
+ * `currentVersion: 1` — same as a freshly inserted row. Treat version as opaque.
+ *
+ * Do not attach triggers that suppress `UPDATE` or return `OLD` for this table —
+ * `putIfMatch` relies on affected-row count to detect conflicts, and a trigger
+ * that drops the update will be reported as a CAS conflict. RLS policies that
+ * silently reject writes have the same problem.
  */
 export function getAdcpStateMigration(tableName = DEFAULT_TABLE): string {
   if (!VALID_IDENTIFIER.test(tableName)) {

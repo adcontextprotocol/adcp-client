@@ -70,6 +70,7 @@ export {
   createSessionedStore,
   scopedStore,
   patchWithRetry,
+  isPutIfMatchConflict,
   validateCollection,
   validateId,
   validatePayloadSize,
