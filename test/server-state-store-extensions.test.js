@@ -6,6 +6,7 @@ const {
   StateError,
   SESSION_KEY_FIELD,
   createSessionedStore,
+  scopedStore,
 } = require('../dist/lib/server/state-store');
 const { ADCPError, isADCPError } = require('../dist/lib/errors');
 const {
@@ -200,16 +201,47 @@ describe('createSessionedStore', () => {
     assert.deepStrictEqual(doc, { v: 1 });
   });
 
-  it('supports nested scoping', async () => {
-    const inner = new InMemoryStateStore();
-    const tenant = inner.scoped('tenant_a');
-    const brand = tenant.scoped('brand_b');
-    await brand.put('col', 'x', { v: 1 });
+  it('scopedStore() falls back to createSessionedStore when store.scoped is undefined', async () => {
+    const backing = new InMemoryStateStore();
+    // Custom store that implements the interface WITHOUT `scoped`.
+    const minimal = {
+      get: (c, i) => backing.get(c, i),
+      put: (c, i, d) => backing.put(c, i, d),
+      patch: (c, i, d) => backing.patch(c, i, d),
+      delete: (c, i) => backing.delete(c, i),
+      list: (c, o) => backing.list(c, o),
+    };
+    const scoped = scopedStore(minimal, 'alice');
+    await scoped.put('col', 'x', { v: 1 });
+    assert.deepStrictEqual(await scoped.get('col', 'x'), { v: 1 });
+  });
 
-    // visible under the nested scope
-    assert.deepStrictEqual(await brand.get('col', 'x'), { v: 1 });
-    // sibling tenant sees nothing
-    assert.strictEqual(await inner.scoped('tenant_z').get('col', 'x'), null);
+  it('scopedStore() uses store.scoped when defined', () => {
+    const inner = new InMemoryStateStore();
+    let called = false;
+    inner.scoped = key => {
+      called = true;
+      return createSessionedStore(inner, key);
+    };
+    scopedStore(inner, 'alice');
+    assert.strictEqual(called, true);
+  });
+
+  it('rejects :: in sessionKey (reserved separator)', () => {
+    const inner = new InMemoryStateStore();
+    assert.throws(
+      () => inner.scoped('alice::bob'),
+      err => err instanceof StateError && err.code === 'INVALID_ID'
+    );
+  });
+
+  it('rejects :: in ids to prevent scope collisions', async () => {
+    const inner = new InMemoryStateStore();
+    const alice = inner.scoped('alice');
+    await assert.rejects(
+      () => alice.put('col', 'bob::x', { v: 1 }),
+      err => err instanceof StateError && err.code === 'INVALID_ID'
+    );
   });
 });
 
@@ -310,7 +342,7 @@ describe('structuredSerialize / structuredDeserialize', () => {
     const d = new Date('2026-04-17T12:34:56.000Z');
     const serialized = structuredSerialize({ createdAt: d });
     assert.strictEqual(
-      JSON.parse(JSON.stringify(serialized)).createdAt.__type,
+      JSON.parse(JSON.stringify(serialized)).createdAt.__adcpType,
       'Date'
     );
     const restored = structuredDeserialize(JSON.parse(JSON.stringify(serialized)));
@@ -351,6 +383,13 @@ describe('structuredSerialize / structuredDeserialize', () => {
     assert.ok(restored.session.participants instanceof Set);
     assert.ok(restored.session.counters instanceof Map);
     assert.strictEqual(restored.session.counters.get('msg'), 42);
+  });
+
+  it('passes through caller data that uses __adcpType for its own purposes', () => {
+    const input = { __adcpType: 'SomeDomainThing', value: 'not an iso string' };
+    const serialized = JSON.parse(JSON.stringify(structuredSerialize(input)));
+    const restored = structuredDeserialize(serialized);
+    assert.deepStrictEqual(restored, input);
   });
 
   it('leaves primitives, null, and undefined alone', () => {

@@ -12,25 +12,26 @@
  * const session = structuredDeserialize(await ctx.store.get('sessions', id));
  * ```
  *
- * Tagged envelopes use the field `__type` (reserved). Plain objects that
- * happen to contain a `__type` field are left alone — they are round-tripped
- * as-is, but if you rely on that field for domain data, rename it first.
+ * Tagged envelopes use the namespaced field `__adcpType` to avoid collision
+ * with domain data. Unknown tag values pass through unchanged on deserialize,
+ * so a future tag addition won't corrupt caller data that already uses
+ * `__adcpType` for something else.
  */
 
 type Primitive = string | number | boolean | null;
 
 interface DateEnvelope {
-  __type: 'Date';
+  __adcpType: 'Date';
   value: string;
 }
 
 interface MapEnvelope {
-  __type: 'Map';
+  __adcpType: 'Map';
   entries: [unknown, unknown][];
 }
 
 interface SetEnvelope {
-  __type: 'Set';
+  __adcpType: 'Set';
   values: unknown[];
 }
 
@@ -38,8 +39,17 @@ type Envelope = DateEnvelope | MapEnvelope | SetEnvelope;
 
 function isEnvelope(value: unknown): value is Envelope {
   if (typeof value !== 'object' || value === null) return false;
-  const tag = (value as Record<string, unknown>).__type;
-  return tag === 'Date' || tag === 'Map' || tag === 'Set';
+  const o = value as Record<string, unknown>;
+  switch (o.__adcpType) {
+    case 'Date':
+      return typeof o.value === 'string';
+    case 'Map':
+      return Array.isArray(o.entries);
+    case 'Set':
+      return Array.isArray(o.values);
+    default:
+      return false;
+  }
 }
 
 /**
@@ -52,19 +62,19 @@ export function structuredSerialize(value: unknown): unknown {
   if (t === 'string' || t === 'number' || t === 'boolean') return value as Primitive;
 
   if (value instanceof Date) {
-    return { __type: 'Date', value: value.toISOString() } satisfies DateEnvelope;
+    return { __adcpType: 'Date', value: value.toISOString() } satisfies DateEnvelope;
   }
 
   if (value instanceof Map) {
     return {
-      __type: 'Map',
+      __adcpType: 'Map',
       entries: [...value.entries()].map(([k, v]) => [structuredSerialize(k), structuredSerialize(v)]),
     } satisfies MapEnvelope;
   }
 
   if (value instanceof Set) {
     return {
-      __type: 'Set',
+      __adcpType: 'Set',
       values: [...value.values()].map(v => structuredSerialize(v)),
     } satisfies SetEnvelope;
   }
@@ -99,7 +109,7 @@ export function structuredDeserialize(value: unknown): unknown {
   }
 
   if (isEnvelope(value)) {
-    switch (value.__type) {
+    switch (value.__adcpType) {
       case 'Date':
         return new Date(value.value);
       case 'Map':

@@ -163,20 +163,32 @@ export interface AdcpStateStore {
   ): Promise<ListResult<T>>;
 
   /**
-   * Return a session-scoped view of this store. All reads and writes are
-   * isolated to `sessionKey` — ids are namespaced and `list()` only returns
-   * documents owned by the session.
-   *
-   * Multi-tenant sellers use this to avoid re-implementing session scoping
-   * per handler:
-   *
-   * ```ts
-   * const sessionStore = ctx.store.scoped(ctx.sessionKey!);
-   * await sessionStore.put('media_buys', buyId, buy);
-   * const { items } = await sessionStore.list('media_buys');
-   * ```
+   * Convenience method for built-in stores: returns a session-scoped view.
+   * Optional on the interface so custom `AdcpStateStore` implementations
+   * aren't forced to implement it — callers who need the wrapper on any
+   * store should use {@link scopedStore} instead, which handles the fallback.
    */
   scoped?(sessionKey: string): AdcpStateStore;
+}
+
+/**
+ * Return a session-scoped view of any `AdcpStateStore`.
+ *
+ * Prefers `store.scoped(sessionKey)` when the store defines it; otherwise
+ * wraps with {@link createSessionedStore}. Use this in SDK code and skills
+ * so custom store implementations work without requiring them to implement
+ * `scoped` themselves.
+ *
+ * ```ts
+ * import { scopedStore } from '@adcp/client/server';
+ *
+ * const sessionStore = scopedStore(ctx.store, ctx.sessionKey!);
+ * await sessionStore.put('media_buys', buyId, buy);
+ * const { items } = await sessionStore.list('media_buys');
+ * ```
+ */
+export function scopedStore(store: AdcpStateStore, sessionKey: string): AdcpStateStore {
+  return store.scoped ? store.scoped(sessionKey) : createSessionedStore(store, sessionKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -303,9 +315,20 @@ export const SESSION_KEY_FIELD = '_session_key';
 
 /**
  * Reserved id separator inserted between `sessionKey` and the caller's `id`.
- * Chosen to be inside {@link KEY_PATTERN} but rare in real ids.
+ * Rejected inside sessionKeys and ids so scoping is unambiguous — otherwise
+ * `scoped('alice').put('col', 'bob::x')` would collide with
+ * `scoped('alice::bob').put('col', 'x')`.
  */
 const SESSION_ID_SEPARATOR = '::';
+
+function assertNoSeparator(kind: 'sessionKey' | 'id', value: string): void {
+  if (value.includes(SESSION_ID_SEPARATOR)) {
+    throw new StateError(
+      'INVALID_ID',
+      `Invalid ${kind} "${value}": must not contain the reserved separator "${SESSION_ID_SEPARATOR}".`
+    );
+  }
+}
 
 function stripSessionKey<T extends Record<string, unknown>>(doc: T | null): T | null {
   if (doc == null) return null;
@@ -322,18 +345,22 @@ function stripSessionKey<T extends Record<string, unknown>>(doc: T | null): T | 
  * - **reads/lists** strip `_session_key` before returning documents.
  * - **list filters** always AND-in `_session_key = sessionKey`.
  *
+ * `sessionKey` and caller-supplied `id`s must not contain `::` — that token
+ * is reserved as the scope separator. Nested `scoped()` calls compose safely.
+ *
  * Use this when every handler's state is scoped to a tenant/brand/session,
  * so you don't have to thread `sessionKey` through every `put`/`list` call.
  */
 export function createSessionedStore(inner: AdcpStateStore, sessionKey: string): AdcpStateStore {
   if (!KEY_PATTERN.test(sessionKey)) {
-    throw new StateError(
-      'INVALID_ID',
-      `Invalid sessionKey "${sessionKey}". Must match ${KEY_PATTERN} (1–256 chars, [A-Za-z0-9_.-:]).`
-    );
+    throw new StateError('INVALID_ID', `Invalid sessionKey "${sessionKey}". Must be ${KEY_DESCRIPTION}.`);
   }
+  assertNoSeparator('sessionKey', sessionKey);
 
-  const prefix = (id: string) => `${sessionKey}${SESSION_ID_SEPARATOR}${id}`;
+  const prefix = (id: string) => {
+    assertNoSeparator('id', id);
+    return `${sessionKey}${SESSION_ID_SEPARATOR}${id}`;
+  };
 
   return {
     async get<T extends Record<string, unknown> = Record<string, unknown>>(
@@ -370,10 +397,6 @@ export function createSessionedStore(inner: AdcpStateStore, sessionKey: string):
       });
       const stripped = items.map(item => stripSessionKey(item) as T);
       return nextCursor !== undefined ? { items: stripped, nextCursor } : { items: stripped };
-    },
-
-    scoped(nestedKey: string): AdcpStateStore {
-      return createSessionedStore(inner, `${sessionKey}${SESSION_ID_SEPARATOR}${nestedKey}`);
     },
   };
 }

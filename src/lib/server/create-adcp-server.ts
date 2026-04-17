@@ -204,8 +204,8 @@ const noopLogger: AdcpLogger = {
  *
  * If `resolveSessionKey` is configured, `sessionKey` is the scoping key
  * derived from the request — usually tenant/brand/publisher-account id.
- * Handlers can use `ctx.store.scoped(ctx.sessionKey!)` to get a
- * session-scoped view without re-deriving the key.
+ * Handlers can pass it to `scopedStore(ctx.store, ctx.sessionKey!)` to get
+ * a session-scoped view that works on any `AdcpStateStore` implementation.
  */
 export interface HandlerContext<TAccount = unknown> {
   account?: TAccount;

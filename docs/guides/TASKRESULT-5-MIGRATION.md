@@ -77,7 +77,10 @@ if (!result.success && result.adcpError?.code === 'INSUFFICIENT_BUDGET') {
 
 Full structured error lives on `result.adcpError`. The raw response payload
 (including `context` and `ext`) is on `result.data` even for failures.
-`result.error` is always a human-readable string.
+`result.error` is a human-readable string — but only on the failure arm.
+After `if (!result.success)` the union narrows so `result.error` is
+guaranteed `string`; on the success arms it's `undefined`. Always guard on
+`success` before reading `error`.
 
 ### Retry helpers
 

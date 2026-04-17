@@ -82,12 +82,29 @@ await ctx.store.put('media_buys', 'mb_1', buy);         // writes { budget: 1300
 This is the most common concurrency bug with document stores. Two ways to
 avoid it:
 
-### 1. Use `patch` for field-level updates
+### 1. Use `patch` for top-level field updates
 
-`patch` is atomic at the field level in PostgresStateStore (`data || partial`
-in the JSONB update clause). If two handlers `patch` different fields, both
-survive. If they patch the same field, last writer wins — but you don't lose
-the rest of the document.
+`patch` is atomic at the **top-level field** in PostgresStateStore
+(`data || partial` in the JSONB update clause does a **shallow** merge).
+If two handlers `patch` different top-level fields, both survive. If they
+patch the same top-level field, last writer wins.
+
+**Shallow merge means nested objects still race.** The JSONB `||` operator
+replaces top-level keys wholesale — it does not deep-merge nested objects.
+So this is unsafe:
+
+```ts
+// Existing: { budget: { total: 1000, spent: 0 } }
+
+// T1: patch({ budget: { total: 5000 } })   — overwrites budget entirely
+// T2: patch({ budget: { spent: 100 } })    — overwrites budget entirely
+
+// Final: whichever landed last. The other's budget field is gone.
+```
+
+If you need independent updates to nested fields, flatten the nested object
+into separate top-level fields (`budget_total`, `budget_spent`), or split
+the nested entity into its own row.
 
 ### 2. Split entities into separate rows
 

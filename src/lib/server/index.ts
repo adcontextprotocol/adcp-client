@@ -67,6 +67,7 @@ export {
   DEFAULT_MAX_DOCUMENT_BYTES,
   SESSION_KEY_FIELD,
   createSessionedStore,
+  scopedStore,
   validateCollection,
   validateId,
   validatePayloadSize,
