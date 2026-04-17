@@ -3,7 +3,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 // Import protocol functions
-const { callA2ATool } = require('../../dist/lib/protocols/a2a.js');
+const { callA2ATool, closeA2AConnections } = require('../../dist/lib/protocols/a2a.js');
 
 /**
  * Protocol Compliance Testing Strategy
@@ -26,6 +26,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
   // Reset mocks before each test
   function setupA2AMocks() {
     capturedMessages = [];
+    closeA2AConnections();
 
     // Create a mock A2A client that captures sendMessage calls
     mockA2AClient = {
@@ -219,7 +220,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
 
   describe('Error Response Handling', () => {
     test('should properly detect JSON-RPC errors in response', async () => {
-      // Mock client to return JSON-RPC error
+      closeA2AConnections();
       const errorClient = {
         sendMessage: async () => ({
           jsonrpc: '2.0',
@@ -247,7 +248,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
     });
 
     test('should handle nested result errors', async () => {
-      // Mock client to return error nested in result
+      closeA2AConnections();
       const errorClient = {
         sendMessage: async () => ({
           jsonrpc: '2.0',

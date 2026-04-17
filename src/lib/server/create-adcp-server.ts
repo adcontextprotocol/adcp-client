@@ -874,13 +874,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             ctx.account = account;
           } catch (err) {
-            logger.error('Account resolution failed', {
-              tool: toolName,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Account resolution failed', { tool: toolName, error: reason });
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',
+                details: { reason },
               })
             );
           }
@@ -896,13 +895,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
           } catch (err) {
-            logger.error('Session key resolution failed', {
-              tool: toolName,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Session key resolution failed', { tool: toolName, error: reason });
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Session key resolution failed',
+                details: { reason },
               })
             );
           }
@@ -914,13 +912,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           const formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
           return finalize(formatted);
         } catch (err) {
-          logger.error('Handler failed', {
-            tool: toolName,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          const reason = err instanceof Error ? err.message : String(err);
+          logger.error('Handler failed', { tool: toolName, error: reason });
           return finalize(
             adcpError('SERVICE_UNAVAILABLE', {
               message: `Tool ${toolName} encountered an internal error`,
+              details: { reason },
             })
           );
         }

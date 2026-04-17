@@ -298,12 +298,12 @@ describe('resolveSessionKey', () => {
     assert.strictEqual(seenSessionKey, 'tnt_42');
   });
 
-  it('returns SERVICE_UNAVAILABLE if resolver throws', async () => {
+  it('returns SERVICE_UNAVAILABLE with the original reason in details if resolver throws', async () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
       resolveSessionKey: () => {
-        throw new Error('boom');
+        throw new Error('db lookup timed out');
       },
       signals: {
         getSignals: async () => ({ signals: [] }),
@@ -311,7 +311,9 @@ describe('resolveSessionKey', () => {
     });
 
     const result = await callTool(server, 'get_signals', {});
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    const error = result.structuredContent.adcp_error;
+    assert.strictEqual(error.code, 'SERVICE_UNAVAILABLE');
+    assert.strictEqual(error.details?.reason, 'db lookup timed out');
   });
 
   it('leaves ctx.sessionKey undefined when resolver returns undefined', async () => {
