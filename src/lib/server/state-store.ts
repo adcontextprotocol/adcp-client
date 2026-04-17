@@ -39,12 +39,7 @@
 
 import { ADCPError } from '../errors';
 
-export type StateErrorCode =
-  | 'INVALID_COLLECTION'
-  | 'INVALID_ID'
-  | 'PAYLOAD_TOO_LARGE'
-  | 'NOT_FOUND'
-  | 'BACKEND_ERROR';
+export type StateErrorCode = 'INVALID_COLLECTION' | 'INVALID_ID' | 'PAYLOAD_TOO_LARGE' | 'NOT_FOUND' | 'BACKEND_ERROR';
 
 /**
  * Typed error thrown by state-store implementations for validation, size-limit,

@@ -73,13 +73,7 @@ export {
   validatePayloadSize,
   validateWrite,
 } from './state-store';
-export type {
-  AdcpStateStore,
-  InMemoryStateStoreOptions,
-  ListOptions,
-  ListResult,
-  StateErrorCode,
-} from './state-store';
+export type { AdcpStateStore, InMemoryStateStoreOptions, ListOptions, ListResult, StateErrorCode } from './state-store';
 
 export { PostgresStateStore, getAdcpStateMigration, ADCP_STATE_MIGRATION } from './postgres-state-store';
 export type { PostgresStateStoreOptions } from './postgres-state-store';

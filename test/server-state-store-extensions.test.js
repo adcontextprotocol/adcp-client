@@ -9,10 +9,7 @@ const {
   scopedStore,
 } = require('../dist/lib/server/state-store');
 const { ADCPError, isADCPError } = require('../dist/lib/errors');
-const {
-  structuredSerialize,
-  structuredDeserialize,
-} = require('../dist/lib/server/structured-serialize');
+const { structuredSerialize, structuredDeserialize } = require('../dist/lib/server/structured-serialize');
 const { createAdcpServer, requireSessionKey } = require('../dist/lib/server/create-adcp-server');
 
 // ---------------------------------------------------------------------------
@@ -255,9 +252,15 @@ describe('createSessionedStore', () => {
   it('closes the "trailing colon" collision between sessionKey="alice:" and id=":x"', () => {
     // Both were previously accepted; neither contains `::`. Fix now rejects both.
     const inner = new InMemoryStateStore();
-    assert.throws(() => inner.scoped('alice:'), err => err.code === 'INVALID_ID');
+    assert.throws(
+      () => inner.scoped('alice:'),
+      err => err.code === 'INVALID_ID'
+    );
     const alice = inner.scoped('alice');
-    assert.rejects(() => alice.put('col', ':x', { v: 1 }), err => err.code === 'INVALID_ID');
+    assert.rejects(
+      () => alice.put('col', ':x', { v: 1 }),
+      err => err.code === 'INVALID_ID'
+    );
   });
 
   it('rejects payloads containing the reserved _session_key field', async () => {
@@ -390,10 +393,7 @@ describe('structuredSerialize / structuredDeserialize', () => {
   it('round-trips Date', () => {
     const d = new Date('2026-04-17T12:34:56.000Z');
     const serialized = structuredSerialize({ createdAt: d });
-    assert.strictEqual(
-      JSON.parse(JSON.stringify(serialized)).createdAt.__adcpType,
-      'Date'
-    );
+    assert.strictEqual(JSON.parse(JSON.stringify(serialized)).createdAt.__adcpType, 'Date');
     const restored = structuredDeserialize(JSON.parse(JSON.stringify(serialized)));
     assert.ok(restored.createdAt instanceof Date);
     assert.strictEqual(restored.createdAt.toISOString(), d.toISOString());
