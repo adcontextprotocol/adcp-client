@@ -107,6 +107,34 @@ describe('mediaBuyResponse', () => {
     });
     assert.deepStrictEqual(result.structuredContent.valid_actions, ['cancel']);
   });
+
+  it('throws when `setup` is placed at the top level instead of inside account', () => {
+    assert.throws(
+      () =>
+        mediaBuyResponse({
+          media_buy_id: 'mb_1',
+          packages: [],
+          status: 'pending_approval',
+          setup: { url: 'https://example.com/sign', message: 'Review IO' },
+        }),
+      /`setup` is not a field on the media buy.*belongs inside `account\.setup`/
+    );
+  });
+
+  it('accepts setup nested under account', () => {
+    const result = mediaBuyResponse({
+      media_buy_id: 'mb_1',
+      packages: [],
+      status: 'pending_approval',
+      account: {
+        account_id: 'acct_1',
+        name: 'Acme',
+        status: 'pending_approval',
+        setup: { url: 'https://example.com/sign', message: 'Review IO' },
+      },
+    });
+    assert.strictEqual(result.structuredContent.account.setup.url, 'https://example.com/sign');
+  });
 });
 
 describe('deliveryResponse', () => {
@@ -172,12 +200,41 @@ describe('updateMediaBuyResponse', () => {
     });
     assert.deepStrictEqual(result.structuredContent.valid_actions, ['cancel']);
   });
+
+  it('throws when `setup` is placed at the top level instead of inside account', () => {
+    assert.throws(
+      () =>
+        updateMediaBuyResponse({
+          media_buy_id: 'mb_1',
+          status: 'pending_approval',
+          setup: { url: 'https://example.com/sign', message: 'Review IO' },
+        }),
+      /`setup` is not a field on the media buy.*belongs inside `account\.setup`/
+    );
+  });
 });
 
 describe('getMediaBuysResponse', () => {
   it('returns media buy count in default summary', () => {
     const result = getMediaBuysResponse({ media_buys: [{ media_buy_id: 'mb_1' }] });
     assert.strictEqual(result.content[0].text, 'Found 1 media buy');
+  });
+
+  it('throws when any media buy has `setup` at the top level', () => {
+    assert.throws(
+      () =>
+        getMediaBuysResponse({
+          media_buys: [
+            { media_buy_id: 'mb_1' },
+            {
+              media_buy_id: 'mb_2',
+              status: 'pending_approval',
+              setup: { url: 'https://example.com/sign', message: 'Review IO' },
+            },
+          ],
+        }),
+      /getMediaBuysResponse.*`setup` is not a field on the media buy/
+    );
   });
 });
 

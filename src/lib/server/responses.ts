@@ -68,6 +68,21 @@ export function toStructuredContent(data: object): Record<string, unknown> {
   return data as unknown as Record<string, unknown>;
 }
 
+// `setup` is only ever nested inside an `Account` (the IO-signing / pending_approval
+// path). A top-level `setup` on a media buy response means the builder read the
+// storyboard's "setup.url" shorthand as a top-level field. The strict handler types
+// would catch this, but `DomainHandler` accepts `Record<string, unknown>` for DX,
+// so the error has to move to runtime.
+function assertNoTopLevelSetup(data: unknown, builder: string): void {
+  if (data != null && typeof data === 'object' && 'setup' in data) {
+    throw new Error(
+      `${builder}: \`setup\` is not a field on the media buy — it belongs inside \`account.setup\`. ` +
+        `Move \`{ setup: { url, message } }\` to \`{ account: { ..., setup: { url, message } } }\`. ` +
+        `The setup URL is a property of the Account (returned alongside \`status: 'pending_approval'\`), not the MediaBuy.`
+    );
+  }
+}
+
 /**
  * Build a get_adcp_capabilities response.
  *
@@ -101,6 +116,7 @@ export function productsResponse(data: GetProductsResponse, summary?: string): M
  *   `status` is provided but `valid_actions` is not
  */
 export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string): McpToolResponse {
+  assertNoTopLevelSetup(data, 'mediaBuyResponse');
   const withDefaults = { ...data };
   if (withDefaults.revision === undefined) {
     withDefaults.revision = 1;
@@ -161,6 +177,7 @@ export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, s
  * `valid_actions` from `validActionsForStatus()`.
  */
 export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: string): McpToolResponse {
+  assertNoTopLevelSetup(data, 'updateMediaBuyResponse');
   const withDefaults = { ...data };
   if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
     withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
@@ -175,6 +192,11 @@ export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: st
  * Build a get_media_buys response.
  */
 export function getMediaBuysResponse(data: GetMediaBuysResponse, summary?: string): McpToolResponse {
+  if (Array.isArray(data.media_buys)) {
+    for (const buy of data.media_buys) {
+      assertNoTopLevelSetup(buy, 'getMediaBuysResponse');
+    }
+  }
   return {
     content: [
       {
