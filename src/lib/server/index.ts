@@ -61,11 +61,29 @@ export type { TestControllerStore, ControllerScenario } from './test-controller'
 export { serve } from './serve';
 export type { ServeContext, ServeOptions } from './serve';
 
-export { InMemoryStateStore } from './state-store';
-export type { AdcpStateStore, ListOptions, ListResult } from './state-store';
+export {
+  InMemoryStateStore,
+  StateError,
+  DEFAULT_MAX_DOCUMENT_BYTES,
+  SESSION_KEY_FIELD,
+  createSessionedStore,
+  validateCollection,
+  validateId,
+  validatePayloadSize,
+  validateWrite,
+} from './state-store';
+export type {
+  AdcpStateStore,
+  InMemoryStateStoreOptions,
+  ListOptions,
+  ListResult,
+  StateErrorCode,
+} from './state-store';
 
 export { PostgresStateStore, getAdcpStateMigration, ADCP_STATE_MIGRATION } from './postgres-state-store';
 export type { PostgresStateStoreOptions } from './postgres-state-store';
+
+export { structuredSerialize, structuredDeserialize } from './structured-serialize';
 
 export { createAdcpServer } from './create-adcp-server';
 export type {
@@ -75,6 +93,7 @@ export type {
   AdcpCapabilitiesConfig,
   AdcpLogger,
   HandlerContext,
+  SessionKeyContext,
   MediaBuyHandlers,
   SignalsHandlers,
   CreativeHandlers,

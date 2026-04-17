@@ -32,11 +32,22 @@
  */
 
 import type { PgQueryable } from './postgres-task-store';
-import type { AdcpStateStore, ListOptions, ListResult } from './state-store';
+import {
+  DEFAULT_MAX_DOCUMENT_BYTES,
+  createSessionedStore,
+  validateCollection,
+  validateId,
+  validateWrite,
+  type AdcpStateStore,
+  type ListOptions,
+  type ListResult,
+} from './state-store';
 
 export interface PostgresStateStoreOptions {
   /** Table name. Must contain only lowercase letters, digits, and underscores. Defaults to `"adcp_state"`. */
   tableName?: string;
+  /** Max bytes per document. Defaults to {@link DEFAULT_MAX_DOCUMENT_BYTES}. */
+  maxDocumentBytes?: number;
 }
 
 const DEFAULT_TABLE = 'adcp_state';
@@ -77,10 +88,12 @@ export const ADCP_STATE_MIGRATION = getAdcpStateMigration();
 export class PostgresStateStore implements AdcpStateStore {
   private readonly db: PgQueryable;
   private readonly table: string;
+  private readonly maxDocumentBytes: number;
 
   constructor(db: PgQueryable, options?: PostgresStateStoreOptions) {
     this.db = db;
     this.table = options?.tableName ?? DEFAULT_TABLE;
+    this.maxDocumentBytes = options?.maxDocumentBytes ?? DEFAULT_MAX_DOCUMENT_BYTES;
     if (!VALID_IDENTIFIER.test(this.table)) {
       throw new Error(`Invalid table name: "${this.table}". Must match /^[a-z_][a-z0-9_]*$/.`);
     }
@@ -90,6 +103,8 @@ export class PostgresStateStore implements AdcpStateStore {
     collection: string,
     id: string
   ): Promise<T | null> {
+    validateCollection(collection);
+    validateId(id);
     const { rows } = await this.db.query(`SELECT data FROM ${this.table} WHERE collection = $1 AND id = $2`, [
       collection,
       id,
@@ -99,26 +114,30 @@ export class PostgresStateStore implements AdcpStateStore {
   }
 
   async put(collection: string, id: string, data: Record<string, unknown>): Promise<void> {
+    const serialized = validateWrite(collection, id, data, this.maxDocumentBytes);
     await this.db.query(
       `INSERT INTO ${this.table} (collection, id, data)
        VALUES ($1, $2, $3)
        ON CONFLICT (collection, id)
        DO UPDATE SET data = $3, updated_at = NOW()`,
-      [collection, id, JSON.stringify(data)]
+      [collection, id, serialized]
     );
   }
 
   async patch(collection: string, id: string, partial: Record<string, unknown>): Promise<void> {
+    const serialized = validateWrite(collection, id, partial, this.maxDocumentBytes);
     await this.db.query(
       `INSERT INTO ${this.table} (collection, id, data)
        VALUES ($1, $2, $3)
        ON CONFLICT (collection, id)
        DO UPDATE SET data = ${this.table}.data || $3, updated_at = NOW()`,
-      [collection, id, JSON.stringify(partial)]
+      [collection, id, serialized]
     );
   }
 
   async delete(collection: string, id: string): Promise<boolean> {
+    validateCollection(collection);
+    validateId(id);
     const { rowCount } = await this.db.query(`DELETE FROM ${this.table} WHERE collection = $1 AND id = $2`, [
       collection,
       id,
@@ -130,6 +149,7 @@ export class PostgresStateStore implements AdcpStateStore {
     collection: string,
     options?: ListOptions
   ): Promise<ListResult<T>> {
+    validateCollection(collection);
     const limit = Math.min(options?.limit ?? PAGE_SIZE, MAX_PAGE_SIZE);
     const conditions = ['collection = $1'];
     const values: unknown[] = [collection];
@@ -186,5 +206,9 @@ export class PostgresStateStore implements AdcpStateStore {
   async clearCollection(collection: string): Promise<number> {
     const { rowCount } = await this.db.query(`DELETE FROM ${this.table} WHERE collection = $1`, [collection]);
     return rowCount ?? 0;
+  }
+
+  scoped(sessionKey: string): AdcpStateStore {
+    return createSessionedStore(this, sessionKey);
   }
 }

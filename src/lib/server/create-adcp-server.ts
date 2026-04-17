@@ -201,11 +201,25 @@ const noopLogger: AdcpLogger = {
  * If the tool has an account ref and `resolveAccount` is configured,
  * `account` is the resolved account object (guaranteed non-null —
  * the handler only runs if resolution succeeds).
+ *
+ * If `resolveSessionKey` is configured, `sessionKey` is the scoping key
+ * derived from the request — usually tenant/brand/publisher-account id.
+ * Handlers can use `ctx.store.scoped(ctx.sessionKey!)` to get a
+ * session-scoped view without re-deriving the key.
  */
 export interface HandlerContext<TAccount = unknown> {
   account?: TAccount;
+  /** Session scoping key derived from the request. Populated when `resolveSessionKey` is configured. */
+  sessionKey?: string;
   /** State store for persisting domain objects (media buys, accounts, creatives). */
   store: AdcpStateStore;
+}
+
+/** Request metadata passed to `resolveSessionKey` so the hook can derive a key from any field. */
+export interface SessionKeyContext<TAccount = unknown> {
+  toolName: AdcpServerToolName;
+  params: Record<string, unknown>;
+  account?: TAccount;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +446,17 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * Return null if the account doesn't exist — framework responds ACCOUNT_NOT_FOUND.
    */
   resolveAccount?: (ref: AccountReference) => Promise<TAccount | null>;
+
+  /**
+   * Derive a session-scoping key from the request. Populates `ctx.sessionKey`
+   * so handlers don't re-implement key derivation (tenant, brand, publisher
+   * account id, etc.). Called after `resolveAccount`, so the resolved account
+   * is available.
+   *
+   * Return `undefined` to leave `ctx.sessionKey` unset (e.g., for anonymous
+   * or public tools).
+   */
+  resolveSessionKey?: (ctx: SessionKeyContext<TAccount>) => string | undefined | Promise<string | undefined>;
 
   /** Logger for framework decisions. Defaults to no-op. */
   logger?: AdcpLogger;
@@ -760,6 +785,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     name,
     version,
     resolveAccount,
+    resolveSessionKey,
     stateStore = new InMemoryStateStore(),
     logger = noopLogger,
     capabilities: capConfig,
@@ -855,6 +881,28 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',
+              })
+            );
+          }
+        }
+
+        // --- Session key resolution ---
+        if (resolveSessionKey) {
+          try {
+            const sessionKey = await resolveSessionKey({
+              toolName: toolName as AdcpServerToolName,
+              params,
+              account: ctx.account,
+            });
+            if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
+          } catch (err) {
+            logger.error('Session key resolution failed', {
+              tool: toolName,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Session key resolution failed',
               })
             );
           }
