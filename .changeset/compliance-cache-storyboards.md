@@ -1,8 +1,13 @@
 ---
-'@adcp/client': major
+'@adcp/client': minor
 ---
 
 Pull storyboards from the AdCP compliance tarball instead of bundling them.
+
+Released as a minor bump: 5.0 was intentionally shipped incomplete while the
+upstream compliance tarball + cosign signing work landed (adcontextprotocol/adcp#2273).
+5.0 has not seen meaningful adoption, so the removals below are treated as finishing
+the 5.x surface rather than a 6.0 breaking release.
 
 `npm run sync-schemas` fetches `/protocol/{version}.tgz` from adcontextprotocol.org,
 verifies its sha256 sidecar, and extracts both `schemas/` and `compliance/` into
