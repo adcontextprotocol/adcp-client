@@ -10,7 +10,7 @@
  * CI:  npm run ci:docs-check
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import path from 'path';
 
 // ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@ const INDEX_PATH = path.join(SCHEMA_CACHE_DIR, 'index.json');
 const LLMS_TXT_PATH = path.join(ROOT, 'docs/llms.txt');
 const TYPE_SUMMARY_PATH = path.join(ROOT, 'docs/TYPE-SUMMARY.md');
 const ERROR_CODES_PATH = path.join(ROOT, 'src/lib/types/error-codes.ts');
-const STORYBOARDS_DIR = path.join(ROOT, 'storyboards');
+const COMPLIANCE_CACHE_DIR = path.join(ROOT, 'compliance/cache/latest');
 const CLI_PATH = path.join(ROOT, 'bin/adcp.js');
 
 // Domains whose `tasks` we emit as tools (order matters for output)
@@ -46,8 +46,8 @@ const SKIP_TOOLS = new Set(['comply-test-controller']);
 // GitHub Pages base URL for published docs
 const DOCS_BASE_URL = 'https://adcontextprotocol.github.io/adcp-client';
 
-// Storyboards to skip (meta files, not real flows)
-const SKIP_STORYBOARDS = new Set(['schema.yaml', 'schema_validation.yaml']);
+// Storyboard filenames that aren't runnable flows (schema defs, fixture bundles)
+const SKIP_STORYBOARDS = new Set(['storyboard-schema.yaml', 'fictional-entities.yaml', 'schema_validation.yaml']);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -276,17 +276,36 @@ interface StoryboardSummary {
 }
 
 function parseStoryboards(): StoryboardSummary[] {
-  if (!existsSync(STORYBOARDS_DIR)) return [];
+  if (!existsSync(COMPLIANCE_CACHE_DIR)) return [];
 
-  const files = readdirSync(STORYBOARDS_DIR)
-    .filter(f => f.endsWith('.yaml') && !SKIP_STORYBOARDS.has(f))
-    .sort();
+  // Walk universal/, domains/{id}/index.yaml, domains/{id}/scenarios/*, and
+  // specialisms/{id}/index.yaml (+ any other top-level YAMLs in the specialism dir).
+  const files: string[] = [];
+  const collect = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir)) {
+      if (SKIP_STORYBOARDS.has(entry)) continue;
+      const full = path.join(dir, entry);
+      const stat = statSync(full);
+      if (stat.isDirectory()) {
+        collect(full);
+      } else if (entry.endsWith('.yaml')) {
+        files.push(full);
+      }
+    }
+  };
+  collect(path.join(COMPLIANCE_CACHE_DIR, 'universal'));
+  collect(path.join(COMPLIANCE_CACHE_DIR, 'domains'));
+  collect(path.join(COMPLIANCE_CACHE_DIR, 'specialisms'));
 
   return files
-    .map(f => {
-      const content = readFileSync(path.join(STORYBOARDS_DIR, f), 'utf8');
+    .sort()
+    .map(full => {
+      const content = readFileSync(full, 'utf8');
+      const id = yamlField(content, 'id');
+      if (!id) return null;
       return {
-        id: yamlField(content, 'id') || f.replace('.yaml', ''),
+        id,
         title: yamlField(content, 'title') || '',
         summary: yamlField(content, 'summary') || '',
         track: yamlField(content, 'track') || '',
@@ -294,7 +313,7 @@ function parseStoryboards(): StoryboardSummary[] {
         flow: extractToolFlow(content),
       };
     })
-    .filter(s => s.title); // skip empty/broken files
+    .filter((s): s is StoryboardSummary => s !== null && !!s.title);
 }
 
 /** Extract a top-level scalar YAML field (single line). */
@@ -623,10 +642,12 @@ function generateLlmsTxt(
       ln(`| \`${s.name}\` | ${s.description} |`);
     }
     ln();
-    ln(`**Deep dive:** storyboards/ directory has full YAML definitions for each flow`);
+    ln(
+      `**Deep dive:** Storyboard YAML definitions live at \`https://adcontextprotocol.org/compliance/{version}/\` and are mirrored locally in \`compliance/cache/{version}/\` after \`npm run sync-schemas\`.`
+    );
     ln();
     ln(
-      `**Fictional entities:** storyboards/fictional-entities.yaml defines all fictional companies used in storyboards and training (advertisers, agencies, publishers, data providers). Aligned to the character bible at docs.adcontextprotocol.org/specs/character-bible. All domains use the \`.example\` TLD. Sandbox brands (advertisers) are resolvable via AgenticAdvertising.org.`
+      `**Fictional entities:** \`compliance/cache/{version}/universal/fictional-entities.yaml\` defines all fictional companies used in storyboards and training (advertisers, agencies, publishers, data providers). Aligned to the character bible at docs.adcontextprotocol.org/specs/character-bible. All domains use the \`.example\` TLD. Sandbox brands (advertisers) are resolvable via AgenticAdvertising.org.`
     );
     ln();
   }
