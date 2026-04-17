@@ -13,7 +13,7 @@ const {
   structuredSerialize,
   structuredDeserialize,
 } = require('../dist/lib/server/structured-serialize');
-const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
+const { createAdcpServer, requireSessionKey } = require('../dist/lib/server/create-adcp-server');
 
 // ---------------------------------------------------------------------------
 // Validation / StateError
@@ -227,19 +227,48 @@ describe('createSessionedStore', () => {
     assert.strictEqual(called, true);
   });
 
-  it('rejects :: in sessionKey (reserved separator)', () => {
+  it('rejects : in sessionKey (reserved for scope-path)', () => {
     const inner = new InMemoryStateStore();
     assert.throws(
-      () => inner.scoped('alice::bob'),
+      () => inner.scoped('alice:bob'),
+      err => err instanceof StateError && err.code === 'INVALID_ID'
+    );
+    assert.throws(
+      () => inner.scoped('alice:'),
       err => err instanceof StateError && err.code === 'INVALID_ID'
     );
   });
 
-  it('rejects :: in ids to prevent scope collisions', async () => {
+  it('rejects : in ids to prevent scope collisions', async () => {
     const inner = new InMemoryStateStore();
     const alice = inner.scoped('alice');
     await assert.rejects(
+      () => alice.put('col', ':x', { v: 1 }),
+      err => err instanceof StateError && err.code === 'INVALID_ID'
+    );
+    await assert.rejects(
       () => alice.put('col', 'bob::x', { v: 1 }),
+      err => err instanceof StateError && err.code === 'INVALID_ID'
+    );
+  });
+
+  it('closes the "trailing colon" collision between sessionKey="alice:" and id=":x"', () => {
+    // Both were previously accepted; neither contains `::`. Fix now rejects both.
+    const inner = new InMemoryStateStore();
+    assert.throws(() => inner.scoped('alice:'), err => err.code === 'INVALID_ID');
+    const alice = inner.scoped('alice');
+    assert.rejects(() => alice.put('col', ':x', { v: 1 }), err => err.code === 'INVALID_ID');
+  });
+
+  it('rejects payloads containing the reserved _session_key field', async () => {
+    const inner = new InMemoryStateStore();
+    const alice = inner.scoped('alice');
+    await assert.rejects(
+      () => alice.put('col', 'x', { [SESSION_KEY_FIELD]: 'bob', v: 1 }),
+      err => err instanceof StateError && err.code === 'INVALID_ID'
+    );
+    await assert.rejects(
+      () => alice.patch('col', 'x', { [SESSION_KEY_FIELD]: 'bob' }),
       err => err instanceof StateError && err.code === 'INVALID_ID'
     );
   });
@@ -298,22 +327,40 @@ describe('resolveSessionKey', () => {
     assert.strictEqual(seenSessionKey, 'tnt_42');
   });
 
-  it('returns SERVICE_UNAVAILABLE with the original reason in details if resolver throws', async () => {
+  it('returns SERVICE_UNAVAILABLE without leaking internals by default if resolver throws', async () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
       resolveSessionKey: () => {
-        throw new Error('db lookup timed out');
+        throw new Error('db://user:pass@10.0.0.1 timed out');
       },
-      signals: {
-        getSignals: async () => ({ signals: [] }),
-      },
+      signals: { getSignals: async () => ({ signals: [] }) },
     });
 
     const result = await callTool(server, 'get_signals', {});
     const error = result.structuredContent.adcp_error;
     assert.strictEqual(error.code, 'SERVICE_UNAVAILABLE');
-    assert.strictEqual(error.details?.reason, 'db lookup timed out');
+    assert.strictEqual(error.details, undefined);
+  });
+
+  it('includes details.reason when exposeErrorDetails: true', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      exposeErrorDetails: true,
+      resolveSessionKey: () => {
+        throw new Error('db lookup timed out');
+      },
+      signals: { getSignals: async () => ({ signals: [] }) },
+    });
+
+    const result = await callTool(server, 'get_signals', {});
+    assert.strictEqual(result.structuredContent.adcp_error.details?.reason, 'db lookup timed out');
+  });
+
+  it('requireSessionKey narrows ctx.sessionKey or throws', () => {
+    assert.strictEqual(requireSessionKey({ store: {}, sessionKey: 'alice' }), 'alice');
+    assert.throws(() => requireSessionKey({ store: {} }), /sessionKey is undefined/);
   });
 
   it('leaves ctx.sessionKey undefined when resolver returns undefined', async () => {

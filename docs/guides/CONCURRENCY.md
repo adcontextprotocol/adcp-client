@@ -132,6 +132,43 @@ If you must keep the blob layout, funnel all writes through a single
 worker per `sessionKey`, or upgrade to optimistic concurrency once
 `putIfMatch` lands (see below).
 
+## Per-session isolation
+
+If every handler's state is scoped to a tenant/brand/publisher account, use
+the session-scoping primitives instead of threading a key through every call:
+
+```ts
+import { createAdcpServer, scopedStore, requireSessionKey } from '@adcp/client/server';
+
+const server = createAdcpServer({
+  name: 'My Publisher', version: '1.0.0',
+  stateStore,
+  resolveSessionKey: ({ account }) => account?.tenant_id,
+  mediaBuy: {
+    createMediaBuy: async (params, ctx) => {
+      const sessionKey = requireSessionKey(ctx);
+      const store = scopedStore(ctx.store, sessionKey);
+
+      // Scoped: isolated to this tenant. No cross-tenant leaks.
+      await store.put('media_buys', 'mb_1', { status: 'active' });
+      const { items } = await store.list('media_buys');
+    },
+  },
+});
+```
+
+**Rules the scoped wrapper enforces:**
+
+- `sessionKey` and `id` must be `[A-Za-z0-9_.-]{1,256}` — `:` is reserved as
+  the scope-path separator.
+- Every scoped write injects a `_session_key` field and every scoped read
+  strips it. If you query the raw Postgres table yourself, you will see
+  this column; omit it from your application view.
+- Payloads that already contain `_session_key` are rejected at write time —
+  rename that field in your document if you hit this.
+- `list()` cursors are valid **only within the session** that produced them.
+  Don't pass a cursor from session A to session B.
+
 ## Coming soon: optimistic concurrency
 
 An RFC is open for `putIfMatch(collection, id, data, expectedVersion)` to

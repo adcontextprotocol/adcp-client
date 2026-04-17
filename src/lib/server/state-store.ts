@@ -69,12 +69,26 @@ export const DEFAULT_MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 
 /** 1–256 ASCII letters, digits, or any of `_ - . :`. Prose description is in error messages. */
 const KEY_PATTERN = /^[A-Za-z0-9_.\-:]{1,256}$/;
-const KEY_DESCRIPTION = '1–256 chars from [A-Za-z0-9_.-:]';
+const KEY_DESCRIPTION = 'letters, digits, or `_ . - :` (1–256 chars)';
+
+/**
+ * Stricter pattern for sessioned-store sessionKeys and ids — excludes `:` so
+ * that `sessionKey + "::" + id` is unambiguous. Without this, `"alice:" + "::" + "x"`
+ * would collide with `"alice" + "::" + ":x"` and let tenants read each other's rows.
+ */
+const SESSION_KEY_PATTERN = /^[A-Za-z0-9_.\-]{1,256}$/;
+const SESSION_KEY_DESCRIPTION = 'letters, digits, or `_ . -` (1–256 chars; `:` is reserved for scope paths)';
+
+/** Clamp attacker-controlled input before interpolating into error messages or logs. */
+function safeForMessage(value: unknown): string {
+  const raw = typeof value === 'string' ? value : String(value);
+  return raw.slice(0, 64).replace(/[^\x20-\x7E]/g, '?');
+}
 
 function validateKey(kind: 'collection' | 'id', value: string): void {
   if (typeof value !== 'string' || !KEY_PATTERN.test(value)) {
     const code: StateErrorCode = kind === 'collection' ? 'INVALID_COLLECTION' : 'INVALID_ID';
-    throw new StateError(code, `Invalid ${kind} "${value}". Must be ${KEY_DESCRIPTION}.`);
+    throw new StateError(code, `${kind} "${safeForMessage(value)}" is invalid. Use ${KEY_DESCRIPTION}.`);
   }
 }
 
@@ -313,19 +327,14 @@ export class InMemoryStateStore implements AdcpStateStore {
  */
 export const SESSION_KEY_FIELD = '_session_key';
 
-/**
- * Reserved id separator inserted between `sessionKey` and the caller's `id`.
- * Rejected inside sessionKeys and ids so scoping is unambiguous — otherwise
- * `scoped('alice').put('col', 'bob::x')` would collide with
- * `scoped('alice::bob').put('col', 'x')`.
- */
+/** Reserved scope-path separator. `:` is forbidden in sessionKeys and ids so `::` is unambiguous. */
 const SESSION_ID_SEPARATOR = '::';
 
-function assertNoSeparator(kind: 'sessionKey' | 'id', value: string): void {
-  if (value.includes(SESSION_ID_SEPARATOR)) {
+function validateSessionPart(kind: 'sessionKey' | 'id', value: string): void {
+  if (typeof value !== 'string' || !SESSION_KEY_PATTERN.test(value)) {
     throw new StateError(
       'INVALID_ID',
-      `Invalid ${kind} "${value}": must not contain the reserved separator "${SESSION_ID_SEPARATOR}".`
+      `${kind} "${safeForMessage(value)}" is invalid. Use ${SESSION_KEY_DESCRIPTION}.`
     );
   }
 }
@@ -337,6 +346,15 @@ function stripSessionKey<T extends Record<string, unknown>>(doc: T | null): T | 
   return rest as T;
 }
 
+function rejectReservedField(data: Record<string, unknown>): void {
+  if (SESSION_KEY_FIELD in data) {
+    throw new StateError(
+      'INVALID_ID',
+      `Payload field "${SESSION_KEY_FIELD}" is reserved by the sessioned store. Rename it in your document.`
+    );
+  }
+}
+
 /**
  * Wrap an AdcpStateStore so every operation is isolated to `sessionKey`.
  *
@@ -345,20 +363,18 @@ function stripSessionKey<T extends Record<string, unknown>>(doc: T | null): T | 
  * - **reads/lists** strip `_session_key` before returning documents.
  * - **list filters** always AND-in `_session_key = sessionKey`.
  *
- * `sessionKey` and caller-supplied `id`s must not contain `::` — that token
- * is reserved as the scope separator. Nested `scoped()` calls compose safely.
+ * `sessionKey` and caller `id`s must match {@link SESSION_KEY_PATTERN} — no `:`
+ * characters — so `${sessionKey}::${id}` is unambiguous. Payloads may not include
+ * the reserved `_session_key` field.
  *
  * Use this when every handler's state is scoped to a tenant/brand/session,
  * so you don't have to thread `sessionKey` through every `put`/`list` call.
  */
 export function createSessionedStore(inner: AdcpStateStore, sessionKey: string): AdcpStateStore {
-  if (!KEY_PATTERN.test(sessionKey)) {
-    throw new StateError('INVALID_ID', `Invalid sessionKey "${sessionKey}". Must be ${KEY_DESCRIPTION}.`);
-  }
-  assertNoSeparator('sessionKey', sessionKey);
+  validateSessionPart('sessionKey', sessionKey);
 
   const prefix = (id: string) => {
-    assertNoSeparator('id', id);
+    validateSessionPart('id', id);
     return `${sessionKey}${SESSION_ID_SEPARATOR}${id}`;
   };
 
@@ -372,10 +388,12 @@ export function createSessionedStore(inner: AdcpStateStore, sessionKey: string):
     },
 
     async put(collection, id, data) {
+      rejectReservedField(data);
       await inner.put(collection, prefix(id), { ...data, [SESSION_KEY_FIELD]: sessionKey });
     },
 
     async patch(collection, id, partial) {
+      rejectReservedField(partial);
       await inner.patch(collection, prefix(id), { ...partial, [SESSION_KEY_FIELD]: sessionKey });
     },
 

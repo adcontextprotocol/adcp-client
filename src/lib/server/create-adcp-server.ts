@@ -222,6 +222,27 @@ export interface SessionKeyContext<TAccount = unknown> {
   account?: TAccount;
 }
 
+/**
+ * Narrow `ctx.sessionKey` from `string | undefined` to `string`. Use this in
+ * handlers that require session scoping so you don't litter `!` assertions:
+ *
+ * ```ts
+ * const sessionKey = requireSessionKey(ctx);
+ * const sessionStore = scopedStore(ctx.store, sessionKey);
+ * ```
+ *
+ * Throws a `SERVICE_UNAVAILABLE`-style error if `sessionKey` is missing — typically
+ * meaning `resolveSessionKey` isn't configured or returned `undefined` for this tool.
+ */
+export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccount>): string {
+  if (ctx.sessionKey == null) {
+    throw new Error(
+      'ctx.sessionKey is undefined. Configure resolveSessionKey on createAdcpServer, or guard per-tool before calling requireSessionKey.'
+    );
+  }
+  return ctx.sessionKey;
+}
+
 // ---------------------------------------------------------------------------
 // Tool → type mapping (kept from v1 for type-level handler signatures)
 // ---------------------------------------------------------------------------
@@ -457,6 +478,16 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * or public tools).
    */
   resolveSessionKey?: (ctx: SessionKeyContext<TAccount>) => string | undefined | Promise<string | undefined>;
+
+  /**
+   * When `true`, framework-produced `SERVICE_UNAVAILABLE` errors include the
+   * underlying `err.message` in `details.reason` (helpful in dev, but can leak
+   * DB driver messages, file paths, or schema info to remote callers).
+   *
+   * Defaults to `false`. Enable in trusted environments when you want
+   * debuggable failures at the call site.
+   */
+  exposeErrorDetails?: boolean;
 
   /** Logger for framework decisions. Defaults to no-op. */
   logger?: AdcpLogger;
@@ -786,6 +817,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     version,
     resolveAccount,
     resolveSessionKey,
+    exposeErrorDetails = false,
     stateStore = new InMemoryStateStore(),
     logger = noopLogger,
     capabilities: capConfig,
@@ -879,7 +911,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',
-                details: { reason },
+                ...(exposeErrorDetails && { details: { reason } }),
               })
             );
           }
@@ -900,7 +932,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Session key resolution failed',
-                details: { reason },
+                ...(exposeErrorDetails && { details: { reason } }),
               })
             );
           }
@@ -917,7 +949,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           return finalize(
             adcpError('SERVICE_UNAVAILABLE', {
               message: `Tool ${toolName} encountered an internal error`,
-              details: { reason },
+              ...(exposeErrorDetails && { details: { reason } }),
             })
           );
         }

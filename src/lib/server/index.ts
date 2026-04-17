@@ -86,7 +86,7 @@ export type { PostgresStateStoreOptions } from './postgres-state-store';
 
 export { structuredSerialize, structuredDeserialize } from './structured-serialize';
 
-export { createAdcpServer } from './create-adcp-server';
+export { createAdcpServer, requireSessionKey } from './create-adcp-server';
 export type {
   AdcpServerConfig,
   AdcpToolMap,
