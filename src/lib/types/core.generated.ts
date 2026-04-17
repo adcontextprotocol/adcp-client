@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-16T22:22:26.623Z
+// Generated at: 2026-04-17T15:26:27.555Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -3761,7 +3761,7 @@ export type TaskType =
 /**
  * AdCP domain this task belongs to. Helps classify the operation type at a high level.
  */
-export type AdCPDomain = 'media-buy' | 'signals' | 'governance' | 'creative' | 'brand';
+export type AdCPDomain = 'media-buy' | 'signals' | 'governance' | 'creative' | 'brand' | 'sponsored-intelligence';
 /**
  * Current task status. Webhooks are triggered for status changes after initial submission.
  */
@@ -10638,6 +10638,34 @@ export type SortMetric =
   | 'profile_visits'
   | 'engagement_rate'
   | 'cost_per_click';
+
+
+// enums/specialism.json
+/**
+ * Specialized capability claims an agent can make. Each specialism maps to a compliance storyboard bundle published at /compliance/{version}/specialisms/{id}/. An agent asserts specialisms it supports in get_adcp_capabilities; the AAO compliance runner executes the matching storyboards to verify the claim.
+ */
+export type AdCPSpecialism =
+  | 'audience-sync'
+  | 'brand-rights'
+  | 'content-standards'
+  | 'creative-ad-server'
+  | 'creative-generative'
+  | 'creative-template'
+  | 'governance-delivery-monitor'
+  | 'governance-spend-authority'
+  | 'inventory-lists'
+  | 'measurement-verification'
+  | 'sales-broadcast-tv'
+  | 'sales-catalog-driven'
+  | 'sales-exchange'
+  | 'sales-guaranteed'
+  | 'sales-non-guaranteed'
+  | 'sales-proposal-mode'
+  | 'sales-retail-media'
+  | 'sales-social'
+  | 'sales-streaming-tv'
+  | 'signal-marketplace'
+  | 'signal-owned';
 
 
 // enums/validation-mode.json
