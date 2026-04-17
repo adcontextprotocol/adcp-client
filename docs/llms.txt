@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-16
+> Generated at: 2026-04-17
 > Library: @adcp/client v4.30.2
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -493,7 +493,7 @@ Flow: `get_adcp_capabilities → get_products`
 ### Core
 
 **Brand identity and rights licensing** — Brand agent that serves identity assets and licenses rights for AI-generated content.
-Flow: `get_adcp_capabilities → get_brand_identity → get_rights → acquire_rights → update_rights → creative_approval → acquire_rights → creative_approval`
+Flow: `get_adcp_capabilities → get_brand_identity → get_rights → acquire_rights`
 
 **Capability discovery** — Buyer calls get_adcp_capabilities to discover what an agent supports before making any buying or creative decisions.
 Flow: `get_adcp_capabilities`
@@ -516,6 +516,9 @@ Flow: `get_adcp_capabilities → sync_plans → check_governance`
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
 
 ### Governance
+
+**Collection list governance and targeting** — Manage collection lists — create, update, query, delete — and target media buys by collection membership.
+Flow: `get_adcp_capabilities → create_collection_list → list_collection_lists → get_collection_list → update_collection_list → create_media_buy → delete_collection_list`
 
 **Content standards** — Define creative quality rules, calibrate content against them, and validate that delivered ads met the standards.
 Flow: `get_adcp_capabilities → create_content_standards → list_content_standards → get_content_standards → update_content_standards → calibrate_content → update_content_standards → calibrate_content → validate_content_delivery`
@@ -545,7 +548,7 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
 ### Error Handling
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
-Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy`
+Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
 
 ### Media Buy
 
