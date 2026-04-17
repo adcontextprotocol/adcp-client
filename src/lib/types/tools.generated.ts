@@ -992,6 +992,7 @@ export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus
  */
 export type UIDType =
   | 'rampid'
+  | 'rampid_derived'
   | 'id5'
   | 'uid2'
   | 'euid'
@@ -5046,7 +5047,7 @@ export interface Account {
     categories?: string[];
   }[];
   /**
-   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped so each account can only read its own prefix. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
+   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped at the IAM layer so each account can only read its own prefix — bucket-wide grants are non-compliant even with per-account prefixes. Seller MUST revoke access when the account's status transitions to inactive, suspended, or closed. See security considerations for offline delivery in docs/media-buy/media-buys/optimization-reporting. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
    */
   reporting_bucket?: {
     protocol: CloudStorageProtocol;
@@ -5075,7 +5076,7 @@ export interface Account {
      */
     file_retention_days: number;
     /**
-     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.)
+     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.). Operator-facing documentation — buyer agents MUST NOT auto-fetch this URL; surface it to a human operator. If an implementation fetches it (for preview), apply webhook URL SSRF validation and do not pass the fetched content into an LLM context without indirect-prompt-injection guarding. See docs/media-buy/media-buys/optimization-reporting#security-considerations-for-offline-delivery.
      */
     setup_instructions?: string;
   };
@@ -9777,7 +9778,7 @@ export interface CollectionListFilters {
 export interface CreateCollectionListResponse {
   list: CollectionList;
   /**
-   * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
+   * Token that authorizes sellers to fetch this list via get_collection_list. Only returned at creation time — buyers MUST store it in a secret manager. Scoped to this one list_id; MUST NOT be reused across lists. Governance agents MUST issue a distinct token per seller so per-relationship revocation is possible. Tokens MUST NOT be logged, appear in cache keys, or echo in error responses. delete_collection_list MUST revoke the token immediately; compromise-driven revocation MUST also signal cache invalidation to sellers (reduced cache_valid_until or a list-changed webhook). See Security considerations in docs/governance/collection/tasks/collection_lists.
    */
   auth_token: string;
   context?: ContextObject;
@@ -9859,7 +9860,7 @@ export interface UpdateCollectionListRequest {
   filters?: CollectionListFilters;
   brand?: BrandReference;
   /**
-   * Update the webhook URL for list change notifications (set to empty string to remove)
+   * Update the webhook URL for list change notifications (set to empty string to remove). Governance agents MUST validate this URL against SSRF per docs/building/implementation/security#webhook-url-validation-ssrf.
    */
   webhook_url?: string;
   context?: ContextObject;

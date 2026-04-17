@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-16T19:26:27.864Z
+// Generated at: 2026-04-16T22:22:26.623Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -457,7 +457,7 @@ export interface Account {
     categories?: string[];
   }[];
   /**
-   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped so each account can only read its own prefix. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
+   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped at the IAM layer so each account can only read its own prefix — bucket-wide grants are non-compliant even with per-account prefixes. Seller MUST revoke access when the account's status transitions to inactive, suspended, or closed. See security considerations for offline delivery in docs/media-buy/media-buys/optimization-reporting. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
    */
   reporting_bucket?: {
     protocol: CloudStorageProtocol;
@@ -486,7 +486,7 @@ export interface Account {
      */
     file_retention_days: number;
     /**
-     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.)
+     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.). Operator-facing documentation — buyer agents MUST NOT auto-fetch this URL; surface it to a human operator. If an implementation fetches it (for preview), apply webhook URL SSRF validation and do not pass the fetched content into an LLM context without indirect-prompt-injection guarding. See docs/media-buy/media-buys/optimization-reporting#security-considerations-for-offline-delivery.
      */
     setup_instructions?: string;
   };
@@ -2459,6 +2459,7 @@ export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'dea
  */
 export type UIDType =
   | 'rampid'
+  | 'rampid_derived'
   | 'id5'
   | 'uid2'
   | 'euid'
@@ -5212,7 +5213,7 @@ export interface Account1 {
     categories?: string[];
   }[];
   /**
-   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped so each account can only read its own prefix. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
+   * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped at the IAM layer so each account can only read its own prefix — bucket-wide grants are non-compliant even with per-account prefixes. Seller MUST revoke access when the account's status transitions to inactive, suspended, or closed. See security considerations for offline delivery in docs/media-buy/media-buys/optimization-reporting. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
    */
   reporting_bucket?: {
     protocol: CloudStorageProtocol;
@@ -5241,7 +5242,7 @@ export interface Account1 {
      */
     file_retention_days: number;
     /**
-     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.)
+     * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.). Operator-facing documentation — buyer agents MUST NOT auto-fetch this URL; surface it to a human operator. If an implementation fetches it (for preview), apply webhook URL SSRF validation and do not pass the fetched content into an LLM context without indirect-prompt-injection guarding. See docs/media-buy/media-buys/optimization-reporting#security-considerations-for-offline-delivery.
      */
     setup_instructions?: string;
   };
@@ -6470,7 +6471,7 @@ export interface CollectionListChangedWebhook {
    */
   cache_valid_until?: string;
   /**
-   * Cryptographic signature of the webhook payload, signed with the agent's private key. Recipients MUST verify this signature.
+   * HMAC-SHA256 webhook signature over {unix_timestamp}.{raw_http_body_bytes} using the secret exchanged out-of-band when the seller registered with the governance agent. Recipients MUST verify against the X-ADCP-Signature and X-ADCP-Timestamp headers using timing-safe comparison and MUST reject requests where |now - timestamp| > 300 seconds. The body copy of this field is a convenience only — the headers are authoritative. See docs/building/implementation/security#webhook-security.
    */
   signature: string;
   ext?: ExtensionObject;
@@ -7104,6 +7105,10 @@ export interface AgentSigningKey {
    * Base64url-encoded RSA public exponent.
    */
   e?: string;
+  /**
+   * Optional revocation timestamp. When present, verifiers MUST reject any signature produced with this key whose signing epoch (or equivalent time reference) is at or after this timestamp. The key may continue to appear in the trust anchor during a grace period so caches that have not yet refreshed still find the key and can evaluate the revocation marker. Keys past their revocation can be removed once the cache TTL (recommended: 5 minutes) has elapsed across all verifiers.
+   */
+  revoked_at?: string;
 }
 
 

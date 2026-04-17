@@ -6,6 +6,8 @@ summary: "Brand agent that serves identity assets and licenses rights for AI-gen
 track: core
 required_tools:
   - get_brand_identity
+requires_scenarios:
+  - brand_rights/governance_denied
 
 narrative: |
   You run a brand agent — a system that holds brand identity data (logos, colors, fonts,
@@ -274,106 +276,14 @@ phases:
             path: "context.correlation_id"
             value: "brand_rights--acquire_rights"
             description: "Context correlation_id returned unchanged"
-  - id: rights_management
-    title: "Manage rights"
-    narrative: |
-      The buyer modifies an existing rights grant — extending the end date, adjusting
-      impression caps, or pausing generation while keeping the license active.
-
-    steps:
-      - id: update_rights
-        title: "Modify an existing rights grant"
-        narrative: |
-          The buyer updates an active rights grant. Changes may include extending the
-          duration, increasing impression caps, or pausing/resuming generation. The
-          brand agent re-issues credentials if necessary.
-        task: update_rights
-        schema_ref: "brand/update-rights-request.json"
-        response_schema_ref: "brand/update-rights-response.json"
-        doc_ref: "/brand-protocol/tasks/update_rights"
-        stateful: true
-        expected: |
-          Return the updated rights grant:
-          - Updated expiration or caps
-          - New generation credentials if changed
-          - Status confirmation
-
-        sample_request:
-          rights_grant_id: "$context.rights_grant_id"
-          updates:
-            end_date: "2026-09-30"
-            impression_cap: 5000000
-
-          context:
-            correlation_id: "brand_rights--update_rights"
-        validations:
-          - check: response_schema
-            description: "Response matches update_rights schema"
-          - check: field_present
-            path: "rights_id"
-            description: "Response includes rights_id"
-
-          - check: field_present
-            path: "context"
-            description: "Response echoes back the context object"
-          - check: field_value
-            path: "context.correlation_id"
-            value: "brand_rights--update_rights"
-            description: "Context correlation_id returned unchanged"
-  - id: creative_approval
-    title: "Creative approval"
-    narrative: |
-      After generating content using the licensed rights, the buyer submits the creative
-      for brand approval. The brand agent reviews the generated content against brand
-      guidelines and either approves, requests changes, or rejects it.
-
-    steps:
-      - id: creative_approval
-        title: "Submit generated creative for brand approval"
-        narrative: |
-          The buyer submits a generated creative for the brand's review. The brand agent
-          evaluates it against identity guidelines, tone of voice, and any contractual
-          constraints from the rights grant.
-        task: creative_approval
-        schema_ref: "brand/creative-approval-request.json"
-        response_schema_ref: "brand/creative-approval-response.json"
-        doc_ref: "/brand-protocol/walkthrough-rights-licensing"
-        stateful: true
-        expected: |
-          Return an approval decision:
-          - decision: approved, changes_requested, or rejected
-          - Feedback on brand compliance
-          - Specific issues if changes requested or rejected
-
-        sample_request:
-          rights_grant_id: "$context.rights_grant_id"
-          creative:
-            creative_id: "gen_trail_pro_display"
-            format: "display_300x250"
-            assets:
-              - asset_type: "image"
-                url: "https://cdn.pinnacle-agency.example/gen-trail-pro-300x250.png"
-
-          context:
-            correlation_id: "brand_rights--creative_approval"
-        validations:
-          - check: response_schema
-            description: "Response matches creative_approval schema"
-          - check: field_present
-            path: "decision"
-            description: "Response includes approval decision"
-          - check: field_value
-            path: "decision"
-            allowed_values: ["approved", "changes_requested", "rejected"]
-            description: "Approval decision is a valid status"
-
-          - check: field_present
-            path: "context"
-            description: "Response echoes back the context object"
-          - check: field_value
-            path: "context.correlation_id"
-            value: "brand_rights--creative_approval"
-            description: "Context correlation_id returned unchanged"
+  # NOTE: update_rights and creative_approval are intentionally absent.
+  # - update_rights has no published JSON request/response schemas yet (spec
+  #   describes it conceptually in rights-terms.json).
+  # - creative_approval is modeled in the spec as a webhook (POST to the
+  #   approval_webhook returned from acquire_rights), not an AdCP tool. Agents
+  #   expose it as a regular HTTP endpoint outside the MCP surface.
+  # Both will be added back as storyboard phases once upstream schemas land
+  # (see https://github.com/adcontextprotocol/adcp for tracking).
 
   - id: rights_enforcement
     title: "Rights enforcement"
@@ -421,32 +331,3 @@ phases:
         validations:
           - check: error_code
             description: "Error code present for expired campaign dates"
-
-      - id: creative_approval_wrong_grant
-        title: "Reject creative submitted against nonexistent grant"
-        narrative: |
-          The buyer submits a creative for approval referencing a rights_grant_id that
-          does not exist. The agent must reject this rather than approving by default.
-        task: creative_approval
-        schema_ref: "brand/creative-approval-request.json"
-        response_schema_ref: "brand/creative-approval-response.json"
-        doc_ref: "/brand-protocol/walkthrough-rights-licensing"
-        stateful: false
-        expect_error: true
-        expected: |
-          Reject the request:
-          - rights_grant_id is not recognized
-          - Error indicates the grant was not found
-
-        sample_request:
-          rights_grant_id: "nonexistent_grant_xyz"
-          creative:
-            creative_id: "gen_unauthorized_display"
-            format: "display_300x250"
-            assets:
-              - asset_type: "image"
-                url: "https://cdn.pinnacle-agency.example/unauthorized-300x250.png"
-
-        validations:
-          - check: error_code
-            description: "Error code present for nonexistent rights grant"

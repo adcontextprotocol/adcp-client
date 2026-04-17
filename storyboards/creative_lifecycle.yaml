@@ -168,7 +168,7 @@ phases:
                 agent_url: "https://your-platform.example.com"
                 id: "display_300x250"
               assets:
-                - asset_id: "image"
+                image:
                   asset_type: "image"
                   url: "https://cdn.pinnacle-agency.example/trail-pro-300x250.png"
                   mime_type: "image/png"
@@ -178,7 +178,7 @@ phases:
                 agent_url: "https://your-platform.example.com"
                 id: "video_30s"
               assets:
-                - asset_id: "video"
+                video:
                   asset_type: "video"
                   url: "https://cdn.pinnacle-agency.example/trail-pro-30s.mp4"
                   mime_type: "video/mp4"
@@ -188,11 +188,11 @@ phases:
                 agent_url: "https://your-platform.example.com"
                 id: "native_content"
               assets:
-                - asset_id: "image"
+                image:
                   asset_type: "image"
                   url: "https://cdn.pinnacle-agency.example/trail-pro-native.png"
                   mime_type: "image/png"
-                - asset_id: "headline"
+                headline:
                   asset_type: "text"
                   content: "Trail Pro 3000 — Built for the Summit"
 

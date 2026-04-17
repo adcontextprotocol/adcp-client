@@ -107,6 +107,9 @@ import type {
   SISendMessageRequestSchema,
   SITerminateSessionRequestSchema,
   PreviewCreativeRequestSchema,
+  GetBrandIdentityRequestSchema,
+  GetRightsRequestSchema,
+  AcquireRightsRequestSchema,
 } from '../types/schemas.generated';
 
 import type {
@@ -167,6 +170,7 @@ import {
   GOVERNANCE_TOOLS,
   CREATIVE_TOOLS,
   SPONSORED_INTELLIGENCE_TOOLS,
+  BRAND_RIGHTS_TOOLS,
 } from '../utils/capabilities';
 
 // ---------------------------------------------------------------------------
@@ -292,6 +296,12 @@ export interface AdcpToolMap {
   si_initiate_session: { params: z.input<typeof SIInitiateSessionRequestSchema>; result: SIInitiateSessionResponse };
   si_send_message: { params: z.input<typeof SISendMessageRequestSchema>; result: SISendMessageResponse };
   si_terminate_session: { params: z.input<typeof SITerminateSessionRequestSchema>; result: SITerminateSessionResponse };
+
+  // Brand rights — response types are not yet code-generated. Handlers return
+  // loose records which the framework wraps with `genericResponse`.
+  get_brand_identity: { params: z.input<typeof GetBrandIdentityRequestSchema>; result: Record<string, unknown> };
+  get_rights: { params: z.input<typeof GetRightsRequestSchema>; result: Record<string, unknown> };
+  acquire_rights: { params: z.input<typeof AcquireRightsRequestSchema>; result: Record<string, unknown> };
 }
 
 export type AdcpServerToolName = keyof AdcpToolMap;
@@ -376,6 +386,19 @@ export interface SponsoredIntelligenceHandlers<TAccount = unknown> {
   terminateSession?: DomainHandler<'si_terminate_session', TAccount>;
 }
 
+/**
+ * Brand rights covers identity and licensing workflows. `update_rights` and
+ * `creative_approval` are intentionally not exposed here — the spec models
+ * creative approval as a webhook (POST to `approval_webhook` returned from
+ * `acquire_rights`), and neither has published JSON schemas yet. Implement
+ * those as regular HTTP endpoints outside the MCP surface until schemas land.
+ */
+export interface BrandRightsHandlers<TAccount = unknown> {
+  getBrandIdentity?: DomainHandler<'get_brand_identity', TAccount>;
+  getRights?: DomainHandler<'get_rights', TAccount>;
+  acquireRights?: DomainHandler<'acquire_rights', TAccount>;
+}
+
 // ---------------------------------------------------------------------------
 // Capabilities config
 // ---------------------------------------------------------------------------
@@ -427,6 +450,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
   accounts?: AccountHandlers<TAccount>;
   eventTracking?: EventTrackingHandlers<TAccount>;
   sponsoredIntelligence?: SponsoredIntelligenceHandlers<TAccount>;
+  brandRights?: BrandRightsHandlers<TAccount>;
 
   /** Explicit capabilities overrides (merged on top of auto-detected). */
   capabilities?: AdcpCapabilitiesConfig;
@@ -535,6 +559,11 @@ const TOOL_META: Record<string, ToolMeta> = {
   si_initiate_session: { wrap: null, annotations: MUT },
   si_send_message: { wrap: null, annotations: MUT },
   si_terminate_session: { wrap: null, annotations: DEST },
+
+  // Brand Rights
+  get_brand_identity: { wrap: null, annotations: RO },
+  get_rights: { wrap: null, annotations: RO },
+  acquire_rights: { wrap: null, annotations: MUT },
 };
 
 // ---------------------------------------------------------------------------
@@ -611,6 +640,12 @@ const SI_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'terminateSession', toolName: 'si_terminate_session' },
 ];
 
+const BRAND_RIGHTS_ENTRIES: HandlerEntry[] = [
+  { handlerKey: 'getBrandIdentity', toolName: 'get_brand_identity' },
+  { handlerKey: 'getRights', toolName: 'get_rights' },
+  { handlerKey: 'acquireRights', toolName: 'acquire_rights' },
+];
+
 // ---------------------------------------------------------------------------
 // Protocol detection
 // ---------------------------------------------------------------------------
@@ -621,6 +656,7 @@ const TOOL_PROTOCOL_MAP: [readonly string[], AdcpProtocol][] = [
   [GOVERNANCE_TOOLS, 'governance'],
   [CREATIVE_TOOLS, 'creative'],
   [SPONSORED_INTELLIGENCE_TOOLS, 'sponsored_intelligence'],
+  [BRAND_RIGHTS_TOOLS, 'brand'],
 ];
 
 function detectProtocols(toolNames: string[]): AdcpProtocol[] {
@@ -679,6 +715,30 @@ function isFormattedResponse(value: unknown): value is McpToolResponse {
   return Array.isArray(obj.content) && 'structuredContent' in obj;
 }
 
+// Echo the request context into a formatted MCP tool response so buyers can
+// trace correlation_id across both success and error responses.
+function injectContextIntoResponse(response: McpToolResponse, context: unknown): void {
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (sc && typeof sc === 'object' && !('context' in sc)) {
+    sc.context = context;
+    // Keep the L2 text fallback (JSON body) in sync with structuredContent
+    if (Array.isArray(response.content)) {
+      const first = response.content[0];
+      if (first && first.type === 'text' && typeof first.text === 'string') {
+        try {
+          const parsed = JSON.parse(first.text);
+          if (parsed && typeof parsed === 'object' && !('context' in parsed)) {
+            parsed.context = context;
+            first.text = JSON.stringify(parsed);
+          }
+        } catch {
+          // Text isn't JSON — leave it alone
+        }
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // createAdcpServer
 // ---------------------------------------------------------------------------
@@ -725,6 +785,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     [config.accounts as Record<string, Function> | undefined, ACCOUNT_ENTRIES],
     [config.eventTracking as Record<string, Function> | undefined, EVENT_TRACKING_ENTRIES],
     [config.sponsoredIntelligence as Record<string, Function> | undefined, SI_ENTRIES],
+    [config.brandRights as Record<string, Function> | undefined, BRAND_RIGHTS_ENTRIES],
   ];
 
   for (const [handlers, entries] of domainGroups) {
@@ -761,17 +822,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const toolHandler = async (params: any, _extra: any) => {
         const ctx: HandlerContext<TAccount> = { store: stateStore };
 
+        // Echo params.context into any response (success or error) so buyers
+        // can trace correlation_id end-to-end. Framework-generated errors
+        // (ACCOUNT_NOT_FOUND, SERVICE_UNAVAILABLE) go through this too.
+        const finalize = (response: McpToolResponse): McpToolResponse => {
+          if (params.context !== undefined && params.context !== null) {
+            injectContextIntoResponse(response, params.context);
+          }
+          return response;
+        };
+
         // --- Account resolution ---
         if (hasAccount && params.account != null && resolveAccount) {
           try {
             const account = await resolveAccount(params.account);
             if (account == null) {
               logger.warn('Account not found', { tool: toolName, account: params.account });
-              return adcpError('ACCOUNT_NOT_FOUND', {
-                message: 'The specified account does not exist',
-                field: 'account',
-                suggestion: 'Use list_accounts to discover available accounts, or sync_accounts to create one',
-              });
+              return finalize(
+                adcpError('ACCOUNT_NOT_FOUND', {
+                  message: 'The specified account does not exist',
+                  field: 'account',
+                  suggestion: 'Use list_accounts to discover available accounts, or sync_accounts to create one',
+                })
+              );
             }
             ctx.account = account;
           } catch (err) {
@@ -779,35 +852,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               tool: toolName,
               error: err instanceof Error ? err.message : String(err),
             });
-            return adcpError('SERVICE_UNAVAILABLE', {
-              message: 'Account resolution failed',
-            });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Account resolution failed',
+              })
+            );
           }
         }
 
         // --- Handler ---
         try {
           const result = await handler(params, ctx);
-          if (isFormattedResponse(result)) return result;
-          // Inject context passthrough — echo params.context into response
-          if (
-            params.context !== undefined &&
-            params.context !== null &&
-            typeof result === 'object' &&
-            result !== null &&
-            !('context' in result)
-          ) {
-            (result as Record<string, unknown>).context = params.context;
-          }
-          return wrap(result);
+          const formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
+          return finalize(formatted);
         } catch (err) {
           logger.error('Handler failed', {
             tool: toolName,
             error: err instanceof Error ? err.message : String(err),
           });
-          return adcpError('SERVICE_UNAVAILABLE', {
-            message: `Tool ${toolName} encountered an internal error`,
-          });
+          return finalize(
+            adcpError('SERVICE_UNAVAILABLE', {
+              message: `Tool ${toolName} encountered an internal error`,
+            })
+          );
         }
       };
 

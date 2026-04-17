@@ -94,3 +94,16 @@ export type {
   GovernanceDenied,
   GovernanceConditions,
 } from './governance';
+
+export {
+  resolvePropertyList,
+  resolveCollectionList,
+  matchesPropertyList,
+  matchesCollectionList,
+} from './targeting-helpers';
+export type {
+  ResolvedPropertyList,
+  ResolvedCollectionList,
+  ResolvedCollection,
+  ResolveListOptions,
+} from './targeting-helpers';

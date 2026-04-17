@@ -7,6 +7,7 @@
  * and must always be preserved when sending requests to agents.
  */
 export const ADCP_ENVELOPE_FIELDS = new Set([
+  'adcp_major_version', // Protocol version negotiation — preserved so version probes reach the seller
   'context', // Opaque pass-through for correlation and workflow state
   'ext', // Vendor-namespaced extensions
   'governance_context', // Governance approval token

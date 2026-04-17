@@ -223,13 +223,13 @@ phases:
               agent_url: "https://your-agent.example.com"
               id: "display_300x250"
             assets:
-              - asset_id: "image"
+              image:
                 asset_type: "image"
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-300x250.jpg"
-              - asset_id: "click_url"
+              click_url:
                 asset_type: "url"
                 url: "https://acme-outdoor.example.com/summer-sale"
-              - asset_id: "headline"
+              headline:
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
           output_format: "url"
@@ -296,13 +296,13 @@ phases:
               agent_url: "https://your-agent.example.com"
               id: "display_300x250"
             assets:
-              - asset_id: "image"
+              image:
                 asset_type: "image"
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-300x250.jpg"
-              - asset_id: "click_url"
+              click_url:
                 asset_type: "url"
                 url: "https://acme-outdoor.example.com/summer-sale"
-              - asset_id: "headline"
+              headline:
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
           target_format_id:
@@ -353,13 +353,13 @@ phases:
         sample_request:
           creative_manifest:
             assets:
-              - asset_id: "image"
+              image:
                 asset_type: "image"
                 url: "https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg"
-              - asset_id: "click_url"
+              click_url:
                 asset_type: "url"
                 url: "https://acme-outdoor.example.com/summer-sale"
-              - asset_id: "headline"
+              headline:
                 asset_type: "text"
                 text: "Summer Sale — 40% Off All Gear"
           target_format_ids:

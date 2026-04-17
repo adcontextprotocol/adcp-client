@@ -111,7 +111,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Media Buy ──────────────────────────────────────────
 
-  create_media_buy(_step, context, options) {
+  create_media_buy(step, context, options) {
     const product = selectProduct(context);
     const pricingOption = selectPricingOption(product);
 
@@ -119,10 +119,24 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     const startTime = new Date(now + 24 * 60 * 60 * 1000).toISOString();
     const endTime = new Date(now + 8 * 24 * 60 * 60 * 1000).toISOString();
 
+    // Merge any hand-authored package fields from sample_request (targeting_overlay,
+    // measurement_terms, creative_assignments, performance_standards, etc.) so
+    // scenario-specific behaviors are exercised. Context-derived identifiers
+    // (product_id, pricing_option_id) still win so storyboards share context.
+    const samplePackages = (step.sample_request?.packages as Array<Record<string, unknown>> | undefined) ?? [];
+    const baseSample = samplePackages[0]
+      ? (injectContext({ ...samplePackages[0] }, context) as Record<string, unknown>)
+      : {};
+
     const pkg: Record<string, unknown> = {
-      product_id: product?.product_id ?? context.product_id ?? 'test-product',
-      budget: options.budget ?? Math.max(1000, (pricingOption?.min_spend_per_package as number) ?? 1000),
-      pricing_option_id: pricingOption?.pricing_option_id ?? context.pricing_option_id ?? 'default',
+      ...baseSample,
+      product_id: product?.product_id ?? context.product_id ?? baseSample.product_id ?? 'test-product',
+      budget:
+        (baseSample.budget as number | undefined) ??
+        options.budget ??
+        Math.max(1000, (pricingOption?.min_spend_per_package as number) ?? 1000),
+      pricing_option_id:
+        pricingOption?.pricing_option_id ?? context.pricing_option_id ?? baseSample.pricing_option_id ?? 'default',
     };
 
     // Add bid_price for auction-based pricing
@@ -141,21 +155,25 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   update_media_buy(step, context, _options) {
+    // If the storyboard provides a sample_request, honor it — these requests
+    // are hand-authored to exercise specific seller behaviors (creative
+    // assignment, targeting overlay swaps, pause/resume/cancel, etc.) and the
+    // builder should not override the intent.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+
     const request: Record<string, unknown> = {
       media_buy_id: context.media_buy_id ?? 'unknown',
     };
 
-    // Detect the intent from sample_request or step ID
-    if (step.sample_request?.action) {
-      request.action = step.sample_request.action;
-    } else if (step.id.includes('pause')) {
-      request.action = 'pause';
+    if (step.id.includes('pause')) {
+      request.paused = true;
     } else if (step.id.includes('resume')) {
-      request.action = 'resume';
+      request.paused = false;
     } else if (step.id.includes('cancel')) {
-      request.action = 'cancel';
+      request.canceled = true;
     } else {
-      // Default: update budget
       request.packages = [
         {
           package_id: context.package_id,
@@ -263,7 +281,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     return {};
   },
 
-  build_creative(_step, context, options) {
+  build_creative(step, context, options) {
+    // Hand-authored sample_request can exercise slot-specific briefs, target
+    // format overrides, or multi-format requests — honor it when present.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     const format = selectFormat(context);
     return {
       target_format_id: format?.format_id ?? context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
@@ -286,7 +309,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  sync_creatives(_step, context, options) {
+  sync_creatives(step, context, options) {
+    // Honor hand-authored sample_request for scenarios that require specific
+    // creative shapes (delete/patch flows, format-scoped uploads, etc).
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
+    }
     const formats = (context.formats as Array<Record<string, unknown>> | undefined) ?? [];
     const now = Date.now();
 

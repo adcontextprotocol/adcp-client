@@ -250,11 +250,11 @@ phases:
                 agent_url: "https://social-platform.example.com"
                 id: "native_feed"
               assets:
-                - asset_id: "image"
+                image:
                   asset_type: "image"
                   url: "https://cdn.pinnacle-agency.example/trail-pro-native.png"
                   mime_type: "image/png"
-                - asset_id: "headline"
+                headline:
                   asset_type: "text"
                   content: "Trail Pro 3000 — Built for the Summit"
 

@@ -498,6 +498,105 @@ describe('createAdcpServer', () => {
     });
   });
 
+  describe('context echo', () => {
+    it('echoes params.context into successful response structuredContent', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+        context: { correlation_id: 'trace-abc' },
+      });
+      assert.strictEqual(result.isError, undefined);
+      assert.deepStrictEqual(result.structuredContent.context, { correlation_id: 'trace-abc' });
+    });
+
+    it('echoes params.context into adcpError structuredContent', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () =>
+            adcpError('PRODUCT_NOT_FOUND', {
+              message: 'No products match',
+              field: 'brief',
+            }),
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+        context: { correlation_id: 'trace-err-1' },
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'PRODUCT_NOT_FOUND');
+      assert.deepStrictEqual(result.structuredContent.context, { correlation_id: 'trace-err-1' });
+    });
+
+    it('echoes context into the L2 JSON text fallback on errors', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => adcpError('INVALID_REQUEST', { message: 'bad', field: 'brief' }),
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+        context: { correlation_id: 'trace-err-2' },
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      assert.deepStrictEqual(parsed.context, { correlation_id: 'trace-err-2' });
+      assert.strictEqual(parsed.adcp_error.code, 'INVALID_REQUEST');
+    });
+
+    it('echoes context on framework ACCOUNT_NOT_FOUND errors', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async () => null,
+        mediaBuy: {
+          createMediaBuy: async () => ({ media_buy_id: 'mb1', packages: [] }),
+        },
+      });
+      const result = await callToolRaw(server, 'create_media_buy', {
+        account: { brand: { domain: 'unknown.example' }, operator: 'unknown.example' },
+        packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'pr1' }],
+        context: { correlation_id: 'trace-acct-err' },
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+      assert.deepStrictEqual(result.structuredContent.context, { correlation_id: 'trace-acct-err' });
+    });
+
+    it('echoes context on framework SERVICE_UNAVAILABLE when handler throws', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+        mediaBuy: {
+          getProducts: async () => {
+            throw new Error('boom');
+          },
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+        context: { correlation_id: 'trace-throw' },
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+      assert.deepStrictEqual(result.structuredContent.context, { correlation_id: 'trace-throw' });
+    });
+  });
+
   describe('handler error handling', () => {
     it('returns SERVICE_UNAVAILABLE when handler throws', async () => {
       const errors = [];
