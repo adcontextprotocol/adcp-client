@@ -201,11 +201,46 @@ const noopLogger: AdcpLogger = {
  * If the tool has an account ref and `resolveAccount` is configured,
  * `account` is the resolved account object (guaranteed non-null —
  * the handler only runs if resolution succeeds).
+ *
+ * If `resolveSessionKey` is configured, `sessionKey` is the scoping key
+ * derived from the request — usually tenant/brand/publisher-account id.
+ * Handlers can pass it to `scopedStore(ctx.store, ctx.sessionKey!)` to get
+ * a session-scoped view that works on any `AdcpStateStore` implementation.
  */
 export interface HandlerContext<TAccount = unknown> {
   account?: TAccount;
+  /** Session scoping key derived from the request. Populated when `resolveSessionKey` is configured. */
+  sessionKey?: string;
   /** State store for persisting domain objects (media buys, accounts, creatives). */
   store: AdcpStateStore;
+}
+
+/** Request metadata passed to `resolveSessionKey` so the hook can derive a key from any field. */
+export interface SessionKeyContext<TAccount = unknown> {
+  toolName: AdcpServerToolName;
+  params: Record<string, unknown>;
+  account?: TAccount;
+}
+
+/**
+ * Narrow `ctx.sessionKey` from `string | undefined` to `string`. Use this in
+ * handlers that require session scoping so you don't litter `!` assertions:
+ *
+ * ```ts
+ * const sessionKey = requireSessionKey(ctx);
+ * const sessionStore = scopedStore(ctx.store, sessionKey);
+ * ```
+ *
+ * Throws a `SERVICE_UNAVAILABLE`-style error if `sessionKey` is missing — typically
+ * meaning `resolveSessionKey` isn't configured or returned `undefined` for this tool.
+ */
+export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccount>): string {
+  if (ctx.sessionKey == null) {
+    throw new Error(
+      'ctx.sessionKey is undefined. Configure resolveSessionKey on createAdcpServer, or guard per-tool before calling requireSessionKey.'
+    );
+  }
+  return ctx.sessionKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +467,27 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * Return null if the account doesn't exist — framework responds ACCOUNT_NOT_FOUND.
    */
   resolveAccount?: (ref: AccountReference) => Promise<TAccount | null>;
+
+  /**
+   * Derive a session-scoping key from the request. Populates `ctx.sessionKey`
+   * so handlers don't re-implement key derivation (tenant, brand, publisher
+   * account id, etc.). Called after `resolveAccount`, so the resolved account
+   * is available.
+   *
+   * Return `undefined` to leave `ctx.sessionKey` unset (e.g., for anonymous
+   * or public tools).
+   */
+  resolveSessionKey?: (ctx: SessionKeyContext<TAccount>) => string | undefined | Promise<string | undefined>;
+
+  /**
+   * When `true`, framework-produced `SERVICE_UNAVAILABLE` errors include the
+   * underlying `err.message` in `details.reason` (helpful in dev, but can leak
+   * DB driver messages, file paths, or schema info to remote callers).
+   *
+   * Defaults to `false`. Enable in trusted environments when you want
+   * debuggable failures at the call site.
+   */
+  exposeErrorDetails?: boolean;
 
   /** Logger for framework decisions. Defaults to no-op. */
   logger?: AdcpLogger;
@@ -760,6 +816,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     name,
     version,
     resolveAccount,
+    resolveSessionKey,
+    exposeErrorDetails = false,
     stateStore = new InMemoryStateStore(),
     logger = noopLogger,
     capabilities: capConfig,
@@ -848,13 +906,33 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             ctx.account = account;
           } catch (err) {
-            logger.error('Account resolution failed', {
-              tool: toolName,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Account resolution failed', { tool: toolName, error: reason });
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',
+                ...(exposeErrorDetails && { details: { reason } }),
+              })
+            );
+          }
+        }
+
+        // --- Session key resolution ---
+        if (resolveSessionKey) {
+          try {
+            const sessionKey = await resolveSessionKey({
+              toolName: toolName as AdcpServerToolName,
+              params,
+              account: ctx.account,
+            });
+            if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Session key resolution failed', { tool: toolName, error: reason });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Session key resolution failed',
+                ...(exposeErrorDetails && { details: { reason } }),
               })
             );
           }
@@ -866,13 +944,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           const formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
           return finalize(formatted);
         } catch (err) {
-          logger.error('Handler failed', {
-            tool: toolName,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          const reason = err instanceof Error ? err.message : String(err);
+          logger.error('Handler failed', { tool: toolName, error: reason });
           return finalize(
             adcpError('SERVICE_UNAVAILABLE', {
               message: `Tool ${toolName} encountered an internal error`,
+              ...(exposeErrorDetails && { details: { reason } }),
             })
           );
         }
