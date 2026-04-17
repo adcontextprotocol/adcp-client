@@ -144,6 +144,32 @@ export interface ListResult<T = Record<string, unknown>> {
 }
 
 /**
+ * Document and its row version, returned by {@link AdcpStateStore.getWithVersion}.
+ *
+ * `version` is a monotonically increasing integer that starts at `1` on first
+ * write and increments by `1` on every `put`/`patch`/`putIfMatch`. Use it with
+ * `putIfMatch` to implement optimistic concurrency.
+ */
+export interface VersionedDocument<T = Record<string, unknown>> {
+  data: T;
+  version: number;
+}
+
+/**
+ * Result of an optimistic-concurrency write. Split on `ok` — success gives you
+ * the new row version; failure gives you the current version the store has on
+ * disk (or `null` if the row doesn't exist) so you can re-read, re-compute, and retry.
+ *
+ * **Conflict semantics**: `currentVersion` is a best-effort snapshot of the row
+ * at conflict-report time, which may be later than the exact moment the CAS
+ * failed — another writer can slip in between the failed write and the follow-up
+ * read. This is fine for the retry loop in {@link patchWithRetry} (which just
+ * re-reads anyway). Direct callers using `currentVersion` for anything beyond
+ * "retry if it changed" should account for that race.
+ */
+export type PutIfMatchResult = { ok: true; version: number } | { ok: false; currentVersion: number | null };
+
+/**
  * Generic document store for AdCP domain objects.
  *
  * Collections are logical groupings (e.g., 'media_buys', 'accounts', 'creatives').
@@ -178,6 +204,34 @@ export interface AdcpStateStore {
    * store should use {@link scopedStore} instead, which handles the fallback.
    */
   scoped?(sessionKey: string): AdcpStateStore;
+
+  /**
+   * Read a document with its current row version. Returns `null` if the row
+   * doesn't exist. Optional on the interface — custom stores that don't
+   * track versions don't have to implement it. Use {@link patchWithRetry} to
+   * guard against read-modify-write races without calling this directly.
+   */
+  getWithVersion?<T extends Record<string, unknown> = Record<string, unknown>>(
+    collection: string,
+    id: string
+  ): Promise<VersionedDocument<T> | null>;
+
+  /**
+   * Atomic compare-and-swap write. Succeeds only if the row's current version
+   * equals `expectedVersion` (or if the row doesn't exist and `expectedVersion`
+   * is `null`). On conflict, returns the version the store actually has so the
+   * caller can re-read and retry.
+   *
+   * Optional on the interface — custom stores that can't implement CAS don't
+   * have to. Use {@link patchWithRetry} for the common "update a field with
+   * retry on conflict" case.
+   */
+  putIfMatch?(
+    collection: string,
+    id: string,
+    data: Record<string, unknown>,
+    expectedVersion: number | null
+  ): Promise<PutIfMatchResult>;
 }
 
 /**
@@ -212,20 +266,25 @@ export interface InMemoryStateStoreOptions {
   maxDocumentBytes?: number;
 }
 
+interface VersionedRow {
+  data: Record<string, unknown>;
+  version: number;
+}
+
 /**
  * In-memory state store for development and testing.
  *
  * State is lost when the process restarts. Use PostgresStateStore for production.
  */
 export class InMemoryStateStore implements AdcpStateStore {
-  private collections = new Map<string, Map<string, Record<string, unknown>>>();
+  private collections = new Map<string, Map<string, VersionedRow>>();
   private readonly maxDocumentBytes: number;
 
   constructor(options?: InMemoryStateStoreOptions) {
     this.maxDocumentBytes = options?.maxDocumentBytes ?? DEFAULT_MAX_DOCUMENT_BYTES;
   }
 
-  private getCollection(collection: string): Map<string, Record<string, unknown>> {
+  private getCollection(collection: string): Map<string, VersionedRow> {
     let col = this.collections.get(collection);
     if (!col) {
       col = new Map();
@@ -240,20 +299,53 @@ export class InMemoryStateStore implements AdcpStateStore {
   ): Promise<T | null> {
     validateCollection(collection);
     validateId(id);
-    const doc = this.getCollection(collection).get(id);
-    return doc ? ({ ...doc } as T) : null;
+    const row = this.getCollection(collection).get(id);
+    return row ? ({ ...row.data } as T) : null;
+  }
+
+  async getWithVersion<T extends Record<string, unknown> = Record<string, unknown>>(
+    collection: string,
+    id: string
+  ): Promise<VersionedDocument<T> | null> {
+    validateCollection(collection);
+    validateId(id);
+    const row = this.getCollection(collection).get(id);
+    return row ? { data: { ...row.data } as T, version: row.version } : null;
   }
 
   async put(collection: string, id: string, data: Record<string, unknown>): Promise<void> {
     validateWrite(collection, id, data, this.maxDocumentBytes);
-    this.getCollection(collection).set(id, { ...data });
+    const col = this.getCollection(collection);
+    const existing = col.get(id);
+    col.set(id, { data: { ...data }, version: (existing?.version ?? 0) + 1 });
+  }
+
+  async putIfMatch(
+    collection: string,
+    id: string,
+    data: Record<string, unknown>,
+    expectedVersion: number | null
+  ): Promise<PutIfMatchResult> {
+    validateWrite(collection, id, data, this.maxDocumentBytes);
+    const col = this.getCollection(collection);
+    const existing = col.get(id);
+    const currentVersion = existing?.version ?? null;
+    if (currentVersion !== expectedVersion) {
+      return { ok: false, currentVersion };
+    }
+    const nextVersion = (existing?.version ?? 0) + 1;
+    col.set(id, { data: { ...data }, version: nextVersion });
+    return { ok: true, version: nextVersion };
   }
 
   async patch(collection: string, id: string, partial: Record<string, unknown>): Promise<void> {
     validateWrite(collection, id, partial, this.maxDocumentBytes);
     const col = this.getCollection(collection);
     const existing = col.get(id);
-    col.set(id, { ...(existing ?? {}), ...partial });
+    col.set(id, {
+      data: { ...(existing?.data ?? {}), ...partial },
+      version: (existing?.version ?? 0) + 1,
+    });
   }
 
   async delete(collection: string, id: string): Promise<boolean> {
@@ -269,17 +361,14 @@ export class InMemoryStateStore implements AdcpStateStore {
     validateCollection(collection);
     const col = this.getCollection(collection);
 
-    // Build id+data entries for stable cursor tracking
-    let entries = [...col.entries()].map(([id, data]) => ({ id, data: data as T }));
+    let entries = [...col.entries()].map(([id, row]) => ({ id, data: row.data as T }));
 
-    // Apply filter (exact match on fields)
     if (options?.filter) {
       for (const [key, value] of Object.entries(options.filter)) {
         entries = entries.filter(e => e.data[key] === value);
       }
     }
 
-    // Apply cursor (skip entries at or before cursor id)
     if (options?.cursor) {
       const idx = entries.findIndex(e => e.id === options.cursor);
       if (idx >= 0) {
@@ -287,7 +376,6 @@ export class InMemoryStateStore implements AdcpStateStore {
       }
     }
 
-    // Apply limit
     const limit = Math.min(options?.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
     const hasMore = entries.length > limit;
     entries = entries.slice(0, limit);
@@ -411,5 +499,197 @@ export function createSessionedStore(inner: AdcpStateStore, sessionKey: string):
       const stripped = items.map(item => stripSessionKey(item) as T);
       return nextCursor !== undefined ? { items: stripped, nextCursor } : { items: stripped };
     },
+
+    // Proxy optimistic-concurrency methods when the inner store supports them.
+    // Capture method references at wrap time (bound to `inner`) so runtime
+    // reassignment or `this`-sensitive implementations like PostgresStateStore
+    // can't desync.
+    ...(() => {
+      const innerGetWithVersion = inner.getWithVersion?.bind(inner);
+      const innerPutIfMatch = inner.putIfMatch?.bind(inner);
+      return {
+        ...(innerGetWithVersion && {
+          async getWithVersion<T extends Record<string, unknown> = Record<string, unknown>>(
+            collection: string,
+            id: string
+          ): Promise<VersionedDocument<T> | null> {
+            const result = await innerGetWithVersion<T>(collection, prefix(id));
+            if (result == null) return null;
+            const stripped = stripSessionKey(result.data);
+            return stripped == null ? null : { data: stripped as T, version: result.version };
+          },
+        }),
+        ...(innerPutIfMatch && {
+          async putIfMatch(
+            collection: string,
+            id: string,
+            data: Record<string, unknown>,
+            expectedVersion: number | null
+          ): Promise<PutIfMatchResult> {
+            rejectReservedField(data);
+            return innerPutIfMatch(
+              collection,
+              prefix(id),
+              { ...data, [SESSION_KEY_FIELD]: sessionKey },
+              expectedVersion
+            );
+          },
+        }),
+      };
+    })(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// patchWithRetry helper
+// ---------------------------------------------------------------------------
+
+export interface PatchWithRetryOptions {
+  /** Max retry attempts on version conflict. Defaults to 5. */
+  maxAttempts?: number;
+
+  /**
+   * Called to compute a millisecond delay before the next attempt. Receives the
+   * attempt number that just failed (1-indexed). Defaults to jittered exponential
+   * backoff: `Math.random() * (1 << attempt)` (0–2 ms after 1, 0–4 ms after 2, …).
+   * Return `0` (or pass a function that does) to disable backoff.
+   */
+  backoffMs?: (attempt: number) => number;
+
+  /**
+   * When the row is deleted between the initial read and the write, `patchWithRetry`
+   * normally aborts with `PatchConflictError` to avoid silently resurrecting a
+   * deleted document. Set to `true` to treat the post-delete state as a fresh
+   * insert (re-running `update(null)` and inserting the result).
+   *
+   * Default: `false`.
+   */
+  allowResurrection?: boolean;
+}
+
+// Cap the shift so `1 << attempt` can't overflow to 0 or flip sign at attempt >= 31.
+// 20 is plenty: 2^20 = ~1 second, and maxAttempts would be absurd long before then.
+const defaultBackoffMs = (attempt: number) => Math.random() * Math.pow(2, Math.min(attempt, 20));
+
+/**
+ * Error thrown when `patchWithRetry` exceeds `maxAttempts` consecutive version conflicts,
+ * or when the row was deleted between the initial read and the write and
+ * `allowResurrection` is not set.
+ */
+export class PatchConflictError extends ADCPError {
+  readonly code = 'PATCH_CONFLICT';
+  constructor(
+    readonly collection: string,
+    readonly id: string,
+    readonly attempts: number,
+    readonly reason: 'max_attempts_exceeded' | 'deleted_during_retry',
+    readonly lastObservedVersion: number | null
+  ) {
+    super(
+      reason === 'deleted_during_retry'
+        ? `patchWithRetry(${collection}, ${id}): row was deleted between read and write. ` +
+            `Pass {allowResurrection: true} if you want to re-insert it.`
+        : `patchWithRetry(${collection}, ${id}) exhausted ${attempts} attempts after version conflicts ` +
+            `(last observed version: ${lastObservedVersion ?? 'none'}). ` +
+            `Either the row has too many concurrent writers (split it), or raise {maxAttempts: N}.`
+    );
+  }
+}
+
+/**
+ * Type guard for the conflict arm of {@link PutIfMatchResult}. Useful for
+ * narrowing in hand-rolled retry loops.
+ *
+ * ```ts
+ * const result = await store.putIfMatch('col', 'x', data, version);
+ * if (isPutIfMatchConflict(result)) {
+ *   // result.currentVersion is number | null here
+ * }
+ * ```
+ */
+export function isPutIfMatchConflict(result: PutIfMatchResult): result is { ok: false; currentVersion: number | null } {
+  return result.ok === false;
+}
+
+/**
+ * Read-compute-write loop that retries on version conflict, using `getWithVersion`
+ * + `putIfMatch` under the hood. The right primitive for counter-like updates
+ * where two handlers might read the same pre-state and otherwise lose one write.
+ *
+ * `update` receives the current document (or `null` if the row doesn't exist)
+ * and returns the next document. Returning `null` aborts without writing.
+ *
+ * ```ts
+ * await patchWithRetry(ctx.store, 'media_buys', 'mb_1', (current) => ({
+ *   ...(current ?? {}),
+ *   budget_spent: (current?.budget_spent ?? 0) + cost,
+ * }));
+ * ```
+ *
+ * Throws {@link PatchConflictError} after `maxAttempts` consecutive conflicts.
+ * Throws {@link PatchConflictError} with `reason: 'deleted_during_retry'` if
+ * the row is deleted between the initial read and the write (opt into
+ * resurrection via `allowResurrection: true`).
+ *
+ * Requires the store to implement both `getWithVersion` and `putIfMatch`.
+ *
+ * **Mutation caveat**: always build a fresh object in `update` — never mutate
+ * the `current` argument in place. In-memory stores hand out a shallow copy
+ * (nested references shared across retries) while Postgres deserializes JSONB
+ * fresh each time; the safe pattern (`{ ...current, field: newValue }`) works
+ * on both.
+ *
+ * **Error propagation**: if `update` throws, the exception propagates
+ * immediately and no retry happens.
+ *
+ * **Backoff**: default is jittered exponential (low single-digit ms). Override
+ * with `options.backoffMs`. Return `0` to disable.
+ *
+ * **Size**: each retry re-reads the full document. Avoid on rows close to
+ * `maxDocumentBytes` — split into per-entity rows instead.
+ */
+export async function patchWithRetry<T extends Record<string, unknown> = Record<string, unknown>>(
+  store: AdcpStateStore,
+  collection: string,
+  id: string,
+  update: (current: T | null) => T | null,
+  options: PatchWithRetryOptions = {}
+): Promise<T | null> {
+  if (!store.getWithVersion || !store.putIfMatch) {
+    throw new StateError(
+      'BACKEND_ERROR',
+      'patchWithRetry requires a store with getWithVersion and putIfMatch. Use InMemoryStateStore or PostgresStateStore, or pass a custom store that implements both.'
+    );
+  }
+
+  const maxAttempts = options.maxAttempts ?? 5;
+  const backoffMs = options.backoffMs ?? defaultBackoffMs;
+  const allowResurrection = options.allowResurrection ?? false;
+
+  let sawExistingRow = false;
+  let lastObservedVersion: number | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const current = await store.getWithVersion<T>(collection, id);
+    if (current) {
+      sawExistingRow = true;
+      lastObservedVersion = current.version;
+    } else if (sawExistingRow && !allowResurrection) {
+      throw new PatchConflictError(collection, id, attempt, 'deleted_during_retry', lastObservedVersion);
+    }
+
+    const nextData = update(current ? current.data : null);
+    if (nextData === null) return null;
+
+    const result = await store.putIfMatch(collection, id, nextData, current ? current.version : null);
+    if (result.ok) return nextData;
+
+    if (result.currentVersion !== null) lastObservedVersion = result.currentVersion;
+
+    if (attempt < maxAttempts) {
+      const delay = backoffMs(attempt);
+      if (delay > 0) await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new PatchConflictError(collection, id, maxAttempts, 'max_attempts_exceeded', lastObservedVersion);
 }
