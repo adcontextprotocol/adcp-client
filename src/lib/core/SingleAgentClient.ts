@@ -2328,76 +2328,44 @@ export class SingleAgentClient {
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 
-      // Use MCP SDK to list tools
-      const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
-      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      // Use the shared connectMCP path so both static bearer AND saved OAuth
+      // tokens work. OAuth takes the refresh-capable authProvider branch.
+      const { connectMCP } = await import('../protocols/mcp');
+      const connectOptions: Parameters<typeof connectMCP>[0] = { agentUrl: agent.agent_uri };
+      if (this.normalizedAgent.oauth_tokens) {
+        const { createNonInteractiveOAuthProvider } = await import('../auth/oauth');
+        connectOptions.authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
+          agentHint: this.normalizedAgent.id,
+        });
+      } else if (this.normalizedAgent.auth_token) {
+        connectOptions.authToken = this.normalizedAgent.auth_token;
+      }
 
-      const mcpClient = new MCPClient({
-        name: 'AdCP-Client',
-        version: '1.0.0',
-      });
+      const { client: mcpClient } = await connectMCP(connectOptions);
+      try {
+        const toolsList = await mcpClient.listTools();
 
-      const authToken = this.normalizedAgent.auth_token;
-      const customFetch = authToken
-        ? async (input: string | URL | Request, init?: RequestInit) => {
-            // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
-            // Convert existing headers to plain object for merging
-            let existingHeaders: Record<string, string> = {};
-            if (init?.headers) {
-              if (init.headers instanceof Headers) {
-                // Headers object - use forEach to extract all headers
-                init.headers.forEach((value: string, key: string) => {
-                  existingHeaders[key] = value;
-                });
-              } else if (Array.isArray(init.headers)) {
-                // Array of [key, value] tuples
-                for (const [key, value] of init.headers) {
-                  existingHeaders[key] = value;
-                }
-              } else {
-                // Plain object - copy all properties
-                for (const key in init.headers) {
-                  if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
-                    existingHeaders[key] = init.headers[key] as string;
-                  }
-                }
-              }
-            }
+        const tools = toolsList.tools.map(tool => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          parameters: tool.inputSchema?.properties ? Object.keys(tool.inputSchema.properties) : [],
+        }));
 
-            // Merge auth headers with existing headers
-            // Keep existing headers (including Accept) and only add/override with auth headers
-            const headers = {
-              ...existingHeaders,
-              Authorization: `Bearer ${authToken}`,
-              'x-adcp-auth': authToken,
-            };
-            return fetch(input, { ...init, headers });
-          }
-        : undefined;
-
-      const transport = new StreamableHTTPClientTransport(
-        new URL(agent.agent_uri),
-        customFetch ? { fetch: customFetch } : {}
-      );
-
-      await mcpClient.connect(transport);
-      const toolsList = await mcpClient.listTools();
-      await mcpClient.close();
-
-      const tools = toolsList.tools.map(tool => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        parameters: tool.inputSchema?.properties ? Object.keys(tool.inputSchema.properties) : [],
-      }));
-
-      return {
-        name: this.normalizedAgent.name,
-        description: undefined,
-        protocol: this.normalizedAgent.protocol,
-        url: agent.agent_uri,
-        tools,
-      };
+        return {
+          name: this.normalizedAgent.name,
+          description: undefined,
+          protocol: this.normalizedAgent.protocol,
+          url: agent.agent_uri,
+          tools,
+        };
+      } finally {
+        try {
+          await mcpClient.close();
+        } catch {
+          /* ignore */
+        }
+      }
     } else if (this.normalizedAgent.protocol === 'a2a') {
       // Use A2A SDK to get agent card
       const clientModule = require('@a2a-js/sdk/client');

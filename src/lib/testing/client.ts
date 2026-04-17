@@ -23,11 +23,19 @@ const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example' };
 
 /**
  * Extract a principal identifier from TestOptions auth.
- * For bearer auth this is the token; for basic auth this is the username.
+ * For bearer auth this is the token; for basic auth this is the username;
+ * for oauth this is the access_token.
  */
 export function resolveAuthPrincipal(options: TestOptions): string | undefined {
   if (!options.auth) return undefined;
-  return options.auth.type === 'basic' ? options.auth.username : options.auth.token;
+  switch (options.auth.type) {
+    case 'basic':
+      return options.auth.username;
+    case 'oauth':
+      return options.auth.tokens.access_token;
+    case 'bearer':
+      return options.auth.token;
+  }
 }
 
 /**
@@ -97,6 +105,8 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     agent_uri: string;
     protocol: 'mcp' | 'a2a';
     auth_token?: string;
+    oauth_tokens?: import('../types/adcp').AgentOAuthTokens;
+    oauth_client?: import('../types/adcp').AgentOAuthClient;
     headers?: Record<string, string>;
   } = {
     id: 'test',
@@ -111,6 +121,11 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       // basic: encode credentials here; library sends the Authorization header as-is
       const encoded = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
       agentConfig.headers = { Authorization: `Basic ${encoded}` };
+    } else if (options.auth.type === 'oauth') {
+      // oauth: attach tokens + client registration; ProtocolClient detects
+      // oauth_tokens and routes through the refresh-capable MCP OAuth path.
+      agentConfig.oauth_tokens = options.auth.tokens;
+      if (options.auth.client) agentConfig.oauth_client = options.auth.client;
     } else {
       // bearer: raw token stored; library prepends 'Bearer ' internally via createMCPAuthHeaders
       agentConfig.auth_token = options.auth.token;

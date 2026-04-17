@@ -58,6 +58,7 @@ export {
 
 // Flow handlers
 export { CLIFlowHandler, type CLIFlowHandlerConfig } from './CLIFlowHandler';
+export { NonInteractiveFlowHandler, type NonInteractiveFlowHandlerConfig } from './NonInteractiveFlowHandler';
 
 // Main provider
 export { MCPOAuthProvider } from './MCPOAuthProvider';
@@ -130,6 +131,44 @@ export function createCLIOAuthProvider(
   const flowHandler = new CLIFlowHandler(flowConfig);
 
   // Build complete client metadata
+  const clientMetadata: OAuthClientMetadata = {
+    ...DEFAULT_CLIENT_METADATA,
+    redirect_uris: [flowHandler.getRedirectUrl().toString()],
+    ...options?.clientMetadata,
+  };
+
+  return new MCPOAuthProvider({
+    agent,
+    flowHandler,
+    storage: options?.storage,
+    clientMetadata,
+  });
+}
+
+/**
+ * Create an OAuth provider that uses and auto-refreshes saved tokens but
+ * refuses to start a new interactive browser flow. Use this for storyboard
+ * runs, scheduled jobs, and other non-interactive contexts where you've
+ * already saved tokens via `createCLIOAuthProvider`.
+ *
+ * If refresh fails (e.g., the refresh_token is revoked or expired), the
+ * MCP SDK will throw `UnauthorizedError` at call time — the caller should
+ * treat that as a signal to run `adcp --save-auth <alias> --oauth` and retry.
+ */
+export function createNonInteractiveOAuthProvider(
+  agent: AgentConfig,
+  options?: {
+    /** Hint shown in error messages if an interactive flow is attempted. */
+    agentHint?: string;
+    /** Custom client metadata overrides (inherited from saved registration in practice). */
+    clientMetadata?: Partial<OAuthClientMetadata>;
+    /** Storage for persisting refreshed tokens back to disk. */
+    storage?: OAuthConfigStorage;
+  }
+): MCPOAuthProvider {
+  const { NonInteractiveFlowHandler } = require('./NonInteractiveFlowHandler');
+  const flowHandler = new NonInteractiveFlowHandler({ agentHint: options?.agentHint });
+
   const clientMetadata: OAuthClientMetadata = {
     ...DEFAULT_CLIENT_METADATA,
     redirect_uris: [flowHandler.getRedirectUrl().toString()],

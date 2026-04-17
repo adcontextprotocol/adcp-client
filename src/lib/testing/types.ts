@@ -91,10 +91,21 @@ export interface TestOptions {
   /**
    * Authentication for agents that require it.
    *
-   * For `bearer`, provide the raw token — the library sends it as `Authorization: Bearer <token>`.
-   * For `basic`, provide cleartext `username` and `password` — the library encodes them internally.
+   * - `bearer`: raw token sent as `Authorization: Bearer <token>`.
+   * - `basic`: cleartext `username` and `password`, encoded internally.
+   * - `oauth`: saved OAuth tokens (access_token + refresh_token). MCP only.
+   *   The library auto-refreshes on 401. Obtain tokens interactively via
+   *   `adcp --save-auth <alias> --oauth`, then pass the saved blob here for
+   *   non-interactive reuse.
    */
-  auth?: { type: 'bearer'; token: string } | { type: 'basic'; username: string; password: string };
+  auth?:
+    | { type: 'bearer'; token: string }
+    | { type: 'basic'; username: string; password: string }
+    | {
+        type: 'oauth';
+        tokens: import('../types/adcp').AgentOAuthTokens;
+        client?: import('../types/adcp').AgentOAuthClient;
+      };
   // Brand manifest for creative testing
   brand_manifest?: {
     name: string;
