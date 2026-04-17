@@ -64,16 +64,27 @@ export type { ServeContext, ServeOptions } from './serve';
 export {
   InMemoryStateStore,
   StateError,
+  PatchConflictError,
   DEFAULT_MAX_DOCUMENT_BYTES,
   SESSION_KEY_FIELD,
   createSessionedStore,
   scopedStore,
+  patchWithRetry,
   validateCollection,
   validateId,
   validatePayloadSize,
   validateWrite,
 } from './state-store';
-export type { AdcpStateStore, InMemoryStateStoreOptions, ListOptions, ListResult, StateErrorCode } from './state-store';
+export type {
+  AdcpStateStore,
+  InMemoryStateStoreOptions,
+  ListOptions,
+  ListResult,
+  PatchWithRetryOptions,
+  PutIfMatchResult,
+  StateErrorCode,
+  VersionedDocument,
+} from './state-store';
 
 export { PostgresStateStore, getAdcpStateMigration, ADCP_STATE_MIGRATION } from './postgres-state-store';
 export type { PostgresStateStoreOptions } from './postgres-state-store';

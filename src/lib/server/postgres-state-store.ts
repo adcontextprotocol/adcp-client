@@ -41,6 +41,8 @@ import {
   type AdcpStateStore,
   type ListOptions,
   type ListResult,
+  type PutIfMatchResult,
+  type VersionedDocument,
 } from './state-store';
 
 export interface PostgresStateStoreOptions {
@@ -57,6 +59,10 @@ const MAX_PAGE_SIZE = 500;
 
 /**
  * Generate the SQL DDL for the state store table.
+ *
+ * Idempotent: safe to run on existing tables. The `ADD COLUMN IF NOT EXISTS`
+ * clause upgrades databases created by earlier SDK versions (no `version`
+ * column) without rewriting data — existing rows start at version 1.
  */
 export function getAdcpStateMigration(tableName = DEFAULT_TABLE): string {
   if (!VALID_IDENTIFIER.test(tableName)) {
@@ -68,11 +74,15 @@ export function getAdcpStateMigration(tableName = DEFAULT_TABLE): string {
       collection    TEXT NOT NULL,
       id            TEXT NOT NULL,
       data          JSONB NOT NULL,
+      version       INTEGER NOT NULL DEFAULT 1,
       created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
       PRIMARY KEY (collection, id)
     );
+
+    ALTER TABLE ${tableName}
+      ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
 
     CREATE INDEX IF NOT EXISTS idx_${tableName}_collection
       ON ${tableName}(collection);
@@ -113,24 +123,81 @@ export class PostgresStateStore implements AdcpStateStore {
     return rows[0]!.data as T;
   }
 
+  async getWithVersion<T extends Record<string, unknown> = Record<string, unknown>>(
+    collection: string,
+    id: string
+  ): Promise<VersionedDocument<T> | null> {
+    validateCollection(collection);
+    validateId(id);
+    const { rows } = await this.db.query(`SELECT data, version FROM ${this.table} WHERE collection = $1 AND id = $2`, [
+      collection,
+      id,
+    ]);
+    if (rows.length === 0) return null;
+    const row = rows[0]!;
+    return { data: row.data as T, version: row.version as number };
+  }
+
   async put(collection: string, id: string, data: Record<string, unknown>): Promise<void> {
     const serialized = validateWrite(collection, id, data, this.maxDocumentBytes);
     await this.db.query(
-      `INSERT INTO ${this.table} (collection, id, data)
-       VALUES ($1, $2, $3)
+      `INSERT INTO ${this.table} (collection, id, data, version)
+       VALUES ($1, $2, $3, 1)
        ON CONFLICT (collection, id)
-       DO UPDATE SET data = $3, updated_at = NOW()`,
+       DO UPDATE SET data = $3, version = ${this.table}.version + 1, updated_at = NOW()`,
       [collection, id, serialized]
     );
+  }
+
+  async putIfMatch(
+    collection: string,
+    id: string,
+    data: Record<string, unknown>,
+    expectedVersion: number | null
+  ): Promise<PutIfMatchResult> {
+    const serialized = validateWrite(collection, id, data, this.maxDocumentBytes);
+
+    if (expectedVersion === null) {
+      // Insert-only path: succeed iff no row exists. Returns version on success,
+      // nothing on conflict (then we re-read to report the current version).
+      const { rows } = await this.db.query(
+        `INSERT INTO ${this.table} (collection, id, data, version)
+         VALUES ($1, $2, $3, 1)
+         ON CONFLICT (collection, id) DO NOTHING
+         RETURNING version`,
+        [collection, id, serialized]
+      );
+      if (rows.length > 0) return { ok: true, version: rows[0]!.version as number };
+      const { rows: existing } = await this.db.query(
+        `SELECT version FROM ${this.table} WHERE collection = $1 AND id = $2`,
+        [collection, id]
+      );
+      return { ok: false, currentVersion: (existing[0]?.version as number | undefined) ?? null };
+    }
+
+    const { rows } = await this.db.query(
+      `UPDATE ${this.table}
+       SET data = $3, version = version + 1, updated_at = NOW()
+       WHERE collection = $1 AND id = $2 AND version = $4
+       RETURNING version`,
+      [collection, id, serialized, expectedVersion]
+    );
+    if (rows.length > 0) return { ok: true, version: rows[0]!.version as number };
+
+    const { rows: existing } = await this.db.query(
+      `SELECT version FROM ${this.table} WHERE collection = $1 AND id = $2`,
+      [collection, id]
+    );
+    return { ok: false, currentVersion: (existing[0]?.version as number | undefined) ?? null };
   }
 
   async patch(collection: string, id: string, partial: Record<string, unknown>): Promise<void> {
     const serialized = validateWrite(collection, id, partial, this.maxDocumentBytes);
     await this.db.query(
-      `INSERT INTO ${this.table} (collection, id, data)
-       VALUES ($1, $2, $3)
+      `INSERT INTO ${this.table} (collection, id, data, version)
+       VALUES ($1, $2, $3, 1)
        ON CONFLICT (collection, id)
-       DO UPDATE SET data = ${this.table}.data || $3, updated_at = NOW()`,
+       DO UPDATE SET data = ${this.table}.data || $3, version = ${this.table}.version + 1, updated_at = NOW()`,
       [collection, id, serialized]
     );
   }

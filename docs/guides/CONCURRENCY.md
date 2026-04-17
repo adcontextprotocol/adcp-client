@@ -169,9 +169,67 @@ const server = createAdcpServer({
 - `list()` cursors are valid **only within the session** that produced them.
   Don't pass a cursor from session A to session B.
 
-## Coming soon: optimistic concurrency
+## Optimistic concurrency with `putIfMatch`
 
-An RFC is open for `putIfMatch(collection, id, data, expectedVersion)` to
-give sellers an atomic compare-and-swap primitive. That will let
-read-modify-write loops retry on conflict instead of silently losing data.
-Until then, prefer per-entity rows and `patch`.
+For read-modify-write loops (counters, append-to-array, conditional state
+machines) use `putIfMatch` or the `patchWithRetry` helper. Both built-in
+stores (`InMemoryStateStore`, `PostgresStateStore`) track a monotonically
+increasing `version` per row so updates can compare-and-swap.
+
+### `patchWithRetry` (recommended)
+
+Handles the get → compute → putIfMatch → retry loop for you:
+
+```ts
+import { patchWithRetry } from '@adcp/client/server';
+
+await patchWithRetry(ctx.store, 'media_buys', 'mb_1', current => ({
+  ...(current ?? {}),
+  budget_spent: (current?.budget_spent ?? 0) + cost,
+}));
+```
+
+- Retries up to 5 times by default. Pass `{ maxAttempts: N }` to tune.
+- If an intervening writer bumps the row between your read and write,
+  the closure runs again with the new pre-state.
+- Throws `PatchConflictError` after exhausting attempts — almost always
+  means a hot row; split it into per-entity rows.
+- Returning `null` from the update closure aborts without writing.
+
+### `putIfMatch` (primitive)
+
+If you want the raw primitive:
+
+```ts
+const current = await ctx.store.getWithVersion('media_buys', 'mb_1');
+const next = { ...(current?.data ?? {}), status: 'approved' };
+const result = await ctx.store.putIfMatch(
+  'media_buys',
+  'mb_1',
+  next,
+  current?.version ?? null
+);
+if (!result.ok) {
+  // Someone else wrote first. result.currentVersion tells you what's there now.
+  // Re-read and retry, or abort the operation.
+}
+```
+
+- `expectedVersion: null` means "row must not exist" — insert-only.
+- On success, `result.version` is the row's new version.
+- On conflict, `result.currentVersion` is what the store has on disk
+  (or `null` if the row doesn't exist at all).
+- Both operands are validated the same as `put` (charset, size, reserved fields).
+
+### Postgres migration
+
+The `version` column is added by `getAdcpStateMigration()`; existing
+databases pick it up via `ADD COLUMN IF NOT EXISTS`. Existing rows start
+at version 1. No data rewrite needed.
+
+### Which primitive when
+
+- **Counter / accumulator** → `patchWithRetry`.
+- **Idempotent "create if not exists"** → `putIfMatch(..., null)`, ignore conflict.
+- **Guarded state transition** (e.g., "only archive if status=active") → `getWithVersion` + `putIfMatch` with custom retry logic.
+- **Independent top-level fields** → plain `patch` is still simpler and atomic at the field level (see above).
