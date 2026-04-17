@@ -14,6 +14,7 @@ import {
 } from 'fs';
 import { mkdtempSync } from 'fs';
 import { createHash } from 'crypto';
+import { spawnSync } from 'child_process';
 import path from 'path';
 import * as tar from 'tar';
 
@@ -22,6 +23,11 @@ const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
 const REGISTRY_SPEC_PATH = path.join(REPO_ROOT, 'schemas/registry/registry.yaml');
+
+// Sigstore keyless identity used by the upstream release workflow (adcontextprotocol/adcp#2273).
+const COSIGN_IDENTITY_REGEX =
+  '^https://github\\.com/adcontextprotocol/adcp/\\.github/workflows/release\\.yml@refs/heads/.*$';
+const COSIGN_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 
 function getTargetAdCPVersion(): string {
   const versionFilePath = path.join(REPO_ROOT, 'ADCP_VERSION');
@@ -115,6 +121,81 @@ async function fetchText(url: string): Promise<string> {
 }
 
 /**
+ * If cosign sidecars exist for this tarball, verify them. Graceful degradation:
+ *   - `latest.tgz` is intentionally unsigned upstream (rebuilt too frequently) — skip.
+ *   - Missing sidecars (404) → checksum-only trust, log and continue.
+ *   - Sidecars present but `cosign` binary missing → checksum-only, log install hint.
+ *   - Sidecars present and `cosign` available → verify; throw on failure.
+ */
+async function verifyCosignSignature(tgzPath: string, version: string): Promise<void> {
+  if (version === 'latest') {
+    console.log('ℹ️  latest.tgz is intentionally unsigned upstream (checksum-only trust).');
+    return;
+  }
+
+  const sigUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz.sig`;
+  const crtUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz.crt`;
+
+  const [sigProbe, crtProbe] = await Promise.all([
+    fetch(sigUrl, { method: 'HEAD' }),
+    fetch(crtUrl, { method: 'HEAD' }),
+  ]);
+
+  if (sigProbe.status === 404 || crtProbe.status === 404) {
+    console.log(`ℹ️  No cosign sidecars for v${version} (checksum-only trust — upstream predates signing).`);
+    return;
+  }
+
+  if (!sigProbe.ok || !crtProbe.ok) {
+    throw new Error(`Unexpected status for cosign sidecars: sig ${sigProbe.status}, crt ${crtProbe.status}`);
+  }
+
+  const cosign = spawnSync('cosign', ['version'], { stdio: 'ignore' });
+  if (cosign.error || cosign.status !== 0) {
+    console.warn(
+      `⚠️  cosign sidecars are published for v${version} but \`cosign\` is not installed. ` +
+        `Proceeding with checksum-only trust — install cosign (\`brew install cosign\` / ` +
+        `https://docs.sigstore.dev/cosign/installation/) to enable signature verification.`
+    );
+    return;
+  }
+
+  const [sigBuf, crtBuf] = await Promise.all([fetchBinary(sigUrl), fetchBinary(crtUrl)]);
+  const sigPath = `${tgzPath}.sig`;
+  const crtPath = `${tgzPath}.crt`;
+  writeFileSync(sigPath, sigBuf);
+  writeFileSync(crtPath, crtBuf);
+
+  console.log(`🔐 Verifying cosign signature for v${version}…`);
+  const verify = spawnSync(
+    'cosign',
+    [
+      'verify-blob',
+      '--signature',
+      sigPath,
+      '--certificate',
+      crtPath,
+      '--certificate-identity-regexp',
+      COSIGN_IDENTITY_REGEX,
+      '--certificate-oidc-issuer',
+      COSIGN_OIDC_ISSUER,
+      tgzPath,
+    ],
+    { encoding: 'utf8' }
+  );
+
+  if (verify.status !== 0) {
+    throw new Error(
+      `cosign verify-blob failed for v${version}:\n` +
+        `  exit ${verify.status}\n` +
+        `  stderr: ${verify.stderr}\n` +
+        `  stdout: ${verify.stdout}`
+    );
+  }
+  console.log(`✅ cosign signature verified (identity: adcontextprotocol/adcp release workflow).`);
+}
+
+/**
  * Fetch /protocol/{version}.tgz, verify sha256, and extract schemas + compliance
  * into their cache directories. Returns true on success.
  *
@@ -147,6 +228,11 @@ async function syncFromTarball(version: string): Promise<boolean> {
   try {
     const tgzPath = path.join(workDir, 'bundle.tgz');
     writeFileSync(tgzPath, tgzBuf);
+
+    // Cosign keyless signature verification (adcontextprotocol/adcp#2273).
+    // Best-effort: latest is unsigned, sidecars may be absent on older releases.
+    await verifyCosignSignature(tgzPath, version);
+
     await tar.x({ file: tgzPath, cwd: workDir });
 
     const extractRoot = path.join(workDir, `adcp-${version}`);

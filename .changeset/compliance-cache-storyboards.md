@@ -10,6 +10,12 @@ verifies its sha256 sidecar, and extracts both `schemas/` and `compliance/` into
 as a fallback. The compliance cache ships with the published npm package — no network
 call required for first use.
 
+When a pinned version ships cosign sidecars (`.sig` / `.crt`, per
+adcontextprotocol/adcp#2273), `sync-schemas` verifies them against the upstream
+release workflow's Sigstore identity. `latest.tgz` is intentionally unsigned and skipped.
+Missing sidecars or a missing `cosign` binary fall back to checksum-only trust with a
+clear log line; a present-but-failed verification is a hard error.
+
 Storyboard selection is driven by the agent's `get_adcp_capabilities` response:
 `supported_protocols` resolves to domain baselines and `specialisms` resolves to
 specialism bundles. The runner fails closed when:
