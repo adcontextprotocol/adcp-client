@@ -299,6 +299,20 @@ export async function callMCPToolWithTasks(
               },
             };
           }
+          // Servers may return a synchronous tool error (e.g. VERSION_UNSUPPORTED)
+          // rather than creating a task. The Tasks SDK rejects these with a Zod
+          // validation error about a missing `task` field. When no task was
+          // captured, fall back to standard callTool so the error response
+          // reaches the caller intact.
+          const msg = error instanceof Error ? error.message : String(error);
+          if (!capturedTaskId && /Invalid task creation result/i.test(msg)) {
+            debugLogs.push({
+              type: 'info',
+              message: `MCP Tasks: Server returned synchronous response for ${toolName}, falling back to callTool`,
+              timestamp: new Date().toISOString(),
+            });
+            return (await client.callTool({ name: toolName, arguments: args })) as CallToolResponse;
+          }
           throw error;
         }
 
