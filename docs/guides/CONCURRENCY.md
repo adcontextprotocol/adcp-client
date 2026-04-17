@@ -129,8 +129,8 @@ writes. The symptom is: "a message my handler appended is missing" or
 "a media buy I just created isn't there."
 
 If you must keep the blob layout, funnel all writes through a single
-worker per `sessionKey`, or upgrade to optimistic concurrency once
-`putIfMatch` lands (see below).
+worker per `sessionKey`, or use [`patchWithRetry`](#optimistic-concurrency-patchwithretry)
+for atomic read-modify-write.
 
 ## Per-session isolation
 
@@ -169,9 +169,78 @@ const server = createAdcpServer({
 - `list()` cursors are valid **only within the session** that produced them.
   Don't pass a cursor from session A to session B.
 
-## Coming soon: optimistic concurrency
+## Optimistic concurrency: `patchWithRetry`
 
-An RFC is open for `putIfMatch(collection, id, data, expectedVersion)` to
-give sellers an atomic compare-and-swap primitive. That will let
-read-modify-write loops retry on conflict instead of silently losing data.
-Until then, prefer per-entity rows and `patch`.
+For read-modify-write loops (counters, append-to-array, conditional state
+machines) use `patchWithRetry`. Both built-in stores (`InMemoryStateStore`,
+`PostgresStateStore`) track a monotonically increasing `version` per row so
+updates can compare-and-swap.
+
+### Which primitive when
+
+- **Counter / accumulator** → `patchWithRetry`.
+- **Idempotent "create if not exists"** → `putIfMatch(..., null)`, ignore conflict.
+- **Guarded state transition** (e.g., "only archive if status=active") → `getWithVersion` + `putIfMatch` with custom retry logic.
+- **Independent top-level fields** → plain `patch` is simpler and atomic at the field level (see above).
+
+### `patchWithRetry` (recommended)
+
+Handles the get → compute → putIfMatch → retry loop for you:
+
+```ts
+import { patchWithRetry } from '@adcp/client/server';
+
+await patchWithRetry(ctx.store, 'media_buys', 'mb_1', current => ({
+  ...(current ?? {}),
+  budget_spent: (current?.budget_spent ?? 0) + cost,
+}));
+```
+
+- Retries up to 5 times by default (jittered exponential backoff between attempts).
+  Pass `{ maxAttempts: N, backoffMs: attempt => ... }` to tune.
+- If an intervening writer bumps the row between your read and write,
+  the closure runs again with the new pre-state.
+- If the row is deleted between read and write, throws `PatchConflictError`
+  with `reason: 'deleted_during_retry'` to avoid silently resurrecting it.
+  Opt in to resurrection with `{ allowResurrection: true }`.
+- Throws `PatchConflictError` after exhausting attempts — almost always
+  means a hot row; split it into per-entity rows.
+- Returning `null` from the update closure aborts without writing.
+
+### `putIfMatch` (primitive)
+
+If you want the raw primitive:
+
+```ts
+const current = await ctx.store.getWithVersion('media_buys', 'mb_1');
+const next = { ...(current?.data ?? {}), status: 'approved' };
+const result = await ctx.store.putIfMatch(
+  'media_buys',
+  'mb_1',
+  next,
+  current?.version ?? null
+);
+if (!result.ok) {
+  // Someone else wrote first. result.currentVersion tells you what's there now.
+  // Re-read and retry, or abort the operation.
+}
+```
+
+- `expectedVersion: null` means "row must not exist" — insert-only.
+- On success, `result.version` is the row's new version.
+- On conflict, `result.currentVersion` is what the store has on disk
+  (or `null` if the row doesn't exist at all).
+- Both operands are validated the same as `put` (charset, size, reserved fields).
+
+### Postgres migration
+
+The `version` column is added by `getAdcpStateMigration()`; existing
+databases pick it up via `ADD COLUMN IF NOT EXISTS`. Existing rows start
+at version 1 — a seller's first `putIfMatch` against an existing row after
+upgrade will see `currentVersion: 1`, the same shape as a freshly inserted
+row. Treat the number as opaque; `patchWithRetry` handles both paths.
+
+Do not attach triggers that suppress `UPDATE` or return `OLD` for the state
+table — `putIfMatch` relies on affected-row count to detect conflicts, and
+trigger-suppressed writes look identical to real conflicts. Same for RLS
+policies that silently reject writes.
