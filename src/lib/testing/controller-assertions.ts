@@ -75,18 +75,12 @@ export function expectControllerError(
  * assert.strictEqual(ok.current_state, 'suspended');
  * ```
  */
-export function expectControllerSuccess(
-  result: ComplyTestControllerResponse,
-  kind?: 'list'
-): ListScenariosSuccess;
+export function expectControllerSuccess(result: ComplyTestControllerResponse, kind?: 'list'): ListScenariosSuccess;
 export function expectControllerSuccess(
   result: ComplyTestControllerResponse,
   kind: 'transition'
 ): StateTransitionSuccess;
-export function expectControllerSuccess(
-  result: ComplyTestControllerResponse,
-  kind: 'simulation'
-): SimulationSuccess;
+export function expectControllerSuccess(result: ComplyTestControllerResponse, kind: 'simulation'): SimulationSuccess;
 export function expectControllerSuccess(
   result: ComplyTestControllerResponse
 ): ListScenariosSuccess | StateTransitionSuccess | SimulationSuccess;

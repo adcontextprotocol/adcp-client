@@ -130,7 +130,10 @@ export const CONTROLLER_SCENARIOS = {
  * this type goes non-`never`, TypeScript will reject the assignment below
  * and the build fails until the const is updated.
  */
-type ExhaustiveScenarioCheck = Exclude<ControllerScenario, (typeof CONTROLLER_SCENARIOS)[keyof typeof CONTROLLER_SCENARIOS]>;
+type ExhaustiveScenarioCheck = Exclude<
+  ControllerScenario,
+  (typeof CONTROLLER_SCENARIOS)[keyof typeof CONTROLLER_SCENARIOS]
+>;
 const _scenarioExhaustivenessGuard: ExhaustiveScenarioCheck extends never ? true : never = true;
 void _scenarioExhaustivenessGuard;
 
@@ -347,9 +350,7 @@ export async function handleTestControllerRequest(
   // invoking the factory so session-backed factories don't need to tolerate
   // sessionless probes.
   if (scenario === 'list_scenarios') {
-    const scenarios = isFactory(storeOrFactory)
-      ? [...storeOrFactory.scenarios]
-      : scenariosFromStore(storeOrFactory);
+    const scenarios = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : scenariosFromStore(storeOrFactory);
     return { success: true, scenarios };
   }
 

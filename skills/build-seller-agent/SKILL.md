@@ -227,7 +227,7 @@ const context = args.context; // may be undefined — that's fine
 // In every response:
 return taskToolResponse({
   // ... your response fields ...
-  context,  // echo it back unchanged
+  context, // echo it back unchanged
 });
 ```
 
@@ -304,7 +304,7 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 ### Session-backed stores (factory shape)
 
-**Don't close over module-scoped maps.** If your session state is persisted (Postgres, Redis, JSONB) and rehydrated into a *new* object per request, a store whose methods close over a module-level `WeakMap<SessionState, …>` or module-scoped cache will silently drop entries between calls — the cached ref was GC'd when the session was serialized out and rebuilt.
+**Don't close over module-scoped maps.** If your session state is persisted (Postgres, Redis, JSONB) and rehydrated into a _new_ object per request, a store whose methods close over a module-level `WeakMap<SessionState, …>` or module-scoped cache will silently drop entries between calls — the cached ref was GC'd when the session was serialized out and rebuilt.
 
 Use the factory shape. `scenarios` declares the static capability set — the SDK answers `list_scenarios` from this field and **never invokes `createStore` for capability probes**, so it's safe to throw on missing `session_id`. `createStore` runs per request for every other scenario, returning a store bound to the live session.
 
@@ -362,7 +362,7 @@ registerTestController(server, {
 
 ### Cap per-session maps
 
-Wrap every `Map.set` on session-scoped state with `enforceMapCap` to reject unbounded growth with a typed `INVALID_STATE` error (vs. silent LRU eviction, which would make compliance tests nondeterministic). Existing-key overwrites always pass — only *net-new* keys are rejected at the cap. Default cap is `SESSION_ENTRY_CAP` (1000).
+Wrap every `Map.set` on session-scoped state with `enforceMapCap` to reject unbounded growth with a typed `INVALID_STATE` error (vs. silent LRU eviction, which would make compliance tests nondeterministic). Existing-key overwrites always pass — only _net-new_ keys are rejected at the cap. Default cap is `SESSION_ENTRY_CAP` (1000).
 
 ### Custom MCP wrappers
 
@@ -389,24 +389,24 @@ server.tool('comply_test_controller', 'Sandbox only.', TOOL_INPUT_SHAPE, async i
 
 ## SDK Quick Reference
 
-| SDK piece                                               | Usage                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `createAdcpServer(config)`                              | Domain-grouped server — auto-wires schemas, response builders, capabilities |
-| `serve(() => createAdcpServer(config))`                 | Start HTTP server on `:3001/mcp`                                    |
-| `ctx.store`                                             | State store in every handler — `get`, `put`, `patch`, `delete`, `list` |
-| `InMemoryStateStore`                                    | Default state store (dev/testing)                                   |
-| `PostgresStateStore`                                    | Production state store (shared across instances)                    |
-| `DEFAULT_REPORTING_CAPABILITIES`                        | Use as `reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES` on products |
-| `checkGovernance(options)`                              | Call governance agent before financial commits                      |
-| `governanceDeniedError(result)`                         | Convert governance denial to GOVERNANCE_DENIED error                |
-| `mediaBuyResponse(data)`                                | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions) |
-| `adcpError(code, { message })`                          | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)      |
-| `registerTestController(server, store \| { scenarios, createStore })` | Add `comply_test_controller`. Plain store or per-request factory.   |
-| `TestControllerError(code, message)`                    | Typed error from store methods                                      |
-| `handleTestControllerRequest(store, input)`             | Low-level dispatch for custom MCP wrappers                          |
-| `toMcpResponse(response)` / `TOOL_INPUT_SHAPE`          | MCP envelope + Zod input schema for custom wrappers                 |
-| `enforceMapCap(map, key, label, cap?)`                  | Reject net-new keys once a session Map hits `SESSION_ENTRY_CAP` (1000) |
-| `expectControllerError(result, code)` / `expectControllerSuccess(result)` | Unit-test assertions — narrow responses to error or success arms    |
+| SDK piece                                                                 | Usage                                                                          |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `createAdcpServer(config)`                                                | Domain-grouped server — auto-wires schemas, response builders, capabilities    |
+| `serve(() => createAdcpServer(config))`                                   | Start HTTP server on `:3001/mcp`                                               |
+| `ctx.store`                                                               | State store in every handler — `get`, `put`, `patch`, `delete`, `list`         |
+| `InMemoryStateStore`                                                      | Default state store (dev/testing)                                              |
+| `PostgresStateStore`                                                      | Production state store (shared across instances)                               |
+| `DEFAULT_REPORTING_CAPABILITIES`                                          | Use as `reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES` on products    |
+| `checkGovernance(options)`                                                | Call governance agent before financial commits                                 |
+| `governanceDeniedError(result)`                                           | Convert governance denial to GOVERNANCE_DENIED error                           |
+| `mediaBuyResponse(data)`                                                  | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions) |
+| `adcpError(code, { message })`                                            | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)                 |
+| `registerTestController(server, store \| { scenarios, createStore })`     | Add `comply_test_controller`. Plain store or per-request factory.              |
+| `TestControllerError(code, message)`                                      | Typed error from store methods                                                 |
+| `handleTestControllerRequest(store, input)`                               | Low-level dispatch for custom MCP wrappers                                     |
+| `toMcpResponse(response)` / `TOOL_INPUT_SHAPE`                            | MCP envelope + Zod input schema for custom wrappers                            |
+| `enforceMapCap(map, key, label, cap?)`                                    | Reject net-new keys once a session Map hits `SESSION_ENTRY_CAP` (1000)         |
+| `expectControllerError(result, code)` / `expectControllerSuccess(result)` | Unit-test assertions — narrow responses to error or success arms               |
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by `createAdcpServer` — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 
@@ -442,7 +442,15 @@ Minimal `tsconfig.json`:
 Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
 
 ```typescript
-import { createAdcpServer, serve, adcpError, InMemoryStateStore, checkGovernance, governanceDeniedError, DEFAULT_REPORTING_CAPABILITIES } from '@adcp/client';
+import {
+  createAdcpServer,
+  serve,
+  adcpError,
+  InMemoryStateStore,
+  checkGovernance,
+  governanceDeniedError,
+  DEFAULT_REPORTING_CAPABILITIES,
+} from '@adcp/client';
 import type { ServeContext } from '@adcp/client';
 
 const stateStore = new InMemoryStateStore(); // shared across requests
@@ -454,13 +462,15 @@ function createAgent({ taskStore }: ServeContext) {
     taskStore,
     stateStore,
 
-    resolveAccount: async (ref) => {
+    resolveAccount: async ref => {
       if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
       return null; // or resolve by brand+operator
     },
 
     accounts: {
-      syncAccounts: async (params, ctx) => { /* ... */ },
+      syncAccounts: async (params, ctx) => {
+        /* ... */
+      },
     },
     mediaBuy: {
       getProducts: async (params, ctx) => {
@@ -482,12 +492,13 @@ function createAgent({ taskStore }: ServeContext) {
         const buy = {
           media_buy_id: `mb_${Date.now()}`,
           status: 'pending_creatives',
-          packages: params.packages?.map((pkg, i) => ({
-            package_id: `pkg_${i}`,
-            product_id: pkg.product_id,
-            pricing_option_id: pkg.pricing_option_id,
-            budget: pkg.budget,
-          })) ?? [],
+          packages:
+            params.packages?.map((pkg, i) => ({
+              package_id: `pkg_${i}`,
+              product_id: pkg.product_id,
+              pricing_option_id: pkg.pricing_option_id,
+              budget: pkg.budget,
+            })) ?? [],
         };
         await ctx.store.put('media_buys', buy.media_buy_id, buy);
         return buy; // mediaBuyResponse() auto-applied (sets revision, confirmed_at, valid_actions)
@@ -496,9 +507,15 @@ function createAgent({ taskStore }: ServeContext) {
         const result = await ctx.store.list('media_buys');
         return { media_buys: result.items };
       },
-      getMediaBuyDelivery: async (params, ctx) => { /* ... */ },
-      listCreativeFormats: async (params, ctx) => { /* ... */ },
-      syncCreatives: async (params, ctx) => { /* ... */ },
+      getMediaBuyDelivery: async (params, ctx) => {
+        /* ... */
+      },
+      listCreativeFormats: async (params, ctx) => {
+        /* ... */
+      },
+      syncCreatives: async (params, ctx) => {
+        /* ... */
+      },
     },
     capabilities: {
       features: { inlineCreativeManagement: false },
@@ -510,6 +527,7 @@ serve(createAgent);
 ```
 
 Key points:
+
 1. Single `.ts` file — all domain handlers in one `createAdcpServer` call
 2. `get_adcp_capabilities` is auto-generated from your handlers — don't register it manually
 3. Response builders are auto-applied — just return the data
@@ -547,31 +565,31 @@ When storyboard output shows failures, fix each one:
 
 ## Storyboards
 
-| Storyboard                      | Use case                                       |
-| ------------------------------- | ---------------------------------------------- |
-| `media_buy_seller`              | Full lifecycle — every seller should pass this |
-| `media_buy_non_guaranteed`      | Auction flow with bid adjustment               |
-| `media_buy_guaranteed_approval` | IO approval workflow                           |
-| `media_buy_proposal_mode`       | AI-generated proposals                         |
-| `media_buy_catalog_creative`    | Catalog sync + conversions                     |
-| `schema_validation`             | Schema compliance + date validation errors     |
+| Storyboard                      | Use case                                               |
+| ------------------------------- | ------------------------------------------------------ |
+| `media_buy_seller`              | Full lifecycle — every seller should pass this         |
+| `media_buy_non_guaranteed`      | Auction flow with bid adjustment                       |
+| `media_buy_guaranteed_approval` | IO approval workflow                                   |
+| `media_buy_proposal_mode`       | AI-generated proposals                                 |
+| `media_buy_catalog_creative`    | Catalog sync + conversions                             |
+| `schema_validation`             | Schema compliance + date validation errors             |
 | `deterministic_testing`         | State machine correctness via `comply_test_controller` |
 
 ## Common Mistakes
 
-| Mistake                                              | Fix                                                           |
-| ---------------------------------------------------- | ------------------------------------------------------------- |
-| Using `createTaskCapableServer` + `server.tool()`    | Use `createAdcpServer` — handles schemas, response builders, capabilities |
-| Using module-level Maps for state                    | Use `ctx.store` — persists across HTTP requests, swappable for postgres |
-| Return raw JSON without response builders            | `createAdcpServer` auto-applies response builders — just return the data |
-| Missing `brand`/`operator` in sync_accounts response | Echo them back from the request — they're required            |
-| sync_governance returns wrong shape                  | Must include `status: 'synced'` and `governance_agents` array |
-| `sandbox: false` on mock data                        | Buyers may treat mock data as real                            |
-| Returns raw JSON for validation failures             | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure    |
-| Missing `publisher_properties` or `format_ids` on Product | Both are required — see product example in `get_products` section |
-| format_ids in products don't match list_creative_formats  | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements |
-| Missing `@types/node` in devDependencies             | `process.env` doesn't resolve without it — see Setup section  |
-| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
+| Mistake                                                    | Fix                                                                                                                                                                              |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServer` — handles schemas, response builders, capabilities                                                                                                        |
+| Using module-level Maps for state                          | Use `ctx.store` — persists across HTTP requests, swappable for postgres                                                                                                          |
+| Return raw JSON without response builders                  | `createAdcpServer` auto-applies response builders — just return the data                                                                                                         |
+| Missing `brand`/`operator` in sync_accounts response       | Echo them back from the request — they're required                                                                                                                               |
+| sync_governance returns wrong shape                        | Must include `status: 'synced'` and `governance_agents` array                                                                                                                    |
+| `sandbox: false` on mock data                              | Buyers may treat mock data as real                                                                                                                                               |
+| Returns raw JSON for validation failures                   | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure                                                                                |
+| Missing `publisher_properties` or `format_ids` on Product  | Both are required — see product example in `get_products` section                                                                                                                |
+| format_ids in products don't match list_creative_formats   | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements                         |
+| Missing `@types/node` in devDependencies                   | `process.env` doesn't resolve without it — see Setup section                                                                                                                     |
+| Dropping `context` from responses                          | Echo `args.context` back unchanged in every response — buyers use it for correlation                                                                                             |
 | `channels` typed as `string[]` instead of `MediaChannel[]` | Use `as const` on channel arrays: `channels: ['display', 'olv'] as const`. TypeScript infers `string[]` from array literals, but the SDK requires the `MediaChannel` union type. |
 
 ## Reference

@@ -698,7 +698,8 @@ describe('expectControllerError', () => {
 
   it('throws when codes do not match', () => {
     assert.throws(
-      () => expectControllerError({ success: false, error: 'INVALID_PARAMS', error_detail: 'missing field' }, 'NOT_FOUND'),
+      () =>
+        expectControllerError({ success: false, error: 'INVALID_PARAMS', error_detail: 'missing field' }, 'NOT_FOUND'),
       /expected error code "NOT_FOUND" but got "INVALID_PARAMS"/
     );
   });
@@ -721,10 +722,7 @@ describe('expectControllerSuccess', () => {
   });
 
   it('narrows to simulation arm when kind="simulation"', () => {
-    const ok = expectControllerSuccess(
-      { success: true, simulated: { impressions: 10000 } },
-      'simulation'
-    );
+    const ok = expectControllerSuccess({ success: true, simulated: { impressions: 10000 } }, 'simulation');
     assert.strictEqual(ok.simulated.impressions, 10000);
   });
 
@@ -737,11 +735,7 @@ describe('expectControllerSuccess', () => {
 
   it('throws when kind does not match the success arm', () => {
     assert.throws(
-      () =>
-        expectControllerSuccess(
-          { success: true, previous_state: 'active', current_state: 'suspended' },
-          'list'
-        ),
+      () => expectControllerSuccess({ success: true, previous_state: 'active', current_state: 'suspended' }, 'list'),
       /expected "list" arm but got "transition"/
     );
   });

@@ -22,7 +22,9 @@ registerTestController(server, {
   async createStore(input) {
     const session = await loadSession((input.context as { session_id?: string })?.session_id);
     return {
-      async forceAccountStatus(id, status) { /* closes over live session */ },
+      async forceAccountStatus(id, status) {
+        /* closes over live session */
+      },
     };
   },
 });
