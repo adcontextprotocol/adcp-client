@@ -1,6 +1,5 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { readFileSync, existsSync, unlinkSync, mkdtempSync } = require('node:fs');
 const os = require('node:os');
@@ -11,7 +10,6 @@ const {
   computeContentDigest,
   contentDigestMatches,
   createExpressVerifier,
-  createSigningFetch,
   InMemoryReplayStore,
   InMemoryRevocationStore,
   parseContentDigest,
