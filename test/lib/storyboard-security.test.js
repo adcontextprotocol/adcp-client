@@ -238,12 +238,17 @@ describe('validation context discrimination', () => {
     assert.match(r.error, /HTTP probe/);
   });
 
-  it('fails clearly when an MCP-only check runs against an HTTP probe result', () => {
-    const [r] = runOne([{ check: 'field_present', path: 'foo', description: 'x' }], {
-      httpResult: { url: '', status: 200, headers: {}, body: {} },
+  it('field_present / field_value work against HTTP probe bodies (RFC 9728 metadata)', () => {
+    const [present] = runOne([{ check: 'field_present', path: 'resource', description: 'x' }], {
+      httpResult: { url: '', status: 200, headers: {}, body: { resource: 'https://agent.example/mcp' } },
     });
-    assert.strictEqual(r.passed, false);
-    assert.match(r.error, /MCP task result/);
+    assert.strictEqual(present.passed, true);
+
+    const [value] = runOne(
+      [{ check: 'field_value', path: 'resource', value: 'https://agent.example/mcp', description: 'x' }],
+      { httpResult: { url: '', status: 200, headers: {}, body: { resource: 'https://agent.example/mcp' } } }
+    );
+    assert.strictEqual(value.passed, true);
   });
 });
 

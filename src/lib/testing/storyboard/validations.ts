@@ -39,9 +39,11 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     case 'response_schema':
       return requireTaskResult(ctx, validation, tr => validateResponseSchema(validation, ctx.taskName, tr));
     case 'field_present':
-      return requireTaskResult(ctx, validation, tr => validateFieldPresent(validation, tr));
+      // field_present runs against either MCP task result data OR an HTTP probe body —
+      // the storyboard's probe_protected_resource validates fields in the RFC 9728 JSON.
+      return validateFieldPresent(validation, resolveTarget(ctx));
     case 'field_value':
-      return requireTaskResult(ctx, validation, tr => validateFieldValue(validation, tr));
+      return validateFieldValue(validation, resolveTarget(ctx));
     case 'status_code':
       return requireTaskResult(ctx, validation, tr => validateStatusCode(validation, tr));
     case 'error_code':
@@ -96,6 +98,18 @@ function requireHttpResult(
     };
   }
   return fn(ctx.httpResult);
+}
+
+/**
+ * Resolve the object path-style validations should walk. Prefers the MCP
+ * task result's `data` and falls back to the HTTP probe body, so the same
+ * `field_present` / `field_value` validations work for both MCP tool steps
+ * and raw RFC 9728 / RFC 8414 metadata probes.
+ */
+function resolveTarget(ctx: ValidationContext): TaskResult {
+  if (ctx.taskResult) return ctx.taskResult;
+  if (ctx.httpResult) return { success: !ctx.httpResult.error, data: ctx.httpResult.body };
+  return { success: false, data: undefined };
 }
 
 // ────────────────────────────────────────────────────────────
