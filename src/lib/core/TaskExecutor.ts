@@ -237,19 +237,6 @@ export class TaskExecutor {
 
         if (govResult.status === 'denied' && isBlocking) {
           return this.buildGovernanceResult<T>(
-            'governance-denied',
-            govResult,
-            taskId,
-            taskName,
-            agent,
-            startTime,
-            debugLogs
-          );
-        }
-
-        if (govResult.status === 'escalated' && isBlocking) {
-          return this.buildGovernanceResult<T>(
-            'governance-escalated',
             govResult,
             taskId,
             taskName,
@@ -261,7 +248,6 @@ export class TaskExecutor {
 
         if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
           return this.buildGovernanceResult<T>(
-            'governance-denied',
             govResult,
             taskId,
             taskName,
@@ -399,7 +385,6 @@ export class TaskExecutor {
    * Handle agent response based on ADCP status (PR #78)
    */
   private buildGovernanceResult<T>(
-    status: 'governance-denied' | 'governance-escalated',
     govResult: GovernanceCheckResult,
     taskId: string,
     taskName: string,
@@ -409,8 +394,8 @@ export class TaskExecutor {
   ): TaskResult<T> {
     return {
       success: false,
-      status,
-      error: govResult.explanation || `Governance ${status}`,
+      status: 'governance-denied',
+      error: govResult.explanation || 'Governance governance-denied',
       governance: govResult,
       metadata: {
         taskId,
@@ -419,7 +404,7 @@ export class TaskExecutor {
         responseTimeMs: Date.now() - startTime,
         timestamp: new Date().toISOString(),
         clarificationRounds: 0,
-        status,
+        status: 'governance-denied',
       },
       conversation: [],
       debug_logs: debugLogs,

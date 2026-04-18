@@ -694,7 +694,7 @@ function generateLlmsTxt(
   ln(`- \`submitted\` — Long-running. Poll via \`result.submitted.waitForCompletion()\` or use webhooks.`);
   ln(`- \`working\` — In progress (intermediate, usually not seen by callers).`);
   ln(`- \`deferred\` — Requires human decision. Token in \`result.deferred.token\`.`);
-  ln(`- \`governance-denied\` / \`governance-escalated\` — Blocked or flagged by governance middleware.`);
+  ln(`- \`governance-denied\` — Blocked by governance middleware.`);
   ln();
   ln(`**Deep dive:** docs/guides/ASYNC-DEVELOPER-GUIDE.md, docs/guides/ASYNC-API-REFERENCE.md`);
   ln();
@@ -798,7 +798,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`interface TaskResult<T = any> {`);
   ln(`  success: boolean;`);
   ln(`  status: 'completed' | 'deferred' | 'submitted' | 'input-required'`);
-  ln(`        | 'working' | 'governance-denied' | 'governance-escalated';`);
+  ln(`        | 'working' | 'governance-denied';`);
   ln(`  data?: T;`);
   ln(`  error?: string;`);
   ln(`  deferred?: DeferredContinuation<T>;`);

@@ -204,7 +204,7 @@ if (result.success && result.status === 'completed') {
 }
 if (!result.success) {
   result.error   // string (always present)
-  result.status  // 'failed' | 'governance-denied' | 'governance-escalated'
+  result.status  // 'failed' | 'governance-denied'
 }
 ```
 

@@ -21,7 +21,7 @@ interface AgentConfig {
 interface TaskResult<T = any> {
   success: boolean;
   status: 'completed' | 'deferred' | 'submitted' | 'input-required'
-        | 'working' | 'governance-denied' | 'governance-escalated';
+        | 'working' | 'governance-denied';
   data?: T;
   error?: string;
   deferred?: DeferredContinuation<T>;

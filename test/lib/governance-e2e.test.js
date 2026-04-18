@@ -446,9 +446,9 @@ describe('Governance E2E: Capabilities discovery', { skip: skipReason }, () => {
   });
 });
 
-describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
-  const planId = `e2e-escalation-${Date.now()}`;
-  const campaignRef = `e2e-escalation-campaign-${Date.now()}`;
+describe('Governance E2E: Human-review denial', { skip: skipReason }, () => {
+  const planId = `e2e-human-review-${Date.now()}`;
+  const campaignRef = `e2e-human-review-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
@@ -462,7 +462,7 @@ describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
         {
           plan_id: planId,
           brand: { domain: 'test.example' },
-          objectives: 'Escalation flow test',
+          objectives: 'Human-review denial test',
           budget: {
             total: 10000,
             currency: 'USD',
@@ -486,8 +486,10 @@ describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
     assert.ok(syncResult.success, `syncPlans failed: ${syncResult.error}`);
   });
 
-  it('should escalate when budget exceeds 50% with human_required authority', async () => {
-    // Budget of $6000 > 50% of $10000 plan with human_required authority
+  // AdCP v3 has three terminal statuses (approved|denied|conditions). Human review is
+  // signalled via a critical-severity finding on a denied decision; the buyer resolves
+  // review off-protocol and calls check_governance again with the human's approval.
+  it('should deny with critical-severity finding when budget exceeds 50% under human_required authority', async () => {
     const result = await client.executeTask('check_governance', {
       plan_id: planId,
       buyer_campaign_ref: campaignRef,
@@ -503,10 +505,12 @@ describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
 
     assert.ok(result.success, `check_governance failed: ${result.error}`);
     const data = result.data;
-    assert.equal(data.status, 'escalated', 'Expected escalated status');
-    assert.ok(data.escalation, 'Expected escalation details');
-    assert.equal(data.escalation.requires_human, true, 'Expected requires_human');
-    assert.ok(data.escalation.reason, 'Expected escalation reason');
+    assert.equal(data.status, 'denied', 'Expected denied status');
+    assert.ok(Array.isArray(data.findings) && data.findings.length > 0, 'Expected findings');
+    assert.ok(
+      data.findings.some(f => f.severity === 'critical'),
+      'Expected at least one critical-severity finding'
+    );
   });
 
   it('should approve small budget with human_required authority (under 50%)', async () => {

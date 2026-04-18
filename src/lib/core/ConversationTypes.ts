@@ -115,8 +115,7 @@ export type TaskStatus =
   | 'deferred'
   | 'aborted'
   | 'submitted'
-  | 'governance-denied'
-  | 'governance-escalated';
+  | 'governance-denied';
 
 /**
  * Options for task execution
@@ -302,7 +301,7 @@ export interface TaskResultIntermediate<T> extends TaskResultBase {
 /** Task failed — `error` is always present. */
 export interface TaskResultFailure<T> extends TaskResultBase {
   success: false;
-  status: 'failed' | 'governance-denied' | 'governance-escalated';
+  status: 'failed' | 'governance-denied';
   /** Response payload with structured error details (adcp_error, context, ext) */
   data?: T;
   /** Human-readable error message */

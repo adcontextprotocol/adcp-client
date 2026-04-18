@@ -756,7 +756,7 @@ Every tool call returns a `TaskResult` with one of these statuses:
 - `submitted` — Long-running. Poll via `result.submitted.waitForCompletion()` or use webhooks.
 - `working` — In progress (intermediate, usually not seen by callers).
 - `deferred` — Requires human decision. Token in `result.deferred.token`.
-- `governance-denied` / `governance-escalated` — Blocked or flagged by governance middleware.
+- `governance-denied` — Blocked by governance middleware.
 
 **Deep dive:** docs/guides/ASYNC-DEVELOPER-GUIDE.md, docs/guides/ASYNC-API-REFERENCE.md
 
