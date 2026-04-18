@@ -95,8 +95,11 @@ function startServer(capability) {
     await new Promise(resolve =>
       middleware(reqShim, resShim, err => {
         if (err) {
+          // Log the cause server-side for debugging; return a generic 500 so
+          // test responses don't echo stack traces or internal state.
+          console.error('test-shim middleware error:', err);
           res.statusCode = 500;
-          res.end(JSON.stringify({ error: String(err) }));
+          res.end(JSON.stringify({ error: 'internal_server_error' }));
           resolve();
           return;
         }

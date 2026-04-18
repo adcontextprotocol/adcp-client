@@ -11,6 +11,7 @@ const {
   verifyRequestSignature,
   signRequest,
   buildSignatureBase,
+  parseSignatureInput,
 } = require('../dist/lib/signing/index.js');
 
 const ROOT = path.join(__dirname, '..', 'compliance', 'cache', 'latest', 'test-vectors', 'request-signing');
@@ -30,19 +31,8 @@ const awaitingUpstreamTarball = (() => {
 const KNOWN_UPSTREAM_BUG = awaitingUpstreamTarball ? new Set(['002-post-with-content-digest.json']) : new Set();
 
 function parseSigInput(headerValue) {
-  const m = headerValue.match(/^sig1=\((.*?)\)((?:;[^,]+)*)(?:,|$)/);
-  if (!m) throw new Error('cannot parse Signature-Input: ' + headerValue);
-  const components = [...m[1].matchAll(/"([^"]+)"/g)].map(x => x[1]);
-  const params = {};
-  for (const pair of m[2].split(';').filter(Boolean)) {
-    const eq = pair.indexOf('=');
-    const k = pair.slice(0, eq);
-    let v = pair.slice(eq + 1);
-    if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
-    else v = Number(v);
-    params[k] = v;
-  }
-  return { components, params };
+  const parsed = parseSignatureInput(headerValue);
+  return { components: parsed.components, params: parsed.params };
 }
 
 function buildJwksForVector(vector) {
