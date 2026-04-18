@@ -42,6 +42,10 @@ Steps with `auth:` set bypass the MCP SDK and dispatch via a raw JSON-RPC POST t
 - `comply()` now refuses `http://` agent URLs by default. Use `{ allow_http: true }` or the CLI `--allow-http` flag for local development; the CLI banner marks runs with the flag as non-publishable.
 - OAuth authorization-server discovery fetches are hardened against SSRF: HTTPS only, DNS resolution + private-IP check (loopback, RFC 1918, link-local, IPv6 ULA), 10 s timeout, 64 KiB body cap, no cross-host redirect following.
 
+**Degraded-profile execution (fixes adcp-client#570)**
+
+When an agent's `get_adcp_capabilities` probe returns 401, `comply()` previously short-circuited with `overall_status: 'auth_required'` and executed zero storyboards — which meant `universal/security.yaml` could never run against the exact class of agent it's designed to diagnose. It now detects the auth rejection, drops tool-dependent storyboards, and runs the remaining `track: 'security'` and `required_tools: []` storyboards against a degraded profile. The auth observation is preserved alongside whatever conformance gaps the storyboards surface.
+
 **Test-kit schema**
 
 `TestOptions.test_kit` gained an `auth` field with `api_key` and `probe_task`. Storyboard phases read this to gate their skip logic. The field is forward-compatible: additional keys pass through unchanged.

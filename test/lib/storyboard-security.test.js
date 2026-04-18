@@ -618,3 +618,78 @@ describe('comply() HTTPS enforcement', () => {
     }
   });
 });
+
+// ────────────────────────────────────────────────────────────
+// comply() degraded-profile path — security_baseline against a
+// 401-on-discovery agent still executes instead of bailing with
+// overall_status: 'auth_required'. The whole point of security.yaml
+// is to diagnose agents that mishandle auth, so it MUST run against
+// an agent whose get_adcp_capabilities itself requires auth.
+// ────────────────────────────────────────────────────────────
+
+describe('comply() degraded-profile path (security_baseline against 401-on-discovery)', () => {
+  it('runs the security storyboard and surfaces auth observation when capability discovery 401s', async () => {
+    // Every request — capabilities probe, well-known OAuth metadata, every
+    // storyboard probe — gets 401 + WWW-Authenticate. Previously this agent
+    // would short-circuit with overall_status: 'auth_required' and zero
+    // storyboards executed.
+    const server = http.createServer((req, res) => {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="test", error="invalid_token"',
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+      const result = await comply(agentUrl, {
+        storyboards: ['security_baseline'],
+        allow_http: true,
+        timeout_ms: 30000,
+      });
+
+      assert.ok(
+        Array.isArray(result.storyboards_executed) && result.storyboards_executed.includes('security_baseline'),
+        `expected storyboards_executed to include security_baseline, got ${JSON.stringify(result.storyboards_executed)}`
+      );
+      assert.notStrictEqual(
+        result.overall_status,
+        'auth_required',
+        'expected comply() to NOT short-circuit with auth_required when security_baseline is runnable'
+      );
+      assert.notStrictEqual(result.overall_status, 'unreachable');
+      const authObs = result.observations.find(
+        o => o.category === 'auth' && /401|OAuth/.test(o.message)
+      );
+      assert.ok(authObs, `expected an auth observation noting the 401, got ${JSON.stringify(result.observations)}`);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('falls back to auth_required when selected storyboards all require discovered tools', async () => {
+    // Explicit non-security storyboard against a 401-on-discovery agent →
+    // nothing is runnable without tools, so comply() falls through to
+    // buildUnreachableResult with overall_status: 'auth_required'. This
+    // guards against the filter accidentally widening (e.g., to all tracks)
+    // and running tool-dependent storyboards against an empty tool set.
+    const server = http.createServer((req, res) => {
+      res.writeHead(401, { 'www-authenticate': 'Bearer realm="x"' });
+      res.end('{}');
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+      const result = await comply(agentUrl, {
+        storyboards: ['creative_sales_agent'],
+        allow_http: true,
+        timeout_ms: 30000,
+      });
+      assert.strictEqual(result.overall_status, 'auth_required');
+      assert.deepStrictEqual(result.storyboards_executed ?? [], []);
+    } finally {
+      server.close();
+    }
+  });
+});

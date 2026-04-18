@@ -714,6 +714,38 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     if (!profileStep.passed) {
+      // Capability discovery failed. If it's an auth rejection, we can still
+      // run storyboards that don't need tool discovery — crucially
+      // universal/security_baseline, which is designed precisely to diagnose
+      // agents that mishandle auth. Fall back to the unreachable result only
+      // when no such storyboards are available.
+      const authCheck = await detectAuthRejection(agentUrl, profileStep.error, signal);
+      if (authCheck.isAuth) {
+        const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
+        const candidate = explicitStoryboards?.length
+          ? resolveExplicitStoryboards(explicitStoryboards)
+          : resolveFromCapabilities(degraded);
+        const runnable = candidate.filter(
+          sb => (sb.required_tools?.length ?? 0) === 0 || sb.track === 'security'
+        );
+        if (runnable.length > 0) {
+          allObservations.push(...authCheck.observations);
+          effectiveOptions._profile = degraded;
+          // Skip the rest of the "reachable" setup — no test controller, no
+          // capability-warning observations — and jump straight to storyboard
+          // execution below with the filtered, runnable subset.
+          return await runWithDegradedProfile(
+            agentUrl,
+            degraded,
+            runnable,
+            options,
+            effectiveOptions,
+            allObservations,
+            start,
+            signal
+          );
+        }
+      }
       return buildUnreachableResult(agentUrl, profile, profileStep.error, start, effectiveOptions, signal);
     }
 
@@ -813,47 +845,46 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 }
 
 /**
- * Build result for an unreachable or auth-required agent.
+ * Detect whether a capability-discovery failure is an auth rejection.
+ * Centralized so the "run security.yaml against 401-happy agents" path and
+ * the fallback "unreachable result" path share the same truth.
  */
-async function buildUnreachableResult(
+async function detectAuthRejection(
   agentUrl: string,
-  profile: AgentProfile,
   errorMsg: string | undefined,
-  start: number,
-  effectiveOptions: TestOptions,
   signal?: AbortSignal
-): Promise<ComplianceResult> {
+): Promise<{ isAuth: boolean; observations: AdvisoryObservation[] }> {
   const err = errorMsg || 'Unknown error';
   const observations: AdvisoryObservation[] = [];
 
+  // Check for explicit auth keywords. Case-insensitive so wrapper messages
+  // like "Authentication required ..." match alongside raw 401/unauthorized.
+  const lower = err.toLowerCase();
   const isExplicitAuthError =
-    err.includes('401') ||
-    err.includes('Unauthorized') ||
-    err.includes('unauthorized') ||
-    err.includes('authentication') ||
-    err.includes('JWS') ||
-    err.includes('JWT') ||
-    err.includes('signature verification');
+    lower.includes('401') ||
+    lower.includes('unauthorized') ||
+    lower.includes('authentication') ||
+    lower.includes('jws') ||
+    lower.includes('jwt') ||
+    lower.includes('signature verification');
 
-  let isAuthError = isExplicitAuthError;
-  if (!isAuthError && err.includes('Failed to discover')) {
+  let isAuth = isExplicitAuthError;
+  // Fallback: hit the URL directly and check status. Covers transports that
+  // wrap the 401 into a generic "discovery failed" message with no keyword.
+  if (!isAuth) {
     try {
       const probe = await fetch(agentUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
       });
-      if (probe.status === 401 || probe.status === 403) {
-        isAuthError = true;
-      }
+      if (probe.status === 401 || probe.status === 403) isAuth = true;
     } catch {
       // Network error — not an auth issue
     }
   }
 
-  const headline = isAuthError ? `Authentication required` : `Agent unreachable — ${err}`;
-
-  if (isAuthError) {
+  if (isAuth) {
     const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
     const oauthMeta = await discoverOAuthMetadata(agentUrl);
     if (oauthMeta) {
@@ -871,10 +902,105 @@ async function buildUnreachableResult(
     }
   }
 
+  return { isAuth, observations };
+}
+
+/**
+ * Run a filtered set of storyboards against an agent whose capability
+ * discovery 401'd. Used for `universal/security.yaml` and any other
+ * storyboard with `required_tools: []` — the rest need discovered tools to
+ * be meaningful, so we skip them even though the agent is reachable.
+ *
+ * The returned `ComplianceResult` carries the auth observation alongside
+ * whatever the storyboards actually found, so the operator sees both
+ * "discovery needed auth" AND "here's the specific conformance gap".
+ */
+async function runWithDegradedProfile(
+  agentUrl: string,
+  profile: AgentProfile,
+  storyboards: Storyboard[],
+  options: ComplyOptions,
+  effectiveOptions: TestOptions,
+  seededObservations: AdvisoryObservation[],
+  start: number,
+  signal?: AbortSignal
+): Promise<ComplianceResult> {
+  const allObservations: AdvisoryObservation[] = [...seededObservations];
+  const storyboardResults: StoryboardResult[] = [];
+  const runOptions: StoryboardRunOptions = {
+    ...effectiveOptions,
+    // No discovered tools — storyboards with required_tools[] were filtered out
+    // upstream. Empty agentTools means step-level requires_tool skip-logic kicks
+    // in for anything else, which is what we want.
+    agentTools: [],
+  };
+
+  for (const sb of storyboards) {
+    signal?.throwIfAborted();
+    const result = await runStoryboard(agentUrl, sb, runOptions);
+    storyboardResults.push(result);
+  }
+
+  const grouped = groupByTrack(storyboardResults, storyboards);
+  const trackResults: TrackResult[] = [];
+  const poolTrackSet = new Set<ComplianceTrack>();
+  for (const sb of storyboards) if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
+  for (const track of TRACK_ORDER) {
+    if (!poolTrackSet.has(track)) continue;
+    const results = grouped.get(track) ?? [];
+    if (results.length > 0) {
+      const trackResult = mapStoryboardResultsToTrackResult(track, results, profile);
+      const obs = collectObservations(track, trackResult.scenarios, profile);
+      trackResult.observations = obs;
+      allObservations.push(...obs);
+      trackResults.push(trackResult);
+    }
+  }
+
+  const summary = buildSummary(trackResults);
+  const overallStatus = computeOverallStatus(summary);
+  const agentRef = options.agent_alias || agentUrl;
+  const failures = extractFailures(storyboardResults, storyboards, agentRef);
+
   return {
     agent_url: agentUrl,
     agent_profile: profile,
-    overall_status: (isAuthError ? 'auth_required' : 'unreachable') as OverallStatus,
+    overall_status: overallStatus,
+    tracks: trackResults,
+    tested_tracks: trackResults.filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial'),
+    skipped_tracks: [],
+    summary,
+    observations: allObservations,
+    failures: failures.length > 0 ? failures : undefined,
+    storyboards_executed: storyboards.map(sb => sb.id),
+    controller_detected: false,
+    tested_at: new Date().toISOString(),
+    total_duration_ms: Date.now() - start,
+  };
+}
+
+/**
+ * Build result for an unreachable or auth-required agent.
+ *
+ * Used when even degraded-profile storyboard execution can't help —
+ * e.g., a network-level failure, or an auth-only agent with no
+ * universal/security storyboards in the selected bundle.
+ */
+async function buildUnreachableResult(
+  agentUrl: string,
+  profile: AgentProfile,
+  errorMsg: string | undefined,
+  start: number,
+  _effectiveOptions: TestOptions,
+  signal?: AbortSignal
+): Promise<ComplianceResult> {
+  const { isAuth, observations } = await detectAuthRejection(agentUrl, errorMsg, signal);
+  const err = errorMsg || 'Unknown error';
+  const headline = isAuth ? `Authentication required` : `Agent unreachable — ${err}`;
+  return {
+    agent_url: agentUrl,
+    agent_profile: profile,
+    overall_status: (isAuth ? 'auth_required' : 'unreachable') as OverallStatus,
     tracks: [],
     tested_tracks: [],
     skipped_tracks: [],
