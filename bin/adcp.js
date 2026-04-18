@@ -835,7 +835,7 @@ async function handleStoryboardList(args) {
     process.exit(1);
   }
 
-  const grouped = { universal: [], domain: [], specialism: [] };
+  const grouped = { universal: [], protocol: [], specialism: [] };
   const flat = [];
   for (const ref of bundles) {
     const storyboards = loadBundleStoryboards(ref);
@@ -864,10 +864,10 @@ async function handleStoryboardList(args) {
   }
 
   console.log('\nCompliance storyboards (from local cache)\n');
-  for (const kind of ['universal', 'domain', 'specialism']) {
+  for (const kind of ['universal', 'protocol', 'specialism']) {
     if (grouped[kind].length === 0) continue;
     const header =
-      kind === 'universal' ? 'Universal (required for all agents)' : kind === 'domain' ? 'Domains' : 'Specialisms';
+      kind === 'universal' ? 'Universal (required for all agents)' : kind === 'protocol' ? 'Protocols' : 'Specialisms';
     console.log(`${header}:`);
     for (const bundle of grouped[kind]) {
       console.log(`  [${bundle.bundle_id}]`);

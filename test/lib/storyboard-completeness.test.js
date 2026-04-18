@@ -19,7 +19,7 @@ const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas
 
 const allStoryboards = listAllComplianceStoryboards();
 
-// Upstream ships placeholder storyboards with empty phases for domains/specialisms
+// Upstream ships placeholder storyboards with empty phases for protocols/specialisms
 // whose conformance tests haven't been written yet. Skip structural assertions on those.
 const storyboards = allStoryboards.filter(sb => Array.isArray(sb.phases) && sb.phases.length > 0);
 

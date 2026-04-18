@@ -14,6 +14,17 @@ const { parsePath } = require('../../dist/lib/testing/storyboard/path.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
 const { CONTEXT_EXTRACTORS } = require('../../dist/lib/testing/storyboard/context.js');
 
+// Runner-internal tasks with no agent-facing schema.
+const HARNESS_TASKS = new Set([
+  'comply_test_controller',
+  'protected_resource_metadata',
+  'oauth_auth_server_metadata',
+  'assert_contribution',
+]);
+
+// `$test_kit.*` substitution placeholders — resolved at run time, not tasks themselves.
+const isSubstitutionTask = task => typeof task === 'string' && task.startsWith('$');
+
 // ────────────────────────────────────────────────────────────
 // Zod v4 schema walker
 // ────────────────────────────────────────────────────────────
@@ -208,6 +219,7 @@ describe('storyboard schema drift', () => {
     const tasksWithValidations = [...new Set(fieldValidations.map(v => v.task))].filter(t => !SYNTHETIC_TASKS.has(t));
 
     for (const task of tasksWithValidations) {
+      if (HARNESS_TASKS.has(task) || isSubstitutionTask(task)) continue;
       it(`${task} has a registered response schema`, () => {
         assert.ok(
           TOOL_RESPONSE_SCHEMAS[task],

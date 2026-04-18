@@ -41,15 +41,14 @@ export {
   findBundleById,
   resolveBundleOrStoryboard,
   resolveStoryboardsForCapabilities,
-  PROTOCOL_TO_DOMAIN,
-  PROTOCOLS_WITHOUT_BASELINE,
+  PROTOCOL_TO_PATH,
 } from './compliance';
 export type {
   AgentCapabilities,
   BundleKind,
   BundleRef,
   ComplianceIndex,
-  ComplianceIndexDomain,
+  ComplianceIndexProtocol,
   ComplianceIndexSpecialism,
   ResolveOptions,
   ResolvedBundle,

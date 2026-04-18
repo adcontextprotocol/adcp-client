@@ -647,7 +647,6 @@ Flow: `get_adcp_capabilities → create_media_buy → get_products → create_me
 ### Security
 
 **Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of API key or OAuth MUST be implemented and correctly advertised.
-Flow: `protected_resource_metadata → oauth_auth_server_metadata → assert_contribution`
 
 ## Error Codes
 
