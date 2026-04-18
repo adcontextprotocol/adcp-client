@@ -154,13 +154,15 @@ export async function runStoryboard(
   }
 
   // Overall pass requires (a) no required-phase failures AND (b) at least one
-  // required phase actually passed. Without the second clause, a storyboard
-  // where every phase is marked optional OR every required phase is skipped
-  // would pass vacuously. The storyboard's own gate (assert_contribution in
-  // security_baseline) must live in a required phase for this to behave.
+  // required phase actually passed with at least one non-skipped step.
+  // Without the second clause, a storyboard where every phase is marked
+  // optional, every required phase's steps are skipped (e.g. required_tools
+  // filtered out everything), would pass vacuously. The storyboard's own gate
+  // (assert_contribution in security_baseline) must live in a required phase.
   const requiredPhasesPassed = phaseResults.some((p, idx) => {
     const phaseDef = storyboard.phases[idx];
-    return phaseDef && !phaseDef.optional && p.passed && p.steps.length > 0;
+    if (!phaseDef || phaseDef.optional || !p.passed) return false;
+    return p.steps.some(s => !s.skipped && s.passed);
   });
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
@@ -634,6 +636,13 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
     else if (directive.value_strategy === 'random_invalid_jwt') value = generateRandomInvalidJwt();
   }
   if (!value) return {};
+  // Reject CR/LF/NUL and non-printable ASCII — a test-kit key with stray
+  // whitespace would otherwise crash undici's header validator and the raw
+  // exception (containing the secret) lands in the serialized compliance
+  // report. Fail loudly with a non-echoing error instead.
+  if (/[\r\n\x00]|[^\x20-\x7E]/.test(value)) {
+    throw new Error('test_kit.auth.api_key contains invalid characters (control chars or non-printable ASCII)');
+  }
   return { authorization: `Bearer ${value}` };
 }
 

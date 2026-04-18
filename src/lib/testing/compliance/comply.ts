@@ -869,12 +869,18 @@ async function detectAuthRejection(
   let isAuth = isExplicitAuthError;
   // Fallback: hit the URL directly and check status. Covers transports that
   // wrap the 401 into a generic "discovery failed" message with no keyword.
+  // SSRF-safe: no redirect following (a 302→IMDS would otherwise leak), 5 s
+  // bound, and the outer `signal` still aborts cleanly.
   if (!isAuth) {
     try {
+      const probeSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
+        : AbortSignal.timeout(5000);
       const probe = await fetch(agentUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal,
+        redirect: 'manual',
+        signal: probeSignal,
       });
       if (probe.status === 401 || probe.status === 403) isAuth = true;
     } catch {
