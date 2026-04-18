@@ -402,14 +402,32 @@ function validateResourceEqualsAgentUrl(
   const expected = normalizeAgentUrl(agentUrl);
   const actual = normalizeAgentUrl(resource);
   const passed = actual === expected;
+  // Don't echo the advertised value verbatim — compliance reports may be
+  // shared publicly and the raw diff helps attackers probe victim agents.
+  // Surface just enough for the operator to self-diagnose: their own URL,
+  // which part of the advertised URL differs, and a pointer to the fix.
+  let redactedError: string | undefined;
+  if (!passed) {
+    let actualHost = 'unknown';
+    try {
+      actualHost = new URL(resource).host;
+    } catch {
+      /* ignore */
+    }
+    const expectedHost = new URL(expected).host;
+    const hostDiffers = actualHost !== expectedHost;
+    redactedError =
+      `RFC 9728 \`resource\` does not equal the URL clients call (${expected}). ` +
+      (hostDiffers
+        ? `Advertised host differs from the agent host — the most common cause is copying your authorization server origin into \`resource\`. `
+        : `Advertised path differs from the agent path. `) +
+      `Fix: set \`resource\` equal to the full agent URL in your protected-resource metadata document.`;
+  }
   return {
     check: 'resource_equals_agent_url',
     passed,
     description: validation.description,
-    // Don't echo the agent-advertised value verbatim — compliance reports may
-    // be shared publicly and the raw diff helps attackers probe victim agents.
-    // Report mismatch in a redacted shape.
-    error: passed ? undefined : 'Advertised `resource` does not match agent URL.',
+    error: redactedError,
   };
 }
 

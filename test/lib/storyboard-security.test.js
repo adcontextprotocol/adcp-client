@@ -6,6 +6,7 @@ const { runValidations } = require('../../dist/lib/testing/storyboard/validation
 const {
   fetchProbe,
   isPrivateIp,
+  isAlwaysBlocked,
   PROBE_TASKS,
   generateRandomInvalidApiKey,
   generateRandomInvalidJwt,
@@ -48,6 +49,59 @@ describe('isPrivateIp', () => {
   it('returns false for non-IP strings', () => {
     assert.strictEqual(isPrivateIp('example.com'), false);
   });
+
+  it('flags CGNAT (RFC 6598), broadcast, multicast, and unspecified', () => {
+    for (const addr of [
+      '100.64.0.1',
+      '100.100.100.100',
+      '100.127.255.255',
+      '255.255.255.255',
+      '224.0.0.1',
+      '239.255.255.255',
+    ]) {
+      assert.strictEqual(isPrivateIp(addr), true, `${addr} should be flagged`);
+    }
+    // Just outside CGNAT should be public.
+    assert.strictEqual(isPrivateIp('100.63.255.255'), false);
+    assert.strictEqual(isPrivateIp('100.128.0.0'), false);
+  });
+
+  it('unwraps IPv4-mapped IPv6 (::ffff:a.b.c.d) and flags if v4 is private', () => {
+    assert.strictEqual(isPrivateIp('::ffff:10.0.0.1'), true);
+    assert.strictEqual(isPrivateIp('::ffff:169.254.169.254'), true);
+    assert.strictEqual(isPrivateIp('::ffff:127.0.0.1'), true);
+    assert.strictEqual(isPrivateIp('::ffff:8.8.8.8'), false);
+  });
+
+  it('flags IPv6 multicast', () => {
+    for (const addr of ['ff02::1', 'ff05::1:3']) {
+      assert.strictEqual(isPrivateIp(addr), true, `${addr} should be multicast`);
+    }
+  });
+});
+
+describe('isAlwaysBlocked (IMDS / link-local, blocked even under --allow-http)', () => {
+  it('blocks AWS/Azure/GCP IMDS (169.254.169.254)', () => {
+    assert.strictEqual(isAlwaysBlocked('169.254.169.254'), true);
+    assert.strictEqual(isAlwaysBlocked('::ffff:169.254.169.254'), true);
+  });
+
+  it('blocks entire 169.254/16 link-local range', () => {
+    assert.strictEqual(isAlwaysBlocked('169.254.0.1'), true);
+    assert.strictEqual(isAlwaysBlocked('169.254.255.255'), true);
+    // Just outside — not blocked by this check.
+    assert.strictEqual(isAlwaysBlocked('169.255.0.1'), false);
+  });
+
+  it('blocks IPv6 link-local (fe80:*)', () => {
+    assert.strictEqual(isAlwaysBlocked('fe80::1'), true);
+  });
+
+  it('does not block other loopback / RFC 1918 addresses (those need --allow-http to be bypassed intentionally)', () => {
+    assert.strictEqual(isAlwaysBlocked('127.0.0.1'), false);
+    assert.strictEqual(isAlwaysBlocked('10.0.0.1'), false);
+    assert.strictEqual(isAlwaysBlocked('::1'), false);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -82,6 +136,20 @@ describe('fetchProbe SSRF guardrails', () => {
     } finally {
       server.close();
     }
+  });
+
+  it('refuses unsupported schemes (file:, data:, ftp:) even under allowPrivateIp', async () => {
+    for (const url of ['file:///etc/passwd', 'data:text/plain,hi', 'ftp://example.com/']) {
+      const result = await fetchProbe(url, { allowPrivateIp: true });
+      assert.match(result.error ?? '', /unsupported scheme/);
+      assert.strictEqual(result.status, 0);
+    }
+  });
+
+  it('refuses IMDS (169.254.169.254) even when allowPrivateIp is set', async () => {
+    const result = await fetchProbe('http://169.254.169.254/latest/meta-data/', { allowPrivateIp: true });
+    assert.match(result.error ?? '', /always-blocked/);
+    assert.strictEqual(result.status, 0);
   });
 });
 
@@ -196,8 +264,11 @@ describe('resource_equals_agent_url', () => {
       },
     });
     assert.strictEqual(r.passed, false);
-    // Redacted error message — do not leak the advertised value into shareable reports.
+    // Error message MUST NOT echo the advertised value (public-reports hygiene).
     assert.doesNotMatch(r.error ?? '', /auth\.mismatch/);
+    // But it SHOULD surface the agent's own URL + the actionable fix.
+    assert.match(r.error ?? '', /agent\.example\.com\/mcp/);
+    assert.match(r.error ?? '', /Fix:/);
   });
 
   it('fails when resource field missing', () => {

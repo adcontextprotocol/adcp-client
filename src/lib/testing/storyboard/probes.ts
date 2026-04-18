@@ -14,11 +14,13 @@
 import { lookup as dnsLookup } from 'dns/promises';
 import { isIP } from 'net';
 import { randomBytes } from 'crypto';
+import { Agent, fetch as undiciFetch } from 'undici';
 import type { HttpProbeResult } from './types';
 import type { TaskResult } from '../types';
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 64 * 1024;
+const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
 
 /** Task names dispatched via HTTP probes (not via the MCP client). */
 export const PROBE_TASKS = new Set([
@@ -103,10 +105,18 @@ export interface FetchProbeOptions {
  *
  * Guardrails (RFC 9728 / RFC 8414 metadata endpoints typically live on public
  * HTTPS; anything else is suspicious):
- *   - HTTPS only unless `allowPrivateIp` overrides.
- *   - Resolves the hostname and rejects RFC 1918 / loopback / link-local unless overridden.
- *   - Does not follow redirects across hosts.
- *   - Caps response body at 64 KiB and total fetch time at 10 s.
+ *   - Scheme: `https:` only by default; `http:` allowed only when
+ *     `allowPrivateIp` is set. `file:`, `ftp:`, `data:`, etc. are always rejected.
+ *   - DNS: resolves all A/AAAA records once, rejects if any is private, then
+ *     pins the outbound connection to the validated IP. Defeats DNS rebinding
+ *     where an attacker's authoritative nameserver returns a public address
+ *     to our guard lookup and a private address to the connect-time lookup.
+ *   - Private-IP block applies RFC 1918, loopback, link-local, IPv6 ULA,
+ *     CGNAT (100.64/10), multicast, broadcast, and IPv4-mapped IPv6.
+ *   - IMDS (169.254.169.254 / fe80::) stays blocked **even under
+ *     `allowPrivateIp`** — no legitimate dev use for probing it.
+ *   - Redirects are NOT followed (`redirect: 'manual'`).
+ *   - Body capped at 64 KiB, total fetch time capped at 10 s.
  */
 export async function fetchProbe(url: string, options: FetchProbeOptions = {}): Promise<HttpProbeResult> {
   const timeout = options.timeoutMs ?? PROBE_TIMEOUT_MS;
@@ -120,32 +130,61 @@ export async function fetchProbe(url: string, options: FetchProbeOptions = {}): 
     return result;
   }
 
+  // Scheme gate: only http/https ever reachable. http only under dev opt-in.
+  if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
+    result.error = `Refusing to probe URL with unsupported scheme: ${parsed.protocol}`;
+    return result;
+  }
   if (parsed.protocol !== 'https:' && !options.allowPrivateIp) {
     result.error = `Refusing to probe non-HTTPS URL: ${url}`;
     return result;
   }
 
-  if (!options.allowPrivateIp) {
-    try {
-      const { address } = await dnsLookup(parsed.hostname);
-      if (isPrivateIp(address)) {
-        result.error = `Refusing to probe private/loopback address ${address} for ${parsed.hostname}`;
-        return result;
-      }
-    } catch (err) {
-      result.error = `DNS lookup failed for ${parsed.hostname}: ${err instanceof Error ? err.message : String(err)}`;
+  // Resolve every A/AAAA once and validate the full set — `dnsLookup` without
+  // `{ all: true }` picks one at random. An attacker that publishes a public
+  // address alongside a private one would slip past a single-record check.
+  let addresses: { address: string; family: number }[];
+  try {
+    addresses = await dnsLookup(parsed.hostname, { all: true });
+  } catch (err) {
+    result.error = `DNS lookup failed for ${parsed.hostname}: ${err instanceof Error ? err.message : String(err)}`;
+    return result;
+  }
+  if (addresses.length === 0) {
+    result.error = `DNS returned no addresses for ${parsed.hostname}`;
+    return result;
+  }
+  // Always block IMDS / link-local, even when allowPrivateIp is set.
+  for (const a of addresses) {
+    if (isAlwaysBlocked(a.address)) {
+      result.error = `Refusing to probe always-blocked address ${a.address} for ${parsed.hostname}`;
       return result;
     }
   }
+  if (!options.allowPrivateIp) {
+    for (const a of addresses) {
+      if (isPrivateIp(a.address)) {
+        result.error = `Refusing to probe private/loopback address ${a.address} for ${parsed.hostname}`;
+        return result;
+      }
+    }
+  }
+  // Pin the connection to the resolved IP so undici doesn't re-resolve and
+  // see a rebind. Picks the first address; all addresses were validated above.
+  const pinned = addresses[0]!;
+  const dispatcher = new Agent({
+    connect: { lookup: (_h, _o, cb) => cb(null, pinned.address, pinned.family) },
+  });
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeout);
   try {
-    const res = await fetch(url, {
+    const res = await undiciFetch(url, {
       method: 'GET',
       redirect: 'manual',
       signal: ac.signal,
       headers: { accept: 'application/json' },
+      dispatcher,
     });
     result.status = res.status;
     const headers: Record<string, string> = {};
@@ -154,7 +193,6 @@ export async function fetchProbe(url: string, options: FetchProbeOptions = {}): 
     });
     result.headers = headers;
 
-    // Cap body size before consuming.
     const reader = res.body?.getReader();
     if (reader) {
       const chunks: Uint8Array[] = [];
@@ -189,6 +227,7 @@ export async function fetchProbe(url: string, options: FetchProbeOptions = {}): 
     return result;
   } finally {
     clearTimeout(timer);
+    await dispatcher.close().catch(() => {});
   }
 }
 
@@ -236,6 +275,19 @@ let probeRequestId = 0;
  * can be exercised and the raw HTTP status + `WWW-Authenticate` header can be
  * captured.
  *
+ * **Known limitation**: this probe skips MCP Streamable HTTP session
+ * initialization (`initialize` + `tools/list`). Agents that enforce
+ * session-init before `tools/call` will return `-32002 Session not initialized`
+ * (or similar). The probe detects that response and reports
+ * `error: 'session_not_initialized'` on the synthetic TaskResult so callers
+ * don't mistake it for a valid auth rejection. For agents that gate auth at
+ * the HTTP/transport layer (the common pattern) the 401 + WWW-Authenticate
+ * fires before the session check, which is what this probe is designed to see.
+ *
+ * **Args are not secret** — must not contain credentials or PII. The server's
+ * response body lands in `httpResult.body` and is written to compliance
+ * reports. Outbound request body is not persisted.
+ *
  * Returns an HttpProbeResult plus a synthetic TaskResult for steps that also
  * want to validate body shape — the structuredContent is unwrapped so
  * `field_present: "context"` resolves naturally.
@@ -258,13 +310,17 @@ export async function rawMcpProbe(options: {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), PROBE_TIMEOUT_MS);
   try {
+    // Accept only JSON. Streamable-HTTP MCP servers that prefer SSE framing
+    // will 406 or downgrade to JSON; we can't robustly parse event-stream
+    // wire format in a probe without reimplementing the transport, and silently
+    // misreading an SSE body would make expect_error steps falsely pass.
     const res = await fetch(agentUrl, {
       method: 'POST',
       redirect: 'manual',
       signal: ac.signal,
       headers: {
         'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
+        accept: 'application/json',
         ...headers,
       },
       body,
@@ -282,7 +338,18 @@ export async function rawMcpProbe(options: {
       parsed = JSON.parse(text);
     } catch {
       httpResult.body = text;
-      return { httpResult };
+      // Body didn't parse — almost certainly SSE framing or HTML from an edge
+      // proxy. We deliberately don't attempt SSE parsing (see the advertised
+      // Accept gate above). Surface a distinct error so callers don't mistake
+      // a non-JSON response for a silent success.
+      return {
+        httpResult,
+        taskResult: {
+          success: false,
+          data: undefined,
+          error: `Non-JSON response body (content-type: ${httpResult.headers['content-type'] ?? 'unknown'}).`,
+        },
+      };
     }
     httpResult.body = parsed;
 
@@ -299,9 +366,22 @@ export async function rawMcpProbe(options: {
       };
     }
     if (rpc.error) {
+      // MCP Streamable HTTP session-init errors — agents that require
+      // `initialize` before `tools/call`. Distinct from auth failures so
+      // downstream compliance reporting doesn't misdiagnose.
+      const code = rpc.error.code;
+      const isSessionInit =
+        code === -32002 ||
+        (typeof rpc.error.message === 'string' && /session.*(?:not.*)?initialized/i.test(rpc.error.message));
       return {
         httpResult,
-        taskResult: { success: false, data: undefined, error: rpc.error.message ?? `JSON-RPC error ${rpc.error.code}` },
+        taskResult: {
+          success: false,
+          data: undefined,
+          error: isSessionInit
+            ? `MCP session not initialized (${code}: ${rpc.error.message ?? 'no message'}). rawMcpProbe skips the initialize handshake; strict servers will reject here before auth is evaluated.`
+            : (rpc.error.message ?? `JSON-RPC error ${code}`),
+        },
       };
     }
     const data = rpc.result?.structuredContent ?? rpc.result?.content;
@@ -315,28 +395,81 @@ export async function rawMcpProbe(options: {
 }
 
 /**
- * Reject loopback, link-local, and RFC 1918 private ranges (and IPv6
- * equivalents). Returns false for public addresses — those are the only ones
- * allowed when `allowPrivateIp` is false.
+ * Fold IPv4-mapped and 6to4 IPv6 encodings back to their underlying IPv4
+ * address so the classifier catches `::ffff:10.0.0.1`, `::ffff:169.254.169.254`,
+ * `64:ff9b::a.b.c.d` (NAT64), and `2002:a.b.c.d::` (6to4). Returns null for
+ * native IPv6 addresses.
+ */
+function extractEmbeddedIpv4(address: string): string | null {
+  const lower = address.toLowerCase();
+  // ::ffff:a.b.c.d or ::ffff:<hex>:<hex>
+  const mapped = /^::ffff:(?:([0-9a-f]{1,4}):([0-9a-f]{1,4})|((?:\d{1,3}\.){3}\d{1,3}))$/i.exec(lower);
+  if (mapped) {
+    if (mapped[3]) return mapped[3]!;
+    const hi = parseInt(mapped[1]!, 16);
+    const lo = parseInt(mapped[2]!, 16);
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  // NAT64 well-known prefix 64:ff9b::a.b.c.d
+  const nat64 = /^64:ff9b::((?:\d{1,3}\.){3}\d{1,3})$/i.exec(lower);
+  if (nat64) return nat64[1]!;
+  // 6to4: 2002:<v4-in-hex>::...
+  const sixtofour = /^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})(::|:)/i.exec(lower);
+  if (sixtofour) {
+    const hi = parseInt(sixtofour[1]!, 16);
+    const lo = parseInt(sixtofour[2]!, 16);
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  return null;
+}
+
+/**
+ * Addresses we block even when the dev opt-in `allowPrivateIp` is on — there
+ * is no legitimate reason for a compliance probe to hit cloud metadata
+ * endpoints (AWS IMDS, GCP metadata, Azure IMDS), and landing there in a CI
+ * runner exfiltrates credentials.
+ */
+export function isAlwaysBlocked(address: string): boolean {
+  const v4 = isIP(address) === 4 ? address : (extractEmbeddedIpv4(address) ?? '');
+  if (v4) {
+    const [a, b] = v4.split('.').map(Number);
+    // 169.254/16 — link-local + IMDS (169.254.169.254).
+    if (a === 169 && b === 254) return true;
+  }
+  const lower = address.toLowerCase();
+  if (lower.startsWith('fe80:')) return true; // IPv6 link-local
+  return false;
+}
+
+/**
+ * Reject loopback, link-local, RFC 1918 private ranges, CGNAT (RFC 6598),
+ * broadcast, multicast, the unspecified address, and IPv6 equivalents.
+ * Unwraps IPv4-mapped/NAT64/6to4 IPv6 encodings before classifying.
  */
 export function isPrivateIp(address: string): boolean {
-  const v = isIP(address);
-  if (v === 4) {
-    const [a, b] = address.split('.').map(Number);
+  // Broadcast.
+  if (address === '255.255.255.255') return true;
+
+  const embedded = extractEmbeddedIpv4(address);
+  const v4 = isIP(address) === 4 ? address : embedded;
+  if (v4) {
+    const [a, b] = v4.split('.').map(Number);
+    if (a === 0) return true;
     if (a === 10) return true;
     if (a === 127) return true;
+    if (a === 100 && b! >= 64 && b! <= 127) return true; // RFC 6598 CGNAT 100.64/10
     if (a === 169 && b === 254) return true;
     if (a === 172 && b! >= 16 && b! <= 31) return true;
     if (a === 192 && b === 168) return true;
-    if (a === 0) return true;
-    return false;
+    if (a! >= 224 && a! <= 239) return true; // multicast
+    if (a === 255) return true;
   }
-  if (v === 6) {
+  if (isIP(address) === 6) {
     const lower = address.toLowerCase();
     if (lower === '::1' || lower === '::') return true;
-    if (lower.startsWith('fe80:')) return true; // link-local
-    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // ULA
-    return false;
+    if (lower.startsWith('fe80:')) return true;
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
+    if (lower.startsWith('ff')) return true; // multicast
   }
   return false;
 }

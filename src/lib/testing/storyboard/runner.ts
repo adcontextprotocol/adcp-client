@@ -153,11 +153,20 @@ export async function runStoryboard(
     });
   }
 
+  // Overall pass requires (a) no required-phase failures AND (b) at least one
+  // required phase actually passed. Without the second clause, a storyboard
+  // where every phase is marked optional OR every required phase is skipped
+  // would pass vacuously. The storyboard's own gate (assert_contribution in
+  // security_baseline) must live in a required phase for this to behave.
+  const requiredPhasesPassed = phaseResults.some((p, idx) => {
+    const phaseDef = storyboard.phases[idx];
+    return phaseDef && !phaseDef.optional && p.passed && p.steps.length > 0;
+  });
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
     agent_url: agentUrl,
-    overall_passed: failedCount === 0 && passedCount > 0,
+    overall_passed: failedCount === 0 && requiredPhasesPassed,
     phases: phaseResults,
     context,
     total_duration_ms: Date.now() - start,
