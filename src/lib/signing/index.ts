@@ -34,5 +34,22 @@ export {
 } from './types';
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 export { signRequest, type SignedRequest, type SignerKey, type SignRequestOptions } from './signer';
-export { createSigningFetch, type SigningFetchOptions } from './fetch';
+export { createSigningFetch, type CoverContentDigestPredicate, type SigningFetchOptions } from './fetch';
 export { createExpressVerifier, type ExpressLike, type ExpressMiddlewareOptions } from './middleware';
+export {
+  CapabilityCache,
+  buildCapabilityCacheKey,
+  defaultCapabilityCache,
+  type CachedCapability,
+  type CapabilityCacheOptions,
+} from './capability-cache';
+export {
+  buildAgentSigningFetch,
+  extractAdcpOperation,
+  resolveCoverContentDigest,
+  shouldSignOperation,
+  toSignerKey,
+  type BuildAgentSigningFetchOptions,
+} from './agent-fetch';
+export { buildAgentSigningContext, type AgentSigningContext } from './agent-context';
+export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';

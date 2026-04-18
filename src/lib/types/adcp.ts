@@ -220,6 +220,65 @@ export interface AgentOAuthClient {
   client_secret_expires_at?: number;
 }
 
+/**
+ * Private JWK carrying the `d` scalar required to sign. Narrower than the
+ * generic JWK shape to give hand-authors a compiler error when they paste
+ * the public JWK (which lacks `d`) by accident.
+ */
+export interface AdcpPrivateJsonWebKey {
+  kid: string;
+  kty: string;
+  crv?: string;
+  alg?: string;
+  use?: string;
+  key_ops?: string[];
+  x?: string;
+  y?: string;
+  /** Private scalar. Required for signing. */
+  d: string;
+  [extra: string]: unknown;
+}
+
+/**
+ * Request-signing configuration for an agent. When present on an AgentConfig,
+ * outbound MCP/A2A calls are gated by the seller's advertised
+ * `request_signing` capability block (fetched once via `get_adcp_capabilities`
+ * and cached): operations listed in `required_for` / `supported_for` (or
+ * `always_sign`) are signed with this key per RFC 9421.
+ *
+ * Content-digest coverage is resolved per request from the seller's
+ * advertised `covers_content_digest` policy: `required` covers, `forbidden`
+ * omits, `either` (or absent) covers by default — body-binding is the safer
+ * choice and a seller advertising `either` has explicitly allowed both forms.
+ */
+export interface AgentRequestSigningConfig {
+  /** Key identifier (published by the buyer at its JWKS endpoint) */
+  kid: string;
+  /** Signature algorithm. Must match the key material. */
+  alg: 'ed25519' | 'ecdsa-p256-sha256';
+  /**
+   * Private signing key as a JWK. Must include `d` (the private scalar);
+   * other fields mirror the public JWK the buyer publishes for verification.
+   */
+  private_key: AdcpPrivateJsonWebKey;
+  /**
+   * Fully-qualified HTTPS URL at which the signer publishes its JWKS. Sellers
+   * read this side-channel to discover the signer's verification material.
+   */
+  agent_url: string;
+  /**
+   * AdCP operation names to sign regardless of the seller's advertisement.
+   * Useful during pilots before a counterparty flips an op into `required_for`.
+   */
+  always_sign?: string[];
+  /**
+   * When true, also sign operations the seller lists in `supported_for` (but
+   * not `required_for`). Defaults to false — conservative "sign what the
+   * seller asks for" behavior.
+   */
+  sign_supported?: boolean;
+}
+
 // Agent Configuration Types
 export interface AgentConfig {
   id: string;
@@ -265,6 +324,14 @@ export interface AgentConfig {
    * ```
    */
   headers?: Record<string, string>;
+
+  /**
+   * Optional — when set, outbound requests to this agent are signed per
+   * RFC 9421 for operations the agent advertises in its `request_signing`
+   * capability block (fetched once via `get_adcp_capabilities` and cached
+   * by the client). See {@link AgentRequestSigningConfig}.
+   */
+  request_signing?: AgentRequestSigningConfig;
 }
 
 // Testing Types

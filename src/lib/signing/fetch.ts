@@ -1,7 +1,17 @@
 import { signRequest, type SignerKey, type SignRequestOptions } from './signer';
 
-export interface SigningFetchOptions extends SignRequestOptions {
+/** Callback form for `coverContentDigest` — lets the wrapper decide per call. */
+export type CoverContentDigestPredicate = (url: string, init: RequestInit | undefined) => boolean;
+
+export interface SigningFetchOptions extends Omit<SignRequestOptions, 'coverContentDigest'> {
   shouldSign?: (url: string, init: RequestInit | undefined) => boolean;
+  /**
+   * Whether to cover `content-digest`. May be a boolean (static) or a
+   * predicate resolved at signing time against the current request — used by
+   * the AdCP agent wrapper to honor the seller's `covers_content_digest`
+   * policy (`required` / `forbidden` / `either`) per operation.
+   */
+  coverContentDigest?: boolean | CoverContentDigestPredicate;
 }
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -26,7 +36,14 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
     }
     const body = bodyToString(init?.body);
 
-    const signed = signRequest({ method, url, headers, body }, key, options);
+    const coverContentDigest =
+      typeof options.coverContentDigest === 'function'
+        ? options.coverContentDigest(url, init)
+        : options.coverContentDigest;
+    const { coverContentDigest: _omit, ...signerOptionsBase } = options;
+    const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest };
+
+    const signed = signRequest({ method, url, headers, body }, key, signerOptions);
 
     const mergedInit: RequestInit = { ...init, method, headers: signed.headers };
     if (body !== undefined && mergedInit.body === undefined) mergedInit.body = body;

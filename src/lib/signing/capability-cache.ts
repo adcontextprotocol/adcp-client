@@ -1,0 +1,87 @@
+import { createHash } from 'node:crypto';
+import type { VerifierCapability } from './types';
+
+export interface CachedCapability {
+  /** RFC 9421 request-signing capability block as advertised by the agent. */
+  requestSigning: VerifierCapability | undefined;
+  /** AdCP major version associated with the capability response, when known. */
+  adcpVersion: number | undefined;
+  /** Epoch seconds when this entry was written. */
+  fetchedAt: number;
+}
+
+export interface CapabilityCacheOptions {
+  /** Seconds before a cached capability is considered stale. Default 300. */
+  ttlSeconds?: number;
+  now?: () => number;
+}
+
+const DEFAULT_TTL_SECONDS = 300;
+
+/**
+ * Per-agent cache of the `request_signing` capability block returned by
+ * `get_adcp_capabilities`. Keyed by a caller-supplied `cacheKey` (typically
+ * `agent_uri + auth-token-hash`) so that different credentials or URLs get
+ * independent entries.
+ *
+ * Staleness is TTL-based; callers may also invalidate explicitly — e.g. after
+ * a seller rotates its advertisement mid-session — so the next outbound call
+ * re-fetches before deciding whether to sign.
+ */
+export class CapabilityCache {
+  private readonly entries = new Map<string, CachedCapability>();
+  private readonly ttlSeconds: number;
+  private readonly now: () => number;
+
+  constructor(options: CapabilityCacheOptions = {}) {
+    this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
+  }
+
+  get(cacheKey: string): CachedCapability | undefined {
+    return this.entries.get(cacheKey);
+  }
+
+  set(cacheKey: string, entry: CachedCapability): void {
+    this.entries.set(cacheKey, entry);
+  }
+
+  invalidate(cacheKey: string): void {
+    this.entries.delete(cacheKey);
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+
+  isStale(entry: CachedCapability | undefined): boolean {
+    if (!entry) return true;
+    return this.now() - entry.fetchedAt > this.ttlSeconds;
+  }
+}
+
+/**
+ * Process-global capability cache. Shared by the ProtocolClient priming path
+ * and the transport-level signing fetch wrappers so that a single
+ * `get_adcp_capabilities` call serves every subsequent signing decision for
+ * an agent.
+ */
+export const defaultCapabilityCache = new CapabilityCache();
+
+/**
+ * Build a stable cache key from an agent URI, optional auth token, and
+ * optional signer kid. Two callers pointing at the same agent URI under
+ * different signing identities get separate entries — a seller can
+ * (in principle) advertise different policies per counterparty key.
+ *
+ * Hash is a cache-key disambiguator, not a security boundary; a hypothetical
+ * collision across users would still transmit only the original caller's
+ * token (the cache key is not the auth credential itself).
+ */
+export function buildCapabilityCacheKey(agentUri: string, authToken?: string, signerKid?: string): string {
+  const tokenSuffix = authToken
+    ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
+    : '';
+  const signerSuffix = signerKid ? `::kid=${signerKid}` : '';
+  return `${agentUri}${tokenSuffix}${signerSuffix}`;
+}

@@ -15,6 +15,7 @@ import type { TaskInfo } from '../core/ConversationTypes';
 import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
+import type { AgentSigningContext } from '../signing/agent-context';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -145,7 +146,7 @@ export async function callMCPToolWithTasks(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
-  options?: { workingTimeout?: number }
+  options?: { workingTimeout?: number; signingContext?: AgentSigningContext }
 ): Promise<unknown> {
   return withSpan(
     'adcp.mcp.call_tool',
@@ -328,7 +329,7 @@ export async function callMCPToolWithTasks(
         }
 
         throw new Error(`MCP Tasks: callToolStream for ${toolName} ended without result or task`);
-      });
+      }, options?.signingContext);
     }
   );
 }
