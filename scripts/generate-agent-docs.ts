@@ -520,6 +520,56 @@ function generateLlmsTxt(
   ln('```');
   ln();
 
+  // --- Idempotency ---
+  ln(`## Idempotency (mutating requests)`);
+  ln();
+  ln(
+    `AdCP v3 requires \`idempotency_key\` on every mutating request (\`create_media_buy\`, \`update_media_buy\`, \`activate_signal\`, all \`sync_*\`, \`si_send_message\`, etc.). The SDK auto-generates a UUID v4 when callers don't supply one, reuses it across internal retries, and surfaces it on the result:`
+  );
+  ln();
+  ln('```typescript');
+  ln('const result = await client.createMediaBuy({ account, brand, start_time, end_time, packages });');
+  ln('result.metadata.idempotency_key  // key that was sent (auto-generated or caller-supplied)');
+  ln('result.metadata.replayed         // true if this was a cached replay from a prior retry');
+  ln('```');
+  ln();
+  ln(`**Two things agents with side effects MUST handle:**`);
+  ln();
+  ln(
+    `1. **Side-effect suppression on \`replayed: true\`.** If your agent emits notifications, writes LLM memory, or fires downstream tool calls on the response, check \`result.metadata.replayed\` before acting. A cached replay means the side effects already fired on the original call.`
+  );
+  ln();
+  ln('```typescript');
+  ln('if (result.success && !result.metadata.replayed) {');
+  ln('  await notify(`Campaign ${result.data.media_buy_id} created`);');
+  ln('  await memory.write({ campaign_id: result.data.media_buy_id });');
+  ln('}');
+  ln('```');
+  ln();
+  ln(
+    `2. **Agent re-plan vs. network retry.** A network retry (same bytes, socket timeout) reuses the same key — the SDK handles this. An agent re-plan (LLM re-ran its planner and produced a different payload) means a NEW intent — mint a fresh key by calling the method again without passing one. Reusing the prior key with a different payload returns \`IdempotencyConflictError\`.`
+  );
+  ln();
+  ln(`**Typed errors:**`);
+  ln();
+  ln('```typescript');
+  ln("import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';");
+  ln();
+  ln("if (result.adcpError?.code === 'IDEMPOTENCY_CONFLICT') {");
+  ln('  // Agent re-planned with different payload. Retry with a fresh key.');
+  ln('}');
+  ln("if (result.adcpError?.code === 'IDEMPOTENCY_EXPIRED') {");
+  ln('  // Key past replay window. If you know the prior call succeeded, look up');
+  ln('  // by natural key (e.g., get_media_buys by context.internal_campaign_id).');
+  ln('  // Otherwise mint a fresh key.');
+  ln('}');
+  ln('```');
+  ln();
+  ln(
+    `**BYOK** (persist keys in your DB across process restarts): you own the replay-window boundary. Compare key age against \`adcp.idempotency.replay_ttl_seconds\` from \`get_adcp_capabilities\` before reusing. Past the window, fall back to a natural-key lookup rather than minting a new key — otherwise a second resource is created silently.`
+  );
+  ln();
+
   // --- Tools by domain ---
   ln(`## Tools`);
   ln();

@@ -199,6 +199,8 @@ const CODE_PATTERNS: Array<[RegExp, StandardErrorCode]> = [
   [/\bACCOUNT_SUSPENDED\b/, 'ACCOUNT_SUSPENDED'],
   [/\bCOMPLIANCE_UNSATISFIED\b/, 'COMPLIANCE_UNSATISFIED'],
   [/\bBUDGET_EXHAUSTED\b/, 'BUDGET_EXHAUSTED'],
+  [/\bIDEMPOTENCY_CONFLICT\b/, 'IDEMPOTENCY_CONFLICT'],
+  [/\bIDEMPOTENCY_EXPIRED\b/, 'IDEMPOTENCY_EXPIRED'],
   // CONFLICT omitted from pattern matching — too ambiguous as a common English word
 ];
 

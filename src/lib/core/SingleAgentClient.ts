@@ -71,6 +71,7 @@ import type {
   GetPlanAuditLogsResponse,
   OutcomeType,
 } from '../types/tools.generated';
+import { type MutatingRequestInput, generateIdempotencyKey, isMutatingTask } from '../utils/idempotency';
 
 import type {
   MCPWebhookPayload,
@@ -977,7 +978,20 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     // Normalize params for backwards compatibility before validation
-    const normalizedParams = normalizeRequestParams(taskType, params);
+    let normalizedParams = normalizeRequestParams(taskType, params);
+
+    // Inject an idempotency_key for mutating tools before schema validation
+    // so callers don't have to supply one. TaskExecutor also guards against
+    // missing keys, but validation happens here first — do the injection up
+    // front so the request passes the spec's required-field check.
+    if (
+      isMutatingTask(taskType) &&
+      normalizedParams &&
+      typeof normalizedParams === 'object' &&
+      !normalizedParams.idempotency_key
+    ) {
+      normalizedParams = { ...normalizedParams, idempotency_key: generateIdempotencyKey() };
+    }
 
     // Validate request params against schema
     this.validateRequest(taskType, normalizedParams);
@@ -1280,7 +1294,7 @@ export class SingleAgentClient {
    * @param options - Task execution options
    */
   async createMediaBuy(
-    params: CreateMediaBuyRequest,
+    params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
@@ -1335,7 +1349,7 @@ export class SingleAgentClient {
    * @param options - Task execution options
    */
   async updateMediaBuy(
-    params: UpdateMediaBuyRequest,
+    params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
@@ -1356,7 +1370,7 @@ export class SingleAgentClient {
    * @param options - Task execution options
    */
   async syncCreatives(
-    params: SyncCreativesRequest,
+    params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
@@ -1461,7 +1475,7 @@ export class SingleAgentClient {
    * @param options - Task execution options
    */
   async providePerformanceFeedback(
-    params: ProvidePerformanceFeedbackRequest,
+    params: MutatingRequestInput<ProvidePerformanceFeedbackRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
@@ -1505,7 +1519,7 @@ export class SingleAgentClient {
    * @param options - Task execution options
    */
   async activateSignal(
-    params: ActivateSignalRequest,
+    params: MutatingRequestInput<ActivateSignalRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
@@ -1528,7 +1542,7 @@ export class SingleAgentClient {
    * Pass an explicit agent via options.agent to override.
    */
   async syncPlans(
-    params: SyncPlansRequest,
+    params: MutatingRequestInput<SyncPlansRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<SyncPlansResponse>> {
@@ -1618,7 +1632,7 @@ export class SingleAgentClient {
    * Build a creative from a format and brand context
    */
   async buildCreative(
-    params: BuildCreativeRequest,
+    params: MutatingRequestInput<BuildCreativeRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<BuildCreativeResponse>> {
@@ -1654,7 +1668,7 @@ export class SingleAgentClient {
    * Sync accounts
    */
   async syncAccounts(
-    params: SyncAccountsRequest,
+    params: MutatingRequestInput<SyncAccountsRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncAccountsResponse>> {
@@ -1671,7 +1685,7 @@ export class SingleAgentClient {
    * Sync audiences
    */
   async syncAudiences(
-    params: SyncAudiencesRequest,
+    params: MutatingRequestInput<SyncAudiencesRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncAudiencesResponse>> {
@@ -1690,7 +1704,7 @@ export class SingleAgentClient {
    * Create a property list
    */
   async createPropertyList(
-    params: CreatePropertyListRequest,
+    params: MutatingRequestInput<CreatePropertyListRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreatePropertyListResponse>> {
@@ -1724,7 +1738,7 @@ export class SingleAgentClient {
    * Update a property list
    */
   async updatePropertyList(
-    params: UpdatePropertyListRequest,
+    params: MutatingRequestInput<UpdatePropertyListRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdatePropertyListResponse>> {
@@ -1758,7 +1772,7 @@ export class SingleAgentClient {
    * Delete a property list
    */
   async deletePropertyList(
-    params: DeletePropertyListRequest,
+    params: MutatingRequestInput<DeletePropertyListRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<DeletePropertyListResponse>> {
@@ -1809,7 +1823,7 @@ export class SingleAgentClient {
    * Calibrate content against standards
    */
   async calibrateContent(
-    params: CalibrateContentRequest,
+    params: MutatingRequestInput<CalibrateContentRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CalibrateContentResponse>> {
@@ -1862,7 +1876,7 @@ export class SingleAgentClient {
    * Initiate an SI session
    */
   async siInitiateSession(
-    params: SIInitiateSessionRequest,
+    params: MutatingRequestInput<SIInitiateSessionRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SIInitiateSessionResponse>> {
@@ -1879,7 +1893,7 @@ export class SingleAgentClient {
    * Send a message in an SI session
    */
   async siSendMessage(
-    params: SISendMessageRequest,
+    params: MutatingRequestInput<SISendMessageRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SISendMessageResponse>> {

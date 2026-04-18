@@ -105,6 +105,36 @@ export class ProtocolResponseParser {
     return null;
   }
 
+  /**
+   * Extract the `replayed` field from a protocol response envelope.
+   *
+   * Returns `true` if the seller set `replayed: true` on the envelope,
+   * `false` if explicitly set to `false`, `undefined` if not present. Callers
+   * with side effects on response (notifications, LLM memory writes, downstream
+   * tool calls) MUST treat `undefined` as `false` — the spec says fresh
+   * executions MAY omit the field.
+   */
+  getReplayed(response: any): boolean | undefined {
+    if (response == null) return undefined;
+
+    // A2A JSON-RPC wrapped
+    if (response.result && typeof response.result.replayed === 'boolean') {
+      return response.result.replayed;
+    }
+
+    // MCP structuredContent
+    if (response.structuredContent && typeof response.structuredContent.replayed === 'boolean') {
+      return response.structuredContent.replayed;
+    }
+
+    // Top-level envelope (A2A direct, REST)
+    if (typeof response.replayed === 'boolean') {
+      return response.replayed;
+    }
+
+    return undefined;
+  }
+
   private parseExpectedType(rawType: unknown): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {
     if (typeof rawType === 'string') {
       const allowedTypes: string[] = ['string', 'number', 'boolean', 'object', 'array'];

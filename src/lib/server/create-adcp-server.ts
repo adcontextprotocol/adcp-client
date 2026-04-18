@@ -60,6 +60,8 @@ import {
 } from './responses';
 
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
+import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
+import type { IdempotencyStore } from './idempotency';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
@@ -444,6 +446,18 @@ export interface AdcpCapabilitiesConfig {
   account?: Partial<AccountCapabilities>;
   creative?: Partial<CreativeCapabilities>;
   extensions_supported?: string[];
+  /**
+   * Idempotency replay window. Seconds that a successful response is retained
+   * and replayed on same-key retries. Defaults to 86400 (24h). Spec minimum
+   * is 3600 (1h), maximum is 604800 (7d) — clamped to the spec bounds.
+   *
+   * When using `createIdempotencyStore` from `@adcp/client/server`, call its
+   * `.capability()` method and pass the returned object here — that way the
+   * middleware's actual TTL is what's declared to buyers.
+   */
+  idempotency?: {
+    replay_ttl_seconds?: number;
+  };
   portfolio?: {
     publisher_domains: string[];
     primary_channels?: MediaChannel[];
@@ -510,6 +524,39 @@ export interface AdcpServerConfig<TAccount = unknown> {
 
   /** Explicit capabilities overrides (merged on top of auto-detected). */
   capabilities?: AdcpCapabilitiesConfig;
+  /**
+   * Idempotency store for mutating requests. When configured, the framework:
+   *
+   * - Requires `idempotency_key` on every mutating request (returns
+   *   `INVALID_REQUEST` when missing)
+   * - Replays the cached response for matching `(principal, key, payload)`
+   *   and injects `replayed: true` on the envelope
+   * - Returns `IDEMPOTENCY_CONFLICT` for same-key-different-payload
+   * - Returns `IDEMPOTENCY_EXPIRED` when the key is past the TTL
+   * - Declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`
+   *
+   * Scoping: by default uses `ctx.sessionKey` as the principal. Override
+   * via `resolveIdempotencyPrincipal`.
+   */
+  idempotency?: IdempotencyStore;
+  /**
+   * Derive the idempotency principal from the handler context, the
+   * request params, and the tool name. Defaults to `ctx.sessionKey`. Two
+   * buyers that share a sessionKey would share cache entries — if that's
+   * not what you want, return something more specific (e.g., an
+   * operator_id) from this hook.
+   *
+   * Receives `params` and `toolName` so callers can fold request-shape
+   * identity into the principal when needed (e.g., scoping by a custom
+   * tenant header). For per-session scoping (`si_send_message`), the
+   * framework already folds `params.session_id` into the scope tuple —
+   * the principal is still the authenticated buyer.
+   */
+  resolveIdempotencyPrincipal?: (
+    ctx: HandlerContext<TAccount>,
+    params: Record<string, unknown>,
+    toolName: AdcpServerToolName
+  ) => string | undefined;
   instructions?: string;
   taskStore?: TaskStore;
   taskMessageQueue?: TaskMessageQueue;
@@ -529,6 +576,81 @@ interface ToolAnnotation {
 interface ToolMeta {
   wrap: ((data: any, summary?: string) => McpToolResponse) | null;
   annotations?: ToolAnnotation;
+}
+
+/**
+ * Clamp idempotency replay TTL to spec bounds (1h–7d).
+ */
+function clampReplayTtl(seconds: number): number {
+  const MIN = 3600;
+  const MAX = 604800;
+  if (!Number.isFinite(seconds) || seconds < MIN) return MIN;
+  if (seconds > MAX) return MAX;
+  return Math.floor(seconds);
+}
+
+/**
+ * Set `replayed: true` on the response envelope (MCP structuredContent).
+ * Fresh executions omit the field; seller injects it at response time
+ * on replay.
+ */
+function injectReplayed(response: McpToolResponse): void {
+  if (response.structuredContent && typeof response.structuredContent === 'object') {
+    (response.structuredContent as Record<string, unknown>).replayed = true;
+  }
+}
+
+/**
+ * Shallow-clone a formatted MCP response so callers can mutate envelope
+ * fields (`replayed`, echo-back `context`) without stomping on the cache
+ * entry. The backend returns a fresh object (memory clones, pg
+ * serializes) but re-wrapping via `wrap()` can still alias pieces of the
+ * handler's return value — belt-and-suspenders against mutation leaks.
+ */
+function cloneFormattedResponse(response: McpToolResponse): McpToolResponse {
+  const cloned: McpToolResponse = { ...response };
+  if (cloned.structuredContent && typeof cloned.structuredContent === 'object') {
+    cloned.structuredContent = { ...(cloned.structuredContent as Record<string, unknown>) };
+  }
+  if (Array.isArray(cloned.content)) {
+    cloned.content = cloned.content.map(item => ({ ...item }));
+  }
+  return cloned;
+}
+
+/**
+ * Detect whether a formatted MCP response represents a failure. Failures
+ * are NOT cached — a retry should re-execute rather than replay a
+ * transient error. Checks all three shapes the framework emits:
+ * `isError: true`, `structuredContent.adcp_error`, or envelope
+ * `status: 'failed'` (the envelope example in the spec for failed async
+ * tasks doesn't always include `adcp_error`).
+ */
+function isErrorResponse(response: McpToolResponse): boolean {
+  if (response.isError === true) return true;
+  const sc = response.structuredContent;
+  if (sc && typeof sc === 'object') {
+    if ('adcp_error' in sc) return true;
+    const status = (sc as Record<string, unknown>).status;
+    if (status === 'failed' || status === 'canceled' || status === 'rejected') return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve the extra scope segment for tools with per-session semantics.
+ *
+ * For `si_send_message`, the request `session_id` enters the scope so
+ * the same idempotency_key used across two sessions doesn't false-replay
+ * (or false-conflict) across them. Other tools return `undefined` and
+ * use the default `(principal, key)` scope.
+ */
+function resolveExtraScope(toolName: string, params: Record<string, unknown>): string | undefined {
+  if (toolName === 'si_send_message') {
+    const sessionId = params.session_id;
+    return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+  }
+  return undefined;
 }
 
 function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
@@ -821,6 +943,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     stateStore = new InMemoryStateStore(),
     logger = noopLogger,
     capabilities: capConfig,
+    idempotency,
+    resolveIdempotencyPrincipal,
     instructions,
     taskStore,
     taskMessageQueue,
@@ -938,14 +1062,181 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // --- Idempotency (mutating tools only) ---
+        const toolIsMutating = isMutatingTask(toolName);
+        let idempotencyCheck:
+          | { key: string; principal: string; payloadHash: string; extraScope?: string }
+          | undefined;
+        if (idempotency && toolIsMutating) {
+          const key = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
+          if (!key) {
+            return finalize(
+              adcpError('INVALID_REQUEST', {
+                message: 'idempotency_key is required on mutating requests',
+                field: 'idempotency_key',
+              })
+            );
+          }
+          // Enforce the spec pattern server-side — defense-in-depth against
+          // buyers that bypass MCP schema validation (different transport,
+          // bespoke client). Low-entropy keys pollute the cache and enable
+          // enumeration; keys containing \u0000 would collide with the
+          // internal scope separator.
+          if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
+            return finalize(
+              adcpError('INVALID_REQUEST', {
+                message: 'idempotency_key must match the spec pattern ^[A-Za-z0-9_.:-]{16,255}$',
+                field: 'idempotency_key',
+              })
+            );
+          }
+          const principal =
+            (resolveIdempotencyPrincipal
+              ? resolveIdempotencyPrincipal(ctx, params, toolName as AdcpServerToolName)
+              : ctx.sessionKey) ?? '';
+          if (!principal) {
+            logger.error('Idempotency principal unresolved', { tool: toolName });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message:
+                  'Idempotency principal could not be resolved — configure resolveSessionKey or resolveIdempotencyPrincipal',
+              })
+            );
+          }
+          // SI `si_send_message` is scoped per-session — the same key under
+          // two different sessions must not replay into each other. The
+          // caller's session_id enters the scope tuple so each session has
+          // its own idempotency namespace.
+          const extraScope = resolveExtraScope(toolName, params);
+
+          try {
+            const checkResult = await idempotency.check({ principal, key, payload: params, extraScope });
+            if (checkResult.kind === 'replay') {
+              // The cache stores the already-formatted envelope (so
+              // non-deterministic wrap fields like `confirmed_at` are
+              // pinned to the first execution's values). Clone before
+              // mutating so envelope stamps (replayed, echo-back context)
+              // don't leak into the cache — the backend also clones on
+              // read, but belt-and-suspenders: handler-returned objects
+              // can alias pieces of the formatted envelope.
+              const cachedFormatted = cloneFormattedResponse(checkResult.response as McpToolResponse);
+              injectReplayed(cachedFormatted);
+              return finalize(cachedFormatted);
+            }
+            if (checkResult.kind === 'conflict') {
+              return finalize(
+                adcpError('IDEMPOTENCY_CONFLICT', {
+                  message:
+                    'idempotency_key was used earlier with a different canonical payload. Use a fresh UUID v4, or resend the exact original payload.',
+                })
+              );
+            }
+            if (checkResult.kind === 'expired') {
+              return finalize(
+                adcpError('IDEMPOTENCY_EXPIRED', {
+                  message: `idempotency_key is past the seller's replay window (${idempotency.ttlSeconds}s). Use a fresh UUID v4, or look up the resource by natural key if the prior call succeeded.`,
+                })
+              );
+            }
+            if (checkResult.kind === 'in-flight') {
+              // A parallel request is currently executing this same key.
+              // Tell the client to retry — returning SERVICE_UNAVAILABLE
+              // with a short retry_after is transient-classified and the
+              // buyer SDK auto-retries. Eventually the other request
+              // completes and this retry either replays the cached
+              // response or hits IDEMPOTENCY_CONFLICT.
+              return finalize(
+                adcpError('SERVICE_UNAVAILABLE', {
+                  message:
+                    'A parallel request with the same idempotency_key is still in flight. Retry shortly.',
+                  retry_after: 1,
+                })
+              );
+            }
+            idempotencyCheck = { key, principal, payloadHash: checkResult.payloadHash, extraScope };
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Idempotency check failed', { tool: toolName, error: reason });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Idempotency check failed',
+                ...(exposeErrorDetails && { details: { reason } }),
+              })
+            );
+          }
+        }
+
         // --- Handler ---
         try {
           const result = await handler(params, ctx);
           const formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
+          // Cache successful mutations for replay. Errors re-execute on
+          // retry, not replayed — only cache when the wrapped response is
+          // not an error shape. Release the in-flight claim on error so a
+          // retry can re-execute rather than replay the transient failure.
+          //
+          // Cache the FORMATTED envelope, not the raw handler return:
+          // some wrap functions inject non-deterministic fields
+          // (`confirmed_at = new Date().toISOString()`) when the handler
+          // omits them. Re-wrapping on replay would produce a different
+          // `confirmed_at` each time, breaking the "same response on
+          // replay" contract. Caching the formatted envelope pins those
+          // fields to their first-execution values.
+          if (idempotencyCheck && idempotency) {
+            if (!isErrorResponse(formatted)) {
+              try {
+                await idempotency.save({
+                  principal: idempotencyCheck.principal,
+                  key: idempotencyCheck.key,
+                  payloadHash: idempotencyCheck.payloadHash,
+                  response: formatted,
+                  extraScope: idempotencyCheck.extraScope,
+                });
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('Idempotency save failed — response will not be cached', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            } else {
+              try {
+                await idempotency.release({
+                  principal: idempotencyCheck.principal,
+                  key: idempotencyCheck.key,
+                  extraScope: idempotencyCheck.extraScope,
+                });
+              } catch (err) {
+                // Best-effort release; if it fails the claim TTL will
+                // eventually evict. Log and move on.
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('Idempotency release failed — in-flight claim will expire on TTL', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+          }
           return finalize(formatted);
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
           logger.error('Handler failed', { tool: toolName, error: reason });
+          if (idempotencyCheck && idempotency) {
+            try {
+              await idempotency.release({
+                principal: idempotencyCheck.principal,
+                key: idempotencyCheck.key,
+                extraScope: idempotencyCheck.extraScope,
+              });
+            } catch (releaseErr) {
+              const releaseReason =
+                releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
+              logger.warn('Idempotency release failed — in-flight claim will expire on TTL', {
+                tool: toolName,
+                error: releaseReason,
+              });
+            }
+          }
           return finalize(
             adcpError('SERVICE_UNAVAILABLE', {
               message: `Tool ${toolName} encountered an internal error`,
@@ -970,11 +1261,56 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // Tool coherence warnings
   checkCoherence(registeredToolNames, logger);
 
+  // --- Idempotency configuration guardrails ---
+  //
+  // A seller that registers mutating handlers but doesn't supply an
+  // `idempotency` store cannot honor the v3 retry contract: buyer
+  // retries will double-book because there's no replay cache. The
+  // framework logs a loud error at server-creation time so operators
+  // notice before shipping to production, but doesn't throw — that
+  // would make the framework unusable in testing contexts where
+  // idempotency isn't the unit-under-test. Operators who've thought
+  // about it can suppress the error by setting
+  // `capabilities.idempotency.replay_ttl_seconds` directly.
+  const registeredMutatingTools = [...registeredToolNames].filter(t => MUTATING_TASKS.has(t));
+  if (registeredMutatingTools.length > 0 && !idempotency && !capConfig?.idempotency?.replay_ttl_seconds) {
+    logger.error(
+      `createAdcpServer: ${registeredMutatingTools.length} mutating tools registered ` +
+        `(${registeredMutatingTools.slice(0, 3).join(', ')}${
+          registeredMutatingTools.length > 3 ? ', ...' : ''
+        }) without an idempotency store. AdCP v3 requires sellers to support idempotent replay ` +
+        `on mutating requests — buyer retries will double-book without it. ` +
+        `Pass \`idempotency: createIdempotencyStore({ backend, ttlSeconds })\`, ` +
+        `or set \`capabilities.idempotency.replay_ttl_seconds\` to acknowledge the non-compliance.`
+    );
+  }
+
+  // MUTATING_TASKS is derived at module load by introspecting Zod
+  // schemas. If Zod's internals change or the tool-request-schemas map
+  // shifts, the derivation can silently return an empty set — which
+  // would make every mutating request bypass idempotency enforcement.
+  // Fail loud at server startup if the introspection produced
+  // surprisingly few results.
+  if (MUTATING_TASKS.size < 20) {
+    throw new Error(
+      `createAdcpServer: MUTATING_TASKS set has only ${MUTATING_TASKS.size} entries — expected at least 20. ` +
+        `Schema introspection likely broke (Zod upgrade? tool-request-schemas change?). ` +
+        `Check \`src/lib/utils/idempotency.ts:deriveMutatingTasks\`.`
+    );
+  }
+
   // --- Auto-register get_adcp_capabilities ---
   const protocols = detectProtocols([...registeredToolNames]);
 
   const capabilitiesData: GetAdCPCapabilitiesResponse = {
-    adcp: { major_versions: capConfig?.major_versions ?? [3] },
+    adcp: {
+      major_versions: capConfig?.major_versions ?? [3],
+      idempotency: {
+        replay_ttl_seconds: clampReplayTtl(
+          capConfig?.idempotency?.replay_ttl_seconds ?? idempotency?.ttlSeconds ?? 86400
+        ),
+      },
+    },
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };
 

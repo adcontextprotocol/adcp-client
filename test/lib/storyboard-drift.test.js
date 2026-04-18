@@ -97,7 +97,7 @@ const HARNESS_STORYBOARDS = new Set(['deterministic_testing']);
 
 // Protocol envelope fields validated at runtime but not always declared
 // in individual tool response schemas. Skip these in schema drift checks.
-const ENVELOPE_PATHS = new Set(['context', 'context.correlation_id', 'ext']);
+const ENVELOPE_PATHS = new Set(['context', 'context.correlation_id', 'ext', 'replayed']);
 
 // Upstream scenarios whose validations reference fields not yet in the SDK's
 // generated Zod schemas. Track upstream issues before adding to this list.

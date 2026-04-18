@@ -724,6 +724,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const planWithAudience = {
+      idempotency_key: 'plan_audience_abcdefghij',
       plans: [
         {
           plan_id: 'plan-tylenol-q4',

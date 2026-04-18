@@ -98,6 +98,7 @@ describe('GovernanceAgentStub', () => {
     stub.clearCallLog();
 
     await callMCPTool(stubUrl, 'report_plan_outcome', {
+      idempotency_key: 'outcome_test_abcdefghij',
       plan_id: 'plan-outcome-test',
       outcome: 'completed',
       governance_context: 'test-gc-for-outcome',
@@ -113,6 +114,7 @@ describe('GovernanceAgentStub', () => {
     stub.clearCallLog();
 
     await callMCPTool(stubUrl, 'sync_plans', {
+      idempotency_key: 'sync_plans_abcdefghij1234',
       plans: [
         {
           plan_id: 'plan-sync-test',
@@ -157,6 +159,7 @@ describe('GovernanceAgentStub', () => {
     });
 
     await callMCPTool(stubUrl, 'report_plan_outcome', {
+      idempotency_key: 'multi_test_abcdefghij12',
       plan_id: 'plan-multi',
       outcome: 'completed',
       governance_context: 'gc-multi-test',

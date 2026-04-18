@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test script: Can Claude/Codex build a working agent from a SKILL.md?
-# Usage: ./test-agent-build.sh [claude|codex] [seller|signals]
+# Usage: ./test-agent-build.sh [claude|codex] [seller|signals|si|governance]
 
 set -e
 
@@ -44,6 +44,8 @@ BUILD_PROMPT="You are building an AdCP agent. Read SKILL.md in the current direc
 
 For a signals agent: build a marketplace agent with 4 audience segments, CPM pricing, DSP activation.
 For a seller agent: build an SSP with non-guaranteed display + video, auction pricing.
+For a si agent: build a toy sponsored-intelligence agent with keyword-based recommendations.
+For a governance agent: build a campaign governance agent that approves plans under a budget threshold and maintains a property list.
 
 Implement ALL tools listed in the skill. Use createAdcpServer as instructed. Use ctx.store for state.
 
@@ -105,23 +107,39 @@ if [ -f agent.ts ]; then
     AGENT_PID=$!
     sleep 4
 
-    STORYBOARD="signal_marketplace"
-    if [ "$AGENT_TYPE" = "seller" ]; then
-      STORYBOARD="media_buy_seller"
-    fi
+    case "$AGENT_TYPE" in
+      seller) STORYBOARD="media_buy_seller" ;;
+      signals) STORYBOARD="signal_marketplace" ;;
+      si) STORYBOARD="si_baseline" ;;
+      governance) STORYBOARD="governance_spend_authority" ;;
+      *) STORYBOARD="signal_marketplace" ;;
+    esac
 
     echo "Running storyboard: $STORYBOARD"
     STORYBOARD_BIN="$REPO_ROOT/bin/adcp.js"
     node "$STORYBOARD_BIN" storyboard run http://localhost:3001/mcp "$STORYBOARD" --json 2>/dev/null | grep -v '^\[AdCP\]' | python3 -c "
 import json, sys
 try:
-    data = json.load(sys.stdin)
-    total = data['passed_count'] + data['failed_count']
-    print(f\"Storyboard: {data['passed_count']}/{total} steps pass\")
-    for phase in data['phases']:
-        for step in phase['steps']:
-            status = 'PASS' if step['passed'] else 'FAIL'
-            print(f'  {step[\"title\"]}: {status}')
+    # strict=False tolerates raw control characters (newlines, tabs) in
+    # JSON string values — agent responses sometimes carry multi-line
+    # text fields whose control chars didn't get escaped upstream. The
+    # real fix is upstream serialization, but lenient parsing gives us
+    # usable storyboard output until then.
+    data = json.loads(sys.stdin.read(), strict=False)
+    s = data.get('summary') or {}
+    passed = s.get('tracks_passed', 0)
+    failed = s.get('tracks_failed', 0)
+    partial = s.get('tracks_partial', 0)
+    skipped = s.get('tracks_skipped', 0)
+    print(f\"Storyboard overall: {data.get('overall_status', 'unknown')} \"
+          f\"(tracks: {passed} pass / {failed} fail / {partial} partial / {skipped} skip)\")
+    for track in data.get('tracks', []):
+        print(f\"  track {track.get('track')}: {track.get('status')}\")
+    for fail in data.get('failures', []):
+        sb = fail.get('storyboard_id', '?')
+        step = fail.get('step_id', '?')
+        title = fail.get('step_title', '')
+        print(f\"    FAIL {sb}/{step}: {title}\")
 except Exception as e:
     print(f'Could not parse storyboard output: {e}')
 " 2>&1 || echo "Storyboard failed to run"

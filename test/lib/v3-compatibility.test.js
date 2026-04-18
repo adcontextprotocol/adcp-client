@@ -1814,9 +1814,14 @@ const { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } = require(
 const { ErrorSchema } = require('../../dist/lib/types/schemas.generated.js');
 
 describe('Standard Error Codes', () => {
-  test('STANDARD_ERROR_CODES contains exactly 26 codes', () => {
+  test('STANDARD_ERROR_CODES contains exactly 28 codes', () => {
     const codes = Object.keys(STANDARD_ERROR_CODES);
-    assert.strictEqual(codes.length, 26);
+    assert.strictEqual(codes.length, 28);
+  });
+
+  test('includes the idempotency codes added in AdCP v3 (PR #2315)', () => {
+    assert.ok(STANDARD_ERROR_CODES.IDEMPOTENCY_CONFLICT);
+    assert.ok(STANDARD_ERROR_CODES.IDEMPOTENCY_EXPIRED);
   });
 
   test('every code has description and recovery', () => {
