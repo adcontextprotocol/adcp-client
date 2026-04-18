@@ -156,6 +156,22 @@ export interface TestOptions {
   // When true, use sandbox mode. For implicit accounts, uses the natural key with
   // sandbox: true. For explicit accounts, discovers sandbox accounts via list_accounts.
   sandbox?: boolean;
+  /**
+   * Fictional-entity test-kit data loaded from `test-kits/<name>.yaml`.
+   * Storyboard phases may skip based on fields here (e.g. `skip_if: "!test_kit.auth.api_key"`).
+   */
+  test_kit?: {
+    auth?: {
+      /** API key the runner presents on API-key probes. */
+      api_key?: string;
+      /**
+       * Auth-required, read-only tool the runner uses for unauth + invalid-key probes.
+       * Defaults to `list_creatives`. Override per test-kit when the agent doesn't support it.
+       */
+      probe_task?: string;
+    };
+    [key: string]: unknown;
+  };
   /** @internal Pre-created client from comply() — avoids per-scenario MCP reconnection */
   _client?: unknown;
   /** @internal Pre-discovered profile from comply() — skips per-scenario discovery */

@@ -598,6 +598,7 @@ function parseAgentOptions(args) {
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
+  const allowHttp = args.includes('--allow-http');
 
   // Filter out flags and their values to find positional args
   const flagValues = [
@@ -613,7 +614,7 @@ function parseAgentOptions(args) {
   ].filter(Boolean);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
-  return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, positionalArgs };
+  return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, allowHttp, positionalArgs };
 }
 
 /**
@@ -1166,6 +1167,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     timeout_ms: timeoutMs,
     agent_alias: agentArg !== agentUrl ? agentArg : undefined,
     ...(authOption && { auth: authOption }),
+    ...(opts.allowHttp && { allow_http: true }),
   };
 
   if (!opts.jsonOutput) {
@@ -1174,7 +1176,9 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
     console.log(`   Timeout: ${timeoutMs / 1000}s`);
-    console.log(`   Auth: ${authLabel}\n`);
+    console.log(`   Auth: ${authLabel}`);
+    if (opts.allowHttp) console.log(`   ⚠️  --allow-http set — results are not publishable`);
+    console.log('');
   }
 
   try {

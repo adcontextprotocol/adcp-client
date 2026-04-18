@@ -394,6 +394,12 @@ export interface ComplyOptions extends TestOptions {
   signal?: AbortSignal;
   /** Original agent alias or identifier (used in fix_command instead of resolved URL). */
   agent_alias?: string;
+  /**
+   * Allow plain-http agent URLs. Intended for local dev only — production
+   * agents must terminate TLS. When true, the compliance report emits an
+   * advisory banner so mis-published results are visible.
+   */
+  allow_http?: boolean;
 }
 
 /**
@@ -413,6 +419,16 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
         'get_adcp_capabilities (supported_protocols + specialisms). ' +
         'Pass `storyboards: ["<bundle-or-id>"]` to target a specific bundle. ' +
         'See the changeset for migration notes.'
+    );
+  }
+  // HTTPS enforcement: production agents MUST terminate TLS. `allow_http` is
+  // the dev escape hatch; the caller is responsible for surfacing a banner
+  // in the compliance report when it's used.
+  const allowHttp = (options as ComplyOptions & { allow_http?: boolean }).allow_http === true;
+  if (agentUrl.startsWith('http://') && !allowHttp) {
+    throw new Error(
+      `Refusing to run compliance against a non-HTTPS URL: ${agentUrl}. ` +
+        `Production agents MUST terminate TLS. Pass { allow_http: true } (or --allow-http) for local development.`
     );
   }
   try {
