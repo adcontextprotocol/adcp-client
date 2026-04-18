@@ -1,11 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  createIdempotencyStore,
-  memoryBackend,
-  hashPayload,
-} = require('../../dist/lib/server/index.js');
+const { createIdempotencyStore, memoryBackend, hashPayload } = require('../../dist/lib/server/index.js');
 
 function makeStore(opts = {}) {
   return createIdempotencyStore({
@@ -18,24 +14,15 @@ function makeStore(opts = {}) {
 describe('createIdempotencyStore', () => {
   describe('ttl bounds validation', () => {
     it('throws below 1h', () => {
-      assert.throws(
-        () => makeStore({ ttlSeconds: 100 }),
-        /ttlSeconds must be >= 3600/
-      );
+      assert.throws(() => makeStore({ ttlSeconds: 100 }), /ttlSeconds must be >= 3600/);
     });
 
     it('throws above 7d', () => {
-      assert.throws(
-        () => makeStore({ ttlSeconds: 9999999 }),
-        /ttlSeconds must be <= 604800/
-      );
+      assert.throws(() => makeStore({ ttlSeconds: 9999999 }), /ttlSeconds must be <= 604800/);
     });
 
     it('throws on non-integer', () => {
-      assert.throws(
-        () => makeStore({ ttlSeconds: 3600.5 }),
-        /must be a finite integer/
-      );
+      assert.throws(() => makeStore({ ttlSeconds: 3600.5 }), /must be a finite integer/);
     });
 
     it('accepts valid TTL within bounds', () => {
@@ -260,9 +247,7 @@ describe('concurrent same-key claim race', () => {
     const payload = { budget: 5000 };
 
     const results = await Promise.all(
-      Array.from({ length: 10 }, () =>
-        store.check({ principal: 'p1', key: 'shared_key_abcdefghij', payload })
-      )
+      Array.from({ length: 10 }, () => store.check({ principal: 'p1', key: 'shared_key_abcdefghij', payload }))
     );
 
     const misses = results.filter(r => r.kind === 'miss');

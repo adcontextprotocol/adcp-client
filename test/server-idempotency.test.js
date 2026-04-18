@@ -311,9 +311,7 @@ describe('createAdcpServer with idempotency', () => {
     const key = 'race_test_abcdefghij12';
     const req = { ...basePayload, idempotency_key: key };
 
-    const results = await Promise.all(
-      Array.from({ length: 5 }, () => callTool(server, 'create_media_buy', req))
-    );
+    const results = await Promise.all(Array.from({ length: 5 }, () => callTool(server, 'create_media_buy', req)));
 
     assert.equal(calls, 1, 'handler must run exactly once under concurrent retry');
     // Winners: one got a fresh response, others got SERVICE_UNAVAILABLE (in-flight)

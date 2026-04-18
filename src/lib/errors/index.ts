@@ -300,7 +300,7 @@ export class IdempotencyExpiredError extends ADCPError {
   ) {
     super(
       message ||
-        'idempotency_key is past the seller\'s replay window. ' +
+        "idempotency_key is past the seller's replay window. " +
           'If you know the prior call succeeded, look up the resource by natural key before retrying. Otherwise, mint a fresh UUID v4.'
     );
   }

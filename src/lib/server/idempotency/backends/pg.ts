@@ -143,10 +143,7 @@ export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): Idem
  * Delete expired entries. Run periodically (e.g., every hour) to bound
  * table size. Returns the number of rows deleted.
  */
-export async function cleanupExpiredIdempotency(
-  db: PgQueryable,
-  options: PgBackendOptions = {}
-): Promise<number> {
+export async function cleanupExpiredIdempotency(db: PgQueryable, options: PgBackendOptions = {}): Promise<number> {
   const table = quoteIdent(options.tableName ?? DEFAULT_TABLE);
   const result = await db.query(`DELETE FROM ${table} WHERE expires_at < NOW()`);
   return result.rowCount ?? 0;

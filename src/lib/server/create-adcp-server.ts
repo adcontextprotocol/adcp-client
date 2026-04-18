@@ -1064,9 +1064,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
         // --- Idempotency (mutating tools only) ---
         const toolIsMutating = isMutatingTask(toolName);
-        let idempotencyCheck:
-          | { key: string; principal: string; payloadHash: string; extraScope?: string }
-          | undefined;
+        let idempotencyCheck: { key: string; principal: string; payloadHash: string; extraScope?: string } | undefined;
         if (idempotency && toolIsMutating) {
           const key = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
           if (!key) {
@@ -1147,8 +1145,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // response or hits IDEMPOTENCY_CONFLICT.
               return finalize(
                 adcpError('SERVICE_UNAVAILABLE', {
-                  message:
-                    'A parallel request with the same idempotency_key is still in flight. Retry shortly.',
+                  message: 'A parallel request with the same idempotency_key is still in flight. Retry shortly.',
                   retry_after: 1,
                 })
               );
@@ -1229,8 +1226,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 extraScope: idempotencyCheck.extraScope,
               });
             } catch (releaseErr) {
-              const releaseReason =
-                releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
+              const releaseReason = releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
               logger.warn('Idempotency release failed — in-flight claim will expire on TTL', {
                 tool: toolName,
                 error: releaseReason,

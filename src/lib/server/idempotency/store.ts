@@ -172,10 +172,7 @@ export interface IdempotencyStoreConfig {
  * cache key alongside `(principal, key)`. Used for tools with per-session
  * semantics (`si_send_message` scopes by `session_id`).
  */
-export type ExtraScopeResolver = (args: {
-  toolName: string;
-  params: Record<string, unknown>;
-}) => string | undefined;
+export type ExtraScopeResolver = (args: { toolName: string; params: Record<string, unknown> }) => string | undefined;
 
 export interface IdempotencyStore {
   /**
@@ -382,9 +379,7 @@ function scope(principal: string, key: string, extraScope?: string): string {
 
 function validateTtl(seconds: number): number {
   if (!Number.isFinite(seconds) || !Number.isInteger(seconds)) {
-    throw new Error(
-      `createIdempotencyStore: ttlSeconds must be a finite integer. Got ${seconds}.`
-    );
+    throw new Error(`createIdempotencyStore: ttlSeconds must be a finite integer. Got ${seconds}.`);
   }
   if (seconds < MIN_TTL) {
     throw new Error(
@@ -392,9 +387,7 @@ function validateTtl(seconds: number): number {
     );
   }
   if (seconds > MAX_TTL) {
-    throw new Error(
-      `createIdempotencyStore: ttlSeconds must be <= ${MAX_TTL} (7 days per AdCP spec). Got ${seconds}.`
-    );
+    throw new Error(`createIdempotencyStore: ttlSeconds must be <= ${MAX_TTL} (7 days per AdCP spec). Got ${seconds}.`);
   }
   return seconds;
 }

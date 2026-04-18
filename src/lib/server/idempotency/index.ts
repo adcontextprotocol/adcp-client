@@ -1,7 +1,4 @@
-export {
-  createIdempotencyStore,
-  hashPayload,
-} from './store';
+export { createIdempotencyStore, hashPayload } from './store';
 export type {
   IdempotencyStore,
   IdempotencyStoreConfig,
@@ -11,10 +8,5 @@ export type {
 } from './store';
 export { memoryBackend } from './backends/memory';
 export type { MemoryBackendOptions } from './backends/memory';
-export {
-  pgBackend,
-  getIdempotencyMigration,
-  IDEMPOTENCY_MIGRATION,
-  cleanupExpiredIdempotency,
-} from './backends/pg';
+export { pgBackend, getIdempotencyMigration, IDEMPOTENCY_MIGRATION, cleanupExpiredIdempotency } from './backends/pg';
 export type { PgBackendOptions } from './backends/pg';

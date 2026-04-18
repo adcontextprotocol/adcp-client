@@ -156,9 +156,7 @@ describe('pgBackend', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
       expiresAt: Math.floor(Date.now() / 1000) + 120,
     };
 
-    const results = await Promise.all(
-      Array.from({ length: 10 }, () => backend.putIfAbsent('p\u001frace', entry))
-    );
+    const results = await Promise.all(Array.from({ length: 10 }, () => backend.putIfAbsent('p\u001frace', entry)));
     const winners = results.filter(x => x === true);
     assert.equal(winners.length, 1, 'exactly one concurrent putIfAbsent must win');
   });

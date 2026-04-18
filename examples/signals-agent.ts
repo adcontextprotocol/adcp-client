@@ -150,7 +150,7 @@ function createSignalsAgent({ taskStore }: ServeContext) {
     instructions: 'Signals agent providing audience segment discovery via get_signals.',
 
     signals: {
-      getSignals: async (params) => {
+      getSignals: async params => {
         const signals = querySegments({
           signal_spec: params.signal_spec,
           signal_ids: params.signal_ids,
@@ -159,12 +159,12 @@ function createSignalsAgent({ taskStore }: ServeContext) {
         });
         return { signals, sandbox: true };
       },
-      activateSignal: async (params) => {
+      activateSignal: async params => {
         // Per the compliance spec: platform (DSP) activation is ASYNC,
         // agent (sales-agent) activation is SYNC. The buyer polls for
         // platform activations (subsequent activate_signal call) until
         // is_live flips to true.
-        const deployments = params.destinations.map((dest) => {
+        const deployments = params.destinations.map(dest => {
           if (dest.type === 'platform') {
             return {
               type: 'platform' as const,

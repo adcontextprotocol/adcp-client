@@ -109,12 +109,12 @@ describe('JCS (RFC 8785) canonicalization', () => {
   describe('RFC 8785 test vectors', () => {
     // Subset of vectors from https://www.rfc-editor.org/rfc/rfc8785#appendix-B
     it('A.1: simple object with number', () => {
-      assert.equal(canonicalize({ 'a': 1, 'b': 2 }), '{"a":1,"b":2}');
+      assert.equal(canonicalize({ a: 1, b: 2 }), '{"a":1,"b":2}');
     });
 
     it('key sorting: unicode vs ascii', () => {
       // 'a' (0x61) < 'b' (0x62) < 'é' (0xe9)
-      assert.equal(canonicalize({ 'é': 3, 'b': 2, 'a': 1 }), '{"a":1,"b":2,"é":3}');
+      assert.equal(canonicalize({ é: 3, b: 2, a: 1 }), '{"a":1,"b":2,"é":3}');
     });
   });
 });

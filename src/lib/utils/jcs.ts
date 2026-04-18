@@ -83,7 +83,7 @@ function serializeArray(arr: unknown[]): string {
 }
 
 function serializeObject(obj: Record<string, unknown>): string {
-  const keys = Object.keys(obj).filter((k) => obj[k] !== undefined);
+  const keys = Object.keys(obj).filter(k => obj[k] !== undefined);
   keys.sort(compareUtf16);
 
   const parts: string[] = [];
