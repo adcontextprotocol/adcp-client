@@ -28,10 +28,12 @@ export {
 } from './mcp-tasks';
 
 import { callMCPToolWithTasks } from './mcp-tasks';
+import { callMCPToolWithOAuth } from './mcp';
 import { callA2ATool } from './a2a';
 import type { AgentConfig, DebugLogEntry } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
+import { createNonInteractiveOAuthProvider } from '../auth/oauth';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION } from '../version';
@@ -100,6 +102,23 @@ export class ProtocolClient {
           const argsWithWebhook = pushNotificationConfig
             ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
             : argsWithVersion;
+
+          // If the agent config carries OAuth tokens, route through the OAuth
+          // provider path so the MCP SDK can refresh on 401 instead of hard-failing.
+          // This path does not cache connections (OAuth token-refresh can't share
+          // a cached transport), so it's slower but correct for OAuth-gated agents.
+          if (agent.oauth_tokens) {
+            const authProvider = createNonInteractiveOAuthProvider(agent, { agentHint: agent.id });
+            return callMCPToolWithOAuth({
+              agentUrl: agent.agent_uri,
+              toolName,
+              args: argsWithWebhook,
+              authProvider,
+              debugLogs,
+              customHeaders: agent.headers,
+            });
+          }
+
           // Use callMCPToolWithTasks which auto-detects server tasks capability
           // and falls back to standard callTool when tasks are not supported
           return callMCPToolWithTasks(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);

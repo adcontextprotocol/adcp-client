@@ -617,12 +617,12 @@ function parseAgentOptions(args) {
 }
 
 /**
- * Resolve an agent argument (alias or URL) to { agentUrl, protocol, authToken }
+ * Resolve an agent argument (alias or URL) to { agentUrl, protocol, authToken, oauthTokens, oauthClient, aliasId }
  *
  * Auth resolution order:
- *   1. Explicit --auth token from CLI
+ *   1. Explicit --auth token from CLI (bearer)
  *   2. ADCP_AUTH_TOKEN env var
- *   3. Saved OAuth tokens (if alias has them and they're valid)
+ *   3. Saved OAuth tokens (if alias has them — returned as-is so the caller can refresh on 401)
  *   4. Static auth_token from alias or built-in
  *   5. None
  */
@@ -630,6 +630,9 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
   let agentUrl;
   let protocol = protocolFlag;
   let finalAuthToken = authToken;
+  let oauthTokens;
+  let oauthClient;
+  let aliasId;
 
   if (BUILT_IN_AGENTS[agentArg]) {
     const builtIn = BUILT_IN_AGENTS[agentArg];
@@ -640,6 +643,14 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     const savedAgent = getAgent(agentArg);
     agentUrl = savedAgent.url;
     protocol = protocol || savedAgent.protocol;
+    aliasId = agentArg;
+    // Return saved OAuth tokens even when they look stale — the MCP SDK's
+    // OAuth provider will refresh them on demand. Only fall back to the
+    // static `auth_token` when there's no OAuth material at all.
+    if (savedAgent.oauth_tokens) {
+      oauthTokens = savedAgent.oauth_tokens;
+      oauthClient = savedAgent.oauth_client;
+    }
     finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
     agentUrl = agentArg;
@@ -662,7 +673,7 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     }
   }
 
-  return { agentUrl, protocol, authToken: finalAuthToken };
+  return { agentUrl, protocol, authToken: finalAuthToken, oauthTokens, oauthClient, aliasId };
 }
 
 async function handleComplyCommand(args) {
@@ -1088,6 +1099,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     agentUrl,
     protocol,
     authToken: finalAuthToken,
+    oauthTokens,
+    oauthClient,
   } = await resolveAgent(agentArg, opts.authToken, opts.protocolFlag, opts.jsonOutput);
 
   // Parse --tracks
@@ -1137,6 +1150,14 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     timeoutMs = seconds * 1000;
   }
 
+  // OAuth tokens take precedence over a bare bearer — the OAuth provider path
+  // auto-refreshes on 401 while a raw bearer can't recover.
+  const authOption = oauthTokens
+    ? { type: 'oauth', tokens: oauthTokens, ...(oauthClient && { client: oauthClient }) }
+    : finalAuthToken
+      ? { type: 'bearer', token: finalAuthToken }
+      : undefined;
+
   const testOptions = {
     protocol,
     brief: opts.brief,
@@ -1144,15 +1165,16 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     storyboards,
     timeout_ms: timeoutMs,
     agent_alias: agentArg !== agentUrl ? agentArg : undefined,
-    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
+    ...(authOption && { auth: authOption }),
   };
 
   if (!opts.jsonOutput) {
+    const authLabel = authOption ? (authOption.type === 'oauth' ? 'oauth (auto-refresh)' : 'bearer') : 'none';
     console.log(`\nRunning storyboard assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
     console.log(`   Timeout: ${timeoutMs / 1000}s`);
-    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
+    console.log(`   Auth: ${authLabel}\n`);
   }
 
   try {
