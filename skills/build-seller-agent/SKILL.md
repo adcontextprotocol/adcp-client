@@ -672,6 +672,78 @@ Two things the example doesn't wire (app-specific):
 - **Authentication** — the quick-start has no auth. Production agents need bearer-token or OAuth in front of `serve()`. The library provides OAuth helpers; bearer is middleware territory (Express/Fastify).
 - **Connection-pool sizing** — pass `max`, `idleTimeoutMillis`, `connectionTimeoutMillis` on `new Pool({...})` per your deployment's concurrency characteristics. The pg driver defaults are fine for low traffic.
 
+## Protecting your agent
+
+**An AdCP agent that accepts unauthenticated requests is non-compliant.** The compliance runner enforces this via the `security_baseline` storyboard (every agent regardless of specialism). You MUST pick at least one of:
+
+- **API key** — static bearer tokens looked up in your database or a constant map. Best for B2B integrations with a known counterparty.
+- **OAuth 2.0** — JWTs signed by an IdP (WorkOS, Auth0, Clerk, Okta, a self-hosted authorization server). Best when buyers authenticate as themselves.
+- **Both** — accept either at runtime via `anyOf(verifyApiKey(...), verifyBearer(...))`.
+
+Ask the operator which mechanism they want before generating code. "API key, OAuth, or both?" is the first question.
+
+### API key
+
+```typescript
+import { serve, verifyApiKey } from '@adcp/client';
+
+serve(createAgent, {
+  authenticate: verifyApiKey({
+    verify: async (token) => {
+      const row = await db.api_keys.findUnique({ where: { token } });
+      if (!row) return null;  // framework replies 401 with WWW-Authenticate
+      return { principal: row.account_id };
+    },
+  }),
+});
+```
+
+For local development use the static `keys` map: `verifyApiKey({ keys: { sk_test: { principal: 'dev' } } })`.
+
+### OAuth
+
+```typescript
+import { serve, verifyBearer } from '@adcp/client';
+
+const AGENT_URL = 'https://my-agent.example.com/mcp';
+
+serve(createAgent, {
+  authenticate: verifyBearer({
+    jwksUri: 'https://auth.example.com/.well-known/jwks.json',
+    issuer: 'https://auth.example.com',
+    audience: AGENT_URL,  // MUST equal the URL clients actually call
+  }),
+  protectedResource: {
+    authorization_servers: ['https://auth.example.com'],
+    scopes_supported: ['read', 'write'],
+  },
+});
+```
+
+The `protectedResource` config makes the framework serve `/.well-known/oauth-protected-resource/mcp` with the correct `resource` URL derived from the request host. Buyer clients use that URL as the RFC 8707 `resource` parameter on token requests so the IdP mints tokens bound to the right audience. **Getting this wrong (advertising a different `resource` URL than the host being called) is the most common OAuth misconfiguration — it silently breaks every token.**
+
+### Both
+
+```typescript
+import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+
+serve(createAgent, {
+  authenticate: anyOf(
+    verifyApiKey({ verify: lookupApiKey }),
+    verifyBearer({ jwksUri, issuer, audience: AGENT_URL }),
+  ),
+  protectedResource: { authorization_servers: [issuer] },
+});
+```
+
+### Compliance checklist
+
+The `security_baseline` storyboard verifies:
+
+1. Unauthenticated request → MUST return 401 (or 403) with a `WWW-Authenticate: Bearer ...` header. The framework does this for you when `authenticate` returns `null` or throws.
+2. At least one of API-key or OAuth discovery must succeed.
+3. If OAuth is advertised, `protectedResource.resource` MUST match the URL being called.
+
 ## Validation
 
 **After writing the agent, validate it. Fix failures. Repeat.**

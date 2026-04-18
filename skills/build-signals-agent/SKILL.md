@@ -303,6 +303,44 @@ AdCP v3 requires an `idempotency_key` on every mutating request — for signals 
 
 Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal` for custom scoping). `ttlSeconds` must be 3600–604800 — out of range throws at construction. If you register mutating handlers without wiring `idempotency`, the framework logs an error at server-creation time.
 
+
+## Protecting your agent
+
+**An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
+
+```typescript
+import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+
+// API key — simplest, good for B2B integrations
+serve(createAgent, {
+  authenticate: verifyApiKey({
+    verify: async (token) => {
+      const row = await db.api_keys.findUnique({ where: { token } });
+      return row ? { principal: row.account_id } : null;
+    },
+  }),
+});
+
+// OAuth — best when buyers authenticate as themselves
+serve(createAgent, {
+  authenticate: verifyBearer({
+    jwksUri: 'https://auth.example.com/.well-known/jwks.json',
+    issuer: 'https://auth.example.com',
+    audience: 'https://my-agent.example.com/mcp', // MUST match the URL clients call
+  }),
+  protectedResource: { authorization_servers: ['https://auth.example.com'] },
+});
+
+// Both
+serve(createAgent, {
+  authenticate: anyOf(verifyApiKey({ verify: lookupKey }), verifyBearer({ jwksUri, issuer, audience })),
+  protectedResource: { authorization_servers: [issuer] },
+});
+```
+
+The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with the correct `resource` URL (auto-derived from the request host so buyers get tokens bound to the right audience).
+
+
 ## Validation
 
 **After writing the agent, validate it. Fix failures. Repeat.**

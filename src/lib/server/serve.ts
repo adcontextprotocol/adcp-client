@@ -19,10 +19,12 @@
  */
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer, type Server as HttpServer } from 'http';
+import { createServer, type IncomingMessage, type Server as HttpServer } from 'http';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/interfaces.js';
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
+import type { Authenticator } from './auth';
+import { respondUnauthorized } from './auth';
 
 /**
  * Context passed to the agent factory on each request.
@@ -37,6 +39,30 @@ import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/
 export interface ServeContext {
   /** Shared task store — use this when creating your McpServer so tasks persist across requests. */
   taskStore: TaskStore;
+}
+
+/**
+ * OAuth 2.0 Protected Resource Metadata (RFC 9728) advertised at
+ * `/.well-known/oauth-protected-resource<mountPath>`.
+ *
+ * Set this on OAuth-protected agents so buyer clients can discover your
+ * authorization server. The `resource` field is computed automatically
+ * from the request's `Host` header so it always matches the canonical URL
+ * clients actually called — avoiding the audience-mismatch class of bug.
+ */
+export interface ProtectedResourceMetadata {
+  /** URLs of authorization servers that issue tokens for this resource. */
+  authorization_servers: string[];
+  /** Scopes this resource accepts. Optional. */
+  scopes_supported?: string[];
+  /** Bearer token methods supported. Defaults to `['header']`. */
+  bearer_methods_supported?: Array<'header' | 'body' | 'query'>;
+  /** Human-readable resource docs URL. Optional. */
+  resource_documentation?: string;
+  /** Per-resource policy URL. Optional. */
+  resource_policy_uri?: string;
+  /** Per-resource ToS URL. Optional. */
+  resource_tos_uri?: string;
 }
 
 export interface ServeOptions {
@@ -54,8 +80,26 @@ export interface ServeOptions {
    * provide a store with automatic eviction to prevent unbounded memory growth.
    */
   taskStore?: TaskStore;
+
   /**
-   * Pre-MCP middleware — runs after path-matching but before MCP transport
+   * Authentication middleware applied to every request. When configured,
+   * missing or invalid credentials produce a 401 with a compliant
+   * `WWW-Authenticate` header — no request reaches the MCP transport
+   * without passing. Use helpers from `./auth`: `verifyApiKey`,
+   * `verifyBearer`, or `anyOf(verifyApiKey(...), verifyBearer(...))`.
+   */
+  authenticate?: Authenticator;
+
+  /**
+   * Advertise OAuth 2.0 protected-resource metadata at
+   * `/.well-known/oauth-protected-resource<mountPath>`. The `resource`
+   * field is auto-set from the request host so clients get the correct
+   * audience for RFC 8707 resource-bound tokens.
+   */
+  protectedResource?: ProtectedResourceMetadata;
+
+  /**
+   * Pre-MCP middleware — runs after authentication but before MCP transport
    * is connected. Intended for transport-layer concerns like RFC 9421
    * request-signature verification: the agent's body is already buffered
    * into `(req as any).rawBody` before the middleware fires so signature
@@ -102,9 +146,72 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
   const taskStore = options?.taskStore ?? new InMemoryTaskStore();
   const ctx: ServeContext = { taskStore };
 
+  const protectedResourcePath = `/.well-known/oauth-protected-resource${mountPath}`;
+
+  // Prefer the X-Forwarded-Proto header (set by TLS-terminating proxies) over
+  // the socket state, which only sees plaintext when TLS is terminated upstream.
+  const requestProtocol = (req: IncomingMessage): string => {
+    const forwarded = req.headers['x-forwarded-proto'];
+    if (typeof forwarded === 'string' && forwarded.length > 0) return forwarded.split(',')[0]!.trim();
+    // Node types the `encrypted` flag on TLSSocket; plain sockets don't expose it.
+    const encrypted = (req.socket as { encrypted?: boolean }).encrypted;
+    return encrypted ? 'https' : 'http';
+  };
+  const resourceMetadataUrl = (req: IncomingMessage): string | undefined => {
+    if (!options?.protectedResource) return undefined;
+    const host = req.headers.host;
+    if (!host) return undefined;
+    const proto = requestProtocol(req);
+    return `${proto}://${host}${protectedResourcePath}`;
+  };
+
   const httpServer = createServer(async (req, res) => {
     const { pathname } = new URL(req.url || '', 'http://localhost');
+
+    // Protected-resource metadata endpoint (RFC 9728). The resource URL is
+    // always the request's canonical MCP URL so buyer clients derive the
+    // correct RFC 8707 audience.
+    if (options?.protectedResource && pathname === protectedResourcePath) {
+      const host = req.headers.host;
+      const proto = requestProtocol(req);
+      if (!host) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'missing_host_header' }));
+        return;
+      }
+      const body = {
+        resource: `${proto}://${host}${mountPath}`,
+        ...options.protectedResource,
+        bearer_methods_supported: options.protectedResource.bearer_methods_supported ?? ['header'],
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+
     if (pathname === mountPath || pathname === `${mountPath}/`) {
+      // Enforce authentication before any body processing or transport work.
+      if (options?.authenticate) {
+        try {
+          const principal = await options.authenticate(req);
+          if (!principal) {
+            respondUnauthorized(req, res, {
+              error: 'invalid_token',
+              errorDescription: 'Missing or unrecognized credentials.',
+              resourceMetadata: resourceMetadataUrl(req),
+            });
+            return;
+          }
+        } catch (err) {
+          respondUnauthorized(req, res, {
+            error: 'invalid_token',
+            errorDescription: err instanceof Error ? err.message : 'Credentials rejected.',
+            resourceMetadata: resourceMetadataUrl(req),
+          });
+          return;
+        }
+      }
+
       // Buffer the request body once when preTransport middleware is wired —
       // RFC 9421 verifiers need the raw bytes for Content-Digest recompute,
       // and the MCP transport's own body read would race the verifier otherwise.
@@ -131,6 +238,7 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
           return;
         }
       }
+
       const agentServer = createAgent(ctx);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,

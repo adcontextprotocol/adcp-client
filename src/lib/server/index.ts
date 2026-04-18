@@ -73,7 +73,17 @@ export type {
 } from './test-controller';
 
 export { serve } from './serve';
-export type { ServeContext, ServeOptions } from './serve';
+export type { ServeContext, ServeOptions, ProtectedResourceMetadata } from './serve';
+
+export { verifyApiKey, verifyBearer, anyOf, extractBearerToken, respondUnauthorized } from './auth';
+export type {
+  Authenticator,
+  AuthPrincipal,
+  AuthResult,
+  VerifyApiKeyOptions,
+  VerifyBearerOptions,
+  RespondUnauthorizedOptions,
+} from './auth';
 
 export {
   InMemoryStateStore,
