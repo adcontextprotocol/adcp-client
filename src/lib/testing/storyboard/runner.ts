@@ -685,6 +685,11 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
  * any conflicting brand on the request with `options.brand`. When the
  * request carries an `account` object, we also set `account.brand` so both
  * addressing forms converge.
+ *
+ * `AccountReference` is a union of `{account_id}` or `{brand, operator, sandbox?}`.
+ * Injecting `brand` into an `{account_id}`-branch account still passes schema
+ * validation (request schemas use `.passthrough()`) but is semantically
+ * redundant. No storyboard currently uses the `{account_id}` branch.
  */
 export function applyBrandInvariant(
   request: Record<string, unknown>,
