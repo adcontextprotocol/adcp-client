@@ -13,7 +13,9 @@
  */
 import { lookup as dnsLookup } from 'dns/promises';
 import { isIP } from 'net';
+import { randomBytes } from 'crypto';
 import type { HttpProbeResult } from './types';
+import type { TaskResult } from '../types';
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -32,11 +34,18 @@ export const PROBE_TASKS = new Set([
 /**
  * GET `<agentUrl origin>/.well-known/oauth-protected-resource<agentUrl path>`.
  * Same-origin as the agent, so SSRF risk is bounded.
+ *
+ * When `allowPrivateIp` is set (matches the runner's `--allow-http` flag),
+ * loopback and RFC 1918 targets are allowed so dev loops against localhost
+ * agents work end-to-end.
  */
-export async function probeProtectedResourceMetadata(agentUrl: string): Promise<HttpProbeResult> {
+export async function probeProtectedResourceMetadata(
+  agentUrl: string,
+  options: { allowPrivateIp?: boolean } = {}
+): Promise<HttpProbeResult> {
   const u = new URL(agentUrl);
   const metadataUrl = `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`;
-  return fetchProbe(metadataUrl, { allowPrivateIp: false });
+  return fetchProbe(metadataUrl, { allowPrivateIp: options.allowPrivateIp ?? false });
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +58,10 @@ export async function probeProtectedResourceMetadata(agentUrl: string): Promise<
  * this is the SSRF-hot path — {@link fetchProbe} rejects private networks,
  * non-https schemes, and unbounded responses.
  */
-export async function probeOauthAuthServerMetadata(priorProbe: HttpProbeResult | undefined): Promise<HttpProbeResult> {
+export async function probeOauthAuthServerMetadata(
+  priorProbe: HttpProbeResult | undefined,
+  options: { allowPrivateIp?: boolean } = {}
+): Promise<HttpProbeResult> {
   if (!priorProbe || priorProbe.error) {
     return {
       url: '',
@@ -72,7 +84,7 @@ export async function probeOauthAuthServerMetadata(priorProbe: HttpProbeResult |
   }
   const issuer = servers[0].replace(/\/$/, '');
   const metadataUrl = `${issuer}/.well-known/oauth-authorization-server`;
-  return fetchProbe(metadataUrl, { allowPrivateIp: false });
+  return fetchProbe(metadataUrl, { allowPrivateIp: options.allowPrivateIp ?? false });
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +187,128 @@ export async function fetchProbe(url: string, options: FetchProbeOptions = {}): 
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
     return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Credential generators (value_strategy)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a per-run bogus API key. Prefix is human-readable for log grep;
+ * the 32 random hex bytes guarantee no allowlist collision.
+ */
+export function generateRandomInvalidApiKey(): string {
+  return `invalid-${randomBytes(32).toString('hex')}`;
+}
+
+/**
+ * Generate a per-run bogus JWT-shaped Bearer token. Emits three segments with
+ * valid base64url-encoded JSON header/payload and a random signature — so
+ * well-implemented validators fail at signature verification (→ 401), and
+ * strict parse-time validators that reject at the structural level also fail
+ * cleanly (→ 400 per RFC 6750 §3.1). Either is conformant.
+ */
+export function generateRandomInvalidJwt(): string {
+  const header = base64url(Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
+  const payload = base64url(
+    Buffer.from(JSON.stringify({ sub: `invalid-${randomBytes(8).toString('hex')}`, aud: 'invalid-probe' }))
+  );
+  const signature = base64url(randomBytes(32));
+  return `${header}.${payload}.${signature}`;
+}
+
+function base64url(buf: Buffer): string {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// ---------------------------------------------------------------------------
+// Raw-MCP probe (auth-override dispatch)
+// ---------------------------------------------------------------------------
+
+let probeRequestId = 0;
+
+/**
+ * POST a JSON-RPC `tools/call` request to the MCP endpoint with caller-provided
+ * headers. Bypasses the MCP SDK so auth overrides (none / literal / strategy)
+ * can be exercised and the raw HTTP status + `WWW-Authenticate` header can be
+ * captured.
+ *
+ * Returns an HttpProbeResult plus a synthetic TaskResult for steps that also
+ * want to validate body shape — the structuredContent is unwrapped so
+ * `field_present: "context"` resolves naturally.
+ */
+export async function rawMcpProbe(options: {
+  agentUrl: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  headers?: Record<string, string>;
+}): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
+  const { agentUrl, toolName, args, headers = {} } = options;
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: ++probeRequestId,
+    method: 'tools/call',
+    params: { name: toolName, arguments: args },
+  });
+
+  const httpResult: HttpProbeResult = { url: agentUrl, status: 0, headers: {}, body: null };
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(agentUrl, {
+      method: 'POST',
+      redirect: 'manual',
+      signal: ac.signal,
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        ...headers,
+      },
+      body,
+    });
+    httpResult.status = res.status;
+    const respHeaders: Record<string, string> = {};
+    res.headers.forEach((v, k) => {
+      respHeaders[k.toLowerCase()] = v;
+    });
+    httpResult.headers = respHeaders;
+
+    const text = await res.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      httpResult.body = text;
+      return { httpResult };
+    }
+    httpResult.body = parsed;
+
+    const rpc = parsed as {
+      result?: { structuredContent?: unknown; content?: unknown; isError?: boolean };
+      error?: { message?: string; code?: number };
+    };
+    // HTTP-level failure trumps the JSON-RPC envelope — a 401/500 with any body
+    // shape is still a failure.
+    if (httpResult.status >= 400) {
+      return {
+        httpResult,
+        taskResult: { success: false, data: undefined, error: rpc.error?.message ?? `HTTP ${httpResult.status}` },
+      };
+    }
+    if (rpc.error) {
+      return {
+        httpResult,
+        taskResult: { success: false, data: undefined, error: rpc.error.message ?? `JSON-RPC error ${rpc.error.code}` },
+      };
+    }
+    const data = rpc.result?.structuredContent ?? rpc.result?.content;
+    return { httpResult, taskResult: { success: !rpc.result?.isError, data } };
+  } catch (err) {
+    httpResult.error = err instanceof Error ? err.message : String(err);
+    return { httpResult };
   } finally {
     clearTimeout(timer);
   }

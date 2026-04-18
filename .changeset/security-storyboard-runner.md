@@ -9,13 +9,20 @@ Ships the runner work tracked in adcp-client#565. The upstream storyboard (adcon
 **New step directives**
 
 - `auth: 'none'` — strip transport credentials for that step only. Required for the unauthenticated probe.
-- `auth: { type: 'api_key', value?, from_test_kit? }` — literal Bearer override or pull from the test kit. Supports invalid-key probes and the valid-key probe.
+- `auth: { type: 'api_key', value? | from_test_kit? | value_strategy? }` — literal Bearer override, pull from the test kit, or generate a per-run random bogus key (`random_invalid`).
+- `auth: { type: 'oauth_bearer', value? | value_strategy: 'random_invalid_jwt' }` — send an arbitrary Bearer value or a per-run random JWT-shaped token (valid base64url-encoded JSON header/payload + random signature) so well-implemented validators fail at signature verification.
+- `task: "$test_kit.<path>"` + `task_default: '<task>'` — resolve the step's task from test-kit data, falling back to the default when the kit doesn't supply it. Lets the security storyboard probe whatever protected task each agent implements.
 - `contributes_to: '<flag>'` — mark a step as contributing a flag on success. Consumed by downstream `any_of` validations.
 - `contributes_if: 'prior_step.<id>.passed'` — conditional contribution (e.g., only count the API-key mechanism when BOTH the valid-key and invalid-key steps passed).
 
-**Phase directive**
+**Phase directives**
 
 - `skip_if: '!test_kit.auth.api_key'` — skip optional phases based on test-kit fields.
+- `optional: true` — failing steps in optional phases are reported but do not fail the overall storyboard. The storyboard's final `assert_contribution` step is the gate (e.g., "API key OR OAuth must have verified").
+
+**Auth-override HTTP dispatch**
+
+Steps with `auth:` set bypass the MCP SDK and dispatch via a raw JSON-RPC POST to the MCP endpoint. This is required because (a) the SDK transport has no way to strip credentials or send arbitrary Bearer values, and (b) validations need the raw HTTP status + `WWW-Authenticate` header, which the SDK hides. A synthetic `TaskResult` is built from the JSON-RPC response so `field_present` / `field_value` checks still work on successful calls.
 
 **New task handlers (raw HTTP probes, not MCP tools)**
 

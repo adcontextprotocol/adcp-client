@@ -12,9 +12,17 @@ import { executeStoryboardTask } from './task-map';
 import { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 import { runValidations, type ValidationContext } from './validations';
 import { buildRequest, hasRequestBuilder } from './request-builder';
-import { PROBE_TASKS, probeProtectedResourceMetadata, probeOauthAuthServerMetadata } from './probes';
+import {
+  PROBE_TASKS,
+  probeProtectedResourceMetadata,
+  probeOauthAuthServerMetadata,
+  rawMcpProbe,
+  generateRandomInvalidApiKey,
+  generateRandomInvalidJwt,
+} from './probes';
 import type {
   HttpProbeResult,
+  StepAuthDirective,
   Storyboard,
   StoryboardStep,
   StoryboardPhase,
@@ -26,6 +34,7 @@ import type {
   StoryboardStepPreview,
   ValidationResult,
 } from './types';
+import type { TaskResult } from '../types';
 
 // ────────────────────────────────────────────────────────────
 // runStoryboard: execute all phases/steps
@@ -125,7 +134,12 @@ export async function runStoryboard(
         passedCount++;
       } else {
         phasePassed = false;
-        failedCount++;
+        // Optional phases contribute their failures to reporting but NOT to
+        // overall pass/fail — the storyboard's final assert_contribution
+        // phase is the gate. The "API key OR OAuth" logic lives there, so a
+        // failing optional phase (e.g., OAuth discovery when only API key is
+        // configured) must not fail the storyboard by itself.
+        if (!phase.optional) failedCount++;
         if (step.stateful) statefulFailed = true;
       }
     }
@@ -238,6 +252,25 @@ async function executeStep(
   if (PROBE_TASKS.has(step.task)) {
     return executeProbeStep(step, phaseId, context, allSteps, options, runState);
   }
+
+  // Resolve $test_kit.* task references before any downstream dispatch / skip checks.
+  // When the reference resolves to nothing, fall back to `task_default`.
+  const resolvedTask = resolveTaskName(step, options);
+  if (!resolvedTask) {
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: false,
+      duration_ms: 0,
+      validations: [],
+      context,
+      error: `Step task "${step.task}" references a test-kit field that resolved to nothing and no task_default is set.`,
+    };
+  }
+  const effectiveStep: StoryboardStep = resolvedTask === step.task ? step : { ...step, task: resolvedTask };
+
   // Check requires_tool — skip if agent doesn't have it
   if (step.requires_tool && options.agentTools && !options.agentTools.includes(step.requires_tool)) {
     const next = getNextStepPreview(step.id, allSteps, context);
@@ -257,13 +290,13 @@ async function executeStep(
   }
 
   // Skip if agent doesn't implement the tool this step calls.
-  if (options.agentTools && !options.agentTools.includes(step.task)) {
+  if (options.agentTools && !options.agentTools.includes(effectiveStep.task)) {
     const next = getNextStepPreview(step.id, allSteps, context);
     return {
       step_id: step.id,
       phase_id: phaseId,
       title: step.title,
-      task: step.task,
+      task: effectiveStep.task,
       passed: true,
       skipped: true,
       skip_reason: 'missing_tool',
@@ -284,8 +317,8 @@ async function executeStep(
     request = { ...options.request };
   } else if (step.expect_error && step.sample_request) {
     request = injectContext({ ...step.sample_request }, context);
-  } else if (hasRequestBuilder(step.task)) {
-    request = buildRequest(step, context, options);
+  } else if (hasRequestBuilder(effectiveStep.task)) {
+    request = buildRequest(effectiveStep, context, options);
     // Merge pass-through envelope fields from sample_request — builders
     // don't include these, but storyboards define them for compliance testing.
     // Only context and ext are merged: they are opaque pass-through fields with
@@ -332,11 +365,45 @@ async function executeStep(
     };
   }
 
-  // Execute the task
-  // eslint-disable-next-line prefer-const -- stepResult is const but taskResult is reassigned below
-  let { result: taskResult, step: stepResult } = await runStep(step.title, step.task, () =>
-    executeStoryboardTask(client, step.task, request)
-  );
+  // Execute the task. When the step overrides auth, dispatch via the raw MCP
+  // probe so we can (a) strip credentials or send arbitrary Bearer values
+  // (which the SDK transport doesn't expose), and (b) capture the HTTP status
+  // + `WWW-Authenticate` header for http_* validations.
+  let taskResult: TaskResult | undefined;
+  let stepResult: { duration_ms: number; error?: string; passed: boolean };
+  let httpResult: HttpProbeResult | undefined;
+
+  if (step.auth !== undefined) {
+    const started = Date.now();
+    try {
+      const headers = authHeadersForStep(step.auth, options);
+      const probe = await rawMcpProbe({
+        agentUrl: runState.agentUrl,
+        toolName: effectiveStep.task,
+        args: request,
+        headers,
+      });
+      httpResult = probe.httpResult;
+      taskResult = probe.taskResult;
+      stepResult = {
+        duration_ms: Date.now() - started,
+        passed: !httpResult.error,
+        error: httpResult.error,
+      };
+    } catch (err) {
+      stepResult = {
+        duration_ms: Date.now() - started,
+        passed: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  } else {
+    const run = await runStep(step.title, effectiveStep.task, () =>
+      executeStoryboardTask(client, effectiveStep.task, request)
+    );
+    taskResult = run.result;
+    stepResult = run.step;
+  }
 
   // Feature-unsupported or unknown-tool errors → treat as skip
   const isUnsupported = stepResult.error?.includes('does not support:');
@@ -376,10 +443,11 @@ async function executeStep(
 
   // Run validations
   let validations: ValidationResult[] = [];
-  if (taskResult && step.validations?.length) {
+  if (step.validations?.length && (taskResult || httpResult)) {
     const vctx: ValidationContext = {
-      taskName: step.task,
-      taskResult,
+      taskName: effectiveStep.task,
+      ...(taskResult && { taskResult }),
+      ...(httpResult && { httpResult }),
       agentUrl: runState.agentUrl,
       contributions: runState.contributions,
     };
@@ -432,17 +500,18 @@ async function executeProbeStep(
   phaseId: string,
   context: StoryboardContext,
   allSteps: FlatStep[],
-  _options: StoryboardRunOptions,
+  options: StoryboardRunOptions,
   runState: ExecutionState
 ): Promise<StoryboardStepResult> {
   const start = Date.now();
   let httpResult: HttpProbeResult | undefined;
+  const probeOpts = { allowPrivateIp: options.allow_http === true };
 
   if (step.task === 'protected_resource_metadata') {
-    httpResult = await probeProtectedResourceMetadata(runState.agentUrl);
+    httpResult = await probeProtectedResourceMetadata(runState.agentUrl, probeOpts);
   } else if (step.task === 'oauth_auth_server_metadata') {
     const prior = runState.priorProbes.get('protected_resource_metadata') ?? findPriorProbe(runState.priorStepResults);
-    httpResult = await probeOauthAuthServerMetadata(prior);
+    httpResult = await probeOauthAuthServerMetadata(prior, probeOpts);
   } else if (step.task === 'assert_contribution') {
     // Synthetic: evaluate only through validations (any_of). No network call.
     httpResult = undefined;
@@ -516,6 +585,47 @@ function shouldSkipPhase(phase: StoryboardPhase, options: StoryboardRunOptions):
   }
   const truthy = Boolean(value);
   return negated ? !truthy : truthy;
+}
+
+/**
+ * Resolve a `$test_kit.<path>` task reference against the runtime options.
+ * Falls back to `step.task_default`. Returns undefined when neither yields a string.
+ */
+function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): string | undefined {
+  if (!step.task.startsWith('$test_kit.')) return step.task;
+  const path = step.task.slice('$test_kit.'.length).split('.');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic test-kit shape
+  let value: any = options.test_kit;
+  for (const segment of path) {
+    if (value == null || typeof value !== 'object') {
+      value = undefined;
+      break;
+    }
+    value = (value as Record<string, unknown>)[segment];
+  }
+  if (typeof value === 'string' && value.length > 0) return value;
+  return step.task_default;
+}
+
+/**
+ * Translate a `StepAuthDirective` into HTTP headers for the raw MCP probe.
+ * - `'none'` returns an empty object and the probe sends no `Authorization`.
+ * - `api_key` / `oauth_bearer` resolve the value from `value`, `from_test_kit`,
+ *   or `value_strategy` — in that order — and produce `Authorization: Bearer <value>`.
+ */
+function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRunOptions): Record<string, string> {
+  if (directive === 'none') return {};
+  let value: string | undefined;
+  if ('value' in directive && directive.value) {
+    value = directive.value;
+  } else if ('from_test_kit' in directive && directive.from_test_kit) {
+    value = options.test_kit?.auth?.api_key;
+  } else if ('value_strategy' in directive && directive.value_strategy) {
+    if (directive.value_strategy === 'random_invalid') value = generateRandomInvalidApiKey();
+    else if (directive.value_strategy === 'random_invalid_jwt') value = generateRandomInvalidJwt();
+  }
+  if (!value) return {};
+  return { authorization: `Bearer ${value}` };
 }
 
 /**

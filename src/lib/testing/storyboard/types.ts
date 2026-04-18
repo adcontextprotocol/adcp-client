@@ -80,19 +80,41 @@ export type StepAuthDirective =
   /** Strip transport credentials entirely. The step MUST hit the agent unauthenticated. */
   | 'none'
   | {
-      /** Literal Bearer value sent as `Authorization: Bearer <value>`. */
       type: 'api_key';
+      /** Literal Bearer value sent as `Authorization: Bearer <value>`. */
       value?: string;
       /** Pull the value from the runtime `test_kit.auth.api_key` field. */
       from_test_kit?: boolean;
+      /**
+       * Runner-generated value. Current strategies:
+       *   - `random_invalid` — `invalid-<32 hex bytes>`, fresh per run.
+       */
+      value_strategy?: 'random_invalid';
+    }
+  | {
+      type: 'oauth_bearer';
+      /** Literal Bearer value. */
+      value?: string;
+      /**
+       * Runner-generated value. Current strategies:
+       *   - `random_invalid_jwt` — three base64url segments; valid JSON header/payload, random signature.
+       */
+      value_strategy?: 'random_invalid_jwt';
     };
 
 export interface StoryboardStep {
   id: string;
   title: string;
   narrative?: string;
-  /** AdCP task name (snake_case), e.g. "sync_accounts", "get_products" */
+  /**
+   * AdCP task name (snake_case), e.g. "sync_accounts", "get_products".
+   * May reference a test-kit field with `"$test_kit.<path>"` — the runner
+   * resolves to the value at that path, or to `task_default` when the kit
+   * doesn't supply the field.
+   */
   task: string;
+  /** Fallback task name when `task` is a `$test_kit.*` reference that resolves to null/undefined. */
+  task_default?: string;
   schema_ref?: string;
   response_schema_ref?: string;
   doc_ref?: string;
