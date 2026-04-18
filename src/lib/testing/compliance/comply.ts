@@ -873,9 +873,7 @@ async function detectAuthRejection(
   // bound, and the outer `signal` still aborts cleanly.
   if (!isAuth) {
     try {
-      const probeSignal = signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
-        : AbortSignal.timeout(5000);
+      const probeSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
       const probe = await fetch(agentUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
