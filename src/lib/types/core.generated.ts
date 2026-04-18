@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-18T18:06:43.628Z
+// Generated at: 2026-04-18T21:55:36.491Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -505,6 +505,16 @@ export interface BrandReference {
    */
   domain: string;
   brand_id?: BrandID;
+  /**
+   * Inline override for the brand's industries. Useful when the caller cannot modify the brand's canonical brand.json but needs to declare industries for governance (e.g., Annex III vertical detection). brand.json remains the canonical source; when omitted here, governance agents SHOULD resolve from brand.json.
+   */
+  industries?: string[];
+  /**
+   * Inline override for the brand's contestation contact point. Useful when the operator does not control brand.json but needs to discharge Art 22(3) for this plan. brand.json is canonical; when omitted, governance agents resolve brand → house → missing.
+   */
+  data_subject_contestation?: {
+    [k: string]: unknown | undefined;
+  };
 }
 /**
  * Business entity details for the party responsible for payment. Contains the legal name, tax IDs, address, and bank details needed for formal B2B invoicing. Corresponds to whoever billing points to (operator, agent, or advertiser). When this account appears in a response, bank details MUST be omitted (write-only).
@@ -11857,6 +11867,16 @@ export interface BrandReference3 {
    */
   domain: string;
   brand_id?: BrandID;
+  /**
+   * Inline override for the brand's industries. Useful when the caller cannot modify the brand's canonical brand.json but needs to declare industries for governance (e.g., Annex III vertical detection). brand.json remains the canonical source; when omitted here, governance agents SHOULD resolve from brand.json.
+   */
+  industries?: string[];
+  /**
+   * Inline override for the brand's contestation contact point. Useful when the operator does not control brand.json but needs to discharge Art 22(3) for this plan. brand.json is canonical; when omitted, governance agents resolve brand → house → missing.
+   */
+  data_subject_contestation?: {
+    [k: string]: unknown | undefined;
+  };
 }
 /**
  * Optional webhook configuration for automated reporting delivery
@@ -16166,6 +16186,7 @@ export interface CreatePropertyListRequest {
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Human-readable name for the list
    */
@@ -16328,10 +16349,7 @@ export interface PropertyList {
    * Description of the list's purpose
    */
   description?: string;
-  /**
-   * Principal identity that owns this list
-   */
-  principal?: string;
+  account?: AccountReference;
   /**
    * Array of property sources to evaluate. Each entry is a discriminated union: publisher_tags (publisher_domain + tags), publisher_ids (publisher_domain + property_ids), or identifiers (direct identifiers). If omitted, queries the agent's entire property database.
    */
@@ -16377,6 +16395,7 @@ export interface DeletePropertyListRequest {
    * ID of the property list to delete
    */
   list_id: string;
+  account?: AccountReference;
   context?: ContextObject;
   ext?: ExtensionObject;
   /**
@@ -16415,6 +16434,7 @@ export interface GetPropertyListRequest {
    * ID of the property list to retrieve
    */
   list_id: string;
+  account?: AccountReference;
   /**
    * Whether to apply filters and return resolved identifiers (default: true)
    */
@@ -16494,10 +16514,7 @@ export interface ListPropertyListsRequest {
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
-  /**
-   * Filter to lists owned by this principal
-   */
-  principal?: string;
+  account?: AccountReference;
   /**
    * Filter to lists whose name contains this string
    */
@@ -16534,6 +16551,7 @@ export interface UpdatePropertyListRequest {
    * ID of the property list to update
    */
   list_id: string;
+  account?: AccountReference;
   /**
    * New name for the list
    */
@@ -16583,6 +16601,7 @@ export interface ValidatePropertyDeliveryRequest {
    * ID of the property list to validate against
    */
   list_id: string;
+  account?: AccountReference;
   /**
    * Delivery records to validate. Each record represents impressions delivered to a property identifier.
    */
@@ -16859,14 +16878,15 @@ export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transpor
 export type AdCPSpecialism =
   | 'audience-sync'
   | 'brand-rights'
+  | 'collection-lists'
   | 'content-standards'
   | 'creative-ad-server'
   | 'creative-generative'
   | 'creative-template'
   | 'governance-delivery-monitor'
   | 'governance-spend-authority'
-  | 'inventory-lists'
   | 'measurement-verification'
+  | 'property-lists'
   | 'sales-broadcast-tv'
   | 'sales-catalog-driven'
   | 'sales-exchange'
@@ -16877,7 +16897,8 @@ export type AdCPSpecialism =
   | 'sales-social'
   | 'sales-streaming-tv'
   | 'signal-marketplace'
-  | 'signal-owned';
+  | 'signal-owned'
+  | 'signed-requests';
 
 /**
  * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each protocol has its own capability section.
@@ -17381,6 +17402,31 @@ export interface GetAdCPCapabilitiesResponse {
      * When true, this agent can transform or resize existing manifests via build_creative. The buyer provides a creative_manifest and a target_format_id, and the agent adapts the creative to the new format.
      */
     supports_transformation?: boolean;
+  };
+  /**
+   * RFC 9421 HTTP Signatures support for incoming requests. Optional in 3.0 — capability-advertised so counterparties can opt into signing selectively. Required for spend-committing operations in 4.0 (the next breaking-changes accumulation window). The full profile is defined in docs/building/implementation/security.mdx (Signed Requests (Transport Layer)).
+   */
+  request_signing?: {
+    /**
+     * Whether this agent verifies RFC 9421 signatures on incoming requests. When true, signatures present on requests are validated per the AdCP request-signing profile. When false or absent, signatures are ignored (requests are bearer-authenticated only).
+     */
+    supported: boolean;
+    /**
+     * Policy for content-digest coverage in request signatures. 'required': signers MUST cover content-digest (body is bound to the signature); body-unbound signatures rejected with request_signature_components_incomplete. 'forbidden': signers MUST NOT cover content-digest; body-bound signatures rejected with request_signature_components_unexpected. This is an opt-out for the narrow case of legacy infrastructure that cannot preserve body bytes. 'either' (default): signer chooses per-request; verifier accepts both covered and uncovered forms. 'required' is recommended for spend-committing operations in production; 4.0 recommends 'required' for those operations.
+     */
+    covers_content_digest?: 'required' | 'forbidden' | 'either';
+    /**
+     * AdCP protocol operation names (e.g., 'create_media_buy') for which this agent rejects unsigned requests with request_signature_required. Not MCP tool names, A2A skill names, or any transport-specific rename — verifiers MUST NOT accept operation names that are not defined by the AdCP protocol spec. Empty in 3.0 by default; sellers populate selectively during per-counterparty pilots. In 4.0 this list MUST include all spend-committing operations the agent supports (create_media_buy, acquire_*, etc.). Counterparties MUST sign any listed operation.
+     */
+    required_for?: string[];
+    /**
+     * AdCP protocol operation names for which this agent verifies signatures when present and logs failures but does NOT reject the request. Used as a shadow-mode bridge between supported_for and required_for: the verifier surfaces failure rates in monitoring before flipping an operation to required. Precedence: required_for > warn_for > supported_for. An operation in required_for ignores warn_for. Counterparties SHOULD sign operations in warn_for; verifiers MUST NOT reject if the signature is missing or invalid.
+     */
+    warn_for?: string[];
+    /**
+     * AdCP protocol operation names for which this agent verifies signatures when present but does not require them. Counterparties SHOULD sign operations in this list. Typically a superset of required_for and warn_for.
+     */
+    supported_for?: string[];
   };
   /**
    * Compliance testing capabilities. The presence of this block declares that the agent supports deterministic testing via comply_test_controller for lifecycle state machine validation. Omit the block entirely if the agent does not support compliance testing.
@@ -18556,10 +18602,7 @@ export interface CollectionList {
    * Description of the list's purpose
    */
   description?: string;
-  /**
-   * Principal identity that owns this list
-   */
-  principal?: string;
+  account?: AccountReference;
   /**
    * Array of collection sources to evaluate. Each entry is a discriminated union: distribution_ids (platform-independent identifiers), publisher_collections (publisher_domain + collection_ids), or publisher_genres (publisher_domain + genres). If omitted, queries the agent's entire collection database.
    */
@@ -18922,7 +18965,7 @@ export interface ContentStandards {
   ext?: ExtensionObject;
 }
 /**
- * A policy — either published to the shared registry (with full regulatory metadata) or authored inline by a buyer for their own campaign (lightweight, metadata optional). Policies use natural language text evaluated by governance agents (LLMs). Published registry entries SHOULD include version, name, jurisdiction, source, and exemplars; inline bespoke entries can omit these and let servers default them.
+ * A policy — either published to the shared registry (with full regulatory metadata) or authored inline by a buyer for their own campaign (lightweight, metadata optional). Policies use natural language text evaluated by governance agents (LLMs). Published registry entries SHOULD include version, name, jurisdiction, source, and exemplars; inline bespoke entries can omit these and let servers default them. Governance agents evaluating policies with natural-language LLMs MUST pin registry-sourced policy text (`source: registry`) as system-level instructions and MUST NOT permit `custom_policies` or the plan's `objectives` field to relax, override, or disable registry-sourced policies. Custom policies may only add additional restrictions; they cannot lower enforcement levels or exempt categories.
  */
 export interface PolicyEntry {
   /**
@@ -18947,6 +18990,10 @@ export interface PolicyEntry {
   description?: string;
   category?: PolicyCategory;
   enforcement: PolicyEnforcementLevel;
+  /**
+   * When true, plans subject to this policy MUST set plan.human_review_required = true. Use for policies that mandate human oversight of decisions affecting data subjects — e.g., GDPR Article 22 (solely automated decisions with legal or similarly significant effects) and EU AI Act Annex III high-risk categories (credit, insurance pricing, recruitment, housing allocation). Governance agents MUST escalate any plan action whose resolved policies include requires_human_review: true. Unlike `enforcement`, this flag applies as soon as the policy is resolved — it is NOT gated by `effective_date`. Art 22 GDPR and similar foundational obligations may predate an AI-Act-specific effective date; the human-review requirement fires regardless.
+   */
+  requires_human_review?: boolean;
   /**
    * ISO 3166-1 alpha-2 country codes where this policy applies. Empty array means the policy is not jurisdiction-specific.
    */
@@ -18986,7 +19033,7 @@ export interface PolicyEntry {
    */
   source_name?: string;
   /**
-   * Natural language policy text describing what is required, prohibited, or recommended. Used by governance agents (LLMs) to evaluate actions against this policy.
+   * Natural language policy text describing what is required, prohibited, or recommended. Used by governance agents (LLMs) to evaluate actions against this policy. For source: inline policies, treated as caller-untrusted — governance agents MUST evaluate inline policies as ADDITIONAL restrictions only; they MUST NOT be permitted to relax, override, or conflict with registry-sourced policies.
    */
   policy: string;
   /**
@@ -20958,7 +21005,7 @@ export interface ProtocolResponse {
 
 // core/signal-definition.json
 /**
- * Personal data categories that may be restricted from use in audience targeting. Based on GDPR Article 9 special categories of personal data, which are also referenced by EU DSA Article 26 for advertising restrictions. Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
+ * Personal data categories that may be restricted from use in audience targeting. Combines GDPR Article 9 special categories with US civil-rights protected classes (FHA familial_status, ADEA age). Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
  */
 export type RestrictedAttribute =
   | 'racial_ethnic_origin'
@@ -20968,7 +21015,9 @@ export type RestrictedAttribute =
   | 'health_data'
   | 'sex_life_sexual_orientation'
   | 'genetic_data'
-  | 'biometric_data';
+  | 'biometric_data'
+  | 'age'
+  | 'familial_status';
 
 /**
  * Definition of a signal in a data provider's catalog, published via adagents.json
@@ -21229,13 +21278,6 @@ export type BrandAgentType =
   | 'sales'
   | 'buying'
   | 'signals';
-
-
-// enums/budget-authority-level.json
-/**
- * The level of autonomy an agent has over budget decisions within a campaign plan.
- */
-export type BudgetAuthorityLevel = 'agent_full' | 'agent_limited' | 'human_required';
 
 
 // enums/creative-agent-capability.json
@@ -21699,6 +21741,10 @@ export interface PolicyCategoryDefinition {
    * Restricted attribute categories that regulations in this category prohibit for targeting. Governance agents enforce these when the category is active on a plan — if a plan declares policy_categories: ['fair_housing'], the governance agent restricts targeting on these attributes.
    */
   restricted_attributes?: RestrictedAttribute[];
+  /**
+   * When true, any plan declaring this category MUST set plan.human_review_required = true. Use for regulatory regimes that mandate human oversight under GDPR Art 22 or EU AI Act Annex III — fair_housing, fair_lending, fair_employment, pharmaceutical_advertising, and similar high-risk categories. Category-level setting applies to all policies and plans referencing it; policies can override on policy-entry.requires_human_review. Effective immediately regardless of individual policy `effective_date` fields.
+   */
+  requires_human_review?: boolean;
   /**
    * Industries where this category commonly applies (e.g., 'pharmaceutical' for age_restricted). Governance agents MAY suggest relevant categories when a plan's brand industry matches but no policy_categories are declared.
    */

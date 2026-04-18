@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-18T18:06:48.416Z
+// Generated at: 2026-04-18T22:43:30.462Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -100,7 +100,9 @@ export const ExtensionObjectSchema = z.object({}).passthrough();
 
 export const BrandReferenceSchema = z.object({
     domain: z.string(),
-    brand_id: BrandIDSchema.optional()
+    brand_id: BrandIDSchema.optional(),
+    industries: z.array(z.string()).optional(),
+    data_subject_contestation: z.record(z.string(), z.unknown()).optional()
 }).passthrough();
 
 export const BusinessEntitySchema = z.object({
@@ -2346,7 +2348,9 @@ export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
 export const BrandReference3Schema = z.object({
     domain: z.string(),
-    brand_id: BrandIDSchema.optional()
+    brand_id: BrandIDSchema.optional(),
+    industries: z.array(z.string()).optional(),
+    data_subject_contestation: z.record(z.string(), z.unknown()).optional()
 }).passthrough();
 
 export const ReportingWebhookSchema = z.object({
@@ -3378,6 +3382,7 @@ export const PropertyListFiltersSchema = z.object({
 export const DeletePropertyListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     list_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
     idempotency_key: z.string()
@@ -3393,6 +3398,7 @@ export const DeletePropertyListResponseSchema = z.object({
 export const GetPropertyListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     list_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     resolve: z.boolean().optional(),
     pagination: z.object({
         max_results: z.number().optional(),
@@ -3414,7 +3420,7 @@ export const Identifier3Schema = z.object({
 
 export const ListPropertyListsRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
-    principal: z.string().optional(),
+    account: AccountReferenceSchema.optional(),
     name_contains: z.string().optional(),
     pagination: PaginationRequestSchema.optional(),
     context: ContextObjectSchema.optional(),
@@ -3424,6 +3430,7 @@ export const ListPropertyListsRequestSchema = z.object({
 export const UpdatePropertyListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     list_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     name: z.string().optional(),
     description: z.string().optional(),
     base_properties: z.array(BasePropertySourceSchema).optional(),
@@ -3462,7 +3469,7 @@ export const GetAdCPCapabilitiesRequestSchema = z.object({
 
 export const TransportModeSchema = z.union([z.literal("walking"), z.literal("cycling"), z.literal("driving"), z.literal("public_transport")]);
 
-export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("inventory-lists"), z.literal("measurement-verification"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-exchange"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-retail-media"), z.literal("sales-social"), z.literal("sales-streaming-tv"), z.literal("signal-marketplace"), z.literal("signal-owned")]);
+export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("measurement-verification"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-exchange"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-retail-media"), z.literal("sales-social"), z.literal("sales-streaming-tv"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests")]);
 
 export const SICapabilitiesSchema = z.object({
     modalities: z.object({
@@ -4333,7 +4340,7 @@ export const ProtocolResponseSchema = z.object({
     data: z.record(z.string(), z.unknown()).optional()
 }).passthrough();
 
-export const RestrictedAttributeSchema = z.union([z.literal("racial_ethnic_origin"), z.literal("political_opinions"), z.literal("religious_beliefs"), z.literal("trade_union_membership"), z.literal("health_data"), z.literal("sex_life_sexual_orientation"), z.literal("genetic_data"), z.literal("biometric_data")]);
+export const RestrictedAttributeSchema = z.union([z.literal("racial_ethnic_origin"), z.literal("political_opinions"), z.literal("religious_beliefs"), z.literal("trade_union_membership"), z.literal("health_data"), z.literal("sex_life_sexual_orientation"), z.literal("genetic_data"), z.literal("biometric_data"), z.literal("age"), z.literal("familial_status")]);
 
 export const SignalDefinitionSchema = z.object({
     id: z.string(),
@@ -4403,8 +4410,6 @@ export const VehicleItemSchema = z.object({
 }).passthrough();
 
 export const BrandAgentTypeSchema = z.union([z.literal("brand"), z.literal("rights"), z.literal("measurement"), z.literal("governance"), z.literal("creative"), z.literal("sales"), z.literal("buying"), z.literal("signals")]);
-
-export const BudgetAuthorityLevelSchema = z.union([z.literal("agent_full"), z.literal("agent_limited"), z.literal("human_required")]);
 
 export const CreativeAgentCapabilitySchema = z.union([z.literal("validation"), z.literal("assembly"), z.literal("generation"), z.literal("preview"), z.literal("delivery")]);
 
@@ -4524,6 +4529,7 @@ export const PolicyCategoryDefinitionSchema = z.object({
         policy_ids: z.array(z.string()).optional()
     }).passthrough()).optional(),
     restricted_attributes: z.array(RestrictedAttributeSchema).optional(),
+    requires_human_review: z.boolean().optional(),
     industries: z.array(z.string()).optional(),
     guidance: z.string().optional(),
     related_categories: z.array(z.string()).optional()
@@ -5346,6 +5352,7 @@ export const ActivateSignalSuccessSchema = z.object({
 
 export const CreatePropertyListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    account: AccountReferenceSchema.optional(),
     name: z.string(),
     description: z.string().optional(),
     base_properties: z.array(BasePropertySourceSchema).optional(),
@@ -5360,7 +5367,7 @@ export const PropertyListSchema = z.object({
     list_id: z.string(),
     name: z.string(),
     description: z.string().optional(),
-    principal: z.string().optional(),
+    account: AccountReferenceSchema.optional(),
     base_properties: z.array(BasePropertySourceSchema).optional(),
     filters: PropertyListFiltersSchema.optional(),
     brand: BrandReferenceSchema.optional(),
@@ -5398,6 +5405,7 @@ export const ListPropertyListsResponseSchema = z.object({
 
 export const CreateCollectionListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    account: AccountReferenceSchema.optional(),
     name: z.string(),
     description: z.string().optional(),
     base_collections: z.array(BaseCollectionSourceSchema).optional(),
@@ -5412,7 +5420,7 @@ export const CollectionListSchema = z.object({
     list_id: z.string(),
     name: z.string(),
     description: z.string().optional(),
-    principal: z.string().optional(),
+    account: AccountReferenceSchema.optional(),
     base_collections: z.array(BaseCollectionSourceSchema).optional(),
     filters: CollectionListFiltersSchema.optional(),
     brand: BrandReferenceSchema.optional(),
@@ -5426,6 +5434,7 @@ export const CollectionListSchema = z.object({
 export const UpdateCollectionListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     list_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     name: z.string().optional(),
     description: z.string().optional(),
     base_collections: z.array(BaseCollectionSourceSchema).optional(),
@@ -5446,6 +5455,7 @@ export const UpdateCollectionListResponseSchema = z.object({
 export const GetCollectionListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     list_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     resolve: z.boolean().optional(),
     pagination: z.object({
         max_results: z.number().optional(),
@@ -5482,7 +5492,7 @@ export const GetCollectionListResponseSchema = z.object({
 
 export const ListCollectionListsRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
-    principal: z.string().optional(),
+    account: AccountReferenceSchema.optional(),
     name_contains: z.string().optional(),
     pagination: PaginationRequestSchema.optional(),
     context: ContextObjectSchema.optional(),
@@ -5499,6 +5509,7 @@ export const ListCollectionListsResponseSchema = z.object({
 export const DeleteCollectionListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     list_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
     idempotency_key: z.string()
@@ -5519,6 +5530,7 @@ export const PolicyEntrySchema = z.object({
     description: z.string().optional(),
     category: PolicyCategorySchema.optional(),
     enforcement: PolicyEnforcementLevelSchema,
+    requires_human_review: z.boolean().optional(),
     jurisdictions: z.array(z.string()).optional(),
     region_aliases: z.record(z.string(), z.array(z.string())).optional(),
     policy_categories: z.array(z.string()).optional(),
@@ -5696,64 +5708,7 @@ export const GetCreativeFeaturesResponseSchema = z.union([z.object({
 export const SyncPlansRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     idempotency_key: z.string(),
-    plans: z.array(z.object({
-        plan_id: z.string(),
-        brand: BrandReferenceSchema,
-        objectives: z.string(),
-        budget: z.object({
-            total: z.number(),
-            currency: z.string(),
-            authority_level: BudgetAuthorityLevelSchema,
-            per_seller_max_pct: z.number().optional(),
-            reallocation_threshold: z.number().optional(),
-            allocations: z.record(z.string(), z.object({
-                    amount: z.number().optional(),
-                    max_pct: z.number().optional()
-                }).passthrough()).optional()
-        }).passthrough(),
-        channels: z.object({
-            required: z.array(MediaChannelSchema).optional(),
-            allowed: z.array(MediaChannelSchema).optional(),
-            mix_targets: z.record(z.string(), z.object({
-                    min_pct: z.number().optional(),
-                    max_pct: z.number().optional()
-                }).passthrough()).optional()
-        }).passthrough().optional(),
-        flight: z.object({
-            start: z.string(),
-            end: z.string()
-        }).passthrough(),
-        countries: z.array(z.string()).optional(),
-        regions: z.array(z.string()).optional(),
-        policy_ids: z.array(z.string()).optional(),
-        policy_categories: z.array(z.string()).optional(),
-        audience: AudienceConstraintsSchema.optional(),
-        restricted_attributes: z.array(RestrictedAttributeSchema).optional(),
-        restricted_attributes_custom: z.array(z.string()).optional(),
-        min_audience_size: z.number().optional(),
-        custom_policies: z.array(PolicyEntrySchema).optional(),
-        approved_sellers: z.array(z.string()).optional().nullable(),
-        delegations: z.array(z.object({
-            agent_url: z.string(),
-            authority: DelegationAuthoritySchema,
-            budget_limit: z.object({
-                amount: z.number(),
-                currency: z.string()
-            }).passthrough().optional(),
-            markets: z.array(z.string()).optional(),
-            expires_at: z.string().optional()
-        }).passthrough()).optional(),
-        portfolio: z.object({
-            member_plan_ids: z.array(z.string()),
-            total_budget_cap: z.object({
-                amount: z.number(),
-                currency: z.string()
-            }).passthrough().optional(),
-            shared_policy_ids: z.array(z.string()).optional(),
-            shared_exclusions: z.array(PolicyEntrySchema).optional()
-        }).passthrough().optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough()),
+    plans: z.array(z.record(z.string(), z.unknown())),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -6164,6 +6119,13 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         has_creative_library: z.boolean().optional(),
         supports_generation: z.boolean().optional(),
         supports_transformation: z.boolean().optional()
+    }).passthrough().optional(),
+    request_signing: z.object({
+        supported: z.boolean(),
+        covers_content_digest: z.union([z.literal("required"), z.literal("forbidden"), z.literal("either")]).optional(),
+        required_for: z.array(z.string()).optional(),
+        warn_for: z.array(z.string()).optional(),
+        supported_for: z.array(z.string()).optional()
     }).passthrough().optional(),
     compliance_testing: z.object({
         scenarios: z.array(z.union([z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend")]))
@@ -7499,6 +7461,7 @@ export const CreatePropertyListResponseSchema = z.object({
 export const ValidatePropertyDeliveryRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     list_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     records: z.array(DeliveryRecordSchema),
     include_compliant: z.boolean().optional(),
     context: ContextObjectSchema.optional(),

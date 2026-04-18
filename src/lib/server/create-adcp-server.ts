@@ -447,13 +447,13 @@ export interface AdcpCapabilitiesConfig {
   creative?: Partial<CreativeCapabilities>;
   extensions_supported?: string[];
   /**
-   * Idempotency replay window. Seconds that a successful response is retained
-   * and replayed on same-key retries. Defaults to 86400 (24h). Spec minimum
-   * is 3600 (1h), maximum is 604800 (7d) — clamped to the spec bounds.
+   * Seller-declared idempotency replay window, required on `get_adcp_capabilities`
+   * responses per AdCP spec. Defaults to 86400 (24h). Spec bounds are 3600
+   * (1h) to 604800 (7d); `clampReplayTtl` enforces the range on output.
    *
-   * When using `createIdempotencyStore` from `@adcp/client/server`, call its
-   * `.capability()` method and pass the returned object here — that way the
-   * middleware's actual TTL is what's declared to buyers.
+   * When using `createIdempotencyStore` from `@adcp/client/server`, omit
+   * this — the framework reads `idempotency.ttlSeconds` from the wired
+   * store so the declared capability always matches actual behavior.
    */
   idempotency?: {
     replay_ttl_seconds?: number;
@@ -1305,6 +1305,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const capabilitiesData: GetAdCPCapabilitiesResponse = {
     adcp: {
       major_versions: capConfig?.major_versions ?? [3],
+      // When an idempotency store is wired, pull the TTL from the store
+      // (so declared capability matches actual behavior). Fall back to
+      // explicit capConfig, else to the 24h spec-recommended default.
+      // clampReplayTtl guards against out-of-spec values in capConfig.
       idempotency: {
         replay_ttl_seconds: clampReplayTtl(
           capConfig?.idempotency?.replay_ttl_seconds ?? idempotency?.ttlSeconds ?? 86400

@@ -6,6 +6,15 @@ function errorCodeValidation(value) {
   return { check: 'error_code', value, description: `Expected ${value}` };
 }
 
+function runOne(validations, taskName, taskResult) {
+  return runValidations(validations, {
+    taskName,
+    taskResult,
+    agentUrl: 'https://example.com/mcp',
+    contributions: new Set(),
+  });
+}
+
 describe('validateErrorCode', () => {
   it('reads L3 structured code from data.adcp_error.code', () => {
     const taskResult = {
@@ -13,7 +22,7 @@ describe('validateErrorCode', () => {
       data: { adcp_error: { code: 'MEDIA_BUY_NOT_FOUND', message: 'nope' } },
       error: 'MEDIA_BUY_NOT_FOUND: nope',
     };
-    const [result] = runValidations([errorCodeValidation('MEDIA_BUY_NOT_FOUND')], 'update_media_buy', taskResult);
+    const [result] = runOne([errorCodeValidation('MEDIA_BUY_NOT_FOUND')], 'update_media_buy', taskResult);
     assert.strictEqual(result.passed, true, result.error);
   });
 
@@ -23,7 +32,7 @@ describe('validateErrorCode', () => {
       data: { error_code: 'NOT_CANCELLABLE' },
       error: 'NOT_CANCELLABLE: already cancelled',
     };
-    const [result] = runValidations([errorCodeValidation('NOT_CANCELLABLE')], 'cancel_media_buy', taskResult);
+    const [result] = runOne([errorCodeValidation('NOT_CANCELLABLE')], 'cancel_media_buy', taskResult);
     assert.strictEqual(result.passed, true, result.error);
   });
 
@@ -33,7 +42,7 @@ describe('validateErrorCode', () => {
       data: undefined,
       error: 'VERSION_UNSUPPORTED: adcp_major_version 99 is not supported',
     };
-    const [result] = runValidations([errorCodeValidation('VERSION_UNSUPPORTED')], 'get_adcp_capabilities', taskResult);
+    const [result] = runOne([errorCodeValidation('VERSION_UNSUPPORTED')], 'get_adcp_capabilities', taskResult);
     assert.strictEqual(result.passed, true, result.error);
   });
 
@@ -43,7 +52,7 @@ describe('validateErrorCode', () => {
       data: { adcp_error: { code: 'PACKAGE_NOT_FOUND' } },
       error: 'Some SDK-synthesized string that should NOT win',
     };
-    const [result] = runValidations([errorCodeValidation('PACKAGE_NOT_FOUND')], 'update_media_buy', taskResult);
+    const [result] = runOne([errorCodeValidation('PACKAGE_NOT_FOUND')], 'update_media_buy', taskResult);
     assert.strictEqual(result.passed, true, result.error);
   });
 
@@ -53,7 +62,7 @@ describe('validateErrorCode', () => {
       data: { adcp_error: { code: 'INVALID_REQUEST' } },
       error: 'INVALID_REQUEST: bad input',
     };
-    const [result] = runValidations(
+    const [result] = runOne(
       [
         {
           check: 'error_code',

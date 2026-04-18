@@ -5,6 +5,7 @@
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { randomUUID } = require('crypto');
 
 const { GovernanceAgentStub } = require('../../dist/lib/testing/stubs/index.js');
 const { callMCPTool } = require('../../dist/lib/protocols/mcp.js');
@@ -98,7 +99,7 @@ describe('GovernanceAgentStub', () => {
     stub.clearCallLog();
 
     await callMCPTool(stubUrl, 'report_plan_outcome', {
-      idempotency_key: 'outcome_test_abcdefghij',
+      idempotency_key: randomUUID(),
       plan_id: 'plan-outcome-test',
       outcome: 'completed',
       governance_context: 'test-gc-for-outcome',
@@ -114,7 +115,7 @@ describe('GovernanceAgentStub', () => {
     stub.clearCallLog();
 
     await callMCPTool(stubUrl, 'sync_plans', {
-      idempotency_key: 'sync_plans_abcdefghij1234',
+      idempotency_key: randomUUID(),
       plans: [
         {
           plan_id: 'plan-sync-test',
@@ -159,7 +160,7 @@ describe('GovernanceAgentStub', () => {
     });
 
     await callMCPTool(stubUrl, 'report_plan_outcome', {
-      idempotency_key: 'multi_test_abcdefghij12',
+      idempotency_key: randomUUID(),
       plan_id: 'plan-multi',
       outcome: 'completed',
       governance_context: 'gc-multi-test',

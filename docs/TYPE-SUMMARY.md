@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
 > Generated at: 2026-04-18
-> @adcp/client v5.0.0
+> @adcp/client v5.1.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -481,6 +481,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   name: string  // required
   idempotency_key: string  // required
+  account: Account Ref
   description: string
   base_properties: object[]
   filters: Property List Filters
@@ -495,6 +496,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   list_id: string  // required
   idempotency_key: string  // required
+  account: Account Ref
   name: string
   description: string
   base_properties: object[]
@@ -510,6 +512,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   list_id: string  // required
+  account: Account Ref
   resolve: boolean
   pagination: object
   context: Context
@@ -520,7 +523,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
-  principal: string
+  account: Account Ref
   name_contains: string
   pagination: Pagination Request
   context: Context
@@ -533,6 +536,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   list_id: string  // required
   idempotency_key: string  // required
+  account: Account Ref
   context: Context
 }
 ```
@@ -543,6 +547,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   name: string  // required
   idempotency_key: string  // required
+  account: Account Ref
   description: string
   base_collections: object[]
   filters: Collection List Filters
@@ -557,6 +562,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   list_id: string  // required
   idempotency_key: string  // required
+  account: Account Ref
   name: string
   description: string
   base_collections: object[]
@@ -572,6 +578,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   list_id: string  // required
+  account: Account Ref
   resolve: boolean
   pagination: object
   context: Context
@@ -582,7 +589,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
-  principal: string
+  account: Account Ref
   name_contains: string
   pagination: Pagination Request
   context: Context
@@ -595,6 +602,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   list_id: string  // required
   idempotency_key: string  // required
+  account: Account Ref
   context: Context
 }
 ```

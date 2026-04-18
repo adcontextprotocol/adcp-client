@@ -46,6 +46,15 @@ export interface StoryboardPhase {
   title: string;
   narrative?: string;
   steps: StoryboardStep[];
+  /** When true, the phase is allowed to be skipped without failing the storyboard. */
+  optional?: boolean;
+  /**
+   * Skip expression evaluated against the runtime context. Current grammar:
+   *   - `"!test_kit.auth.api_key"` — true when field is missing/falsy
+   *   - `"test_kit.auth.api_key"`  — true when field is present/truthy
+   * Other expressions are rejected (unknown → fail closed: phase runs).
+   */
+  skip_if?: string;
 }
 
 export interface ContextOutput {
@@ -62,12 +71,50 @@ export interface ContextInput {
   inject_at: string;
 }
 
+/**
+ * Per-step authentication override. Lets a step probe the agent with
+ * different credentials than the rest of the run — required for the
+ * `security_baseline` storyboard's unauthenticated and invalid-key probes.
+ */
+export type StepAuthDirective =
+  /** Strip transport credentials entirely. The step MUST hit the agent unauthenticated. */
+  | 'none'
+  | {
+      type: 'api_key';
+      /** Literal Bearer value sent as `Authorization: Bearer <value>`. */
+      value?: string;
+      /** Pull the value from the runtime `test_kit.auth.api_key` field. */
+      from_test_kit?: boolean;
+      /**
+       * Runner-generated value. Current strategies:
+       *   - `random_invalid` — `invalid-<32 hex bytes>`, fresh per run.
+       */
+      value_strategy?: 'random_invalid';
+    }
+  | {
+      type: 'oauth_bearer';
+      /** Literal Bearer value. */
+      value?: string;
+      /**
+       * Runner-generated value. Current strategies:
+       *   - `random_invalid_jwt` — three base64url segments; valid JSON header/payload, random signature.
+       */
+      value_strategy?: 'random_invalid_jwt';
+    };
+
 export interface StoryboardStep {
   id: string;
   title: string;
   narrative?: string;
-  /** AdCP task name (snake_case), e.g. "sync_accounts", "get_products" */
+  /**
+   * AdCP task name (snake_case), e.g. "sync_accounts", "get_products".
+   * May reference a test-kit field with `"$test_kit.<path>"` — the runner
+   * resolves to the value at that path, or to `task_default` when the kit
+   * doesn't supply the field.
+   */
   task: string;
+  /** Fallback task name when `task` is a `$test_kit.*` reference that resolves to null/undefined. */
+  task_default?: string;
   schema_ref?: string;
   response_schema_ref?: string;
   doc_ref?: string;
@@ -87,17 +134,58 @@ export interface StoryboardStep {
   sample_request?: Record<string, unknown>;
   sample_response?: Record<string, unknown>;
   validations?: StoryboardValidation[];
+  /** Override auth for this step only (see `StepAuthDirective`). */
+  auth?: StepAuthDirective;
+  /** Contribute a flag to the run-level accumulator on success. Used with `any_of` validations downstream. */
+  contributes_to?: string;
+  /**
+   * Conditional contribution expression. Current grammar:
+   *   - `"prior_step.<step_id>.passed"` — contribution fires only if the named step passed.
+   * Unknown expressions → the contribution does NOT fire (fail closed).
+   */
+  contributes_if?: string;
 }
 
+export type StoryboardValidationCheck =
+  | 'response_schema'
+  | 'field_present'
+  | 'field_value'
+  | 'status_code'
+  | 'error_code'
+  // HTTP-probe checks (for raw_probe tasks)
+  | 'http_status'
+  | 'http_status_in'
+  | 'on_401_require_header'
+  // Cross-cutting
+  | 'resource_equals_agent_url'
+  | 'any_of';
+
 export interface StoryboardValidation {
-  check: 'response_schema' | 'field_present' | 'field_value' | 'status_code' | 'error_code';
+  check: StoryboardValidationCheck;
   /** JSON path for field checks, e.g. "accounts[0].account_id" */
   path?: string;
-  /** Expected value for field_value and error_code checks (exact match) */
+  /** Expected value for exact-match checks. */
   value?: unknown;
-  /** Accepted values for field_value and error_code checks (passes if actual matches any) */
+  /** Accepted values for list-match checks (passes if actual matches any). */
   allowed_values?: unknown[];
   description: string;
+}
+
+/**
+ * Raw HTTP probe result for tasks like `protected_resource_metadata` that
+ * bypass the MCP transport. Carried through the runner alongside
+ * `TaskResult` so validations like `http_status` and `on_401_require_header`
+ * can introspect the response.
+ */
+export interface HttpProbeResult {
+  url: string;
+  status: number;
+  /** Lowercased header names. */
+  headers: Record<string, string>;
+  /** Parsed JSON body when the response declared application/json; raw text otherwise. */
+  body: unknown;
+  /** Optional error — set when the fetch failed (network, SSRF guard, etc.). */
+  error?: string;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -117,6 +205,13 @@ export interface StoryboardRunOptions extends TestOptions {
   request?: Record<string, unknown>;
   /** Agent's available tools (for requires_tool filtering) */
   agentTools?: string[];
+  /**
+   * Allow plain-http agent URLs during compliance runs. Normally rejected
+   * because production agents MUST terminate TLS. Intended for local dev
+   * loops (docker compose, localhost harnesses). Emits an advisory banner
+   * in the report when used.
+   */
+  allow_http?: boolean;
 }
 
 // ────────────────────────────────────────────────────────────

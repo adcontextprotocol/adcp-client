@@ -14,6 +14,17 @@ const { parsePath } = require('../../dist/lib/testing/storyboard/path.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
 const { CONTEXT_EXTRACTORS } = require('../../dist/lib/testing/storyboard/context.js');
 
+// Runner-internal tasks with no agent-facing schema.
+const HARNESS_TASKS = new Set([
+  'comply_test_controller',
+  'protected_resource_metadata',
+  'oauth_auth_server_metadata',
+  'assert_contribution',
+]);
+
+// `$test_kit.*` substitution placeholders — resolved at run time, not tasks themselves.
+const isSubstitutionTask = task => typeof task === 'string' && task.startsWith('$');
+
 // ────────────────────────────────────────────────────────────
 // Zod v4 schema walker
 // ────────────────────────────────────────────────────────────
@@ -97,6 +108,8 @@ const HARNESS_STORYBOARDS = new Set(['deterministic_testing']);
 
 // Protocol envelope fields validated at runtime but not always declared
 // in individual tool response schemas. Skip these in schema drift checks.
+// `replayed` lands on the shared mutating-response envelope (AdCP spec) —
+// it's set by the seller's idempotency layer, not the inner response type.
 const ENVELOPE_PATHS = new Set(['context', 'context.correlation_id', 'ext', 'replayed']);
 
 // Upstream scenarios whose validations reference fields not yet in the SDK's
@@ -198,9 +211,17 @@ describe('storyboard schema drift', () => {
   });
 
   describe('every storyboard task with field validations has a response schema', () => {
-    const tasksWithValidations = [...new Set(fieldValidations.map(v => v.task))];
+    // Synthetic runner tasks for raw HTTP probes and flag-accumulator steps
+    // don't correspond to AdCP tools, so they don't have response schemas.
+    const SYNTHETIC_TASKS = new Set([
+      'protected_resource_metadata',
+      'oauth_auth_server_metadata',
+      'assert_contribution',
+    ]);
+    const tasksWithValidations = [...new Set(fieldValidations.map(v => v.task))].filter(t => !SYNTHETIC_TASKS.has(t));
 
     for (const task of tasksWithValidations) {
+      if (HARNESS_TASKS.has(task) || isSubstitutionTask(task)) continue;
       it(`${task} has a registered response schema`, () => {
         assert.ok(
           TOOL_RESPONSE_SCHEMAS[task],

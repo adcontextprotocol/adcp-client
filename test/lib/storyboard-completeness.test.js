@@ -19,12 +19,25 @@ const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas
 
 const allStoryboards = listAllComplianceStoryboards();
 
-// Upstream ships placeholder storyboards with empty phases for domains/specialisms
+// Upstream ships placeholder storyboards with empty phases for protocols/specialisms
 // whose conformance tests haven't been written yet. Skip structural assertions on those.
 const storyboards = allStoryboards.filter(sb => Array.isArray(sb.phases) && sb.phases.length > 0);
 
 // Tasks that are part of the test harness — not protocol tools
-const HARNESS_TASKS = new Set(['comply_test_controller']);
+const HARNESS_TASKS = new Set([
+  'comply_test_controller',
+  // Synthetic tasks dispatched by the storyboard runner — no corresponding
+  // AdCP tool or response schema. Raw HTTP probes and flag-accumulator steps.
+  'protected_resource_metadata',
+  'oauth_auth_server_metadata',
+  'assert_contribution',
+]);
+
+// Tasks that reference test-kit data (e.g. "$test_kit.auth.probe_task"). The
+// runner resolves these at execution time; they aren't MCP tool names.
+function isTestKitReference(task) {
+  return typeof task === 'string' && task.startsWith('$test_kit.');
+}
 
 describe('storyboard structural completeness', () => {
   it('loads at least 25 compliance storyboards from the cache', () => {
@@ -75,6 +88,9 @@ describe('storyboard structural completeness', () => {
               });
 
               it('has a request builder or sample_request', () => {
+                // Synthetic runner tasks (HTTP probes, flag accumulators) build their
+                // own request; they don't need a builder or sample_request.
+                if (HARNESS_TASKS.has(step.task) || isTestKitReference(step.task)) return;
                 const hasBuilder = hasRequestBuilder(step.task);
                 const hasSample = step.sample_request !== undefined && step.sample_request !== null;
                 assert.ok(
@@ -101,7 +117,7 @@ describe('response schema coverage', () => {
   }
 
   for (const task of [...allTasks].sort()) {
-    if (HARNESS_TASKS.has(task)) continue;
+    if (HARNESS_TASKS.has(task) || isTestKitReference(task)) continue;
 
     it(`${task} has a registered response schema`, () => {
       assert.ok(

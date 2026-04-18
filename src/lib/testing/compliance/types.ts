@@ -124,8 +124,17 @@ export interface AdvisoryObservation {
   category: ObservationCategory;
   severity: ObservationSeverity;
   track?: ComplianceTrack;
+  /**
+   * Human-readable message. Any agent-controlled substrings are fenced
+   * with a random per-observation nonce; safe to pass to LLM summarizers
+   * of a shared ComplianceResult.
+   */
   message: string;
-  /** Concrete data backing this observation */
+  /**
+   * Concrete data backing this observation. May contain raw agent-controlled
+   * text (e.g. `agent_reported_error`). Operator-only — MUST NOT be fed to
+   * LLM summarizers, since it bypasses the fencing applied to `message`.
+   */
   evidence?: Record<string, unknown>;
 }
 

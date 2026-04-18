@@ -35,6 +35,11 @@
       "import": "./dist/lib/server/index.js",
       "require": "./dist/lib/server/index.js",
       "types": "./dist/lib/server/index.d.ts"
+    },
+    "./signing": {
+      "import": "./dist/lib/signing/index.js",
+      "require": "./dist/lib/signing/index.js",
+      "types": "./dist/lib/signing/index.d.ts"
     }
   },
   "typesVersions": {
@@ -53,6 +58,9 @@
       ],
       "server": [
         "dist/lib/server/index.d.ts"
+      ],
+      "signing": [
+        "dist/lib/signing/index.d.ts"
       ]
     }
   },
@@ -147,6 +155,7 @@
     "email": "bugs@adcontextprotocol.org"
   },
   "dependencies": {
+    "undici": "^6.25.0",
     "yaml": "^2.7.1"
   },
   "peerDependencies": {

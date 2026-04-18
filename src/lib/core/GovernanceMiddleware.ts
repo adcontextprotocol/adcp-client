@@ -11,6 +11,8 @@
  * After execution, reports the outcome back to the governance agent.
  */
 
+import { randomUUID } from 'crypto';
+
 import type { AgentConfig } from '../types';
 import type {
   CheckGovernanceRequest,

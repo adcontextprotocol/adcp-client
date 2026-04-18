@@ -168,7 +168,7 @@ export {
   type BundleKind,
   type BundleRef,
   type ComplianceIndex,
-  type ComplianceIndexDomain,
+  type ComplianceIndexProtocol,
   type ComplianceIndexSpecialism,
   type ResolveOptions,
   type ResolvedBundle,

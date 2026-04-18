@@ -15,13 +15,12 @@ import { ADCP_VERSION } from '../../version';
 import type { Storyboard } from './types';
 
 /**
- * Maps the `supported_protocols` enum values (snake_case) to domain-directory
- * names (kebab-case). `compliance_testing` is an RPC surface with no compliance
- * baseline per the spec; callers skip it explicitly.
+ * Maps `supported_protocols` enum values (snake_case) to compliance-cache
+ * path segments (kebab-case).
  *
  * Exported so the drift-alarm test can assert every spec enum value has a mapping.
  */
-export const PROTOCOL_TO_DOMAIN: Readonly<Record<string, string>> = Object.freeze({
+export const PROTOCOL_TO_PATH: Readonly<Record<string, string>> = Object.freeze({
   media_buy: 'media-buy',
   creative: 'creative',
   signals: 'signals',
@@ -30,10 +29,7 @@ export const PROTOCOL_TO_DOMAIN: Readonly<Record<string, string>> = Object.freez
   sponsored_intelligence: 'sponsored-intelligence',
 });
 
-/** Protocol values in `supported_protocols` that intentionally have no compliance baseline. */
-export const PROTOCOLS_WITHOUT_BASELINE: ReadonlySet<string> = new Set(['compliance_testing']);
-
-export interface ComplianceIndexDomain {
+export interface ComplianceIndexProtocol {
   id: string;
   title: string | null;
   has_baseline: boolean;
@@ -42,7 +38,7 @@ export interface ComplianceIndexDomain {
 
 export interface ComplianceIndexSpecialism {
   id: string;
-  domain: string;
+  protocol: string;
   title: string | null;
   status: string;
   path: string;
@@ -52,22 +48,22 @@ export interface ComplianceIndex {
   adcp_version: string;
   generated_at: string;
   universal: string[];
-  domains: ComplianceIndexDomain[];
+  protocols: ComplianceIndexProtocol[];
   specialisms: ComplianceIndexSpecialism[];
 }
 
-export type BundleKind = 'universal' | 'domain' | 'specialism';
+export type BundleKind = 'universal' | 'protocol' | 'specialism';
 
 export interface BundleRef {
   kind: BundleKind;
-  /** `capability-discovery` for universal, `media-buy` for domain, `sales-guaranteed` for specialism. */
+  /** `capability-discovery` for universal, `media-buy` for protocol, `sales-guaranteed` for specialism. */
   id: string;
   /** Path to the bundle directory (or YAML file, for universal bundles). */
   path: string;
 }
 
 export interface AgentCapabilities {
-  /** AdCP domain protocols the agent implements. Snake_case per schema. */
+  /** AdCP protocols the agent implements. Snake_case per schema. */
   supported_protocols?: string[];
   /** Optional specialisms the agent claims. */
   specialisms?: string[];
@@ -194,7 +190,7 @@ export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
   return loadStoryboardsFromDir(ref.path);
 }
 
-/** Enumerate every bundle present in the cache (universal + domains + specialisms). */
+/** Enumerate every bundle present in the cache (universal + protocols + specialisms). */
 export function listBundles(options: ResolveOptions = {}): BundleRef[] {
   const dir = getComplianceCacheDir(options);
   const index = loadComplianceIndex(options);
@@ -207,12 +203,12 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
       path: join(dir, 'universal', `${name}.yaml`),
     });
   }
-  for (const domain of index.domains) {
-    if (!domain.has_baseline) continue;
+  for (const protocol of index.protocols) {
+    if (!protocol.has_baseline) continue;
     bundles.push({
-      kind: 'domain',
-      id: domain.id,
-      path: join(dir, 'domains', domain.id),
+      kind: 'protocol',
+      id: protocol.id,
+      path: join(dir, 'protocols', protocol.id),
     });
   }
   for (const specialism of index.specialisms) {
@@ -273,8 +269,8 @@ export function resolveBundleOrStoryboard(id: string, options: ResolveOptions = 
  * Given the agent's `get_adcp_capabilities` response, resolve the set of
  * storyboards the compliance runner should execute:
  *
- *   universal  — every universal bundle (mandatory for every agent)
- *   domains    — baseline for each declared `supported_protocols` entry
+ *   universal   — every universal bundle (mandatory for every agent)
+ *   protocols   — baseline for each declared `supported_protocols` entry
  *   specialisms — every declared specialism
  *
  * Throws (fail-closed) if the agent declares a specialism whose bundle is
@@ -310,12 +306,16 @@ export function resolveStoryboardsForCapabilities(
   }
 
   const declaredProtocols = caps.supported_protocols ?? [];
-  const declaredDomainIds = new Set<string>();
+  const declaredProtocolIds = new Set<string>();
   for (const protocol of declaredProtocols) {
-    if (PROTOCOLS_WITHOUT_BASELINE.has(protocol)) continue;
-    const domainId = PROTOCOL_TO_DOMAIN[protocol];
-    if (!domainId) {
-      // Unknown protocol — could be a newer spec version or a typo. Mirror the
+    // Legacy: older agents listed `compliance_testing` under supported_protocols.
+    // The current schema declares it via the top-level `compliance_testing`
+    // capability block instead, and it has no compliance baseline. Skip silently.
+    if (protocol === 'compliance_testing') continue;
+
+    const protocolId = PROTOCOL_TO_PATH[protocol];
+    if (!protocolId) {
+      // Unknown protocol — likely a newer spec version or a typo. Mirror the
       // fail-closed posture on specialisms: surface it loudly, but as a warning
       // on stderr so a single bad entry doesn't block the full run.
       console.warn(
@@ -324,13 +324,13 @@ export function resolveStoryboardsForCapabilities(
       );
       continue;
     }
-    const entry = index.domains.find(d => d.id === domainId);
+    const entry = index.protocols.find(d => d.id === protocolId);
     if (!entry || !entry.has_baseline) continue;
-    declaredDomainIds.add(domainId);
+    declaredProtocolIds.add(protocolId);
     push({
-      kind: 'domain',
-      id: domainId,
-      path: join(cacheDir, 'domains', domainId),
+      kind: 'protocol',
+      id: protocolId,
+      path: join(cacheDir, 'protocols', protocolId),
     });
   }
 
@@ -346,14 +346,14 @@ export function resolveStoryboardsForCapabilities(
           `This usually means the cache is stale — run \`npm run sync-schemas\`.`
       );
     }
-    // Each specialism rolls up to one parent domain; the spec requires the parent
+    // Each specialism rolls up to one parent protocol; the spec requires the parent
     // to also be declared in supported_protocols. AAO enforces this server-side,
     // but catching it client-side stops us from running orphan scenarios.
-    if (entry.domain && !declaredDomainIds.has(entry.domain)) {
+    if (entry.protocol && !declaredProtocolIds.has(entry.protocol)) {
       throw new Error(
-        `Agent declared specialism "${specialism}" (parent domain: ${entry.domain}) ` +
-          `but did not include "${entry.domain}" in supported_protocols. ` +
-          `Every specialism must roll up to a declared domain per the AdCP spec.`
+        `Agent declared specialism "${specialism}" (parent protocol: ${entry.protocol}) ` +
+          `but did not include "${entry.protocol}" in supported_protocols. ` +
+          `Every specialism must roll up to a declared protocol per the AdCP spec.`
       );
     }
     push({
