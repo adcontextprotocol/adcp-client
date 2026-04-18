@@ -11,6 +11,8 @@
  * After execution, reports the outcome back to the governance agent.
  */
 
+import { randomUUID } from 'crypto';
+
 import type { AgentConfig } from '../types';
 import type {
   CheckGovernanceRequest,
@@ -244,6 +246,7 @@ export class GovernanceMiddleware {
       check_id: checkId,
       outcome,
       governance_context: gc,
+      idempotency_key: randomUUID(),
     };
 
     if (outcome === 'completed' && sellerResponse) {

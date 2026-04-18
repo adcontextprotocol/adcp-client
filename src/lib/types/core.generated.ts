@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-18T15:19:53.815Z
+// Generated at: 2026-04-18T18:14:33.392Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -5671,7 +5671,7 @@ export interface AcquireRightsRequest {
   /**
    * Client-generated key for safe retries. Resubmitting with the same key returns the original response rather than creating a duplicate acquisition. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5875,7 +5875,7 @@ export interface CreativeApprovalRequest {
   /**
    * Client-generated key for safe retries. Resubmitting with the same key returns the original response. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6607,7 +6607,7 @@ export interface UpdateRightsRequest {
   /**
    * Client-generated idempotency key for safe retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -11470,7 +11470,7 @@ export interface SyncCreativesRequest {
   /**
    * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   /**
    * When true, creatives not included in this sync will be archived. Use with caution for full library replacement. Invalid when creative_ids is provided — delete_missing applies to the entire library scope, not a filtered subset.
    */
@@ -11561,7 +11561,7 @@ export interface BuildCreativeRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate creative generation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -11667,7 +11667,7 @@ export interface CreateMediaBuyRequest {
   /**
    * Client-generated unique key for this request. If a request with the same idempotency_key and account has already been processed, the seller returns the existing media buy rather than creating a duplicate. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   /**
    * Campaign governance plan identifier. Required when the account has governance_agents. The seller includes this in the committed check_governance request so the governance agent can validate against the correct plan.
    */
@@ -14946,7 +14946,7 @@ export interface LogEventRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate event logging on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject2;
 }
@@ -15139,7 +15139,7 @@ export interface ProvidePerformanceFeedbackRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate feedback submissions on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   measurement_period: DatetimeRange;
   /**
    * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
@@ -15225,6 +15225,10 @@ export interface SyncAudiencesRequest {
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  /**
+   * Client-generated unique key for at-most-once execution. `audience_id` gives resource-level dedup per audience, but the sync envelope emits audit events and may trigger downstream refreshes — this key prevents those side effects from firing twice on retry. Also serves as a request ID on discovery-only calls (when `audiences` is omitted). MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key: string;
   account: AccountReference;
   /**
    * Audiences to sync (create or update). When omitted, the call is discovery-only and returns all existing audiences on the account without modification.
@@ -15394,6 +15398,10 @@ export interface SyncCatalogsRequest {
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  /**
+   * Client-generated unique key for at-most-once execution. `catalog_id` gives resource-level dedup per catalog, but the sync envelope emits audit events and triggers platform review for large feeds — this key prevents those side effects from firing twice on retry. Also serves as a request ID on discovery-only calls (when `catalogs` is omitted). MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key: string;
   account: AccountReference;
   /**
    * Array of catalog feeds to sync (create or update). When omitted, the call is discovery-only and returns all existing catalogs on the account without modification.
@@ -15426,6 +15434,10 @@ export interface SyncEventSourcesRequest {
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  /**
+   * Client-generated unique key for at-most-once execution. `event_source_id` gives resource-level dedup per source, but the sync envelope emits audit events and can trigger downstream pixel provisioning — this key prevents those side effects from firing twice on retry. Also serves as a request ID on discovery-only calls (when `event_sources` is omitted). MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key: string;
   account: AccountReference;
   /**
    * Event sources to sync (create or update). When omitted, the call is discovery-only and returns all existing event sources on the account without modification.
@@ -15643,7 +15655,7 @@ export interface UpdateMediaBuyRequest {
   /**
    * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -16171,7 +16183,7 @@ export interface CreatePropertyListRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate property list creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -16370,7 +16382,7 @@ export interface DeletePropertyListRequest {
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
 }
 
 // bundled/property/delete-property-list-response.json
@@ -16545,7 +16557,7 @@ export interface UpdatePropertyListRequest {
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
 }
 
 // bundled/property/update-property-list-response.json
@@ -16879,6 +16891,15 @@ export interface GetAdCPCapabilitiesResponse {
      * AdCP major versions supported by this seller. Major versions indicate breaking changes. When multiple versions are listed, the buyer declares its version via the adcp_major_version field on requests.
      */
     major_versions: number[];
+    /**
+     * Idempotency semantics for mutating requests. Sellers MUST declare their replay window so buyers can reason about safe retry behavior. Clients MUST NOT assume a default — a seller without this declaration is non-compliant and should be treated as unsafe for retry-sensitive operations.
+     */
+    idempotency: {
+      /**
+       * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
+       */
+      replay_ttl_seconds: number;
+    };
   };
   /**
    * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
@@ -17556,7 +17577,7 @@ export interface ActivateSignalRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate activations on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -17995,7 +18016,7 @@ export interface SIInitiateSessionRequest {
   /**
    * Client-generated unique key for this request. Prevents duplicate session creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  idempotency_key?: string;
+  idempotency_key: string;
   ext?: ExtensionObject;
 }
 /**
@@ -18123,6 +18144,10 @@ export type SISendMessageRequest = {
    */
   adcp_major_version?: number;
   /**
+   * Client-generated unique key for at-most-once execution. Each conversational turn is a distinct mutation of session transcript — without this key, a timeout-and-retry produces a duplicate turn and a duplicate model response. MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each user turn.
+   */
+  idempotency_key: string;
+  /**
    * Active session identifier
    */
   session_id: string;
@@ -18226,7 +18251,7 @@ export interface SISendMessageResponse {
 
 // bundled/sponsored-intelligence/si-terminate-session-request.json
 /**
- * Request to terminate an SI session
+ * Request to terminate an SI session. Naturally idempotent — `session_id` is the dedup boundary, and terminating an already-terminated session is a no-op that returns the same terminal state. No `idempotency_key` is needed on this request.
  */
 export interface SITerminateSessionRequest {
   /**
@@ -20267,6 +20292,10 @@ export interface ProtocolEnvelope {
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   push_notification_config?: PushNotificationConfig;
   /**
    * Governance context token issued by a governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle.
@@ -21250,6 +21279,8 @@ export type ErrorCode =
   | 'BUDGET_EXHAUSTED'
   | 'BUDGET_EXCEEDED'
   | 'CONFLICT'
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'IDEMPOTENCY_EXPIRED'
   | 'CREATIVE_DEADLINE_EXCEEDED'
   | 'INVALID_STATE'
   | 'MEDIA_BUY_NOT_FOUND'
