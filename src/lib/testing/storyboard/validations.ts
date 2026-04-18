@@ -10,32 +10,54 @@
 
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import type { TaskResult } from '../types';
-import type { StoryboardValidation, ValidationResult } from './types';
+import type { HttpProbeResult, StoryboardValidation, ValidationResult } from './types';
 import { resolvePath } from './path';
+
+/**
+ * Broader validation context that carries the run-level state a single
+ * validation might need: the task result (for MCP tools), the HTTP probe
+ * result (for raw tasks), the agent URL (for cross-cutting checks like
+ * `resource_equals_agent_url`), and the accumulated contribution flags.
+ */
+export interface ValidationContext {
+  taskName: string;
+  taskResult?: TaskResult;
+  httpResult?: HttpProbeResult;
+  agentUrl: string;
+  contributions: Set<string>;
+}
 
 /**
  * Run all validations for a storyboard step.
  */
-export function runValidations(
-  validations: StoryboardValidation[],
-  taskName: string,
-  taskResult: TaskResult
-): ValidationResult[] {
-  return validations.map(v => runValidation(v, taskName, taskResult));
+export function runValidations(validations: StoryboardValidation[], context: ValidationContext): ValidationResult[] {
+  return validations.map(v => runValidation(v, context));
 }
 
-function runValidation(validation: StoryboardValidation, taskName: string, taskResult: TaskResult): ValidationResult {
+function runValidation(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
   switch (validation.check) {
     case 'response_schema':
-      return validateResponseSchema(validation, taskName, taskResult);
+      return requireTaskResult(ctx, validation, tr => validateResponseSchema(validation, ctx.taskName, tr));
     case 'field_present':
-      return validateFieldPresent(validation, taskResult);
+      // field_present runs against either MCP task result data OR an HTTP probe body —
+      // the storyboard's probe_protected_resource validates fields in the RFC 9728 JSON.
+      return validateFieldPresent(validation, resolveTarget(ctx));
     case 'field_value':
-      return validateFieldValue(validation, taskResult);
+      return validateFieldValue(validation, resolveTarget(ctx));
     case 'status_code':
-      return validateStatusCode(validation, taskResult);
+      return requireTaskResult(ctx, validation, tr => validateStatusCode(validation, tr));
     case 'error_code':
-      return validateErrorCode(validation, taskResult);
+      return requireTaskResult(ctx, validation, tr => validateErrorCode(validation, tr));
+    case 'http_status':
+      return requireHttpResult(ctx, validation, hr => validateHttpStatus(validation, hr));
+    case 'http_status_in':
+      return requireHttpResult(ctx, validation, hr => validateHttpStatusIn(validation, hr));
+    case 'on_401_require_header':
+      return requireHttpResult(ctx, validation, hr => validateOn401RequireHeader(validation, hr));
+    case 'resource_equals_agent_url':
+      return requireHttpResult(ctx, validation, hr => validateResourceEqualsAgentUrl(validation, hr, ctx.agentUrl));
+    case 'any_of':
+      return validateAnyOf(validation, ctx.contributions);
     default:
       return {
         check: validation.check,
@@ -44,6 +66,50 @@ function runValidation(validation: StoryboardValidation, taskName: string, taskR
         error: `Unknown validation check: ${validation.check}`,
       };
   }
+}
+
+function requireTaskResult(
+  ctx: ValidationContext,
+  validation: StoryboardValidation,
+  fn: (tr: TaskResult) => ValidationResult
+): ValidationResult {
+  if (!ctx.taskResult) {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      error: `Validation "${validation.check}" requires an MCP task result but this step was an HTTP probe.`,
+    };
+  }
+  return fn(ctx.taskResult);
+}
+
+function requireHttpResult(
+  ctx: ValidationContext,
+  validation: StoryboardValidation,
+  fn: (hr: HttpProbeResult) => ValidationResult
+): ValidationResult {
+  if (!ctx.httpResult) {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      error: `Validation "${validation.check}" requires an HTTP probe result but this step was an MCP task.`,
+    };
+  }
+  return fn(ctx.httpResult);
+}
+
+/**
+ * Resolve the object path-style validations should walk. Prefers the MCP
+ * task result's `data` and falls back to the HTTP probe body, so the same
+ * `field_present` / `field_value` validations work for both MCP tool steps
+ * and raw RFC 9728 / RFC 8414 metadata probes.
+ */
+function resolveTarget(ctx: ValidationContext): TaskResult {
+  if (ctx.taskResult) return ctx.taskResult;
+  if (ctx.httpResult) return { success: !ctx.httpResult.error, data: ctx.httpResult.body };
+  return { success: false, data: undefined };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -239,6 +305,144 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
     passed,
     description: validation.description,
     error: passed ? undefined : `Expected error code "${validation.value}", got "${errorCode}"`,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// http_status / http_status_in
+// ────────────────────────────────────────────────────────────
+
+function validateHttpStatus(validation: StoryboardValidation, hr: HttpProbeResult): ValidationResult {
+  const expected = validation.value as number | undefined;
+  const passed = typeof expected === 'number' && hr.status === expected;
+  return {
+    check: 'http_status',
+    passed,
+    description: validation.description,
+    error: passed ? undefined : `Expected HTTP ${expected}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
+  };
+}
+
+function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeResult): ValidationResult {
+  const allowed = Array.isArray(validation.allowed_values) ? validation.allowed_values : [];
+  const passed = allowed.some(v => v === hr.status);
+  return {
+    check: 'http_status_in',
+    passed,
+    description: validation.description,
+    error: passed
+      ? undefined
+      : `Expected HTTP status in ${JSON.stringify(allowed)}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// on_401_require_header
+// ────────────────────────────────────────────────────────────
+
+function validateOn401RequireHeader(validation: StoryboardValidation, hr: HttpProbeResult): ValidationResult {
+  const header = typeof validation.value === 'string' ? validation.value.toLowerCase() : undefined;
+  if (!header) {
+    return {
+      check: 'on_401_require_header',
+      passed: false,
+      description: validation.description,
+      error: '`value` is required (the header name to require on 401 responses).',
+    };
+  }
+  // Silent pass when the response isn't a 401 — the conditional is part of
+  // the spec (RFC 6750 §3 only applies to 401s).
+  if (hr.status !== 401) {
+    return { check: 'on_401_require_header', passed: true, description: validation.description };
+  }
+  const value = hr.headers[header];
+  const passed = typeof value === 'string' && value.length > 0;
+  return {
+    check: 'on_401_require_header',
+    passed,
+    description: validation.description,
+    error: passed ? undefined : `401 response missing required header "${header}".`,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// resource_equals_agent_url
+// ────────────────────────────────────────────────────────────
+
+function normalizeAgentUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    u.search = '';
+    // Drop trailing slash but keep the root "/".
+    if (u.pathname.length > 1 && u.pathname.endsWith('/')) {
+      u.pathname = u.pathname.slice(0, -1);
+    }
+    return `${u.protocol.toLowerCase()}//${u.host.toLowerCase()}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function validateResourceEqualsAgentUrl(
+  validation: StoryboardValidation,
+  hr: HttpProbeResult,
+  agentUrl: string
+): ValidationResult {
+  const body = (hr.body ?? {}) as { resource?: unknown };
+  const resource = typeof body.resource === 'string' ? body.resource : undefined;
+  if (!resource) {
+    return {
+      check: 'resource_equals_agent_url',
+      passed: false,
+      description: validation.description,
+      error: 'Response body missing string `resource` field.',
+    };
+  }
+  const expected = normalizeAgentUrl(agentUrl);
+  const actual = normalizeAgentUrl(resource);
+  const passed = actual === expected;
+  // Don't echo the advertised value verbatim — compliance reports may be
+  // shared publicly and the raw diff helps attackers probe victim agents.
+  // Surface just enough for the operator to self-diagnose: their own URL,
+  // which part of the advertised URL differs, and a pointer to the fix.
+  let redactedError: string | undefined;
+  if (!passed) {
+    let actualHost = 'unknown';
+    try {
+      actualHost = new URL(resource).host;
+    } catch {
+      /* ignore */
+    }
+    const expectedHost = new URL(expected).host;
+    const hostDiffers = actualHost !== expectedHost;
+    redactedError =
+      `RFC 9728 \`resource\` does not equal the URL clients call (${expected}). ` +
+      (hostDiffers
+        ? `Advertised host differs from the agent host — the most common cause is copying your authorization server origin into \`resource\`. `
+        : `Advertised path differs from the agent path. `) +
+      `Fix: set \`resource\` equal to the full agent URL in your protected-resource metadata document.`;
+  }
+  return {
+    check: 'resource_equals_agent_url',
+    passed,
+    description: validation.description,
+    error: redactedError,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// any_of (contribution accumulator)
+// ────────────────────────────────────────────────────────────
+
+function validateAnyOf(validation: StoryboardValidation, contributions: Set<string>): ValidationResult {
+  const flags = Array.isArray(validation.allowed_values) ? validation.allowed_values.map(String) : [];
+  const passed = flags.some(f => contributions.has(f));
+  return {
+    check: 'any_of',
+    passed,
+    description: validation.description,
+    error: passed ? undefined : `None of the required contributions were recorded: ${JSON.stringify(flags)}`,
   };
 }
 

@@ -147,6 +147,7 @@
     "email": "bugs@adcontextprotocol.org"
   },
   "dependencies": {
+    "undici": "^6.25.0",
     "yaml": "^2.7.1"
   },
   "peerDependencies": {

@@ -440,6 +440,14 @@ export interface BrandRightsHandlers<TAccount = unknown> {
 
 export interface AdcpCapabilitiesConfig {
   major_versions?: number[];
+  /**
+   * Seller-declared idempotency window. AdCP requires this on capabilities.
+   * Defaults to 86400 (24h) — the spec's recommended value. Override when
+   * your seller retains canonical responses for a different duration.
+   */
+  idempotency?: {
+    replay_ttl_seconds: number;
+  };
   features?: Partial<MediaBuyFeatures>;
   account?: Partial<AccountCapabilities>;
   creative?: Partial<CreativeCapabilities>;
@@ -974,7 +982,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const protocols = detectProtocols([...registeredToolNames]);
 
   const capabilitiesData: GetAdCPCapabilitiesResponse = {
-    adcp: { major_versions: capConfig?.major_versions ?? [3] },
+    adcp: {
+      major_versions: capConfig?.major_versions ?? [3],
+      // Default to 24h per AdCP recommendation; SDKs building a seller can
+      // override via capConfig.idempotency when they have different retention.
+      idempotency: { replay_ttl_seconds: capConfig?.idempotency?.replay_ttl_seconds ?? 86400 },
+    },
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };
 

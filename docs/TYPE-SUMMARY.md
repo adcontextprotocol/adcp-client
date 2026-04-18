@@ -89,6 +89,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   accounts: object[]  // required
   delete_missing: boolean
   dry_run: boolean
@@ -101,6 +102,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   accounts: object[]  // required
   context: Context
 }
@@ -110,9 +112,9 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   reporting_period: Datetime Range  // required
   usage: object[]  // required
-  idempotency_key: string
   context: Context
 }
 ```
@@ -176,11 +178,11 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   account: Account Ref  // required
   brand: Brand Ref  // required
   start_time: Start Timing  // required
   end_time: string  // required
-  idempotency_key: string
   plan_id: string
   proposal_id: string
   total_budget: object
@@ -203,6 +205,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   account: Account Ref  // required
   media_buy_id: string  // required
+  idempotency_key: string  // required
   revision: integer
   paused: boolean
   canceled: 'true'
@@ -214,7 +217,6 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   new_packages: object[]
   reporting_webhook: Reporting Webhook
   push_notification_config: Push Notification Config
-  idempotency_key: string
   context: Context
 }
 ```
@@ -254,9 +256,9 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   media_buy_id: string  // required
+  idempotency_key: string  // required
   measurement_period: Datetime Range  // required
   performance_index: number  // required
-  idempotency_key: string
   package_id: string
   creative_id: string
   metric_type: Metric Type
@@ -269,6 +271,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   account: Account Ref  // required
   event_sources: object[]
   delete_missing: boolean
@@ -282,8 +285,8 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   event_source_id: string  // required
   events: object[]  // required
+  idempotency_key: string  // required
   test_event_code: string
-  idempotency_key: string
   context: Context
 }
 ```
@@ -292,6 +295,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   account: Account Ref  // required
   audiences: object[]
   delete_missing: boolean
@@ -303,6 +307,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   account: Account Ref  // required
   catalogs: object[]
   catalog_ids: string[]
@@ -320,6 +325,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   message: string
   creative_manifest: Creative Manifest
   creative_id: string
@@ -337,7 +343,6 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   preview_quality: Creative Quality
   preview_output_format: Preview Output Format
   macro_values: object
-  idempotency_key: string
   context: Context
 }
 ```
@@ -425,9 +430,9 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   account: Account Ref  // required
   creatives: object[]  // required
+  idempotency_key: string  // required
   creative_ids: string[]
   assignments: object[]
-  idempotency_key: string
   delete_missing: boolean
   dry_run: boolean
   validation_mode: Validation Mode
@@ -460,10 +465,10 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   signal_agent_segment_id: string  // required
   destinations: object[]  // required
+  idempotency_key: string  // required
   action: 'activate' | 'deactivate'
   pricing_option_id: string
   account: Account Ref
-  idempotency_key: string
   context: Context
 }
 ```
@@ -475,11 +480,11 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   name: string  // required
+  idempotency_key: string  // required
   description: string
   base_properties: object[]
   filters: Property List Filters
   brand: Brand Ref
-  idempotency_key: string
   context: Context
 }
 ```
@@ -489,6 +494,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   list_id: string  // required
+  idempotency_key: string  // required
   name: string
   description: string
   base_properties: object[]
@@ -496,7 +502,6 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   brand: Brand Ref
   webhook_url: string
   context: Context
-  idempotency_key: string
 }
 ```
 
@@ -527,8 +532,8 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   list_id: string  // required
+  idempotency_key: string  // required
   context: Context
-  idempotency_key: string
 }
 ```
 
@@ -537,11 +542,11 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   name: string  // required
+  idempotency_key: string  // required
   description: string
   base_collections: object[]
   filters: Collection List Filters
   brand: Brand Ref
-  idempotency_key: string
   context: Context
 }
 ```
@@ -551,6 +556,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   list_id: string  // required
+  idempotency_key: string  // required
   name: string
   description: string
   base_collections: object[]
@@ -558,7 +564,6 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   brand: Brand Ref
   webhook_url: string
   context: Context
-  idempotency_key: string
 }
 ```
 
@@ -589,8 +594,8 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   list_id: string  // required
+  idempotency_key: string  // required
   context: Context
-  idempotency_key: string
 }
 ```
 
@@ -620,10 +625,10 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   scope: object  // required
+  idempotency_key: string  // required
   registry_policy_ids: string[]
   policies: object[]
   calibration_exemplars: object
-  idempotency_key: string
   context: Context
 }
 ```
@@ -633,12 +638,12 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   standards_id: string  // required
+  idempotency_key: string  // required
   scope: object
   registry_policy_ids: string[]
   policies: object[]
   calibration_exemplars: object
   context: Context
-  idempotency_key: string
 }
 ```
 
@@ -648,7 +653,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   standards_id: string  // required
   artifact: Artifact  // required
-  idempotency_key: string
+  idempotency_key: string  // required
   context: Context
 }
 ```
@@ -694,6 +699,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   plans: object[]  // required
   context: Context
 }
@@ -704,10 +710,10 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   plan_id: string  // required
+  idempotency_key: string  // required
   outcome: Outcome Type  // required
   governance_context: string  // required
   check_id: string
-  idempotency_key: string
   purchase_type: Purchase Type
   seller_response: object
   delivery: object
@@ -767,12 +773,12 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 {
   context: string  // required
   identity: Si Identity  // required
+  idempotency_key: string  // required
   media_buy_id: string
   placement: string
   offering_id: string
   supported_capabilities: Si Capabilities
   offering_token: string
-  idempotency_key: string
 }
 ```
 
@@ -780,6 +786,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ```
 {
+  idempotency_key: string  // required
   session_id: string  // required
   message: string
   action_response: object

@@ -10,6 +10,8 @@
  * and validates proper error handling for invalid signals.
  */
 
+import { randomUUID } from 'crypto';
+
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import type { ActivateSignalSuccess, Destination } from '../../types/tools.generated';
 import { getOrCreateClient, runStep, getOrDiscoverProfile, discoverSignals, validateResponseSchema } from '../client';
@@ -133,6 +135,7 @@ export async function testSignalsFlow(
             client.activateSignal({
               signal_agent_segment_id: signal.signal_id,
               destinations: [destination],
+              idempotency_key: randomUUID(),
             })
         );
 
@@ -184,6 +187,7 @@ export async function testSignalsFlow(
               account: 'test-account',
             },
           ],
+          idempotency_key: randomUUID(),
         })
     );
 

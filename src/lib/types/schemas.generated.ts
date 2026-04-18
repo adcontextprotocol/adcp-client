@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-18T14:58:30.277Z
+// Generated at: 2026-04-18T18:14:36.999Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1394,7 +1394,7 @@ export const CreativeApprovalRequestSchema = z.object({
     creative_format: FormatIDSchema.optional(),
     description: z.string().optional(),
     metadata: z.object({}).passthrough().optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -1599,7 +1599,7 @@ export const UpdateRightsRequestSchema = z.object({
     pricing_option_id: z.string().optional(),
     paused: z.boolean().optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -3175,6 +3175,7 @@ export const ConsentBasisSchema = z.union([z.literal("consent"), z.literal("legi
 
 export const SyncAudiencesRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string(),
     account: AccountReferenceSchema,
     audiences: z.array(z.object({
         audience_id: z.string(),
@@ -3228,6 +3229,7 @@ export const SyncAudiencesSuccessSchema = z.object({
 
 export const SyncCatalogsRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string(),
     account: AccountReferenceSchema,
     catalogs: z.array(CatalogSchema).optional(),
     catalog_ids: z.array(z.string()).optional(),
@@ -3241,6 +3243,7 @@ export const SyncCatalogsRequestSchema = z.object({
 
 export const SyncEventSourcesRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string(),
     account: AccountReferenceSchema,
     event_sources: z.array(z.object({
         event_source_id: z.string(),
@@ -3377,7 +3380,7 @@ export const DeletePropertyListRequestSchema = z.object({
     list_id: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
-    idempotency_key: z.string().optional()
+    idempotency_key: z.string()
 }).passthrough();
 
 export const DeletePropertyListResponseSchema = z.object({
@@ -3429,7 +3432,7 @@ export const UpdatePropertyListRequestSchema = z.object({
     webhook_url: z.string().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
-    idempotency_key: z.string().optional()
+    idempotency_key: z.string()
 }).passthrough();
 
 export const DeliveryRecordSchema = z.object({
@@ -3508,7 +3511,7 @@ export const ActivateSignalRequestSchema = z.object({
     destinations: z.array(DestinationSchema),
     pricing_option_id: z.string().optional(),
     account: AccountReferenceSchema.optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -3646,6 +3649,7 @@ export const SIInitiateSessionResponseSchema = z.object({
 
 export const SISendMessageRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string(),
     session_id: z.string(),
     message: z.string().optional(),
     action_response: z.object({
@@ -4141,6 +4145,7 @@ export const ProtocolEnvelopeSchema = z.object({
     status: TaskStatusSchema,
     message: z.string().optional(),
     timestamp: z.string().optional(),
+    replayed: z.boolean().optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
     governance_context: z.string().optional(),
     payload: z.object({}).passthrough()
@@ -4405,7 +4410,7 @@ export const CreativeAgentCapabilitySchema = z.union([z.literal("validation"), z
 
 export const DelegationAuthoritySchema = z.union([z.literal("full"), z.literal("execute_only"), z.literal("propose_only")]);
 
-export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("CONFLICT"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("SESSION_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("VERSION_UNSUPPORTED")]);
+export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("SESSION_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("VERSION_UNSUPPORTED")]);
 
 export const EscalationSeveritySchema = z.union([z.literal("info"), z.literal("warning"), z.literal("critical")]);
 
@@ -4987,7 +4992,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
 export const ProvidePerformanceFeedbackRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     media_buy_id: z.string(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     measurement_period: DatetimeRangeSchema,
     performance_index: z.number(),
     package_id: z.string().optional(),
@@ -5282,7 +5287,7 @@ export const SyncCreativesRequestSchema = z.object({
         weight: z.number().optional(),
         placement_ids: z.array(z.string()).optional()
     }).passthrough()).optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     delete_missing: z.boolean().optional(),
     dry_run: z.boolean().optional(),
     validation_mode: ValidationModeSchema.optional(),
@@ -5346,7 +5351,7 @@ export const CreatePropertyListRequestSchema = z.object({
     base_properties: z.array(BasePropertySourceSchema).optional(),
     filters: PropertyListFiltersSchema.optional(),
     brand: BrandReferenceSchema.optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -5398,7 +5403,7 @@ export const CreateCollectionListRequestSchema = z.object({
     base_collections: z.array(BaseCollectionSourceSchema).optional(),
     filters: CollectionListFiltersSchema.optional(),
     brand: BrandReferenceSchema.optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -5429,7 +5434,7 @@ export const UpdateCollectionListRequestSchema = z.object({
     webhook_url: z.string().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
-    idempotency_key: z.string().optional()
+    idempotency_key: z.string()
 }).passthrough();
 
 export const UpdateCollectionListResponseSchema = z.object({
@@ -5496,7 +5501,7 @@ export const DeleteCollectionListRequestSchema = z.object({
     list_id: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
-    idempotency_key: z.string().optional()
+    idempotency_key: z.string()
 }).passthrough();
 
 export const DeleteCollectionListResponseSchema = z.object({
@@ -5569,7 +5574,7 @@ export const CreateContentStandardsRequestSchema = z.object({
                 language: z.string().optional()
             }).passthrough(), ArtifactSchema])).optional()
     }).passthrough().optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -5599,7 +5604,7 @@ export const UpdateContentStandardsRequestSchema = z.object({
     }).passthrough().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
-    idempotency_key: z.string().optional()
+    idempotency_key: z.string()
 }).passthrough();
 
 export const UpdateContentStandardsResponseSchema = z.union([UpdateContentStandardsSuccessSchema, UpdateContentStandardsErrorSchema]);
@@ -5608,7 +5613,7 @@ export const CalibrateContentRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     standards_id: z.string(),
     artifact: ArtifactSchema,
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -5690,6 +5695,7 @@ export const GetCreativeFeaturesResponseSchema = z.union([z.object({
 
 export const SyncPlansRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string(),
     plans: z.array(z.object({
         plan_id: z.string(),
         brand: BrandReferenceSchema,
@@ -5776,7 +5782,7 @@ export const ReportPlanOutcomeRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     plan_id: z.string(),
     check_id: z.string().optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     purchase_type: PurchaseTypeSchema.optional(),
     outcome: OutcomeTypeSchema,
     seller_response: z.object({
@@ -5993,13 +5999,16 @@ export const SIInitiateSessionRequestSchema = z.object({
     offering_id: z.string().optional(),
     supported_capabilities: SICapabilitiesSchema.optional(),
     offering_token: z.string().optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const GetAdCPCapabilitiesResponseSchema = z.object({
     adcp: z.object({
-        major_versions: z.array(z.number())
+        major_versions: z.array(z.number()),
+        idempotency: z.object({
+            replay_ttl_seconds: z.number()
+        }).passthrough()
     }).passthrough(),
     supported_protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative"), z.literal("brand")])),
     account: z.object({
@@ -6186,6 +6195,7 @@ export const ListAccountsResponseSchema = z.object({
 
 export const SyncAccountsRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string(),
     accounts: z.array(z.object({
         brand: BrandReferenceSchema,
         operator: z.string(),
@@ -6241,6 +6251,7 @@ export const SyncAccountsErrorSchema = z.object({
 
 export const SyncGovernanceRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string(),
     accounts: z.array(z.object({
         account: AccountReferenceSchema,
         governance_agents: z.array(z.object({
@@ -6278,7 +6289,7 @@ export const SyncGovernanceErrorSchema = z.object({
 
 export const ReportUsageRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     reporting_period: DatetimeRangeSchema,
     usage: z.array(z.object({
         account: AccountReferenceSchema,
@@ -6583,7 +6594,7 @@ export const AcquireRightsRequestSchema = z.object({
     }).passthrough(),
     revocation_webhook: PushNotificationConfigSchema,
     push_notification_config: PushNotificationConfigSchema.optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -7215,7 +7226,7 @@ export const BuildCreativeRequestSchema = z.object({
     preview_quality: CreativeQualitySchema.optional(),
     preview_output_format: PreviewOutputFormatSchema.optional(),
     macro_values: z.record(z.string(), z.string()).optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -7281,7 +7292,7 @@ export const LogEventRequestSchema = z.object({
     event_source_id: z.string(),
     test_event_code: z.string().optional(),
     events: z.array(EventSchema),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -7709,7 +7720,7 @@ export const ListCreativeFormatsResponseSchema = z.object({
 
 export const CreateMediaBuyRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     plan_id: z.string().optional(),
     account: AccountReferenceSchema,
     proposal_id: z.string().optional(),
@@ -7765,7 +7776,7 @@ export const UpdateMediaBuyRequestSchema = z.object({
     new_packages: z.array(PackageRequestSchema).optional(),
     reporting_webhook: ReportingWebhookSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    idempotency_key: z.string().optional(),
+    idempotency_key: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
