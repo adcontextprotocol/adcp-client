@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-17T16:57:47.510Z
+// Generated at: 2026-04-18T14:54:24.554Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -3759,9 +3759,9 @@ export type TaskType =
   | 'get_rights'
   | 'acquire_rights';
 /**
- * AdCP domain this task belongs to. Helps classify the operation type at a high level.
+ * AdCP protocol this task belongs to. Helps classify the operation type at a high level.
  */
-export type AdCPDomain = 'media-buy' | 'signals' | 'governance' | 'creative' | 'brand' | 'sponsored-intelligence';
+export type AdCPProtocol = 'media-buy' | 'signals' | 'governance' | 'creative' | 'brand' | 'sponsored-intelligence';
 /**
  * Current task status. Webhooks are triggered for status changes after initial submission.
  */
@@ -4117,7 +4117,7 @@ export interface MCPWebhookPayload {
    */
   task_id: string;
   task_type: TaskType;
-  domain?: AdCPDomain;
+  protocol?: AdCPProtocol;
   status: TaskStatus;
   /**
    * ISO 8601 timestamp when this webhook was generated.
@@ -6900,7 +6900,7 @@ export type ValidateContentDeliveryResponse =
           value?: unknown;
           message?: string;
           /**
-           * Which rule triggered this result (e.g., GARM category, Scope3 standard)
+           * Which rule triggered this result (e.g., CSBS category, vendor-defined standard)
            */
           rule_id?: string;
         }[];
@@ -6938,7 +6938,7 @@ export interface TasksGetRequest {
 
 // bundled/core/tasks-get-response.json
 /**
- * Response containing detailed information about a specific task including status and optional conversation history across all AdCP domains
+ * Response containing detailed information about a specific task including status and optional conversation history across all AdCP protocols
  */
 export interface TasksGetResponse {
   /**
@@ -6946,10 +6946,7 @@ export interface TasksGetResponse {
    */
   task_id: string;
   task_type: TaskType;
-  /**
-   * AdCP domain this task belongs to
-   */
-  domain: 'media-buy' | 'signals';
+  protocol: AdCPProtocol;
   status: TaskStatus;
   /**
    * When the task was initially created (ISO 8601)
@@ -7004,10 +7001,7 @@ export interface TasksGetResponse {
      * Additional error context
      */
     details?: {
-      /**
-       * AdCP domain where error occurred
-       */
-      domain?: 'media-buy' | 'signals';
+      protocol?: AdCPProtocol;
       /**
        * Specific operation that failed
        */
@@ -7046,7 +7040,7 @@ export interface TasksGetResponse {
 export type SortDirection = 'asc' | 'desc';
 
 /**
- * Request parameters for listing and filtering async tasks across all AdCP domains with state reconciliation capabilities
+ * Request parameters for listing and filtering async tasks across all AdCP protocols with state reconciliation capabilities
  */
 export interface TasksListRequest {
   /**
@@ -7057,11 +7051,11 @@ export interface TasksListRequest {
    * Filter criteria for querying tasks
    */
   filters?: {
-    domain?: AdCPDomain;
+    protocol?: AdCPProtocol;
     /**
-     * Filter by multiple AdCP domains
+     * Filter by multiple AdCP protocols
      */
-    domains?: AdCPDomain[];
+    protocols?: AdCPProtocol[];
     status?: TaskStatus;
     /**
      * Filter by multiple task statuses
@@ -7108,7 +7102,7 @@ export interface TasksListRequest {
     /**
      * Field to sort by
      */
-    field?: 'created_at' | 'updated_at' | 'status' | 'task_type' | 'domain';
+    field?: 'created_at' | 'updated_at' | 'status' | 'task_type' | 'protocol';
     direction?: SortDirection;
   };
   pagination?: PaginationRequest;
@@ -16844,7 +16838,7 @@ export type AdCPSpecialism =
   | 'signal-owned';
 
 /**
- * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each domain protocol has its own capability section.
+ * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
   /**
@@ -16857,17 +16851,9 @@ export interface GetAdCPCapabilitiesResponse {
     major_versions: number[];
   };
   /**
-   * AdCP domain protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/domains/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../domains/media-buy/). compliance_testing is an RPC surface only and has no compliance baseline.
+   * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
    */
-  supported_protocols: (
-    | 'media_buy'
-    | 'signals'
-    | 'governance'
-    | 'sponsored_intelligence'
-    | 'creative'
-    | 'brand'
-    | 'compliance_testing'
-  )[];
+  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
   /**
    * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
@@ -17346,13 +17332,13 @@ export interface GetAdCPCapabilitiesResponse {
     supports_transformation?: boolean;
   };
   /**
-   * Compliance testing capabilities. Only present if compliance_testing is in supported_protocols. Indicates this agent supports deterministic testing via comply_test_controller for lifecycle state machine validation.
+   * Compliance testing capabilities. The presence of this block declares that the agent supports deterministic testing via comply_test_controller for lifecycle state machine validation. Omit the block entirely if the agent does not support compliance testing.
    */
   compliance_testing?: {
     /**
-     * Compliance testing scenarios this agent supports. Use comply_test_controller with scenario: 'list_scenarios' to discover available scenarios at runtime.
+     * Compliance testing scenarios this agent supports. Must be non-empty — at least one scenario. Callers can also use comply_test_controller with scenario: 'list_scenarios' to discover supported scenarios at runtime.
      */
-    scenarios?: (
+    scenarios: (
       | 'force_creative_status'
       | 'force_account_status'
       | 'force_media_buy_status'
@@ -20144,7 +20130,11 @@ export interface ProtocolEnvelope {
   timestamp?: string;
   push_notification_config?: PushNotificationConfig;
   /**
-   * Opaque governance context issued by a governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle. Neither buyers nor sellers interpret this value — only the governance agent that issued it. This is the primary correlation key for audit and reporting across the governance lifecycle.
+   * Governance context token issued by a governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle.
+   *
+   * Value format: in 3.0 governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged. In 3.1 all sellers MUST verify. Non-JWS values from pre-3.0 governance agents are deprecated.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
    */
   governance_context?: string;
   /**
