@@ -11823,7 +11823,7 @@ export interface CheckGovernanceRequest {
    */
   payload?: {};
   /**
-   * Opaque governance context from a prior check_governance response. Pass this on subsequent checks for the same governed action so the governance agent can maintain continuity across the lifecycle. Issued by the governance agent, never interpreted by callers.
+   * Governance context token from a prior check_governance response. Pass this on subsequent checks for the same governed action so the governance agent can maintain continuity across the lifecycle. In 3.0 governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context); callers persist and forward the value verbatim.
    */
   governance_context?: string;
   phase?: GovernancePhase;
@@ -11993,7 +11993,11 @@ export interface CheckGovernanceResponse {
    */
   policies_evaluated?: string[];
   /**
-   * Opaque governance context for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle. Only the issuing governance agent interprets this value. This is the primary correlation key for audit and reporting across the governance lifecycle.
+   * Governance context token for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle.
+   *
+   * Value format: in 3.0 governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged so auditors can verify downstream. In 3.1 all sellers MUST verify per the checklist. Non-JWS values from pre-3.0 governance agents are deprecated and will be rejected in 3.1.
+   *
+   * Sellers that implement verification MUST verify signature, `aud`, `exp`, `jti` replay, and revocation per the profile before treating the request as governance-approved. This is the primary correlation key for audit and reporting across the governance lifecycle — the governance agent decodes its own signed token to look up internal plan state (buyer correlation IDs, policy decision log, etc.).
    */
   governance_context?: string;
   context?: ContextObject;

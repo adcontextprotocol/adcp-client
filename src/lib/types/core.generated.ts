@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-18T13:47:43.312Z
+// Generated at: 2026-04-18T14:40:36.201Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -20130,7 +20130,11 @@ export interface ProtocolEnvelope {
   timestamp?: string;
   push_notification_config?: PushNotificationConfig;
   /**
-   * Opaque governance context issued by a governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle. Neither buyers nor sellers interpret this value — only the governance agent that issued it. This is the primary correlation key for audit and reporting across the governance lifecycle.
+   * Governance context token issued by a governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle.
+   *
+   * Value format: in 3.0 governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged. In 3.1 all sellers MUST verify. Non-JWS values from pre-3.0 governance agents are deprecated.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
    */
   governance_context?: string;
   /**
