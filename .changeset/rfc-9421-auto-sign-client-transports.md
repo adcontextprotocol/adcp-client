@@ -24,13 +24,30 @@ Behavior:
 - `get_adcp_capabilities` and MCP/A2A protocol-layer RPCs (`initialize`,
   `tools/list`, A2A card discovery) always pass through unsigned.
 
-New exports from `@adcp/client/signing`:
-`CapabilityCache`, `buildCapabilityCacheKey`, `defaultCapabilityCache`,
-`buildAgentSigningContext`, `buildAgentSigningFetch`, `ensureCapabilityLoaded`,
-`extractAdcpOperation`, `shouldSignOperation`, `resolveCoverContentDigest`.
+New field on `AgentConfig`: `request_signing?: AgentRequestSigningConfig`
+(kid, alg, `AdcpPrivateJsonWebKey` with required `d`, agent_url, optional
+`always_sign[]` and `sign_supported`).
 
-New field on `AgentConfig`: `request_signing?: AgentRequestSigningConfig`.
+New sub-barrels:
 
-`createSigningFetch` now accepts `coverContentDigest` as either `boolean` or
-`(url, init) => boolean` so the seller policy can be resolved per request
-without rebuilding the wrapper.
+- `@adcp/client/signing/client` — signer, canonicalization, fetch wrapper,
+  capability cache, and the auto-wiring helpers a buyer building an
+  AdCPClient needs.
+- `@adcp/client/signing/server` — verifier pipeline, Express-shaped
+  middleware, JWKS / replay / revocation stores, error taxonomy.
+
+The existing `@adcp/client/signing` barrel continues to export the union of
+both sub-barrels, so existing consumers keep working. New code should
+import from whichever half matches its role — coding agents reading a file
+cold only need to hold one side of the taxonomy.
+
+New exports on `@adcp/client/signing/client`: `CapabilityCache`,
+`buildCapabilityCacheKey`, `defaultCapabilityCache`,
+`buildAgentSigningContext`, `buildAgentSigningFetch`,
+`ensureCapabilityLoaded`, `extractAdcpOperation`, `shouldSignOperation`,
+`resolveCoverContentDigest`, `toSignerKey`, `CAPABILITY_OP`,
+`CoverContentDigestPredicate`.
+
+`createSigningFetch` now accepts `coverContentDigest` as either `boolean`
+or `(url, init) => boolean` so the seller policy can be resolved per
+request without rebuilding the wrapper.
