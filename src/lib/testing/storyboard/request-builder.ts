@@ -409,58 +409,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  create_property_list(_step, _context, options) {
-    return {
-      name: options.property_list_name ?? `E2E Test List ${Date.now()}`,
-      description: 'Property list created by storyboard testing',
-      base_properties: [
-        {
-          selection_type: 'identifiers',
-          identifiers: [{ type: 'domain', value: 'test.example' }],
-        },
-      ],
-      brand: resolveBrand(options),
-    };
-  },
-
-  get_property_list(_step, context, options) {
-    return {
-      list_id: context.property_list_id ?? 'unknown',
-      brand: resolveBrand(options),
-      resolve: true,
-    };
-  },
-
-  update_property_list(_step, context, options) {
-    return {
-      list_id: context.property_list_id ?? 'unknown',
-      brand: resolveBrand(options),
-      description: 'Updated by storyboard testing',
-      base_properties: [
-        {
-          selection_type: 'identifiers',
-          identifiers: [
-            { type: 'domain', value: 'test.example' },
-            { type: 'domain', value: 'updated.example' },
-          ],
-        },
-      ],
-    };
-  },
-
-  list_property_lists(_step, _context, options) {
-    return {
-      brand: resolveBrand(options),
-    };
-  },
-
-  delete_property_list(_step, context, options) {
-    return {
-      list_id: context.property_list_id ?? 'unknown',
-      brand: resolveBrand(options),
-    };
-  },
-
   list_content_standards() {
     return {};
   },
@@ -564,23 +512,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
             artifact_id: context.creative_id ?? 'test-creative',
             assets: {},
           },
-        },
-      ],
-    };
-  },
-
-  validate_property_delivery(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
-    return {
-      brand: resolveBrand(options),
-      list_id: context.property_list_id ?? 'unknown',
-      records: [
-        {
-          record_id: 'delivery_001',
-          property: { type: 'domain', value: 'test.example' },
-          impressions: 1000,
         },
       ],
     };

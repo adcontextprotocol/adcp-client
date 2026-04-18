@@ -301,8 +301,6 @@ export type {
   GetPlanAuditLogsResponse,
   // Governance Domain - Types & Enums
   PlannedDelivery,
-  BudgetAuthorityLevel,
-  DelegationAuthority,
   GovernancePhase,
   EscalationSeverity,
   PolicyEnforcementLevel,
@@ -423,6 +421,7 @@ export type {
   PricingOption,
   PriceGuidance,
 } from './types/tools.generated';
+export type { DelegationAuthority } from './types/core.generated';
 
 // ====== ERROR CODES ======
 // Standard error code vocabulary for programmatic error handling

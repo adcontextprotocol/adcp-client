@@ -281,68 +281,68 @@ Optional: `action: 'activate' | 'deactivate'`, `pricing_option_id: string`, `acc
 Request parameters for creating a new property list.
 
 Required: `name: string`, `idempotency_key: string`
-Optional: `description: string`, `base_properties: object[]`, `filters: Property List Filters`, `brand: Brand Ref`, `context: Context`
+Optional: `account: Account Ref`, `description: string`, `base_properties: object[]`, `filters: Property List Filters`, `brand: Brand Ref`, `context: Context`
 
 #### `update_property_list`
 
 Request parameters for updating an existing property list.
 
 Required: `list_id: string`, `idempotency_key: string`
-Optional: `name: string`, `description: string`, `base_properties: object[]`, `filters: Property List Filters`, `brand: Brand Ref`, `webhook_url: string`, `context: Context`
+Optional: `account: Account Ref`, `name: string`, `description: string`, `base_properties: object[]`, `filters: Property List Filters`, `brand: Brand Ref`, `webhook_url: string`, `context: Context`
 
 #### `get_property_list`
 
 Request parameters for retrieving a property list with resolved properties.
 
 Required: `list_id: string`
-Optional: `resolve: boolean`, `pagination: object`, `context: Context`
+Optional: `account: Account Ref`, `resolve: boolean`, `pagination: object`, `context: Context`
 
 #### `list_property_lists`
 
 Request parameters for listing property lists.
 
-Optional: `principal: string`, `name_contains: string`, `pagination: Pagination Request`, `context: Context`
+Optional: `account: Account Ref`, `name_contains: string`, `pagination: Pagination Request`, `context: Context`
 
 #### `delete_property_list`
 
 Request parameters for deleting a property list.
 
 Required: `list_id: string`, `idempotency_key: string`
-Optional: `context: Context`
+Optional: `account: Account Ref`, `context: Context`
 
 #### `create_collection_list`
 
 Request parameters for creating a new collection list.
 
 Required: `name: string`, `idempotency_key: string`
-Optional: `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `context: Context`
+Optional: `account: Account Ref`, `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `context: Context`
 
 #### `update_collection_list`
 
 Request parameters for updating an existing collection list.
 
 Required: `list_id: string`, `idempotency_key: string`
-Optional: `name: string`, `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `webhook_url: string`, `context: Context`
+Optional: `account: Account Ref`, `name: string`, `description: string`, `base_collections: object[]`, `filters: Collection List Filters`, `brand: Brand Ref`, `webhook_url: string`, `context: Context`
 
 #### `get_collection_list`
 
 Request parameters for retrieving a collection list with resolved collections.
 
 Required: `list_id: string`
-Optional: `resolve: boolean`, `pagination: object`, `context: Context`
+Optional: `account: Account Ref`, `resolve: boolean`, `pagination: object`, `context: Context`
 
 #### `list_collection_lists`
 
 Request parameters for listing collection lists.
 
-Optional: `principal: string`, `name_contains: string`, `pagination: Pagination Request`, `context: Context`
+Optional: `account: Account Ref`, `name_contains: string`, `pagination: Pagination Request`, `context: Context`
 
 #### `delete_collection_list`
 
 Request parameters for deleting a collection list.
 
 Required: `list_id: string`, `idempotency_key: string`
-Optional: `context: Context`
+Optional: `account: Account Ref`, `context: Context`
 
 #### `list_content_standards`
 
@@ -622,13 +622,16 @@ Flow: `get_adcp_capabilities → get_products → list_creative_formats → crea
 
 ### Governance
 
+**Collection lists** — Curated collection lists for program-level brand safety and content targeting — create, query, update, and delete lists of content programs (shows, series, podcasts).
+Flow: `get_adcp_capabilities → create_collection_list → list_collection_lists → get_collection_list → update_collection_list → delete_collection_list`
+
 **Content standards** — Define creative quality rules, calibrate content against them, and validate that delivered ads met the standards.
 Flow: `get_adcp_capabilities → create_content_standards → list_content_standards → get_content_standards → update_content_standards → calibrate_content → update_content_standards → calibrate_content → validate_content_delivery`
 
-**Inventory lists** — Curated property and collection lists for inventory grouping, targeting governance, and delivery compliance — create, query, update, delete, and validate.
-Flow: `get_adcp_capabilities → create_property_list → list_property_lists → get_property_list → update_property_list → validate_property_delivery → delete_property_list`
-
 **Measurement and verification** — Third-party measurement and verification — viewability, brand safety, attribution, and SI outcome measurement across domains.
+
+**Property lists** — Curated property lists for inventory grouping, targeting governance, and delivery compliance — create, query, update, delete, and validate.
+Flow: `get_adcp_capabilities → create_property_list → list_property_lists → get_property_list → update_property_list → validate_property_delivery → delete_property_list`
 
 ### 
 
@@ -642,6 +645,11 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
 **Retail media sales** — Retail media network seller — onsite, offsite, and in-store inventory tied to commerce signals and SKU-level reporting.
 
 **Streaming TV sales** — Connected TV and streaming sellers — ad-supported video inventory, audience-based buying, and frequency management across CTV apps.
+
+### Security transport
+
+**Signed requests — RFC 9421 transport-layer verification** — Agent verifies RFC 9421 HTTP Signatures on incoming AdCP requests per the transport-layer profile. Graded against conformance vectors covering every checklist step and canonicalization-edge rule.
+Flow: `get_adcp_capabilities`
 
 ### Error Handling
 

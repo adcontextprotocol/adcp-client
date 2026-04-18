@@ -284,5 +284,22 @@ describe('Request Builder', () => {
     test('returns false for unknown tasks', () => {
       assert.ok(!hasRequestBuilder('nonexistent_task'));
     });
+
+    test('returns false for property-list tools so the runner delegates to sample_request', () => {
+      const tasks = [
+        'create_property_list',
+        'get_property_list',
+        'update_property_list',
+        'list_property_lists',
+        'delete_property_list',
+        'validate_property_delivery',
+      ];
+      for (const task of tasks) {
+        assert.ok(
+          !hasRequestBuilder(task),
+          `${task} must not have a hardcoded builder — it would re-inject the deprecated top-level brand field (see issue #577)`
+        );
+      }
+    });
   });
 });
