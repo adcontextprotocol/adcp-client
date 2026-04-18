@@ -302,6 +302,91 @@ Throw `TestControllerError` from store methods for typed errors. The SDK validat
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
+### Session-backed stores (factory shape)
+
+**Don't close over module-scoped maps.** If your session state is persisted (Postgres, Redis, JSONB) and rehydrated into a *new* object per request, a store whose methods close over a module-level `WeakMap<SessionState, …>` or module-scoped cache will silently drop entries between calls — the cached ref was GC'd when the session was serialized out and rebuilt.
+
+Use the factory shape. `scenarios` declares the static capability set — the SDK answers `list_scenarios` from this field and **never invokes `createStore` for capability probes**, so it's safe to throw on missing `session_id`. `createStore` runs per request for every other scenario, returning a store bound to the live session.
+
+```
+import {
+  registerTestController,
+  CONTROLLER_SCENARIOS,
+  enforceMapCap,
+  TestControllerError,
+} from '@adcp/client';
+
+registerTestController(server, {
+  scenarios: [
+    CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS,
+    CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS,
+    CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS,
+    CONTROLLER_SCENARIOS.SIMULATE_DELIVERY,
+    CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND,
+  ],
+  async createStore(input) {
+    const sessionId = (input.context as { session_id?: string })?.session_id;
+    if (!sessionId) throw new TestControllerError('INVALID_PARAMS', 'context.session_id is required');
+    const session = await loadSession(sessionId);
+
+    return {
+      async forceAccountStatus(accountId, status) {
+        // enforceMapCap only rejects NET-NEW keys at the cap; updating an
+        // existing accountId always passes, so calling it before every set()
+        // is safe.
+        enforceMapCap(session.accountStatuses, accountId, 'account statuses');
+        const prev = session.accountStatuses.get(accountId) ?? 'active';
+        session.accountStatuses.set(accountId, status);
+        await saveSession(session);
+        return { success: true, previous_state: prev, current_state: status };
+      },
+
+      async forceMediaBuyStatus(mediaBuyId, status) {
+        const prev = session.mediaBuyStatuses.get(mediaBuyId);
+        if (!prev) throw new TestControllerError('NOT_FOUND', `Media buy ${mediaBuyId} not found`);
+        const terminal = ['completed', 'rejected', 'canceled'];
+        if (terminal.includes(prev)) {
+          throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from ${prev}`, prev);
+        }
+        enforceMapCap(session.mediaBuyStatuses, mediaBuyId, 'media buy states');
+        session.mediaBuyStatuses.set(mediaBuyId, status);
+        await saveSession(session);
+        return { success: true, previous_state: prev, current_state: status };
+      },
+
+      // ...implement other scenarios from your `scenarios` list the same way
+    };
+  },
+});
+```
+
+### Cap per-session maps
+
+Wrap every `Map.set` on session-scoped state with `enforceMapCap` to reject unbounded growth with a typed `INVALID_STATE` error (vs. silent LRU eviction, which would make compliance tests nondeterministic). Existing-key overwrites always pass — only *net-new* keys are rejected at the cap. Default cap is `SESSION_ENTRY_CAP` (1000).
+
+### Custom MCP wrappers
+
+If you need `AsyncLocalStorage`, sandbox gating, or a custom task store around the controller tool, bypass `registerTestController` and call the exported building blocks directly. `toMcpResponse` and `TOOL_INPUT_SHAPE` are the exact pieces the default registration uses — reusing them keeps the envelope shape identical.
+
+```
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { handleTestControllerRequest, toMcpResponse, TOOL_INPUT_SHAPE } from '@adcp/client';
+
+const sessionContext = new AsyncLocalStorage<{ sessionId: string }>();
+const store = { async forceAccountStatus(id, status) { /* ... */ } };
+
+server.tool('comply_test_controller', 'Sandbox only.', TOOL_INPUT_SHAPE, async input => {
+  if (!sandboxEnabled()) {
+    return toMcpResponse({ success: false, error: 'FORBIDDEN', error_detail: 'Sandbox disabled' });
+  }
+  const sessionId = (input.context as { session_id: string }).session_id;
+  return sessionContext.run({ sessionId }, async () => {
+    const response = await handleTestControllerRequest(store, input as Record<string, unknown>);
+    return toMcpResponse(response);
+  });
+});
+```
+
 ## SDK Quick Reference
 
 | SDK piece                                               | Usage                                                               |
@@ -316,8 +401,12 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 | `governanceDeniedError(result)`                         | Convert governance denial to GOVERNANCE_DENIED error                |
 | `mediaBuyResponse(data)`                                | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions) |
 | `adcpError(code, { message })`                          | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)      |
-| `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |
+| `registerTestController(server, store \| { scenarios, createStore })` | Add `comply_test_controller`. Plain store or per-request factory.   |
 | `TestControllerError(code, message)`                    | Typed error from store methods                                      |
+| `handleTestControllerRequest(store, input)`             | Low-level dispatch for custom MCP wrappers                          |
+| `toMcpResponse(response)` / `TOOL_INPUT_SHAPE`          | MCP envelope + Zod input schema for custom wrappers                 |
+| `enforceMapCap(map, key, label, cap?)`                  | Reject net-new keys once a session Map hits `SESSION_ENTRY_CAP` (1000) |
+| `expectControllerError(result, code)` / `expectControllerSuccess(result)` | Unit-test assertions — narrow responses to error or success arms    |
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by `createAdcpServer` — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 

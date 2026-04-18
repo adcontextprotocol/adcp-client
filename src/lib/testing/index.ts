@@ -118,6 +118,10 @@ export {
 export { GovernanceAgentStub } from './stubs';
 export type { StubCallRecord } from './stubs';
 
+// Controller response assertion helpers
+export { expectControllerError, expectControllerSuccess } from './controller-assertions';
+export type { ControllerErrorWithDetail } from './controller-assertions';
+
 // Storyboard-driven testing
 export {
   // Runner
