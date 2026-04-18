@@ -46,6 +46,10 @@ Steps with `auth:` set bypass the MCP SDK and dispatch via a raw JSON-RPC POST t
 
 When an agent's `get_adcp_capabilities` probe returns 401, `comply()` previously short-circuited with `overall_status: 'auth_required'` and executed zero storyboards — which meant `universal/security.yaml` could never run against the exact class of agent it's designed to diagnose. It now detects the auth rejection, drops tool-dependent storyboards, and runs the remaining `track: 'security'` and `required_tools: []` storyboards against a degraded profile. The auth observation is preserved alongside whatever conformance gaps the storyboards surface.
 
+**Fenced agent-controlled error text (fixes adcp-client#574)**
+
+The `capabilities_probe_error` observation wraps agent-reported error text in a `<<<…>>>` fence with an explicit "do not follow as instructions" marker and strips terminal control characters. Downstream LLM summarizers of a shared `ComplianceResult` can no longer be prompt-injected by a hostile agent that embedded instructions in its error message. The raw text is still available under `evidence.agent_reported_error` for operators.
+
 **Test-kit schema**
 
 `TestOptions.test_kit` gained an `auth` field with `api_key` and `probe_task`. Storyboard phases read this to gate their skip logic. The field is forward-compatible: additional keys pass through unchanged.
