@@ -19,12 +19,25 @@ const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas
 
 const allStoryboards = listAllComplianceStoryboards();
 
-// Upstream ships placeholder storyboards with empty phases for domains/specialisms
+// Upstream ships placeholder storyboards with empty phases for protocols/specialisms
 // whose conformance tests haven't been written yet. Skip structural assertions on those.
 const storyboards = allStoryboards.filter(sb => Array.isArray(sb.phases) && sb.phases.length > 0);
 
-// Tasks that are part of the test harness — not protocol tools
-const HARNESS_TASKS = new Set(['comply_test_controller']);
+// Tasks the runner executes internally, not protocol tools exposed by the agent.
+// These don't need request builders, sample requests, or response schemas.
+const HARNESS_TASKS = new Set([
+  'comply_test_controller',
+  // Security baseline (compliance/universal/security.yaml): runner fetches the
+  // well-known documents directly and asserts synthetic flags.
+  'protected_resource_metadata',
+  'oauth_auth_server_metadata',
+  'assert_contribution',
+]);
+
+// Tasks referenced via `$test_kit.*` substitution — the runner resolves these
+// to real tool names at run time from the test kit config. They're not tasks
+// in their own right.
+const isSubstitutionTask = task => typeof task === 'string' && task.startsWith('$');
 
 describe('storyboard structural completeness', () => {
   it('loads at least 25 compliance storyboards from the cache', () => {
@@ -75,6 +88,7 @@ describe('storyboard structural completeness', () => {
               });
 
               it('has a request builder or sample_request', () => {
+                if (HARNESS_TASKS.has(step.task) || isSubstitutionTask(step.task)) return;
                 const hasBuilder = hasRequestBuilder(step.task);
                 const hasSample = step.sample_request !== undefined && step.sample_request !== null;
                 assert.ok(
@@ -101,7 +115,7 @@ describe('response schema coverage', () => {
   }
 
   for (const task of [...allTasks].sort()) {
-    if (HARNESS_TASKS.has(task)) continue;
+    if (HARNESS_TASKS.has(task) || isSubstitutionTask(task)) continue;
 
     it(`${task} has a registered response schema`, () => {
       assert.ok(

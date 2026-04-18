@@ -278,7 +278,7 @@ interface StoryboardSummary {
 function parseStoryboards(): StoryboardSummary[] {
   if (!existsSync(COMPLIANCE_CACHE_DIR)) return [];
 
-  // Walk universal/, domains/{id}/index.yaml, domains/{id}/scenarios/*, and
+  // Walk universal/, protocols/{id}/index.yaml, protocols/{id}/scenarios/*, and
   // specialisms/{id}/index.yaml (+ any other top-level YAMLs in the specialism dir).
   const files: string[] = [];
   const collect = (dir: string) => {
@@ -295,7 +295,7 @@ function parseStoryboards(): StoryboardSummary[] {
     }
   };
   collect(path.join(COMPLIANCE_CACHE_DIR, 'universal'));
-  collect(path.join(COMPLIANCE_CACHE_DIR, 'domains'));
+  collect(path.join(COMPLIANCE_CACHE_DIR, 'protocols'));
   collect(path.join(COMPLIANCE_CACHE_DIR, 'specialisms'));
 
   return files
@@ -336,12 +336,23 @@ function yamlListField(content: string, field: string): string[] {
 }
 
 /** Extract ordered tool names from storyboard step `task:` fields. */
+// Synthetic tasks the runner executes itself (well-known metadata fetches,
+// accumulated-flag assertions) — not agent-implemented protocol tools. Omit
+// from the per-storyboard Flow summary so LLMs don't mistake them for tools
+// an agent must expose.
+const RUNNER_INTERNAL_TASKS: ReadonlySet<string> = new Set([
+  'protected_resource_metadata',
+  'oauth_auth_server_metadata',
+  'assert_contribution',
+]);
+
 function extractToolFlow(content: string): string {
   const tools: string[] = [];
   const re = /^\s+task:\s*(\w+)/gm;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) {
     const tool = m[1];
+    if (RUNNER_INTERNAL_TASKS.has(tool)) continue;
     // Deduplicate consecutive same-tool calls
     if (tools[tools.length - 1] !== tool) {
       tools.push(tool);

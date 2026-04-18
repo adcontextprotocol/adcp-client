@@ -9324,7 +9324,7 @@ export interface PropertyListFilters {
   exclude_identifiers?: Identifier[];
 }
 /**
- * A feature-based requirement for property filtering. Use min_value/max_value for quantitative features, allowed_values for binary/categorical features.
+ * A feature-based requirement — a reusable predicate over a feature value. Used by property list filters today; designed for reuse in other surfaces (audience filters, creative gates) in future versions. Use min_value/max_value for quantitative features, allowed_values for binary/categorical features.
  */
 export interface FeatureRequirement {
   /**
@@ -9347,6 +9347,10 @@ export interface FeatureRequirement {
    * How to handle properties where this feature is not covered. 'exclude' (default): property is removed from the list. 'include': property passes this requirement (fail-open).
    */
   if_not_covered?: 'exclude' | 'include';
+  /**
+   * Optional attribution — when this requirement exists to satisfy a specific policy, policy_id references the authorizing PolicyEntry. Reserved field; populated by producers in 3.1 and later (see issue #2303). Governance agents MAY ignore in 3.0.
+   */
+  policy_id?: string;
 }
 
 // create_property_list response
@@ -10099,6 +10103,18 @@ export type ListContentStandardsResponse =
       ext?: ExtensionObject;
     };
 /**
+ * The nature of the obligation: regulation (legal requirement) or standard (best practice). Optional for inline bespoke policies — defaults to "standard".
+ */
+export type PolicyCategory = 'regulation' | 'standard';
+/**
+ * How governance agents treat violations. Regulations are typically "must"; standards are typically "should".
+ */
+export type PolicyEnforcementLevel = 'must' | 'should' | 'may';
+/**
+ * Governance sub-domains that a registry policy applies to. Used to indicate which types of governance agents can evaluate this policy.
+ */
+export type GovernanceDomain = 'campaign' | 'property' | 'creative' | 'content_standards';
+/**
  * Authentication for secured URLs
  */
 export type AssetAccess =
@@ -10148,9 +10164,9 @@ export interface ContentStandards {
    */
   languages_any?: string[];
   /**
-   * Natural language policy describing acceptable and unacceptable content contexts. Used by LLMs and human reviewers to make judgments.
+   * Bespoke policies for this content-standards configuration, using the same shape as registry entries. Each policy is addressable by policy_id; governance findings reference the policy_id that triggered them.
    */
-  policy?: string;
+  policies?: PolicyEntry[];
   /**
    * Training/test set to calibrate policy interpretation. Provides concrete examples of pass/fail decisions.
    */
@@ -10169,6 +10185,103 @@ export interface ContentStandards {
    */
   pricing_options?: VendorPricingOption[];
   ext?: ExtensionObject;
+}
+/**
+ * A policy — either published to the shared registry (with full regulatory metadata) or authored inline by a buyer for their own campaign (lightweight, metadata optional). Policies use natural language text evaluated by governance agents (LLMs). Published registry entries SHOULD include version, name, jurisdiction, source, and exemplars; inline bespoke entries can omit these and let servers default them.
+ */
+export interface PolicyEntry {
+  /**
+   * Unique identifier for this policy. Registry-published ids are canonical (e.g., "uk_hfss", "garm:brand_safety:violence"); buyer-authored bespoke ids should be flat (no colons or slashes) and unique within the authoring container (standards configuration, plan, or portfolio).
+   */
+  policy_id: string;
+  /**
+   * Origin of this policy. 'registry' = published to the shared AdCP policy registry with full regulatory metadata. 'inline' = authored bespoke for a specific standards configuration, plan, or portfolio. Defaults to 'inline'. Governance agents MUST set 'registry' when publishing to the registry.
+   */
+  source?: 'registry' | 'inline';
+  /**
+   * Semver version string (e.g., "1.0.0"). Incremented when policy content changes. Optional for inline bespoke policies — defaults to "1.0.0". SHOULD be provided for registry-published policies.
+   */
+  version?: string;
+  /**
+   * Human-readable name (e.g., "UK HFSS Restrictions"). Optional for inline bespoke policies — servers MAY default to policy_id.
+   */
+  name?: string;
+  /**
+   * Brief summary of what this policy covers.
+   */
+  description?: string;
+  category?: PolicyCategory;
+  enforcement: PolicyEnforcementLevel;
+  /**
+   * ISO 3166-1 alpha-2 country codes where this policy applies. Empty array means the policy is not jurisdiction-specific.
+   */
+  jurisdictions?: string[];
+  /**
+   * Named groups of jurisdictions for convenience (e.g., {"EU": ["AT","BE","BG",...]}). Governance agents expand aliases when matching against a plan's target jurisdictions.
+   */
+  region_aliases?: {
+    [k: string]: string[] | undefined;
+  };
+  /**
+   * Regulatory categories this policy belongs to (e.g., ["children_directed", "age_restricted"]). Used for automatic matching against a campaign plan's declared policy_categories. A single policy can belong to multiple categories.
+   */
+  policy_categories?: string[];
+  /**
+   * Advertising channels this policy applies to. If omitted or null, the policy applies to all channels.
+   */
+  channels?: MediaChannel[];
+  /**
+   * Governance sub-domains this policy applies to. Determines which types of governance agents can declare registry:{policy_id} features. For example, a policy with domains ["creative", "property"] can be declared as a feature by both creative and property governance agents.
+   */
+  governance_domains?: GovernanceDomain[];
+  /**
+   * ISO 8601 date when the regulation or standard takes effect. Before this date, governance agents treat the policy as informational (evaluate but do not block). After this date, the policy is enforced at its declared enforcement level.
+   */
+  effective_date?: string;
+  /**
+   * ISO 8601 date when the regulation or standard is no longer enforced. After this date, governance agents stop evaluating this policy. Omit if the policy has no expiration.
+   */
+  sunset_date?: string;
+  /**
+   * Link to the source regulation, standard, or legislation.
+   */
+  source_url?: string;
+  /**
+   * Name of the issuing body (e.g., "UK Food Standards Agency", "US Federal Trade Commission").
+   */
+  source_name?: string;
+  /**
+   * Natural language policy text describing what is required, prohibited, or recommended. Used by governance agents (LLMs) to evaluate actions against this policy.
+   */
+  policy: string;
+  /**
+   * Implementation notes for governance agent developers. Not used in evaluation prompts.
+   */
+  guidance?: string;
+  /**
+   * Calibration examples for governance agents, following the Content Standards pattern.
+   */
+  exemplars?: {
+    /**
+     * Scenarios that comply with this policy.
+     */
+    pass?: Exemplar[];
+    /**
+     * Scenarios that violate this policy.
+     */
+    fail?: Exemplar[];
+  };
+  ext?: ExtensionObject;
+}
+export interface Exemplar {
+  /**
+   * A concrete scenario describing an advertising action or configuration.
+   */
+  scenario: string;
+  /**
+   * Why this scenario passes or fails the policy.
+   */
+  explanation: string;
 }
 /**
  * Content artifact for safety and suitability evaluation. An artifact represents content adjacent to an ad placement - a news article, podcast segment, video chapter, or social post. Artifacts are collections of assets (text, images, video, audio) plus metadata and signals.
@@ -10397,7 +10510,9 @@ export type GetContentStandardsResponse =
 /**
  * Request parameters for creating a new content standards configuration
  */
-export interface CreateContentStandardsRequest {
+export type CreateContentStandardsRequest = {
+  [k: string]: unknown | undefined;
+} & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -10428,9 +10543,9 @@ export interface CreateContentStandardsRequest {
    */
   registry_policy_ids?: string[];
   /**
-   * Natural language policy describing acceptable and unacceptable content contexts. Used by LLMs and human reviewers to make judgments. Optional when registry_policy_ids is provided.
+   * Bespoke policies for this content-standards configuration, using the same shape as registry entries. Each policy is addressable by policy_id and carries its own enforcement (must|should); governance findings reference the policy_id that triggered them. Inline bespoke policies can omit version/name/category (defaulted by the server). Combines with registry_policy_ids — registry policies and bespoke policies are both evaluated. Bespoke policy_ids MUST be flat (no colons/slashes) to avoid collision with namespaced registry ids.
    */
-  policy: string;
+  policies?: PolicyEntry[];
   /**
    * Training/test set to calibrate policy interpretation. Use URL references for pages to be fetched and analyzed, or full artifacts for pre-extracted content.
    */
@@ -10482,7 +10597,7 @@ export interface CreateContentStandardsRequest {
   idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-}
+};
 /**
  * Response payload for creating a content standards configuration
  */
@@ -10545,9 +10660,9 @@ export interface UpdateContentStandardsRequest {
    */
   registry_policy_ids?: string[];
   /**
-   * Updated natural language policy describing acceptable and unacceptable content contexts.
+   * Updated bespoke policies for this content-standards configuration, using the same shape as registry entries. Replaces the existing policies array; use stable policy_ids to track policies across versions. Combines with registry_policy_ids. Bespoke policy_ids MUST be flat (no colons/slashes).
    */
-  policy?: string;
+  policies?: PolicyEntry[];
   /**
    * Updated training/test set to calibrate policy interpretation. Use URL references for pages to be fetched and analyzed, or full artifacts for pre-extracted content.
    */
@@ -10677,11 +10792,11 @@ export type CalibrateContentResponse =
        */
       explanation?: string;
       /**
-       * Per-feature breakdown with explanations
+       * Per-feature breakdown with explanations. Mirrors validate_content_delivery feature shape so calibration loops can correlate against production verdicts by policy_id.
        */
       features?: {
         /**
-         * Which feature was evaluated (e.g., brand_safety, brand_suitability, competitor_adjacency)
+         * Which feature was evaluated. Data features come from the content-standards feature catalog (e.g., 'brand_safety', 'brand_suitability', 'competitor_adjacency'). Record-level structural checks use reserved namespaces: 'record:malformed_artifact'. Reserved prefixes: 'record:', 'delivery:'.
          */
         feature_id: string;
         /**
@@ -10689,9 +10804,17 @@ export type CalibrateContentResponse =
          */
         status: 'passed' | 'failed' | 'warning' | 'unevaluated';
         /**
+         * Policy ID that triggered this result. Enables the calibration loop to iterate on specific policies by correlating sample outcomes to policy ids.
+         */
+        policy_id?: string;
+        /**
          * Human-readable explanation of why this feature passed or failed
          */
         explanation?: string;
+        /**
+         * Optional evaluator confidence in this result (0-1). Distinguishes certain verdicts from ambiguous ones.
+         */
+        confidence?: number;
       }[];
       context?: ContextObject;
       ext?: ExtensionObject;
@@ -10794,17 +10917,26 @@ export type ValidateContentDeliveryResponse =
          */
         verdict: 'pass' | 'fail';
         /**
-         * Optional feature-level breakdown
+         * Per-feature breakdown. When present, SHOULD include all failed and warning features. MAY include passed features. Oracle pattern: exposes verdict + rule pointer, never the seller's threshold or the caller's submitted value (the seller authored the content standards).
          */
         features?: {
+          /**
+           * Which feature was evaluated. Data features come from the content-standards feature catalog (e.g., 'brand_safety', 'brand_suitability', 'image_dpi'). Record-level structural checks use reserved namespaces: 'record:malformed_artifact', 'delivery:authorization'. Reserved prefixes: 'record:', 'delivery:'.
+           */
           feature_id: string;
           status: 'passed' | 'failed' | 'warning' | 'unevaluated';
-          value?: unknown;
-          message?: string;
           /**
-           * Which rule triggered this result (e.g., GARM category, Scope3 standard)
+           * Registry policy ID that triggered this result. Present when the result originates from a specific registry policy (e.g., GARM category, CSBS standard). Enables programmatic routing by looking up the policy in the registry.
            */
-          rule_id?: string;
+          policy_id?: string;
+          /**
+           * Directional human-readable explanation (e.g., 'Below minimum resolution for display placement'). Avoid quantitative thresholds — the evaluator is the oracle.
+           */
+          explanation?: string;
+          /**
+           * Optional evaluator confidence in this result (0-1). Distinguishes certain verdicts from ambiguous ones.
+           */
+          confidence?: number;
         }[];
       }[];
       context?: ContextObject;
@@ -11044,6 +11176,10 @@ export interface CreativeFeatureResult {
    * Additional vendor-specific details about this evaluation
    */
   details?: {};
+  /**
+   * Optional attribution — when this feature was evaluated to satisfy a specific policy, policy_id references the authorizing PolicyEntry. Reserved field; populated by producers in 3.1 and later (see issue #2303). Governance agents MAY ignore in 3.0.
+   */
+  policy_id?: string;
   ext?: ExtensionObject;
 }
 
@@ -11196,9 +11332,9 @@ export interface SyncPlansRequest {
      */
     min_audience_size?: number;
     /**
-     * Natural language policy statements specific to this campaign (e.g., 'No advertising adjacent to competitor content'). Applied regardless of geography.
+     * Bespoke policies specific to this campaign, using the same shape as registry entries. Each policy has a policy_id, enforcement (must|should), and natural-language policy text. Governance findings reference policy_id to identify which policy triggered. For quick authoring, omit version/name/category — servers default them.
      */
-    custom_policies?: string[];
+    custom_policies?: PolicyEntry[];
     /**
      * List of approved seller agent URLs. null means any seller.
      */
@@ -11248,9 +11384,9 @@ export interface SyncPlansRequest {
        */
       shared_policy_ids?: string[];
       /**
-       * Natural language exclusion rules applied across all member plans (e.g., 'No advertising on properties owned by competitor holding companies').
+       * Bespoke exclusion policies applied across all member plans, using the same shape as registry entries. Authored typically as enforcement: must policies with exclusion language in the policy text (e.g., 'No advertising on properties owned by competitor holding companies').
        */
-      shared_exclusions?: string[];
+      shared_exclusions?: PolicyEntry[];
     };
     ext?: ExtensionObject;
   }[];
@@ -11272,11 +11408,6 @@ export interface AudienceConstraints {
 }
 
 // sync_plans response
-/**
- * Enforcement level for this policy.
- */
-export type PolicyEnforcementLevel = 'must' | 'should' | 'may';
-
 /**
  * Response from syncing campaign plans. Returns status and active validation categories for each plan.
  */
@@ -11823,7 +11954,7 @@ export interface CheckGovernanceRequest {
    */
   payload?: {};
   /**
-   * Opaque governance context from a prior check_governance response. Pass this on subsequent checks for the same governed action so the governance agent can maintain continuity across the lifecycle. Issued by the governance agent, never interpreted by callers.
+   * Governance context token from a prior check_governance response. Pass this on subsequent checks for the same governed action so the governance agent can maintain continuity across the lifecycle. In 3.0 governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context); callers persist and forward the value verbatim.
    */
   governance_context?: string;
   phase?: GovernancePhase;
@@ -11936,9 +12067,13 @@ export interface CheckGovernanceResponse {
      */
     category_id: string;
     /**
-     * Registry policy ID that triggered this finding. Present when the finding originates from a specific registry policy. Enables programmatic routing of compliance failures.
+     * ID of the policy that triggered this finding. May reference a registry policy (with source: registry) or a bespoke inline policy (with source: inline). Bespoke policy_ids are unique within their authoring container; use source_plan_id when findings aggregate across multiple plans (e.g., portfolio evaluations).
      */
     policy_id?: string;
+    /**
+     * For portfolio or aggregated evaluations where findings draw on bespoke policies from multiple member plans: identifies the plan whose policy triggered this finding. Omit when the finding's policy_id is unambiguous within the response context (e.g., single-plan check_governance).
+     */
+    source_plan_id?: string;
     severity: EscalationSeverity;
     /**
      * Human-readable description of the issue.
@@ -11993,7 +12128,11 @@ export interface CheckGovernanceResponse {
    */
   policies_evaluated?: string[];
   /**
-   * Opaque governance context for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle. Only the issuing governance agent interprets this value. This is the primary correlation key for audit and reporting across the governance lifecycle.
+   * Governance context token for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle.
+   *
+   * Value format: in 3.0 governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged so auditors can verify downstream. In 3.1 all sellers MUST verify per the checklist. Non-JWS values from pre-3.0 governance agents are deprecated and will be rejected in 3.1.
+   *
+   * Sellers that implement verification MUST verify signature, `aud`, `exp`, `jti` replay, and revocation per the profile before treating the request as governance-approved. This is the primary correlation key for audit and reporting across the governance lifecycle — the governance agent decodes its own signed token to look up internal plan state (buyer correlation IDs, policy decision log, etc.).
    */
   governance_context?: string;
   context?: ContextObject;
@@ -12707,7 +12846,7 @@ export type AdCPSpecialism =
   | 'signal-owned';
 
 /**
- * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each domain protocol has its own capability section.
+ * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
   /**
@@ -12720,17 +12859,9 @@ export interface GetAdCPCapabilitiesResponse {
     major_versions: number[];
   };
   /**
-   * AdCP domain protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/domains/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../domains/media-buy/). compliance_testing is an RPC surface only and has no compliance baseline.
+   * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
    */
-  supported_protocols: (
-    | 'media_buy'
-    | 'signals'
-    | 'governance'
-    | 'sponsored_intelligence'
-    | 'creative'
-    | 'brand'
-    | 'compliance_testing'
-  )[];
+  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
   /**
    * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
@@ -13209,13 +13340,13 @@ export interface GetAdCPCapabilitiesResponse {
     supports_transformation?: boolean;
   };
   /**
-   * Compliance testing capabilities. Only present if compliance_testing is in supported_protocols. Indicates this agent supports deterministic testing via comply_test_controller for lifecycle state machine validation.
+   * Compliance testing capabilities. The presence of this block declares that the agent supports deterministic testing via comply_test_controller for lifecycle state machine validation. Omit the block entirely if the agent does not support compliance testing.
    */
   compliance_testing?: {
     /**
-     * Compliance testing scenarios this agent supports. Use comply_test_controller with scenario: 'list_scenarios' to discover available scenarios at runtime.
+     * Compliance testing scenarios this agent supports. Must be non-empty — at least one scenario. Callers can also use comply_test_controller with scenario: 'list_scenarios' to discover supported scenarios at runtime.
      */
-    scenarios?: (
+    scenarios: (
       | 'force_creative_status'
       | 'force_account_status'
       | 'force_media_buy_status'

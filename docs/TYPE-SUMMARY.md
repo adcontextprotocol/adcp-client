@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-04-17
-> @adcp/client v5.0.0
+> Generated at: 2026-04-18
+> @adcp/client v5.1.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -620,8 +620,8 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 ```
 {
   scope: object  // required
-  policy: string  // required
   registry_policy_ids: string[]
+  policies: object[]
   calibration_exemplars: object
   idempotency_key: string
   context: Context
@@ -635,7 +635,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   standards_id: string  // required
   scope: object
   registry_policy_ids: string[]
-  policy: string
+  policies: object[]
   calibration_exemplars: object
   context: Context
   idempotency_key: string

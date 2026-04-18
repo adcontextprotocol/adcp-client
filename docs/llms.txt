@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-17
-> Library: @adcp/client v5.0.0
+> Generated at: 2026-04-18
+> Library: @adcp/client v5.1.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -360,15 +360,15 @@ Optional: `context: Context`
 
 Request parameters for creating a new content standards configuration.
 
-Required: `scope: object`, `policy: string`
-Optional: `registry_policy_ids: string[]`, `calibration_exemplars: object`, `idempotency_key: string`, `context: Context`
+Required: `scope: object`
+Optional: `registry_policy_ids: string[]`, `policies: object[]`, `calibration_exemplars: object`, `idempotency_key: string`, `context: Context`
 
 #### `update_content_standards`
 
 Request parameters for updating an existing content standards configuration.
 
 Required: `standards_id: string`
-Optional: `scope: object`, `registry_policy_ids: string[]`, `policy: string`, `calibration_exemplars: object`, `context: Context`, `idempotency_key: string`
+Optional: `scope: object`, `registry_policy_ids: string[]`, `policies: object[]`, `calibration_exemplars: object`, `context: Context`, `idempotency_key: string`
 
 #### `calibrate_content`
 
@@ -643,6 +643,10 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
+
+### Security
+
+**Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of API key or OAuth MUST be implemented and correctly advertised.
 
 ## Error Codes
 
