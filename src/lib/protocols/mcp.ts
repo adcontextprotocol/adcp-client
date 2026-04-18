@@ -13,8 +13,7 @@ import { createMCPAuthHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
-import { buildAgentSigningFetch } from '../signing/agent-fetch';
-import type { AgentSigningContext } from '../signing/agent-context';
+import { buildAgentSigningFetch, type AgentSigningContext } from '../signing/client';
 
 // Re-export for convenience
 export { UnauthorizedError };

@@ -15,7 +15,7 @@ import type { TaskInfo } from '../core/ConversationTypes';
 import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
-import type { AgentSigningContext } from '../signing/agent-context';
+import type { AgentSigningContext } from '../signing/client';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {

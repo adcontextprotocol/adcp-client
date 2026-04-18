@@ -10,8 +10,7 @@ import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
-import type { AgentSigningContext } from '../signing/agent-context';
-import { buildAgentSigningFetch } from '../signing/agent-fetch';
+import { buildAgentSigningFetch, type AgentSigningContext } from '../signing/client';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');

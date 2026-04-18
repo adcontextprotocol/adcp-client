@@ -37,8 +37,7 @@ import { createNonInteractiveOAuthProvider } from '../auth/oauth';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION } from '../version';
-import { buildAgentSigningContext } from '../signing/agent-context';
-import { CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/capability-priming';
+import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
