@@ -743,6 +743,7 @@ describe('Zod Schema Validation', () => {
           policy_ids: ['us_coppa_data_collection'],
         },
       ],
+      idempotency_key: '550e8400-e29b-41d4-a716-446655440000',
     };
 
     const result = schemas.SyncPlansRequestSchema.safeParse(planWithAudience);
