@@ -659,9 +659,7 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
         'expected comply() to NOT short-circuit with auth_required when security_baseline is runnable'
       );
       assert.notStrictEqual(result.overall_status, 'unreachable');
-      const authObs = result.observations.find(
-        o => o.category === 'auth' && /401|OAuth/.test(o.message)
-      );
+      const authObs = result.observations.find(o => o.category === 'auth' && /401|OAuth/.test(o.message));
       assert.ok(authObs, `expected an auth observation noting the 401, got ${JSON.stringify(result.observations)}`);
     } finally {
       server.close();

@@ -725,9 +725,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         const candidate = explicitStoryboards?.length
           ? resolveExplicitStoryboards(explicitStoryboards)
           : resolveFromCapabilities(degraded);
-        const runnable = candidate.filter(
-          sb => (sb.required_tools?.length ?? 0) === 0 || sb.track === 'security'
-        );
+        const runnable = candidate.filter(sb => (sb.required_tools?.length ?? 0) === 0 || sb.track === 'security');
         if (runnable.length > 0) {
           allObservations.push(...authCheck.observations);
           effectiveOptions._profile = degraded;

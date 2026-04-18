@@ -200,7 +200,11 @@ describe('storyboard schema drift', () => {
   describe('every storyboard task with field validations has a response schema', () => {
     // Synthetic runner tasks for raw HTTP probes and flag-accumulator steps
     // don't correspond to AdCP tools, so they don't have response schemas.
-    const SYNTHETIC_TASKS = new Set(['protected_resource_metadata', 'oauth_auth_server_metadata', 'assert_contribution']);
+    const SYNTHETIC_TASKS = new Set([
+      'protected_resource_metadata',
+      'oauth_auth_server_metadata',
+      'assert_contribution',
+    ]);
     const tasksWithValidations = [...new Set(fieldValidations.map(v => v.task))].filter(t => !SYNTHETIC_TASKS.has(t));
 
     for (const task of tasksWithValidations) {
