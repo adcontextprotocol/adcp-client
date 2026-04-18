@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-17T17:04:30.925Z
+// Generated at: 2026-04-18T13:58:28.778Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -809,7 +809,7 @@ export const PropertySchema = z.object({
 
 export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("sync_creatives"), z.literal("activate_signal"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("get_rights"), z.literal("acquire_rights")]);
 
-export const AdCPDomainSchema = z.union([z.literal("media-buy"), z.literal("signals"), z.literal("governance"), z.literal("creative"), z.literal("brand"), z.literal("sponsored-intelligence")]);
+export const AdCPProtocolSchema = z.union([z.literal("media-buy"), z.literal("signals"), z.literal("governance"), z.literal("creative"), z.literal("brand"), z.literal("sponsored-intelligence")]);
 
 export const TaskStatusSchema = z.union([z.literal("submitted"), z.literal("working"), z.literal("input-required"), z.literal("completed"), z.literal("canceled"), z.literal("failed"), z.literal("rejected"), z.literal("auth-required"), z.literal("unknown")]);
 
@@ -1743,7 +1743,7 @@ export const TasksGetRequestSchema = z.object({
 export const TasksGetResponseSchema = z.object({
     task_id: z.string(),
     task_type: TaskTypeSchema,
-    domain: z.union([z.literal("media-buy"), z.literal("signals")]),
+    protocol: AdCPProtocolSchema,
     status: TaskStatusSchema,
     created_at: z.string(),
     updated_at: z.string(),
@@ -1759,7 +1759,7 @@ export const TasksGetResponseSchema = z.object({
         code: z.string(),
         message: z.string(),
         details: z.object({
-            domain: z.union([z.literal("media-buy"), z.literal("signals")]).optional(),
+            protocol: AdCPProtocolSchema.optional(),
             operation: z.string().optional(),
             specific_context: z.object({}).passthrough().optional()
         }).passthrough().optional()
@@ -1778,8 +1778,8 @@ export const SortDirectionSchema = z.union([z.literal("asc"), z.literal("desc")]
 export const TasksListRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     filters: z.object({
-        domain: AdCPDomainSchema.optional(),
-        domains: z.array(AdCPDomainSchema).optional(),
+        protocol: AdCPProtocolSchema.optional(),
+        protocols: z.array(AdCPProtocolSchema).optional(),
         status: TaskStatusSchema.optional(),
         statuses: z.array(TaskStatusSchema).optional(),
         task_type: TaskTypeSchema.optional(),
@@ -1793,7 +1793,7 @@ export const TasksListRequestSchema = z.object({
         has_webhook: z.boolean().optional()
     }).passthrough().optional(),
     sort: z.object({
-        field: z.union([z.literal("created_at"), z.literal("updated_at"), z.literal("status"), z.literal("task_type"), z.literal("domain")]).optional(),
+        field: z.union([z.literal("created_at"), z.literal("updated_at"), z.literal("status"), z.literal("task_type"), z.literal("protocol")]).optional(),
         direction: SortDirectionSchema.optional()
     }).passthrough().optional(),
     pagination: PaginationRequestSchema.optional(),
@@ -5976,7 +5976,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     adcp: z.object({
         major_versions: z.array(z.number())
     }).passthrough(),
-    supported_protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative"), z.literal("brand"), z.literal("compliance_testing")])),
+    supported_protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative"), z.literal("brand")])),
     account: z.object({
         require_operator_auth: z.boolean().optional(),
         authorization_endpoint: z.string().optional(),
@@ -6132,7 +6132,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         supports_transformation: z.boolean().optional()
     }).passthrough().optional(),
     compliance_testing: z.object({
-        scenarios: z.array(z.union([z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend")])).optional()
+        scenarios: z.array(z.union([z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend")]))
     }).passthrough().optional(),
     specialisms: z.array(AdCPSpecialismSchema).optional(),
     extensions_supported: z.array(z.string()).optional(),
@@ -7800,7 +7800,7 @@ export const MCPWebhookPayloadSchema: z.ZodType = z.object({
     operation_id: z.string().optional(),
     task_id: z.string(),
     task_type: TaskTypeSchema,
-    domain: AdCPDomainSchema.optional(),
+    protocol: AdCPProtocolSchema.optional(),
     status: TaskStatusSchema,
     timestamp: z.string(),
     message: z.string().optional(),

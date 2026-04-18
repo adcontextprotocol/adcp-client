@@ -460,7 +460,7 @@ function resolveFromCapabilities(profile: AgentProfile): Storyboard[] {
 
 /**
  * Expand `requires_scenarios` references against the full compliance cache.
- * A specialism bundle may reference scenarios that live in its parent domain
+ * A specialism bundle may reference scenarios that live in its parent protocol
  * bundle (e.g., `sales-guaranteed` → `media_buy_seller/governance_approved`),
  * so the lookup spans every cached storyboard — not just the declared set.
  */

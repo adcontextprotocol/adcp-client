@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-17
+> Generated at: 2026-04-18
 > Library: @adcp/client v5.0.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -643,6 +643,10 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
+
+### Security
+
+**Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of API key or OAuth MUST be implemented and correctly advertised.
 
 ## Error Codes
 

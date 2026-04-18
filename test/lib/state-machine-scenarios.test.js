@@ -120,12 +120,12 @@ describe('getApplicableScenarios with state machine scenarios', () => {
 // Comply track integration
 // ============================================================
 
-describe('Compliance cache covers media_buy domain', () => {
-  test('media-buy domain bundle exists with media_buy-tracked storyboards', () => {
+describe('Compliance cache covers media_buy protocol', () => {
+  test('media-buy protocol bundle exists with media_buy-tracked storyboards', () => {
     const { listBundles, loadBundleStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
     const bundles = listBundles();
-    const mediaBuy = bundles.find(b => b.kind === 'domain' && b.id === 'media-buy');
-    assert.ok(mediaBuy, 'media-buy domain bundle should exist in compliance cache');
+    const mediaBuy = bundles.find(b => b.kind === 'protocol' && b.id === 'media-buy');
+    assert.ok(mediaBuy, 'media-buy protocol bundle should exist in compliance cache');
     const storyboards = loadBundleStoryboards(mediaBuy);
     assert.ok(storyboards.length > 0, 'media-buy bundle should contain storyboards');
     assert.ok(

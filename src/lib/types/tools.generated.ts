@@ -10802,7 +10802,7 @@ export type ValidateContentDeliveryResponse =
           value?: unknown;
           message?: string;
           /**
-           * Which rule triggered this result (e.g., GARM category, Scope3 standard)
+           * Which rule triggered this result (e.g., CSBS category, vendor-defined standard)
            */
           rule_id?: string;
         }[];
@@ -12707,7 +12707,7 @@ export type AdCPSpecialism =
   | 'signal-owned';
 
 /**
- * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each domain protocol has its own capability section.
+ * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
   /**
@@ -12720,17 +12720,9 @@ export interface GetAdCPCapabilitiesResponse {
     major_versions: number[];
   };
   /**
-   * AdCP domain protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/domains/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../domains/media-buy/). compliance_testing is an RPC surface only and has no compliance baseline.
+   * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
    */
-  supported_protocols: (
-    | 'media_buy'
-    | 'signals'
-    | 'governance'
-    | 'sponsored_intelligence'
-    | 'creative'
-    | 'brand'
-    | 'compliance_testing'
-  )[];
+  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
   /**
    * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
@@ -13209,13 +13201,13 @@ export interface GetAdCPCapabilitiesResponse {
     supports_transformation?: boolean;
   };
   /**
-   * Compliance testing capabilities. Only present if compliance_testing is in supported_protocols. Indicates this agent supports deterministic testing via comply_test_controller for lifecycle state machine validation.
+   * Compliance testing capabilities. The presence of this block declares that the agent supports deterministic testing via comply_test_controller for lifecycle state machine validation. Omit the block entirely if the agent does not support compliance testing.
    */
   compliance_testing?: {
     /**
-     * Compliance testing scenarios this agent supports. Use comply_test_controller with scenario: 'list_scenarios' to discover available scenarios at runtime.
+     * Compliance testing scenarios this agent supports. Must be non-empty — at least one scenario. Callers can also use comply_test_controller with scenario: 'list_scenarios' to discover supported scenarios at runtime.
      */
-    scenarios?: (
+    scenarios: (
       | 'force_creative_status'
       | 'force_account_status'
       | 'force_media_buy_status'

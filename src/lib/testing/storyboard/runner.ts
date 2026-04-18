@@ -24,6 +24,24 @@ import type {
   ValidationResult,
 } from './types';
 
+// Synthetic tasks the storyboard YAML references that the runner executes
+// internally rather than as agent tool calls (well-known metadata fetches,
+// accumulated-flag assertions, test-kit substitution placeholders). The
+// runner does not yet implement these paths; steps targeting them are skipped
+// with `missing_test_harness` so they surface distinctly from agents missing
+// a real protocol tool.
+const HARNESS_TASKS: ReadonlySet<string> = new Set([
+  'protected_resource_metadata',
+  'oauth_auth_server_metadata',
+  'assert_contribution',
+]);
+
+function isHarnessTask(task: string): boolean {
+  // `$test_kit.*` placeholders resolve to real tasks at run time; until the
+  // runner implements substitution they must be skipped rather than called.
+  return HARNESS_TASKS.has(task) || task.startsWith('$');
+}
+
 // ────────────────────────────────────────────────────────────
 // runStoryboard: execute all phases/steps
 // ────────────────────────────────────────────────────────────
@@ -188,6 +206,28 @@ async function executeStep(
   allSteps: FlatStep[],
   options: StoryboardRunOptions
 ): Promise<StoryboardStepResult> {
+  // Runner-internal tasks (well-known fetches, synthetic assertions, test-kit
+  // substitution placeholders) are recognised explicitly — otherwise the
+  // generic agentTools check below reports them as "missing_tool", which is
+  // misleading: the agent isn't missing a tool, the runner doesn't yet
+  // implement these synthetic task types.
+  if (isHarnessTask(step.task)) {
+    const next = getNextStepPreview(step.id, allSteps, context);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'missing_test_harness',
+      duration_ms: 0,
+      validations: [],
+      context,
+      next,
+    };
+  }
+
   // Check requires_tool — skip if agent doesn't have it
   if (step.requires_tool && options.agentTools && !options.agentTools.includes(step.requires_tool)) {
     const next = getNextStepPreview(step.id, allSteps, context);
