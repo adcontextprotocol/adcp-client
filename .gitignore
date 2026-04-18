@@ -134,3 +134,6 @@ data/
 AUTH_TOKEN_FLOW_TRACE.md
 adcp/
 IMPLEMENTATION_PLAN.md
+
+# Claude Code runtime artifacts (.claude/skills/ is tracked on purpose)
+.claude/scheduled_tasks.lock
