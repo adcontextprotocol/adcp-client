@@ -73,7 +73,7 @@ export interface IPropertyListAdapter {
   getList(request: GetPropertyListRequest): Promise<GetPropertyListResponse>;
 
   /**
-   * List all property lists for a principal
+   * List all property lists for an account
    */
   listLists(request: ListPropertyListsRequest): Promise<ListPropertyListsResponse>;
 
@@ -238,10 +238,23 @@ export class PropertyListAdapter implements IPropertyListAdapter {
       );
     }
 
-    // Filter by principal if provided
+    // Filter by account if provided. AdCP 3.0 identifies list ownership via the
+    // account primitive (either account_id or brand+operator). Match on whichever
+    // key the request carries.
     let lists = Array.from(this.lists.values());
-    if (request.principal) {
-      lists = lists.filter(l => l.principal === request.principal);
+    if (request.account) {
+      const filter = request.account;
+      lists = lists.filter(l => {
+        const acct = l.account;
+        if (!acct) return false;
+        if ('account_id' in filter && 'account_id' in acct) {
+          return filter.account_id === acct.account_id;
+        }
+        if ('brand' in filter && 'brand' in acct) {
+          return filter.brand.domain === acct.brand.domain && filter.operator === acct.operator;
+        }
+        return false;
+      });
     }
 
     // Filter by name if provided
