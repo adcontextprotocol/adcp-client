@@ -1465,6 +1465,12 @@ async function main() {
     return;
   }
 
+  if (args[0] === 'signing') {
+    const { handleSigningCommand } = require('./adcp-signing.js');
+    await handleSigningCommand(args.slice(1));
+    return;
+  }
+
   // Handle help
   if (args.includes('--help') || args.includes('-h') || args.length === 0) {
     printUsage();
