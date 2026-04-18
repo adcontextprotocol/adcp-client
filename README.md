@@ -324,6 +324,80 @@ const client = new ADCPMultiAgentClient(agents, {
 // Returns 401 if signature invalid
 ```
 
+### Request Signing (RFC 9421, AdCP 3.0 optional)
+
+`@adcp/client/signing` implements the [AdCP request-signing transport profile](https://adcontextprotocol.org/docs/building/implementation/security#signed-requests-transport-layer)
+— HTTP Message Signatures (RFC 9421) with Ed25519 (default) or ES256, a `adcp/request-signing/v1` tag,
+and content-digest support. Conformance is verified against all 28 vectors shipped in the spec repo
+(see `compliance/cache/latest/test-vectors/request-signing/`).
+
+**Generate a signing key + JWKS for publication:**
+
+```bash
+adcp signing generate-key --alg ed25519 --kid my-buyer-2026 \
+  --private-out ./buyer.pem --public-out ./buyer-jwks.json
+# Publish buyer-jwks.json at the jwks_uri of your brand.json agents[] entry.
+```
+
+**Signer (client-side) — wraps `fetch` to sign outbound requests:**
+
+```typescript
+import { createSigningFetch } from '@adcp/client/signing';
+
+const signingFetch = createSigningFetch(fetch, {
+  keyid: 'my-buyer-2026',
+  alg: 'ed25519',
+  privateKey: buyerPrivateJwk, // JWK with `d` field
+});
+
+await signingFetch('https://seller.example.com/adcp/create_media_buy', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ plan_id: 'plan_001' }),
+});
+// Signature, Signature-Input, and (optionally) Content-Digest headers
+// are attached per RFC 9421 before the upstream fetch is called.
+```
+
+**Verifier (server-side) — middleware runs the 12-step checklist:**
+
+```typescript
+import {
+  createExpressVerifier,
+  InMemoryReplayStore,
+  InMemoryRevocationStore,
+  StaticJwksResolver,
+} from '@adcp/client/signing';
+
+app.post(
+  '/adcp/create_media_buy',
+  rawBodyMiddleware(), // req.rawBody must hold the byte-exact body
+  createExpressVerifier({
+    capability: {
+      supported: true,
+      covers_content_digest: 'required', // 'required' | 'forbidden' | 'either'
+      required_for: ['create_media_buy'],
+    },
+    jwks: new StaticJwksResolver(publishedBuyerKeys),
+    replayStore: new InMemoryReplayStore(),
+    revocationStore: new InMemoryRevocationStore(),
+    resolveOperation: (req) => 'create_media_buy',
+  }),
+  handler,
+);
+// On verify, req.verifiedSigner = { keyid, agent_url?, verified_at }.
+// On reject, the middleware returns 401 with
+//   WWW-Authenticate: Signature error="<code>"
+// and JSON { error, message, failed_step }.
+```
+
+**Running a single vector for debugging:**
+
+```bash
+adcp signing verify-vector \
+  --vector compliance/cache/latest/test-vectors/request-signing/positive/001-basic-post.json
+```
+
 ### Authentication
 
 ```typescript
