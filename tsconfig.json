@@ -16,6 +16,9 @@
     "declarationMap": true,
     "sourceMap": true,
     "moduleResolution": "node",
+    "paths": {
+      "structured-headers": ["./node_modules/structured-headers/cjs/index.d.cts"]
+    },
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true

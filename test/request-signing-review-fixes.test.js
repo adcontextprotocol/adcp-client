@@ -46,10 +46,7 @@ describe('parser hardening (security/code-review findings)', () => {
         parseSignatureInput(
           'sig1=("@method" "@target-uri" "@authority");created=;expires=1776521100;nonce="x";keyid="k";alg="ed25519";tag="adcp/request-signing/v1"'
         ),
-      err =>
-        err instanceof RequestSignatureError &&
-        err.code === 'request_signature_header_malformed' &&
-        /empty value|empty/i.test(err.message)
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_header_malformed'
     );
   });
 
@@ -72,6 +69,16 @@ describe('parser hardening (security/code-review findings)', () => {
         parseSignatureInput(
           'sig1=("@method" "@target-uri" "@authority");created=1e5;expires=2;nonce="x";keyid="k";alg="ed25519";tag="adcp/request-signing/v1"'
         ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_header_malformed'
+    );
+  });
+
+  test('decimal numeric param (1.5) is rejected — created/expires must be integers', () => {
+    assert.throws(
+      () =>
+        parseSignatureInput(
+          'sig1=("@method" "@target-uri" "@authority");created=1.5;expires=2;nonce="x";keyid="k";alg="ed25519";tag="adcp/request-signing/v1"'
+        ),
       err =>
         err instanceof RequestSignatureError &&
         err.code === 'request_signature_header_malformed' &&
@@ -80,10 +87,12 @@ describe('parser hardening (security/code-review findings)', () => {
   });
 
   test('escaped quote inside a quoted param does not terminate the string', () => {
+    // RFC 8941 §3.3.3: backslash-escapes decode, so the literal `nonce="a\"b"`
+    // on the wire surfaces as the logical value `a"b` after parsing.
     const parsed = parseSignatureInput(
       'sig1=("@method" "@target-uri" "@authority");created=1;expires=2;nonce="a\\"b";keyid="k";alg="ed25519";tag="adcp/request-signing/v1"'
     );
-    assert.strictEqual(parsed.params.nonce, 'a\\"b');
+    assert.strictEqual(parsed.params.nonce, 'a"b');
   });
 
   test('Signature-Input with params in non-canonical order still produces byte-identical base', () => {
