@@ -29,10 +29,12 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 |---|---|---|---|
 | `governance-spend-authority` | stable | `check_governance` evaluates `binding` against Plan's `authority_level` + `custom_policies`; return conditions or denial | [§ governance-spend-authority](#specialism-governance-spend-authority) |
 | `governance-delivery-monitor` | stable | `check_governance` with `phase: 'delivery'` + `delivery_evidence`; compute drift vs Plan's `reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
-| `inventory-lists` | stable | Tool family is named `property_list` — specialism title aside; implement CRUD plus `validate_property_delivery` with full `violations[]` | [§ inventory-lists](#specialism-inventory-lists) |
-| `audience-sync` | stable | **Does not use governance tools.** Required: `sync_audiences` + `list_accounts`. Handlers live under `accounts` / `eventTracking` domain groups, not `governance`. | [§ audience-sync](#specialism-audience-sync) |
+| `property-lists` | stable | Tool family `property_list` — implement CRUD plus `validate_property_delivery` with full `violations[]`. (Was `inventory-lists` before AdCP 3.0 GA.) | [§ property-lists](#specialism-property-lists) |
+| `collection-lists` | stable | Tool family `collection_list` — program-level brand safety (shows, series, podcasts) identified by platform-independent IDs: IMDb, Gracenote, EIDR. Mirrors property-lists CRUD plus collection resolution. | [§ collection-lists](#specialism-collection-lists) |
 | `content-standards` | stable | `policy` on create/update is a **prose string** with inline `(must)`/`(should)` severity — not the array shape shown in the baseline below; `validate_content_delivery` uses `records[].artifact`, not `results[].creative_id` | [§ content-standards](#specialism-content-standards) |
 | `measurement-verification` | preview | v3.1 placeholder (empty `phases`). Pass universal + governance baseline only. Advertise `measurement_verification` capability for discoverability. | Baseline only |
+
+**Not in this skill:** `audience-sync` was reclassified to `protocol: media-buy` in AdCP 3.0 GA (was governance). Build it in `skills/build-seller-agent/` instead — it uses `sync_audiences`, `list_accounts`, `delete_audience` under the `accounts` / `eventTracking` domain groups.
 
 Specialism ID (kebab-case) = storyboard directory. Storyboard `id:` (snake_case, e.g. `campaign_governance_conditions`) is the category name — multiple specialisms can reference the same storyboard category.
 
@@ -684,9 +686,9 @@ checkGovernance: async (params, ctx) => {
 
 If the storyboard's `findings` shape (using `code`, `severity: 'should'`) diverges from the schema's (`category_id`, `severity: 'info'|'warning'|'critical'`), trust the schema — file an issue against adcp spec to reconcile. Current skill guidance uses `category_id`/`severity`.
 
-### <a name="specialism-inventory-lists"></a>inventory-lists
+### <a name="specialism-property-lists"></a>property-lists
 
-Storyboard category: `property_governance`. The specialism is named `inventory-lists` but the tool family is `property_list`. Your agent owns both inclusion and exclusion list semantics — track `list_type` on the stored list even though the request schema may not surface it.
+Storyboard: `property_lists`. Specialism and tool family now share the same name (in AdCP 3.0 GA the specialism was renamed from `inventory-lists`). Your agent owns both inclusion and exclusion list semantics — track `list_type` on the stored list even though the request schema may not surface it.
 
 ```typescript
 createPropertyList: async (params, ctx) => {
@@ -710,40 +712,33 @@ createPropertyList: async (params, ctx) => {
 
 `validate_property_delivery` returns `violations[]` with `list_id`, `list_type`, `severity: 'critical'`, and an explanation per non-compliant record — see the response shape in the tool section above.
 
-### <a name="specialism-audience-sync"></a>audience-sync
+### <a name="specialism-collection-lists"></a>collection-lists
 
-Storyboard: `audience_sync`. The specialism is classified under `domain: governance`, but its `required_tools` (`sync_audiences`, `list_accounts`) live outside this skill's `governance` handler group. Wire them under `accounts` and `eventTracking`:
+Storyboard: `collection_lists`. Where `property-lists` curate surfaces (domains, app bundle IDs), `collection-lists` curate **content programs** (shows, series, podcasts, series arcs) identified by platform-independent IDs: IMDb (`tt0944947`), Gracenote, EIDR. Used for program-level brand safety — "keep my ads out of all episodes of [show]" cuts across every surface that carries that show.
+
+Tool family is `collection_list` (note the singular prefix on create/update). Response shape mirrors `property_list`:
 
 ```typescript
-createAdcpServer({
-  accounts: {
-    syncAccounts: /* ... */,
-    listAccounts: async (params, ctx) => {
-      const { items } = await ctx.store.list('accounts');
-      const brandFilter = params.brand?.domain;
-      return { accounts: brandFilter ? items.filter((a) => a.brand.domain === brandFilter) : items };
-    },
-  },
-  eventTracking: {
-    syncAudiences: async (params, ctx) => ({
-      audiences: params.audiences.map((a) => ({
-        audience_id: a.audience_id,
-        name: a.name,
-        status: 'active' as const,
-        action: a.delete ? 'deleted' : 'created',  // empty audiences array = discovery mode
-        uploaded_count: a.members?.length ?? 0,
-        matched_count: Math.floor((a.members?.length ?? 0) * 0.72),   // simulated match rate
-        effective_match_rate: 0.72,
-      })),
-    }),
-  },
-  governance: { /* baseline */ },
-});
+createCollectionList: async (params, ctx) => {
+  const list_id = `clist_${Date.now()}`;
+  const stored = {
+    list_id,
+    name: params.name,
+    description: params.description,
+    list_type: params.list_type,         // 'inclusion' | 'exclusion' — the storyboard does surface this
+    base_collections: params.base_collections ?? [],   // e.g. [{ id_type: 'imdb_id', id: 'tt0944947' }]
+    filters: params.filters ?? [],                     // genre/rating/language filters applied on top of base
+    program_count: resolveProgramCount(params.base_collections, params.filters),
+    status: 'active' as const,
+  };
+  await ctx.store.put('collection_list', list_id, stored);
+  return { list: summarize(stored), auth_token: `tok_${list_id}` };
+},
 ```
 
-Identifier rules: hashed emails/phones use SHA-256 on lowercased, trimmed input. Salting/normalization is out-of-band between buyer and platform.
+On `get_collection_list` the response includes `resolved_programs[]` — the concrete list of program IDs after filters are applied. Sellers cache this and enforce it at bid time.
 
-Destinations span `platform_types: ['dsp', 'retail_media', 'social', 'audio', 'pmax']`. Each has its own `activation_key` shape — see `skills/build-signals-agent/SKILL.md` for the activation patterns.
+No `validate_collection_delivery` tool exists yet (preview in 3.1). For now, delivery enforcement is a receiving-seller concern — your governance agent's job ends at publishing the resolved list.
 
 ### <a name="specialism-content-standards"></a>content-standards
 

@@ -34,7 +34,7 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to a compliance storyboard at `compliance/cache/latest/specialisms/<id>/`. The skill below has a dedicated section for each specialism's deltas.
 
-| Specialism | Domain | Status | Skill |
+| Specialism | Protocol | Status | Skill |
 |---|---|---|---|
 | `sales-guaranteed` | media-buy | stable | `skills/build-seller-agent/` |
 | `sales-non-guaranteed` | media-buy | stable | `skills/build-seller-agent/` |
@@ -45,6 +45,8 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 | `sales-catalog-driven` | media-buy | stable | `skills/build-retail-media-agent/` |
 | `sales-retail-media` | media-buy | preview | `skills/build-retail-media-agent/` |
 | `sales-proposal-mode` | media-buy | stable | `skills/build-seller-agent/` |
+| `audience-sync` | media-buy | stable | `skills/build-seller-agent/` (track: `audiences`; uses `sync_audiences`, `list_accounts`, `delete_audience`) |
+| `signed-requests` | media-buy | preview | Applies cross-cutting — any agent that receives mutating requests. See `skills/build-seller-agent/` (§ signed-requests) |
 | `creative-ad-server` | creative | stable | `skills/build-creative-agent/` |
 | `creative-template` | creative | stable | `skills/build-creative-agent/` |
 | `creative-generative` | creative | stable | `skills/build-creative-agent/` or `skills/build-generative-seller-agent/` (if you also sell inventory) |
@@ -52,15 +54,21 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 | `signal-owned` | signals | stable | `skills/build-signals-agent/` |
 | `governance-spend-authority` | governance | stable | `skills/build-governance-agent/` |
 | `governance-delivery-monitor` | governance | stable | `skills/build-governance-agent/` |
-| `inventory-lists` | governance | stable | `skills/build-governance-agent/` |
-| `audience-sync` | governance | stable | `skills/build-governance-agent/` (note: `sync_audiences` handler lives under `eventTracking`, not `governance`) |
+| `property-lists` | governance | stable | `skills/build-governance-agent/` |
+| `collection-lists` | governance | stable | `skills/build-governance-agent/` (program-level brand safety via IMDb/Gracenote/EIDR IDs) |
 | `content-standards` | governance | stable | `skills/build-governance-agent/` |
 | `measurement-verification` | governance | preview | `skills/build-governance-agent/` |
 | `brand-rights` | brand | stable | `skills/build-brand-rights-agent/` |
 
 **Naming conventions:** specialism IDs are kebab-case (`sales-broadcast-tv`). Storyboard category IDs in `index.yaml` are snake_case (`media_buy_broadcast_seller`). Yaml titles are prose ("Broadcast linear TV seller agent"). Same concept, three names — don't confuse them.
 
-**Preview specialisms** have `phases: []` in their `index.yaml` — the storyboard is a placeholder and the agent passes the domain baseline only. Claim a preview specialism to advertise intent; expect `phases` to populate in a subsequent AdCP release.
+**`protocol:` vs `domain:`.** The specialism yaml uses `protocol:` (renamed from `domain:` in AdCP 3.0 GA). If you see older docs or issues reference `domain:`, they mean the same thing.
+
+**Preview specialisms** have `phases: []` in their `index.yaml` — the storyboard is a placeholder and the agent passes the protocol baseline only. Claim a preview specialism to advertise intent; expect `phases` to populate in a subsequent AdCP release.
+
+**Protocol-wide requirements.** Two requirements now apply to every mutating AdCP operation regardless of specialism:
+- **`idempotency_key`** — required on every mutating request (`create_media_buy`, `update_media_buy`, `acquire_rights`, `activate_signal`, `sync_*`). Your handler must return the same response when the same key is replayed. Landed in AdCP 3.0 GA.
+- **RFC 9421 HTTP Signatures** — optional but recommended. If you claim `signed-requests`, you verify incoming signatures; regardless, you must not break when signature headers are present.
 
 **Critical rules**:
 - ALWAYS create a changeset (`npm run changeset`) for ANY library/CLI code change before pushing a PR. This is mandatory — do not wait to be asked.

@@ -36,8 +36,39 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | `sales-catalog-driven` | stable | See `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too | Different skill |
 | `sales-retail-media` | preview | See `skills/build-retail-media-agent/` | Different skill |
 | `sales-proposal-mode` | stable | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages` | [§ sales-proposal-mode](#specialism-sales-proposal-mode) |
+| `audience-sync` | stable | Track: `audiences`. Implement `sync_audiences`, `list_accounts`, `delete_audience`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on `sync_audiences` response. | [§ audience-sync](#specialism-audience-sync) |
+| `signed-requests` | preview | RFC 9421 HTTP Signature verification on every mutating request. Required headers: `Signature-Input`, `Signature`. Verify covered components, keyid, expiry, nonce. Preview — runner not yet implemented (adcontextprotocol/adcp#2331). | [§ signed-requests](#specialism-signed-requests) |
 
 Specialism ID (kebab-case) = storyboard directory. The storyboard's `id:` field (snake_case, e.g. `media_buy_broadcast_seller`) is the category name, not the specialism name. One specialism can apply to multiple product lines — a seller with both CTV inventory and broadcast TV inventory can claim `sales-streaming-tv` and `sales-broadcast-tv` simultaneously.
+
+## Protocol-Wide Requirements (AdCP 3.0 GA)
+
+Two requirements apply to **every** mutating AdCP operation, regardless of which specialism you claim.
+
+### `idempotency_key` is required on every mutating request
+
+`create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `provide_performance_feedback` — every mutating call now carries a client-supplied `idempotency_key`. Your handler must return the **same response** when the same key is replayed.
+
+```typescript
+createMediaBuy: async (params, ctx) => {
+  // Check idempotency cache first
+  const cached = await ctx.store.get('idempotency', params.idempotency_key);
+  if (cached) return cached;
+
+  // ... normal handler body ...
+  const response = { media_buy_id: `mb_${Date.now()}`, status: 'active' as const, /* ... */ };
+
+  // Cache before returning
+  await ctx.store.put('idempotency', params.idempotency_key, response);
+  return response;
+},
+```
+
+Keys are scoped per-tool + per-account. The cache TTL is implementation-defined but buyers retry within a 24-hour window — size your store accordingly. If the same key arrives with a **different** payload, return `adcpError('IDEMPOTENCY_KEY_CONFLICT', { message })` rather than silently overwriting.
+
+### Don't break when RFC 9421 Signature headers arrive
+
+Even if you don't claim `signed-requests`, a buyer may send `Signature-Input` / `Signature` headers. Your MCP transport must pass the request through without rejecting it. If you do claim the specialism, verify per [§ signed-requests](#specialism-signed-requests) below.
 
 ## Before Writing Code
 
@@ -988,6 +1019,79 @@ createMediaBuy: async (params, ctx) => {
   // ... fall through to baseline packages path
 },
 ```
+
+### <a name="specialism-audience-sync"></a>audience-sync
+
+Storyboard: `audience_sync`. Reclassified from governance to media-buy in AdCP 3.0 GA. Track is `audiences` — separate from the core seller lifecycle, but lives here because identifier sync and account discovery sit next to media-buying.
+
+Required tools: `sync_audiences`, `list_accounts`, `delete_audience`. Wire them under `accounts` and `eventTracking`:
+
+```typescript
+createAdcpServer({
+  accounts: {
+    syncAccounts: /* baseline */,
+    listAccounts: async (params, ctx) => {
+      const { items } = await ctx.store.list('accounts');
+      const brandFilter = params.brand?.domain;
+      return { accounts: brandFilter ? items.filter((a) => a.brand.domain === brandFilter) : items };
+    },
+  },
+  eventTracking: {
+    syncAudiences: async (params, ctx) => ({
+      audiences: params.audiences.map((a) => ({
+        audience_id: a.audience_id,
+        name: a.name,
+        status: 'active' as const,
+        action: a.delete ? 'deleted' : 'created',   // empty audiences array = discovery mode
+        uploaded_count: a.members?.length ?? 0,
+        matched_count: Math.floor((a.members?.length ?? 0) * 0.72),   // simulated match rate
+        effective_match_rate: 0.72,
+      })),
+    }),
+    deleteAudience: async (params, ctx) => ({
+      audience_id: params.audience_id,
+      status: 'deleted' as const,
+      deleted_at: new Date().toISOString(),
+    }),
+  },
+});
+```
+
+**Identifier rules:** hashed emails/phones use SHA-256 on lowercased, trimmed input. Salting/normalization is out-of-band between buyer and platform — accept what the buyer sends and document your expected input format.
+
+**Platform types:** destinations span `['dsp', 'retail_media', 'social', 'audio', 'pmax']`. Each has its own `activation_key` shape — see `skills/build-signals-agent/SKILL.md` for activation patterns, which are shared across signals and audience sync.
+
+### <a name="specialism-signed-requests"></a>signed-requests (preview)
+
+Storyboard: `signed_requests`. Transport-layer security specialism — certifies that your agent correctly verifies incoming RFC 9421 HTTP Signatures on every mutating request per [AdCP security docs](https://adcontextprotocol.org/docs/building/implementation/security.mdx#signed-requests-transport-layer).
+
+**Status: preview.** The conformance runner is not yet implemented (tracked upstream as adcontextprotocol/adcp#2331). Claiming this specialism today advertises intent; real grading begins once the runner ships.
+
+**What to implement:**
+
+1. On every mutating request, parse `Signature-Input` and `Signature` headers.
+2. Resolve the `keyid` from the signature params against the buyer's published key (typically via `adagents.json` or an authenticated key registry).
+3. Verify covered components: `@method`, `@target-uri`, `content-digest`, `content-type`, plus any AdCP-required extras (`idempotency_key` as a content-derived component).
+4. Check `created` is within acceptance window (e.g. 5 minutes) and `nonce` is not replayed.
+5. If verification fails: return `adcpError('SIGNATURE_INVALID', { message })` with an HTTP 401.
+6. If headers are absent: behavior depends on policy — either accept (open mode) or reject with `adcpError('SIGNATURE_REQUIRED', { ... })`.
+
+```typescript
+import { verifyRfc9421Signature } from '@adcp/client';   // helper ships alongside 3.0 idempotency work
+
+// Wrap mutating handlers:
+const signatureGuard = async (request) => {
+  const result = await verifyRfc9421Signature(request.headers, request.body, {
+    keyResolver: async (keyid) => fetchBuyerKey(keyid),
+    acceptanceWindowSeconds: 300,
+    nonceStore: ctx.store,
+    requireSignature: true,   // or false for open mode
+  });
+  if (!result.valid) throw adcpError('SIGNATURE_INVALID', { message: result.reason });
+};
+```
+
+**Don't claim preview.** Unless you've implemented and tested signature verification, leave this specialism off your capabilities. A non-claiming agent is not graded against it.
 
 ## Reference
 
