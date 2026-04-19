@@ -21,6 +21,24 @@ A seller agent receives briefs from buyers, returns products with pricing, accep
 - Serving audience segments → `skills/build-signals-agent/`
 - Rendering creatives from briefs → that's a creative agent
 
+## Specialisms This Skill Covers
+
+Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each specialism has a storyboard bundle at `compliance/cache/latest/specialisms/<id>/` that the AAO compliance runner executes. Pick one or more:
+
+| Specialism | Status | Delta from baseline | See |
+|---|---|---|---|
+| `sales-guaranteed` | stable | IO approval: return `status: 'submitted'` + `setup{url,message}` + `estimated_completion`; transition to `pending_approval` then `active` via `forceMediaBuyStatus` | [§ sales-guaranteed](#specialism-sales-guaranteed) |
+| `sales-non-guaranteed` | stable | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
+| `sales-broadcast-tv` | stable | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv) |
+| `sales-streaming-tv` | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products | Baseline only |
+| `sales-social` | stable | Walled-garden: no `get_products`/`create_media_buy`; implement `sync_audiences`, `log_event`, `get_account_financials` instead | [§ sales-social](#specialism-sales-social) |
+| `sales-exchange` | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending | Baseline only |
+| `sales-catalog-driven` | stable | See `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too | Different skill |
+| `sales-retail-media` | preview | See `skills/build-retail-media-agent/` | Different skill |
+| `sales-proposal-mode` | stable | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages` | [§ sales-proposal-mode](#specialism-sales-proposal-mode) |
+
+Specialism ID (kebab-case) = storyboard directory. The storyboard's `id:` field (snake_case, e.g. `media_buy_broadcast_seller`) is the category name, not the specialism name. One specialism can apply to multiple product lines — a seller with both CTV inventory and broadcast TV inventory can claim `sales-streaming-tv` and `sales-broadcast-tv` simultaneously.
+
 ## Before Writing Code
 
 Determine these five things. Ask the user — don't guess.
@@ -799,6 +817,177 @@ When storyboard output shows failures, fix each one:
 | Missing `@types/node` in devDependencies                   | `process.env` doesn't resolve without it — see Setup section                                                                                                                     |
 | Dropping `context` from responses                          | Echo `args.context` back unchanged in every response — buyers use it for correlation                                                                                             |
 | `channels` typed as `string[]` instead of `MediaChannel[]` | Use `as const` on channel arrays: `channels: ['display', 'olv'] as const`. TypeScript infers `string[]` from array literals, but the SDK requires the `MediaChannel` union type. |
+
+## Specialism Details
+
+### <a name="specialism-sales-guaranteed"></a>sales-guaranteed
+
+Storyboard: `media_buy_guaranteed_approval`. The compliance runner expects a three-state transition the baseline example does not show.
+
+`create_media_buy` returns **`submitted`** (not `pending_creatives`) with setup and completion estimate:
+
+```typescript
+return {
+  media_buy_id: `mb_${Date.now()}`,
+  status: 'submitted' as const,
+  estimated_completion: new Date(Date.now() + 24 * 3600_000).toISOString(),
+  setup: {
+    url: `https://your-platform.example.com/io/${id}/sign`,
+    message: 'Review and sign the IO to confirm the order.',
+  },
+  packages: params.packages?.map((pkg, i) => ({ /* ... */ })) ?? [],
+};
+```
+
+`get_media_buys` during the pending_approval window returns `setup` on the media_buy entry; after approval returns `confirmed_at` and status `active`. The runner drives the transitions via `forceMediaBuyStatus` — implement it in your `TestControllerStore` for `submitted → pending_approval → active`.
+
+Declare the `requires_io_approval` capability on the agent: add it to `capabilities.features` in your `createAdcpServer` config.
+
+### <a name="specialism-sales-non-guaranteed"></a>sales-non-guaranteed
+
+Storyboard: `media_buy_non_guaranteed`. The specialism hinges on `bid_price` and `update_media_buy`, neither of which the baseline example shows.
+
+Packages on `create_media_buy` carry `bid_price`. Validate it against the product's `floor_price`:
+
+```typescript
+createMediaBuy: async (params, ctx) => {
+  for (const pkg of params.packages ?? []) {
+    const product = PRODUCTS.find((p) => p.product_id === pkg.product_id);
+    const floor = product?.pricing_options[0].floor_price;
+    if (floor && pkg.bid_price != null && pkg.bid_price < floor) {
+      return adcpError('INVALID_REQUEST', {
+        message: `bid_price ${pkg.bid_price} below floor_price ${floor}`,
+      });
+    }
+  }
+  return {
+    media_buy_id: `mb_${Date.now()}`,
+    status: 'active' as const,   // instant — no IO
+    packages: /* ... */,
+  };
+},
+
+updateMediaBuy: async (params, ctx) => {
+  const existing = await ctx.store.get('media_buys', params.media_buy_id);
+  if (!existing) return adcpError('NOT_FOUND', { message: `Media buy ${params.media_buy_id} not found` });
+  // Apply bid/budget updates from params.packages
+  const updated = { ...existing, packages: /* merged */ };
+  await ctx.store.put('media_buys', params.media_buy_id, updated);
+  return updated;
+},
+```
+
+`valid_actions` on an active non-guaranteed buy should include `pause`, `update_bid`, `get_delivery`. The framework auto-populates this when `createMediaBuy`/`updateMediaBuy` return with `status: 'active'`.
+
+### <a name="specialism-sales-broadcast-tv"></a>sales-broadcast-tv
+
+Storyboard: `media_buy_broadcast_seller`. Broadcast has four protocol surfaces not used in digital.
+
+**Pricing** — unit-based (cost per spot). Until a `pricing_model: 'unit'` lands, express as CPM with a very high `fixed_price` that represents the cost per thousand spots equivalent, or use a custom pricing option ID and clarify in `description`.
+
+**Agency estimate number** — top-level on `create_media_buy`. Echo it on the response:
+
+```typescript
+{
+  media_buy_id,
+  agency_estimate_number: params.agency_estimate_number,  // "PNNL-NM-2026-Q4-0847"
+  status: 'submitted',
+  // ...
+}
+```
+
+**Measurement terms** — per-package on the request:
+
+```typescript
+packages: [{
+  product_id: 'primetime_30s_mf',
+  measurement_terms: {
+    billing_measurement: {
+      vendor: { domain: 'videoamp.com' },
+      measurement_window: 'c7',
+      max_variance_percent: 10,
+    },
+  },
+}]
+```
+
+Echo `measurement_terms` on the response's package entries — the buyer uses `c7` as the guarantee basis for reconciliation.
+
+**Ad-ID on creatives** — `sync_creatives` rejects spots without a valid Ad-ID:
+
+```typescript
+syncCreatives: async (params) => ({
+  creatives: params.creatives.map((c) => {
+    const adId = c.industry_identifiers?.find((x) => x.type === 'ad_id')?.value;
+    if (!adId) return { creative_id: c.creative_id, action: 'created', status: 'rejected',
+      rejection_reason: 'Ad-ID required for broadcast spots' };
+    return { creative_id: c.creative_id, action: 'created', status: 'accepted' };
+  }),
+}),
+```
+
+**Measurement windows on delivery** — each delivery row tags `measurement_window: 'live' | 'c3' | 'c7'`, `is_final: boolean`, and `supersedes_window` (for window upgrades). Live ratings mature in 24h, C3 in ~4d, C7 in ~8d. Final reconciliation lands ~15d after last air date.
+
+### <a name="specialism-sales-social"></a>sales-social
+
+Storyboard: `social_platform`. This is a walled-garden sync flow — the classic `get_products` → `create_media_buy` path does not apply. The buyer pushes audiences and creatives **into** the platform.
+
+Required tools (on top of baseline):
+
+- `sync_accounts` with `account_scope`, `payment_terms`, `setup` fields
+- `list_accounts` with brand filter
+- `sync_audiences` → returns `{ audiences: [{ audience_id, name, status: 'active', action: 'created' }] }`
+- `log_event` → returns `{ events: [{ event_id, status: 'accepted' }] }`
+- `get_account_financials` → returns `{ account, financials: { currency, current_spend, remaining_balance, payment_status } }`
+- `sync_creatives` for platform-native assemblies with `{ creative_id, action, status: 'pending_review' }`
+
+`sync_audiences` and `log_event` live under `eventTracking`, not `mediaBuy`, in `createAdcpServer`. `get_account_financials` lives under `accounts`.
+
+### <a name="specialism-sales-proposal-mode"></a>sales-proposal-mode
+
+Storyboard: `media_buy_proposal_mode`. The acceptance path inverts the baseline — buyer sends `proposal_id` + `total_budget`, no `packages`.
+
+`get_products` returns a `proposals[]` array alongside products:
+
+```typescript
+return {
+  products: PRODUCTS,
+  proposals: [{
+    proposal_id: 'balanced_reach_q2',
+    name: 'Balanced Reach Plan',
+    rationale: 'CTV for premium reach, OLV for sports frequency, display for always-on context.',
+    total_budget: { amount: 50000, currency: 'USD' },
+    budget_allocations: [
+      { product_id: 'ctv_outdoor_lifestyle', pricing_option_id: 'ctv_cpm', amount: 25000, currency: 'USD' },
+      { product_id: 'olv_sports', pricing_option_id: 'olv_cpm', amount: 15000, currency: 'USD' },
+      { product_id: 'display_endemic', pricing_option_id: 'display_cpm', amount: 10000, currency: 'USD' },
+    ],
+    forecast: { impressions: 3_500_000, reach: 1_200_000, frequency: 2.9 },
+  }],
+  sandbox: true,
+};
+```
+
+Handle `buying_mode: 'refine'` by returning an updated `proposals[]` plus `refinement_applied[]` describing what changed.
+
+`create_media_buy` with `proposal_id`:
+
+```typescript
+createMediaBuy: async (params, ctx) => {
+  if (params.proposal_id) {
+    const proposal = PROPOSALS[params.proposal_id];
+    if (!proposal) return adcpError('INVALID_REQUEST', { message: `Unknown proposal_id: ${params.proposal_id}` });
+    // TTL check — return PROPOSAL_EXPIRED if the proposal has aged out
+    return {
+      media_buy_id: `mb_${Date.now()}`,
+      status: 'active' as const,       // instant on proposal accept
+      proposal_id: proposal.proposal_id,
+      packages: proposal.budget_allocations.map((a, i) => ({ /* expand server-side */ })),
+    };
+  }
+  // ... fall through to baseline packages path
+},
+```
 
 ## Reference
 

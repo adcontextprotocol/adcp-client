@@ -30,6 +30,38 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a brand rights agent?** Read and follow `skills/build-brand-rights-agent/SKILL.md` — covers brand identity, rights licensing, creative approval.
 
+### Specialism → Skill Index
+
+Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to a compliance storyboard at `compliance/cache/latest/specialisms/<id>/`. The skill below has a dedicated section for each specialism's deltas.
+
+| Specialism | Domain | Status | Skill |
+|---|---|---|---|
+| `sales-guaranteed` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-non-guaranteed` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-broadcast-tv` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-streaming-tv` | media-buy | preview | `skills/build-seller-agent/` |
+| `sales-social` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-exchange` | media-buy | preview | `skills/build-seller-agent/` |
+| `sales-catalog-driven` | media-buy | stable | `skills/build-retail-media-agent/` |
+| `sales-retail-media` | media-buy | preview | `skills/build-retail-media-agent/` |
+| `sales-proposal-mode` | media-buy | stable | `skills/build-seller-agent/` |
+| `creative-ad-server` | creative | stable | `skills/build-creative-agent/` |
+| `creative-template` | creative | stable | `skills/build-creative-agent/` |
+| `creative-generative` | creative | stable | `skills/build-creative-agent/` or `skills/build-generative-seller-agent/` (if you also sell inventory) |
+| `signal-marketplace` | signals | stable | `skills/build-signals-agent/` |
+| `signal-owned` | signals | stable | `skills/build-signals-agent/` |
+| `governance-spend-authority` | governance | stable | `skills/build-governance-agent/` |
+| `governance-delivery-monitor` | governance | stable | `skills/build-governance-agent/` |
+| `inventory-lists` | governance | stable | `skills/build-governance-agent/` |
+| `audience-sync` | governance | stable | `skills/build-governance-agent/` (note: `sync_audiences` handler lives under `eventTracking`, not `governance`) |
+| `content-standards` | governance | stable | `skills/build-governance-agent/` |
+| `measurement-verification` | governance | preview | `skills/build-governance-agent/` |
+| `brand-rights` | brand | stable | `skills/build-brand-rights-agent/` |
+
+**Naming conventions:** specialism IDs are kebab-case (`sales-broadcast-tv`). Storyboard category IDs in `index.yaml` are snake_case (`media_buy_broadcast_seller`). Yaml titles are prose ("Broadcast linear TV seller agent"). Same concept, three names — don't confuse them.
+
+**Preview specialisms** have `phases: []` in their `index.yaml` — the storyboard is a placeholder and the agent passes the domain baseline only. Claim a preview specialism to advertise intent; expect `phases` to populate in a subsequent AdCP release.
+
 **Critical rules**:
 - ALWAYS create a changeset (`npm run changeset`) for ANY library/CLI code change before pushing a PR. This is mandatory — do not wait to be asked.
 - ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing

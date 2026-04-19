@@ -21,6 +21,17 @@ A retail media agent sells advertising on a retailer's properties (sponsored pro
 - Generative seller (AI creative from briefs) → `skills/build-generative-seller-agent/`
 - Signals/audience data → `skills/build-signals-agent/`
 
+Despite the name, **this skill also covers non-retail catalog-driven sales** — restaurants, travel, local commerce, any platform where the ad unit is rendered from a feed of products/listings/menu items. The compliance storyboard `media_buy_catalog_creative` uses a steakhouse protagonist, not a retailer.
+
+## Specialisms This Skill Covers
+
+| Specialism | Status | Delta |
+|---|---|---|
+| `sales-catalog-driven` | stable | Products declare `supports_catalog: true` and `supports_conversion_tracking: true`; `create_media_buy` accepts `packages[].catalogs[]`; `log_event` response includes `match_quality` |
+| `sales-retail-media` | preview | v3.1 placeholder. Ship the `sales-catalog-driven` baseline plus retail-specific surface encoding (search vs PDP vs homepage vs offsite vs in-store) in `publisher_properties` / `format_ids` |
+
+Attribution linkage (`log_event.content_ids` → catalog `item_id` → `media_buy_id`) is deliberately out-of-scope for AdCP 3.0 — the storyboard accepts counter-only responses. Closed-loop attribution + ROAS reporting land in 3.1.
+
 ## Before Writing Code
 
 Same domain decisions as the seller skill, plus:

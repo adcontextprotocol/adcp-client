@@ -21,6 +21,14 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 - Managing creative formats/library → `skills/build-creative-agent/`
 - Evaluating media buys → `skills/build-governance-agent/`
 
+## Specialisms This Skill Covers
+
+| Specialism | Status | Delta |
+|---|---|---|
+| `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`. `update_rights` and `creative_approval` are spec-tracked but not schema-backed (see Protocol Status below). |
+
+Storyboard: `brand_rights`. The specialism tests identity discovery → rights search → acquisition → enforcement (including expired-campaign denial).
+
 ## Before Writing Code
 
 ### 1. What Brand?

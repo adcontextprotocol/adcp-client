@@ -21,6 +21,21 @@ A governance agent sits between buyers and sellers, evaluating proposed media bu
 - Serving audience segments → `skills/build-signals-agent/`
 - Managing brand identity and licensing → `skills/build-brand-rights-agent/`
 
+## Specialisms This Skill Covers
+
+Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each maps to a storyboard at `compliance/cache/latest/specialisms/<id>/`:
+
+| Specialism | Status | Delta from baseline | See |
+|---|---|---|---|
+| `governance-spend-authority` | stable | `check_governance` evaluates `binding` against Plan's `authority_level` + `custom_policies`; return conditions or denial | [§ governance-spend-authority](#specialism-governance-spend-authority) |
+| `governance-delivery-monitor` | stable | `check_governance` with `phase: 'delivery'` + `delivery_evidence`; compute drift vs Plan's `reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
+| `inventory-lists` | stable | Tool family is named `property_list` — specialism title aside; implement CRUD plus `validate_property_delivery` with full `violations[]` | [§ inventory-lists](#specialism-inventory-lists) |
+| `audience-sync` | stable | **Does not use governance tools.** Required: `sync_audiences` + `list_accounts`. Handlers live under `accounts` / `eventTracking` domain groups, not `governance`. | [§ audience-sync](#specialism-audience-sync) |
+| `content-standards` | stable | `policy` on create/update is a **prose string** with inline `(must)`/`(should)` severity — not the array shape shown in the baseline below; `validate_content_delivery` uses `records[].artifact`, not `results[].creative_id` | [§ content-standards](#specialism-content-standards) |
+| `measurement-verification` | preview | v3.1 placeholder (empty `phases`). Pass universal + governance baseline only. Advertise `measurement_verification` capability for discoverability. | Baseline only |
+
+Specialism ID (kebab-case) = storyboard directory. Storyboard `id:` (snake_case, e.g. `campaign_governance_conditions`) is the category name — multiple specialisms can reference the same storyboard category.
+
 ## Before Writing Code
 
 ### 1. Which Governance Domains?
@@ -75,7 +90,41 @@ taskToolResponse({
 
 **`check_governance`** — `CheckGovernanceRequestSchema.shape`
 
-Evaluate a media buy against the registered plan. The response needs `check_id`, `status`, `plan_id`, and `explanation`.
+Evaluate a media buy against the registered plan. The request carries a `binding` (what is being evaluated) and a `phase`:
+
+```
+// Request shape:
+{
+  plan_id: string,              // required — previously registered via sync_plans
+  phase: 'create' | 'delivery', // required — gating create_media_buy vs monitoring active flight
+  binding: {                    // what to evaluate
+    type: 'media_buy',
+    account: { brand: {...}, operator: string },
+    total_budget: { amount: number, currency: string },
+    packages: [{ product_id, pricing_option_id, budget }],
+  },
+  delivery_evidence?: {         // only on phase: 'delivery'
+    packages: [{ package_id, budget, spend_to_date, flight_progress }],
+  },
+  governance_context?: string,  // prior check's context, for re-evaluation
+}
+```
+
+The Plan object (stored via `sync_plans`) drives decisions. Expected shape:
+
+```
+{
+  plan_id: string,
+  brand: { domain: string },
+  operator: string,
+  budget: { total: number, currency: string },
+  authority_level: 'agent_full' | 'agent_limited' | 'human_required',
+  custom_policies: string[],        // free-form rules, e.g. "CTV buys require weekly delivery reporting (must)"
+  reallocation_threshold: number,   // drift % that triggers re-approval during delivery
+}
+```
+
+The response needs `check_id`, `status`, `plan_id`, and `explanation`.
 
 ```
 // Approved:
@@ -190,13 +239,36 @@ taskToolResponse({
 
 **`validate_property_delivery`** — no generated schema, use `{}` for input
 
+The storyboard's enforcement phase asserts per-record `violations` with list reference and severity. A minimal `{property, compliant}` response will pass schema but fail the behavioral checks.
+
 ```
+// Request:
+{
+  list_id: string,
+  records: [{
+    record_id: string,
+    property: { type: 'domain' | 'bundle_id' | ..., value: string },
+    impressions: number,
+  }],
+}
+
+// Response:
 taskToolResponse({
   compliant: true,              // required — overall compliance
+  list_id: string,              // echo from request
   results: [{
-    property: string,
+    record_id: string,          // echo
+    property: { type, value },  // echo
+    impressions: number,
     compliant: boolean,
+    violations: [{              // empty when compliant
+      list_id: string,
+      list_type: 'inclusion' | 'exclusion',
+      severity: 'critical',
+      explanation: string,      // e.g. "Property {value} is not on inclusion list {name}"
+    }],
   }],
+  violations: [],               // flattened — all violations across results
 })
 ```
 
@@ -223,15 +295,14 @@ taskToolResponse({
 
 **`get_content_standards`** — `GetContentStandardsRequestSchema.shape`
 
+`policy` is a free-text string with embedded `(must)` and `(should)` severity markers. Parse them at check time — `(must)` is blocking, `(should)` is advisory. Do not model as a structured array; the storyboard sends prose.
+
 ```
 taskToolResponse({
   standards_id: string,
   name: string,
-  policy: [{
-    category: string,
-    description: string,
-    severity: 'info' | 'warning' | 'critical',
-  }],
+  policy: 'No tobacco advertising on family-programming properties (must). Weekly pacing reports required for CTV buys (should).',
+  scope: { languages_any: ['en', 'es'], brand: { domain: string } },
 })
 ```
 
@@ -257,7 +328,21 @@ taskToolResponse({
 
 **`validate_content_delivery`** — `ValidateContentDeliveryRequestSchema.shape`
 
+The request uses `records[].artifact`, not `creative_id`. Each record scopes a served impression with `property_rid`, `artifact_id`, and `assets`. Response returns per-record compliance plus a `summary`.
+
 ```
+// Request:
+{
+  standards_id: string,
+  records: [{
+    record_id: string,
+    property_rid: string,
+    artifact: { artifact_id: string, assets: {...} },
+    impressions: number,
+  }],
+}
+
+// Response:
 taskToolResponse({
   summary: {
     compliant: true,
@@ -265,8 +350,16 @@ taskToolResponse({
     non_compliant_impressions: 0,
   },
   results: [{
-    creative_id: string,
+    record_id: string,             // echo from request
+    artifact: { artifact_id: string, assets: {...} },
+    impressions: number,
     compliant: boolean,
+    violations: [{                 // empty when compliant
+      rule: string,                // e.g. "No tobacco advertising"
+      severity: 'must' | 'should',
+      evidence: string,            // why it failed
+      remediation: string,         // how to fix
+    }],
   }],
 })
 ```
@@ -498,6 +591,194 @@ npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --js
 | `campaign_governance_denied`      | Denied — buy exceeds spending authority                        |
 | `property_governance`             | Property list lifecycle: create, query, update, delete, validate |
 | `content_standards`               | Content standards lifecycle: create, calibrate, validate       |
+
+## Specialism Details
+
+### <a name="specialism-governance-spend-authority"></a>governance-spend-authority
+
+Storyboard category: `campaign_governance_*`. The agent holds a Plan and evaluates each binding against it.
+
+Minimal decision logic:
+
+```typescript
+checkGovernance: async (params, ctx) => {
+  const plan = await ctx.store.get('plan', params.plan_id);
+  if (!plan) return adcpError('NOT_FOUND', { message: `Plan ${params.plan_id} not found` });
+
+  const budget = params.binding.total_budget.amount;
+
+  // 1. Authority level gate
+  if (plan.authority_level === 'human_required') {
+    return { check_id: `chk_${Date.now()}`, status: 'escalate' as const, plan_id: params.plan_id,
+      explanation: 'Requires human approval' };
+  }
+  if (plan.authority_level === 'agent_limited' && budget > plan.budget.total) {
+    return { check_id: `chk_${Date.now()}`, status: 'denied' as const, plan_id: params.plan_id,
+      explanation: `Budget ${budget} exceeds authority limit ${plan.budget.total}`,
+      findings: [{ category_id: 'BUDGET_EXCEEDED', severity: 'critical',
+        explanation: `Over authority by ${budget - plan.budget.total}` }],
+    };
+  }
+
+  // 2. Custom policy matching (free-form strings)
+  const conditions = [];
+  for (const policy of plan.custom_policies ?? []) {
+    if (policy.toLowerCase().includes('ctv') && hasCtv(params.binding)) {
+      conditions.push({ field: 'reporting.frequency', reason: policy });
+    }
+  }
+
+  return {
+    check_id: `chk_${Date.now()}`,
+    status: 'approved' as const,
+    plan_id: params.plan_id,
+    explanation: conditions.length ? 'Approved with conditions' : 'Within spending authority',
+    conditions,
+    governance_context: `gov_ctx_${params.plan_id}_${Date.now()}`,  // opaque string — buyer echoes back to create_media_buy
+  };
+},
+```
+
+`governance_context` is an opaque string your agent mints and the buyer echoes back. Use it to tie a specific approval to a specific `create_media_buy` call — sign it or tag it with the plan revision if you care about tamper-resistance.
+
+### <a name="specialism-governance-delivery-monitor"></a>governance-delivery-monitor
+
+Storyboard category: `campaign_governance_delivery`. Same `check_governance` tool, different `phase` and payload.
+
+```typescript
+checkGovernance: async (params, ctx) => {
+  if (params.phase === 'delivery') {
+    const plan = await ctx.store.get('plan', params.plan_id);
+    const threshold = plan.reallocation_threshold ?? 0.15;  // e.g. 15% drift
+
+    const driftedPackages = [];
+    for (const pkg of params.delivery_evidence?.packages ?? []) {
+      const expected = pkg.budget * pkg.flight_progress;     // what should have spent by now
+      const actual = pkg.spend_to_date;
+      const drift = Math.abs(actual - expected) / pkg.budget;
+      if (drift > threshold) driftedPackages.push({ ...pkg, drift });
+    }
+
+    if (driftedPackages.length === 0) {
+      return { check_id: `chk_${Date.now()}`, status: 'approved' as const, plan_id: params.plan_id,
+        explanation: 'Delivery within threshold',
+        governance_context: params.governance_context ?? `gov_ctx_${params.plan_id}_delivery` };
+    }
+
+    return {
+      check_id: `chk_${Date.now()}`,
+      status: 'approved' as const,    // approved with reallocation conditions
+      plan_id: params.plan_id,
+      explanation: `Drift exceeded ${threshold * 100}% on ${driftedPackages.length} package(s)`,
+      conditions: driftedPackages.map((pkg) => ({
+        field: `packages[${pkg.package_id}].budget`,
+        reason: `Reallocate to match delivered pace (drift ${(pkg.drift * 100).toFixed(1)}%)`,
+      })),
+      findings: [{ category_id: 'BUDGET_DRIFT_EXCEEDED', severity: 'warning',
+        explanation: `${driftedPackages.length} package(s) outside reallocation threshold` }],
+    };
+  }
+  // ... create-phase logic above
+},
+```
+
+If the storyboard's `findings` shape (using `code`, `severity: 'should'`) diverges from the schema's (`category_id`, `severity: 'info'|'warning'|'critical'`), trust the schema — file an issue against adcp spec to reconcile. Current skill guidance uses `category_id`/`severity`.
+
+### <a name="specialism-inventory-lists"></a>inventory-lists
+
+Storyboard category: `property_governance`. The specialism is named `inventory-lists` but the tool family is `property_list`. Your agent owns both inclusion and exclusion list semantics — track `list_type` on the stored list even though the request schema may not surface it.
+
+```typescript
+createPropertyList: async (params, ctx) => {
+  const list_id = `plist_${Date.now()}`;
+  const stored = {
+    list_id,
+    name: params.name,
+    description: params.description,
+    list_type: 'inclusion' as const,        // caller-modeled — infer from context or add as ext
+    base_properties: params.base_properties ?? [],
+    property_count: countIdentifiers(params.base_properties),
+    status: 'active' as const,
+  };
+  await ctx.store.put('property_list', list_id, stored);
+  return {
+    list: summarize(stored),
+    auth_token: `tok_${list_id}`,
+  };
+},
+```
+
+`validate_property_delivery` returns `violations[]` with `list_id`, `list_type`, `severity: 'critical'`, and an explanation per non-compliant record — see the response shape in the tool section above.
+
+### <a name="specialism-audience-sync"></a>audience-sync
+
+Storyboard: `audience_sync`. The specialism is classified under `domain: governance`, but its `required_tools` (`sync_audiences`, `list_accounts`) live outside this skill's `governance` handler group. Wire them under `accounts` and `eventTracking`:
+
+```typescript
+createAdcpServer({
+  accounts: {
+    syncAccounts: /* ... */,
+    listAccounts: async (params, ctx) => {
+      const { items } = await ctx.store.list('accounts');
+      const brandFilter = params.brand?.domain;
+      return { accounts: brandFilter ? items.filter((a) => a.brand.domain === brandFilter) : items };
+    },
+  },
+  eventTracking: {
+    syncAudiences: async (params, ctx) => ({
+      audiences: params.audiences.map((a) => ({
+        audience_id: a.audience_id,
+        name: a.name,
+        status: 'active' as const,
+        action: a.delete ? 'deleted' : 'created',  // empty audiences array = discovery mode
+        uploaded_count: a.members?.length ?? 0,
+        matched_count: Math.floor((a.members?.length ?? 0) * 0.72),   // simulated match rate
+        effective_match_rate: 0.72,
+      })),
+    }),
+  },
+  governance: { /* baseline */ },
+});
+```
+
+Identifier rules: hashed emails/phones use SHA-256 on lowercased, trimmed input. Salting/normalization is out-of-band between buyer and platform.
+
+Destinations span `platform_types: ['dsp', 'retail_media', 'social', 'audio', 'pmax']`. Each has its own `activation_key` shape — see `skills/build-signals-agent/SKILL.md` for the activation patterns.
+
+### <a name="specialism-content-standards"></a>content-standards
+
+Storyboard: `content_standards`. Two load-bearing protocol quirks the baseline above does not cover:
+
+1. **`policy` is a prose string**, not a structured array. Parse `(must)` vs `(should)` at check time:
+
+```typescript
+function severityFor(rule: string): 'must' | 'should' {
+  return /\(must\)/i.test(rule) ? 'must' : 'should';
+}
+
+// Splitting a policy into rules:
+const rules = policy.split(/\.\s+/).filter(Boolean);   // sentence-per-rule convention
+```
+
+2. **`validate_content_delivery` uses `records[].artifact`**, not `results[].creative_id`. See the tool section above for the full shape.
+
+`calibrate_content` should return per-rule results, not just a top-level verdict:
+
+```typescript
+calibrateContent: async (params, ctx) => ({
+  verdict: 'fail' as const,
+  confidence: 0.95,
+  explanation: 'Content violates tobacco-free rule',
+  rules: [
+    { rule: 'No tobacco advertising', severity: 'must', passed: false,
+      evidence: 'Detected cigarette imagery in primary asset',
+      remediation: 'Remove cigarette imagery or select a compliant creative' },
+    { rule: 'Weekly pacing reports required for CTV', severity: 'should', passed: true,
+      evidence: 'Agent has reporting_capabilities frequencies: ["weekly"]', remediation: null },
+  ],
+  features: [],
+}),
+```
 
 ## Reference
 

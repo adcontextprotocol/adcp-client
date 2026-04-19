@@ -21,15 +21,28 @@ A creative agent manages the creative lifecycle: accepts assets from buyers, sto
 - Selling inventory (no creative management) → `skills/build-seller-agent/`
 - Serving audience segments → `skills/build-signals-agent/`
 
+## Specialisms This Skill Covers
+
+Creative specialisms are three distinct archetypes with materially different tool contracts. Pick the one that matches your platform — do not try to make one handler cover all three.
+
+| Specialism | Archetype | `build_creative` behavior | `sync_creatives` behavior | See |
+|---|---|---|---|---|
+| `creative-ad-server` | Stateful library, pricing + billing | Look up in library by `target_format_id`; return VAST/tag output with macro placeholders; price the output (`pricing_option_id`, `vendor_cost`) | Accept assets into the library; support `include_pricing=true` on `list_creatives` | [§ creative-ad-server](#specialism-creative-ad-server) |
+| `creative-template` | Stateless transform | Build from inline `creative_manifest` in the request; no `ctx.store` lookup; support `target_format_ids` (plural) for multi-format | Not used — agents in this specialism are stateless | [§ creative-template](#specialism-creative-template) |
+| `creative-generative` | Brief-to-creative generation | Generate assets from `message` + `brand.domain`; honor `quality: draft\|production`; support refinement (re-send manifest in) | Not used — output is ephemeral; buyer syncs to the seller separately | [§ creative-generative](#specialism-creative-generative) |
+
+The `interaction_model` in each specialism's `index.yaml` is the forcing function: `stateful_ad_server`, `stateless_transform`, `stateless_generate`. Decide which one matches your business, then follow the archetype section below.
+
 ## Before Writing Code
 
 Determine these things. Ask the user — don't guess.
 
 ### 1. What kind of creative platform?
 
-- **Ad server** (Innovid, Flashtalking, CM360) — stateful library, builds serving tags (VAST, display tags), tracks delivery
-- **Creative management platform** (Celtra) — format transformation, template rendering, asset management
-- **Publisher creative service** — accepts buyer assets, validates against publisher specs, renders previews
+- **Ad server** (Innovid, Flashtalking, CM360) — specialism `creative-ad-server`. Stateful library, builds serving tags (VAST, display tags), tracks delivery, reconciles billing.
+- **Creative management platform** (Celtra) — specialism `creative-template`. Stateless transformation from inline manifest, template rendering across formats.
+- **Generative creative agent** — specialism `creative-generative`. Takes a brief + brand reference, generates finished creatives from scratch (no inventory sold — that's `build-generative-seller-agent`).
+- **Publisher creative service** — accepts buyer assets, validates against publisher specs, renders previews. Usually pairs with `build-seller-agent` and doesn't claim a creative specialism on its own.
 
 ### 2. What formats?
 
@@ -436,6 +449,206 @@ npx tsc --noEmit agent.ts
 | `creative_template`    | Stateless template rendering (build + preview only)              |
 | `creative_sales_agent` | Sales agent that accepts pushed assets                           |
 | `creative_ad_server`   | Ad server with pre-loaded library                                |
+
+## Specialism Details
+
+### <a name="specialism-creative-ad-server"></a>creative-ad-server
+
+Storyboard: `creative_ad_server`. Stateful — the library is pre-loaded; buyers do **not** push assets via `sync_creatives` at runtime. Pricing and billing round-trips are first-class.
+
+**`list_creatives`** with `include_pricing=true` returns per-creative `pricing_options`:
+
+```typescript
+listCreatives: async (params, ctx) => {
+  const items = await ctx.store.list('creatives');
+  const creatives = items.items.map((c) => ({
+    creative_id: c.creative_id,
+    name: c.name,
+    format_id: c.format_id,
+    status: 'approved' as const,
+    created_date: c.created_date,
+    updated_date: c.updated_date,
+    ...(params.include_pricing && {
+      pricing_options: [{
+        pricing_option_id: 'standard_cpm',
+        model: 'cpm' as const,
+        cpm: 2.5,
+        currency: 'USD',
+      }],
+    }),
+  }));
+  return {
+    query_summary: { total_matching: creatives.length, returned: creatives.length, filters_applied: [] },
+    creatives,
+    pagination: { has_more: false },
+  };
+},
+```
+
+**`build_creative`** receives `media_buy_id`, `package_id`, `target_format_id`, and `pricing_option_id`. Return a VAST tag with macro placeholders, plus `vendor_cost` at CPM = 0 (billing happens via `report_usage`):
+
+```typescript
+buildCreative: async (params, ctx) => {
+  const creative = await lookupCreativeForFormat(params.target_format_id, ctx);
+  const vast = `<?xml version="1.0"?>
+<VAST version="4.2">
+  <Ad id="${creative.creative_id}"><InLine>
+    <Impression><![CDATA[https://adserver.example/imp?cb=[CACHEBUSTER]&mb=${params.media_buy_id}]]></Impression>
+    <Creatives><Creative>
+      <Linear><Duration>00:00:30</Duration>
+        <MediaFiles><MediaFile type="video/mp4"><![CDATA[${creative.video_url}]]></MediaFile></MediaFiles>
+        <VideoClicks><ClickThrough><![CDATA[[CLICK_URL]https://landing.example]]></ClickThrough></VideoClicks>
+      </Linear>
+    </Creative></Creatives>
+  </InLine></Ad>
+</VAST>`;
+
+  return {
+    creative_manifest: {
+      format_id: params.target_format_id,
+      assets: { serving_tag: { content: vast } },     // HTML asset shape: { content: string }
+    },
+    pricing_option_id: params.pricing_option_id,      // echo
+    vendor_cost: { amount: 0, currency: 'USD' },      // CPM at build time — billing is separate
+    sandbox: true,
+  };
+},
+```
+
+**`report_usage`** is the billing reconciliation tool. Validate `idempotency_key` (return the same response for the same key) and echo `pricing_option_id` + `reporting_period`:
+
+```typescript
+reportUsage: async (params, ctx) => {
+  const existing = await ctx.store.get('usage_reports', params.idempotency_key);
+  if (existing) return existing;    // idempotent
+  const report = {
+    idempotency_key: params.idempotency_key,
+    creative_id: params.creative_id,
+    pricing_option_id: params.pricing_option_id,
+    reporting_period: params.reporting_period,
+    billable_amount: { amount: params.impressions * 2.5 / 1000, currency: 'USD' },
+    status: 'accepted' as const,
+  };
+  await ctx.store.put('usage_reports', params.idempotency_key, report);
+  return report;
+},
+```
+
+**`get_creative_delivery`** returns impressions/spend, optionally broken down by variant and filtered by `media_buy_ids`:
+
+```typescript
+getCreativeDelivery: async (params, ctx) => ({
+  reporting_period: params.reporting_period,
+  creatives: (params.creative_ids ?? []).map((id) => ({
+    creative_id: id,
+    impressions: 12500,
+    spend: { amount: 31.25, currency: 'USD' },
+    by_variant: [],
+  })),
+  sandbox: true,
+}),
+```
+
+Output formats returned by `list_creative_formats` for ad servers are **serving-tag formats** (VAST 4.2, display tag HTML, native JSON payload), not input visual formats.
+
+### <a name="specialism-creative-template"></a>creative-template
+
+Storyboard: `creative_template`. Stateless — build from the inline `creative_manifest` in the request, do not call `ctx.store`.
+
+Formats declare `variables` the template will substitute:
+
+```typescript
+listCreativeFormats: async (params) => ({
+  formats: [{
+    format_id: { agent_url: AGENT_URL, id: 'banner_300x250_template' },
+    name: 'Responsive 300x250 Banner Template',
+    type: 'display' as const,
+    renders: [{ width: 300, height: 250 }],
+    variables: [          // template-agent specific
+      { variable_id: 'headline', type: 'text', max_length: 40 },
+      { variable_id: 'cta', type: 'text', max_length: 20 },
+      { variable_id: 'hero_image', type: 'image' },
+      { variable_id: 'accent_color', type: 'color' },
+    ],
+    assets: [/* acceptance specs */],
+  }],
+}),
+```
+
+`build_creative` must branch on single vs. multi-format:
+
+```typescript
+buildCreative: async (params) => {
+  const inputManifest = params.creative_manifest;    // already provided — no lookup
+
+  // Multi-format path (plural target_format_ids)
+  if (params.target_format_ids?.length) {
+    return {
+      creative_manifests: params.target_format_ids.map((fid) => renderTemplate(fid, inputManifest)),
+      sandbox: true,
+    };   // wraps to buildCreativeMultiResponse
+  }
+
+  // Single-format
+  const targetFid = params.target_format_id ?? inputManifest.format_id;
+  return {
+    creative_manifest: renderTemplate(targetFid, inputManifest),
+    sandbox: true,
+  };
+},
+```
+
+Output can be HTML (`{ content: '<div>...</div>' }`), JavaScript tag (`{ content: '<script>...</script>' }`), or VAST XML. `asset_type: 'url'` is valid for click-through URLs.
+
+`list_creative_formats` accepts filter params (`type`, `max_width`, `max_height`). Return an empty array — not an error — when nothing matches.
+
+### <a name="specialism-creative-generative"></a>creative-generative
+
+Storyboard: `creative_generative`. Takes a brief (`message`) and brand reference (`brand.domain`), generates finished assets.
+
+```typescript
+buildCreative: async (params) => {
+  const { message, brand, quality } = params;
+  const brandDomain = brand?.domain ?? 'unknown';
+  const q = quality ?? 'draft';
+
+  // Multi-format: return one manifest per target
+  if (params.target_format_ids?.length) {
+    const manifests = await Promise.all(
+      params.target_format_ids.map((fid) => generateForFormat(fid, message, brandDomain, q)),
+    );
+    return { creative_manifests: manifests, sandbox: true };
+  }
+
+  // Single / refinement: if params.creative_manifest is present, use its assets as a seed
+  const targetFid = params.target_format_id ?? params.creative_manifest?.format_id;
+  const manifest = await generateForFormat(targetFid, message, brandDomain, q, params.creative_manifest);
+  return { creative_manifest: manifest, sandbox: true };
+},
+
+async function generateForFormat(fid, message, brandDomain, quality, seed) {
+  const priorHeadline = seed?.assets?.headline?.text;   // refinement — reuse buyer-approved copy
+  // ... call your image/copy model here
+  return {
+    format_id: fid,
+    assets: {
+      generated_image: { url: `${AGENT_URL}/generated/${fid.id}-${quality}.jpg`,
+        width: 300, height: 250, format: 'jpeg' },
+      headline: { text: priorHeadline ?? 'Generated headline' },
+      cta: { text: 'Shop now' },
+    },
+    // Provenance metadata when your output is AI-generated:
+    provenance: {
+      digital_source_type: 'ai',
+      ai_tool: 'your-generator-v1',
+    },
+  };
+}
+```
+
+Brand resolution: fetch `https://{brand.domain}/brand.json` (or your internal brand store) to pull logos, voice, palette — use that to style the generated assets. If brand resolution fails, return `BRAND_NOT_FOUND` rather than silently using defaults.
+
+Quality levels: `draft` is fast + cheap (thumbnails, placeholder copy); `production` is final-quality (full-resolution, real copy, brand-reviewed). Use the distinction to let buyers iterate cheaply before paying for final renders.
 
 ## Reference
 
