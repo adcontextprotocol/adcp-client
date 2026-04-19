@@ -4804,15 +4804,15 @@ export interface PushNotificationConfig {
    */
   token?: string;
   /**
-   * Authentication configuration for webhook delivery (A2A-compatible)
+   * Legacy authentication configuration (A2A-compatible). Opts the seller into Bearer or HMAC-SHA256 signing instead of the default RFC 9421 webhook profile. Deprecated; removed in AdCP 4.0. When omitted, the seller MUST sign webhooks with the 9421 profile.
    */
-  authentication: {
+  authentication?: {
     /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit `authentication` and use the RFC 9421 webhook profile.
      */
     schemes: AuthenticationScheme[];
     /**
-     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
      */
     credentials: string;
   };
@@ -4855,9 +4855,9 @@ export interface ReportingWebhook {
 
 // create_media_buy response
 /**
- * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
+ * Response payload for create_media_buy. Exactly one of three shapes: (1) synchronous success — media_buy_id and packages are issued in-line, no status or a MediaBuyStatus value (pending_creatives / pending_start / active); (2) terminal failure — an errors array with no media-buy artifact and status != 'submitted'; (3) submitted task envelope — status 'submitted' with task_id, the media buy is queued or awaiting a human decision (e.g., IO signing), and media_buy_id / packages land on the task's completion artifact, not this response. The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These three shapes are mutually exclusive — a response has exactly one.
  */
-export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
+export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError | CreateMediaBuySubmitted;
 /**
  * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
  */
@@ -5280,6 +5280,30 @@ export interface CreateMediaBuyError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+/**
+ * Async task envelope returned when the media buy cannot be confirmed before the response is emitted — for example, when a guaranteed buy requires IO signing, when governance review is outstanding, or when the seller has queued the request for batch processing. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the media_buy_id and packages land on the completion artifact, not this envelope. Do not use a 'pending_approval' MediaBuy.status for this case — that value is not in MediaBuyStatus; IO review and similar pre-issuance workflows are modeled at the task layer only.
+ */
+export interface CreateMediaBuySubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose status field carries a MediaBuyStatus value (pending_creatives, pending_start, active). See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. The media_buy_id is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Suitable for display to buyer-side humans or agent reasoning.
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
 
 // update_media_buy parameters
 /**
@@ -7426,7 +7450,8 @@ export type RightUse =
   | 'sync'
   | 'background_music'
   | 'editorial'
-  | 'commercial';
+  | 'commercial'
+  | 'ai_generated_image';
 /**
  * Type of rights (talent, music, etc.). Helps identify constraints when a creative combines multiple rights types.
  */

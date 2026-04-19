@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-19T20:28:00.594Z
+// Generated at: 2026-04-19T21:08:29.618Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -936,7 +936,7 @@ export const SignalIDSchema = z.union([z.object({
         id: z.string()
     }).passthrough()]);
 
-export const RightUseSchema = z.union([z.literal("likeness"), z.literal("voice"), z.literal("name"), z.literal("endorsement"), z.literal("motion_capture"), z.literal("signature"), z.literal("catchphrase"), z.literal("sync"), z.literal("background_music"), z.literal("editorial"), z.literal("commercial")]);
+export const RightUseSchema = z.union([z.literal("likeness"), z.literal("voice"), z.literal("name"), z.literal("endorsement"), z.literal("motion_capture"), z.literal("signature"), z.literal("catchphrase"), z.literal("sync"), z.literal("background_music"), z.literal("editorial"), z.literal("commercial"), z.literal("ai_generated_image")]);
 
 export const RightTypeSchema = z.union([z.literal("talent"), z.literal("character"), z.literal("brand_ip"), z.literal("music"), z.literal("stock_media")]);
 
@@ -1124,6 +1124,15 @@ export const CreateMediaBuyErrorSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const CreateMediaBuySubmittedSchema = z.object({
+    status: z.literal("submitted"),
+    task_id: z.string(),
+    message: z.string().optional(),
+    errors: z.array(ErrorSchema).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CreateMediaBuyAsyncInputRequiredSchema = z.object({
     reason: z.union([z.literal("APPROVAL_REQUIRED"), z.literal("BUDGET_EXCEEDS_LIMIT")]).optional(),
     errors: z.array(ErrorSchema).optional(),
@@ -1283,7 +1292,7 @@ export const PushNotificationConfigSchema = z.object({
     authentication: z.object({
         schemes: z.array(AuthenticationSchemeSchema),
         credentials: z.string()
-    }).passthrough()
+    }).passthrough().optional()
 }).passthrough();
 
 export const AcquireRightsPendingApprovalSchema = z.object({
@@ -6122,7 +6131,7 @@ export const CreateMediaBuyRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema]);
+export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema, CreateMediaBuySubmittedSchema]);
 
 export const UpdateMediaBuyRequestSchema = z.object({
     adcp_major_version: z.number().optional(),

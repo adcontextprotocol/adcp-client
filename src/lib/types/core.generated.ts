@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-19T20:27:11.965Z
+// Generated at: 2026-04-19T21:08:25.600Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -3816,7 +3816,7 @@ export type ProposalStatus = 'draft' | 'committed';
 /**
  * Response for completed or failed create_media_buy
  */
-export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
+export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError | CreateMediaBuySubmitted;
 /**
  * Selects an audience by signal reference or natural language description. Uses 'type' as the primary discriminator (signal vs description). Signal selectors additionally use 'value_type' to determine the targeting expression format (matching signal-targeting.json variants).
  */
@@ -3938,7 +3938,8 @@ export type RightUse =
   | 'sync'
   | 'background_music'
   | 'editorial'
-  | 'commercial';
+  | 'commercial'
+  | 'ai_generated_image';
 /**
  * Type of rights (talent, music, etc.). Helps identify constraints when a creative combines multiple rights types.
  */
@@ -4577,6 +4578,29 @@ export interface CreateMediaBuyError {
    * Array of errors explaining why the operation failed
    */
   errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Async task envelope returned when the media buy cannot be confirmed before the response is emitted — for example, when a guaranteed buy requires IO signing, when governance review is outstanding, or when the seller has queued the request for batch processing. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the media_buy_id and packages land on the completion artifact, not this envelope. Do not use a 'pending_approval' MediaBuy.status for this case — that value is not in MediaBuyStatus; IO review and similar pre-issuance workflows are modeled at the task layer only.
+ */
+export interface CreateMediaBuySubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose status field carries a MediaBuyStatus value (pending_creatives, pending_start, active). See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. The media_buy_id is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Suitable for display to buyer-side humans or agent reasoning.
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5550,15 +5574,15 @@ export interface PushNotificationConfig {
    */
   token?: string;
   /**
-   * Authentication configuration for webhook delivery (A2A-compatible)
+   * Legacy authentication configuration (A2A-compatible). Opts the seller into Bearer or HMAC-SHA256 signing instead of the default RFC 9421 webhook profile. Deprecated; removed in AdCP 4.0. When omitted, the seller MUST sign webhooks with the 9421 profile.
    */
-  authentication: {
+  authentication?: {
     /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit `authentication` and use the RFC 9421 webhook profile.
      */
     schemes: AuthenticationScheme[];
     /**
-     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
      */
     credentials: string;
   };
