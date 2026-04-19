@@ -1,5 +1,1113 @@
 # Changelog
 
+## 6.0.0
+
+### Major Changes
+
+- 9e9e407: Verifier API v3 + HTTPS-fetching JWKS / revocation stores. Closes #583
+  (items 1 and 2) and closes #584.
+
+  ## Breaking changes
+
+  **`verifyRequestSignature` return shape** — now a discriminated union:
+
+  ```ts
+  type VerifyResult =
+    | { status: 'verified'; keyid: string; agent_url?: string; verified_at: number }
+    | { status: 'unsigned'; verified_at: number };
+  ```
+
+  Pre-3.x returned a `VerifiedSigner` with `keyid: ''` as a sentinel when the
+  request was unsigned on an operation not in `required_for`. Consumers that
+  branched on `result.keyid === ''` must now branch on `result.status`.
+
+  `createExpressVerifier` updates `req.verifiedSigner` accordingly — the field
+  is set only when `status === 'verified'`. Handlers that read
+  `req.verifiedSigner !== undefined` continue to work (they were incorrect on
+  the old `keyid: ''` sentinel path, which we've now eliminated).
+
+  **`VerifyRequestOptions.operation` is now optional.** Passing it remains
+  the correct behavior for middleware-driven verification; when omitted, the
+  verifier treats the operation as "not in any `required_for`" and returns an
+  unsigned result. Use this for always-verify mode where the application
+  layer rejects the unsigned case itself.
+
+  **`ExpressMiddlewareOptions.resolveOperation` may now return `undefined`.**
+  Previously typed `(req) => string`. Callers that want to accept unsigned
+  requests for specific paths (health checks, discovery) can return
+  `undefined` to bypass `required_for` enforcement without losing verifier
+  coverage on signed paths.
+
+  ## New
+  - **`HttpsJwksResolver(url, options)`** — fetches a JWKS from an HTTPS URL
+    and caches it in memory. Key-unknown triggers a lazy refetch (honoring a
+    30s minimum cooldown), so a counterparty rotating its keys is picked up
+    without a process restart. Respects `ETag` (`If-None-Match`) and
+    `Cache-Control: max-age`. Runs through `ssrfSafeFetch` so IMDS / private
+    networks are refused.
+  - **`HttpsRevocationStore(url, options)`** — caches a `RevocationSnapshot`
+    in memory and refreshes when `now > next_update`. Fails closed with
+    `request_signature_revocation_stale` when the snapshot is past
+    `next_update + graceSeconds` (default 300s). SSRF-guarded.
+  - **`request_signature_revocation_stale`** added to
+    `RequestSignatureErrorCode`, with `failedStep: 9`. Middleware returns
+    it as a 401 the same as any other verifier error.
+
+  ## Migration
+
+  ```ts
+  // Before (2.x):
+  if (verified.keyid) {
+    // signed
+  }
+
+  // After (3.x):
+  if (result.status === 'verified') {
+    // signed — result.keyid is non-empty
+  }
+  ```
+
+### Minor Changes
+
+- d9613f6: Follow upstream AdCP rename of `domain` → `protocol` through the compliance cache, generated types, and storyboard runner.
+
+  **Compliance cache layout**
+  - `compliance/cache/{version}/domains/` → `compliance/cache/{version}/protocols/` (upstream currently ships both during transition; the runner now reads `protocols/`).
+  - `index.json` field `domains` → `protocols`.
+  - Specialism entries expose `protocol` (parent) instead of `domain`.
+
+  **Public API**
+  - `PROTOCOL_TO_DOMAIN` → `PROTOCOL_TO_PATH`.
+  - `PROTOCOLS_WITHOUT_BASELINE` removed. Upstream no longer lists `compliance_testing` under `supported_protocols`; it's declared via the top-level `compliance_testing` capability block. Agents still shipping the old enum value are handled silently inside `resolveStoryboardsForCapabilities`. If you imported `PROTOCOLS_WITHOUT_BASELINE`, delete the reference.
+  - `ComplianceIndexDomain` → `ComplianceIndexProtocol`.
+  - `BundleKind` value `'domain'` → `'protocol'`.
+  - `ComplianceIndex.domains` → `ComplianceIndex.protocols`.
+
+  **Generated types (from upstream schemas)**
+  - `AdCPDomain` → `AdCPProtocol`.
+  - `TasksGetResponse.domain` → `protocol`; `TasksListRequest.filters.{domain,domains}` → `{protocol,protocols}`; `MCPWebhookPayload.domain` → `protocol`.
+  - `GetAdCPCapabilitiesResponse.supported_protocols` no longer includes `'compliance_testing'`; presence of the top-level `compliance_testing` block declares the capability and `scenarios` is required within it.
+
+  **Security baseline storyboard (partial support)**
+
+  Upstream added a universal `security_baseline` storyboard whose steps target runner-internal tasks (`protected_resource_metadata`, `oauth_auth_server_metadata`, `assert_contribution`) and `$test_kit.*` substitution placeholders. The runner does not yet implement those execution paths. Steps targeting them are skipped with `skip_reason: 'missing_test_harness'` (overall storyboard reports `overall_passed: false` with zero passed steps). Full implementation — well-known metadata fetches, SSRF guardrails, accumulated-flag assertions, test-kit substitution — is tracked as a follow-up.
+
+  **Other**
+  - `adcp storyboard list` groups now labelled "Protocols" instead of "Domains".
+  - `docs/llms.txt` Flow summaries omit runner-internal tasks so LLM consumers don't mistake them for tools agents must expose.
+
+- c2a549d: Governance: remove non-spec `'escalated'` status to align with AdCP v3.
+
+  AdCP v3 governance has three terminal `check_governance` statuses: `'approved' | 'denied' | 'conditions'`. `CheckGovernanceResponseSchema` already validates to this set, but the SDK core carried `'escalated'` as a fourth status from a pre-v3 model. Spec-compliant governance agents cannot emit it, so the code path was dead under validation and misrepresented the protocol to consumers branching on `govResult.status`.
+
+  Human review is modelled in v3 as a workflow on `denied` (governance agent denies with a critical-severity finding that says human review is required; the buyer resolves review off-protocol and calls `check_governance` again with the human's approval), not as a fourth terminal status.
+
+  Changes:
+  - `GovernanceCheckResult.status` narrows to `'approved' | 'denied' | 'conditions'`.
+  - `TaskStatus` drops `'governance-escalated'`; failing governance checks surface as `'governance-denied'`.
+  - `TaskResultFailure.status` narrows to `'failed' | 'governance-denied'`.
+  - `GovernanceMiddleware` drops the `'escalated'` branch in `checkProposed`.
+  - `TaskExecutor.buildGovernanceResult` signature no longer takes a status parameter.
+  - Test-scenario validator for `check_governance` rejects `'escalated'` as an unexpected status.
+
+  Migration: if you branch on `result.status === 'governance-escalated'` or `govResult.status === 'escalated'`, fold those branches into the `'governance-denied'` / `'denied'` paths. Inspect `governance.findings` for human-review signals if you need to distinguish the reason.
+
+  Fixes #589.
+
+- 6034b50: Governance: migrate test fixtures off `budget.authority_level`; add Annex III helpers and a client-side invariant validator.
+
+  AdCP removed `budget.authority_level` in favor of two orthogonal fields:
+  - `budget.reallocation_threshold: number ≥ 0` / `budget.reallocation_unlimited: true` — budget reallocation autonomy (mutually exclusive).
+  - `plan.human_review_required: boolean` — mandatory human review for decisions affecting data subjects under GDPR Art 22 / EU AI Act Annex III.
+
+  Changes:
+  - Remove every `authority_level` reference from `src/lib/testing/` and `test/lib/` fixtures. Mapping: `agent_full → reallocation_unlimited: true`; `agent_limited → keep reallocation_threshold` (drop authority_level); `human_required → plan.human_review_required: true`.
+  - New `@adcp/client` exports from `src/lib/governance/`:
+    - `buildHumanReviewPlan(input)` — stamps `human_review_required: true` on a plan. The caller remains responsible for declaring the reason via `policy_categories` / `policy_ids`.
+    - `buildHumanOverride({ reason, approver, approvedAt? })` — builds the artifact required to downgrade `human_review_required: true → false` on re-sync. Validates reason ≥20 chars after trim, approver is an email, no control characters in either (audit-log safety), and `approvedAt` parses as ISO 8601.
+    - `validateGovernancePlan(plan)` — client-side check for two invariants that `datamodel-code-generator`-style codegen drops from `if/then`: budget threshold XOR unlimited, and regulated `policy_categories` (`fair_housing`, `fair_lending`, `fair_employment`, `pharmaceutical_advertising`) or Annex III `policy_ids` requiring `human_review_required: true`. Governance agents resolve synonyms and custom policies server-side and remain authoritative.
+    - `REGULATED_HUMAN_REVIEW_CATEGORIES`, `ANNEX_III_POLICY_IDS` constants.
+  - `skills/build-governance-agent/SKILL.md` `check_governance` decision logic updated to document `reallocation_threshold` / `reallocation_unlimited`, auto-flipping `human_review_required`, `data_subject_contestation` findings, `human_override` artifacts, and the audit-mode-no-downgrade rule.
+  - `docs/guides/GOVERNANCE-MIGRATION.md` documents the `authority_level` → `reallocation_threshold` / `reallocation_unlimited` / `human_review_required` mapping.
+
+  Fixes #576.
+
+- d666e51: Idempotency support for AdCP v3 mutating requests. Implements [adcp-client#568](https://github.com/adcontextprotocol/adcp-client/issues/568) (client ergonomics) and [adcp-client#569](https://github.com/adcontextprotocol/adcp-client/issues/569) (server middleware) for the required-key changes in [adcp#2315](https://github.com/adcontextprotocol/adcp/pull/2315).
+
+  ## What "just works" for existing callers
+
+  `npm update @adcp/client` is the full integration for most buyer-side apps:
+  - Client methods for mutating tools (`createMediaBuy`, `updateMediaBuy`, `activateSignal`, etc.) auto-generate a UUID v4 `idempotency_key` when the caller doesn't supply one. TypeScript input types were loosened to accept callers without a key — the method types for mutating tools now wrap their request with `MutatingRequestInput<T>`.
+  - Internal retries inside the SDK reuse the same key (re-generating defeats retry safety).
+  - `result.metadata.idempotency_key` surfaces the key that was sent, so callers can log it or persist it alongside the resource they created.
+  - `result.metadata.replayed` surfaces whether the seller returned a cached response for a prior retry.
+
+  ## Things downstream users MUST actually do
+
+  Three cases require action:
+  1. **If your agent emits side effects on response** — notifications, LLM memory writes, downstream tool calls, UI toasts — you MUST check `result.metadata.replayed` before acting. A cached replay returning `replayed: true` means the side effects already fired on the original call; re-emitting is the exact bug this field exists to prevent.
+  2. **If you catch errors broadly**, new typed errors exist:
+     - `IdempotencyConflictError` — same key used earlier with a different canonical payload. Mint a fresh UUID v4 and retry. This is the signal that an agent re-planned with a different intent, not a retry.
+     - `IdempotencyExpiredError` — key is past the seller's replay window. If you know the prior call succeeded, look up the resource by natural key (e.g., `get_media_buys` by `context.internal_campaign_id`) before retrying. If you don't know, a fresh key is safe.
+  3. **If you BYOK** — persist `idempotency_key` to your own DB across process restarts — you own the replay-window boundary. Compare the key's age against `adcp.idempotency.replay_ttl_seconds` from `get_adcp_capabilities`. Past the window, fall back to natural-key lookup.
+
+  ## Server-side middleware (`@adcp/client/server`)
+
+  New: `createIdempotencyStore({ backend, ttlSeconds })`. Pass the store to `createAdcpServer` and the framework handles:
+  - `INVALID_REQUEST` rejection when `idempotency_key` is missing or doesn't match the spec pattern `^[A-Za-z0-9_.:-]{16,255}$` (defense-in-depth against low-entropy keys and scope-injection via `\u0000` in the key)
+  - Replay cache with RFC 8785 JCS canonicalization of the payload hash (excludes `idempotency_key`, `context` _when it's the echo-back object shape — string-typed `context` on SI tools stays in the hash_, `governance_context`, and `push_notification_config.authentication.credentials`)
+  - `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload/field/hash leak in the error body — spec-compliant read-oracle defense)
+  - `IDEMPOTENCY_EXPIRED` past TTL with ±60s clock-skew tolerance
+  - Concurrent-retry protection via atomic `putIfAbsent` claim step — parallel requests with the same fresh key see `SERVICE_UNAVAILABLE` with `retry_after: 1` rather than all racing to execute side effects
+  - `replayed: true` injection on the envelope for cached replays (cache stores the _formatted_ envelope so non-deterministic wrap fields like `confirmed_at` are pinned; clones on every read so envelope stamps don't leak into the cache)
+  - Per-principal scoping via `resolveSessionKey` or explicit `resolveIdempotencyPrincipal(ctx, params, toolName)`
+  - **Per-session scoping for `si_send_message`** — the request `session_id` enters the scope tuple so the same key across two sessions doesn't cross-replay
+  - Only successful responses are cached (errors, `status: 'failed'`, and `status: 'canceled'` responses re-execute on retry — handler errors release the in-flight claim so a retry can re-execute rather than replay a transient failure)
+  - Auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities` (REQUIRED per spec — clients MUST NOT assume a default)
+  - Server-creation guardrail: logs an error when mutating handlers are registered without an idempotency store (v3 non-compliance — buyer retries will double-book). Suppressed by explicitly setting `capabilities.idempotency.replay_ttl_seconds` in your config.
+
+  `ttlSeconds` must be between 3600 (1h) and 604800 (7d) per spec. Out-of-range values throw at `createIdempotencyStore` construction — silent clamping would hide operator misconfiguration (e.g., `60` meaning "one minute" becoming `3600` and misleading buyers about retry safety).
+
+  Backends:
+  - `memoryBackend()` — in-process Map, for tests and single-process training agents. Deep-clones on read and write so middleware mutations (envelope stamps, echo-back context) don't leak back into the cache.
+  - `pgBackend(pool, { tableName? })` — Postgres. Identifiers centrally quoted via `quoteIdent` for defense-in-depth. Includes `getIdempotencyMigration()` for DDL and `cleanupExpiredIdempotency(pool)` for periodic reclaim.
+
+  ## Public API additions
+
+  ```ts
+  // Client
+  import {
+    IdempotencyConflictError,
+    IdempotencyExpiredError,
+    generateIdempotencyKey,
+    isMutatingTask,
+    isValidIdempotencyKey,
+    canonicalize,
+    canonicalJsonSha256,
+    closeMCPConnections, // now re-exported from the root — previously only via ./protocols
+    type MutatingRequestInput,
+  } from '@adcp/client';
+
+  // Server
+  import {
+    createIdempotencyStore,
+    memoryBackend,
+    pgBackend,
+    hashPayload,
+    getIdempotencyMigration,
+    cleanupExpiredIdempotency,
+    type IdempotencyStore,
+    type IdempotencyBackend,
+  } from '@adcp/client/server';
+  ```
+
+  ## Not breaking, despite the field becoming required in the spec
+
+  TypeScript request interfaces in `@adcp/client` mark `idempotency_key` as required (tracking the upstream schema), but the public client methods accept input without it and inject a key before sending. So existing call sites that omit `idempotency_key` continue to compile and run correctly. If you have code that constructs `CreateMediaBuyRequest` objects directly and sends them through raw MCP/A2A clients (bypassing `SingleAgentClient` / `AgentClient` / `ADCPMultiAgentClient`), add an `idempotency_key` — or route through the SDK methods, which handle it.
+
+- 7a31d75: Complete the remaining client-side idempotency gaps from [#568](https://github.com/adcontextprotocol/adcp-client/issues/568) left open after PR #590.
+
+  ## What changed
+
+  ### Typed error instances on `TaskResult` for idempotency failures
+
+  `result.errorInstance` is populated with a typed `ADCPError` subclass when the seller's error code has a dedicated class — currently `IdempotencyConflictError` and `IdempotencyExpiredError`. Callers can now write:
+
+  ```ts
+  const result = await client.createMediaBuy({...});
+  if (result.errorInstance instanceof IdempotencyConflictError) {
+    // Mint a fresh UUID v4 and retry
+  }
+  ```
+
+  The SDK pulls the sent `idempotency_key` from tracked task state when constructing the error — the server intentionally omits the key from error bodies (it's a read-oracle), so the transport-layer caller is the authoritative source. A new `adcpErrorToTypedError(adcpError, key)` helper is exported for callers who already have an `AdcpErrorInfo` in hand and want to type-narrow it themselves.
+
+  ### `getIdempotencyReplayTtlSeconds()` with fail-closed behaviour
+
+  New method on `SingleAgentClient` / `AgentClient` that reads `adcp.idempotency.replay_ttl_seconds` from cached capabilities. Returns `undefined` on v2 sellers (pre-idempotency-envelope), the declared number on compliant v3 sellers, and **throws** when a v3 seller omits the declaration. No silent 24h default — the spec makes the declaration REQUIRED, and silently defaulting would mislead retry-sensitive flows.
+
+  `AdcpCapabilities` now carries an `idempotency?: { replayTtlSeconds }` field populated from the v3 capabilities response. `parseCapabilitiesResponse` treats `0`, negative, or non-numeric values as "not declared" rather than coercing them.
+
+  ### `useIdempotencyKey(key)` BYOK helper
+
+  Validates against `IDEMPOTENCY_KEY_PATTERN` (`^[A-Za-z0-9_.:-]{16,255}$`) up front and returns a `{ idempotency_key }` fragment to spread into mutating params. Catches persisted-key drift before the round-trip:
+
+  ```ts
+  const key = await db.getOrCreateIdempotencyKey(campaign.id);
+  await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
+  ```
+
+  ### Key logging hygiene
+
+  Idempotency keys are a retry-pattern oracle within their TTL, so the SDK no longer writes full keys to debug logs by default. MCP and A2A debug logs now show the first 8 characters of any `idempotency_key` followed by `…`. Set `ADCP_LOG_IDEMPOTENCY_KEYS=1` to opt into full logging for local debugging. New `redactIdempotencyKey(key)` helper is exported for applications that emit their own logs.
+
+  ## Public API additions
+
+  ```ts
+  import {
+    adcpErrorToTypedError,
+    useIdempotencyKey,
+    redactIdempotencyKey,
+    type IdempotencyCapabilities,
+  } from '@adcp/client';
+
+  // On SingleAgentClient / AgentClient:
+  const ttl = await client.getIdempotencyReplayTtlSeconds(); // throws on non-compliant v3
+  ```
+
+  ## Not a breaking change
+
+  `TaskResult.errorInstance` is additive — existing code that switches on `adcpError.code` still works untouched. The new `getIdempotencyReplayTtlSeconds()` method only throws when callers explicitly ask for it against a non-compliant seller.
+
+- f29780a: Storyboard runner: `--multi-instance` mode to catch horizontal-scaling persistence bugs.
+
+  A seller deployed behind a load balancer with in-memory state passes every storyboard against a single URL but breaks in production when a follow-up step lands on a different machine. Single-URL runs never exercise this. `runStoryboard` now accepts an array of agent URLs and round-robins steps across them — writes on instance A must be visible on instance B or the read fails, and the runner attributes the failure with an instance→step map and a `write on [#A] → read on [#B] → NOT_FOUND` signature line matching the canonical horizontal-scaling bug.
+
+  CLI:
+
+  ```
+  npx @adcp/client storyboard run \
+    --url https://a.your-agent.example/mcp/ \
+    --url https://b.your-agent.example/mcp/ \
+    account_and_audience \
+    --auth $TOKEN
+  ```
+
+  - Repeated `--url` engages multi-instance mode (minimum 2). Positional agent is disallowed in this mode — single-URL runs still use the positional shorthand.
+  - JSON output gains `agent_urls[]` and `multi_instance_strategy` on the result, and `agent_url` + `agent_index` on each step.
+  - `--dry-run` prints the per-step instance assignment plan.
+  - Full capability-driven assessment (no storyboard ID) is not yet multi-instance aware; use a specific storyboard or bundle ID.
+
+  Error output mirrors the canonical failure example in the protocol docs (`create on replica [#1] … succeeded. read on replica [#2] … failed with NOT_FOUND. → Brand-scoped state is not shared across replicas.`) so developers pattern-match the page they'll click through to. Deep-links to [Verifying cross-instance state](https://adcontextprotocol.org/docs/building/validate-your-agent#verifying-cross-instance-state).
+
+  See `docs/guides/MULTI-INSTANCE-TESTING.md` for the full contract, including why the test asserts `(brand, account)`-keyed state, when false failures can occur, and how this fits alongside verify-by-architecture and verify-by-own-testing approaches.
+
+  Implements the client-side half of the cross-instance persistence requirement introduced in [adcontextprotocol/adcp#2363](https://github.com/adcontextprotocol/adcp/pull/2363). Closes [adcontextprotocol/adcp#2267](https://github.com/adcontextprotocol/adcp/issues/2267).
+
+- 7745a6f: Zero-config OAuth: auto-discovery on 401 + actionable `NeedsAuthorizationError`.
+
+  Closes the remaining item from #563. Calling an OAuth-gated MCP agent without saved credentials used to bubble up a generic 401 or `UnauthorizedError`. Now the library automatically walks RFC 9728 protected-resource metadata + RFC 8414 authorization-server metadata from the server's `WWW-Authenticate` challenge and throws a structured `NeedsAuthorizationError` with everything a caller needs to recover — no re-probing required.
+
+  **New exports**
+  - `NeedsAuthorizationError` — thrown automatically by `ProtocolClient.callTool` / `ADCPMultiAgentClient` when an MCP agent returns a 401 Bearer challenge and no saved tokens can satisfy it. Carries `agentUrl`, `resource`, `resourceMetadataUrl`, `authorizationServer`, `authorizationEndpoint`, `tokenEndpoint`, `registrationEndpoint`, `scopesSupported`, and the parsed challenge.
+  - `discoverAuthorizationRequirements(agentUrl, options?)` — programmatic access to the same walk. Returns `null` if the agent responds 200 without auth or 401 without a Bearer challenge.
+  - `createFileOAuthStorage({ configPath, agentKey? })` — file-backed `OAuthConfigStorage` against the `adcp` CLI's agents.json format. Atomic writes via write-then-rename; preserves non-OAuth fields on save. `agentKey` override keys all writes under a fixed alias regardless of `agent.id` (CLI pattern).
+  - `bindAgentStorage(agent, storage)` / `getAgentStorage(agent)` — per-agent `WeakMap` binding that threads an `OAuthConfigStorage` through `ProtocolClient.callTool` without changing its signature.
+
+  **Behavior changes**
+  - `ProtocolClient.callTool` now catches 401-shaped errors from both the OAuth-token path and the plain-bearer path and, if the agent returns a Bearer challenge, throws `NeedsAuthorizationError` instead of the generic error. Non-401 errors propagate unchanged.
+  - When `agent.oauth_tokens` is present and storage has been bound via `bindAgentStorage`, the non-interactive OAuth provider now receives the storage so refreshed tokens persist to disk.
+  - `adcp <alias> <tool>` automatically binds file-backed storage for saved OAuth aliases and prints an actionable prompt when authorization is required.
+
+  **Not breaking**
+
+  Existing callers that construct their own OAuth providers keep working. Existing bearer-only agents keep working. The only visible change on the error path is a more informative error class where `UnauthorizedError` would have propagated before.
+
+- 198542f: OAuth DX: `adcp diagnose-auth` + introspection utilities.
+
+  Debugging an OAuth misconfiguration against an MCP agent previously took hours of manual wire-level probing. These utilities collapse that into a single command with ranked hypotheses — and expose the underlying primitives so consumers can introspect the handshake themselves.
+
+  **New CLI**
+  - `adcp diagnose-auth <alias|url>` — end-to-end diagnostic that probes RFC 9728 protected-resource metadata, RFC 8414 authorization-server metadata, decodes the saved access token, optionally attempts a refresh with a `resource` indicator (RFC 8707), and calls `tools/list` + a tool on the agent. Emits ranked hypotheses (H1 resource-URL mismatch, H2 refresh grant ignores `resource`, H4 401 without `WWW-Authenticate`, H5 token-audience mismatch, H6 agent accepts token but doesn't validate audience).
+  - `--json` for structured output, `--skip-refresh` / `--skip-tool-call` for read-only runs, `--tool NAME` to override the probe tool.
+
+  **New library exports (from `@adcp/client` and `@adcp/client/auth`)**
+  - `runAuthDiagnosis(agent, options)` — programmatic access to the diagnosis runner; returns `AuthDiagnosisReport` with per-step HTTP captures and ranked hypotheses.
+  - `parseWWWAuthenticate(header)` — parse an RFC 9110 / RFC 6750 challenge and surface `realm`, `error`, `error_description`, `scope`, and the RFC 9728 `resource_metadata` URL.
+  - `decodeAccessTokenClaims(token)` — unsigned JWT claim decoder for diagnostics. Returns `{ header, claims, signature }` or `null` for opaque tokens. Does not verify the signature.
+  - `validateTokenAudience(token, expectedResource)` — checks whether the `aud` claim matches an expected resource URL with URL normalization. Returns `{ ok, reason, actualAudience }`.
+  - `InvalidTokenError`, `InsufficientScopeError` — re-exported from `@modelcontextprotocol/sdk/server/auth/errors.js` so consumers can discriminate 401 causes with `instanceof` rather than string-matching error messages.
+
+  **Bugfix**
+  - `ssrfSafeFetch` now handles undici's `lookup` callback correctly when it's called with `{ all: true }` (undici's default on Node 22+ for HTTPS targets). The previous scalar-only callback path caused "Invalid IP address: undefined" errors on every external HTTPS probe.
+
+- 6c84ea3: Thread OAuth tokens through the storyboard runner + `ADCPMultiAgentClient`.
+
+  Storyboards and other `ADCPMultiAgentClient`-based flows were bearer-only — saved OAuth tokens never reached the MCP transport, so OAuth-gated agents always failed with `Authentication required` and couldn't refresh on 401.
+
+  **New**
+  - `NonInteractiveFlowHandler` — an OAuth flow handler that lets the MCP SDK use and refresh saved tokens but refuses to open a browser. Throws an actionable error (`adcp --save-auth <alias> --oauth`) if a full authorization flow is attempted.
+  - `createNonInteractiveOAuthProvider(agent, { agentHint? })` — factory that builds an `MCPOAuthProvider` backed by the handler above. Use this in storyboard runs, scheduled jobs, and CI.
+  - `TestOptions.auth` gained a third variant: `{ type: 'oauth', tokens, client? }`. Pass saved OAuth tokens here and the test client builds the refresh-capable OAuth provider automatically.
+
+  **CLI**
+  - `adcp storyboard run <alias>` now picks up `oauth_tokens` from saved aliases and routes them through the OAuth provider, so the SDK can refresh on 401 instead of failing immediately.
+  - `resolveAgent` returns `oauthTokens` alongside `authToken` for command handlers that want the raw tokens.
+
+  **Runtime**
+  - `ProtocolClient.callTool` detects `agent.oauth_tokens` and routes MCP calls through `callMCPToolWithOAuth` with the non-interactive provider. Plain-bearer agents keep the cached-connection fast path.
+  - `SingleAgentClient.getAgentInfo()` — the hand-rolled MCP connection now routes through `connectMCP`, so both bearer and OAuth aliases work.
+
+  **Compatibility**
+
+  No breaking changes. Agents without `oauth_tokens` keep the existing bearer path. Existing `auth_token` and `auth.type: 'bearer'` call sites are unchanged.
+
+- 99ab36d: Follow upstream AdCP 3.0 account migration (adcontextprotocol/adcp#2336) across
+  storyboard runner, generated types, and property-list adapter.
+
+  **Storyboard runner — property-list builders removed.** The hardcoded request
+  builders for `create_property_list`, `get_property_list`, `update_property_list`,
+  `list_property_lists`, `delete_property_list`, and `validate_property_delivery`
+  injected a top-level `brand:` field that is no longer part of those request
+  schemas (replaced by `account`). The client stripped `brand` against any agent
+  built to current spec, session keying collapsed, and every post-create step in
+  the `property-lists` storyboard failed with `NOT_FOUND`. The builders are
+  removed so the runner falls through to each step's `sample_request` (spec-correct
+  `account` primitive), matching how `collection_list` tools have always worked.
+  Fixes [#577](https://github.com/adcontextprotocol/adcp-client/issues/577).
+
+  **Generated types regenerated** from upstream `latest.tgz` to pick up the
+  account migration, new `signed-requests` specialism, and `request_signing`
+  capability field on `GetAdCPCapabilitiesResponse`.
+
+  **Public API**
+  - `BudgetAuthorityLevel` type is removed — upstream no longer defines it.
+  - `DelegationAuthority` is re-exported from `./types/core.generated` (moved
+    upstream; the re-export path is the only change for consumers).
+
+  **Property-list adapter (`@adcp/client/server`)**
+  - `PropertyListAdapter.listLists` now filters by the `account` primitive instead
+    of the removed `principal` field. Both `account_id` and `brand+operator`
+    shapes are matched.
+
+- c19ecce: Request-signing grader — MCP transport mode (closes #612).
+
+  The conformance grader shipped in #600 targets raw-HTTP AdCP endpoints
+  (`/adcp/create_media_buy`), matching the spec vectors' URL shape. MCP
+  agents expose a single JSON-RPC endpoint with the operation named in the
+  body — different URL shape, different framing. This change adds a
+  transport-aware grading mode so the same grader works against both.
+
+  **New `GradeOptions.transport: 'raw' | 'mcp'`** (default `'raw'`).
+
+  In `'mcp'` mode, for every vector:
+  - The URL becomes `baseUrl` as-is (no path-join) — MCP agents have one
+    endpoint; the operation is in the body, not the path.
+  - The body is wrapped in a JSON-RPC `tools/call` envelope:
+    ```json
+    { "jsonrpc": "2.0", "id": N, "method": "tools/call",
+      "params": { "name": "<operation>", "arguments": <vector.body> } }
+    ```
+    `operation` is extracted from the vector URL's last path segment
+    (`/adcp/create_media_buy` → `create_media_buy`).
+  - `Accept: application/json, text/event-stream` is added so MCP Streamable
+    HTTP servers don't 406 the probe. Not a signed component, so adding it
+    doesn't affect signatures.
+
+  The signature covers the envelope body (including `content-digest` when
+  the verifier capability requires it). The verifier's `resolveOperation`
+  reads the JSON-RPC `params.name`; this pattern is already the canonical
+  one for MCP-hosted verifiers.
+
+  **CLI flag `--transport <mode>`** on `adcp grade request-signing`.
+  Validated against `raw | mcp`; any other value exits 2 with a clear
+  error.
+
+  **New test agent `test-agents/seller-agent-signed-mcp.ts`** — uses
+  `createAdcpServer` (with `request_signing` + `specialisms` advertised via
+  the #600 framework wiring) + `serve({ preTransport })` (the pre-MCP
+  middleware hook from #600). The verifier fires before MCP dispatch; valid
+  requests flow into `createMediaBuy` / etc., invalid requests get 401 +
+  WWW-Authenticate.
+
+  **End-to-end test** at `test/request-signing-grader-mcp.test.js` —
+  spawns the MCP agent on a dedicated port, grades it in MCP mode, asserts
+  25/25 non-profile vectors pass + structural invariants on the envelope
+  shape (method, params.name, URL = baseUrl, Accept header present).
+
+  Raw-HTTP grading (default) is unchanged. Canonicalization-edge vectors
+  (005–008) bake their edges into the vector URL path/query — MCP mode
+  folds them into plain POSTs against the MCP endpoint, which is a
+  documented trade-off, not a regression. Operators who want those edges
+  tested should use `--transport raw` against a per-operation agent.
+
+  Dependency graph is now complete for the live-agent smoke test tracked
+  at adcontextprotocol/adcp#2368: with #600 (grader) + this PR
+  (MCP-aware) + #2368 (test-agent deploys the verifier + advertises the
+  specialism), `adcp grade request-signing https://test-agent.adcontextprotocol.org/mcp --transport mcp`
+  produces a meaningful conformance grade.
+
+- d116a07: Request-signing conformance grader — review fixes.
+
+  Addresses findings from the six-agent expert review of PR #600. Behavioral
+  changes:
+
+  **Correctness**
+  - Skipped vectors now report as `skipped: true` through the storyboard
+    runner instead of being scored as failures (previously `probe-dispatch.ts`
+    set `HttpProbeResult.error` on skip, which the runner's `fetchOk` check
+    treated as failed). Requires a new `HttpProbeResult.skipped` flag and
+    `executeProbeStep` branch that bypasses validations for skipped probes.
+  - Synthesis failure now surfaces as a failing `synthesis_error` phase in
+    the storyboard rather than a silent empty-phase fallback — CI pipelines
+    would have seen green for an infrastructural bug.
+  - Vector 010 (`content-digest-mismatch`) now tests the intended invariant:
+    the signer commits a wrong `Content-Digest` value (zero-byte digest) in
+    the signature base, and the verifier's step-11 recompute fails. Previous
+    mutation (append space to body post-sign) exercised a different bug
+    class (body-tampered-in-transit) and would mask lying-signer detection
+    in verifiers that recompute digest from the received body.
+  - Vector 009 (`key-purpose-invalid`) now honors the vector's pinned
+    `jwks_ref` (`test-gov-2026`) directly instead of inferring a non-request-
+    signing key from the keyset.
+
+  **Safety (live side effects)**
+  - Vectors 016 (`replay_window`) and 020 (`rate_abuse`) now auto-skip
+    against non-sandbox endpoints unless the operator passes
+    `allowLiveSideEffects: true`. The contract YAML's `endpoint_scope:
+sandbox` declaration satisfies the gate when present. Prevents
+    accidental live `create_media_buy` creation or replay-cache flooding
+    against production agents.
+  - `GradeReport.endpoint_scope_warning` → renamed to `live_endpoint_warning`
+    and inverted to be `true` when the endpoint is NOT declared sandbox
+    (the dangerous case). Prior semantics were misleading: the field read
+    as "sandbox is bad."
+
+  **WWW-Authenticate parser hardening**
+  - `extractSignatureErrorCode` now constrains returned codes to the
+    `[a-z0-9_]+` alphabet, rejecting malformed / adversarial values from
+    untrusted agent headers. Downstream diagnostic strings and LLM-consumption
+    paths are safe from smuggled content.
+  - `splitChallenges` now tracks quote state so adversarial `error="foo,
+Bar baz"` doesn't spuriously split mid-value.
+
+  **DX / ergonomics**
+  - New CLI: `adcp grade request-signing <agent-url>` with
+    `--skip-rate-abuse`, `--rate-abuse-cap`, `--only`, `--skip`,
+    `--allow-live-side-effects`, `--allow-http`, `--json`. Human-readable
+    table output by default; exit code 0 on pass, 1 on fail, 2 on
+    configuration error.
+  - `GradeReport` now carries `passed_count` / `failed_count` /
+    `skipped_count` at the top level — no more client-side `reduce()` to
+    enumerate.
+  - `GradeOptions.onlyVectors: string[]` filters to a subset of vector IDs
+    (all others auto-skip) — simplifies isolated regression tests and
+    replaces the three hand-maintained 19-entry skip arrays in the test
+    suite.
+  - Barrel (`index.ts`) is now grouped as "Public API" / "Storyboard-runner
+    hooks" / "Advanced harness building blocks" with a top-level module
+    JSDoc and usage snippet.
+  - `BuildOptions.baseUrl` now prefixes the agent's mount path to the
+    vector path, so agents served at `/v1/adcp/*` (not `/adcp/*`) receive
+    requests at the right path.
+
+  **Hygiene**
+  - `ContractId` (`replay_window | revocation | rate_abuse`) is now a single
+    source of truth in `types.ts` (was duplicated across three files).
+  - `AdcpJsonWebKey.d` is now an explicit optional field with JSDoc
+    explaining its role instead of flowing through the index signature.
+  - `loadRequestSigningVectors` memoizes per-cacheDir. Previously every
+    `gradeOneVector` call re-parsed 28 JSON fixtures + keys.json + YAML
+    test-kit (compliance cache is immutable during a process lifetime).
+  - New test util `test/utils/reference-verifier.js` extracts the
+    `startReferenceVerifier` + `makeExpressShim` pattern that previously
+    appeared verbatim in three test files.
+  - Dispatch wire-up test: `runStoryboardStep` with a synthesized
+    `request_signing_probe` step now has a dedicated test so someone
+    removing the task from `PROBE_TASKS` or flipping the dispatch condition
+    in `runner.ts` gets caught by CI.
+
+- d116a07: Request-signing conformance grader — Slice 1: vector loader + adversarial builder.
+
+  Internal module at `src/lib/testing/storyboard/request-signing/` that consumes the
+  RFC 9421 conformance vectors and test keypairs shipped in
+  `compliance/cache/{version}/test-vectors/request-signing/`. Walks the positive/
+  and negative/ directories, parses each fixture into typed `PositiveVector` /
+  `NegativeVector` values (including the `requires_contract` field for stateful
+  vectors 016/017/020 once upstream adcp#2353 lands in `latest.tgz`), and loads
+  `keys.json` with the private scalars needed for dynamic re-signing.
+
+  Adversarial builder registers one mutation per negative vector (20 total). Each
+  mutation starts from a freshly-signed baseline via `src/lib/signing/signer.ts`
+  and applies the single documented mutation — wrong tag, expired window,
+  missing covered component, content-digest mismatch, malformed Signature-Input,
+  etc. — so the grader can send real requests to a live verifier rather than
+  replaying stale `reference_now` signatures. Stateful vectors (016 replay, 017
+  revoked, 020 rate-abuse) produce a single well-formed request; the storyboard
+  runner will orchestrate repeat/flood/revoked-keyid behavior around them per
+  the signed-requests-runner test-kit contract (coming in Slice 2).
+
+  Not yet public API — consumed by the in-progress storyboard runner phase.
+
+- d116a07: Request-signing conformance grader — Slice 2: standalone grader orchestrator
+  and end-to-end smoke test against the reference verifier.
+
+  New module surface under `src/lib/testing/storyboard/request-signing/`:
+  - **Test-kit loader** (`test-kit.ts`): parses the signed-requests-runner harness
+    contract YAML shipped by adcp#2353. Typed access to the runner's signing
+    keyids, replay-window contract, revocation contract, and rate-abuse contract
+    (with production-cap vs grading-cap fields kept separate per the spec).
+  - **HTTP probe** (`probe.ts`): sends a `SignedHttpRequest` to the agent and
+    captures status + `WWW-Authenticate` error code. Reuses the SSRF guards
+    from `storyboard/probes.ts` (DNS pin, private-IP block, IMDS always-block,
+    64 KiB body cap, 10 s timeout, `redirect: 'manual'`).
+  - **Grader orchestrator** (`grader.ts`): `gradeRequestSigning(agentUrl, options)`
+    runs all 28 conformance vectors in black-box mode. Handles the stateful
+    contracts natively — vector 016 uses the replay-window repeat-request
+    behavior, 017 uses the pre-revoked keyid, 020 fills the per-keyid cap then
+    probes cap+1 — and emits per-vector diagnostics keyed to the spec error
+    codes. `skipRateAbuse`, `rateAbuseCap`, and `skipVectors` options let
+    operators tune to their agent's configuration.
+  - **Base-URL retargeting** in the builder: the vectors target
+    `seller.example.com`, but real agents live elsewhere. `BuildOptions.baseUrl`
+    swaps the origin into the agent's URL before signing so signatures match
+    the URL the grader actually POSTs to.
+
+  Integration test at `test/request-signing-grader-e2e.test.js` stands up a
+  reference verifier (the #587 Express middleware) on localhost and grades
+  against it. Covers the capability-either profile on 17 non-stateful negatives
+  - replay/revocation + 8 positives, plus dedicated tests for the
+    content-digest `required`/`forbidden` capability profiles and the rate-abuse
+    contract with matched caps. Verifies the full loader → builder → probe →
+    grader pipeline catches the step-ordering guarantees of the checklist (9/9a
+    before 10, 12 before 13) and the WWW-Authenticate byte-for-byte match.
+
+  Storyboard-runner integration (synthesizing per-vector steps into the YAML
+  runner's phase structure) is deferred to Slice 3 so it can land as a
+  focused change touching `runner.ts` / `probes.ts` / `compliance.ts`.
+
+  Not yet a CLI entry point — consume via `loadRequestSigningVectors` /
+  `gradeRequestSigning` from
+  `@adcp/client/testing/storyboard/request-signing` (internal module path).
+
+- d116a07: Request-signing conformance grader — Slice 3: storyboard-runner integration.
+
+  The signed-requests specialism YAML declares `positive_vectors` and
+  `negative_vectors` phases whose steps are synthesized at runtime from the
+  test-vector fixtures (the spec deliberately avoids duplicating fixture data
+  in YAML). This change wires those synthesized steps into the storyboard
+  runner so `get_adcp_capabilities` → run-storyboard pipelines grade an agent's
+  RFC 9421 verifier as part of a normal compliance run.
+
+  Changes:
+  - **Synthesizer** (`storyboard/request-signing/synthesize.ts`): expands
+    `positive_vectors` / `negative_vectors` phases with one
+    `request_signing_probe` step per vector on disk. Step IDs follow a
+    `positive-<vector>` / `negative-<vector>` convention that the dispatch
+    helper decodes. `skipVectors` option filters at synthesis time.
+  - **Compliance loader** hooks synthesis into `loadBundleStoryboards` so
+    callers (runner, CLI tools, reporting) see a fully populated storyboard.
+    Falls back to the unsynthesized form with a warning if the compliance
+    cache is missing vectors.
+  - **Loader** (`storyboard/loader.ts`) now tolerates phases with no `steps:`
+    key — the signed-requests YAML is the first specialism to ship such
+    phases.
+  - **Probe dispatch** (`storyboard/request-signing/probe-dispatch.ts`): new
+    `request_signing_probe` entry in `PROBE_TASKS`. The dispatcher decodes
+    the step ID, runs the grader's per-vector logic
+    (`gradeOneVector`), and maps the `VectorGradeResult` to an
+    `HttpProbeResult`-shaped return so the existing validation pipeline
+    (`http_status`, `http_status_in`) works unchanged.
+  - **StoryboardRunOptions** gains a `request_signing?` block —
+    `skipRateAbuse`, `rateAbuseCap`, `skipVectors` — so operators can tune
+    the grader without forking the runner.
+
+  Integration tests at `test/request-signing-runner-integration.test.js`:
+  verify synthesis produces the right step count/IDs, exercise the probe
+  dispatch against a reference verifier (positive accept, negative reject
+  with matching WWW-Authenticate, skip-rate-abuse, skip-vectors, unknown
+  step ID, capability-profile mismatch surfaces as a probe error).
+
+  With this slice, `compliance/specialisms/signed-requests/index.yaml` runs
+  end-to-end through the existing storyboard runner — no specialism-specific
+  entry point required.
+
+- d116a07: Request-signing grader — Slice 4: signed test agent + framework wiring for
+  `request_signing` / `specialisms` capability advertisement.
+
+  **Framework — `AdcpCapabilitiesConfig`**
+
+  `createAdcpServer({ capabilities: { … } })` now accepts two fields previously
+  unreachable from the framework:
+  - `request_signing` — the RFC 9421 verifier capability block
+    (`supported`, `covers_content_digest`, `required_for`, `warn_for`,
+    `supported_for`). Emitted verbatim in `get_adcp_capabilities.request_signing`.
+  - `specialisms` — specialism claim list (e.g. `['signed-requests']`).
+    Each entry maps to a compliance bundle under
+    `/compliance/{version}/specialisms/{id}/`; the AAO runner resolves and
+    executes the matching storyboards.
+
+  Without these, agents wanting to declare signed-requests support had to
+  fork the capability-assembly path. Now it's one-liner capability config.
+
+  **Framework — `serve.preTransport` hook**
+
+  `serve(createAgent, { preTransport })` accepts a pre-MCP-transport middleware
+  that runs after path-matching and before the MCP transport is connected. The
+  request body is buffered into `req.rawBody` before the hook fires so
+  signature verifiers can hash it. The transport receives the parsed JSON body
+  via `transport.handleRequest(req, res, parsedBody)` so the already-consumed
+  stream doesn't race.
+
+  Intended for transport-layer concerns — RFC 9421 signature verification
+  being the primary use case. Returning `true` signals the middleware handled
+  the response (e.g. a 401 with `WWW-Authenticate`); returning `false`
+  continues into MCP dispatch.
+
+  **Test agent — `test-agents/seller-agent-signed.ts`**
+
+  Minimal HTTP server pre-configured per the `signed-requests-runner`
+  test-kit contract:
+  - JWKS contains `test-ed25519-2026`, `test-es256-2026`, `test-gov-2026`,
+    `test-revoked-2026` (from `compliance/cache/latest/test-vectors/
+request-signing/keys.json`).
+  - Revocation list pre-includes `test-revoked-2026`.
+  - Per-keyid replay cap = 100 (matches contract's
+    `grading_target_per_keyid_cap_requests`).
+  - `required_for: ['create_media_buy']` — vector 001 surfaces
+    `request_signature_required`.
+
+  Exposes `/get_adcp_capabilities` (unsigned, declares `supported: true` +
+  `specialisms: ['signed-requests']`) and accepts signed requests on any
+  other path, routing the operation name from the last path segment.
+
+  Run `PORT=3100 node test-agents/dist/seller-agent-signed.js` and grade it
+  with `node bin/adcp.js grade request-signing http://127.0.0.1:3100
+--allow-http --skip-rate-abuse`. Current results against this agent:
+  **25/25 graded vectors pass, 3 skipped** (capability-profile + rate-abuse
+  opt-out). Validates the full grader → signer → verifier path end-to-end.
+
+  Note: the test agent is not an MCP agent — vectors target raw-HTTP AdCP
+  paths, and the RFC 9421 verifier is a transport-layer concern. An
+  MCP-aware grader (JSON-RPC envelope wrapping + single-endpoint routing)
+  is a separate scope; follow-up ticket to be filed.
+
+- 9fd1ba1: RFC 9421 request-signing profile (AdCP 3.0 optional). Adds `@adcp/client/signing`
+  with signer, verifier, Express-shaped middleware, pluggable JWKS/replay/revocation
+  stores, and typed error taxonomy (`RequestSignatureError`). Passes all 28 spec
+  conformance vectors shipped in `compliance/cache/latest/test-vectors/request-signing/`
+  (one positive vector currently skipped pending upstream adcp#2335 tarball
+  republish — test auto-unskips when `npm run sync-schemas` pulls the fixed
+  vector). Verifier uses the received `Signature-Input` substring verbatim when
+  rebuilding the signature base, so peers emitting params in any legal RFC 8941
+  order remain byte-identical. Replay TTL floored at one max-window + skew so
+  short-validity signers can't escape the replay horizon. Content-Digest parses
+  as an RFC 9530 dictionary (accepts `sha-256` alongside other algorithms).
+  JWKS-returns-wrong-kid and Content-Length-without-rawBody both reject as typed
+  errors. New CLI: `adcp signing generate-key` (suppresses private JWK from
+  stdout when `--private-out` is set) and `adcp signing verify-vector`.
+- f22d5dc: Auto-apply RFC 9421 request signing to outbound MCP and A2A calls inside
+  `ProtocolClient` / `AdCPClient`. Follow-up to the signing primitives shipped
+  previously: the library now wires the signer into `StreamableHTTPClientTransport`
+  and the A2A `fetchImpl` automatically when an `AgentConfig.request_signing`
+  block is present.
+
+  Behavior:
+  - On first outbound call for an agent with `request_signing`, the client
+    fetches `get_adcp_capabilities` (unsigned — the discovery op is exempt) and
+    caches the seller's `request_signing` capability per-agent with a 300s TTL.
+  - Subsequent calls consult the cache to decide per-operation whether to
+    sign — precedence matches the spec: buyer `always_sign` > seller
+    `required_for` > seller `warn_for` (shadow-mode telemetry) > seller
+    `supported_for` (buyer opted in via `sign_supported`).
+  - Content-digest coverage honors the seller's `covers_content_digest` policy
+    (`required` / `forbidden` / `either`) per-request.
+  - Transport connection caches disambiguate by a per-key fingerprint (hash of
+    `kid` + private scalar) so two tenants that misconfigure the same `kid`
+    but hold distinct private keys cannot collide on a shared cached
+    transport and sign each other's traffic.
+  - `get_adcp_capabilities` and MCP/A2A protocol-layer RPCs (`initialize`,
+    `tools/list`, A2A card discovery) always pass through unsigned.
+  - OAuth-gated agents with signing: `callMCPToolWithOAuth` threads the
+    signing context through to the transport fetch, so OAuth flows don't
+    silently drop signatures.
+  - Priming failures fail open with a 60s negative cache: a transient seller
+    discovery outage doesn't wedge every subsequent call. `always_sign` ops
+    still get signed with sensible content-digest defaults; ops the seller
+    might have listed in `required_for` reach the wire unsigned and are
+    rejected visibly with `request_signature_required`, which retries re-prime.
+  - Concurrent cold-cache fans-out share one `get_adcp_capabilities` fetch
+    via an in-flight pending-map stored on the `CapabilityCache` instance
+    itself — so two tenants with separate `CapabilityCache` instances get
+    independent in-flight tables, and embedders who construct their own
+    cache don't race against the default cache.
+  - `AgentSigningContext.invalidate()` evicts this context's capability
+    entry so callers don't have to rebuild the cache key from the agent's
+    identifying fields when they want to force a re-prime.
+  - Signing-reserved headers (`Signature`, `Signature-Input`, `Content-Digest`)
+    supplied by a caller's `customHeaders` are scrubbed before the signer
+    runs — a misconfigured header cannot silently break or bypass the RFC
+    9421 signature output.
+  - `extractAdcpOperation` throws on unsupported body shapes (Blob, FormData,
+    ReadableStream) rather than silently passing the request unsigned — the
+    seller's `required_for` contract is not broken by SDK body-format drift.
+
+  New field on `AgentConfig`: `request_signing?: AgentRequestSigningConfig`
+  (kid, alg, `AdcpPrivateJsonWebKey` with required `d`, agent_url, optional
+  `always_sign[]` and `sign_supported`).
+
+  New sub-barrels:
+  - `@adcp/client/signing/client` — signer, canonicalization, fetch wrapper,
+    capability cache, and the auto-wiring helpers a buyer building an
+    AdCPClient needs.
+  - `@adcp/client/signing/server` — verifier pipeline, Express-shaped
+    middleware, JWKS / replay / revocation stores, error taxonomy.
+
+  The existing `@adcp/client/signing` barrel continues to export the union of
+  both sub-barrels, so existing consumers keep working. New code should
+  import from whichever half matches its role — coding agents reading a file
+  cold only need to hold one side of the taxonomy.
+
+  New exports on `@adcp/client/signing/client`: `CapabilityCache`,
+  `buildCapabilityCacheKey`, `defaultCapabilityCache`,
+  `buildAgentSigningContext`, `buildAgentSigningFetch`,
+  `ensureCapabilityLoaded`, `extractAdcpOperation`, `shouldSignOperation`,
+  `resolveCoverContentDigest`, `toSignerKey`, `CAPABILITY_OP`,
+  `CoverContentDigestPredicate`. `AgentSigningContext` gains an
+  `invalidate()` method. `CachedCapability` gains an optional `staleAt`
+  deadline for negative-cache entries.
+
+  `createSigningFetch` now accepts `coverContentDigest` as either `boolean`
+  or `(url, init) => boolean` so the seller policy can be resolved per
+  request without rebuilding the wrapper.
+
+- 9f79f72: Conform the storyboard runner and `comply()` output to the universal
+  runner-output contract (adcontextprotocol/adcp PR #2364 / issue #2352).
+  Failure results are now actionable: the implementor can self-diagnose
+  a validation failure from the runner output alone, without re-running
+  the step by hand.
+
+  **New on every `ValidationResult`:**
+  - `json_pointer` — RFC 6901 pointer to the failing field
+  - `expected` / `actual` — machine-readable values (schema `$id`,
+    allowed enums, observed value, etc.)
+  - `schema_id` / `schema_url` — set on `response_schema` checks so the
+    implementor can re-validate locally against the same artifact
+  - `request` / `response` — exact bytes the runner sent and observed,
+    attached on failure (not echoed on passing checks)
+  - For `response_schema` failures, `actual` is now an AJV-shaped
+    `{ instance_path, schema_path, keyword, message }[]` instead of a
+    flat message string.
+
+  **New on every `StoryboardStepResult`:**
+  - `extraction: { path: "structured_content" | "text_fallback" | "error" | "none" }`
+    — records which MCP extraction path produced the parsed response so
+    runner extraction bugs are separable from agent bugs. The response
+    unwrapper and raw MCP probe stamp the provenance as a non-enumerable
+    `_extraction_path` tag on the unwrapped `AdCPResponse`; the runner reads
+    it via `readExtractionPath()` and surfaces it here. All four values are
+    emitted in practice (previously `text_fallback` was unreachable).
+  - `request` / `response_record` — the full transport-level exchange
+    (omitted for synthetic / skipped steps).
+  - `storyboard_id` — each step is self-describing.
+  - `skip: { reason, detail }` — structured skip result with
+    human-readable explanation (agent tools, prerequisite step id, etc.).
+
+  **Spec-aligned skip reasons.** The narrow
+  `"not_testable" | "dependency_failed" | "missing_test_harness" | "missing_tool"`
+  enum is replaced by the six contract reasons:
+
+  | Reason                    | When it fires                                              |
+  | ------------------------- | ---------------------------------------------------------- |
+  | `not_applicable`          | Agent did not declare the protocol / specialism            |
+  | `no_phases`               | Storyboard is a placeholder with no executable phases      |
+  | `prerequisite_failed`     | Prior step or context variable did not produce a value     |
+  | `missing_tool`            | Agent did not advertise a required tool                    |
+  | `missing_test_controller` | Deterministic-testing phase needs `comply_test_controller` |
+  | `unsatisfied_contract`    | A test-kit harness contract is out of scope                |
+
+  **Top-level summary gains:**
+  - `total_steps`, `steps_passed`, `steps_failed`, `steps_skipped`
+  - `schemas_used: Array<{ schema_id, schema_url }>` — deduplicated list
+    of schemas applied across the run so implementors can re-validate
+    locally.
+
+  **`ComplianceFailure` carries the first failed validation's
+  machine-readable detail** (`json_pointer`, `expected`, `actual`,
+  `schema_id`, `schema_url`) under a `validation` field, and the terminal
+  formatter now renders `At:` / `Expected:` / `Actual:` / `Schema:` for
+  each failure instead of the single generic line
+  `"Check agent capabilities"`.
+
+  **Security hardening.** Request and response payloads echoed on failed
+  validations run through a recursive redactor that replaces values at
+  keys matching `/^(authorization|credentials?|token|api[_-]?key|…)$/i`
+  with `'[redacted]'`. Response headers are allowlisted — only
+  `content-type`, `content-length`, `content-encoding`,
+  `www-authenticate`, `location`, `retry-after`, `x-request-id`,
+  `x-correlation-id` pass through; `set-cookie`, `authorization`,
+  `x-internal-*`, `x-amz-*` etc. are dropped so a hostile agent cannot
+  bait the runner into publishing internal state in a shared compliance
+  report. Agent-controlled `error` / `validation.actual` strings in the
+  terminal formatter output are wrapped in the existing
+  `fenceAgentText()` nonce so downstream LLM summarizers can't be
+  hijacked by hostile error messages.
+
+  **Migration.** The changes are additive on `ValidationResult` /
+  `StepResult` / `ComplianceFailure`. The skip-reason enum is a
+  breaking rename. Call sites that pattern-match on the old values
+  (`"not_testable"`, `"dependency_failed"`, `"missing_test_harness"`)
+  need to migrate to the spec-aligned names above. The bundled CLI
+  (`bin/adcp.js`) is updated in-tree; the only user-visible surface
+  that still needs a migration is third-party automation that reads
+  `StoryboardStepResult.skip_reason` from the `--json` output.
+
+- 5ff25b0: Round-2 runner enhancements for the `universal/security.yaml` conformance baseline (adcp-client#565).
+
+  > **Upgrade note** — this release tightens one test-kit invariant (`test_kit.auth.probe_task` is now required whenever `test_kit.auth` is declared, with an allowlist) and tightens its TypeScript type accordingly. Callers that relied on the 5.0.x implicit default must add `probe_task: list_creatives` to preserve the prior behavior. See the "Breaking" section below.
+
+  Picks up the outstanding runner-side asks flagged during expert review of the storyboard. The directives and validation checks from the first round already shipped in 5.0.x; this release closes the remaining gaps before the storyboard can drive conformance against real v3.x agents.
+
+  **Version-gated storyboard execution**
+
+  Storyboards can now declare the AdCP version that introduced them via a new optional `introduced_in: "<major.minor>"` field. When an agent's `get_adcp_capabilities.adcp.major_versions` does not include the storyboard's major, the runner skips it with `skip_reason: 'not_applicable'` instead of running and retroactively failing. A v3.0 agent tested against a v3.1-introduced storyboard now surfaces a distinct "not applicable" row in compliance reports rather than a silent pass or a misleading fail.
+
+  `resolveStoryboardsForCapabilities()` now returns `{ storyboards, not_applicable, bundles }` — callers that previously destructured only `{ storyboards }` continue to work. The new `AgentCapabilities.major_versions` input drives the gate; when omitted (v2 agents, failed-discovery profiles) every storyboard runs as before.
+
+  **`test_kit.auth.probe_task` is now required with an allowlist**
+
+  The kit field that tells the runner which authenticated read-only task to probe for unauth / invalid-key rejections no longer silently defaults to `list_creatives`. A kit that declares `test_kit.auth` without a `probe_task` now fails at load with a `TestKitValidationError`. `probe_task` must be one of `list_creatives`, `get_media_buy_delivery`, `list_authorized_properties`, `get_signals`, `list_si_sessions` — auth-required, read-only AdCP tasks that accept an empty request body so auth failures fire before schema validation.
+
+  This is the issue-565 round-2 "Option A" call: explicit declaration blocks the silent-regression hazard where every signals-only / SI-only / retail-only agent would fail the storyboard for kit-config reasons, not agent reasons, on the day the storyboard shipped. `validateTestKit()` is exported from `@adcp/client/testing` so upstream YAML loaders can reject malformed kits at file-load time.
+
+  **Probe-task error disambiguation (400 / 422 vs 401 / 403)**
+
+  When a probe step expects an auth rejection (`http_status_in: [401, 403]`) and the agent instead returns 400 or 422 with a JSON-RPC invalid-params / schema-validation body, the runner now reports a targeted kit-config error: "agent's schema validator rejected the probe before the auth layer ran; fix `test_kit.auth.probe_task`." This is the safety net behind the allowlist: even if a non-allowlisted task slipped through, the diagnostic points at kit config, not a nonexistent agent auth bug.
+
+  **Breaking (narrow)**
+
+  Two compile-time / runtime behaviors change for callers that use `TestOptions.test_kit.auth`:
+  - The TypeScript type of `probe_task` is now required (`probe_task: string`, not `probe_task?: string`). TypeScript users get a compile error the first time they build against 5.1.0.
+  - At runtime, `comply()` / `runStoryboard()` / `runStoryboardStep()` throw `TestKitValidationError` when `test_kit.auth` is declared without `probe_task`, or with a value outside the allowlist. No default is substituted.
+
+  Kits that don't declare a `test_kit.auth` block are unaffected. To migrate: set `probe_task: list_creatives` if you previously relied on the implicit default, or pick the allowlisted task that matches your agent's surface (`get_media_buy_delivery`, `list_authorized_properties`, `get_signals`, `list_si_sessions`).
+
+- 6862d8c: Storyboard runner support for the `universal/security.yaml` conformance baseline.
+
+  Ships the runner work tracked in adcp-client#565. The upstream storyboard (adcontextprotocol/adcp#2298) uses three new directives and four new validation checks that this release implements.
+
+  **New step directives**
+  - `auth: 'none'` — strip transport credentials for that step only. Required for the unauthenticated probe.
+  - `auth: { type: 'api_key', value? | from_test_kit? | value_strategy? }` — literal Bearer override, pull from the test kit, or generate a per-run random bogus key (`random_invalid`).
+  - `auth: { type: 'oauth_bearer', value? | value_strategy: 'random_invalid_jwt' }` — send an arbitrary Bearer value or a per-run random JWT-shaped token (valid base64url-encoded JSON header/payload + random signature) so well-implemented validators fail at signature verification.
+  - `task: "$test_kit.<path>"` + `task_default: '<task>'` — resolve the step's task from test-kit data, falling back to the default when the kit doesn't supply it. Lets the security storyboard probe whatever protected task each agent implements.
+  - `contributes_to: '<flag>'` — mark a step as contributing a flag on success. Consumed by downstream `any_of` validations.
+  - `contributes_if: 'prior_step.<id>.passed'` — conditional contribution (e.g., only count the API-key mechanism when BOTH the valid-key and invalid-key steps passed).
+
+  **Phase directives**
+  - `skip_if: '!test_kit.auth.api_key'` — skip optional phases based on test-kit fields.
+  - `optional: true` — failing steps in optional phases are reported but do not fail the overall storyboard. The storyboard's final `assert_contribution` step is the gate (e.g., "API key OR OAuth must have verified").
+
+  **Auth-override HTTP dispatch**
+
+  Steps with `auth:` set bypass the MCP SDK and dispatch via a raw JSON-RPC POST to the MCP endpoint. This is required because (a) the SDK transport has no way to strip credentials or send arbitrary Bearer values, and (b) validations need the raw HTTP status + `WWW-Authenticate` header, which the SDK hides. A synthetic `TaskResult` is built from the JSON-RPC response so `field_present` / `field_value` checks still work on successful calls.
+
+  **New task handlers (raw HTTP probes, not MCP tools)**
+  - `protected_resource_metadata` — GETs the agent's `/.well-known/oauth-protected-resource<path>` (RFC 9728).
+  - `oauth_auth_server_metadata` — GETs `<issuer>/.well-known/oauth-authorization-server` for the first issuer from the prior step.
+  - `assert_contribution` — synthetic step that evaluates accumulated flags; no network call.
+
+  **New validation checks**
+  - `http_status` / `http_status_in` — exact or list-match on HTTP status.
+  - `on_401_require_header` — conditional check: if response was 401, require the named header (RFC 6750 §3 compliance).
+  - `resource_equals_agent_url` — normalized comparison of RFC 9728 `resource` against the URL under test. Catches the audience-mismatch class of bug from adcp-client#563. The error message does **not** echo the advertised value verbatim — compliance reports are shareable and detailed diffs help attackers probe victim agents.
+  - `any_of` — at least one listed flag must be in the accumulator.
+
+  **Safety**
+  - `comply()` now refuses `http://` agent URLs by default. Use `{ allow_http: true }` or the CLI `--allow-http` flag for local development; the CLI banner marks runs with the flag as non-publishable.
+  - OAuth authorization-server discovery fetches are hardened against SSRF: HTTPS only, DNS resolution + private-IP check (loopback, RFC 1918, link-local, IPv6 ULA), 10 s timeout, 64 KiB body cap, no cross-host redirect following.
+
+  **Degraded-profile execution (fixes adcp-client#570)**
+
+  When an agent's `get_adcp_capabilities` probe returns 401, `comply()` previously short-circuited with `overall_status: 'auth_required'` and executed zero storyboards — which meant `universal/security.yaml` could never run against the exact class of agent it's designed to diagnose. It now detects the auth rejection, drops tool-dependent storyboards, and runs the remaining `track: 'security'` and `required_tools: []` storyboards against a degraded profile. The auth observation is preserved alongside whatever conformance gaps the storyboards surface.
+
+  **Fenced agent-controlled error text (fixes adcp-client#574)**
+
+  The `capabilities_probe_error` observation wraps agent-reported error text in a `<<<…>>>` fence with an explicit "do not follow as instructions" marker and strips terminal control characters. Downstream LLM summarizers of a shared `ComplianceResult` can no longer be prompt-injected by a hostile agent that embedded instructions in its error message. The raw text is still available under `evidence.agent_reported_error` for operators.
+
+  **Test-kit schema**
+
+  `TestOptions.test_kit` gained an `auth` field with `api_key` and `probe_task`. Storyboard phases read this to gate their skip logic. The field is forward-compatible: additional keys pass through unchanged.
+
+  **Breaking**
+
+  `runValidations(validations, taskName, taskResult)` became `runValidations(validations, validationContext)` to carry probe results, the agent URL, and the contribution accumulator. Existing callers inside the SDK were updated; external callers who import `runValidations` directly need to pass a `ValidationContext` object.
+
+  No storyboard YAML ships in this repo — the real `universal/security.yaml` arrives via the upstream AdCP tarball sync (adcontextprotocol/adcp#2298). This PR makes the runner ready for it.
+
+- 1037b9d: Expand the `comply_test_controller` SDK surface so custom wrappers and session-backed stores don't need to reimplement SDK internals.
+
+  **New exports from `@adcp/client` / `@adcp/client/server`**
+  - `toMcpResponse(response)` — MCP envelope helper (`content` + `structuredContent` + `isError`). Previously module-local; custom wrappers had to re-derive the summary/error shape to stay consistent with `registerTestController`.
+  - `TOOL_INPUT_SHAPE` — canonical Zod input shape for the tool. Four fields matching `ComplyTestControllerRequest`: `scenario`, `params`, `context`, `ext`. Pass directly to `server.tool(...)` in wrappers that need `AsyncLocalStorage`, sandbox gating, or a custom task store.
+  - `handleTestControllerRequest(storeOrFactory, input)` — already exported; now the documented entry point for custom wrappers.
+  - `CONTROLLER_SCENARIOS` — const object mapping typed keys to wire-format scenario names. Use in place of string literals (`'force_account_status'`) for type-safe dispatch. Build-time exhaustiveness guard breaks the build if a new scenario is added upstream without updating the map.
+  - `SESSION_ENTRY_CAP` (default `1000`) + `enforceMapCap(map, key, label, cap?)` — reject-on-overflow quota guard for session-scoped Maps inside `TestControllerStore` methods. Throws `TestControllerError('INVALID_STATE', …)`, which the dispatcher turns into a typed `ControllerError` response. Rejects rather than LRU-evicts so compliance tests stay deterministic.
+
+  **Factory shape for session-backed stores**
+
+  `registerTestController(server, storeOrFactory)` now accepts either a plain `TestControllerStore` or a `TestControllerStoreFactory`:
+
+  ```ts
+  registerTestController(server, {
+    scenarios: [CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS],
+    async createStore(input) {
+      const session = await loadSession((input.context as { session_id?: string })?.session_id);
+      return {
+        async forceAccountStatus(id, status) {
+          /* closes over live session */
+        },
+      };
+    },
+  });
+  ```
+
+  `createStore` runs once per request with the tool input, so the returned store binds to the current session — solving a silent-data-loss bug class where sellers closed over module-level state (e.g., `WeakMap<SessionState, …>`) that the session lifecycle didn't carry across rehydration.
+
+  `list_scenarios` is answered from the declared `scenarios` field without invoking `createStore`, keeping capability discovery stateless and matching storyboard expectations.
+
+  **New exports from `@adcp/client` / `@adcp/client/testing`**
+  - `expectControllerError(result, code)` — narrows a `ComplyTestControllerResponse` to `ControllerError` and asserts the error code. Returns `ControllerErrorWithDetail` (narrowed so `error_detail` is guaranteed `string`).
+  - `expectControllerSuccess(result, kind?)` — narrows to the success arm and optionally asserts which variant (`'list'` / `'transition'` / `'simulation'`). Overloaded return types let tests skip `if (result.success)` boilerplate.
+
+  **Compatibility**
+
+  No breaking changes. Plain-store `registerTestController(server, store)` and single-arity `handleTestControllerRequest(store, input)` keep working unchanged. The `ControllerScenario` type union is unchanged; `CONTROLLER_SCENARIOS` is additive.
+
+  **Migration note for custom wrappers using top-level `account`**
+
+  Some sellers built custom `server.tool('comply_test_controller', ...)` wrappers that route sandbox gating off a top-level `account` field (e.g., `account.sandbox === true`). `TOOL_INPUT_SHAPE` intentionally matches `ComplyTestControllerRequest` in the generated schema, which declares only `scenario`, `params`, `context`, `ext` — so `account` is not included.
+
+  Two migration paths:
+  1. **Move the check to `context`**: route sandbox gating through `context.sandbox` / `context.account_id`. Recommended — this is where AdCP routes per-request envelope data on tools that don't take a structural `account`.
+  2. **Extend the shape locally**: `const MY_SHAPE = { ...TOOL_INPUT_SHAPE, account: z.object({ sandbox: z.boolean() }).passthrough().optional() };` and pass `MY_SHAPE` to `server.tool(...)`. Documented in the `TOOL_INPUT_SHAPE` JSDoc.
+
+  Either path keeps your wrapper functional; only the default `registerTestController` registration uses the minimal schema.
+
+### Patch Changes
+
+- 9c52c67: Storyboard runner: enforce a brand/account invariant on every outgoing request.
+
+  Sellers that scope session state by brand (required for per-tenant isolation) derive a session key from `brand.domain`. Before this fix, a storyboard's `create_*` step could send one brand while the follow-up `get_*` / `update_*` / `delete_*` / `validate_*` step sent another — or omitted brand entirely and hit the default `test.example`. The list created in one session was then invisible to the lookup in a different session, surfacing as `NOT_FOUND` across `property_governance`, `collection_governance`, `media_buy_seller`, and any storyboard that exercises stateful CRUD.
+
+  The runner now merges `options.brand` into every request after builder / `sample_request` resolution, overriding any conflicting brand and filling in `account.brand` when the request carries an `account` object. A storyboard run now lands in one session regardless of per-tool authorship. Storyboards that don't configure a brand (e.g. `universal/security.yaml` probes) pass through unchanged.
+
+  Fixes #579.
+
+- 934eea2: Request-signing grader — two follow-ups from the #617 review thread.
+
+  **Operation-name allowlist** in `extractOperationFromVectorUrl`. Previously
+  the extractor returned whatever URL-decoded bytes sat in the vector URL's
+  last path segment and inlined that into `params.name`. AdCP operations are
+  spec-defined identifiers (lowercase snake*case matching
+  `static/schemas/source/enums/operation.json`); constrain the extractor
+  output to `/^[a-z]a-z0-9*]\*$/` so a corrupted compliance cache can't
+  smuggle arbitrary bytes into the JSON-RPC envelope. No exploit today —
+  fixtures are spec-published, not attacker-supplied — but defense in depth.
+
+  **MCP rate-abuse subtest** in `test/request-signing-grader-mcp.test.js`.
+  Spins up a dedicated MCP agent with `ADCP_REPLAY_CAP=10` + grades with
+  `onlyVectors: ['020-rate-abuse']`, `rateAbuseCap: 10`,
+  `allowLiveSideEffects: true`. Exercises the end-to-end rate-abuse flow
+  under MCP transport (previously only covered against the raw-HTTP
+  reference verifier). Adds `ADCP_REPLAY_CAP` env override to
+  `test-agents/seller-agent-signed-mcp.ts` so tests can tune the cap
+  without forking the agent.
+
+- bba6f3e: refactor: thread signing context via AsyncLocalStorage
+
+  Flattens the `signingContext` parameter that PR #593 pushed through nine function signatures in the MCP and A2A transports. Top-level entries (`callMCPTool`, `callMCPToolRaw`, `callMCPToolWithTasks`, `callA2ATool`) now push the context onto a new `signingContextStorage` AsyncLocalStorage for the duration of the call, and the internal helpers (`withCachedConnection`, `getOrCreateConnection`, `connectMCPWithFallback`, `getOrCreateA2AClient`, `createA2AClient`, `buildFetchImpl`) read it from storage instead of receiving it as a parameter. The public entry-point signatures are unchanged, so external callers and integration tests continue to pass `signingContext` explicitly.
+
+  Adds tests that fire interleaved concurrent `callTool`s with distinct signing identities to verify each sees its own context, and that a signing call followed by a non-signing call in the same async chain does not leak the stale context.
+
+- 18cefcc: Signing: swap hand-rolled `Signature-Input` / `Signature` / `Content-Digest`
+  parsers for the maintained `structured-headers` library (RFC 8941 / RFC 9651).
+  Cuts ~90 lines of bespoke state-machine code and inherits the library's
+  coverage of the dictionary/inner-list/token/escape corners we weren't
+  exercising. AdCP-profile checks (required params, tag match, alg allowlist,
+  quoted-string typing for `nonce`/`keyid`/`alg`/`tag`, integer typing for
+  `created`/`expires`) stay in this package as thin typed wrappers. Signature
+  byte-sequence values remain base64url-tolerant, and `Content-Digest` keeps
+  its regex fallback so a malformed filler member (e.g. truncated `sha-512`)
+  does not mask the `sha-256` entry we verify against. Closes #581.
+- 18cefcc: Signing: time-bucket the in-memory replay store so `has()` / `insert()` /
+  `isCapHit()` stay O(1) amortized on a hot keyid pinned near the per-keyid
+  cap. Entries are grouped by `floor(expiresAt / bucketSizeSeconds)` (default
+  60s); whole buckets are evicted in one step when their latest expiry has
+  passed, eliminating the per-call O(N) filter sweep that turned a near-cap
+  keyid into a quadratic DoS target. Default `maxEntriesPerKeyid` drops from
+  1,000,000 → 100,000 (still ample for typical traffic; can be raised via
+  `new InMemoryReplayStore({ maxEntriesPerKeyid })` for large deployments).
+  The `ReplayStore` interface is unchanged. Closes #582.
+- 3227148: **Idempotency storyboard end-to-end compliance** — the universal
+  `idempotency` compliance storyboard now passes 1/0/0/0 against agents
+  built from all 8 skills. Three framework fixes were required to get there:
+  1. **`replayed: false` on fresh executions.** Middleware now stamps the
+     field on every mutating response, not just replays. Buyers that branch
+     on `metadata.replayed` to decide whether side effects already fired
+     need the field present either way. Cached envelopes are stamped after
+     the save so replays cleanly overwrite with `true`.
+  2. **Replay echoes the current retry's `context`, not the first caller's.**
+     Previously, cached response envelopes baked in the first caller's
+     `correlation_id` and replays returned that to every subsequent retry,
+     breaking end-to-end tracing. The middleware now strips `context` from
+     the formatted response before caching; on replay, `finalize()`
+     re-injects the current request's context.
+  3. **MCP-level `idempotency_key` relaxed to optional when the framework
+     has an idempotency store wired.** The middleware is authoritative for
+     this field and returns a structured `adcp_error` with `code` + `field`.
+     If the MCP SDK's schema validator rejected first, buyers got a text-
+     only `-32602` error that failed the storyboard's `error_code` check.
+
+  **Storyboard harness fixes** so the runner actually exercises replay semantics:
+  - `$generate:uuid_v4[#alias]` placeholder resolution in `sample_request`
+    values. Same alias within a run → same UUID (enables initial + replay
+    testing). Alias cache lives in a WeakMap keyed off context identity,
+    propagated explicitly at shallow-clone sites via `forwardAliasCache` —
+    no implementation-detail keys leak into serialized output.
+  - Request builders now forward `idempotency_key` from `sample_request`
+    and respect future-dated `start_time`/`end_time` (two calls generated
+    ms apart with `Date.now()` hash differently, triggering spurious
+    CONFLICT on replay).
+  - `$context.<key>` placeholders now resolved in validation `value` and
+    `allowed_values` so expected values can reference prior steps.
+  - New `TaskOptions.skipIdempotencyAutoInject` (`@internal` — compliance
+    testing only) lets the runner exercise servers' missing-key validation
+    without the client auto-generating a key. Gated at all three inject
+    sites: `normalizeRequestParams`, `executeAndHandle` pre-validation,
+    and `TaskExecutor.executeTask`.
+
+  **Skills**: wire `createIdempotencyStore` into the main Implementation
+  block for creative, signals, brand-rights, retail-media, and
+  generative-seller (seller/SI/governance were already complete). Extends
+  `test-agents/test-agent-build.sh` to all 8 agent types, adds the
+  universal idempotency storyboard as a second check, passes `--allow-http`.
+
+- 0884b25: Lift the SSRF-safe fetch used by the storyboard runner into a reusable
+  `@adcp/client/net` primitive. Behavior is unchanged for metadata probes;
+  raw MCP probes now dispatch through the DNS-pinned undici `Agent` that was
+  previously only used for metadata fetches — closes a TOCTOU gap where an
+  attacker-supplied agent URL could resolve to a public IP during SSRF
+  validation and a private IP during the actual connect.
+
+  Tightened defaults:
+  - `rawMcpProbe` now refuses `http://` / private-IP agent URLs unless the
+    caller passes `allowPrivateIp: true`. The storyboard runner threads
+    `allow_http` through, so dev loops against localhost agents keep
+    working end-to-end.
+  - IMDS (`169.254.169.254`, IPv6 `fe80::/10`) stays refused even under
+    `allowPrivateIp` — cloud metadata exfiltration is never a legitimate
+    dev-loop destination.
+
+  New exports (internal; the public barrel is unchanged):
+  - `ssrfSafeFetch(url, options)` — returns buffered bytes + headers; throws
+    `SsrfRefusedError` with a typed `code` when the guard refuses.
+  - `SsrfRefusedError`, `SsrfRefusedCode`, `SsrfFetchOptions`,
+    `SsrfFetchResult`.
+  - `isPrivateIp`, `isAlwaysBlocked` (moved from
+    `src/lib/testing/storyboard/probes.ts`; the original import site keeps
+    working via re-export).
+  - `decodeBodyAsJsonOrText(body, contentType)` — convenience decoder for
+    probe-style call sites.
+
+  The primitive is the foundation for future HTTPS-fetching stores (JWKS
+  auto-refresh, revocation-list polling) that must not follow counterparty
+  URLs into private networks.
+
+- 8d69399: `adcp storyboard run --json` now guarantees clean JSON on stdout.
+
+  The CLI installs a stdout guard around `comply()` / `runStoryboard()` / `runStoryboardStep()` that forwards any stray `console.log` / `console.info` to stderr, and writes the final JSON payload via `process.stdout.write` and waits for drain before exiting. This closes the class of failure reported in adcp-client#588, where a single internal log line turns valid JSON into a parse error for `jq` and `python -c 'json.load(sys.stdin)'`. `--json` stdout is now a single JSON document; everything else goes to stderr.
+
 ## 5.1.0
 
 ### Minor Changes
