@@ -55,8 +55,22 @@ export {
 } from './postgres-task-store';
 export type { PgQueryable, PostgresTaskStoreOptions } from './postgres-task-store';
 
-export { registerTestController, TestControllerError } from './test-controller';
-export type { TestControllerStore, ControllerScenario } from './test-controller';
+export {
+  registerTestController,
+  handleTestControllerRequest,
+  TestControllerError,
+  toMcpResponse,
+  TOOL_INPUT_SHAPE,
+  CONTROLLER_SCENARIOS,
+  SESSION_ENTRY_CAP,
+  enforceMapCap,
+} from './test-controller';
+export type {
+  TestControllerStore,
+  TestControllerStoreFactory,
+  TestControllerStoreOrFactory,
+  ControllerScenario,
+} from './test-controller';
 
 export { serve } from './serve';
 export type { ServeContext, ServeOptions } from './serve';
