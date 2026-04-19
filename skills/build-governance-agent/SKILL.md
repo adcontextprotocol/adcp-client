@@ -27,7 +27,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 
 | Specialism | Status | Delta from baseline | See |
 |---|---|---|---|
-| `governance-spend-authority` | stable | `check_governance` evaluates `binding` against Plan's `authority_level` + `custom_policies`; return conditions or denial | [§ governance-spend-authority](#specialism-governance-spend-authority) |
+| `governance-spend-authority` | stable | `check_governance` evaluates `binding` against Plan's `budget.total`, `human_review_required`, and `custom_policies`; return `approved`, `conditions`, or `denied` | [§ governance-spend-authority](#specialism-governance-spend-authority) |
 | `governance-delivery-monitor` | stable | `check_governance` with `phase: 'delivery'` + `delivery_evidence`; compute drift vs Plan's `reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
 | `property-lists` | stable | Tool family `property_list` — implement CRUD plus `validate_property_delivery` with full `violations[]` | [§ property-lists](#specialism-property-lists) |
 | `collection-lists` | stable | Tool family `collection_list` — program-level brand safety (shows, series, podcasts) identified by platform-independent IDs: IMDb, Gracenote, EIDR. Mirrors property-lists CRUD plus collection resolution. | [§ collection-lists](#specialism-collection-lists) |
@@ -128,10 +128,13 @@ The Plan object (stored via `sync_plans`) drives decisions. Expected shape:
   budget: {
     total: number,
     currency: string,
-    reallocation_threshold: number,   // absolute currency amount (NOT a ratio) — nested under budget
+    // Exactly one of the next two is required:
+    reallocation_threshold?: number,  // absolute currency amount the orchestrator can reallocate without human escalation
+    reallocation_unlimited?: boolean, // set true for full autonomy up to total (prefer this over threshold == total)
   },
   flight: { start: string, end: string },
   countries: string[],
+  human_review_required?: boolean,    // GDPR Art 22 / EU AI Act Annex III — when true, every action on this plan needs human review regardless of budget. Set automatically by the agent if any resolved policy has requires_human_review: true.
   custom_policies: [                  // array of structured policy objects — NOT bare strings
     {
       policy_id: string,
@@ -139,9 +142,15 @@ The Plan object (stored via `sync_plans`) drives decisions. Expected shape:
       policy: string,                 // prose description of the rule
     },
   ],
-  authority_level?: 'agent_full' | 'agent_limited' | 'human_required',
 }
 ```
+
+The `authority_level` enum from earlier AdCP drafts is gone. Authority is now split into two independent concerns:
+
+- **`budget.reallocation_threshold` / `reallocation_unlimited`** — budget autonomy. Dollar-denominated cap on how much the orchestrator can shift around without asking.
+- **`human_review_required`** — decisions affecting data subjects (targeting, creative, delivery). Fires regardless of budget. Driven by regulation, not finance.
+
+Both can be true simultaneously on the same plan.
 
 The response needs `check_id`, `status`, `plan_id`, and `explanation`.
 
@@ -646,31 +655,34 @@ checkGovernance: async (params, ctx) => {
 
   const budget = params.binding.total_budget.amount;
 
-  // 1. Authority level gate
-  //    Human review is signalled as `denied` + critical finding (the 'escalated' status was dropped in v3).
-  //    The buyer resolves review off-protocol and re-calls check_governance with the approved governance_context.
-  if (plan.authority_level === 'human_required') {
+  // 1. Human-review gate — GDPR Art 22 / EU AI Act.
+  //    Every action on a human_review_required plan must be escalated, regardless of budget.
+  //    Signalled as `denied` + critical finding (the 'escalated' status was dropped in v3).
+  //    The buyer resolves review off-protocol and re-calls check_governance with a fresh governance_context.
+  if (plan.human_review_required) {
     return {
       check_id: `chk_${Date.now()}`,
       status: 'denied' as const,
       plan_id: params.plan_id,
-      explanation: 'Requires human approval before this buy can proceed',
+      explanation: 'Plan requires human review before this action can proceed',
       findings: [{
         category_id: 'HUMAN_REVIEW_REQUIRED',
         severity: 'critical',
-        explanation: 'Plan authority_level is human_required — resolve off-protocol and retry',
+        explanation: 'plan.human_review_required is true — resolve off-protocol and retry with a fresh governance_context',
       }],
     };
   }
-  if (plan.authority_level === 'agent_limited' && budget > plan.budget.total) {
+
+  // 2. Budget ceiling — cannot exceed plan.budget.total.
+  if (budget > plan.budget.total) {
     return { check_id: `chk_${Date.now()}`, status: 'denied' as const, plan_id: params.plan_id,
-      explanation: `Budget ${budget} exceeds authority limit ${plan.budget.total}`,
+      explanation: `Budget ${budget} exceeds plan ceiling ${plan.budget.total}`,
       findings: [{ category_id: 'BUDGET_EXCEEDED', severity: 'critical',
-        explanation: `Over authority by ${budget - plan.budget.total}` }],
+        explanation: `Over plan ceiling by ${budget - plan.budget.total}` }],
     };
   }
 
-  // 2. Custom policy matching — custom_policies is an array of structured objects
+  // 3. Custom policy matching — custom_policies is an array of structured objects
   const conditions = [];
   for (const policy of plan.custom_policies ?? []) {
     if (policy.policy.toLowerCase().includes('ctv') && hasCtv(params.binding)) {

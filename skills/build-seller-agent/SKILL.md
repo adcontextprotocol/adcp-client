@@ -37,7 +37,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | `sales-retail-media` | preview | See `skills/build-retail-media-agent/` | Different skill |
 | `sales-proposal-mode` | stable | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages` | [§ sales-proposal-mode](#specialism-sales-proposal-mode) |
 | `audience-sync` | stable | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response. | [§ audience-sync](#specialism-audience-sync) |
-| `signed-requests` | preview | RFC 9421 HTTP Signature verification on every mutating request. Required headers: `Signature-Input`, `Signature`. Verify covered components, keyid, expiry, nonce. Preview — runner not yet implemented (adcontextprotocol/adcp#2331). | [§ signed-requests](#specialism-signed-requests) |
+| `signed-requests` | preview | RFC 9421 HTTP Signature verification on mutating requests. Advertise `request_signing.supported: true` in capabilities; graded against conformance vectors — positive vectors must produce non-4xx; negative vectors must return `401` with `WWW-Authenticate: Signature error="<code>"` matching the vector's `expected_outcome.error_code` byte-for-byte. | [§ signed-requests](#specialism-signed-requests) |
 
 Specialism ID (kebab-case) = storyboard directory. The storyboard's `id:` field (snake_case, e.g. `media_buy_broadcast_seller`) is the category name, not the specialism name. One specialism can apply to multiple product lines — a seller with both CTV inventory and broadcast TV inventory can claim `sales-streaming-tv` and `sales-broadcast-tv` simultaneously.
 
@@ -1080,18 +1080,31 @@ createAdcpServer({
 
 **Platform types:** destinations span `['dsp', 'retail_media', 'social', 'audio', 'pmax']`. Each has its own `activation_key` shape — see `skills/build-signals-agent/SKILL.md` for activation patterns, which are shared across signals and audience sync.
 
-### <a name="specialism-signed-requests"></a>signed-requests (preview)
+### <a name="specialism-signed-requests"></a>signed-requests
 
-Storyboard: `signed_requests`. Transport-layer security specialism — certifies that your agent correctly verifies incoming RFC 9421 HTTP Signatures on every mutating request per [AdCP security docs](https://adcontextprotocol.org/docs/building/implementation/security.mdx#signed-requests-transport-layer).
+Storyboard: `signed_requests`. Transport-layer security specialism — certifies that your agent correctly verifies incoming RFC 9421 HTTP Signatures on mutating AdCP operations.
 
-**Status: preview.** The conformance runner is not yet implemented (tracked upstream as adcontextprotocol/adcp#2331). Claiming the specialism today advertises intent; grading begins once the runner ships.
+The specialism yaml still carries `status: preview`, but the conformance grader shipped. Phases are `capability_discovery`, `positive_vectors`, `negative_vectors`. Test vectors live at `compliance/cache/latest/test-vectors/request-signing/`; the test kit is `test-kits/signed-requests-runner.yaml`.
 
-**Use the SDK's server verifier** — don't write signature parsing or canonicalization yourself. The `@adcp/client/signing/server` barrel ships the full verification pipeline.
+**Grading model.** The runner constructs signed HTTP requests per each vector and sends them to your agent. Your verifier's responses are compared against the vector's `expected_outcome`:
+
+- **Positive vectors** must produce a non-4xx response — the agent accepted the signed request.
+- **Negative vectors** must produce `401` with `WWW-Authenticate: Signature error="<code>"`, where `<code>` matches the vector's `expected_outcome.error_code` byte-for-byte.
+
+The `WWW-Authenticate` header is the grading surface — return the right error code there, not just any 401.
+
+**Prerequisites.** Claim this specialism only if:
+
+1. `get_adcp_capabilities` advertises `request_signing.supported: true` along with the full `VerifierCapability` (`required_for`, `supported_for`, `covers_content_digest`).
+2. Your JWKS accepts the runner's test keypairs (`test-ed25519-2026`, `test-es256-2026`) as a registered test counterparty with `adcp_use: "request-signing"`.
+3. For negative vectors `016` (replayed nonce), `017` (revoked key), `020` (per-keyid cap), your verifier is pre-configured per `signed-requests-runner.yaml` — the runner cannot set that state from outside. Missing prerequisites grade as **FAIL**, not SKIP.
+
+**Use the SDK's server verifier.** Don't write signature parsing or canonicalization yourself — `@adcp/client/signing/server` ships the full pipeline and produces the right `WWW-Authenticate` error codes.
 
 ```typescript
 import {
   verifyRequestSignature,        // low-level verifier
-  createExpressVerifier,         // Express middleware
+  createExpressVerifier,         // Express middleware — emits the 401 + WWW-Authenticate
   InMemoryReplayStore,
   InMemoryRevocationStore,
   StaticJwksResolver,
@@ -1099,11 +1112,9 @@ import {
   type VerifierCapability,
 } from '@adcp/client/signing/server';
 
-// Declare the policy that will ship in your get_adcp_capabilities response.
-// required_for: operations where a missing signature is a hard reject.
-// supported_for: operations where signatures are verified if present but not required.
-// covers_content_digest: whether content-digest must be a covered component.
+// Policy that ships in your get_adcp_capabilities response:
 const capability: VerifierCapability = {
+  supported: true,
   required_for: ['create_media_buy', 'update_media_buy', 'acquire_rights'],
   supported_for: ['sync_creatives', 'sync_audiences', 'sync_accounts'],
   covers_content_digest: 'required',
@@ -1112,7 +1123,13 @@ const capability: VerifierCapability = {
 
 const verifier = createExpressVerifier({
   capability,
-  jwks: new StaticJwksResolver({ /* { keyid: jwk } for each buyer */ }),
+  jwks: new StaticJwksResolver({
+    // Test counterparty for grading:
+    'test-ed25519-2026': { /* public JWK from compliance/cache/latest/test-vectors/request-signing/keys.json */ },
+    'test-es256-2026':   { /* ... */ },
+    // Pre-revoked keyid per the test kit — mark it revoked in your revocationStore before grading:
+    // 'test-revoked-2026' should be insert()-ed into revocationStore at startup.
+  }),
   replayStore: new InMemoryReplayStore(),
   revocationStore: new InMemoryRevocationStore(),
   operationFor: (req) => req.body?.method ?? req.path,
@@ -1121,9 +1138,9 @@ const verifier = createExpressVerifier({
 app.use('/mcp', verifier);   // run before the MCP transport
 ```
 
-**Advertise your policy.** Put your `VerifierCapability` shape (`required_for` / `supported_for` / `covers_content_digest`) under `capabilities.request_signing` in your `get_adcp_capabilities` response. Client SDKs fetch this on first call and cache for 300s — they use it to decide whether to sign outbound calls. If you don't advertise, AdCP clients that auto-sign won't know to do so for your agent.
+**Advertise your policy in `get_adcp_capabilities`.** Put your `VerifierCapability` under `capabilities.request_signing`. Client SDKs fetch this on first call, cache it for 300s, and use it to decide whether to sign outbound calls. If you don't advertise, the grader skips you (and so do auto-signing clients). If you advertise without actually verifying, negative vectors will fail.
 
-**Don't claim preview.** Unless you've implemented and tested signature verification, leave this specialism off your capabilities. A non-claiming agent is not graded against it.
+**Don't claim unless tested.** Run `adcp storyboard run ... signed_requests --json` against a local instance before claiming — every negative vector must return the exact `expected_outcome.error_code`. A non-claiming agent is not graded against this specialism.
 
 ## Reference
 
