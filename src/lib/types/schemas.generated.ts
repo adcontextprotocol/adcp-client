@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-19T18:48:13.148Z
+// Generated at: 2026-04-19T20:03:51.626Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1532,7 +1532,7 @@ export const RightsPricingOptionSchema = z.object({
 }).passthrough();
 
 export const RevocationNotificationSchema = z.object({
-    notification_id: z.string(),
+    idempotency_key: z.string(),
     rights_id: z.string(),
     brand_id: z.string(),
     reason: z.string(),
@@ -2827,6 +2827,7 @@ export const PublisherGenresSourceSchema = z.object({
 }).passthrough();
 
 export const CollectionListChangedWebhookSchema = z.object({
+    idempotency_key: z.string(),
     event: z.literal("collection_list_changed"),
     list_id: z.string(),
     list_name: z.string().optional(),
@@ -3654,6 +3655,7 @@ export const PropertyFeatureSchema = z.object({
 }).passthrough();
 
 export const PropertyListChangedWebhookSchema = z.object({
+    idempotency_key: z.string(),
     event: z.literal("property_list_changed"),
     list_id: z.string(),
     list_name: z.string().optional(),
@@ -5878,6 +5880,7 @@ export const ValidationResultSchema = z.object({
 export const ActivateSignalResponseSchema = z.union([ActivateSignalSuccessSchema, ActivateSignalErrorSchema]);
 
 export const ArtifactWebhookPayloadSchema = z.object({
+    idempotency_key: z.string(),
     media_buy_id: z.string(),
     batch_id: z.string(),
     timestamp: z.string(),
@@ -6165,6 +6168,7 @@ export const ComplyTestControllerResponseSchema = z.union([ListScenariosSuccessS
 export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, BuildCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
 
 export const MCPWebhookPayloadSchema: z.ZodType = z.object({
+    idempotency_key: z.string(),
     operation_id: z.string().optional(),
     task_id: z.string(),
     task_type: TaskTypeSchema,

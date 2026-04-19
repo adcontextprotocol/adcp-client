@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-19T15:45:37.826Z
+// Generated at: 2026-04-19T20:03:45.392Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -4115,6 +4115,10 @@ export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
  */
 export interface MCPWebhookPayload {
   /**
+   * Sender-generated key stable across retries of the same webhook event. Publishers MUST generate a cryptographically random value (UUID v4 recommended) per distinct event and reuse the same key on every retry of that event. Receivers MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different publishers are independent. This is the canonical dedup field — the (task_id, status, timestamp) tuple is insufficient when a single transition is retried with unchanged timestamp or when two transitions share a timestamp.
+   */
+  idempotency_key: string;
+  /**
    * Client-generated identifier that was embedded in the webhook URL by the buyer. Publishers echo this back in webhook payloads so clients can correlate notifications without parsing URL paths. Typically generated as a unique ID per task invocation.
    */
   operation_id?: string;
@@ -6405,9 +6409,9 @@ export interface GetRightsError {
  */
 export interface RevocationNotification {
   /**
-   * Unique identifier for this notification. Buyers use this for deduplication — the same revocation may be delivered multiple times.
+   * Sender-generated key stable across retries of the same revocation notification. Rights holders MUST generate a cryptographically random value (UUID v4 recommended) per distinct revocation event and reuse the same key when retrying delivery. Buyers MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential); keys from different senders are independent.
    */
-  notification_id: string;
+  idempotency_key: string;
   /**
    * The revoked rights grant identifier
    */
@@ -13165,6 +13169,10 @@ export interface PublisherGenresSource {
  */
 export interface CollectionListChangedWebhook {
   /**
+   * Sender-generated key stable across retries of the same webhook event. Governance agents MUST generate a cryptographically random value (UUID v4 recommended) per distinct list-change event and reuse the same key on every retry. Recipients MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different governance agents are independent.
+   */
+  idempotency_key: string;
+  /**
    * The event type
    */
   event: 'collection_list_changed';
@@ -13331,6 +13339,10 @@ export type AssetAccess =
  * Payload sent by sales agents to orchestrators when pushing content artifacts for governance validation. Complements get_media_buy_artifacts for push-based artifact delivery.
  */
 export interface ArtifactWebhookPayload {
+  /**
+   * Sender-generated key stable across retries of the same webhook event. Sales agents MUST generate a cryptographically random value (UUID v4 recommended) per distinct emission of a batch and reuse the same key on every retry. Recipients MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different sales agents are independent. Distinct from `batch_id`, which identifies the logical batch: `idempotency_key` identifies this specific emission event, so a re-emission of the same `batch_id` (e.g., after a correction) is a different event and MUST carry a fresh `idempotency_key`.
+   */
+  idempotency_key: string;
   /**
    * Media buy identifier these artifacts belong to
    */
@@ -16615,6 +16627,10 @@ export interface PropertyFeature {
  * Webhook notification sent when a property list's resolved properties change. Contains a summary only - recipients must call get_property_list to retrieve the updated properties. This keeps payloads small and avoids redundant data transfer.
  */
 export interface PropertyListChangedWebhook {
+  /**
+   * Sender-generated key stable across retries of the same webhook event. Governance agents MUST generate a cryptographically random value (UUID v4 recommended) per distinct list-change event and reuse the same key on every retry. Recipients MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different governance agents are independent.
+   */
+  idempotency_key: string;
   /**
    * The event type
    */
