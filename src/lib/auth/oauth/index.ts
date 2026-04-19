@@ -270,6 +270,23 @@ export {
   type AuthDiagnosisReport,
 } from './diagnose';
 
+// Zero-config authorization discovery + actionable error type.
+// Raised automatically by `ProtocolClient.callTool` when an MCP agent returns
+// a 401 Bearer challenge and the caller has no saved tokens.
+export {
+  NeedsAuthorizationError,
+  discoverAuthorizationRequirements,
+  type AuthorizationRequirements,
+  type DiscoverAuthorizationOptions,
+} from './authorization-required';
+
+// File-backed `OAuthConfigStorage` implementation (agents.json format).
+export { createFileOAuthStorage, type FileOAuthStorageOptions } from './file-storage';
+
+// Per-agent storage binding — the bridge that lets `callTool` pick up the
+// caller's chosen `OAuthConfigStorage` without a signature change.
+export { bindAgentStorage, getAgentStorage, unbindAgentStorage } from './storage-registry';
+
 // Re-exported MCP SDK OAuth error types so consumers can discriminate 401 causes
 // without string-matching on error messages. These originate from the MCP server
 // auth module but are the canonical OAuth error classes for client-side handling too.

@@ -33,7 +33,13 @@ import { callA2ATool } from './a2a';
 import type { AgentConfig, DebugLogEntry } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
-import { createNonInteractiveOAuthProvider } from '../auth/oauth';
+import {
+  createNonInteractiveOAuthProvider,
+  discoverAuthorizationRequirements,
+  NeedsAuthorizationError,
+  getAgentStorage,
+} from '../auth/oauth';
+import { is401Error } from '../errors';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION } from '../version';
@@ -130,29 +136,46 @@ export class ProtocolClient {
           // This path does not cache connections (OAuth token-refresh can't share
           // a cached transport), so it's slower but correct for OAuth-gated agents.
           if (agent.oauth_tokens) {
-            const authProvider = createNonInteractiveOAuthProvider(agent, { agentHint: agent.id });
-            return callMCPToolWithOAuth({
-              agentUrl: agent.agent_uri,
-              toolName,
-              args: argsWithWebhook,
-              authProvider,
-              debugLogs,
-              customHeaders: agent.headers,
-              signingContext,
+            const storage = getAgentStorage(agent);
+            const authProvider = createNonInteractiveOAuthProvider(agent, {
+              agentHint: agent.id,
+              storage,
             });
+            try {
+              return await callMCPToolWithOAuth({
+                agentUrl: agent.agent_uri,
+                toolName,
+                args: argsWithWebhook,
+                authProvider,
+                debugLogs,
+                customHeaders: agent.headers,
+                signingContext,
+              });
+            } catch (err) {
+              // Refresh failed or server rejected the refreshed token — walk the
+              // discovery chain so the caller can distinguish "re-auth needed"
+              // from other failure modes.
+              await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+              throw err;
+            }
           }
 
           // Use callMCPToolWithTasks which auto-detects server tasks capability
           // and falls back to standard callTool when tasks are not supported
-          return callMCPToolWithTasks(
-            agent.agent_uri,
-            toolName,
-            argsWithWebhook,
-            authToken,
-            debugLogs,
-            agent.headers,
-            signingContext ? { signingContext } : undefined
-          );
+          try {
+            return await callMCPToolWithTasks(
+              agent.agent_uri,
+              toolName,
+              argsWithWebhook,
+              authToken,
+              debugLogs,
+              agent.headers,
+              signingContext ? { signingContext } : undefined
+            );
+          } catch (err) {
+            await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+            throw err;
+          }
         } else if (agent.protocol === 'a2a') {
           // For A2A, pass pushNotificationConfig separately (not in skill parameters)
           return callA2ATool(
@@ -170,6 +193,66 @@ export class ProtocolClient {
         }
       }
     );
+  }
+}
+
+/**
+ * If `err` looks like a 401 from the MCP transport, probe the agent for a
+ * Bearer challenge and throw a {@link NeedsAuthorizationError} carrying
+ * walked discovery metadata. If the error isn't a 401 or we can't build a
+ * requirements record, return silently so the caller re-throws the original.
+ *
+ * Keeping this off the hot path: we only probe on error, and the probe is
+ * a single unauthenticated `tools/list` POST — no retries, no DNS rebind.
+ */
+async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string): Promise<void> {
+  if (err instanceof NeedsAuthorizationError) throw err;
+  if (!is401Error(err)) return;
+
+  // If the caller has already connected to the agent URL, they've implicitly
+  // trusted it — inherit that trust for the discovery probe so loopback /
+  // private-IP development agents work the same way as public ones.
+  const allowPrivateIp = isLikelyPrivateHost(agentUrl);
+
+  // discoverAuthorizationRequirements internally catches network failures and
+  // returns null rather than throwing — anything that escapes is a genuine
+  // bug we want to surface rather than mask the 401 with.
+  const requirements = await discoverAuthorizationRequirements(agentUrl, { allowPrivateIp });
+  if (requirements) {
+    throw new NeedsAuthorizationError(requirements);
+  }
+  // No requirements walked; let the caller re-throw the original error.
+}
+
+function isLikelyPrivateHost(agentUrl: string): boolean {
+  try {
+    const u = new URL(agentUrl);
+    const host = u.hostname.toLowerCase();
+    if (host === 'localhost') return true;
+    // `isIP` guards against matching domain names that happen to start with
+    // a number (e.g. `10.corp.example.com`) — private-IP regex only fires
+    // when the host is an actual IP literal.
+    const { isIP } = require('net') as typeof import('net');
+    if (isIP(host) === 4) {
+      return (
+        /^10\./.test(host) ||
+        /^192\.168\./.test(host) ||
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+        /^127\./.test(host) ||
+        /^169\.254\./.test(host) || // link-local
+        /^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./.test(host) // CGNAT 100.64.0.0/10
+      );
+    }
+    if (isIP(host) === 6) {
+      return (
+        host === '::1' ||
+        host.startsWith('fe80:') || // link-local
+        /^f[cd][0-9a-f]{0,2}:/.test(host) // ULA fc00::/7
+      );
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 

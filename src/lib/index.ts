@@ -650,6 +650,19 @@ export {
   type AuthDiagnosisReport,
 } from './auth/oauth';
 
+// Zero-config OAuth: actionable error + discovery + file storage + per-agent binding
+export {
+  NeedsAuthorizationError,
+  discoverAuthorizationRequirements,
+  createFileOAuthStorage,
+  bindAgentStorage,
+  getAgentStorage,
+  unbindAgentStorage,
+  type AuthorizationRequirements,
+  type DiscoverAuthorizationOptions,
+  type FileOAuthStorageOptions,
+} from './auth/oauth';
+
 // ====== TOOL SCHEMA MAPS ======
 // Zod schemas keyed by tool name — use with server.tool(name, schema.shape, handler)
 export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';
