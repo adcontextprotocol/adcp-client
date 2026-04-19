@@ -2559,21 +2559,34 @@ async function main() {
       process.exit(3);
     }
   } catch (error) {
+    // Defense-in-depth: the library already strips ASCII control chars from
+    // server-supplied strings before storing them on `requirements`, but
+    // re-apply at the output call site in case a downstream field is added
+    // that bypasses the library's sanitizer.
+    const safe = s => (typeof s === 'string' ? s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '') : s);
+
     // NeedsAuthorizationError carries walked discovery metadata. Route it
     // through the CLI's existing auto-OAuth flow when conditions are right,
     // so the user gets a browser prompt instead of a cold error message.
     if (error instanceof NeedsAuthorizationError) {
-      // Non-interactive contexts (JSON output, piped stdin, CI) get the
-      // structured actionable error — we never spawn a browser we can't
-      // guarantee a human will see.
-      const interactive = !jsonOutput && !!process.stdout.isTTY && !process.env.CI;
+      // Auto-browser requires:
+      //   - stdout + stdin are TTYs (the OAuth flow blocks on stdin/terminal focus)
+      //   - no explicit opt-out (ADCP_NO_BROWSER) and not in CI
+      //   - a protocol we can drive interactively (MCP only today)
+      //   - no conflicting auth source already provided
+      //   - not asked for JSON (scripts/dashboards must stay deterministic)
+      const canAutoBrowse =
+        !jsonOutput &&
+        !!process.stdout.isTTY &&
+        !!process.stdin.isTTY &&
+        !process.env.CI &&
+        !process.env.ADCP_NO_BROWSER &&
+        process.env.TERM !== 'dumb' &&
+        protocol === 'mcp' &&
+        !useOAuth &&
+        !authToken;
 
-      if (!interactive) {
-        // Defense-in-depth: the library already strips ASCII control chars
-        // from server-supplied strings before storing them on `requirements`,
-        // but sanitize again at the point of terminal output in case a
-        // downstream field is added that bypasses the library's sanitizer.
-        const safe = s => (typeof s === 'string' ? s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '') : s);
+      if (!canAutoBrowse) {
         if (jsonOutput) {
           console.log(
             JSON.stringify(
@@ -2608,15 +2621,15 @@ async function main() {
         process.exit(1);
       }
 
-      // Interactive context: open browser, complete OAuth, retry the task.
-      // The auto-OAuth flow below (originally gated on `isUnauthorized`) does
-      // exactly this; re-run via a synthetic tag so we share the same code path.
-      console.log('\n🔐 Agent requires OAuth authorization.');
+      // Interactive context: print a short header on stderr (so stdout stays
+      // clean for the eventual tool result) then fall through to the
+      // auto-OAuth branch below which opens the browser and retries the call.
+      console.error('\n🔐 Agent requires OAuth authorization.');
       if (error.requirements.authorizationServer) {
-        console.log(`   Authorization server: ${error.requirements.authorizationServer}`);
+        console.error(`   Authorization server: ${safe(error.requirements.authorizationServer)}`);
       }
       if (error.requirements.scopesSupported?.length) {
-        console.log(`   Scopes: ${error.requirements.scopesSupported.join(', ')}`);
+        console.error(`   Scopes: ${error.requirements.scopesSupported.map(safe).join(', ')}`);
       }
       // Let execution fall through to the auto-OAuth path below.
     }
