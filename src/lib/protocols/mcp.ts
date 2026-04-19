@@ -242,6 +242,8 @@ export interface MCPCallOptions {
   debugLogs?: DebugLogEntry[];
   /** Additional headers to send with every request (auth headers take precedence) */
   customHeaders?: Record<string, string>;
+  /** RFC 9421 signing context — when set, the transport signs outbound ops per seller capability. */
+  signingContext?: AgentSigningContext;
 }
 
 /**
@@ -580,8 +582,9 @@ export async function connectMCP(options: {
   authProvider?: OAuthClientProvider;
   debugLogs?: DebugLogEntry[];
   customHeaders?: Record<string, string>;
+  signingContext?: AgentSigningContext;
 }): Promise<MCPConnectionResult> {
-  const { agentUrl, authToken, authProvider, debugLogs = [], customHeaders } = options;
+  const { agentUrl, authToken, authProvider, debugLogs = [], customHeaders, signingContext } = options;
   const baseUrl = new URL(agentUrl);
 
   debugLogs.push({
@@ -616,6 +619,17 @@ export async function connectMCP(options: {
       message: 'MCP: Using static token for authentication',
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // RFC 9421 signing — wrap the transport's fetch so the signer sees the final
+  // headers the SDK assembled (including any OAuth-issued Authorization) and
+  // decides per outbound request whether to sign.
+  if (signingContext) {
+    transportOptions.fetch = buildAgentSigningFetch({
+      upstream: (input, init) => fetch(input as string | URL, init),
+      signing: signingContext.signing,
+      getCapability: signingContext.getCapability,
+    }) as typeof fetch;
   }
 
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);
@@ -657,11 +671,11 @@ export async function connectMCP(options: {
  * @throws UnauthorizedError if OAuth is required (with transport attached)
  */
 export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unknown> {
-  const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [], customHeaders } = options;
+  const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [], customHeaders, signingContext } = options;
 
   // If no OAuth provider, use the legacy function
   if (!authProvider) {
-    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
+    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext);
   }
 
   let client: MCPClient | undefined;
@@ -673,6 +687,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
       authProvider,
       debugLogs,
       customHeaders,
+      signingContext,
     });
     client = result.client;
     transport = result.transport;

@@ -63,11 +63,29 @@ function unwrapResponse(response: unknown): unknown {
 const pendingFetches = new Map<string, Promise<CachedCapability>>();
 
 /**
+ * Refresh window applied to a negative-cache entry written after a failed
+ * discovery call. 60s is short enough that a transient seller outage
+ * self-heals on the next user action, long enough to avoid pile-ups if the
+ * seller stays down.
+ */
+const NEGATIVE_CACHE_TTL_SECONDS = 60;
+
+/**
  * Populate the capability cache for an agent when the `request_signing` entry
  * is absent or stale. The injected `fetchRaw` callback is expected to make an
  * unsigned `get_adcp_capabilities` call against the counterparty — callers
  * wire it to `ProtocolClient.callTool` or the underlying transport helper so
  * that no new connection code lives here.
+ *
+ * Fails open: if discovery itself fails, we cache an empty entry with a short
+ * `staleAt` window and return it rather than propagating the error. Signing
+ * decisions then fall through:
+ *   - Ops in the buyer's `always_sign` list are still signed (with default
+ *     content-digest coverage), so explicit pilot opt-ins keep working.
+ *   - Ops the seller might have listed in `required_for` go out unsigned and
+ *     are rejected with `request_signature_required` at the wire — the user
+ *     sees a clear error rather than an opaque priming wedge, and the next
+ *     retry re-primes.
  */
 export async function ensureCapabilityLoaded(
   _agent: AgentConfig,
@@ -88,6 +106,17 @@ export async function ensureCapabilityLoaded(
         requestSigning,
         adcpVersion,
         fetchedAt: Math.floor(Date.now() / 1000),
+      };
+      signingContext.cache.set(key, entry);
+      return entry;
+    })
+    .catch(() => {
+      const now = Math.floor(Date.now() / 1000);
+      const entry: CachedCapability = {
+        requestSigning: undefined,
+        adcpVersion: undefined,
+        fetchedAt: now,
+        staleAt: now + NEGATIVE_CACHE_TTL_SECONDS,
       };
       signingContext.cache.set(key, entry);
       return entry;

@@ -16,6 +16,14 @@ export interface SigningFetchOptions extends Omit<SignRequestOptions, 'coverCont
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Header names whose wire values are produced by the signer itself. Any
+ * caller-supplied value gets stripped before signing so a misconfigured
+ * custom-headers bag can't silently overwrite (or bypass) the RFC 9421
+ * signature output.
+ */
+const SIGNING_RESERVED_HEADERS = new Set(['signature', 'signature-input', 'content-digest']);
+
 export function createSigningFetch(upstream: FetchLike, key: SignerKey, options: SigningFetchOptions = {}): FetchLike {
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -30,6 +38,11 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
     }
 
     const headers = headersToRecord(init?.headers);
+    for (const name of Object.keys(headers)) {
+      if (SIGNING_RESERVED_HEADERS.has(name.toLowerCase())) {
+        delete headers[name];
+      }
+    }
     const hasContentType = Object.keys(headers).some(k => k.toLowerCase() === 'content-type');
     if (!hasContentType && (init?.body !== undefined || method !== 'GET')) {
       headers['content-type'] = 'application/json';

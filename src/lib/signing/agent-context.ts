@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { AgentConfig, AgentRequestSigningConfig } from '../types/adcp';
 import {
   buildCapabilityCacheKey,
@@ -40,12 +41,14 @@ export function buildAgentSigningContext(
   if (!signing) return undefined;
 
   const cache = options.cache ?? defaultCapabilityCache;
-  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, signing.kid);
-  // Transport-connection cache-key suffix is bound to the signer kid. Distinct
-  // keys get their own cached transport so a change in signing identity
-  // doesn't silently reuse a connection whose fetch was wrapped with a
-  // different key.
-  const cacheKey = `sig=${signing.kid}`;
+  const keyFingerprint = privateKeyFingerprint(signing);
+  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, keyFingerprint);
+  // Transport-connection cache-key suffix binds to a hash of the private key,
+  // not just the advertised `kid`. Two tenants that misconfigure the same
+  // `kid` string but hold distinct private keys must not collide on a shared
+  // cached transport — that would sign one tenant's outbound requests with
+  // the other tenant's key (same `kid`, different `d`), an impersonation.
+  const cacheKey = `sig=${keyFingerprint}`;
 
   return {
     signing,
@@ -54,4 +57,16 @@ export function buildAgentSigningContext(
     capabilityCacheKey,
     getCapability: () => cache.get(capabilityCacheKey),
   };
+}
+
+/**
+ * Derive a stable per-key cache-key fragment. Hashes both `kid` and the
+ * private scalar `d` so that two tenants advertising the same `kid` but
+ * holding distinct private keys get different cache entries. Truncated to
+ * 16 hex chars — a collision-resistance budget of 64 bits against random
+ * keys is plenty for a cache disambiguator, and we never rely on this
+ * value as a security boundary.
+ */
+function privateKeyFingerprint(signing: AgentRequestSigningConfig): string {
+  return createHash('sha256').update(signing.kid).update('\0').update(signing.private_key.d).digest('hex').slice(0, 16);
 }

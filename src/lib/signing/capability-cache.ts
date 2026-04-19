@@ -8,6 +8,14 @@ export interface CachedCapability {
   adcpVersion: number | undefined;
   /** Epoch seconds when this entry was written. */
   fetchedAt: number;
+  /**
+   * Optional explicit epoch-seconds deadline at which this entry becomes
+   * stale. Overrides the cache's default TTL — used to give negative
+   * (failed-discovery) entries a shorter refresh window than positive
+   * entries so a transient seller outage doesn't block signing decisions
+   * for the full 5-minute TTL.
+   */
+  staleAt?: number;
 }
 
 export interface CapabilityCacheOptions {
@@ -56,7 +64,9 @@ export class CapabilityCache {
 
   isStale(entry: CachedCapability | undefined): boolean {
     if (!entry) return true;
-    return this.now() - entry.fetchedAt > this.ttlSeconds;
+    const now = this.now();
+    if (entry.staleAt !== undefined) return now >= entry.staleAt;
+    return now - entry.fetchedAt > this.ttlSeconds;
   }
 }
 
@@ -69,17 +79,17 @@ export class CapabilityCache {
 export const defaultCapabilityCache = new CapabilityCache();
 
 /**
- * Build a stable cache key from an agent URI, optional auth token, and
- * optional signer kid. Two callers pointing at the same agent URI under
- * different signing identities get separate entries — a seller can
- * (in principle) advertise different policies per counterparty key.
+ * Build a stable cache key from an agent URI, an optional auth-token hash,
+ * and an optional signer-key fingerprint. Two callers pointing at the same
+ * agent URI under different signing identities get separate entries — a
+ * seller can advertise different policies per counterparty key.
  *
  * Hash is a cache-key disambiguator, not a security boundary; a hypothetical
  * collision across users would still transmit only the original caller's
  * token (the cache key is not the auth credential itself).
  */
-export function buildCapabilityCacheKey(agentUri: string, authToken?: string, signerKid?: string): string {
+export function buildCapabilityCacheKey(agentUri: string, authToken?: string, signerFingerprint?: string): string {
   const tokenSuffix = authToken ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}` : '';
-  const signerSuffix = signerKid ? `::kid=${signerKid}` : '';
+  const signerSuffix = signerFingerprint ? `::sig=${signerFingerprint}` : '';
   return `${agentUri}${tokenSuffix}${signerSuffix}`;
 }

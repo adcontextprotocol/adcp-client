@@ -7,10 +7,26 @@ import type { SignerKey } from './signer';
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 function bodyToUtf8(body: unknown): string | undefined {
+  if (body === undefined || body === null) return undefined;
   if (typeof body === 'string') return body.length ? body : undefined;
   if (body instanceof Uint8Array) return Buffer.from(body).toString('utf8');
   if (body instanceof ArrayBuffer) return Buffer.from(body).toString('utf8');
-  return undefined;
+  // FormData / Blob / ReadableStream / async iterables fall through. Throw
+  // rather than return `undefined` — a silent pass-through would ship the
+  // request unsigned with no hint to the caller, defeating the seller's
+  // `required_for` contract. Matches the strict posture of `createSigningFetch`
+  // which also refuses unsupported body shapes.
+  throw new TypeError(
+    `buildAgentSigningFetch cannot extract an AdCP operation name from a body of type ${describeBody(body)}. The signer only supports string, Uint8Array, and ArrayBuffer bodies because the signature must cover the exact wire bytes.`
+  );
+}
+
+function describeBody(body: unknown): string {
+  if (body && typeof body === 'object') {
+    const ctor = (body as { constructor?: { name?: string } }).constructor?.name;
+    if (ctor) return ctor;
+  }
+  return typeof body;
 }
 
 /**
@@ -22,6 +38,10 @@ function bodyToUtf8(body: unknown): string | undefined {
  * - All other JSON-RPC methods (`initialize`, `tools/list`, notifications)
  *   return `undefined` — those are protocol-layer housekeeping, not AdCP
  *   operations subject to request-signing policy.
+ *
+ * Throws if the body is of a shape the signer can't read (Blob, FormData,
+ * ReadableStream). The MCP / A2A SDKs both emit JSON strings today; a future
+ * SDK version switching to streams would silently break signing otherwise.
  */
 export function extractAdcpOperation(body: unknown): string | undefined {
   const text = bodyToUtf8(body);
@@ -61,12 +81,16 @@ export function extractAdcpOperation(body: unknown): string | undefined {
  * Decide whether an outbound AdCP call should be signed given the seller's
  * advertised capability block and the buyer's override list.
  *
- * Precedence:
+ * Precedence matches the AdCP spec (`required_for` > `warn_for` >
+ * `supported_for`):
  *   1. `always_sign` on the buyer config — pilot-time override, signs even
  *      if the seller hasn't listed the op.
  *   2. Seller `required_for` — seller rejects unsigned requests, MUST sign.
- *   3. Seller `supported_for` — sign only if the buyer opted in via
- *      `sign_supported: true`.
+ *   3. Seller `warn_for` — shadow mode. Seller verifies when present and
+ *      logs failures without rejecting; counterparties SHOULD sign so the
+ *      seller can surface failure rates before flipping to `required_for`.
+ *   4. Seller `supported_for` — sign only if the buyer opted in via
+ *      `sign_supported: true` (defaults off).
  *
  * Returns false when the capability is unknown (cold cache) except for ops
  * in `always_sign`, so the priming `get_adcp_capabilities` call itself is
@@ -81,6 +105,7 @@ export function shouldSignOperation(
   if (config.always_sign?.includes(operation)) return true;
   if (!capability?.supported) return false;
   if (capability.required_for?.includes(operation)) return true;
+  if (capability.warn_for?.includes(operation)) return true;
   if (config.sign_supported && capability.supported_for?.includes(operation)) return true;
   return false;
 }

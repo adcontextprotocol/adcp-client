@@ -14,15 +14,35 @@ Behavior:
   fetches `get_adcp_capabilities` (unsigned — the discovery op is exempt) and
   caches the seller's `request_signing` capability per-agent with a 300s TTL.
 - Subsequent calls consult the cache to decide per-operation whether to
-  sign — required by the seller's `required_for`, opted-in via
-  `supported_for` + `sign_supported`, or forced by buyer `always_sign`.
+  sign — precedence matches the spec: buyer `always_sign` > seller
+  `required_for` > seller `warn_for` (shadow-mode telemetry) > seller
+  `supported_for` (buyer opted in via `sign_supported`).
 - Content-digest coverage honors the seller's `covers_content_digest` policy
   (`required` / `forbidden` / `either`) per-request.
-- Transport connection caches disambiguate by signer `kid`, so an agent
-  rotating keys mid-session gets a fresh connection rather than replaying the
-  old wrapper.
+- Transport connection caches disambiguate by a per-key fingerprint (hash of
+  `kid` + private scalar) so two tenants that misconfigure the same `kid`
+  but hold distinct private keys cannot collide on a shared cached
+  transport and sign each other's traffic.
 - `get_adcp_capabilities` and MCP/A2A protocol-layer RPCs (`initialize`,
   `tools/list`, A2A card discovery) always pass through unsigned.
+- OAuth-gated agents with signing: `callMCPToolWithOAuth` threads the
+  signing context through to the transport fetch, so OAuth flows don't
+  silently drop signatures.
+- Priming failures fail open with a 60s negative cache: a transient seller
+  discovery outage doesn't wedge every subsequent call. `always_sign` ops
+  still get signed with sensible content-digest defaults; ops the seller
+  might have listed in `required_for` reach the wire unsigned and are
+  rejected visibly with `request_signature_required`, which retries re-prime.
+- Concurrent cold-cache fans-out share one `get_adcp_capabilities` fetch
+  via an in-flight pending-map — same pattern the MCP transport already
+  uses for connections.
+- Signing-reserved headers (`Signature`, `Signature-Input`, `Content-Digest`)
+  supplied by a caller's `customHeaders` are scrubbed before the signer
+  runs — a misconfigured header cannot silently break or bypass the RFC
+  9421 signature output.
+- `extractAdcpOperation` throws on unsupported body shapes (Blob, FormData,
+  ReadableStream) rather than silently passing the request unsigned — the
+  seller's `required_for` contract is not broken by SDK body-format drift.
 
 New field on `AgentConfig`: `request_signing?: AgentRequestSigningConfig`
 (kid, alg, `AdcpPrivateJsonWebKey` with required `d`, agent_url, optional

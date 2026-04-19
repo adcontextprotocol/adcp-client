@@ -138,6 +138,7 @@ export class ProtocolClient {
               authProvider,
               debugLogs,
               customHeaders: agent.headers,
+              signingContext,
             });
           }
 

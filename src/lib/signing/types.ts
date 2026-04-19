@@ -4,6 +4,14 @@ export interface VerifierCapability {
   supported: boolean;
   covers_content_digest: ContentDigestPolicy;
   required_for: string[];
+  /**
+   * Shadow-mode bridge between `supported_for` and `required_for`: the seller
+   * verifies signatures when present and logs failures but does NOT reject
+   * unsigned requests. Counterparties SHOULD sign ops in this list so sellers
+   * can surface failure rates before flipping to `required_for`. Precedence:
+   * `required_for` > `warn_for` > `supported_for`.
+   */
+  warn_for?: string[];
   supported_for?: string[];
 }
 

@@ -9,7 +9,7 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 
 const { ProtocolClient } = require('../dist/lib/protocols/index.js');
 const { closeMCPConnections } = require('../dist/lib/protocols/mcp.js');
-const { defaultCapabilityCache, buildCapabilityCacheKey } = require('../dist/lib/signing/index.js');
+const { defaultCapabilityCache, buildAgentSigningContext } = require('../dist/lib/signing/client.js');
 
 const KEYS_PATH = path.join(
   __dirname,
@@ -247,10 +247,11 @@ test('capability rotation: seller adds op to required_for → cache refresh pick
       required_for: ['create_media_buy', 'another_op'],
     };
     // Simulate the cache TTL expiry / explicit invalidation that would
-    // force a re-fetch on the next outbound call.
-    defaultCapabilityCache.invalidate(
-      buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, agent.request_signing.kid)
-    );
+    // force a re-fetch on the next outbound call. The context derives its
+    // own cache key from the agent's signing identity — using it guarantees
+    // the test invalidates the exact entry the transport reads from.
+    const signingContext = buildAgentSigningContext(agent);
+    defaultCapabilityCache.invalidate(signingContext.capabilityCacheKey);
 
     // Second call: capability re-fetched, another_op now in required_for → signed.
     await ProtocolClient.callTool(agent, 'another_op', {});
@@ -277,6 +278,114 @@ test('always_sign override forces signing even when seller has not listed the op
     await ProtocolClient.callTool(agent, 'another_op', {});
     const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'another_op')[0];
     assert.ok(call.headers['signature-input'], 'always_sign forces signing');
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('warn_for: shadow-mode op is signed so the seller can surface failure rates', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: [],
+    warn_for: ['another_op'],
+  });
+  try {
+    await ProtocolClient.callTool(agentFor(stub.url), 'another_op', {});
+    const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'another_op')[0];
+    assert.ok(call.headers['signature-input'], 'warn_for ops SHOULD be signed so sellers get shadow-mode telemetry');
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('customHeaders signing-reserved keys are stripped before signing', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: ['create_media_buy'],
+  });
+  try {
+    const agent = agentFor(stub.url);
+    // Malicious or misconfigured caller tries to pre-set Signature-Input +
+    // Content-Digest. The signer must overwrite both — a silent pass-through
+    // would break verification at the seller.
+    agent.headers = {
+      'signature-input': 'sig1=("@method");created=0;expires=0;keyid="attacker";alg="ed25519"',
+      'content-digest': 'sha-256=:AAAA:',
+      'x-benign-header': 'yes',
+    };
+    await ProtocolClient.callTool(agent, 'create_media_buy', {});
+    const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'create_media_buy')[0];
+    assert.match(call.headers['signature-input'], /keyid="test-ed25519-2026"/, 'signer produced the Signature-Input');
+    assert.doesNotMatch(
+      call.headers['signature-input'],
+      /keyid="attacker"/,
+      'attacker-supplied Signature-Input was overwritten'
+    );
+    assert.match(
+      call.headers['content-digest'],
+      /sha-256=:[^A]/,
+      'signer recomputed Content-Digest from the real body'
+    );
+    assert.strictEqual(call.headers['x-benign-header'], 'yes', 'non-reserved customHeaders still pass through');
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('concurrent cold-cache calls share a single get_adcp_capabilities fetch', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: ['create_media_buy'],
+  });
+  try {
+    const agent = agentFor(stub.url);
+    // Fire three concurrent create_media_buy calls against a cold cache.
+    // The priming dedupe in capability-priming.ts must collapse them to
+    // exactly one get_adcp_capabilities fetch — otherwise a seller with
+    // low quota for discovery could be hammered every time a caller
+    // fans out.
+    await Promise.all([
+      ProtocolClient.callTool(agent, 'create_media_buy', {}),
+      ProtocolClient.callTool(agent, 'create_media_buy', {}),
+      ProtocolClient.callTool(agent, 'create_media_buy', {}),
+    ]);
+    const primingCalls = stub.state.toolCallHeaders.filter(r => r.toolName === 'get_adcp_capabilities');
+    assert.strictEqual(primingCalls.length, 1, 'priming dedupe folded 3 cold-cache calls into 1 discovery call');
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('priming failure → fail-open: next call proceeds unsigned, always_sign still forces signing', async () => {
+  await resetGlobalState();
+  // Stand up a stub that rejects get_adcp_capabilities with a 500-equivalent
+  // error. create_media_buy still succeeds. The client should NOT wedge —
+  // it should cache a negative entry and let the call proceed.
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: ['create_media_buy'],
+  });
+  // Monkey-patch the capability to throw.
+  Object.defineProperty(stub.state, 'capability', {
+    get() {
+      throw new Error('simulated discovery outage');
+    },
+  });
+  try {
+    const agent = agentFor(stub.url);
+    agent.request_signing.always_sign = ['create_media_buy'];
+    // Fail-open: the call must not throw on priming failure, and always_sign
+    // ops still get signed with sensible content-digest defaults.
+    await ProtocolClient.callTool(agent, 'create_media_buy', {});
+    const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'create_media_buy')[0];
+    assert.ok(call.headers['signature-input'], 'always_sign forces signing even when seller discovery failed');
   } finally {
     await cleanup(stub);
   }
