@@ -400,13 +400,27 @@ describe('live-verifier integration: stale-revocation fail-closed', () => {
     // keep serving the cached snapshot until grace expires — the alternative
     // (immediately fail-closed on first misbehavior) would create cascading
     // outages on routine revocation endpoint blips.
-    const jwksServer = await startJwksServer({ jwks: [primaryPublic], cacheControl: 'max-age=3600' });
+    //
+    // Key property this test guards against: a regression that cleared the
+    // cached snapshot on refresh-failure (substituting an empty revocation
+    // set) would ACCEPT a request signed with a kid the snapshot had
+    // previously revoked. We pin that down by keeping an
+    // `already-revoked-kid` in the JWKS and asserting it stays rejected
+    // during grace.
+    const alreadyRevokedKid = 'already-revoked-kid';
+    const alreadyRevokedPublic = { ...primaryPublic, kid: alreadyRevokedKid };
+    const alreadyRevokedPrivate = { ...primaryPrivate, kid: alreadyRevokedKid };
+
+    const jwksServer = await startJwksServer({
+      jwks: [primaryPublic, alreadyRevokedPublic],
+      cacheControl: 'max-age=3600',
+    });
     const issuedAt = 30_500;
     const revocationServer = await startRevocationServer(
       revocationSnapshot({
         updatedAt: issuedAt,
         nextUpdateAt: issuedAt + 60,
-        revoked: ['already-revoked-kid'],
+        revoked: [alreadyRevokedKid],
       })
     );
     await withServers([jwksServer, revocationServer], async () => {
@@ -419,10 +433,11 @@ describe('live-verifier integration: stale-revocation fail-closed', () => {
         now: () => clock,
       });
       const replay = new InMemoryReplayStore();
-
-      // Seed the cache — request 1 establishes the snapshot in memory.
       const url = 'https://seller.example.com/adcp/create_media_buy';
       const body = '{"plan_id":"plan_001"}';
+
+      // Seed the cache — req 1 with the non-revoked primary kid establishes
+      // the snapshot in memory.
       const signed1 = buildSigned({
         kid: 'test-ed25519-2026',
         privateKey: primaryPrivate,
@@ -444,17 +459,16 @@ describe('live-verifier integration: stale-revocation fail-closed', () => {
       );
       assert.strictEqual(result1.status, 'verified');
 
-      // Origin breaks: starts serving a 500 with HTML body.
+      // Origin breaks: 500 with HTML body.
       revocationServer.state.responseOverride = (_req, res) => {
         res.writeHead(500, { 'content-type': 'text/html' });
         res.end('<html>origin is down</html>');
       };
 
-      // Inside grace window but past next_update — refresh attempt throws,
-      // store keeps the cached snapshot. A not-yet-revoked kid verifies; a
-      // previously-revoked kid is still rejected. This is the property that
-      // prevents the seller's verifier from hard-failing on a flaky endpoint.
+      // Inside grace window but past next_update.
       clock = issuedAt + 90; // 30s past next_update, 90s before grace expires
+
+      // (a) A non-revoked kid still verifies — cache enforced, non-revoked path.
       const signed2 = buildSigned({
         kid: 'test-ed25519-2026',
         privateKey: primaryPrivate,
@@ -476,14 +490,14 @@ describe('live-verifier integration: stale-revocation fail-closed', () => {
       );
       assert.strictEqual(result2.status, 'verified', 'cached snapshot still enforced during grace despite origin 500');
 
-      // Past grace → fail-closed regardless of whether the origin is silent
-      // or returning garbage.
-      clock = issuedAt + 60 + 121; // 1s past grace
+      // (b) A previously-revoked kid is still rejected at step 9 — cache
+      // enforced, revoked path. This is the regression-catcher: a refresh
+      // failure that silently cleared the cache would accept this request.
       const signed3 = buildSigned({
-        kid: 'test-ed25519-2026',
-        privateKey: primaryPrivate,
+        kid: alreadyRevokedKid,
+        privateKey: alreadyRevokedPrivate,
         clock,
-        nonce: 'garbage-past-nonce-cccc',
+        nonce: 'garbage-during-revoked-cc',
         url,
         body,
       });
@@ -491,6 +505,34 @@ describe('live-verifier integration: stale-revocation fail-closed', () => {
         () =>
           verifyRequestSignature(
             { method: 'POST', url, headers: signed3.headers, body },
+            {
+              capability: baseCapability(),
+              jwks,
+              replayStore: replay,
+              revocationStore,
+              now: () => clock,
+              operation: 'create_media_buy',
+            }
+          ),
+        err =>
+          err instanceof RequestSignatureError && err.code === 'request_signature_key_revoked' && err.failedStep === 9
+      );
+
+      // Past grace → fail-closed regardless of which kid or whether the
+      // origin is silent or returning garbage.
+      clock = issuedAt + 60 + 121; // 1s past grace
+      const signed4 = buildSigned({
+        kid: 'test-ed25519-2026',
+        privateKey: primaryPrivate,
+        clock,
+        nonce: 'garbage-past-nonce-dddd',
+        url,
+        body,
+      });
+      await assert.rejects(
+        () =>
+          verifyRequestSignature(
+            { method: 'POST', url, headers: signed4.headers, body },
             {
               capability: baseCapability(),
               jwks,
