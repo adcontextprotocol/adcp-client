@@ -169,6 +169,8 @@ type NormalizedWebhookPayload = {
   result?: AdCPAsyncResponseData;
   message?: string;
   timestamp?: string;
+  idempotency_key?: string;
+  protocol?: 'mcp' | 'a2a';
 };
 
 /**
@@ -184,7 +186,14 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   headers?: Record<string, string>;
   /** Activity callback for observability (logging, UI updates, etc) */
   onActivity?: (activity: Activity) => void | Promise<void>;
-  /** Task completion handlers - called for both sync responses and webhook completions */
+  /**
+   * Task completion handlers — called for both sync responses and webhook
+   * completions.
+   *
+   * For at-least-once webhook delivery, set `handlers.webhookDedup` to
+   * drop duplicate retries by `idempotency_key`. See
+   * `docs/guides/PUSH-NOTIFICATION-CONFIG.md#deduplication`.
+   */
   handlers?: AsyncHandlerConfig;
   /** Webhook secret for signature verification (recommended for production) */
   webhookSecret?: string;
@@ -702,6 +711,8 @@ export class SingleAgentClient {
       status: normalizedPayload.status,
       message: normalizedPayload.message,
       timestamp: normalizedPayload.timestamp || new Date().toISOString(),
+      idempotency_key: normalizedPayload.idempotency_key,
+      protocol: normalizedPayload.protocol,
     };
 
     // Emit activity
@@ -756,6 +767,8 @@ export class SingleAgentClient {
         result: mcpPayload.result ?? undefined,
         message: mcpPayload.message ?? undefined,
         timestamp: mcpPayload.timestamp,
+        idempotency_key: mcpPayload.idempotency_key,
+        protocol: 'mcp',
       };
     }
 
@@ -817,6 +830,7 @@ export class SingleAgentClient {
         result,
         message: message,
         timestamp: a2aPayload.status?.timestamp || new Date().toISOString(),
+        protocol: 'a2a',
       };
     }
 
