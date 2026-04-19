@@ -6,7 +6,7 @@
  * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
  */
 
-import { getOrCreateClient, getOrDiscoverProfile, runStep } from '../client';
+import { getOrCreateClient, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import { closeConnections } from '../../protocols';
 import { executeStoryboardTask } from './task-map';
 import { extractContext, injectContext, applyContextOutputs, applyContextInputs, forwardAliasCache } from './context';
@@ -45,19 +45,44 @@ import type { TaskResult } from '../types';
 
 /**
  * Run an entire storyboard against an agent.
+ *
+ * Pass a single URL for the standard single-instance run. Pass an array of
+ * URLs to engage multi-instance mode: the runner round-robins each step
+ * across the provided URLs so that (brand, account)-scoped state created on
+ * one instance must be visible on the next. Sellers whose state lives only
+ * in-process will fail this mode — the failure signature is a prior write
+ * succeeding on instance A while a subsequent read returns NOT_FOUND or
+ * empty on instance B.
  */
 export async function runStoryboard(
-  agentUrl: string,
+  agentUrlOrUrls: string | string[],
   storyboard: Storyboard,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   validateTestKit(options.test_kit);
   const start = Date.now();
-  const client = getOrCreateClient(agentUrl, options);
+  const agentUrls = Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls];
+  if (agentUrls.length === 0) {
+    throw new Error('runStoryboard: at least one agent URL required');
+  }
+  const isMultiInstance = agentUrls.length > 1;
+  if (isMultiInstance && options._client) {
+    throw new Error(
+      'runStoryboard: _client override is incompatible with multi-instance mode. ' +
+        'Remove _client (or pass a single agent URL) to use round-robin dispatch.'
+    );
+  }
 
-  // Discover agent profile and (for MCP) keep the transport alive.
+  // Build one client per URL. In single-URL mode `_client` (from comply()) is
+  // honored so the shared MCP transport is reused across storyboards.
+  const clients = agentUrls.map(url => getOrCreateClient(url, options));
+
+  // Discover agent profile against the first instance; all instances are
+  // expected to run the same code behind a shared state store, so one probe
+  // is sufficient. For multi-instance runs, skipping N-1 redundant
+  // get_agent_info calls also keeps CI output clean.
   if (!options._client) {
-    const { profile } = await getOrDiscoverProfile(client, options);
+    const { profile } = await getOrDiscoverProfile(clients[0]!, options);
     // Populate agentTools from discovered profile if not already set
     if (!options.agentTools && profile?.tools) {
       options = { ...options, agentTools: profile.tools };
@@ -76,6 +101,7 @@ export async function runStoryboard(
 
   // Flatten all steps for next-step preview lookups
   const allSteps = flattenSteps(storyboard);
+  const dispatch = createDispatcher(agentUrls, clients, options.multi_instance_strategy ?? 'round-robin');
 
   for (const phase of storyboard.phases) {
     const phaseStart = Date.now();
@@ -115,12 +141,17 @@ export async function runStoryboard(
         continue;
       }
 
-      const result = await executeStep(client, step, phase.id, context, allSteps, options, {
+      const assignment = dispatch.nextFor(step);
+      const result = await executeStep(assignment.client, step, phase.id, context, allSteps, options, {
         contributions,
         priorStepResults,
         priorProbes,
-        agentUrl,
+        agentUrl: assignment.agentUrl,
       });
+      if (isMultiInstance) {
+        result.agent_url = assignment.agentUrl;
+        result.agent_index = assignment.instanceIndex + 1;
+      }
       stepResults.push(result);
       priorStepResults.set(step.id, result);
 
@@ -146,6 +177,11 @@ export async function runStoryboard(
         // configured) must not fail the storyboard by itself.
         if (!phase.optional) failedCount++;
         if (step.stateful) statefulFailed = true;
+        // In multi-instance mode, annotate the failure with the cross-instance
+        // attribution block so CI readers pattern-match it as a deployment bug.
+        if (isMultiInstance) {
+          annotateMultiInstanceFailure(result, storyboard, stepResults);
+        }
       }
     }
 
@@ -172,7 +208,9 @@ export async function runStoryboard(
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
-    agent_url: agentUrl,
+    agent_url: agentUrls[0]!,
+    ...(isMultiInstance && { agent_urls: [...agentUrls] }),
+    ...(isMultiInstance && { multi_instance_strategy: options.multi_instance_strategy ?? 'round-robin' }),
     overall_passed: failedCount === 0 && requiredPhasesPassed,
     phases: phaseResults,
     context,
@@ -183,7 +221,9 @@ export async function runStoryboard(
     tested_at: new Date().toISOString(),
   };
 
-  // Close protocol connections when the runner created its own client
+  // Close protocol connections when the runner created its own client. The
+  // connection pool is keyed by URL+auth, so a single closeConnections() call
+  // evicts every instance's transport regardless of how many URLs we used.
   if (!options._client) {
     await closeConnections(options.protocol);
   }
@@ -828,6 +868,159 @@ function getNextStepPreview(
     expected: nextStep.expected,
     sample_request: previewRequest,
   };
+}
+
+// ────────────────────────────────────────────────────────────
+// Multi-instance dispatch
+// ────────────────────────────────────────────────────────────
+
+interface StepAssignment {
+  client: TestClient;
+  agentUrl: string;
+  /** 0-based index into the agent URL list */
+  instanceIndex: number;
+}
+
+interface Dispatcher {
+  nextFor(step: StoryboardStep): StepAssignment;
+}
+
+/**
+ * Build a dispatcher that picks an (agent URL, client) pair per step.
+ *
+ * Single-URL runs always return the same assignment. Multi-URL runs use the
+ * configured strategy — currently round-robin only (other strategies reserved
+ * in the enum; see tracking issue adcontextprotocol/adcp-client#607 for a
+ * dependency-aware variant that closes the 2-replica coverage gap). Each
+ * step increments the counter so step N hits `clients[N % N_urls]`,
+ * deterministic and reproducible for bug reports.
+ */
+function createDispatcher(agentUrls: string[], clients: TestClient[], _strategy: 'round-robin'): Dispatcher {
+  let counter = 0;
+  return {
+    nextFor(_step: StoryboardStep): StepAssignment {
+      const idx = counter % agentUrls.length;
+      counter++;
+      return {
+        client: clients[idx]!,
+        agentUrl: agentUrls[idx]!,
+        instanceIndex: idx,
+      };
+    },
+  };
+}
+
+const HORIZONTAL_SCALING_DOCS_URL =
+  'https://adcontextprotocol.org/docs/building/validate-your-agent#verifying-cross-instance-state';
+const NOT_FOUND_PATTERN = /not[_ ]found|not-found|\b404\b/i;
+
+// Agent-controlled text (error messages, response payloads) lands in terminal
+// output. Strip C0/C1 control chars so a hostile agent returning
+// `\x1b[2J\x1b[H` (clear screen) or `\r` (overwrite prior line) can't mangle
+// CI logs or forge terminal state. Tabs and newlines are preserved.
+// The cap bounds JSON-stringification cost if an agent returns an enormous
+// or deeply-nested response body.
+const MAX_ATTRIBUTION_SNIPPET = 512;
+function sanitizeAgentText(text: string): string {
+  return text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').slice(0, MAX_ATTRIBUTION_SNIPPET);
+}
+
+/**
+ * Detect the canonical horizontal-scaling failure signature on a step result.
+ *
+ * Reads structured fields the runner commonly populates (error string,
+ * nested response.error/code/message/status) rather than regex-matching the
+ * full stringified response — structured lookup is cheaper, resistant to an
+ * agent smuggling "NOT_FOUND" into an unrelated field to falsely trigger the
+ * canonical wording, and doesn't blow up on circular or oversized payloads.
+ */
+function isNotFoundSignature(result: StoryboardStepResult): boolean {
+  const candidates: Array<unknown> = [result.error];
+  const resp = result.response as Record<string, unknown> | null | undefined;
+  if (resp && typeof resp === 'object' && !Array.isArray(resp)) {
+    candidates.push(resp.error, resp.code, resp.message, resp.status, resp.status_code);
+  }
+  for (const c of candidates) {
+    if (typeof c === 'string' && NOT_FOUND_PATTERN.test(c)) return true;
+    if (typeof c === 'number' && c === 404) return true;
+  }
+  return false;
+}
+
+/**
+ * Mutate a failed step result to include cross-instance attribution.
+ *
+ * In multi-instance mode any step failure is worth attributing because the
+ * failure signature may not be NOT_FOUND — it can surface as 500, an empty
+ * array, PERMISSION_DENIED, or stale status. Attribution always emits:
+ *   - which replica served this step and the immediate prior stateful write
+ *   - a replica→step map for pattern-matching in CI logs
+ *   - a single-replica repro command
+ * When the signature matches the canonical horizontal-scaling case (prior
+ * write on A, read fails on B with NOT_FOUND), the wording mirrors the
+ * protocol docs verbatim so developers pattern-match the page they'll
+ * eventually click through to.
+ */
+function annotateMultiInstanceFailure(
+  result: StoryboardStepResult,
+  storyboard: Storyboard,
+  priorResults: StoryboardStepResult[]
+): void {
+  const currentInstance = result.agent_index;
+  const currentUrl = result.agent_url;
+  if (!currentInstance || !currentUrl) return;
+
+  // Lookup stateful flag on step defs — needed to identify "prior writes".
+  const stepDefs = new Map<string, StoryboardStep>();
+  for (const phase of storyboard.phases) {
+    for (const s of phase.steps) stepDefs.set(s.id, s);
+  }
+
+  const priorCrossInstanceWrite = [...priorResults].reverse().find(prior => {
+    if (!prior.passed || prior.skipped) return false;
+    if (!prior.agent_index || prior.agent_index === currentInstance) return false;
+    return stepDefs.get(prior.step_id)?.stateful === true;
+  });
+
+  const replicaMap = priorResults
+    .filter(r => !r.skipped && r.agent_index)
+    .map(r => `    [#${r.agent_index}] ${r.step_id} — ${r.passed ? 'ok' : 'FAIL'}`)
+    .join('\n');
+
+  const lines: string[] = [];
+
+  if (priorCrossInstanceWrite) {
+    const writerIdx = priorCrossInstanceWrite.agent_index;
+    const writerUrl = priorCrossInstanceWrite.agent_url;
+    // Wording deliberately mirrors the failure example in the protocol docs
+    // ("<write> on replica A returned …; <read> on replica B returned NOT_FOUND;
+    // → Brand-scoped state is not shared across replicas.") so CI readers
+    // pattern-match the page they'll click through to.
+    lines.push(`${priorCrossInstanceWrite.step_id} on replica [#${writerIdx}] (${writerUrl}) succeeded.`);
+    lines.push(
+      `${result.step_id} on replica [#${currentInstance}] (${currentUrl}) failed${
+        isNotFoundSignature(result) ? ' with NOT_FOUND' : ''
+      }.`
+    );
+    lines.push('→ Brand-scoped state is not shared across replicas.');
+    lines.push(`See: ${HORIZONTAL_SCALING_DOCS_URL}`);
+  } else {
+    lines.push(
+      `Multi-instance failure on replica [#${currentInstance}] (${currentUrl}). ` +
+        `No prior cross-replica stateful write found — the failure may be intrinsic to this replica.`
+    );
+  }
+
+  if (replicaMap) {
+    lines.push('Replica → step map:');
+    lines.push(replicaMap);
+  }
+  lines.push(`Reproduce single-replica: adcp storyboard run ${currentUrl} ${storyboard.id}`);
+
+  // Agent-controlled text goes in the base line; control chars are stripped
+  // so a hostile agent can't forge terminal escape sequences in CI output.
+  const base = sanitizeAgentText(result.error ?? 'Step failed');
+  result.error = `${base}\n\n${lines.join('\n')}`;
 }
 
 /**
