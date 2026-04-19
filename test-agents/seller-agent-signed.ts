@@ -5,11 +5,12 @@
  * smoke-testing the conformance grader shipped in
  * adcontextprotocol/adcp-client#585.
  *
- * This is NOT an MCP agent — the conformance vectors target raw-HTTP AdCP
- * endpoints (e.g., `/adcp/create_media_buy`), and the RFC 9421 verifier is
- * a transport-layer concern independent of the MCP/A2A wrapping. A future
- * MCP-aware grader (issue TBD) will layer JSON-RPC envelope handling on
- * top; this agent validates the signing-layer contract standalone.
+ * This is the raw-HTTP variant — the conformance vectors target raw-HTTP
+ * AdCP endpoints (e.g., `/adcp/create_media_buy`), and the RFC 9421
+ * verifier is a transport-layer concern independent of the MCP/A2A
+ * wrapping. For grading MCP-hosted agents, see the MCP variant at
+ * `seller-agent-signed-mcp.ts` and invoke the grader with
+ * `--transport mcp` (#617).
  *
  * Run locally:
  *   npm run build:test-agents

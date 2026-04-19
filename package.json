@@ -102,6 +102,7 @@
     "prepublishOnly": "npm run clean && npm run sync-schemas && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
     "build:lib": "tsc --project tsconfig.lib.json",
+    "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "test": "node --test-force-exit --test test/*.test.js test/lib/*.test.js",
     "test:lib": "node --test-force-exit --test test/lib/*.test.js",
     "test:e2e": "node test/e2e/adcp-e2e.test.js",
