@@ -354,7 +354,9 @@ export type RunnerDetailedSkipReason =
   | 'live_side_effect_opt_in_required'
   | 'operator_skip'
   | 'not_in_only_vectors'
-  | 'grader_skipped';
+  | 'grader_skipped'
+  /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
+  | 'mcp_mode_flattens_url_edges';
 
 /**
  * Map detailed grader skip reasons onto the six canonical spec values so
@@ -365,6 +367,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   probe_skipped: 'not_applicable',
   not_in_only_vectors: 'not_applicable',
   grader_skipped: 'not_applicable',
+  mcp_mode_flattens_url_edges: 'not_applicable',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
   live_side_effect_opt_in_required: 'unsatisfied_contract',
@@ -441,9 +444,9 @@ export interface StoryboardStepResult {
   /**
    * Skip reason. Accepts either a canonical `RunnerSkipReason` (the six
    * spec-required values) or one of the grader-specific variants introduced
-   * by the RFC 9421 request-signing grader (#585). The structured `skip`
-   * field below always carries the canonical spec reason so consumers of the
-   * runner-output contract don't need to know the grader vocabulary.
+   * by the RFC 9421 request-signing grader (#585, #617). The structured
+   * `skip` field below always carries the canonical spec reason so consumers
+   * of the runner-output contract don't need to know the grader vocabulary.
    */
   skip_reason?: RunnerSkipReason | RunnerDetailedSkipReason;
   /** Structured skip result with canonical spec reason + human-readable detail. */

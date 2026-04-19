@@ -44,5 +44,5 @@ export {
   toSignerKey,
   type BuildAgentSigningFetchOptions,
 } from './agent-fetch';
-export { buildAgentSigningContext, type AgentSigningContext } from './agent-context';
+export { buildAgentSigningContext, signingContextStorage, type AgentSigningContext } from './agent-context';
 export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';

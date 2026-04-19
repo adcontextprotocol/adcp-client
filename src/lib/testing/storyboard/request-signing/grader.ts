@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { buildNegativeRequest, buildPositiveRequest, type SignedHttpRequest } from './builder';
+import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
 import { probeSignedRequest, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
@@ -40,6 +40,16 @@ export interface GradeOptions extends LoadVectorsOptions {
    * endpoints.
    */
   allowLiveSideEffects?: boolean;
+  /**
+   * Transport shape the agent speaks. `'raw'` (default) POSTs per-operation
+   * AdCP endpoints matching the vectors' URL shape. `'mcp'` wraps each
+   * vector body in a JSON-RPC `tools/call` envelope and POSTs to the MCP
+   * mount path (`agentUrl`) — use when grading an MCP agent whose verifier
+   * sits as transport-layer middleware ahead of MCP dispatch.
+   *
+   * See adcontextprotocol/adcp-client#612 for the MCP-mode rationale.
+   */
+  transport?: 'raw' | 'mcp';
   /**
    * Override the agent's base URL used for the grader's HTTP targets. When set,
    * each vector's `request.url` is rewritten by swapping origin+path under this
@@ -109,7 +119,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     timeoutMs: options.timeoutMs,
   };
 
-  const buildOpts = { baseUrl: agentUrl };
+  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
 
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
@@ -157,9 +167,21 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   };
 }
 
+// Positive vectors whose edge-case coverage survives only under raw transport
+// (per-operation endpoint URLs). Listed explicitly rather than heuristically
+// so a spec author adding a new canonicalization-edge vector has to opt into
+// the skip.
+const MCP_FLATTENED_VECTORS = new Set([
+  '005-default-port-stripped',
+  '006-dot-segment-path',
+  '007-query-byte-preserved',
+  '008-percent-encoded-path',
+]);
+
 /**
  * Centralized skip decisions. Checks (in order): onlyVectors filter, operator
- * skipVectors, rate-abuse opt-out, stateful-contract missing, side-effect gate.
+ * skipVectors, MCP-mode URL-edge flattening, rate-abuse opt-out,
+ * stateful-contract missing, side-effect gate.
  */
 function preflightSkip(
   vector: PositiveVector | NegativeVector,
@@ -182,6 +204,23 @@ function preflightSkip(
   }
   if (options.skipVectors?.includes(vector.id)) {
     return { ...base, skipped: true, skip_reason: 'operator_skip' };
+  }
+  // Canonicalization-edge positive vectors (005–008) bake their edge case
+  // into the vector URL path, query, or port. MCP mode flattens every vector
+  // to the same baseUrl (JSON-RPC single endpoint), so these vectors become
+  // indistinguishable from vector 001 — passing under MCP is not evidence
+  // the edge was tested. Skip with a distinct reason so the report doesn't
+  // claim coverage it didn't deliver.
+  if (kind === 'positive' && options.transport === 'mcp' && MCP_FLATTENED_VECTORS.has(vector.id)) {
+    return {
+      ...base,
+      skipped: true,
+      skip_reason: 'mcp_mode_flattens_url_edges',
+      diagnostic:
+        `Vector ${vector.id} tests a URL-canonicalization edge (port/path/query/encoding) ` +
+        `that MCP mode neutralizes by routing every vector to the MCP endpoint. ` +
+        `Grade this edge with \`--transport raw\` against a per-operation AdCP agent.`,
+    };
   }
   if (kind === 'negative') {
     const neg = vector as NegativeVector;
@@ -236,7 +275,7 @@ export async function gradeOneVector(
     allowPrivateIp: options.allowPrivateIp === true,
     timeoutMs: options.timeoutMs,
   };
-  const buildOpts = { baseUrl: agentUrl };
+  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
 
   const vector =
     kind === 'positive' ? loaded.positive.find(v => v.id === vectorId) : loaded.negative.find(v => v.id === vectorId);
@@ -282,7 +321,7 @@ async function gradeNegative(
   loaded: ReturnType<typeof loadRequestSigningVectors>,
   contract: SignedRequestsRunnerContract | undefined,
   probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
-  buildOpts: { baseUrl: string },
+  buildOpts: BuildOptions,
   options: GradeOptions
 ): Promise<VectorGradeResult> {
   switch (vector.requires_contract) {
@@ -300,7 +339,7 @@ function gradeStaticNegative(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
   probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
-  buildOpts: { baseUrl: string }
+  buildOpts: BuildOptions
 ): Promise<VectorGradeResult> {
   const signed = buildNegativeRequest(vector, loaded.keys, buildOpts);
   return probeSignedRequest(signed, probeOpts).then(probe => ({
@@ -319,11 +358,11 @@ async function gradeReplayWindow(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
   probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
-  buildOpts: { baseUrl: string }
+  buildOpts: BuildOptions
 ): Promise<VectorGradeResult> {
   // Build one valid signed request with a fixed nonce, then send it twice.
   const fixedNonce = randomBytes(16).toString('base64url');
-  const signed = buildPositiveRequestFromNegative(vector, loaded, { nonce: fixedNonce, baseUrl: buildOpts.baseUrl });
+  const signed = buildPositiveRequestFromNegative(vector, loaded, { ...buildOpts, nonce: fixedNonce });
 
   const first = await probeSignedRequest(signed, probeOpts);
   if (first.status < 200 || first.status >= 300) {
@@ -360,7 +399,7 @@ async function gradeRateAbuse(
   loaded: ReturnType<typeof loadRequestSigningVectors>,
   contract: SignedRequestsRunnerContract,
   probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
-  buildOpts: { baseUrl: string },
+  buildOpts: BuildOptions,
   options: GradeOptions
 ): Promise<VectorGradeResult> {
   const cap =
@@ -393,7 +432,7 @@ async function gradeRateAbuse(
 function buildPositiveRequestFromNegative(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
-  options: { nonce: string; baseUrl: string }
+  options: BuildOptions & { nonce: string }
 ): SignedHttpRequest {
   // Vector 016 is structurally identical to positive/001 — sign it as a positive.
   const pseudoPositive: PositiveVector = {

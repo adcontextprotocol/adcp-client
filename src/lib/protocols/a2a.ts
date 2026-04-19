@@ -10,7 +10,7 @@ import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
-import { buildAgentSigningFetch, type AgentSigningContext } from '../signing/client';
+import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 
 if (!A2AClient) {
@@ -63,9 +63,9 @@ export function closeA2AConnections(): void {
 
 async function getOrCreateA2AClient(
   agentUrl: string,
-  authToken: string | undefined,
-  signingContext: AgentSigningContext | undefined
+  authToken: string | undefined
 ): Promise<InstanceType<typeof A2AClient>> {
+  const signingContext = signingContextStorage.getStore();
   const cacheKey = a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey);
   const cached = a2aClientCache.get(cacheKey);
   if (cached) return cached;
@@ -73,7 +73,7 @@ async function getOrCreateA2AClient(
   const pending = pendingA2AClients.get(cacheKey);
   if (pending) return pending;
 
-  const promise = createA2AClient(agentUrl, authToken, signingContext)
+  const promise = createA2AClient(agentUrl, authToken)
     .then(client => {
       a2aClientCache.set(cacheKey, client);
       return client;
@@ -88,10 +88,9 @@ async function getOrCreateA2AClient(
 
 async function createA2AClient(
   agentUrl: string,
-  authToken: string | undefined,
-  signingContext: AgentSigningContext | undefined
+  authToken: string | undefined
 ): Promise<InstanceType<typeof A2AClient>> {
-  const fetchImpl = buildFetchImpl(authToken, signingContext);
+  const fetchImpl = buildFetchImpl(authToken);
   const cardUrls = buildCardUrls(agentUrl);
 
   const context = callContextStorage.getStore();
@@ -117,7 +116,14 @@ async function createA2AClient(
   return client;
 }
 
-function buildFetchImpl(authToken: string | undefined, signingContext: AgentSigningContext | undefined) {
+function buildFetchImpl(authToken: string | undefined) {
+  // The A2A client is cached per (url, authToken, signingCacheKey). We capture
+  // the signing context at client-creation time so all subsequent calls that
+  // share this cached client use the same signing identity — changing identity
+  // requires a different cache entry, built on a separate call that enters ALS
+  // with a different context.
+  const signingContext = signingContextStorage.getStore();
+
   // Inner fetch handles auth/header injection and 401 detection. If the
   // agent has request-signing configured, we wrap it with the AdCP signing
   // fetch so the signature covers the exact bytes we're about to send (auth
@@ -216,16 +222,9 @@ export async function callA2ATool(
         debugLogs,
         got401Ref: { value: false },
       };
-      return callContextStorage.run(context, () =>
-        callA2AToolImpl(
-          agentUrl,
-          toolName,
-          parameters,
-          authToken,
-          debugLogs,
-          pushNotificationConfig,
-          context,
-          signingContext
+      return signingContextStorage.run(signingContext, () =>
+        callContextStorage.run(context, () =>
+          callA2AToolImpl(agentUrl, toolName, parameters, authToken, debugLogs, pushNotificationConfig, context)
         )
       );
     }
@@ -239,11 +238,10 @@ async function callA2AToolImpl(
   authToken: string | undefined,
   debugLogs: DebugLogEntry[],
   pushNotificationConfig: PushNotificationConfig | undefined,
-  context: A2ACallContext,
-  signingContext: AgentSigningContext | undefined
+  context: A2ACallContext
 ): Promise<unknown> {
   try {
-    const client = await getOrCreateA2AClient(agentUrl, authToken, signingContext);
+    const client = await getOrCreateA2AClient(agentUrl, authToken);
 
     const requestPayload: {
       message: {
@@ -330,6 +328,7 @@ async function callA2AToolImpl(
   } catch (error: unknown) {
     if (is401Error(error, context.got401Ref.value)) {
       // Evict this cache entry — token may have expired or been revoked.
+      const signingContext = signingContextStorage.getStore();
       a2aClientCache.delete(a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey));
 
       debugLogs.push({
