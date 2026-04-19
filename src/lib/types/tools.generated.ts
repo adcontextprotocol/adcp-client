@@ -456,9 +456,7 @@ export interface CatalogFieldMapping {
   /**
    * Static literal value to inject into catalog_field for every item, regardless of what the feed contains. Mutually exclusive with feed_field. Useful for fields the feed omits (e.g., currency when price is always USD, or a constant category value).
    */
-  value?: {
-    [k: string]: unknown | undefined;
-  };
+  value?: unknown;
   /**
    * Named transform to apply to the feed field value before writing to the catalog schema. See transform-specific parameters (format, timezone, by, separator).
    */
@@ -482,9 +480,7 @@ export interface CatalogFieldMapping {
   /**
    * Fallback value to use when feed_field is absent, null, or empty. Applied after any transform would have been applied. Allows optional feed fields to have a guaranteed baseline value.
    */
-  default?: {
-    [k: string]: unknown | undefined;
-  };
+  default?: unknown;
   ext?: ExtensionObject;
 }
 /**
@@ -11926,9 +11922,7 @@ export interface CheckGovernanceResponse {
     /**
      * The value the field must have for approval. When present, the condition is machine-actionable. When absent, the condition is advisory.
      */
-    required_value?: {
-      [k: string]: unknown | undefined;
-    };
+    required_value?: unknown;
     /**
      * Why this condition is required.
      */

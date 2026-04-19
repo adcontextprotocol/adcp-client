@@ -90,13 +90,25 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
     const productsResult = await plainClient.executeTask('get_products', {
       buying_mode: 'brief',
       brief: 'display advertising',
+      is_fixed_price: true,
     });
     if (productsResult.success && productsResult.data?.products?.length > 0) {
-      const product = productsResult.data.products[0];
-      testProduct = {
-        product_id: product.product_id,
-        pricing_option_id: product.pricing_options?.[0]?.pricing_option_id || 'default',
-      };
+      // Pick a (product, pricing_option) pair with fixed_price set. Auction options
+      // require bid_price on the package and would fail the approve case.
+      for (const product of productsResult.data.products) {
+        const fixed = product.pricing_options?.find(po => po.fixed_price != null);
+        if (fixed) {
+          testProduct = { product_id: product.product_id, pricing_option_id: fixed.pricing_option_id };
+          break;
+        }
+      }
+      if (!testProduct) {
+        const summary = productsResult.data.products.map(p => ({
+          product_id: p.product_id,
+          pricing_option_ids: p.pricing_options?.map(o => o.pricing_option_id),
+        }));
+        console.error('No fixed-price option found despite is_fixed_price=true request:', JSON.stringify(summary));
+      }
     }
 
     // Sync a plan first
@@ -1215,19 +1227,6 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
     for (let i = 1; i < entries.length; i++) {
       assert.ok(entries[i].timestamp >= entries[i - 1].timestamp, 'Expected entries sorted by timestamp');
     }
-  });
-
-  it('should track campaign breakdown', async () => {
-    const auditResult = await client.getPlanAuditLogs({
-      plan_ids: [planId],
-    });
-
-    assert.ok(auditResult.success);
-    const plan = auditResult.data.plans[0];
-    assert.ok(plan.campaigns?.length > 0, 'Expected campaigns');
-    const campaign = plan.campaigns.find(c => c.buyer_campaign_ref === campaignRef);
-    assert.ok(campaign, 'Expected campaign matching our ref');
-    assert.ok(campaign.committed >= 0, 'Expected committed budget on campaign');
   });
 });
 

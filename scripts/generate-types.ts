@@ -148,11 +148,74 @@ function enforceStrictSchema(schema: any): any {
     delete strictSchema.additionalProperties;
   }
 
+  // Annotation-only nodes — schemas that carry only JSON Schema metadata keywords and no
+  // type, ref, combinator, validator, or structural keyword — represent "any JSON value"
+  // per JSON Schema semantics. json-schema-to-typescript defaults these to
+  // { [k: string]: unknown }, which downstream Zod generation narrows to z.record and
+  // rejects scalar values the spec allows (e.g. `check_governance` conditions[].required_value
+  // returning a number). Annotate with tsType so the emitted TS is unknown.
+  const metadataOnlyKeys = new Set([
+    'description',
+    'title',
+    '$comment',
+    'examples',
+    'default',
+    'deprecated',
+    'readOnly',
+    'writeOnly',
+    '$id',
+    '$anchor',
+    '$schema',
+  ]);
+  const allKeys = Object.keys(strictSchema);
+  if (allKeys.length > 0 && allKeys.every(k => metadataOnlyKeys.has(k))) {
+    strictSchema.tsType = 'unknown';
+  }
+
   // Recursively process nested schemas
   if (strictSchema.properties) {
     strictSchema.properties = Object.fromEntries(
       Object.entries(strictSchema.properties).map(([key, value]) => [key, enforceStrictSchema(value)])
     );
+  }
+
+  if (strictSchema.patternProperties) {
+    strictSchema.patternProperties = Object.fromEntries(
+      Object.entries(strictSchema.patternProperties).map(([key, value]) => [key, enforceStrictSchema(value)])
+    );
+  }
+
+  // additionalProperties can be boolean or a schema; only recurse when it's a schema.
+  if (strictSchema.additionalProperties && typeof strictSchema.additionalProperties === 'object') {
+    strictSchema.additionalProperties = enforceStrictSchema(strictSchema.additionalProperties);
+  }
+
+  for (const key of [
+    'not',
+    'if',
+    'then',
+    'else',
+    'contains',
+    'propertyNames',
+    'unevaluatedItems',
+    'unevaluatedProperties',
+  ]) {
+    if (strictSchema[key] && typeof strictSchema[key] === 'object') {
+      strictSchema[key] = enforceStrictSchema(strictSchema[key]);
+    }
+  }
+
+  // dependentSchemas maps property name → schema. (dependencies in draft-07 may be schema or
+  // string[]; only recurse into schema values.)
+  for (const key of ['dependentSchemas', 'dependencies']) {
+    if (strictSchema[key] && typeof strictSchema[key] === 'object' && !Array.isArray(strictSchema[key])) {
+      strictSchema[key] = Object.fromEntries(
+        Object.entries(strictSchema[key]).map(([name, value]) => [
+          name,
+          value && typeof value === 'object' && !Array.isArray(value) ? enforceStrictSchema(value) : value,
+        ])
+      );
+    }
   }
 
   if (strictSchema.items) {
@@ -883,10 +946,13 @@ function alignOptionalWithNullish(typeDefinitions: string): string {
 // The json-schema-to-typescript compiler appends numbers when it encounters the same $ref multiple
 // times within a single compilation unit. We replace all references to the numbered variant with
 // the canonical name and remove the duplicate definition.
-function removeNumberedTypeDuplicates(typeDefinitions: string): string {
-  // Extract all type/interface definitions with their full text
-  const typeBodyMap = new Map<string, string>(); // name -> body text
+function removeNumberedTypeDuplicatesOnce(
+  typeDefinitions: string,
+  skipWarnings: Set<string>
+): { result: string; collapsed: Array<{ numbered: string; base: string }>; mismatched: string[] } {
+  const typeBodyMap = new Map<string, string>();
   const numberedTypes: Array<{ numbered: string; base: string }> = [];
+  const mismatched: string[] = [];
 
   // Match all export type/interface blocks.
   // Note: {[^}]*} stops at the first } so interfaces with nested objects (e.g. assets: {...})
@@ -899,45 +965,58 @@ function removeNumberedTypeDuplicates(typeDefinitions: string): string {
   let match;
   while ((match = typePattern.exec(typeDefinitions)) !== null) {
     const [, fullDef, name] = match;
-    // Normalize whitespace for comparison
-    const normalized = fullDef.replace(/\s+/g, ' ').trim();
-    typeBodyMap.set(name, normalized);
+    typeBodyMap.set(name, fullDef.replace(/\s+/g, ' ').trim());
   }
 
-  // Find numbered types (e.g., EventType1, Catalog1) that match a base type
   for (const [name] of typeBodyMap) {
     const numberedMatch = name.match(/^(.+?)(\d+)$/);
     if (numberedMatch) {
       const [, base] = numberedMatch;
       if (typeBodyMap.has(base)) {
-        // Compare normalized bodies (replace numbered name with base name for comparison)
         const numberedBody = (typeBodyMap.get(name) ?? '').replace(new RegExp(`\\b${name}\\b`, 'g'), base);
         const baseBody = typeBodyMap.get(base) ?? '';
         if (numberedBody === baseBody) {
           numberedTypes.push({ numbered: name, base });
         } else {
-          // Body mismatch — likely a nested-object interface where {[^}]*} truncates the body.
-          // The duplicate will remain in the output. This is a known limitation.
-          console.warn(`⚠️  Skipping ${name}→${base}: body mismatch (may have nested object types)`);
+          mismatched.push(name);
+          if (!skipWarnings.has(name)) {
+            console.warn(`⚠️  Skipping ${name}→${base}: body mismatch (may have nested object types)`);
+            skipWarnings.add(name);
+          }
         }
       }
     }
   }
 
-  if (numberedTypes.length === 0) return typeDefinitions;
-
-  console.log(
-    `🔢 Deduplicating ${numberedTypes.length} numbered type(s): ${numberedTypes.map(t => `${t.numbered}→${t.base}`).join(', ')}`
-  );
-
   let result = typeDefinitions;
   for (const { numbered, base } of numberedTypes) {
-    // Replace all references to the numbered type with the base type
     result = result.replace(new RegExp(`\\b${numbered}\\b`, 'g'), base);
   }
 
-  // Remove now-duplicate definitions (base type now appears twice with same name)
-  return filterDuplicateTypeDefinitions(result, new Set<string>());
+  return { result, collapsed: numberedTypes, mismatched };
+}
+
+function removeNumberedTypeDuplicates(typeDefinitions: string): string {
+  // Iterate: a first-pass mismatch is often caused by nested numbered references
+  // (e.g. CatalogFieldMapping2 references ExtensionObject32; once ExtensionObject32
+  // is collapsed to ExtensionObject, CatalogFieldMapping2's body matches the base).
+  const skipWarnings = new Set<string>();
+  let current = typeDefinitions;
+  const allCollapsed: Array<{ numbered: string; base: string }> = [];
+  for (let pass = 0; pass < 10; pass++) {
+    const { result, collapsed } = removeNumberedTypeDuplicatesOnce(current, skipWarnings);
+    if (collapsed.length === 0) break;
+    allCollapsed.push(...collapsed);
+    current = result;
+  }
+
+  if (allCollapsed.length === 0) return typeDefinitions;
+
+  console.log(
+    `🔢 Deduplicating ${allCollapsed.length} numbered type(s): ${allCollapsed.map(t => `${t.numbered}→${t.base}`).join(', ')}`
+  );
+
+  return filterDuplicateTypeDefinitions(current, new Set<string>());
 }
 
 // Helper function to filter duplicate type definitions properly
@@ -1514,9 +1593,11 @@ async function generateTypes() {
 
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
-  // Remove index signature types that were incorrectly generated from oneOf schemas
+  // Strip inline index-signature arms first so numbered-duplicate detection compares
+  // clean bodies (without the { [k: string]: unknown } intersection arms that only appear
+  // on some compile passes of the same schema).
   const processedCoreTypes = fixTypedIndexSignatures(
-    removeIndexSignatureTypes(removeNumberedTypeDuplicates(coreTypes))
+    removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
