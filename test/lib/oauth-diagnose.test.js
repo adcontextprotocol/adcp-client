@@ -45,8 +45,12 @@ before(async () => {
       try {
         handler(req, res, body);
       } catch (err) {
+        // Test fixture: swallow error into a generic 500 so CodeQL doesn't
+        // flag exception-text reflection; real failures surface via the
+        // assertion phase of the driving test.
+        console.error('test fixture handler threw:', err);
         res.statusCode = 500;
-        res.end(String(err));
+        res.end('test fixture error');
       }
     });
   });
