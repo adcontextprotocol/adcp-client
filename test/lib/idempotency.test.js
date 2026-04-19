@@ -191,3 +191,54 @@ describe('redactIdempotencyKey', () => {
     }
   });
 });
+
+describe('redactIdempotencyKeyInArgs', () => {
+  const { redactIdempotencyKeyInArgs } = require('../../dist/lib/utils/idempotency.js');
+
+  it('returns the same reference when args has no idempotency_key', () => {
+    const args = { brief: 'hi', account: { account_id: 'a1' } };
+    assert.equal(redactIdempotencyKeyInArgs(args), args, 'no-key path must preserve reference (A2A relies on this)');
+  });
+
+  it('returns a shallow clone with the key redacted when present', () => {
+    delete process.env.ADCP_LOG_IDEMPOTENCY_KEYS;
+    const args = { brief: 'hi', idempotency_key: 'abcdefgh-1234-5678-ij-sensitive' };
+    const out = redactIdempotencyKeyInArgs(args);
+    assert.notEqual(out, args, 'must return a clone, not mutate the original');
+    assert.equal(out.idempotency_key, 'abcdefgh…');
+    assert.equal(args.idempotency_key, 'abcdefgh-1234-5678-ij-sensitive', 'original must not be mutated');
+    assert.equal(out.brief, 'hi');
+  });
+
+  it('returns the same reference when ADCP_LOG_IDEMPOTENCY_KEYS is enabled', () => {
+    process.env.ADCP_LOG_IDEMPOTENCY_KEYS = '1';
+    try {
+      const args = { brief: 'hi', idempotency_key: 'abcdefgh-1234-5678-ij-full' };
+      assert.equal(redactIdempotencyKeyInArgs(args), args, 'opt-in full logging must preserve reference');
+    } finally {
+      delete process.env.ADCP_LOG_IDEMPOTENCY_KEYS;
+    }
+  });
+});
+
+describe('IdempotencyConflictError/ExpiredError do not leak key on serialization', () => {
+  it('idempotencyKey is non-enumerable on IdempotencyConflictError', () => {
+    const err = new IdempotencyConflictError('secret-key-abcdefghij1234');
+    assert.equal(err.idempotencyKey, 'secret-key-abcdefghij1234', 'direct access still works');
+    assert.ok(
+      !Object.keys(err).includes('idempotencyKey'),
+      'key must not appear in Object.keys (blocks JSON.stringify leak)'
+    );
+    assert.ok(
+      !JSON.stringify(err).includes('secret-key'),
+      `JSON.stringify(err) leaked the key: ${JSON.stringify(err)}`
+    );
+  });
+
+  it('idempotencyKey is non-enumerable on IdempotencyExpiredError', () => {
+    const err = new IdempotencyExpiredError('secret-key-abcdefghij1234');
+    assert.equal(err.idempotencyKey, 'secret-key-abcdefghij1234');
+    assert.ok(!Object.keys(err).includes('idempotencyKey'));
+    assert.ok(!JSON.stringify(err).includes('secret-key'));
+  });
+});

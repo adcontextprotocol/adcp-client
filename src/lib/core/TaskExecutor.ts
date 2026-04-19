@@ -12,7 +12,7 @@ import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
-import { generateIdempotencyKey, isMutatingTask } from '../utils/idempotency';
+import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import type {
   Message,
@@ -289,7 +289,10 @@ export class TaskExecutor {
     let effectiveParams = params;
 
     try {
-      // Emit protocol_request activity
+      // Emit protocol_request activity. The activity payload is the boundary
+      // callers typically pipe into external observability stacks, so redact
+      // the idempotency key — it's a retry-pattern oracle within the seller's
+      // TTL. Full logging is opt-in via ADCP_LOG_IDEMPOTENCY_KEYS=1.
       await this.config.onActivity?.({
         type: 'protocol_request',
         operation_id: taskId,
@@ -298,7 +301,7 @@ export class TaskExecutor {
         task_id: taskId,
         task_type: taskName,
         status: 'pending',
-        payload: { params },
+        payload: { params: redactIdempotencyKeyInArgs(params) },
         timestamp: new Date().toISOString(),
       });
 

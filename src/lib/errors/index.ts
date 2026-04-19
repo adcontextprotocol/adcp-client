@@ -266,15 +266,23 @@ export class AuthenticationRequiredError extends ADCPError {
 export class IdempotencyConflictError extends ADCPError {
   readonly code = 'IDEMPOTENCY_CONFLICT';
 
-  constructor(
-    public readonly idempotencyKey: string | undefined,
-    message?: string
-  ) {
+  // Exposed via the getter so `console.log(err)` and JSON.stringify don't
+  // leak the key (it's a retry-pattern oracle within the seller's TTL).
+  // Callers reading `err.idempotencyKey` get it normally.
+  readonly idempotencyKey: string | undefined;
+
+  constructor(idempotencyKey: string | undefined, message?: string) {
     super(
       message ||
         'idempotency_key was used earlier with a different canonical payload. ' +
           'Use a fresh UUID v4 for the new request, or resend the exact original payload to get the cached response.'
     );
+    Object.defineProperty(this, 'idempotencyKey', {
+      value: idempotencyKey,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
   }
 }
 
@@ -294,15 +302,22 @@ export class IdempotencyConflictError extends ADCPError {
 export class IdempotencyExpiredError extends ADCPError {
   readonly code = 'IDEMPOTENCY_EXPIRED';
 
-  constructor(
-    public readonly idempotencyKey: string | undefined,
-    message?: string
-  ) {
+  // Non-enumerable so `console.log(err)` / JSON.stringify don't leak it —
+  // same reasoning as IdempotencyConflictError.idempotencyKey.
+  readonly idempotencyKey: string | undefined;
+
+  constructor(idempotencyKey: string | undefined, message?: string) {
     super(
       message ||
         "idempotency_key is past the seller's replay window. " +
           'If you know the prior call succeeded, look up the resource by natural key before retrying. Otherwise, mint a fresh UUID v4.'
     );
+    Object.defineProperty(this, 'idempotencyKey', {
+      value: idempotencyKey,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
   }
 }
 

@@ -101,22 +101,39 @@ if (result.success && !result.metadata.replayed) {
 
 2. **Agent re-plan vs. network retry.** A network retry (same bytes, socket timeout) reuses the same key — the SDK handles this. An agent re-plan (LLM re-ran its planner and produced a different payload) means a NEW intent — mint a fresh key by calling the method again without passing one. Reusing the prior key with a different payload returns `IdempotencyConflictError`.
 
-**Typed errors:**
+**Typed errors:** on failure, `result.errorInstance` carries a typed `ADCPError` subclass for codes with dedicated classes — currently `IdempotencyConflictError` and `IdempotencyExpiredError`. Prefer `instanceof` checks over switching on `adcpError.code` strings.
 
 ```typescript
 import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';
 
-if (result.adcpError?.code === 'IDEMPOTENCY_CONFLICT') {
+if (result.errorInstance instanceof IdempotencyConflictError) {
   // Agent re-planned with different payload. Retry with a fresh key.
+  // result.errorInstance.idempotencyKey carries the key the server omitted.
 }
-if (result.adcpError?.code === 'IDEMPOTENCY_EXPIRED') {
+if (result.errorInstance instanceof IdempotencyExpiredError) {
   // Key past replay window. If you know the prior call succeeded, look up
   // by natural key (e.g., get_media_buys by context.internal_campaign_id).
   // Otherwise mint a fresh key.
 }
 ```
 
-**BYOK** (persist keys in your DB across process restarts): you own the replay-window boundary. Compare key age against `adcp.idempotency.replay_ttl_seconds` from `get_adcp_capabilities` before reusing. Past the window, fall back to a natural-key lookup rather than minting a new key — otherwise a second resource is created silently.
+**BYOK** (persist keys in your DB across process restarts): you own the replay-window boundary. Ask the client for the seller's declared TTL:
+
+```typescript
+const ttl = await client.getIdempotencyReplayTtlSeconds();
+// Returns the declared number. Throws ConfigurationError if the seller is v3
+// but omits adcp.idempotency.replay_ttl_seconds — the SDK does NOT default to
+// 24h, because a silent default misleads retry-sensitive flows. Returns
+// undefined on v2 sellers (pre-idempotency-envelope).
+```
+
+Pass your persisted key with `useIdempotencyKey(key)` — it validates against the spec pattern (`^[A-Za-z0-9_.:-]{16,255}$`) before the network round-trip:
+
+```typescript
+import { useIdempotencyKey } from '@adcp/client';
+const key = await db.getOrCreateIdempotencyKey(campaign.id);
+await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
+```
 
 ## Tools
 

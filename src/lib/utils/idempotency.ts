@@ -116,8 +116,11 @@ export type MutatingRequestInput<T extends { idempotency_key: string }> = Omit<T
  */
 export function useIdempotencyKey(key: string): { idempotency_key: string } {
   if (typeof key !== 'string' || !isValidIdempotencyKey(key)) {
+    // Preview only 8 chars so near-valid keys (16+ chars, minor drift) don't
+    // flow verbatim into exception messages and stack traces. Matches the
+    // redactIdempotencyKey() policy for debug logs.
     const preview =
-      typeof key === 'string' ? `${JSON.stringify(key.slice(0, 32))}${key.length > 32 ? '…' : ''}` : typeof key;
+      typeof key === 'string' ? `${JSON.stringify(key.slice(0, 8))}${key.length > 8 ? '…' : ''}` : typeof key;
     throw new Error(`Invalid idempotency_key: must match ${IDEMPOTENCY_KEY_PATTERN}. Received: ${preview}`);
   }
   return { idempotency_key: key };

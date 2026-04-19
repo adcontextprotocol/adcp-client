@@ -311,6 +311,50 @@ results.forEach((result, i) => {
 });
 ```
 
+## Idempotency
+
+Every mutating tool call (`createMediaBuy`, `syncCreatives`, `activateSignal`, etc.) auto-generates an `idempotency_key` (UUID v4) when the caller omits one. Internal retries reuse the key so a re-sent request returns the cached response rather than double-booking. See `docs/llms.txt` for the full protocol story.
+
+```typescript
+const result = await client.createMediaBuy({ account, brand, start_time, end_time, packages });
+
+// Key used on the wire (auto-generated or caller-supplied). Log alongside your own IDs.
+result.metadata.idempotency_key;
+
+// true when the response was a cached replay. Side-effecting callers MUST gate
+// notifications, memory writes, downstream calls on this flag.
+result.metadata.replayed;
+```
+
+**Typed errors on replay conflicts** — check `result.errorInstance` with `instanceof` instead of switching on error codes:
+
+```typescript
+import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';
+
+if (result.errorInstance instanceof IdempotencyConflictError) {
+  // Agent re-planned with a different payload. Mint a fresh key and retry.
+}
+if (result.errorInstance instanceof IdempotencyExpiredError) {
+  // Key past the seller's replay window. Look up by natural key before retrying.
+}
+```
+
+**BYOK** (persist keys across process restarts so crash-recovery can resend the exact key):
+
+```typescript
+import { useIdempotencyKey } from '@adcp/client';
+
+// Validates against the spec pattern `^[A-Za-z0-9_.:-]{16,255}$` before the round-trip.
+const key = await db.getOrCreateIdempotencyKey(campaign.id);
+await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
+
+// Check the seller's replay window so you know when to fall back to natural-key lookup.
+// Throws on v3 sellers that omit the declaration — the SDK does NOT default to 24h.
+const ttlSeconds = await client.getIdempotencyReplayTtlSeconds();
+```
+
+Idempotency keys are retry-pattern oracles within their TTL, so the SDK truncates them to the first 8 characters in debug logs by default. Set `ADCP_LOG_IDEMPOTENCY_KEYS=1` to opt into full logging for local debugging.
+
 ## Security
 
 ### Webhook Signature Verification
@@ -381,9 +425,9 @@ app.post(
     jwks: new StaticJwksResolver(publishedBuyerKeys),
     replayStore: new InMemoryReplayStore(),
     revocationStore: new InMemoryRevocationStore(),
-    resolveOperation: (req) => 'create_media_buy',
+    resolveOperation: req => 'create_media_buy',
   }),
-  handler,
+  handler
 );
 // On verify, req.verifiedSigner = { keyid, agent_url?, verified_at }.
 // On reject, the middleware returns 401 with
@@ -757,13 +801,13 @@ npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --jso
 
 Available skills:
 
-| Skill | For | Storyboard |
-|-------|-----|------------|
-| [`skills/build-seller-agent/`](skills/build-seller-agent/SKILL.md) | Publishers, SSPs, retail media | `media_buy_seller` |
-| [`skills/build-generative-seller-agent/`](skills/build-generative-seller-agent/SKILL.md) | AI ad networks, generative DSPs | `media_buy_generative_seller` |
-| [`skills/build-signals-agent/`](skills/build-signals-agent/SKILL.md) | CDPs, data providers | `signal_owned`, `signal_marketplace` |
-| [`skills/build-retail-media-agent/`](skills/build-retail-media-agent/SKILL.md) | Retail media networks | `media_buy_catalog_creative` |
-| [`skills/build-creative-agent/`](skills/build-creative-agent/SKILL.md) | Ad servers, creative platforms | `creative_lifecycle` |
+| Skill                                                                                    | For                             | Storyboard                           |
+| ---------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------ |
+| [`skills/build-seller-agent/`](skills/build-seller-agent/SKILL.md)                       | Publishers, SSPs, retail media  | `media_buy_seller`                   |
+| [`skills/build-generative-seller-agent/`](skills/build-generative-seller-agent/SKILL.md) | AI ad networks, generative DSPs | `media_buy_generative_seller`        |
+| [`skills/build-signals-agent/`](skills/build-signals-agent/SKILL.md)                     | CDPs, data providers            | `signal_owned`, `signal_marketplace` |
+| [`skills/build-retail-media-agent/`](skills/build-retail-media-agent/SKILL.md)           | Retail media networks           | `media_buy_catalog_creative`         |
+| [`skills/build-creative-agent/`](skills/build-creative-agent/SKILL.md)                   | Ad servers, creative platforms  | `creative_lifecycle`                 |
 
 For manual implementation, see the [Build an Agent guide](docs/guides/BUILD-AN-AGENT.md) and [`examples/signals-agent.ts`](examples/signals-agent.ts).
 
