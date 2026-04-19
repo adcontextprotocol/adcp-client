@@ -149,16 +149,16 @@ The response needs `check_id`, `status`, `plan_id`, and `explanation`.
 // Approved:
 taskToolResponse({
   check_id: string,              // required — unique check identifier
-  status: 'approved',            // required — 'approved' | 'denied' | 'conditions'
+  status: 'approved',            // required — enum: 'approved' | 'denied' | 'conditions'
   plan_id: string,               // required — echo from request
   explanation: string,           // required — human-readable explanation
   governance_context: string,    // pass to create_media_buy
 })
 
-// Approved with conditions:
+// Approved with conditions — status is literally 'conditions' (not 'approved' plus a conditions array):
 taskToolResponse({
   check_id: string,
-  status: 'approved',
+  status: 'conditions',
   plan_id: string,
   explanation: 'Approved with conditions',
   conditions: [{                 // array of binding conditions
@@ -169,7 +169,7 @@ taskToolResponse({
   governance_context: string,
 })
 
-// Denied:
+// Denied — also the way human review is signalled (no separate 'escalate' status):
 taskToolResponse({
   check_id: string,
   status: 'denied',
@@ -177,7 +177,7 @@ taskToolResponse({
   explanation: 'Exceeds spending authority',
   findings: [{                   // array of policy findings
     category_id: string,         // required — policy category ID
-    severity: 'info' | 'warning' | 'critical', // required
+    severity: 'info' | 'warning' | 'critical', // required — human-review signal uses 'critical'
     explanation: string,         // required — human-readable
   }],
 })
@@ -647,9 +647,20 @@ checkGovernance: async (params, ctx) => {
   const budget = params.binding.total_budget.amount;
 
   // 1. Authority level gate
+  //    Human review is signalled as `denied` + critical finding (the 'escalated' status was dropped in v3).
+  //    The buyer resolves review off-protocol and re-calls check_governance with the approved governance_context.
   if (plan.authority_level === 'human_required') {
-    return { check_id: `chk_${Date.now()}`, status: 'escalate' as const, plan_id: params.plan_id,
-      explanation: 'Requires human approval' };
+    return {
+      check_id: `chk_${Date.now()}`,
+      status: 'denied' as const,
+      plan_id: params.plan_id,
+      explanation: 'Requires human approval before this buy can proceed',
+      findings: [{
+        category_id: 'HUMAN_REVIEW_REQUIRED',
+        severity: 'critical',
+        explanation: 'Plan authority_level is human_required — resolve off-protocol and retry',
+      }],
+    };
   }
   if (plan.authority_level === 'agent_limited' && budget > plan.budget.total) {
     return { check_id: `chk_${Date.now()}`, status: 'denied' as const, plan_id: params.plan_id,
@@ -669,7 +680,7 @@ checkGovernance: async (params, ctx) => {
 
   return {
     check_id: `chk_${Date.now()}`,
-    status: 'approved' as const,
+    status: conditions.length ? 'conditions' as const : 'approved' as const,   // 3-value enum, pick one
     plan_id: params.plan_id,
     explanation: conditions.length ? 'Approved with conditions' : 'Within spending authority',
     conditions,
@@ -710,7 +721,7 @@ checkGovernance: async (params, ctx) => {
 
     return {
       check_id: `chk_${Date.now()}`,
-      status: 'approved' as const,    // approved with reallocation conditions
+      status: 'conditions' as const,    // approved-with-reallocation — use the 'conditions' status, not 'approved'
       plan_id: params.plan_id,
       explanation: `Drift exceeded threshold: ${overage > 0 ? 'overage' : 'underage'} of ${Math.abs(overage)}`,
       conditions: driftedChannels.map(([channel, percent]) => ({

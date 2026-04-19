@@ -1084,31 +1084,44 @@ createAdcpServer({
 
 Storyboard: `signed_requests`. Transport-layer security specialism — certifies that your agent correctly verifies incoming RFC 9421 HTTP Signatures on every mutating request per [AdCP security docs](https://adcontextprotocol.org/docs/building/implementation/security.mdx#signed-requests-transport-layer).
 
-**Status: preview.** The conformance runner is not yet implemented (tracked upstream as adcontextprotocol/adcp#2331). Claiming this specialism today advertises intent; real grading begins once the runner ships.
+**Status: preview.** The conformance runner is not yet implemented (tracked upstream as adcontextprotocol/adcp#2331). Claiming the specialism today advertises intent; grading begins once the runner ships.
 
-**What to implement:**
-
-1. On every mutating request, parse `Signature-Input` and `Signature` headers.
-2. Resolve the `keyid` from the signature params against the buyer's published key (typically via `adagents.json` or an authenticated key registry).
-3. Verify covered components: `@method`, `@target-uri`, `content-digest`, `content-type`, plus any AdCP-required extras (`idempotency_key` as a content-derived component).
-4. Check `created` is within acceptance window (e.g. 5 minutes) and `nonce` is not replayed.
-5. If verification fails: return `adcpError('SIGNATURE_INVALID', { message })` with an HTTP 401.
-6. If headers are absent: behavior depends on policy — either accept (open mode) or reject with `adcpError('SIGNATURE_REQUIRED', { ... })`.
+**Use the SDK's server verifier** — don't write signature parsing or canonicalization yourself. The `@adcp/client/signing/server` barrel ships the full verification pipeline.
 
 ```typescript
-import { verifyRfc9421Signature } from '@adcp/client';   // helper ships alongside 3.0 idempotency work
+import {
+  verifyRequestSignature,        // low-level verifier
+  createExpressVerifier,         // Express middleware
+  InMemoryReplayStore,
+  InMemoryRevocationStore,
+  StaticJwksResolver,
+  RequestSignatureError,
+  type VerifierCapability,
+} from '@adcp/client/signing/server';
 
-// Wrap mutating handlers:
-const signatureGuard = async (request) => {
-  const result = await verifyRfc9421Signature(request.headers, request.body, {
-    keyResolver: async (keyid) => fetchBuyerKey(keyid),
-    acceptanceWindowSeconds: 300,
-    nonceStore: ctx.store,
-    requireSignature: true,   // or false for open mode
-  });
-  if (!result.valid) throw adcpError('SIGNATURE_INVALID', { message: result.reason });
+// Declare the policy that will ship in your get_adcp_capabilities response.
+// required_for: operations where a missing signature is a hard reject.
+// supported_for: operations where signatures are verified if present but not required.
+// covers_content_digest: whether content-digest must be a covered component.
+const capability: VerifierCapability = {
+  required_for: ['create_media_buy', 'update_media_buy', 'acquire_rights'],
+  supported_for: ['sync_creatives', 'sync_audiences', 'sync_accounts'],
+  covers_content_digest: 'required',
+  agent_url: 'https://seller.example.com/mcp',
 };
+
+const verifier = createExpressVerifier({
+  capability,
+  jwks: new StaticJwksResolver({ /* { keyid: jwk } for each buyer */ }),
+  replayStore: new InMemoryReplayStore(),
+  revocationStore: new InMemoryRevocationStore(),
+  operationFor: (req) => req.body?.method ?? req.path,
+});
+
+app.use('/mcp', verifier);   // run before the MCP transport
 ```
+
+**Advertise your policy.** Put your `VerifierCapability` shape (`required_for` / `supported_for` / `covers_content_digest`) under `capabilities.request_signing` in your `get_adcp_capabilities` response. Client SDKs fetch this on first call and cache for 300s — they use it to decide whether to sign outbound calls. If you don't advertise, AdCP clients that auto-sign won't know to do so for your agent.
 
 **Don't claim preview.** Unless you've implemented and tested signature verification, leave this specialism off your capabilities. A non-claiming agent is not graded against it.
 
