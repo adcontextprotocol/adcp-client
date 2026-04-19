@@ -848,7 +848,8 @@ Ask the operator which mechanism they want before generating code. "API key, OAu
 ### API key
 
 ```typescript
-import { serve, verifyApiKey } from '@adcp/client';
+import { serve } from '@adcp/client';
+import { verifyApiKey } from '@adcp/client/server';
 
 serve(createAgent, {
   authenticate: verifyApiKey({
@@ -866,7 +867,8 @@ For local development use the static `keys` map: `verifyApiKey({ keys: { sk_test
 ### OAuth
 
 ```typescript
-import { serve, verifyBearer } from '@adcp/client';
+import { serve } from '@adcp/client';
+import { verifyBearer } from '@adcp/client/server';
 
 const AGENT_URL = 'https://my-agent.example.com/mcp';
 
@@ -889,7 +891,8 @@ Set `publicUrl` to the canonical https:// URL clients use — the framework serv
 ### Both
 
 ```typescript
-import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+import { serve } from '@adcp/client';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
 
 serve(createAgent, {
   publicUrl: AGENT_URL,
