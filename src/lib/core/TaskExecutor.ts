@@ -6,12 +6,13 @@ import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import { getMCPTaskStatus, listMCPTasks } from '../protocols/mcp-tasks';
 import { getAuthToken } from '../auth';
-import { is401Error } from '../errors';
+import { is401Error, adcpErrorToTypedError } from '../errors';
+import type { ADCPError } from '../errors';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
-import { generateIdempotencyKey, isMutatingTask } from '../utils/idempotency';
+import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import type {
   Message,
@@ -196,6 +197,22 @@ export class TaskExecutor {
     return meta;
   }
 
+  /**
+   * Map a task's structured AdCP error to a typed `ADCPError` subclass when
+   * the code has a dedicated class (e.g., `IDEMPOTENCY_CONFLICT` →
+   * `IdempotencyConflictError`). The idempotency key is pulled from tracked
+   * task state because the server intentionally omits it from error bodies
+   * (it's a read-oracle).
+   */
+  private buildErrorInstance(
+    taskId: string,
+    adcpError: ReturnType<typeof extractAdcpErrorInfo>
+  ): ADCPError | undefined {
+    if (!adcpError) return undefined;
+    const key = this.activeTasks.get(taskId)?.idempotencyKey;
+    return adcpErrorToTypedError(adcpError, key);
+  }
+
   private generateWebhookUrl(taskName: string, operationId: string): string | undefined {
     if (!this.config.webhookUrlTemplate || !this.config.agentId) {
       return undefined;
@@ -272,7 +289,10 @@ export class TaskExecutor {
     let effectiveParams = params;
 
     try {
-      // Emit protocol_request activity
+      // Emit protocol_request activity. The activity payload is the boundary
+      // callers typically pipe into external observability stacks, so redact
+      // the idempotency key — it's a retry-pattern oracle within the seller's
+      // TTL. Full logging is opt-in via ADCP_LOG_IDEMPOTENCY_KEYS=1.
       await this.config.onActivity?.({
         type: 'protocol_request',
         operation_id: taskId,
@@ -281,7 +301,7 @@ export class TaskExecutor {
         task_id: taskId,
         task_type: taskName,
         status: 'pending',
-        payload: { params },
+        payload: { params: redactIdempotencyKeyInArgs(params) },
         timestamp: new Date().toISOString(),
       });
 
@@ -500,12 +520,14 @@ export class TaskExecutor {
             debug_logs: debugLogs,
           };
         }
+        const completedAdcpError = extractAdcpErrorInfo(completedData);
         return {
           success: false as const,
           status: 'failed' as const,
           data: completedData,
           error: finalError ?? 'Unknown error',
-          adcpError: extractAdcpErrorInfo(completedData),
+          adcpError: completedAdcpError,
+          errorInstance: this.buildErrorInstance(taskId, completedAdcpError),
           correlationId: extractCorrelationId(completedData),
           metadata: this.buildMetadata({
             taskId,
@@ -568,6 +590,7 @@ export class TaskExecutor {
           data: hasStructuredError ? failedData : undefined,
           error: typeof failedError === 'string' ? failedError : `Task ${status}`,
           adcpError: adcpErrorInfo,
+          errorInstance: this.buildErrorInstance(taskId, adcpErrorInfo),
           correlationId: extractCorrelationId(failedData),
           metadata: this.buildMetadata({
             taskId,
@@ -619,12 +642,14 @@ export class TaskExecutor {
               debug_logs: debugLogs,
             };
           }
+          const defaultAdcpError = extractAdcpErrorInfo(defaultData);
           return {
             success: false as const,
             status: 'failed' as const,
             data: defaultData,
             error: defaultFinalError!,
-            adcpError: extractAdcpErrorInfo(defaultData),
+            adcpError: defaultAdcpError,
+            errorInstance: this.buildErrorInstance(taskId, defaultAdcpError),
             correlationId: extractCorrelationId(defaultData),
             metadata: this.buildMetadata({
               taskId,
@@ -1086,12 +1111,14 @@ export class TaskExecutor {
             }),
           };
         }
+        const asyncResultErr = extractAdcpErrorInfo(status.result);
         return {
           success: false as const,
           status: 'failed' as const,
           data: status.result,
           error: this.extractOperationError(status.result),
-          adcpError: extractAdcpErrorInfo(status.result),
+          adcpError: asyncResultErr,
+          errorInstance: this.buildErrorInstance(taskId, asyncResultErr),
           correlationId: extractCorrelationId(status.result),
           metadata: this.buildMetadata({
             taskId,
@@ -1105,12 +1132,14 @@ export class TaskExecutor {
       }
 
       if (status.status === ADCP_STATUS.FAILED || status.status === ADCP_STATUS.CANCELED) {
+        const asyncFailedErr = extractAdcpErrorInfo(status.result);
         return {
           success: false as const,
           status: 'failed' as const,
           data: status.result,
           error: status.error || `Task ${status.status}`,
-          adcpError: extractAdcpErrorInfo(status.result),
+          adcpError: asyncFailedErr,
+          errorInstance: this.buildErrorInstance(taskId, asyncFailedErr),
           correlationId: extractCorrelationId(status.result),
           metadata: this.buildMetadata({
             taskId,
@@ -1244,6 +1273,7 @@ export class TaskExecutor {
       status: 'failed' as const,
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
+      errorInstance: this.buildErrorInstance(taskId, adcpErrorInfo),
       correlationId,
       metadata: this.buildMetadata({
         taskId,

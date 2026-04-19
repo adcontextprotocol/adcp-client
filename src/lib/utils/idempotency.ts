@@ -95,3 +95,68 @@ export function isValidIdempotencyKey(key: string): boolean {
 export type MutatingRequestInput<T extends { idempotency_key: string }> = Omit<T, 'idempotency_key'> & {
   idempotency_key?: string;
 };
+
+/**
+ * Validate a bring-your-own-key `idempotency_key` up front and return a
+ * `{ idempotency_key }` fragment to spread into a mutating request.
+ *
+ * Useful when the caller persists keys across process restarts (e.g., key
+ * stored in a DB alongside a campaign row) and wants to catch drift before
+ * the round-trip — the server would reject a malformed key with
+ * `INVALID_REQUEST`, but failing locally produces a faster, cleaner error.
+ *
+ * Throws when the key doesn't match `IDEMPOTENCY_KEY_PATTERN`
+ * (`^[A-Za-z0-9_.:-]{16,255}$`).
+ *
+ * @example
+ * ```ts
+ * const key = await db.getOrCreateIdempotencyKey(campaign.id);
+ * const result = await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
+ * ```
+ */
+export function useIdempotencyKey(key: string): { idempotency_key: string } {
+  if (typeof key !== 'string' || !isValidIdempotencyKey(key)) {
+    // Preview only 8 chars so near-valid keys (16+ chars, minor drift) don't
+    // flow verbatim into exception messages and stack traces. Matches the
+    // redactIdempotencyKey() policy for debug logs.
+    const preview =
+      typeof key === 'string' ? `${JSON.stringify(key.slice(0, 8))}${key.length > 8 ? '…' : ''}` : typeof key;
+    throw new Error(`Invalid idempotency_key: must match ${IDEMPOTENCY_KEY_PATTERN}. Received: ${preview}`);
+  }
+  return { idempotency_key: key };
+}
+
+/**
+ * True when the caller has opted into logging full idempotency keys via the
+ * `ADCP_LOG_IDEMPOTENCY_KEYS` environment variable. Keys are a retry-pattern
+ * oracle within their TTL, so the default is to truncate.
+ */
+function fullIdempotencyKeyLoggingEnabled(): boolean {
+  const value = process.env.ADCP_LOG_IDEMPOTENCY_KEYS;
+  if (!value) return false;
+  const v = value.toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+/**
+ * Truncate an idempotency key for logging — first 8 chars followed by `…`.
+ * Callers who need the full key for debugging can opt in via
+ * `ADCP_LOG_IDEMPOTENCY_KEYS=1`.
+ */
+export function redactIdempotencyKey(key: string): string {
+  if (fullIdempotencyKeyLoggingEnabled()) return key;
+  if (typeof key !== 'string' || key.length === 0) return key;
+  return `${key.slice(0, 8)}…`;
+}
+
+/**
+ * Return a shallow copy of `args` with any `idempotency_key` field replaced by
+ * its truncated form for safe debug logging. Leaves non-key fields untouched.
+ * No-op when `ADCP_LOG_IDEMPOTENCY_KEYS` is set.
+ */
+export function redactIdempotencyKeyInArgs<T extends Record<string, unknown>>(args: T): T {
+  if (!args || typeof args !== 'object') return args;
+  if (!('idempotency_key' in args) || typeof args.idempotency_key !== 'string') return args;
+  if (fullIdempotencyKeyLoggingEnabled()) return args;
+  return { ...args, idempotency_key: redactIdempotencyKey(args.idempotency_key) } as T;
+}

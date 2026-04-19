@@ -301,6 +301,7 @@ export interface TaskResultCompleted<T> extends TaskResultBase {
   data: T;
   error?: undefined;
   adcpError?: undefined;
+  errorInstance?: undefined;
   correlationId?: undefined;
   deferred?: undefined;
   submitted?: undefined;
@@ -313,6 +314,7 @@ export interface TaskResultIntermediate<T> extends TaskResultBase {
   data?: T;
   error?: undefined;
   adcpError?: undefined;
+  errorInstance?: undefined;
   correlationId?: undefined;
   /** Deferred continuation (client needs time for input) */
   deferred?: DeferredContinuation<T>;
@@ -330,6 +332,15 @@ export interface TaskResultFailure<T> extends TaskResultBase {
   error: string;
   /** Structured AdCP error (code, recovery, suggestion, retryAfterMs) */
   adcpError?: AdcpErrorInfo;
+  /**
+   * Typed `ADCPError` subclass instance when the seller's error code has a
+   * dedicated class — currently `IdempotencyConflictError` and
+   * `IdempotencyExpiredError`. Lets callers write
+   * `if (result.errorInstance instanceof IdempotencyConflictError)` instead of
+   * switching on `adcpError.code` strings. Absent for codes without a typed
+   * mapping.
+   */
+  errorInstance?: import('../errors').ADCPError;
   /** Correlation ID from the error response context, for tracing across agents */
   correlationId?: string;
   deferred?: undefined;

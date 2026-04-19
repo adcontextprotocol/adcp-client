@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const { TaskExecutor } = require('../../dist/lib/core/TaskExecutor.js');
 const protocols = require('../../dist/lib/protocols/index.js');
 const { isMutatingTask } = require('../../dist/lib/utils/idempotency.js');
+const { IdempotencyConflictError, IdempotencyExpiredError } = require('../../dist/lib/index.js');
 
 function buildResponse({ replayed } = {}) {
   return {
@@ -117,6 +118,63 @@ describe('TaskExecutor surfaces replayed on result metadata', () => {
       const executor = new TaskExecutor();
       const result = await executor.executeTask(agent, 'create_media_buy', baseParams);
       assert.equal(result.metadata.replayed, undefined);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('TaskExecutor surfaces typed error instances on IDEMPOTENCY_CONFLICT/EXPIRED', () => {
+  function failedResponse(code) {
+    return {
+      structuredContent: {
+        status: 'failed',
+        adcp_error: { code, message: `seller returned ${code}` },
+      },
+      content: [{ type: 'text', text: JSON.stringify({ status: 'failed', adcp_error: { code } }) }],
+    };
+  }
+
+  it('IDEMPOTENCY_CONFLICT response → result.errorInstance is IdempotencyConflictError with the sent key', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({ response: failedResponse('IDEMPOTENCY_CONFLICT'), capture });
+    try {
+      const executor = new TaskExecutor();
+      const myKey = 'my_persisted_key_abcdefghij1234';
+      const result = await executor.executeTask(agent, 'create_media_buy', {
+        ...baseParams,
+        idempotency_key: myKey,
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.adcpError?.code, 'IDEMPOTENCY_CONFLICT');
+      assert.ok(result.errorInstance instanceof IdempotencyConflictError, 'expected typed error instance');
+      assert.equal(result.errorInstance.idempotencyKey, myKey);
+    } finally {
+      restore();
+    }
+  });
+
+  it('IDEMPOTENCY_EXPIRED response → result.errorInstance is IdempotencyExpiredError', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({ response: failedResponse('IDEMPOTENCY_EXPIRED'), capture });
+    try {
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(agent, 'create_media_buy', baseParams);
+      assert.equal(result.success, false);
+      assert.ok(result.errorInstance instanceof IdempotencyExpiredError);
+    } finally {
+      restore();
+    }
+  });
+
+  it('non-idempotency errors leave errorInstance undefined', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({ response: failedResponse('RATE_LIMITED'), capture });
+    try {
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(agent, 'create_media_buy', baseParams);
+      assert.equal(result.success, false);
+      assert.equal(result.errorInstance, undefined);
     } finally {
       restore();
     }

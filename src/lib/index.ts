@@ -211,6 +211,7 @@ export {
   FeatureUnsupportedError,
   IdempotencyConflictError,
   IdempotencyExpiredError,
+  adcpErrorToTypedError,
   isADCPError,
   isErrorOfType,
   extractErrorInfo,
@@ -224,9 +225,12 @@ export {
   generateIdempotencyKey,
   isMutatingTask,
   isValidIdempotencyKey,
+  useIdempotencyKey,
+  redactIdempotencyKey,
   IDEMPOTENCY_KEY_PATTERN,
   MUTATING_TASKS,
 } from './utils/idempotency';
+export type { IdempotencyCapabilities } from './utils/capabilities';
 export type { MutatingRequestInput } from './utils/idempotency';
 export { canonicalize, canonicalJsonSha256 } from './utils/jcs';
 

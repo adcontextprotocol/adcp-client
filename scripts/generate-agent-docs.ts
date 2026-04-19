@@ -561,15 +561,18 @@ function generateLlmsTxt(
     `2. **Agent re-plan vs. network retry.** A network retry (same bytes, socket timeout) reuses the same key — the SDK handles this. An agent re-plan (LLM re-ran its planner and produced a different payload) means a NEW intent — mint a fresh key by calling the method again without passing one. Reusing the prior key with a different payload returns \`IdempotencyConflictError\`.`
   );
   ln();
-  ln(`**Typed errors:**`);
+  ln(
+    `**Typed errors:** on failure, \`result.errorInstance\` carries a typed \`ADCPError\` subclass for codes with dedicated classes — currently \`IdempotencyConflictError\` and \`IdempotencyExpiredError\`. Prefer \`instanceof\` checks over switching on \`adcpError.code\` strings.`
+  );
   ln();
   ln('```typescript');
   ln("import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';");
   ln();
-  ln("if (result.adcpError?.code === 'IDEMPOTENCY_CONFLICT') {");
+  ln('if (result.errorInstance instanceof IdempotencyConflictError) {');
   ln('  // Agent re-planned with different payload. Retry with a fresh key.');
+  ln('  // result.errorInstance.idempotencyKey carries the key the server omitted.');
   ln('}');
-  ln("if (result.adcpError?.code === 'IDEMPOTENCY_EXPIRED') {");
+  ln('if (result.errorInstance instanceof IdempotencyExpiredError) {');
   ln('  // Key past replay window. If you know the prior call succeeded, look up');
   ln('  // by natural key (e.g., get_media_buys by context.internal_campaign_id).');
   ln('  // Otherwise mint a fresh key.');
@@ -577,8 +580,26 @@ function generateLlmsTxt(
   ln('```');
   ln();
   ln(
-    `**BYOK** (persist keys in your DB across process restarts): you own the replay-window boundary. Compare key age against \`adcp.idempotency.replay_ttl_seconds\` from \`get_adcp_capabilities\` before reusing. Past the window, fall back to a natural-key lookup rather than minting a new key — otherwise a second resource is created silently.`
+    `**BYOK** (persist keys in your DB across process restarts): you own the replay-window boundary. Ask the client for the seller's declared TTL:`
   );
+  ln();
+  ln('```typescript');
+  ln('const ttl = await client.getIdempotencyReplayTtlSeconds();');
+  ln('// Returns the declared number. Throws ConfigurationError if the seller is v3');
+  ln('// but omits adcp.idempotency.replay_ttl_seconds — the SDK does NOT default to');
+  ln('// 24h, because a silent default misleads retry-sensitive flows. Returns');
+  ln('// undefined on v2 sellers (pre-idempotency-envelope).');
+  ln('```');
+  ln();
+  ln(
+    `Pass your persisted key with \`useIdempotencyKey(key)\` — it validates against the spec pattern (\`^[A-Za-z0-9_.:-]{16,255}$\`) before the network round-trip:`
+  );
+  ln();
+  ln('```typescript');
+  ln("import { useIdempotencyKey } from '@adcp/client';");
+  ln('const key = await db.getOrCreateIdempotencyKey(campaign.id);');
+  ln('await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });');
+  ln('```');
   ln();
 
   // --- Tools by domain ---

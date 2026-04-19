@@ -11,6 +11,7 @@ import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, type AgentSigningContext } from '../signing/client';
+import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
@@ -276,14 +277,30 @@ async function callA2AToolImpl(
     }
 
     const payloadSize = JSON.stringify(requestPayload).length;
+    const redactedParameters = redactIdempotencyKeyInArgs(parameters);
+    const redactedPayload =
+      redactedParameters === parameters
+        ? requestPayload
+        : {
+            ...requestPayload,
+            message: {
+              ...requestPayload.message,
+              parts: [
+                {
+                  kind: 'data',
+                  data: { skill: toolName, parameters: redactedParameters },
+                },
+              ],
+            },
+          };
     debugLogs.push({
       type: 'info',
       message: `A2A: Calling skill ${toolName} with parameters: ${JSON.stringify(
-        parameters
+        redactedParameters
       )}. Payload size: ${payloadSize} bytes`,
       timestamp: new Date().toISOString(),
       payloadSize,
-      actualPayload: requestPayload,
+      actualPayload: redactedPayload,
     });
 
     debugLogs.push({

@@ -98,6 +98,23 @@ export interface CreativeCapabilities {
 }
 
 /**
+ * Idempotency capabilities declared by the seller.
+ *
+ * Clients MUST NOT fall back to an assumed TTL when the seller omits this —
+ * `getIdempotencyReplayTtlSeconds()` throws when the declaration is missing
+ * on a v3 server rather than silently defaulting to 24h. A seller without the
+ * declaration is non-compliant and unsafe for retry-sensitive operations.
+ */
+export interface IdempotencyCapabilities {
+  /**
+   * Seconds the seller retains cached `(principal, idempotency_key, payload)`
+   * tuples. BYOK callers compare their persisted key's age against this to
+   * decide whether a fresh key + natural-key lookup is safer than reusing.
+   */
+  replayTtlSeconds: number;
+}
+
+/**
  * Normalized capabilities response that works for both v2 and v3 servers
  */
 export interface AdcpCapabilities {
@@ -118,6 +135,9 @@ export interface AdcpCapabilities {
 
   /** Creative protocol capabilities */
   creative?: CreativeCapabilities;
+
+  /** Idempotency replay capabilities (v3 sellers declaring `adcp.idempotency`) */
+  idempotency?: IdempotencyCapabilities;
 
   /** Supported extension namespaces (e.g., 'scope3', 'garm') */
   extensions: string[];
@@ -355,6 +375,15 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     };
   }
 
+  // adcp.idempotency.replay_ttl_seconds is REQUIRED per spec when the seller
+  // supports mutating tools. Absence is surfaced downstream as a fail-closed
+  // error in getIdempotencyReplayTtlSeconds() — we deliberately do NOT default.
+  let idempotency: IdempotencyCapabilities | undefined;
+  const rawTtl = response.adcp?.idempotency?.replay_ttl_seconds;
+  if (typeof rawTtl === 'number' && Number.isFinite(rawTtl) && rawTtl > 0) {
+    idempotency = { replayTtlSeconds: rawTtl };
+  }
+
   return {
     version: highestVersion >= 3 ? 'v3' : 'v2',
     majorVersions,
@@ -362,6 +391,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     features,
     account,
     creative,
+    idempotency,
     extensions: response.extensions_supported ?? [],
     publisherDomains: response.media_buy?.portfolio?.publisher_domains,
     channels: response.media_buy?.portfolio?.channels,

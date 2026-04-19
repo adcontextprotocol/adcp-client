@@ -14,6 +14,7 @@ import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { buildAgentSigningFetch, type AgentSigningContext } from '../signing/client';
+import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -480,7 +481,7 @@ async function callMCPToolImpl(
 
   debugLogs.push({
     type: 'info',
-    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
+    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactIdempotencyKeyInArgs(args))}`,
     timestamp: new Date().toISOString(),
   });
 
