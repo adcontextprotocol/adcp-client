@@ -230,7 +230,9 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       allow_http: true,
       request_signing: { skipRateAbuse: true },
     });
-    assert.ok(/skipped/.test(result.error ?? ''), `skip reason surfaced: ${result.error}`);
+    assert.strictEqual(result.skipped, true, `expected skipped, got: ${JSON.stringify(result)}`);
+    assert.match(result.skip_reason ?? '', /rate_abuse_opt_out|skipRateAbuse/);
+    assert.strictEqual(result.error, undefined, 'skipped probe should not set error');
   });
 
   test('probe dispatch honors request_signing.skipVectors', async () => {
@@ -238,12 +240,95 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       allow_http: true,
       request_signing: { skipVectors: ['003-expired-signature'] },
     });
-    assert.ok(/skipped/.test(result.error ?? ''), `skip reason: ${result.error}`);
+    assert.strictEqual(result.skipped, true, `expected skipped, got: ${JSON.stringify(result)}`);
+    assert.match(result.skip_reason ?? '', /operator_skip|skipVectors/);
   });
 
   test('probe dispatch rejects unknown step id', async () => {
     const result = await probeRequestSigningVector('random-step', 'http://127.0.0.1:1', {});
     assert.match(result.error ?? '', /does not match positive-\/negative-/);
+  });
+
+  test('runStoryboardStep routes request_signing_probe through the dispatch', async () => {
+    // Guarantees the wire-up in runner.ts (executeProbeStep's dispatch on
+    // step.task === 'request_signing_probe') stays live. If someone
+    // removes the task from PROBE_TASKS or the dispatch condition, this
+    // test catches it — callers to probeRequestSigningVector directly
+    // would not.
+    const fresh = await startReferenceVerifier({ replayCap: 1000 });
+    try {
+      const { runStoryboardStep } = require('../dist/lib/testing/storyboard/runner.js');
+      const storyboard = {
+        id: 'test-wire-up',
+        version: '1.0.0',
+        title: 'Dispatch wire-up smoke',
+        phases: [
+          {
+            id: 'wire_up',
+            title: 'wire_up',
+            steps: [
+              {
+                id: 'positive-001-basic-post',
+                title: 'Positive: wire-up',
+                task: 'request_signing_probe',
+                validations: [
+                  {
+                    check: 'http_status_in',
+                    allowed_values: [200, 201, 202, 203, 204],
+                    description: 'ok',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboardStep(fresh.url, storyboard, 'positive-001-basic-post', {
+        allow_http: true,
+        _client: {}, // bypass MCP profile discovery — probe tasks don't touch the client
+      });
+      assert.strictEqual(result.passed, true, `step should pass: ${result.error}`);
+      assert.strictEqual(result.response.status, 200);
+    } finally {
+      fresh.server.close();
+    }
+  });
+
+  test('runStoryboardStep propagates skipped status to the step result', async () => {
+    const fresh = await startReferenceVerifier({ replayCap: 1000 });
+    try {
+      const { runStoryboardStep } = require('../dist/lib/testing/storyboard/runner.js');
+      const storyboard = {
+        id: 'test-skip-propagation',
+        version: '1.0.0',
+        title: 'Skip propagation',
+        phases: [
+          {
+            id: 'skip_check',
+            title: 'skip_check',
+            steps: [
+              {
+                id: 'negative-020-rate-abuse',
+                title: 'Rate-abuse',
+                task: 'request_signing_probe',
+                validations: [{ check: 'http_status', value: 401, description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboardStep(fresh.url, storyboard, 'negative-020-rate-abuse', {
+        allow_http: true,
+        _client: {},
+        request_signing: { skipRateAbuse: true },
+      });
+      // Skipped ≠ failed — this is the bug the review caught.
+      assert.strictEqual(result.skipped, true, 'step marked skipped');
+      assert.strictEqual(result.passed, true, 'skipped steps do not count as failures');
+      assert.match(result.skip_reason ?? '', /rate_abuse_opt_out|skipRateAbuse/);
+    } finally {
+      fresh.server.close();
+    }
   });
 
   test('probe dispatch propagates grader error on verifier mismatch', async () => {

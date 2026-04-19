@@ -194,6 +194,14 @@ export interface HttpProbeResult {
   body: unknown;
   /** Optional error — set when the fetch failed (network, SSRF guard, etc.). */
   error?: string;
+  /**
+   * Probe was intentionally skipped (e.g. operator opted out of a vector,
+   * capability profile mismatch, or test-kit contract not in scope). When
+   * set, the runner marks the step `skipped: true` and does NOT run
+   * validations — skipped probes neither pass nor fail.
+   */
+  skipped?: boolean;
+  skip_reason?: string;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -235,6 +243,17 @@ export interface StoryboardRunOptions extends TestOptions {
      * 007/018 when the agent's `covers_content_digest` policy differs).
      */
     skipVectors?: string[];
+    /**
+     * Run only the named vector ids — all others auto-skip. Takes precedence
+     * over `skipVectors`.
+     */
+    onlyVectors?: string[];
+    /**
+     * Opt in to running vectors that produce live agent-side effects
+     * (016 replay, 020 rate-abuse). Required unless the test-kit declares
+     * `endpoint_scope: sandbox`.
+     */
+    allowLiveSideEffects?: boolean;
   };
 }
 
@@ -275,8 +294,16 @@ export interface StoryboardStepResult {
     | 'dependency_failed'
     | 'missing_test_harness'
     | 'missing_tool'
-    /** Storyboard predates the agent's declared adcp.major_versions. */
-    | 'not_applicable';
+    /** Storyboard predates the agent's declared adcp.major_versions (#606). */
+    | 'not_applicable'
+    /** Request-signing grader skip paths (#585). */
+    | 'probe_skipped'
+    | 'rate_abuse_opt_out'
+    | 'missing_test_kit_contract'
+    | 'live_side_effect_opt_in_required'
+    | 'operator_skip'
+    | 'not_in_only_vectors'
+    | 'grader_skipped';
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;

@@ -1,6 +1,7 @@
 import type { HttpProbeResult, StoryboardRunOptions } from '../types';
 import { gradeOneVector } from './grader';
 import { parseRequestSigningStepId } from './synthesize';
+import { loadRequestSigningVectors } from './vector-loader';
 
 /**
  * Dispatch a synthesized request-signing step. The step ID encodes the vector
@@ -16,20 +17,43 @@ export async function probeRequestSigningVector(
 ): Promise<HttpProbeResult> {
   const parsed = parseRequestSigningStepId(stepId);
   if (!parsed) {
-    return skipResult(agentUrl, `request_signing_probe: step id "${stepId}" does not match positive-/negative- prefix`);
+    return {
+      url: agentUrl,
+      status: 0,
+      headers: {},
+      body: null,
+      error: `request_signing_probe: step id "${stepId}" does not match positive-/negative- prefix`,
+    };
   }
   const rsOpts = options.request_signing ?? {};
-  if (parsed.kind === 'negative' && parsed.vector_id === '020-rate-abuse' && rsOpts.skipRateAbuse) {
-    return skipResult(agentUrl, `request_signing_probe: ${parsed.vector_id} skipped via request_signing.skipRateAbuse`);
+  // Vector-id lookup so we skip by the vector's `requires_contract`, not by
+  // hardcoded vector id. Keeps the dispatch resilient to upstream renames.
+  if (parsed.kind === 'negative' && rsOpts.skipRateAbuse) {
+    try {
+      const loaded = loadRequestSigningVectors();
+      const vector = loaded.negative.find(v => v.id === parsed.vector_id);
+      if (vector?.requires_contract === 'rate_abuse') {
+        return skipProbe(agentUrl, `${parsed.vector_id} skipped via request_signing.skipRateAbuse`);
+      }
+    } catch {
+      // fall through — surfaces as a grader error below
+    }
   }
   if (rsOpts.skipVectors?.includes(parsed.vector_id)) {
-    return skipResult(agentUrl, `request_signing_probe: ${parsed.vector_id} skipped via request_signing.skipVectors`);
+    return skipProbe(agentUrl, `${parsed.vector_id} skipped via request_signing.skipVectors`);
   }
   try {
     const result = await gradeOneVector(parsed.vector_id, parsed.kind, agentUrl, {
       allowPrivateIp: options.allow_http === true,
       rateAbuseCap: rsOpts.rateAbuseCap,
+      allowLiveSideEffects: rsOpts.allowLiveSideEffects,
+      onlyVectors: rsOpts.onlyVectors,
+      skipVectors: rsOpts.skipVectors,
+      skipRateAbuse: rsOpts.skipRateAbuse,
     });
+    if (result.skipped) {
+      return skipProbe(agentUrl, result.skip_reason ?? 'grader_skipped');
+    }
     const headers: Record<string, string> = {};
     if (result.actual_error_code) {
       headers['www-authenticate'] = `Signature error="${result.actual_error_code}"`;
@@ -39,7 +63,7 @@ export async function probeRequestSigningVector(
       status: result.http_status,
       headers,
       body: result.diagnostic ?? null,
-      error: result.passed || result.skipped ? undefined : (result.diagnostic ?? 'vector grade failed'),
+      error: result.passed ? undefined : (result.diagnostic ?? 'vector grade failed'),
     };
   } catch (err) {
     return {
@@ -52,6 +76,6 @@ export async function probeRequestSigningVector(
   }
 }
 
-function skipResult(url: string, message: string): HttpProbeResult {
-  return { url, status: 0, headers: {}, body: null, error: message };
+function skipProbe(url: string, reason: string): HttpProbeResult {
+  return { url, status: 0, headers: {}, body: null, skipped: true, skip_reason: reason };
 }

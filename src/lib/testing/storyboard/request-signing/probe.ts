@@ -160,9 +160,11 @@ export async function probeSignedRequest(
 
 /**
  * Extract `error="<code>"` from a `WWW-Authenticate: Signature ...` header.
- * Returns undefined when the header isn't a Signature challenge or the param
- * is absent — grading treats that as a mismatch (agent returned 401 but
- * didn't advertise a stable error code).
+ * Returns undefined when the header isn't a Signature challenge, the param
+ * is absent, or the extracted value isn't a well-formed spec error code
+ * (a token in `[a-z0-9_]+`). Sanitizing at source keeps downstream
+ * diagnostics / LLM-consumption paths safe from smuggled content in
+ * attacker-controlled header values.
  */
 export function extractSignatureErrorCode(headerValue: string): string | undefined {
   // `WWW-Authenticate` may carry multiple challenges concatenated with commas.
@@ -171,23 +173,51 @@ export function extractSignatureErrorCode(headerValue: string): string | undefin
   for (const challenge of challenges) {
     if (!/^Signature\b/i.test(challenge)) continue;
     const m = /\berror\s*=\s*"([^"]*)"/.exec(challenge);
-    if (m) return m[1];
+    if (!m) continue;
+    const value = m[1];
+    // Spec error codes are `request_signature_*` — all lowercase-alnum +
+    // underscore. Reject anything else so quotes/newlines/HTML/LLM-poisoning
+    // content can't flow into diagnostic strings or rendered reports.
+    if (value && /^[a-z0-9_]+$/.test(value)) return value;
+    return undefined;
   }
   return undefined;
 }
 
+/**
+ * Split a `WWW-Authenticate` header into per-challenge chunks. RFC 7235 §4.1
+ * lets multiple challenges coexist separated by commas, and challenge params
+ * are `k="v"` where `v` can contain commas. Track quote state so an
+ * adversarial `error="foo, Bar baz"` doesn't spuriously split mid-value.
+ */
 function splitChallenges(headerValue: string): string[] {
-  // Split on commas, but only when the preceding token looks like a scheme name
-  // followed by whitespace. Challenge params are `k="v"` which may contain
-  // commas — split on the scheme boundary only.
   const parts: string[] = [];
-  let start = 0;
-  const re = /,\s*([A-Za-z][A-Za-z0-9-]*\s+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(headerValue)) !== null) {
-    parts.push(headerValue.slice(start, m.index).trim());
-    start = m.index + m[0].length - m[1]!.length;
+  let current = '';
+  let inQuotes = false;
+  let lastTokenWasScheme = false;
+  for (let i = 0; i < headerValue.length; i++) {
+    const ch = headerValue[i]!;
+    if (ch === '"' && headerValue[i - 1] !== '\\') {
+      inQuotes = !inQuotes;
+      current += ch;
+      continue;
+    }
+    if (!inQuotes && ch === ',') {
+      // Look ahead for a scheme-like token (`<name><whitespace>`) — only
+      // then treat this comma as a challenge boundary; otherwise it's a
+      // param-list separator inside the current challenge.
+      const rest = headerValue.slice(i + 1);
+      if (/^\s*[A-Za-z][A-Za-z0-9-]*\s+/.test(rest)) {
+        parts.push(current.trim());
+        current = '';
+        lastTokenWasScheme = false;
+        continue;
+      }
+    }
+    current += ch;
+    if (!inQuotes && /\s/.test(ch)) lastTokenWasScheme = true;
   }
-  parts.push(headerValue.slice(start).trim());
+  if (current.trim().length > 0) parts.push(current.trim());
+  void lastTokenWasScheme; // reserved for stricter validation if needed later
   return parts.filter(p => p.length > 0);
 }

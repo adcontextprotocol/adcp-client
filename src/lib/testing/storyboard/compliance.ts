@@ -229,16 +229,37 @@ function postProcessStoryboard(storyboard: Storyboard): Storyboard {
     try {
       return synthesizeRequestSigningSteps(storyboard);
     } catch (err) {
-      // Synthesis failure (e.g., compliance cache missing vectors) leaves the
-      // storyboard with empty phases — the runner will report empty steps
-      // rather than crash. Surface the cause so operators can run sync-schemas.
-      console.warn(
-        `[compliance] Failed to synthesize request-signing steps: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return storyboard;
+      // Synthesis failure = infrastructural problem (cache missing vectors,
+      // schema drift, etc.). Emit a synthetic failing phase so the runner's
+      // existing reporting surfaces the cause — silent empty-phase fallback
+      // would render as a green pass with 0 steps, which is the worst
+      // possible outcome for CI pipelines.
+      return withSynthesisErrorPhase(storyboard, err);
     }
   }
   return storyboard;
+}
+
+function withSynthesisErrorPhase(storyboard: Storyboard, err: unknown): Storyboard {
+  const message = err instanceof Error ? err.message : String(err);
+  const errorPhase = {
+    id: 'synthesis_error',
+    title: 'Request-signing vector synthesis failed',
+    narrative:
+      'The signed-requests specialism requires its phases to be synthesized at load time ' +
+      'from the compliance cache. Synthesis failed — the runner cannot grade against the ' +
+      'conformance vectors. Run `npm run sync-schemas` to refresh the cache.',
+    steps: [
+      {
+        id: 'synthesis_error',
+        title: 'Synthesize vector phases',
+        task: 'synthesis_error',
+        narrative: message,
+        expect_error: false,
+      },
+    ],
+  };
+  return { ...storyboard, phases: [errorPhase, ...storyboard.phases] };
 }
 
 /** Enumerate every bundle present in the cache (universal + protocols + specialisms). */

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'yaml';
 import { getComplianceCacheDir } from '../compliance';
+import type { ContractId } from './types';
 
 export interface RunnerSigningKey {
   keyid: string;
@@ -32,7 +33,7 @@ export interface SignedRequestsRunnerContract {
   endpoint_scope: 'sandbox' | string;
   harness_mode: 'black_box' | 'white_box';
   runner_signing_keys: RunnerSigningKey[];
-  stateful_vector_contract: {
+  stateful_vector_contract: Record<ContractId, ReplayWindowContract | RevocationContract | RateAbuseContract> & {
     replay_window: ReplayWindowContract;
     revocation: RevocationContract;
     rate_abuse: RateAbuseContract;

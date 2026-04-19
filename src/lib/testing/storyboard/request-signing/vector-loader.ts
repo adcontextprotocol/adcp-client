@@ -2,7 +2,9 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { basename, join } from 'path';
 import { getComplianceCacheDir } from '../compliance';
 import type { RequestSignatureErrorCode } from '../../../signing';
+import { CONTRACT_IDS } from './types';
 import type {
+  ContractId,
   NegativeVector,
   PositiveVector,
   TestKeypair,
@@ -40,23 +42,41 @@ const ERROR_CODES: ReadonlySet<string> = new Set([
   'request_signature_rate_abuse',
 ]);
 
-const CONTRACT_IDS: ReadonlySet<string> = new Set(['replay_window', 'revocation', 'rate_abuse']);
+const CONTRACT_ID_SET: ReadonlySet<string> = new Set(CONTRACT_IDS);
+
+// Memoized per sourceDir — loading 28 JSON fixtures + keys.json on every
+// per-vector call in the runner path added up (~28 disk reads × 2-3 storyboard
+// resolve calls per CLI run). Invariant: the compliance cache is immutable
+// during a process lifetime — `npm run sync-schemas` runs before the process,
+// never concurrently. Cache key is the absolute cacheDir so env-var overrides
+// don't poison the entry.
+const VECTOR_CACHE = new Map<string, LoadedVectors>();
 
 export function loadRequestSigningVectors(options: LoadVectorsOptions = {}): LoadedVectors {
   const cacheDir = getComplianceCacheDir(options);
   const sourceDir = join(cacheDir, 'test-vectors', 'request-signing');
+  const cached = VECTOR_CACHE.get(sourceDir);
+  if (cached) return cached;
+
   if (!existsSync(sourceDir)) {
     throw new Error(
       `Request-signing vectors not found at ${sourceDir}. Run \`npm run sync-schemas\` or check your ADCP_COMPLIANCE_DIR.`
     );
   }
 
-  return {
+  const loaded: LoadedVectors = {
     positive: loadDir(join(sourceDir, 'positive'), parsePositive),
     negative: loadDir(join(sourceDir, 'negative'), parseNegative),
     keys: loadKeys(join(sourceDir, 'keys.json')),
     sourceDir,
   };
+  VECTOR_CACHE.set(sourceDir, loaded);
+  return loaded;
+}
+
+/** Test-only: clear the memoization cache so a fresh cache path is reread. */
+export function __resetVectorCache(): void {
+  VECTOR_CACHE.clear();
 }
 
 function loadDir<T extends Vector>(dir: string, parse: (id: string, raw: unknown) => T): T[] {
@@ -105,13 +125,13 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
   if (typeof failedStep !== 'number' && typeof failedStep !== 'string') {
     throw new Error(`${id}: expected_outcome.failed_step must be number or string`);
   }
-  let contract: NegativeVector['requires_contract'];
+  let contract: ContractId | undefined;
   if (r.requires_contract !== undefined) {
     const c = str(r.requires_contract, `${id}.requires_contract`);
-    if (!CONTRACT_IDS.has(c)) {
+    if (!CONTRACT_ID_SET.has(c)) {
       throw new Error(`${id}: unknown requires_contract "${c}" (spec drift?)`);
     }
-    contract = c as NegativeVector['requires_contract'];
+    contract = c as ContractId;
   }
   return {
     kind: 'negative',

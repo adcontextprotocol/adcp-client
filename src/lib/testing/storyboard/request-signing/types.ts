@@ -1,6 +1,10 @@
 import type { RequestLike } from '../../../signing';
 import type { RequestSignatureErrorCode } from '../../../signing';
 
+/** Stateful-vector contracts declared in `test-kits/signed-requests-runner.yaml`. */
+export const CONTRACT_IDS = ['replay_window', 'revocation', 'rate_abuse'] as const;
+export type ContractId = (typeof CONTRACT_IDS)[number];
+
 export interface VectorRequest extends RequestLike {
   method: string;
   url: string;
@@ -37,7 +41,7 @@ export interface NegativeVector {
   jwks_ref: string[];
   expected_error_code: RequestSignatureErrorCode;
   expected_failed_step: number | string;
-  requires_contract?: 'replay_window' | 'revocation' | 'rate_abuse';
+  requires_contract?: ContractId;
   spec_reference?: string;
 }
 

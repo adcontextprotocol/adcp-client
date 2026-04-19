@@ -128,17 +128,38 @@ const MUTATIONS: Record<string, Mutator> = {
   },
 
   '009-key-ops-missing-verify': (vector, keys, options) => {
-    // Sign with test-gov-2026 (adcp_use: governance-signing, not request-signing).
-    const kid = pickKeyidForPurposeMismatch(vector, keys);
-    const key = keyFor(keys, kid);
+    // Vector 009 pins `jwks_ref: ["test-gov-2026"]` (adcp_use:
+    // governance-signing, not request-signing) — use it directly instead of
+    // inferring. Honors the vector's intent if future keysets add a second
+    // non-request-signing keypair.
+    const key = signerKeyFor(vector, keys);
     return sign(key, vector, options);
   },
 
   '010-content-digest-mismatch': (vector, keys, options) => {
+    // Vector 010 tests "signer committed a wrong Content-Digest value" — the
+    // signature IS valid over the base that includes that wrong value, so the
+    // verifier passes the signature check (step 10) and then fails the
+    // digest-vs-body recompute (step 11). Do NOT mutate the body post-sign —
+    // that tests a different bug (body-tampered-in-transit) and a verifier
+    // that recomputes digest from sent body would not catch the "lying
+    // signer" path this vector exercises.
     const key = signerKeyFor(vector, keys);
-    const signed = sign(key, vector, { ...options, coverContentDigest: true });
-    // Mutate body after signing so the Content-Digest header no longer matches.
-    return { ...signed, body: (signed.body ?? '') + ' ' };
+    // Zero-byte digest: guaranteed not to match the actual body.
+    const zeroDigest = 'sha-256=:' + Buffer.alloc(32).toString('base64') + ':';
+    const headersWithBadDigest = { ...vector.request.headers, 'Content-Digest': zeroDigest };
+    const vectorWithBadDigest = {
+      ...vector,
+      request: { ...vector.request, headers: headersWithBadDigest },
+    };
+    // Sign the request WITH content-digest in covered components, without
+    // letting `signRequest` recompute the digest over the real body.
+    return signWithComponents(
+      key,
+      vectorWithBadDigest,
+      options,
+      ['@method', '@target-uri', '@authority', 'content-type', 'content-digest']
+    );
   },
 
   '011-malformed-header': (vector, keys, options) => {
@@ -253,6 +274,17 @@ function retargetUrl(vectorUrl: string, baseUrl: string | undefined): string {
   const b = new URL(baseUrl);
   v.protocol = b.protocol;
   v.host = b.host;
+  // Prefix the agent's mount path (from baseUrl) ahead of the vector's path
+  // so agents mounted at e.g. `/v1/adcp/*` receive requests at
+  // `/v1/adcp/create_media_buy` rather than the bare `/adcp/create_media_buy`
+  // the vector carries. When baseUrl has no path (or just `/`), this is a
+  // no-op. Canonicalization-edge vectors (005–008) bake their edge into the
+  // vector's path/query; we preserve those bytes by joining, not replacing.
+  if (b.pathname && b.pathname !== '/') {
+    const mount = b.pathname.replace(/\/+$/, '');
+    const vectorPath = v.pathname.startsWith('/') ? v.pathname : `/${v.pathname}`;
+    v.pathname = `${mount}${vectorPath}`;
+  }
   return v.toString();
 }
 
@@ -406,16 +438,6 @@ function toSignerKey(keypair: TestKeypair): SignerKey {
     d: keypair.private_d,
   };
   return { keyid: keypair.kid, alg, privateKey };
-}
-
-function pickKeyidForPurposeMismatch(vector: NegativeVector, keys: TestKeyset): string {
-  // Vector 009 uses a key whose adcp_use is not request-signing. Prefer the
-  // first such key in the keyset; fall back to the vector's jwks_ref.
-  const nonRequestSigning = keys.keys.find(k => k.adcp_use && k.adcp_use !== 'request-signing');
-  if (nonRequestSigning) return nonRequestSigning.kid;
-  const fallback = vector.jwks_ref[0];
-  if (!fallback) throw new Error(`${vector.id}: jwks_ref empty and no purpose-mismatch key in keyset`);
-  return fallback;
 }
 
 function stripSignatureHeaders(headers: Record<string, string>): Record<string, string> {

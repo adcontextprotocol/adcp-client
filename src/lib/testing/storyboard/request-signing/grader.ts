@@ -28,6 +28,22 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   skipVectors?: string[];
   /**
+   * When set, run only the named vector ids (all others auto-skip). Takes
+   * precedence over `skipVectors`. Useful for isolated regression tests
+   * against a single vector without hand-maintaining an inverted skip list.
+   */
+  onlyVectors?: string[];
+  /**
+   * Opt in to running vectors that produce live agent-side effects — vector
+   * 016 (replay_window) sends a valid `create_media_buy`-shaped request the
+   * agent will accept, and vector 020 (rate_abuse) floods cap+1 requests.
+   * Required unless the test-kit contract declares `endpoint_scope: sandbox`
+   * (in which case the agent asserts the operation is side-effect-free).
+   * Default: false — side-effectful vectors auto-skip against non-sandbox
+   * endpoints.
+   */
+  allowLiveSideEffects?: boolean;
+  /**
    * Override the agent's base URL used for the grader's HTTP targets. When set,
    * each vector's `request.url` is rewritten by swapping origin+path under this
    * base — useful when the vectors point at `seller.example.com` but the agent
@@ -56,11 +72,20 @@ export interface VectorGradeResult {
 export interface GradeReport {
   agent_url: string;
   harness_mode: 'black_box';
-  endpoint_scope_warning: boolean;
+  /**
+   * `true` when the test-kit contract declares an endpoint_scope other than
+   * `sandbox` — vectors 016 and 020 produce live side effects (a real
+   * `create_media_buy` for 016, cap+1 flooding for 020). Treat as a warning
+   * to the operator.
+   */
+  live_endpoint_warning: boolean;
   contract_loaded: boolean;
   positive: VectorGradeResult[];
   negative: VectorGradeResult[];
   passed: boolean;
+  passed_count: number;
+  failed_count: number;
+  skipped_count: number;
   total_duration_ms: number;
 }
 
@@ -91,20 +116,12 @@ export async function gradeRequestSigning(
   };
 
   const buildOpts = { baseUrl: agentUrl };
-  const skipSet = new Set(options.skipVectors ?? []);
 
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
-    if (skipSet.has(vector.id)) {
-      positive.push({
-        vector_id: vector.id,
-        kind: 'positive',
-        passed: false,
-        skipped: true,
-        skip_reason: 'operator_skip',
-        http_status: 0,
-        probe_duration_ms: 0,
-      });
+    const skip = preflightSkip(vector, 'positive', contract, options);
+    if (skip) {
+      positive.push(skip);
       continue;
     }
     const signed = buildPositiveRequest(vector, loaded.keys, buildOpts);
@@ -114,65 +131,95 @@ export async function gradeRequestSigning(
 
   const negative: VectorGradeResult[] = [];
   for (const vector of loaded.negative) {
-    if (skipSet.has(vector.id)) {
-      negative.push({
-        vector_id: vector.id,
-        kind: 'negative',
-        passed: false,
-        skipped: true,
-        skip_reason: 'operator_skip',
-        expected_error_code: vector.expected_error_code,
-        http_status: 0,
-        probe_duration_ms: 0,
-      });
+    const skip = preflightSkip(vector, 'negative', contract, options);
+    if (skip) {
+      negative.push(skip);
       continue;
     }
-    if (vector.requires_contract === 'rate_abuse' && options.skipRateAbuse) {
-      negative.push({
-        vector_id: vector.id,
-        kind: 'negative',
-        passed: false,
-        skipped: true,
-        skip_reason: 'rate_abuse_opt_out',
-        expected_error_code: vector.expected_error_code,
-        http_status: 0,
-        probe_duration_ms: 0,
-      });
-      continue;
-    }
-    if (vector.requires_contract && !contract) {
-      negative.push({
-        vector_id: vector.id,
-        kind: 'negative',
-        passed: false,
-        skipped: true,
-        skip_reason: 'missing_test_kit_contract',
-        expected_error_code: vector.expected_error_code,
-        diagnostic:
-          'Stateful vector requires `test-kits/signed-requests-runner.yaml` in the compliance cache. Run `npm run sync-schemas`.',
-        http_status: 0,
-        probe_duration_ms: 0,
-      });
-      continue;
-    }
-
-    const result = await gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options);
-    negative.push(result);
+    negative.push(await gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options));
   }
 
-  const passed =
-    positive.every(p => p.passed) && negative.every(n => n.passed || n.skipped);
+  const all = [...positive, ...negative];
+  const passed_count = all.filter(r => r.passed && !r.skipped).length;
+  const skipped_count = all.filter(r => r.skipped).length;
+  const failed_count = all.filter(r => !r.passed && !r.skipped).length;
+  const passed = failed_count === 0;
 
   return {
     agent_url: agentUrl,
     harness_mode: 'black_box',
-    endpoint_scope_warning: contract?.endpoint_scope === 'sandbox',
+    live_endpoint_warning: Boolean(contract) && contract!.endpoint_scope !== 'sandbox',
     contract_loaded: Boolean(contract),
     positive,
     negative,
     passed,
+    passed_count,
+    failed_count,
+    skipped_count,
     total_duration_ms: Date.now() - start,
   };
+}
+
+/**
+ * Centralized skip decisions. Checks (in order): onlyVectors filter, operator
+ * skipVectors, rate-abuse opt-out, stateful-contract missing, side-effect gate.
+ */
+function preflightSkip(
+  vector: PositiveVector | NegativeVector,
+  kind: 'positive' | 'negative',
+  contract: SignedRequestsRunnerContract | undefined,
+  options: GradeOptions
+): VectorGradeResult | undefined {
+  const expected_error_code = kind === 'negative' ? (vector as NegativeVector).expected_error_code : undefined;
+  const base = {
+    vector_id: vector.id,
+    kind,
+    passed: true, // skipped ≠ failed; overall pass/fail excludes skipped
+    http_status: 0,
+    probe_duration_ms: 0,
+    ...(expected_error_code ? { expected_error_code } : {}),
+  } as const;
+
+  if (options.onlyVectors && !options.onlyVectors.includes(vector.id)) {
+    return { ...base, skipped: true, skip_reason: 'not_in_only_vectors' };
+  }
+  if (options.skipVectors?.includes(vector.id)) {
+    return { ...base, skipped: true, skip_reason: 'operator_skip' };
+  }
+  if (kind === 'negative') {
+    const neg = vector as NegativeVector;
+    if (neg.requires_contract === 'rate_abuse' && options.skipRateAbuse) {
+      return { ...base, skipped: true, skip_reason: 'rate_abuse_opt_out' };
+    }
+    if (neg.requires_contract && !contract) {
+      return {
+        ...base,
+        skipped: true,
+        skip_reason: 'missing_test_kit_contract',
+        diagnostic:
+          'Stateful vector requires `test-kits/signed-requests-runner.yaml` in the compliance cache. Run `npm run sync-schemas`.',
+      };
+    }
+    // Sandbox opt-in: vectors 016 (replay_window) and 020 (rate_abuse) produce
+    // live side effects on the agent. Refuse to run unless the contract says
+    // sandbox OR the operator explicitly accepts the side effects.
+    if (
+      (neg.requires_contract === 'replay_window' || neg.requires_contract === 'rate_abuse') &&
+      !options.allowLiveSideEffects &&
+      contract?.endpoint_scope !== 'sandbox'
+    ) {
+      return {
+        ...base,
+        skipped: true,
+        skip_reason: 'live_side_effect_opt_in_required',
+        diagnostic:
+          `Vector ${vector.id} produces live agent-side effects. Pass allowLiveSideEffects: true ` +
+          `(or point the grader at an endpoint whose signed-requests-runner contract declares ` +
+          `endpoint_scope: sandbox) to run it.`,
+      };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -194,16 +241,21 @@ export async function gradeOneVector(
   };
   const buildOpts = { baseUrl: agentUrl };
 
+  const vector =
+    kind === 'positive'
+      ? loaded.positive.find(v => v.id === vectorId)
+      : loaded.negative.find(v => v.id === vectorId);
+  if (!vector) throw new Error(`Unknown ${kind} vector "${vectorId}"`);
+
+  const skip = preflightSkip(vector, kind, contract, options);
+  if (skip) return skip;
+
   if (kind === 'positive') {
-    const vector = loaded.positive.find(v => v.id === vectorId);
-    if (!vector) throw new Error(`Unknown positive vector "${vectorId}"`);
-    const signed = buildPositiveRequest(vector, loaded.keys, buildOpts);
+    const signed = buildPositiveRequest(vector as PositiveVector, loaded.keys, buildOpts);
     const probe = await probeSignedRequest(signed, probeOpts);
-    return gradePositive(vector, probe);
+    return gradePositive(vector as PositiveVector, probe);
   }
-  const vector = loaded.negative.find(v => v.id === vectorId);
-  if (!vector) throw new Error(`Unknown negative vector "${vectorId}"`);
-  return gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options);
+  return gradeNegative(vector as NegativeVector, loaded, contract, probeOpts, buildOpts, options);
 }
 
 // ── Phase helpers ─────────────────────────────────────────────

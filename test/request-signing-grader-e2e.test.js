@@ -175,33 +175,11 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
-        skipRateAbuse: true,
-        // Only exercise 007 against this profile; other vectors assume either.
-        skipVectors: [
-          '001-no-signature-header',
-          '002-wrong-tag',
-          '003-expired-signature',
-          '004-window-too-long',
-          '005-alg-not-allowed',
-          '006-missing-covered-component',
-          '008-unknown-keyid',
-          '009-key-ops-missing-verify',
-          '010-content-digest-mismatch',
-          '011-malformed-header',
-          '012-missing-expires-param',
-          '013-expires-le-created',
-          '014-missing-nonce-param',
-          '015-signature-invalid',
-          '016-replayed-nonce',
-          '017-key-revoked',
-          '018-digest-covered-when-forbidden',
-          '019-signature-without-signature-input',
-          '020-rate-abuse',
-        ],
+        onlyVectors: ['007-missing-content-digest'],
       });
       const v007 = report.negative.find(v => v.vector_id === '007-missing-content-digest');
       assert.ok(v007, '007 present');
-      assert.ok(v007.passed, `007 should pass under required profile: ${v007.diagnostic}`);
+      assert.ok(v007.passed && !v007.skipped, `007 should pass under required profile: ${v007.diagnostic}`);
     } finally {
       fresh.server.close();
     }
@@ -212,79 +190,33 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     try {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
-        skipRateAbuse: true,
-        skipVectors: [
-          '001-no-signature-header',
-          '002-wrong-tag',
-          '003-expired-signature',
-          '004-window-too-long',
-          '005-alg-not-allowed',
-          '006-missing-covered-component',
-          '007-missing-content-digest',
-          '008-unknown-keyid',
-          '009-key-ops-missing-verify',
-          '010-content-digest-mismatch',
-          '011-malformed-header',
-          '012-missing-expires-param',
-          '013-expires-le-created',
-          '014-missing-nonce-param',
-          '015-signature-invalid',
-          '016-replayed-nonce',
-          '017-key-revoked',
-          '019-signature-without-signature-input',
-          '020-rate-abuse',
-        ],
+        onlyVectors: ['018-digest-covered-when-forbidden'],
       });
       const v018 = report.negative.find(v => v.vector_id === '018-digest-covered-when-forbidden');
       assert.ok(v018, '018 present');
-      assert.ok(v018.passed, `018 should pass under forbidden profile: ${v018.diagnostic}`);
+      assert.ok(v018.passed && !v018.skipped, `018 should pass under forbidden profile: ${v018.diagnostic}`);
     } finally {
       fresh.server.close();
     }
   });
 
   test('rate-abuse vector: cap+1th request rejected with request_signature_rate_abuse', async () => {
-    // Dedicated fresh server with a tight cap matched to the grader so the
-    // (cap+1)th request trips the rejection. Isolating 020 on its own server
-    // means prior vectors' signatures don't consume replay-cache entries from
-    // this test's quota.
+    // Dedicated server with a tight cap matched to the grader so the
+    // (cap+1)th request trips the rejection. `onlyVectors` isolates 020 on
+    // a fresh replay cache so prior vectors don't consume the quota.
     const fresh = await startGraderServer({ replayCap: 10 });
     try {
-      const all = [...Array(20)].map((_, i) => String(i + 1).padStart(3, '0'));
-      const skip = all
-        .filter(n => n !== '020')
-        .map(n => {
-          const files = {
-            '001': '001-no-signature-header',
-            '002': '002-wrong-tag',
-            '003': '003-expired-signature',
-            '004': '004-window-too-long',
-            '005': '005-alg-not-allowed',
-            '006': '006-missing-covered-component',
-            '007': '007-missing-content-digest',
-            '008': '008-unknown-keyid',
-            '009': '009-key-ops-missing-verify',
-            '010': '010-content-digest-mismatch',
-            '011': '011-malformed-header',
-            '012': '012-missing-expires-param',
-            '013': '013-expires-le-created',
-            '014': '014-missing-nonce-param',
-            '015': '015-signature-invalid',
-            '016': '016-replayed-nonce',
-            '017': '017-key-revoked',
-            '018': '018-digest-covered-when-forbidden',
-            '019': '019-signature-without-signature-input',
-          };
-          return files[n];
-        });
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
         rateAbuseCap: 10,
-        skipVectors: skip,
+        onlyVectors: ['020-rate-abuse'],
+        // 020 produces live side effects (fills the cap); test-kit contract
+        // says sandbox but the localhost verifier doesn't advertise that.
+        allowLiveSideEffects: true,
       });
       const v020 = report.negative.find(v => v.vector_id === '020-rate-abuse');
       assert.ok(v020, '020 present');
-      assert.ok(v020.passed, `020 should pass with matched cap: ${v020.diagnostic}`);
+      assert.ok(v020.passed && !v020.skipped, `020 should pass with matched cap: ${v020.diagnostic}`);
       assert.strictEqual(v020.actual_error_code, 'request_signature_rate_abuse');
     } finally {
       fresh.server.close();
