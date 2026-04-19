@@ -446,9 +446,9 @@ describe('Governance E2E: Capabilities discovery', { skip: skipReason }, () => {
   });
 });
 
-describe('Governance E2E: Human-review denial', { skip: skipReason }, () => {
-  const planId = `e2e-human-review-${Date.now()}`;
-  const campaignRef = `e2e-human-review-campaign-${Date.now()}`;
+describe('Governance E2E: reallocation threshold enforcement', { skip: skipReason }, () => {
+  const planId = `e2e-reallocation-threshold-${Date.now()}`;
+  const campaignRef = `e2e-reallocation-threshold-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
@@ -456,13 +456,13 @@ describe('Governance E2E: Human-review denial', { skip: skipReason }, () => {
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
-    // Sync plan with human_required authority
+    // Sync plan with a 50% reallocation threshold
     const syncResult = await client.syncPlans({
       plans: [
         {
           plan_id: planId,
           brand: { domain: 'test.example' },
-          objectives: 'Human-review denial test',
+          objectives: 'Reallocation threshold enforcement test',
           budget: {
             total: 10000,
             currency: 'USD',
@@ -489,7 +489,7 @@ describe('Governance E2E: Human-review denial', { skip: skipReason }, () => {
   // AdCP v3 has three terminal statuses (approved|denied|conditions). Human review is
   // signalled via a critical-severity finding on a denied decision; the buyer resolves
   // review off-protocol and calls check_governance again with the human's approval.
-  it('should deny with critical-severity finding when budget exceeds 50% under human_required authority', async () => {
+  it('should deny with critical-severity finding when budget exceeds the reallocation threshold', async () => {
     const result = await client.executeTask('check_governance', {
       plan_id: planId,
       buyer_campaign_ref: campaignRef,
@@ -513,7 +513,7 @@ describe('Governance E2E: Human-review denial', { skip: skipReason }, () => {
     );
   });
 
-  it('should approve small budget with human_required authority (under 50%)', async () => {
+  it('should approve a budget under the reallocation threshold', async () => {
     const result = await client.executeTask('check_governance', {
       plan_id: planId,
       buyer_campaign_ref: campaignRef,

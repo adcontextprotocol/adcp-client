@@ -150,16 +150,19 @@ export type {
 export { GovernanceMiddleware } from './core/GovernanceMiddleware';
 export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
 
-// ====== GOVERNANCE PLAN HELPERS (Annex III / GDPR Art 22) ======
+// ====== GOVERNANCE PLAN HELPERS ======
+// Invariants the schema encodes via if/then / oneOf that generated types
+// typically drop: budget reallocation autonomy and regulated-vertical
+// human review under GDPR Art 22 / EU AI Act Annex III.
 export {
-  buildAnnexIIIPlan,
+  buildHumanReviewPlan,
   buildHumanOverride,
   validateGovernancePlan,
   REGULATED_HUMAN_REVIEW_CATEGORIES,
   ANNEX_III_POLICY_IDS,
 } from './governance';
 export type {
-  BuildAnnexIIIPlanInput,
+  BuildHumanReviewPlanInput,
   BuildHumanOverrideInput,
   DataSubjectContestation,
   GovernancePlan,

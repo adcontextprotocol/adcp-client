@@ -2,16 +2,16 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  buildAnnexIIIPlan,
+  buildHumanReviewPlan,
   buildHumanOverride,
   validateGovernancePlan,
   REGULATED_HUMAN_REVIEW_CATEGORIES,
   ANNEX_III_POLICY_IDS,
 } = require('../../dist/lib/governance');
 
-describe('buildAnnexIIIPlan', () => {
+describe('buildHumanReviewPlan', () => {
   test('stamps human_review_required: true on the returned plan', () => {
-    const plan = buildAnnexIIIPlan({
+    const plan = buildHumanReviewPlan({
       plan_id: 'plan-1',
       brand: { domain: 'example.com' },
       objectives: 'Regulated campaign',
@@ -32,8 +32,25 @@ describe('buildAnnexIIIPlan', () => {
       flight: { start: '2026-05-01T00:00:00Z', end: '2026-06-01T00:00:00Z' },
     };
     const before = JSON.stringify(input);
-    buildAnnexIIIPlan(input);
+    buildHumanReviewPlan(input);
     assert.strictEqual(JSON.stringify(input), before);
+  });
+
+  test('produces a plan that passes validateGovernancePlan when regulated category is declared', () => {
+    const plan = buildHumanReviewPlan({
+      plan_id: 'plan-1',
+      brand: { domain: 'brand.example' },
+      objectives: 'Regulated mortgage campaign',
+      budget: { total: 250000, currency: 'USD', reallocation_threshold: 10000 },
+      flight: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T00:00:00Z' },
+      policy_categories: ['fair_lending'],
+      data_subject_contestation: {
+        url: 'https://brand.example/contestation',
+        email: 'privacy@brand.example',
+        languages: ['en'],
+      },
+    });
+    assert.deepStrictEqual(validateGovernancePlan(plan), []);
   });
 });
 
@@ -58,14 +75,45 @@ describe('buildHumanOverride', () => {
     assert.strictEqual(override.approved_at, '2026-04-18T12:00:00.000Z');
   });
 
+  test('accepts a parseable ISO string for approvedAt', () => {
+    const override = buildHumanOverride({
+      reason: 'Compliance team ratified post-review',
+      approver: 'approver@example.com',
+      approvedAt: '2026-04-18T12:00:00Z',
+    });
+    assert.strictEqual(override.approved_at, '2026-04-18T12:00:00Z');
+  });
+
   test('rejects reason shorter than 20 characters', () => {
     assert.throws(
       () =>
         buildHumanOverride({
           reason: 'too short',
-          approver: 'a@b.co',
+          approver: 'approver@example.com',
         }),
       /at least 20 characters/
+    );
+  });
+
+  test('rejects control characters in reason', () => {
+    assert.throws(
+      () =>
+        buildHumanOverride({
+          reason: 'Compliance team ratified\npost-review',
+          approver: 'approver@example.com',
+        }),
+      /must not contain control characters/
+    );
+  });
+
+  test('rejects control characters in approver', () => {
+    assert.throws(
+      () =>
+        buildHumanOverride({
+          reason: 'Compliance team ratified post-review',
+          approver: 'approver\r@example.com',
+        }),
+      /must not contain control characters/
     );
   });
 
@@ -77,6 +125,52 @@ describe('buildHumanOverride', () => {
           approver: 'not-an-email',
         }),
       /must be an email address/
+    );
+  });
+
+  test('rejects consecutive-dot approver', () => {
+    assert.throws(
+      () =>
+        buildHumanOverride({
+          reason: 'Compliance team ratified post-review',
+          approver: 'admin@sub..example.com',
+        }),
+      /must be an email address/
+    );
+  });
+
+  test('rejects a single-char TLD approver', () => {
+    assert.throws(
+      () =>
+        buildHumanOverride({
+          reason: 'Compliance team ratified post-review',
+          approver: 'a@b.c',
+        }),
+      /must be an email address/
+    );
+  });
+
+  test('rejects invalid Date instance for approvedAt', () => {
+    assert.throws(
+      () =>
+        buildHumanOverride({
+          reason: 'Compliance team ratified post-review',
+          approver: 'approver@example.com',
+          approvedAt: new Date('not-a-date'),
+        }),
+      /invalid Date/
+    );
+  });
+
+  test('rejects an unparseable string for approvedAt', () => {
+    assert.throws(
+      () =>
+        buildHumanOverride({
+          reason: 'Compliance team ratified post-review',
+          approver: 'approver@example.com',
+          approvedAt: 'not-a-timestamp',
+        }),
+      /parseable ISO 8601 timestamp/
     );
   });
 });
@@ -94,6 +188,11 @@ describe('validateGovernancePlan', () => {
       budget: validBudget,
       flight: validFlight,
     });
+    assert.deepStrictEqual(issues, []);
+  });
+
+  test('returns no issues for a plan with no budget (structural validation belongs to Zod)', () => {
+    const issues = validateGovernancePlan({});
     assert.deepStrictEqual(issues, []);
   });
 
@@ -151,6 +250,18 @@ describe('validateGovernancePlan', () => {
     );
   });
 
+  test('flags explicit human_review_required: false on regulated category', () => {
+    const issues = validateGovernancePlan({
+      budget: validBudget,
+      policy_categories: ['fair_housing'],
+      human_review_required: false,
+    });
+    assert.ok(
+      issues.some(i => i.code === 'plan.human_review_required_missing'),
+      'expected issue when human_review_required is explicitly false'
+    );
+  });
+
   test('passes when human_review_required: true is set for regulated category', () => {
     const issues = validateGovernancePlan({
       budget: validBudget,
@@ -164,6 +275,16 @@ describe('validateGovernancePlan', () => {
     const issues = validateGovernancePlan({
       budget: validBudget,
       policy_categories: ['health_wellness'],
+    });
+    assert.deepStrictEqual(issues, []);
+  });
+
+  test('does not infer regulated status from category synonyms (server-side is authoritative)', () => {
+    // A synonym like "housing" instead of "fair_housing" should NOT be flagged
+    // client-side. The governance agent resolves this via its policy registry.
+    const issues = validateGovernancePlan({
+      budget: validBudget,
+      policy_categories: ['housing'],
     });
     assert.deepStrictEqual(issues, []);
   });

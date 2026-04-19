@@ -57,12 +57,14 @@ constraints — call `validateGovernancePlan` client-side to catch it early.
 
 ```ts
 import {
-  buildAnnexIIIPlan,
+  buildHumanReviewPlan,
   buildHumanOverride,
   validateGovernancePlan,
 } from '@adcp/client';
 
-const plan = buildAnnexIIIPlan({
+// Stamps human_review_required: true. The caller still declares the
+// reason via policy_categories / policy_ids.
+const plan = buildHumanReviewPlan({
   plan_id: 'plan-2026-q2',
   brand: { domain: 'brand.example' },
   objectives: 'Regulated mortgage campaign',
@@ -76,12 +78,15 @@ const plan = buildAnnexIIIPlan({
   },
 });
 
-// Validate before sync
+// Validate before sync. Governance agents resolve synonyms and custom
+// policies server-side, so they remain authoritative — this is a
+// pre-submit guard for the canonical invariants.
 const issues = validateGovernancePlan(plan);
 if (issues.length > 0) throw new Error(JSON.stringify(issues));
 
 // On re-sync, to downgrade human_review_required: true → false,
-// provide a human_override artifact.
+// provide a human_override artifact. Throws if reason <20 chars,
+// approver isn't an email, or either contains control characters.
 const override = buildHumanOverride({
   reason: 'Human reviewer cleared targeting post Annex III review',
   approver: 'compliance@brand.example',

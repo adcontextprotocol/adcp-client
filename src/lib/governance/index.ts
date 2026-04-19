@@ -1,16 +1,26 @@
 /**
- * Governance plan helpers — Annex III / GDPR Art 22 invariants.
+ * Governance plan helpers — GDPR Art 22 / EU AI Act Annex III invariants.
  *
- * These helpers complement `@modelcontextprotocol/sdk`-generated types by
- * enforcing cross-field constraints that `if/then` codegen commonly drops:
+ * These helpers complement the Zod-generated request schemas by exposing
+ * constraints that `datamodel-code-generator`-style codegen commonly drops
+ * from `if/then` and `oneOf`:
  *  - budget reallocation autonomy is exactly one of `reallocation_threshold`
  *    or `reallocation_unlimited`
  *  - regulated-vertical `policy_categories` / Annex III `policy_ids` require
  *    `human_review_required: true`
  *
- * The helpers never mutate their inputs.
+ * The helpers never mutate their inputs. The validator is intentionally
+ * advisory — the authoritative check happens in the governance agent, which
+ * resolves category synonyms and custom policies server-side.
  */
 
+/**
+ * `policy_categories` values that MUST set `human_review_required: true`
+ * under GDPR Art 22 / EU AI Act Annex III. Matches the schema's `if/then`
+ * constraint on `sync-plans-request.json`. Governance agents resolve
+ * synonyms and custom policies server-side; this list is the client-side
+ * minimum for pre-submit validation.
+ */
 export const REGULATED_HUMAN_REVIEW_CATEGORIES = Object.freeze([
   'fair_housing',
   'fair_lending',
@@ -18,11 +28,21 @@ export const REGULATED_HUMAN_REVIEW_CATEGORIES = Object.freeze([
   'pharmaceutical_advertising',
 ] as const);
 
+/**
+ * `policy_ids` values that MUST set `human_review_required: true`.
+ * Client-enforced minimum; server-side resolution remains authoritative.
+ */
 export const ANNEX_III_POLICY_IDS = Object.freeze(['eu_ai_act_annex_iii'] as const);
 
+/**
+ * Budget reallocation autonomy. Exactly one field must be set; the runtime
+ * validator `validateGovernancePlan` is the source of truth. The structural
+ * type does not enforce mutual exclusion because `PlanBudget` carries an
+ * index signature for forward-compatibility with schema additions.
+ */
 export type ReallocationAutonomy =
-  | { reallocation_unlimited: true; reallocation_threshold?: never }
-  | { reallocation_threshold: number; reallocation_unlimited?: never };
+  | { reallocation_unlimited: true }
+  | { reallocation_threshold: number };
 
 export interface PlanBudget {
   total: number;
@@ -59,7 +79,7 @@ export interface GovernancePlan {
   [k: string]: unknown;
 }
 
-export interface BuildAnnexIIIPlanInput {
+export interface BuildHumanReviewPlanInput {
   plan_id: string;
   brand: { domain: string; [k: string]: unknown };
   objectives: string;
@@ -72,13 +92,15 @@ export interface BuildAnnexIIIPlanInput {
 }
 
 /**
- * Build a plan for regulated verticals. Stamps `human_review_required: true`
- * and preserves every other field verbatim.
+ * Stamp `human_review_required: true` on a plan. The caller remains
+ * responsible for declaring the reason for human review through
+ * `policy_categories` (e.g. `'fair_lending'`) or `policy_ids` (e.g.
+ * `'eu_ai_act_annex_iii'`). This helper does not infer or set either.
  *
- * `data_subject_contestation` is optional here — if omitted, the governance
- * agent will emit a critical finding and resolve via brand.json / house.
+ * Call `validateGovernancePlan` on the returned plan before `sync_plans`
+ * to verify the reallocation autonomy and regulated-vertical invariants.
  */
-export function buildAnnexIIIPlan(input: BuildAnnexIIIPlanInput): GovernancePlan {
+export function buildHumanReviewPlan(input: BuildHumanReviewPlanInput): GovernancePlan {
   return {
     ...input,
     human_review_required: true,
@@ -91,15 +113,27 @@ export interface BuildHumanOverrideInput {
   approvedAt?: string | Date;
 }
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_PATTERN = /^[^\s@.]+(?:\.[^\s@.]+)*@[^\s@.]+(?:\.[^\s@.]+)*\.[^\s@.]{2,}$/;
+const CONTROL_CHAR_PATTERN = /[\x00-\x1F\x7F]/;
 const MIN_REASON_LENGTH = 20;
+
+function assertParseableIsoTimestamp(value: string, field: string): void {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`${field} must be a parseable ISO 8601 timestamp (got "${value}")`);
+  }
+}
 
 /**
  * Build a `human_override` artifact for downgrading `human_review_required`
- * on a plan re-sync. Validates that the reason is substantive (≥20 chars)
- * and the approver is an email address.
+ * on a plan re-sync. Validates that the reason is substantive (≥20
+ * characters after trimming edge whitespace), the approver is an email,
+ * and no control characters appear in either field (audit-log safety).
  *
- * Throws on invalid input — governance agents reject malformed overrides.
+ * `approvedAt` defaults to the current ISO timestamp. Callers recording
+ * a retroactive approval should pass the human's decision time explicitly.
+ *
+ * Throws `Error` with a descriptive message on invalid input.
  */
 export function buildHumanOverride(input: BuildHumanOverrideInput): HumanOverride {
   const reason = input.reason.trim();
@@ -108,14 +142,31 @@ export function buildHumanOverride(input: BuildHumanOverrideInput): HumanOverrid
       `human_override.reason must be at least ${MIN_REASON_LENGTH} characters (got ${reason.length})`
     );
   }
+  if (CONTROL_CHAR_PATTERN.test(reason)) {
+    throw new Error('human_override.reason must not contain control characters');
+  }
+
   const approver = input.approver.trim();
+  if (CONTROL_CHAR_PATTERN.test(approver)) {
+    throw new Error('human_override.approver must not contain control characters');
+  }
   if (!EMAIL_PATTERN.test(approver)) {
     throw new Error(`human_override.approver must be an email address (got "${approver}")`);
   }
-  const approvedAt =
-    input.approvedAt instanceof Date
-      ? input.approvedAt.toISOString()
-      : input.approvedAt ?? new Date().toISOString();
+
+  let approvedAt: string;
+  if (input.approvedAt instanceof Date) {
+    if (Number.isNaN(input.approvedAt.getTime())) {
+      throw new Error('human_override.approvedAt is an invalid Date');
+    }
+    approvedAt = input.approvedAt.toISOString();
+  } else if (typeof input.approvedAt === 'string') {
+    assertParseableIsoTimestamp(input.approvedAt, 'human_override.approvedAt');
+    approvedAt = input.approvedAt;
+  } else {
+    approvedAt = new Date().toISOString();
+  }
+
   return { reason, approver, approved_at: approvedAt };
 }
 
@@ -130,17 +181,24 @@ export interface GovernanceValidationIssue {
 }
 
 /**
- * Check plan-level invariants that codegen commonly drops from generated
- * types (if/then, oneOf):
+ * Client-side check for plan-level invariants that generated types often
+ * drop from `if/then` / `oneOf`. Complements the Zod request schema, which
+ * covers structural validation (required fields, value types).
  *
- *  - Budget must set exactly one of `reallocation_threshold` /
- *    `reallocation_unlimited`.
- *  - `reallocation_threshold` must be ≥ 0.
- *  - `human_review_required: true` is required when `policy_categories`
- *    includes a regulated vertical or `policy_ids` includes Annex III.
+ * Runs two checks:
  *
- * Returns `[]` when the plan is valid. Does not validate field presence
- * beyond these invariants — the Zod schema covers the rest.
+ *  - When `budget` is present: exactly one of `reallocation_threshold` /
+ *    `reallocation_unlimited` must be set, and `reallocation_threshold`
+ *    must be ≥ 0. Missing `budget` is **not** flagged — leave structural
+ *    validation to the Zod schema.
+ *  - When `policy_categories` includes a value in
+ *    `REGULATED_HUMAN_REVIEW_CATEGORIES`, or `policy_ids` includes a value
+ *    in `ANNEX_III_POLICY_IDS`, `human_review_required: true` is required.
+ *    Governance agents resolve synonyms and custom policies server-side;
+ *    this check is a best-effort pre-submit guard for the canonical names.
+ *
+ * Returns `[]` when no client-detectable invariants are violated. Callers
+ * should still treat the governance agent as authoritative.
  */
 export function validateGovernancePlan(plan: Partial<GovernancePlan>): GovernanceValidationIssue[] {
   const issues: GovernanceValidationIssue[] = [];
