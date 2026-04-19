@@ -830,6 +830,11 @@ EXAMPLES:
 async function handleStoryboardList(args) {
   const { listBundles, loadBundleStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
+  // --stateful: keep only storyboards that contain at least one step marked
+  // `stateful: true`. That's the same predicate the multi-instance runner
+  // uses to identify storyboards whose write→read chains surface in-process
+  // state bugs, so this filter returns the "worth round-robining" set.
+  const statefulOnly = args.includes('--stateful');
 
   let bundles;
   try {
@@ -844,30 +849,38 @@ async function handleStoryboardList(args) {
   for (const ref of bundles) {
     const storyboards = loadBundleStoryboards(ref);
     if (storyboards.length === 0) continue; // skip schema/fixture YAMLs that aren't runnable
-    const summary = {
-      bundle_kind: ref.kind,
-      bundle_id: ref.id,
-      storyboards: storyboards.map(s => ({
-        id: s.id,
-        title: s.title,
-        category: s.category,
-        summary: s.summary,
-        track: s.track,
-        step_count: s.phases.reduce((sum, p) => sum + p.steps.length, 0),
-      })),
-    };
+    const summaryStoryboards = storyboards
+      .map(s => {
+        const allSteps = s.phases.flatMap(p => p.steps);
+        const statefulStepCount = allSteps.filter(step => step.stateful === true).length;
+        return {
+          id: s.id,
+          title: s.title,
+          category: s.category,
+          summary: s.summary,
+          track: s.track,
+          step_count: allSteps.length,
+          stateful_step_count: statefulStepCount,
+        };
+      })
+      .filter(s => !statefulOnly || s.stateful_step_count > 0);
+    if (summaryStoryboards.length === 0) continue;
+    const summary = { bundle_kind: ref.kind, bundle_id: ref.id, storyboards: summaryStoryboards };
     grouped[ref.kind].push(summary);
-    for (const sb of summary.storyboards) {
+    for (const sb of summaryStoryboards) {
       flat.push({ ...sb, bundle_kind: ref.kind, bundle_id: ref.id });
     }
   }
 
   if (jsonOutput) {
-    await writeJsonOutput({ bundles: grouped, storyboards: flat });
+    await writeJsonOutput({ bundles: grouped, storyboards: flat, filter: statefulOnly ? 'stateful' : null });
     return;
   }
 
-  console.log('\nCompliance storyboards (from local cache)\n');
+  const heading = statefulOnly
+    ? 'Stateful compliance storyboards (1+ step marked stateful: true)'
+    : 'Compliance storyboards (from local cache)';
+  console.log(`\n${heading}\n`);
   for (const kind of ['universal', 'protocol', 'specialism']) {
     if (grouped[kind].length === 0) continue;
     const header =
@@ -876,13 +889,17 @@ async function handleStoryboardList(args) {
     for (const bundle of grouped[kind]) {
       console.log(`  [${bundle.bundle_id}]`);
       for (const sb of bundle.storyboards) {
-        console.log(`    ${sb.id}  — ${sb.title} (${sb.step_count} steps)`);
+        const statefulSuffix = statefulOnly || sb.stateful_step_count > 0 ? `, ${sb.stateful_step_count} stateful` : '';
+        console.log(`    ${sb.id}  — ${sb.title} (${sb.step_count} steps${statefulSuffix})`);
         if (sb.track) console.log(`      Track: ${sb.track}`);
       }
     }
     console.log();
   }
-  console.log(`${flat.length} storyboard(s) across ${bundles.length} bundle(s).`);
+  const suffix = statefulOnly ? ' with at least one stateful step' : '';
+  console.log(
+    `${flat.length} storyboard(s)${suffix} across ${grouped.universal.length + grouped.protocol.length + grouped.specialism.length} bundle(s).`
+  );
 }
 
 async function handleStoryboardShow(args) {
@@ -963,6 +980,14 @@ async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
   const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = opts;
 
+  // Multi-instance mode: repeated --url flags round-robin steps across N
+  // seller URLs. Must share a backing store to pass — catches horizontal
+  // scaling bugs where brand-scoped state lives in-process.
+  const extraUrls = extractRepeatedUrlFlags(args);
+  if (extraUrls.length > 0) {
+    return handleMultiInstanceStoryboardRun(args, opts, extraUrls);
+  }
+
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];
 
@@ -972,6 +997,7 @@ async function handleStoryboardRun(args) {
 
   if (!agentArg) {
     console.error('Usage: adcp storyboard run <agent> [storyboard_id|--file path] [options]');
+    console.error('  Multi-instance: adcp storyboard run --url <url1> --url <url2> <storyboard_id|bundle_id>');
     process.exit(2);
   }
 
@@ -1094,6 +1120,280 @@ async function handleStoryboardRun(args) {
   }
 
   process.exit(result.overall_passed ? 0 : 3);
+}
+
+/**
+ * Extract every `--url <value>` occurrence from the CLI args and validate
+ * each against the same policy the single-instance agent argument enforces:
+ *
+ *  - value must be a parseable URL
+ *  - scheme must be http or https (http only allowed with --allow-http)
+ *  - no userinfo (`https://user:pass@host/` is rejected — tokens go via --auth)
+ *
+ * Without these gates a hostile or typo'd `--url file:///etc/passwd` or
+ * `--url https://attacker@victim/mcp` would flow straight into the MCP
+ * transport and land in attribution output.
+ */
+function extractRepeatedUrlFlags(args) {
+  const allowHttp = args.includes('--allow-http');
+  const values = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--url') continue;
+    const raw = args[i + 1];
+    if (raw === undefined || raw.startsWith('--')) {
+      console.error('ERROR: --url requires a value (URL)');
+      process.exit(2);
+    }
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      console.error(`ERROR: --url value is not a valid URL: ${raw}`);
+      process.exit(2);
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      console.error(`ERROR: --url must be http(s); got ${parsed.protocol} in "${raw}"`);
+      process.exit(2);
+    }
+    if (parsed.protocol === 'http:' && !allowHttp) {
+      console.error(`ERROR: --url with http:// requires --allow-http (got "${raw}")`);
+      process.exit(2);
+    }
+    if (parsed.username || parsed.password) {
+      console.error('ERROR: --url must not contain credentials (user:pass@). Pass tokens via --auth.');
+      process.exit(2);
+    }
+    values.push(raw);
+  }
+  return values;
+}
+
+/**
+ * Run a storyboard (or bundle) in multi-instance mode. Each step round-robins
+ * across the supplied URLs. Positional agent is disallowed — --url is the
+ * multi-instance path; positional is the single-instance path.
+ *
+ * Full capability-driven assessment (no storyboard ID) is intentionally not
+ * supported here: the compliance pipeline shares a single client across
+ * storyboards for connection reuse, which is incompatible with per-step URL
+ * dispatch. Use a specific storyboard or bundle ID.
+ */
+async function handleMultiInstanceStoryboardRun(args, opts, urls) {
+  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs } = opts;
+
+  if (urls.length < 2) {
+    console.error('ERROR: Multi-instance mode requires 2+ --url flags. Drop --url for single-instance.');
+    process.exit(2);
+  }
+
+  // Strip --url values that may have slipped past parseAgentOptions' positional filter.
+  const cleanPositional = positionalArgs.filter(p => !urls.includes(p));
+  const firstPositional = cleanPositional[0];
+
+  if (firstPositional && (firstPositional.startsWith('http://') || firstPositional.startsWith('https://'))) {
+    console.error(
+      'ERROR: Cannot combine a positional agent URL with --url flags. ' +
+        'Use either a positional agent (single-instance) or repeated --url flags (multi-instance).'
+    );
+    process.exit(2);
+  }
+
+  const fileIndex = args.indexOf('--file');
+  const filePath = fileIndex !== -1 ? args[fileIndex + 1] : null;
+  const storyboardId = firstPositional;
+
+  if (filePath && storyboardId) {
+    console.error('ERROR: Cannot combine a storyboard ID with --file. Use one or the other.');
+    process.exit(2);
+  }
+
+  if (!filePath && !storyboardId) {
+    console.error(
+      'ERROR: Multi-instance mode requires a storyboard ID, bundle ID, or --file. ' +
+        'Capability-driven full assessment is not yet multi-instance aware.'
+    );
+    process.exit(2);
+  }
+
+  const { loadStoryboardFile, runStoryboard, getComplianceStoryboardById, loadBundleStoryboards, findBundleById } =
+    await import('../dist/lib/testing/storyboard/index.js');
+
+  // Load one or more storyboards (bundle IDs expand).
+  const storyboards = [];
+  if (filePath) {
+    try {
+      storyboards.push(loadStoryboardFile(filePath));
+    } catch (err) {
+      console.error(`Failed to load storyboard from ${filePath}: ${err.message}`);
+      process.exit(2);
+    }
+  } else {
+    const bundle = findBundleById(storyboardId);
+    if (bundle) {
+      const bundleStoryboards = loadBundleStoryboards(storyboardId);
+      if (!bundleStoryboards || bundleStoryboards.length === 0) {
+        console.error(`ERROR: Bundle "${storyboardId}" is empty.`);
+        process.exit(2);
+      }
+      storyboards.push(...bundleStoryboards);
+    } else {
+      const sb = getComplianceStoryboardById(storyboardId);
+      if (!sb) {
+        console.error(
+          `ERROR: Unknown storyboard or bundle ID: ${storyboardId}\n` + `Run 'adcp storyboard list' to see all options.`
+        );
+        process.exit(2);
+      }
+      storyboards.push(sb);
+    }
+  }
+
+  // Auto-detect protocol from the first URL. Multi-instance deployments
+  // share a codebase across replicas, so one probe is representative.
+  let protocol = protocolFlag;
+  if (!protocol) {
+    if (!jsonOutput) console.error('Auto-detecting protocol from first URL...');
+    try {
+      protocol = await detectProtocol(urls[0]);
+      if (!jsonOutput) console.error(`Detected protocol: ${protocol.toUpperCase()}\n`);
+    } catch (err) {
+      console.error(`ERROR: Failed to detect protocol: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  const totalSteps = storyboards.reduce(
+    (sum, sb) => sum + sb.phases.reduce((phaseSum, p) => phaseSum + p.steps.length, 0),
+    0
+  );
+
+  if (!jsonOutput) {
+    console.error(`Multi-instance storyboard run (round-robin across ${urls.length} instances):`);
+    urls.forEach((u, i) => console.error(`  [#${i + 1}] ${u}`));
+    console.error(`  Protocol: ${protocol.toUpperCase()}`);
+    console.error(`  Storyboards: ${storyboards.map(s => s.id).join(', ')}`);
+    console.error(`  Total steps: ${totalSteps}\n`);
+  }
+
+  // --dry-run: print the assignment plan and exit
+  if (dryRun) {
+    if (jsonOutput) {
+      await writeJsonOutput({
+        agent_urls: urls,
+        multi_instance_strategy: 'round-robin',
+        protocol,
+        preview: true,
+        storyboards: storyboards.map(sb => {
+          const flat = sb.phases.flatMap(p => p.steps);
+          return {
+            storyboard_id: sb.id,
+            storyboard_title: sb.title,
+            assignments: flat.map((s, idx) => ({
+              step_id: s.id,
+              task: s.task,
+              instance_index: (idx % urls.length) + 1,
+              agent_url: urls[idx % urls.length],
+            })),
+          };
+        }),
+      });
+    } else {
+      for (const sb of storyboards) {
+        console.log(`\n${sb.title} (${sb.id})`);
+        console.log('═'.repeat(50));
+        let stepIdx = 0;
+        for (const phase of sb.phases) {
+          console.log(`\n── Phase: ${phase.title} ──`);
+          for (const step of phase.steps) {
+            const inst = (stepIdx % urls.length) + 1;
+            console.log(`  [#${inst}] ${step.id}: ${step.title} → ${step.task}`);
+            stepIdx++;
+          }
+        }
+      }
+      console.log(
+        `\n${totalSteps} step(s) would be executed across ${urls.length} instances. Use without --dry-run to run.`
+      );
+    }
+    return;
+  }
+
+  const runOptions = {
+    protocol,
+    ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
+    ...(opts.allowHttp && { allow_http: true }),
+  };
+
+  const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
+  const results = [];
+  let hadFailure = false;
+  try {
+    for (const sb of storyboards) {
+      const result = await runStoryboard(urls, sb, runOptions);
+      results.push(result);
+      if (!result.overall_passed) hadFailure = true;
+    }
+  } finally {
+    if (restoreLogs) restoreLogs();
+  }
+
+  if (jsonOutput) {
+    await writeJsonOutput(
+      results.length === 1
+        ? results[0]
+        : {
+            agent_urls: urls,
+            multi_instance_strategy: 'round-robin',
+            storyboards: results,
+            overall_passed: !hadFailure,
+          }
+    );
+  } else {
+    const SKIP_ICONS = { missing_test_harness: '🔧', not_testable: '⏭️', dependency_failed: '⏭️' };
+    const SKIP_LABELS = {
+      missing_test_harness: ' [needs test harness]',
+      not_testable: ' [not testable]',
+      dependency_failed: ' [dependency failed]',
+    };
+    for (const result of results) {
+      console.log(`\n${result.storyboard_title} (${result.storyboard_id})`);
+      console.log('═'.repeat(50));
+      for (const phase of result.phases) {
+        console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
+        for (const step of phase.steps) {
+          const icon = step.skipped ? (SKIP_ICONS[step.skip_reason] ?? '⏭️') : step.passed ? '✅' : '❌';
+          const skipLabel = SKIP_LABELS[step.skip_reason] ?? '';
+          const instTag = step.agent_index ? `[#${step.agent_index}] ` : '';
+          console.log(`\n${icon} ${instTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
+          console.log(`   Task: ${step.task}`);
+          if (step.error) {
+            console.log(`   Error: ${step.error}`);
+          }
+          for (const v of step.validations) {
+            const vIcon = v.passed ? '✅' : '❌';
+            console.log(`   ${vIcon} ${v.description}`);
+            if (v.error) console.log(`      ${v.error}`);
+          }
+        }
+      }
+    }
+    console.log(`\n${'─'.repeat(50)}`);
+    const totals = results.reduce(
+      (acc, r) => ({
+        passed: acc.passed + r.passed_count,
+        failed: acc.failed + r.failed_count,
+        skipped: acc.skipped + r.skipped_count,
+        duration: acc.duration + r.total_duration_ms,
+      }),
+      { passed: 0, failed: 0, skipped: 0, duration: 0 }
+    );
+    const overallIcon = !hadFailure ? '✅' : '❌';
+    console.log(
+      `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms) across ${urls.length} instances`
+    );
+  }
+
+  process.exit(hadFailure ? 3 : 0);
 }
 
 // Shared implementation: run all matching storyboards against an agent

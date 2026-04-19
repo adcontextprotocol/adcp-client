@@ -244,7 +244,9 @@ export class TaskExecutor {
     // Auto-generate idempotency_key for mutating tasks when the caller didn't
     // supply one. The key lives on TaskState so internal retries reuse it —
     // re-generating on retry defeats the whole point of the envelope.
-    const idempotencyKey = resolveIdempotencyKey(taskName, params);
+    // `options.skipIdempotencyAutoInject` disables this for compliance testing
+    // that needs to exercise server-side missing-key behavior.
+    const idempotencyKey = options.skipIdempotencyAutoInject ? undefined : resolveIdempotencyKey(taskName, params);
     if (idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
       params = { ...params, idempotency_key: idempotencyKey };
     }

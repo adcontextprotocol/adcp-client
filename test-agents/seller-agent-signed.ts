@@ -190,10 +190,15 @@ const server = createServer(async (req, res) => {
     await new Promise<void>(resolve =>
       verifier(reqShim, resShim, err => {
         if (err) {
+          // Log the cause internally; the wire never sees err.message /
+          // stack — CodeQL rule js/stack-trace-exposure. The response body
+          // mirrors the generic shape `createExpressVerifier` itself emits
+          // on a signature-pipeline rejection (status + error code).
+          console.error('verifier middleware error:', err);
           if (!res.writableEnded) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'verifier_error', message: String(err) }));
+            res.end(JSON.stringify({ error: 'verifier_error' }));
           }
         } else if (!res.writableEnded) {
           // Verifier accepted (or skipped when operation wasn't in
@@ -207,10 +212,15 @@ const server = createServer(async (req, res) => {
       })
     );
   } catch (err) {
+    // Log internally so operators can debug locally; don't leak the stack
+    // trace to the wire (CodeQL rule js/stack-trace-exposure). Every code
+    // path here is a test-harness error — the grader treats 500 as a probe
+    // error anyway.
+    console.error('signed test agent internal error:', err);
     if (!res.writableEnded) {
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: 'internal_error', message: String(err) }));
+      res.end(JSON.stringify({ error: 'internal_error' }));
     }
   }
 });

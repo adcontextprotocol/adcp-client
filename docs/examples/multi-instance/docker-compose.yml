@@ -1,0 +1,102 @@
+# Reference multi-instance harness for AdCP storyboard testing.
+#
+# Two replicas of your agent (agent-a, agent-b) share one Postgres store.
+# Caddy fronts both with round-robin routing for the "single LB endpoint"
+# test path. You can also hit the replicas directly via their host ports
+# (4100, 4101) and pass both to `npx @adcp/client storyboard run --url`.
+#
+# Swap `image: CHANGEME/your-adcp-agent:latest` for your own image (or a
+# build context). Everything else is reusable.
+#
+# Quickstart:
+#   cp .env.example .env    # replace every <placeholder>
+#   docker compose up -d --wait
+#
+# Then run storyboards in one of two shapes:
+#
+#   # (A) Runner-level round-robin across two direct URLs. Each request
+#   # gets a distinct MCP session and round-robins at the client.
+#   npx @adcp/client storyboard run \
+#     --url http://localhost:4100/mcp/ \
+#     --url http://localhost:4101/mcp/ \
+#     property_lists --auth $AGENT_TOKEN --allow-http
+#
+#   # (B) LB-level rotation at Caddy. Single MCP session; Caddy round-robins
+#   # per request. This matches what a production Fly.io / K8s deployment
+#   # looks like from the outside.
+#   npx @adcp/client storyboard run http://localhost:4099/mcp/ \
+#     property_lists --auth $AGENT_TOKEN --allow-http
+#
+# Both shapes exercise cross-replica state persistence. (A) gives you
+# per-step instance attribution in failure output; (B) is closer to what
+# production traffic looks like.
+#
+# All credentials flow through `env_file: .env` — nothing is inlined in
+# this compose file so secret scanners don't flag reference values.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: adcp
+      POSTGRES_USER: adcp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U adcp -d adcp']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  agent-a: &agent
+    image: CHANGEME/your-adcp-agent:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # The replica label shows up in error attribution — set it so
+      # cross-replica failure messages are unambiguous. DATABASE_URL and
+      # AGENT_TOKEN are injected via env_file (.env), not inlined here.
+      REPLICA_ID: a
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: adcp
+      PGUSER: adcp
+    ports:
+      - '4100:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:8080/healthz || exit 1']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  agent-b:
+    <<: *agent
+    environment:
+      REPLICA_ID: b
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: adcp
+      PGUSER: adcp
+    ports:
+      - '4101:8080'
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '4099:4099'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      agent-a:
+        condition: service_healthy
+      agent-b:
+        condition: service_healthy
+
+volumes:
+  pgdata:

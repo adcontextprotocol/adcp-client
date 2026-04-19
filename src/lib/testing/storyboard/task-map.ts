@@ -79,16 +79,23 @@ export async function executeStoryboardTask(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic dispatch requires any
   client: any,
   taskName: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  opts: { skipIdempotencyAutoInject?: boolean } = {}
 ): Promise<TaskResult> {
   const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
+
+  // Only pass TaskOptions when a flag is actually set — avoids changing
+  // behavior for the common path that relies on method defaults.
+  const taskOptions = opts.skipIdempotencyAutoInject ? { skipIdempotencyAutoInject: true } : undefined;
 
   let result;
   const invoke = async () => {
     if (methodName && typeof client[methodName] === 'function') {
-      return client[methodName](params);
+      // Typed methods take (params, inputHandler?, options?). Pass options
+      // only when set, otherwise they take their defaults.
+      return taskOptions ? client[methodName](params, undefined, taskOptions) : client[methodName](params);
     }
-    return client.executeTask(taskName, params);
+    return client.executeTask(taskName, params, undefined, taskOptions);
   };
 
   // Retry with exponential backoff on rate limit errors

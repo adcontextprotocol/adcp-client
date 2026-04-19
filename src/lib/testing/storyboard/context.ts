@@ -10,6 +10,7 @@
  * (context_outputs/context_inputs) while still enabling stateful flows.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { StoryboardContext, ContextOutput, ContextInput } from './types';
 import { resolvePath, setPath } from './path';
 
@@ -276,8 +277,51 @@ export function extractContext(taskName: string, data: unknown): Record<string, 
 // ────────────────────────────────────────────────────────────
 
 /**
- * Deep-walk an object and replace "$context.<key>" string values
- * with the corresponding value from context.
+ * Per-context alias cache for `$generate:uuid_v4#<alias>` placeholders.
+ *
+ * A WeakMap keyed off the StoryboardContext identity avoids landing
+ * implementation-detail keys on the serialized context object and avoids
+ * fragility when context is shallow-cloned between steps — the cache
+ * follows the context reference rather than riding as an owned key.
+ *
+ * Propagation across steps is handled by `forwardAliasCache` (called by
+ * the runner when it rolls context forward to the next step), keeping
+ * this a deliberate design choice rather than an invisible by-reference
+ * leak through `{ ...context }`.
+ */
+const aliasCaches = new WeakMap<StoryboardContext, Record<string, string>>();
+
+/**
+ * Ensure an alias cache exists for the given context and return it.
+ */
+function getAliasCache(context: StoryboardContext): Record<string, string> {
+  let cache = aliasCaches.get(context);
+  if (!cache) {
+    cache = {};
+    aliasCaches.set(context, cache);
+  }
+  return cache;
+}
+
+/**
+ * Propagate the alias cache from one context to another — call after
+ * shallow-cloning context between storyboard steps so replay tests
+ * (initial + replay sharing `$generate:uuid_v4#<alias>`) resolve to the
+ * same UUID. No-op when `from` has no cache.
+ */
+export function forwardAliasCache(from: StoryboardContext, to: StoryboardContext): void {
+  const cache = aliasCaches.get(from);
+  if (cache) aliasCaches.set(to, cache);
+}
+
+/**
+ * Deep-walk an object and replace recognized placeholder strings:
+ *
+ * - `$context.<key>` → value from `context[key]`
+ * - `$generate:uuid_v4` → fresh UUID v4 per occurrence
+ * - `$generate:uuid_v4#<alias>` → fresh UUID v4 on first occurrence,
+ *   then the same UUID for every subsequent occurrence of the same
+ *   alias within this storyboard run (enables initial + replay testing)
  *
  * Returns a new object (does not mutate the input).
  */
@@ -287,10 +331,20 @@ export function injectContext(obj: Record<string, unknown>, context: StoryboardC
 
 function deepReplace(value: unknown, context: StoryboardContext): unknown {
   if (typeof value === 'string') {
-    const match = value.match(/^\$context\.(\w+)$/);
-    if (match?.[1]) {
-      const key = match[1];
+    const ctxMatch = value.match(/^\$context\.(\w+)$/);
+    if (ctxMatch?.[1]) {
+      const key = ctxMatch[1];
       return key in context ? context[key] : value;
+    }
+    const genMatch = value.match(/^\$generate:uuid_v4(?:#([A-Za-z0-9_.-]+))?$/);
+    if (genMatch) {
+      const alias = genMatch[1];
+      if (alias) {
+        const cache = getAliasCache(context);
+        if (!(alias in cache)) cache[alias] = randomUUID();
+        return cache[alias];
+      }
+      return randomUUID();
     }
     return value;
   }

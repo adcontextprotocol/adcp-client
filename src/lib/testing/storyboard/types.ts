@@ -255,6 +255,12 @@ export interface StoryboardRunOptions extends TestOptions {
      */
     allowLiveSideEffects?: boolean;
   };
+  /**
+   * Distribution strategy across agent URLs in multi-instance mode (#608).
+   * Only consulted when the runner is given 2+ URLs. Defaults to 'round-robin'.
+   * Reserved enum; additional strategies may land without a signature change.
+   */
+  multi_instance_strategy?: 'round-robin';
 }
 
 // ────────────────────────────────────────────────────────────
@@ -314,6 +320,10 @@ export interface StoryboardStepResult {
   error?: string;
   /** Preview of the next step (for LLM consumption) */
   next?: StoryboardStepPreview;
+  /** Agent URL that served this step (multi-instance mode). Absent in single-URL mode. */
+  agent_url?: string;
+  /** 1-based index of the agent instance (multi-instance mode). Absent in single-URL mode. */
+  agent_index?: number;
 }
 
 export interface StoryboardPhaseResult {
@@ -327,7 +337,12 @@ export interface StoryboardPhaseResult {
 export interface StoryboardResult {
   storyboard_id: string;
   storyboard_title: string;
+  /** Primary agent URL. In multi-instance mode this is the first URL — see agent_urls for the full list. */
   agent_url: string;
+  /** All agent URLs used in multi-instance mode. Absent (or single-entry) in single-URL mode. */
+  agent_urls?: string[];
+  /** Distribution strategy used across agent_urls. Absent in single-URL mode. */
+  multi_instance_strategy?: 'round-robin';
   overall_passed: boolean;
   phases: StoryboardPhaseResult[];
   /** Final accumulated context */

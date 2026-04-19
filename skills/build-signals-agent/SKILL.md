@@ -194,12 +194,26 @@ Minimal `tsconfig.json`:
 
 ```typescript
 import { createAdcpServer, serve, adcpError } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 
 const signals = [ /* your signal objects */ ];
+
+// Idempotency — required for v3 compliance. `activate_signal` is mutating;
+// `get_signals` is read-only and exempt from key validation.
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // pgBackend(pool) for production
+  ttlSeconds: 86400,                // 24 hours (spec bounds: 1h–7d)
+});
 
 serve(() => createAdcpServer({
   name: 'My Signals Agent',
   version: '1.0.0',
+  idempotency,
+
+  // Principal scoping for idempotency. MUST never return undefined — or
+  // every mutating request rejects as SERVICE_UNAVAILABLE. A constant
+  // works for a demo; for multi-tenant use ctx.account.
+  resolveSessionKey: () => 'default-principal',
 
   signals: {
     getSignals: async (params, ctx) => {
@@ -277,26 +291,17 @@ serve(() => createAdcpServer({
 
 ## Idempotency
 
-AdCP v3 requires an `idempotency_key` on every mutating request — for signals agents that's `activate_signal` (`get_signals` is read-only and exempt). Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — a failed activation re-executes on retry so buyers can safely retry transient errors. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) so two buyers requesting the same destinations won't collide.
+AdCP v3 requires an `idempotency_key` on every mutating request — for signals agents that's `activate_signal` only (`get_signals` is read-only and exempt). Idempotency is already wired in the Implementation example above. The framework then handles:
 
-```typescript
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+- Missing/malformed key → `INVALID_REQUEST` (spec pattern `^[A-Za-z0-9_.:-]{16,255}$`)
+- JCS-canonicalized payload hashing with same-key-different-payload → `IDEMPOTENCY_CONFLICT` (no payload leaked in the error body)
+- Past-TTL replay → `IDEMPOTENCY_EXPIRED` (±60s clock-skew tolerance)
+- Cache hits replay the cached envelope with `replayed: true` injected
+- `adcp.idempotency.replay_ttl_seconds` auto-declared on `get_adcp_capabilities`
+- Only successful responses cache — a failed activation re-executes on retry
+- Atomic claim so concurrent retries with a fresh key don't all race to activate
 
-const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),         // or pgBackend(pool) for production
-  ttlSeconds: 86400,                // 3600–604800 per spec; throws if out of range
-});
-
-const server = createAdcpServer({
-  idempotency,
-  // MUST never return undefined — or every mutating request rejects as
-  // SERVICE_UNAVAILABLE. A constant works for a demo; for multi-tenant
-  // production, type the account via `createAdcpServer<MyAccount>({...})`
-  // and use `(ctx) => ctx.account?.id`.
-  resolveSessionKey: () => 'default-principal',
-  // ... your signals.activateSignal handler
-});
-```
+Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal` for custom scoping). `ttlSeconds` must be 3600–604800 — out of range throws at construction. If you register mutating handlers without wiring `idempotency`, the framework logs an error at server-creation time.
 
 ## Validation
 

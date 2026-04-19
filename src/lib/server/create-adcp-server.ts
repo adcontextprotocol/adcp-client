@@ -606,14 +606,48 @@ function clampReplayTtl(seconds: number): number {
 }
 
 /**
- * Set `replayed: true` on the response envelope (MCP structuredContent).
- * Fresh executions omit the field; seller injects it at response time
- * on replay.
+ * Set `replayed` on the response envelope (MCP structuredContent).
+ * Both fresh executions (`false`) and replays (`true`) carry the field,
+ * per spec — a buyer that checks `replayed` to decide whether side
+ * effects already fired needs the field present on every mutating
+ * response, not just replays.
  */
-function injectReplayed(response: McpToolResponse): void {
+function injectReplayed(response: McpToolResponse, value: boolean): void {
   if (response.structuredContent && typeof response.structuredContent === 'object') {
-    (response.structuredContent as Record<string, unknown>).replayed = true;
+    (response.structuredContent as Record<string, unknown>).replayed = value;
   }
+}
+
+/**
+ * Remove per-request echo fields (`context`) from a formatted MCP response
+ * before caching. The buyer's `correlation_id` is scoped to the individual
+ * retry attempt and must not be baked into the cached envelope — replays
+ * need to echo back the CURRENT retry's context, not the first caller's.
+ * Other fields (media_buy_id, status, timestamps) are part of the pinned
+ * response and stay put.
+ */
+function stripEnvelopeEcho(response: McpToolResponse): McpToolResponse {
+  const cloned = cloneFormattedResponse(response);
+  if (cloned.structuredContent && typeof cloned.structuredContent === 'object') {
+    const sc = cloned.structuredContent as Record<string, unknown>;
+    delete sc.context;
+  }
+  if (Array.isArray(cloned.content)) {
+    for (const item of cloned.content) {
+      if (item && item.type === 'text' && typeof item.text === 'string') {
+        try {
+          const parsed = JSON.parse(item.text);
+          if (parsed && typeof parsed === 'object') {
+            delete parsed.context;
+            item.text = JSON.stringify(parsed);
+          }
+        } catch {
+          // Text isn't JSON — leave it alone
+        }
+      }
+    }
+  }
+  return cloned;
 }
 
 /**
@@ -1134,7 +1168,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // read, but belt-and-suspenders: handler-returned objects
               // can alias pieces of the formatted envelope.
               const cachedFormatted = cloneFormattedResponse(checkResult.response as McpToolResponse);
-              injectReplayed(cachedFormatted);
+              injectReplayed(cachedFormatted, true);
               return finalize(cachedFormatted);
             }
             if (checkResult.kind === 'conflict') {
@@ -1198,11 +1232,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           if (idempotencyCheck && idempotency) {
             if (!isErrorResponse(formatted)) {
               try {
+                // Strip `context` before caching — it's a per-request echo
+                // field (buyer's correlation_id), not part of the cached
+                // payload. If we cached it, replays would return the
+                // FIRST caller's correlation_id to every subsequent
+                // retry, breaking end-to-end request tracing. On replay,
+                // `finalize()` re-injects the current request's context.
+                const cacheable = stripEnvelopeEcho(formatted);
                 await idempotency.save({
                   principal: idempotencyCheck.principal,
                   key: idempotencyCheck.key,
                   payloadHash: idempotencyCheck.payloadHash,
-                  response: formatted,
+                  response: cacheable,
                   extraScope: idempotencyCheck.extraScope,
                 });
               } catch (err) {
@@ -1212,6 +1253,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   error: reason,
                 });
               }
+              // Stamp replayed:false AFTER caching so the cached copy has
+              // no pre-baked value. On replay we inject replayed:true
+              // from the replay path, overwriting anything.
+              injectReplayed(formatted, false);
             } else {
               try {
                 await idempotency.release({
@@ -1258,7 +1303,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
       };
 
-      server.tool(toolName, schema.shape as any, toolHandler);
+      // When idempotency is wired and the tool is mutating, relax
+      // `idempotency_key` to optional in the MCP-level input schema. The
+      // middleware is authoritative for this field and returns a properly-
+      // shaped `adcp_error` (with `code`, `field`, `recovery`) on missing
+      // or malformed keys. If we let the MCP SDK's schema validator
+      // reject the request first, buyers get a text-only `-32602` error
+      // instead of the structured compliance error — breaking the
+      // idempotency storyboard's `error_code` validation.
+      const registersAsMutating = isMutatingTask(toolName);
+      const idempKeyField = (schema.shape as any).idempotency_key;
+      const toolShape =
+        idempotency && registersAsMutating && typeof idempKeyField?.optional === 'function'
+          ? { ...(schema.shape as any), idempotency_key: idempKeyField.optional() }
+          : schema.shape;
+      server.tool(toolName, toolShape as any, toolHandler);
       if (meta?.annotations) {
         const registered = (server as any)._registeredTools[toolName];
         if (registered?.update) {
