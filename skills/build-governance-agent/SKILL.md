@@ -34,7 +34,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | `content-standards` | stable | `policies[]` is an array of `{ policy_id, enforcement, policy, policy_categories?, channels? }`; `validate_content_delivery` uses `records[].artifact` (not `creative_id`); re-read policies per call for `standards_version_change` | [§ content-standards](#specialism-content-standards) |
 | `measurement-verification` | preview | v3.1 placeholder (empty `phases`). Pass universal + governance baseline only. Advertise `measurement_verification` capability for discoverability. | Baseline only |
 
-**Not in this skill:** `audience-sync` was reclassified to `protocol: media-buy` in AdCP 3.0 GA (was governance). Build it in `skills/build-seller-agent/` instead — it uses `sync_audiences`, `list_accounts`, `delete_audience` under the `accounts` / `eventTracking` domain groups.
+**Not in this skill:** `audience-sync` lives under `protocol: media-buy`. Build it in `skills/build-seller-agent/` instead — it uses `sync_audiences` (overloaded for discovery, add, and delete) and `list_accounts` under the `accounts` / `eventTracking` domain groups.
 
 Specialism ID (kebab-case) = storyboard directory. Storyboard `id:` (snake_case, e.g. `campaign_governance_conditions`) is the category name — multiple specialisms can reference the same storyboard category.
 
@@ -97,7 +97,7 @@ Evaluate a media buy against the registered plan. The request carries a `binding
 ```
 // Request shape:
 {
-  plan_id: string,              // required — previously registered via sync_plans
+  plan_id: string,              // required — registered via sync_plans
   phase?: 'create' | 'delivery',  // optional — authoritative when present
   binding: {                    // what to evaluate (create-phase)
     type: 'media_buy',
@@ -146,7 +146,7 @@ The Plan object (stored via `sync_plans`) drives decisions. Expected shape:
 }
 ```
 
-The `authority_level` enum from earlier AdCP drafts is gone. Authority is now split into two independent concerns:
+Authority is split into two independent concerns:
 
 - **`budget.reallocation_threshold` / `reallocation_unlimited`** — budget autonomy. Dollar-denominated cap on how much the orchestrator can shift around without asking.
 - **`human_review_required`** — decisions affecting data subjects (targeting, creative, delivery). Fires regardless of budget. Driven by regulation, not finance.
@@ -680,7 +680,7 @@ checkGovernance: async (params, ctx) => {
 
   // 1. Human-review gate — GDPR Art 22 / EU AI Act.
   //    Every action on a human_review_required plan must be escalated, regardless of budget.
-  //    Signalled as `denied` + critical finding (the 'escalated' status was dropped in v3).
+  //    Signal as `denied` + a critical-severity finding.
   //    The buyer resolves review off-protocol and re-calls check_governance with a fresh governance_context.
   if (plan.human_review_required) {
     return {

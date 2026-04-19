@@ -27,7 +27,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 
 | Specialism | Status | Delta from baseline | See |
 |---|---|---|---|
-| `sales-guaranteed` | stable | IO approval is **task-layer**, not MediaBuy-layer. Return an A2A task envelope with `status: 'submitted'` + `task_id` + `message`. Do NOT return `media_buy_id` or `packages` yet — those land on the final artifact when the task completes. There is no `pending_approval` MediaBuy status. | [§ sales-guaranteed](#specialism-sales-guaranteed) |
+| `sales-guaranteed` | stable | IO approval is **task-layer**, not MediaBuy-layer. Return a task envelope (MCP Tasks SDK) with `status: 'submitted'` + `task_id` + `message`. Do NOT return `media_buy_id` or `packages` yet — those land on the final artifact when the task completes. There is no `pending_approval` MediaBuy status. | [§ sales-guaranteed](#specialism-sales-guaranteed) |
 | `sales-non-guaranteed` | stable | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
 | `sales-broadcast-tv` | stable | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv) |
 | `sales-streaming-tv` | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products | Baseline only |
@@ -84,11 +84,18 @@ const capability: VerifierCapability = {
   required_for: ['create_media_buy', 'update_media_buy', 'acquire_rights'],
   supported_for: ['sync_creatives', 'sync_audiences', 'sync_accounts'],
   covers_content_digest: 'required',
-  agent_url: 'https://seller.example.com/mcp',
 };
-const jwks = new StaticJwksResolver({ /* ... */ });
+const jwks = new StaticJwksResolver([
+  // JWKs array — each must carry its own `kid`.
+]);
 const replayStore = new InMemoryReplayStore();
-const revocationStore = new InMemoryRevocationStore();
+const revocationStore = new InMemoryRevocationStore({
+  issuer: 'https://seller.example.com/mcp',
+  updated: new Date().toISOString(),
+  next_update: new Date(Date.now() + 24 * 3600_000).toISOString(),
+  revoked_kids: [],
+  revoked_jtis: [],
+});
 
 serve(createAgent, {
   publicUrl: 'https://seller.example.com/mcp',
@@ -111,7 +118,10 @@ serve(createAgent, {
     try {
       await verifyRequestSignature(
         { method: req.method!, url: req.url!, headers: req.headers, body: req.rawBody ?? '' },
-        { capability, jwks, replayStore, revocationStore, operation: resolveOperation(req) },
+        {
+          capability, jwks, replayStore, revocationStore,
+          operation: resolveOperation(req),   // your function: extract the AdCP operation name from the request
+        },
       );
     } catch (err) {
       if (err instanceof RequestSignatureError) {
@@ -957,7 +967,7 @@ When storyboard output shows failures, fix each one:
 
 ### <a name="specialism-sales-guaranteed"></a>sales-guaranteed
 
-Storyboard: `sales_guaranteed`. Guaranteed media buys with human IO signing are modelled as **A2A tasks**, not as a stepwise MediaBuy status machine. There is no `pending_approval` value in `MediaBuy.status` — review lives at the task layer, and the MediaBuy itself doesn't exist as a queryable object until the task completes.
+Storyboard: `sales_guaranteed`. Guaranteed media buys with human IO signing are modelled at the **MCP task layer**, not as a stepwise MediaBuy status machine. There is no `pending_approval` value in `MediaBuy.status` — review lives on the task (use `registerAdcpTaskTool` from `@adcp/client/server` to wire `create_media_buy` as a task-capable tool), and the MediaBuy itself doesn't exist as a queryable object until the task completes.
 
 **What `create_media_buy` must return when IO signing is required:** a task envelope in `submitted` state. No `media_buy_id`, no `packages`, no `setup` or `estimated_completion` on a MediaBuy object yet.
 
@@ -1212,53 +1222,41 @@ The `WWW-Authenticate` header is the grading surface — return the right error 
 2. Your JWKS accepts the runner's test keypairs (`test-ed25519-2026`, `test-es256-2026`) as a registered test counterparty with `adcp_use: "request-signing"`.
 3. For negative vectors `016` (replayed nonce), `017` (revoked key), `020` (per-keyid cap), your verifier is pre-configured per `signed-requests-runner.yaml` — the runner cannot set that state from outside. Missing prerequisites grade as **FAIL**, not SKIP.
 
-**Use the SDK's server verifier.** Don't write signature parsing or canonicalization yourself — `@adcp/client/signing/server` ships the full pipeline and produces the right `WWW-Authenticate` error codes.
+**Use the SDK's server verifier.** Don't write signature parsing or canonicalization yourself — `@adcp/client/signing/server` ships the full pipeline. The canonical wiring lives in [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) which feeds `verifyRequestSignature` through `serve({ preTransport })`; don't hand-roll an Express middleware chain alongside it. What you need that's specific to this specialism is the capability advertisement and the revocation-store pre-state:
 
 ```typescript
 import {
-  verifyRequestSignature,        // low-level verifier
-  createExpressVerifier,         // Express middleware — emits the 401 + WWW-Authenticate
-  InMemoryReplayStore,
   InMemoryRevocationStore,
   StaticJwksResolver,
-  RequestSignatureError,
   type VerifierCapability,
 } from '@adcp/client/signing/server';
 
-// Policy that ships in your get_adcp_capabilities response:
+// Policy that ships in your get_adcp_capabilities response under capabilities.request_signing:
 const capability: VerifierCapability = {
   supported: true,
   required_for: ['create_media_buy', 'update_media_buy', 'acquire_rights'],
   supported_for: ['sync_creatives', 'sync_audiences', 'sync_accounts'],
   covers_content_digest: 'required',
-  agent_url: 'https://seller.example.com/mcp',
-  per_keyid_request_rate_limit: 60,   // vector 020 targets this — match the per-keyid cap in test-kits/signed-requests-runner.yaml
 };
 
-const jwks = new StaticJwksResolver({
-  // Test counterparty keys — load from compliance/cache/latest/test-vectors/request-signing/keys.json:
-  'test-ed25519-2026': { /* public JWK */ },
-  'test-es256-2026':   { /* public JWK */ },
-  'test-revoked-2026': { /* public JWK — still present, but marked revoked below */ },
+// JWKS takes an array of JWKs; each must carry its own `kid`:
+const jwks = new StaticJwksResolver([
+  { kid: 'test-ed25519-2026', kty: 'OKP', crv: 'Ed25519', /* x from test-vectors/request-signing/keys.json */ },
+  { kid: 'test-es256-2026',   kty: 'EC', crv: 'P-256',    /* x, y */ },
+  { kid: 'test-revoked-2026', kty: 'OKP', crv: 'Ed25519', /* x — present so parsing succeeds, revoked below */ },
+]);
+
+// Vector 017 requires `test-revoked-2026` to be pre-revoked before the runner sends its signed request.
+// The in-memory store seeds from its constructor snapshot — no insert() method exists; load the set up front:
+const revocationStore = new InMemoryRevocationStore({
+  issuer: 'https://seller.example.com/mcp',
+  updated: new Date().toISOString(),
+  next_update: new Date(Date.now() + 24 * 3600_000).toISOString(),
+  revoked_kids: ['test-revoked-2026'],
+  revoked_jtis: [],
 });
 
-const revocationStore = new InMemoryRevocationStore();
-// Vector 017 requires this keyid to be revoked before the runner sends its signed request:
-await revocationStore.insert('test-revoked-2026', { revoked_at: new Date().toISOString() });
-
-const verifier = createExpressVerifier({
-  capability,
-  jwks,
-  replayStore: new InMemoryReplayStore(),
-  revocationStore,
-  operationFor: (req) => req.body?.method ?? req.path,
-});
-
-// MOUNT ORDER MATTERS. The verifier needs the raw request body to compute
-// content-digest — mount it BEFORE express.json() or any other body parser.
-// If a parser has already consumed the stream, covers_content_digest silently fails.
-app.use('/mcp', verifier);          // raw body available here
-app.use(express.json());            // parses for downstream handlers
+// Wire capability + jwks + stores into serve({ preTransport }) per §Composing.
 ```
 
 **Advertise your policy in `get_adcp_capabilities`.** Put your `VerifierCapability` under `capabilities.request_signing`. Client SDKs fetch this on first call, cache it for 300s, and use it to decide whether to sign outbound calls. If you don't advertise, the grader skips you (and so do auto-signing clients). If you advertise without actually verifying, negative vectors will fail.
