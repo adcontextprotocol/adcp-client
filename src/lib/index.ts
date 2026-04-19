@@ -624,6 +624,32 @@ export * from './types/schemas.generated';
 // Auth utilities for custom integrations
 export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
 
+// OAuth diagnostics utilities (see src/lib/auth/oauth/diagnostics.ts)
+export {
+  parseWWWAuthenticate,
+  decodeAccessTokenClaims,
+  validateTokenAudience,
+  type WWWAuthenticateChallenge,
+  type DecodedJWTHeader,
+  type DecodedJWTClaims,
+  type DecodedAccessToken,
+  type TokenAudienceResult,
+  InvalidTokenError,
+  InsufficientScopeError,
+} from './auth/oauth';
+
+// End-to-end OAuth handshake diagnosis — powers `adcp diagnose-auth`
+export {
+  runAuthDiagnosis,
+  AUTH_DIAGNOSIS_SCHEMA_VERSION,
+  type DiagnoseOptions,
+  type HttpCapture as DiagnosisHttpCapture,
+  type DiagnosisStep,
+  type Hypothesis as DiagnosisHypothesis,
+  type HypothesisVerdict as DiagnosisHypothesisVerdict,
+  type AuthDiagnosisReport,
+} from './auth/oauth';
+
 // ====== TOOL SCHEMA MAPS ======
 // Zod schemas keyed by tool name — use with server.tool(name, schema.shape, handler)
 export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';

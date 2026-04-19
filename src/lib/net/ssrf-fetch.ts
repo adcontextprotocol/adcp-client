@@ -30,7 +30,8 @@
  * Returns a fully-buffered result. Callers that need streaming or large bodies
  * should extend this primitive rather than bypass it.
  */
-import { lookup as dnsLookup } from 'dns/promises';
+import { type LookupAddress, type LookupOptions } from 'dns';
+import { lookup as dnsLookupAsync } from 'dns/promises';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isAlwaysBlocked, isPrivateIp } from './address-guards';
 
@@ -137,7 +138,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
 
   let addresses: { address: string; family: number }[];
   try {
-    addresses = await dnsLookup(hostname, { all: true });
+    addresses = await dnsLookupAsync(hostname, { all: true });
   } catch (err) {
     throw new SsrfRefusedError(
       'dns_lookup_failed',
@@ -183,7 +184,19 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     connect: {
       // All addresses were validated above; pin the connect to the first. The
       // custom lookup also means undici won't re-resolve and pick up a rebind.
-      lookup: (_h, _o, cb) => cb(null, pinned.address, pinned.family),
+      // undici's Agent may call lookup with `{ all: true }` (it does for HTTPS
+      // targets under Node 22+), which expects the array form of the callback.
+      lookup: (
+        _h: string,
+        opts: LookupOptions | undefined,
+        cb: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void
+      ) => {
+        if (opts?.all) {
+          cb(null, [{ address: pinned.address, family: pinnedFamily }]);
+        } else {
+          cb(null, pinned.address, pinnedFamily);
+        }
+      },
     },
   });
 
