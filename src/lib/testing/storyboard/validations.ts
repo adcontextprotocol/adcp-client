@@ -1,17 +1,25 @@
 /**
  * Per-step validation engine for storyboard testing.
  *
- * Supports four validation types defined in storyboard YAML:
- * - response_schema: validate against Zod schemas
- * - field_present: check a JSON path exists and is not null/undefined
- * - field_value: check a JSON path equals an expected value
- * - status_code: check the TaskResult status
+ * Emits validation results conforming to the runner-output contract:
+ * failed validations carry RFC 6901 `json_pointer`, machine-readable
+ * `expected`/`actual`, and for `response_schema` checks the `schema_id`
+ * plus resolvable `schema_url`. See
+ * `static/compliance/source/universal/runner-output-contract.yaml`.
  */
 
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
+import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
-import type { HttpProbeResult, StoryboardValidation, ValidationResult } from './types';
-import { resolvePath } from './path';
+import type {
+  HttpProbeResult,
+  RunnerRequestRecord,
+  RunnerResponseRecord,
+  SchemaValidationError,
+  StoryboardValidation,
+  ValidationResult,
+} from './types';
+import { resolvePath, toJsonPointer } from './path';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
 /**
@@ -26,19 +34,43 @@ export interface ValidationContext {
   httpResult?: HttpProbeResult;
   agentUrl: string;
   contributions: Set<string>;
+  /**
+   * Storyboard-declared response schema reference, e.g.
+   * `"protocol/get-adcp-capabilities-response.json"`. When present the
+   * runner emits schema_id / schema_url conforming to the contract.
+   */
+  responseSchemaRef?: string;
+  /** Exact request the runner sent — echoed on failed validations. */
+  request?: RunnerRequestRecord;
+  /** Exact response observed — echoed on failed validations. */
+  response?: RunnerResponseRecord;
 }
 
 /**
  * Run all validations for a storyboard step.
  */
 export function runValidations(validations: StoryboardValidation[], context: ValidationContext): ValidationResult[] {
-  return validations.map(v => runValidation(v, context));
+  return validations.map(v => attachOnFailure(runValidation(v, context), context));
+}
+
+/**
+ * Attach request / response records to a failed validation so implementors
+ * see the exact bytes the runner sent and observed. Passed validations stay
+ * minimal — carrying the full payload on every passing check bloats the
+ * JSON surface without diagnostic value.
+ */
+function attachOnFailure(result: ValidationResult, context: ValidationContext): ValidationResult {
+  if (result.passed) return result;
+  const augmented: ValidationResult = { ...result };
+  if (context.request && augmented.request === undefined) augmented.request = context.request;
+  if (context.response && augmented.response === undefined) augmented.response = context.response;
+  return augmented;
 }
 
 function runValidation(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
   switch (validation.check) {
     case 'response_schema':
-      return requireTaskResult(ctx, validation, tr => validateResponseSchema(validation, ctx.taskName, tr));
+      return requireTaskResult(ctx, validation, tr => validateResponseSchema(validation, ctx, tr));
     case 'field_present':
       // field_present runs against either MCP task result data OR an HTTP probe body —
       // the storyboard's probe_protected_resource validates fields in the RFC 9728 JSON.
@@ -65,6 +97,7 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
         passed: false,
         description: validation.description,
         error: `Unknown validation check: ${validation.check}`,
+        json_pointer: null,
       };
   }
 }
@@ -80,6 +113,7 @@ function requireTaskResult(
       passed: false,
       description: validation.description,
       error: `Validation "${validation.check}" requires an MCP task result but this step was an HTTP probe.`,
+      json_pointer: null,
     };
   }
   return fn(ctx.taskResult);
@@ -96,6 +130,7 @@ function requireHttpResult(
       passed: false,
       description: validation.description,
       error: `Validation "${validation.check}" requires an HTTP probe result but this step was an MCP task.`,
+      json_pointer: null,
     };
   }
   return fn(ctx.httpResult);
@@ -114,14 +149,95 @@ function resolveTarget(ctx: ValidationContext): TaskResult {
 }
 
 // ────────────────────────────────────────────────────────────
+// Schema URL resolution
+// ────────────────────────────────────────────────────────────
+
+const SCHEMA_URL_BASE = 'https://adcontextprotocol.org';
+
+/**
+ * Build a `{ schema_id, schema_url }` pair from a storyboard-declared
+ * `response_schema_ref`. The id follows the `/schemas/<version>/<path>.json`
+ * convention used by `$id` in cached JSON schemas; the url dereferences
+ * against the public docs origin so implementors can fetch it.
+ */
+function resolveSchemaIdentity(schemaRef: string | undefined): { schema_id: string | null; schema_url: string | null } {
+  if (!schemaRef) return { schema_id: null, schema_url: null };
+  const trimmed = schemaRef.replace(/^\/+/, '');
+  const schemaId = `/schemas/${ADCP_VERSION}/${trimmed}`;
+  const schemaUrl = `${SCHEMA_URL_BASE}${schemaId}`;
+  return { schema_id: schemaId, schema_url: schemaUrl };
+}
+
+/**
+ * Convert a Zod error into the AJV-shaped `SchemaValidationError[]` the
+ * contract calls for. Each issue names the failing instance path, the
+ * schema keyword that rejected it (best-effort from Zod's `code`), and
+ * the original message.
+ */
+/**
+ * Escape a single Zod path segment as an RFC 6901 reference token: `~` → `~0`
+ * (done first), then `/` → `~1`. Numeric segments pass through as-is.
+ */
+function escapeJsonPointerSegment(seg: PropertyKey): string {
+  return String(seg).replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+function zodIssuePathToJsonPointer(path: ReadonlyArray<PropertyKey>): string {
+  return '/' + path.map(escapeJsonPointerSegment).join('/');
+}
+
+function zodIssuesToSchemaErrors(
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; code: string; message: string }>
+): SchemaValidationError[] {
+  return issues.map(issue => {
+    const keyword = mapZodCodeToSchemaKeyword(issue.code);
+    const instancePointer = issue.path.map(escapeJsonPointerSegment).join('/');
+    return {
+      instance_path: '/' + instancePointer,
+      // Zod does not expose the schema-side pointer. Approximate AJV's
+      // `schema_path` (a JSON pointer into the schema) as
+      // `#/properties/<path>/<keyword>` so implementors can locate the
+      // rejecting keyword inside their schema.
+      schema_path: `#/properties/${instancePointer}/${keyword}`,
+      keyword,
+      message: issue.message,
+    };
+  });
+}
+
+function mapZodCodeToSchemaKeyword(code: string): string {
+  switch (code) {
+    case 'invalid_type':
+      return 'type';
+    case 'invalid_literal':
+    case 'invalid_enum_value':
+      return 'enum';
+    case 'too_small':
+      return 'minimum';
+    case 'too_big':
+      return 'maximum';
+    case 'invalid_string':
+      return 'format';
+    case 'unrecognized_keys':
+      return 'additionalProperties';
+    case 'invalid_union':
+      return 'oneOf';
+    default:
+      return code;
+  }
+}
+
+// ────────────────────────────────────────────────────────────
 // response_schema: validate against Zod
 // ────────────────────────────────────────────────────────────
 
 function validateResponseSchema(
   validation: StoryboardValidation,
-  taskName: string,
+  ctx: ValidationContext,
   taskResult: TaskResult
 ): ValidationResult {
+  const taskName = ctx.taskName;
+  const { schema_id, schema_url } = resolveSchemaIdentity(ctx.responseSchemaRef);
   const schema = TOOL_RESPONSE_SCHEMAS[taskName];
   if (!schema) {
     return {
@@ -129,6 +245,13 @@ function validateResponseSchema(
       passed: false,
       description: validation.description,
       error: `No schema registered for task "${taskName}"`,
+      json_pointer: null,
+      expected: schema_id ?? `response schema for ${taskName}`,
+      // The runner failed before observing the agent — distinguish that from
+      // "agent returned null" so implementors don't chase a phantom agent bug.
+      actual: { reason: 'no_schema_registered', task: taskName },
+      schema_id,
+      schema_url,
     };
   }
 
@@ -141,10 +264,14 @@ function validateResponseSchema(
       check: 'response_schema',
       passed: true,
       description: validation.description,
+      schema_id,
+      schema_url,
     };
   }
 
-  // Format Zod errors
+  const schemaErrors = zodIssuesToSchemaErrors(parseResult.error.issues);
+  const firstIssue = parseResult.error.issues[0];
+  const jsonPointer = firstIssue ? zodIssuePathToJsonPointer(firstIssue.path) : null;
   const issues = parseResult.error.issues
     .slice(0, 5)
     .map(i => `${i.path.join('.')}: ${i.message}`)
@@ -155,6 +282,11 @@ function validateResponseSchema(
     passed: false,
     description: validation.description,
     error: issues,
+    json_pointer: jsonPointer,
+    expected: schema_id ?? `response schema for ${taskName}`,
+    actual: schemaErrors,
+    schema_id,
+    schema_url,
   };
 }
 
@@ -170,18 +302,35 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
       description: validation.description,
       path: validation.path,
       error: 'No path specified for field_present validation',
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
     };
   }
 
   const value = resolvePath(taskResult.data, validation.path);
   const present = value !== undefined && value !== null;
+  const pointer = toJsonPointer(validation.path);
+
+  if (present) {
+    return {
+      check: 'field_present',
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
 
   return {
     check: 'field_present',
-    passed: present,
+    passed: false,
     description: validation.description,
     path: validation.path,
-    error: present ? undefined : `Field not found at path: ${validation.path}`,
+    error: `Field not found at path: ${validation.path}`,
+    json_pointer: pointer,
+    expected: validation.path,
+    actual: value ?? null,
   };
 }
 
@@ -204,34 +353,60 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
       description: validation.description,
       path: validation.path,
       error: 'No path specified for field_value validation',
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
     };
   }
 
   const actual = resolvePath(taskResult.data, validation.path);
+  const pointer = toJsonPointer(validation.path);
 
   // allowed_values: pass if actual matches any value in the list
   if (validation.allowed_values?.length) {
     const passed = validation.allowed_values.some(v => valuesMatch(actual, v));
+    if (passed) {
+      return {
+        check: 'field_value',
+        passed: true,
+        description: validation.description,
+        path: validation.path,
+        json_pointer: pointer,
+      };
+    }
     return {
       check: 'field_value',
-      passed,
+      passed: false,
       description: validation.description,
       path: validation.path,
-      error: passed
-        ? undefined
-        : `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(actual)}`,
+      error: `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(actual)}`,
+      json_pointer: pointer,
+      expected: validation.allowed_values,
+      actual: actual ?? null,
     };
   }
 
   // Exact match against value
   const passed = valuesMatch(actual, validation.value);
 
+  if (passed) {
+    return {
+      check: 'field_value',
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
   return {
     check: 'field_value',
-    passed,
+    passed: false,
     description: validation.description,
     path: validation.path,
-    error: passed ? undefined : `Expected ${JSON.stringify(validation.value)}, got ${JSON.stringify(actual)}`,
+    error: `Expected ${JSON.stringify(validation.value)}, got ${JSON.stringify(actual)}`,
+    json_pointer: pointer,
+    expected: validation.value,
+    actual: actual ?? null,
   };
 }
 
@@ -240,14 +415,23 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
 // ────────────────────────────────────────────────────────────
 
 function validateStatusCode(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
-  // Check success status
   const passed = taskResult.success;
 
+  if (passed) {
+    return {
+      check: 'status_code',
+      passed: true,
+      description: validation.description,
+    };
+  }
   return {
     check: 'status_code',
-    passed,
+    passed: false,
     description: validation.description,
-    error: passed ? undefined : `Task failed: ${taskResult.error || 'unknown error'}`,
+    error: `Task failed: ${taskResult.error || 'unknown error'}`,
+    json_pointer: null,
+    expected: 'success',
+    actual: taskResult.error ?? 'failure',
   };
 }
 
@@ -276,36 +460,55 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
     (data?.error as Record<string, unknown> | undefined)?.code ??
     extractCodeFromErrorString(taskResult.error);
 
+  const pointer =
+    adcpError?.code !== undefined ? '/adcp_error/code' : data?.error_code !== undefined ? '/error_code' : null;
+
   if (validation.allowed_values?.length) {
-    const actual = errorCode !== undefined && errorCode !== null ? String(errorCode) : undefined;
-    const passed = actual !== undefined && validation.allowed_values.some(v => String(v) === actual);
+    const actualCode = errorCode !== undefined && errorCode !== null ? String(errorCode) : undefined;
+    const passed = actualCode !== undefined && validation.allowed_values.some(v => String(v) === actualCode);
+    if (passed) {
+      return { check: 'error_code', passed: true, description: validation.description, json_pointer: pointer };
+    }
     return {
       check: 'error_code',
-      passed,
+      passed: false,
       description: validation.description,
-      error: passed
-        ? undefined
-        : `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(errorCode)}`,
+      error: `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(errorCode)}`,
+      json_pointer: pointer,
+      expected: validation.allowed_values,
+      actual: errorCode ?? null,
     };
   }
 
   if (!validation.value) {
     // Just check that an error code exists
     const hasCode = errorCode !== undefined && errorCode !== null;
+    if (hasCode) {
+      return { check: 'error_code', passed: true, description: validation.description, json_pointer: pointer };
+    }
     return {
       check: 'error_code',
-      passed: hasCode,
+      passed: false,
       description: validation.description,
-      error: hasCode ? undefined : 'No error code found in response',
+      error: 'No error code found in response',
+      json_pointer: pointer,
+      expected: 'any error code',
+      actual: null,
     };
   }
 
   const passed = String(errorCode) === String(validation.value);
+  if (passed) {
+    return { check: 'error_code', passed: true, description: validation.description, json_pointer: pointer };
+  }
   return {
     check: 'error_code',
-    passed,
+    passed: false,
     description: validation.description,
-    error: passed ? undefined : `Expected error code "${validation.value}", got "${errorCode}"`,
+    error: `Expected error code "${validation.value}", got "${errorCode}"`,
+    json_pointer: pointer,
+    expected: validation.value,
+    actual: errorCode ?? null,
   };
 }
 
@@ -316,11 +519,17 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
 function validateHttpStatus(validation: StoryboardValidation, hr: HttpProbeResult): ValidationResult {
   const expected = validation.value as number | undefined;
   const passed = typeof expected === 'number' && hr.status === expected;
+  if (passed) {
+    return { check: 'http_status', passed: true, description: validation.description };
+  }
   return {
     check: 'http_status',
-    passed,
+    passed: false,
     description: validation.description,
-    error: passed ? undefined : `Expected HTTP ${expected}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
+    error: `Expected HTTP ${expected}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
+    json_pointer: null,
+    expected: expected ?? null,
+    actual: hr.status,
   };
 }
 
@@ -351,6 +560,9 @@ function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeRes
         `\`probe_task\` to one of ${PROBE_TASK_ALLOWLIST.join(', ')}); or (2) the agent evaluates ` +
         `schema before auth, which is itself a conformance gap (protected endpoints must return ` +
         `401/403 on invalid credentials regardless of body shape).`,
+      json_pointer: null,
+      expected: allowed,
+      actual: hr.status,
     };
   }
   return {
@@ -358,6 +570,9 @@ function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeRes
     passed: false,
     description: validation.description,
     error: `Expected HTTP status in ${JSON.stringify(allowed)}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
+    json_pointer: null,
+    expected: allowed,
+    actual: hr.status,
   };
 }
 
@@ -412,6 +627,9 @@ function validateOn401RequireHeader(validation: StoryboardValidation, hr: HttpPr
       passed: false,
       description: validation.description,
       error: '`value` is required (the header name to require on 401 responses).',
+      json_pointer: null,
+      expected: 'header name',
+      actual: null,
     };
   }
   // Silent pass when the response isn't a 401 — the conditional is part of
@@ -421,11 +639,17 @@ function validateOn401RequireHeader(validation: StoryboardValidation, hr: HttpPr
   }
   const value = hr.headers[header];
   const passed = typeof value === 'string' && value.length > 0;
+  if (passed) {
+    return { check: 'on_401_require_header', passed: true, description: validation.description };
+  }
   return {
     check: 'on_401_require_header',
-    passed,
+    passed: false,
     description: validation.description,
-    error: passed ? undefined : `401 response missing required header "${header}".`,
+    error: `401 response missing required header "${header}".`,
+    json_pointer: null,
+    expected: `response header "${header}" present`,
+    actual: value ?? null,
   };
 }
 
@@ -461,15 +685,18 @@ function validateResourceEqualsAgentUrl(
       passed: false,
       description: validation.description,
       error: 'Response body missing string `resource` field.',
+      json_pointer: '/resource',
+      expected: normalizeAgentUrl(agentUrl),
+      actual: null,
     };
   }
   const expected = normalizeAgentUrl(agentUrl);
   const actual = normalizeAgentUrl(resource);
   const passed = actual === expected;
-  // Don't echo the advertised value verbatim — compliance reports may be
-  // shared publicly and the raw diff helps attackers probe victim agents.
-  // Surface just enough for the operator to self-diagnose: their own URL,
-  // which part of the advertised URL differs, and a pointer to the fix.
+  // Don't echo the advertised value verbatim in the human-readable message —
+  // compliance reports may be shared publicly and the raw diff helps attackers
+  // probe victim agents. Machine-readable expected/actual are fine: implementors
+  // consuming the JSON already hold both URLs.
   let redactedError: string | undefined;
   if (!passed) {
     let actualHost = 'unknown';
@@ -487,11 +714,22 @@ function validateResourceEqualsAgentUrl(
         : `Advertised path differs from the agent path. `) +
       `Fix: set \`resource\` equal to the full agent URL in your protected-resource metadata document.`;
   }
+  if (passed) {
+    return {
+      check: 'resource_equals_agent_url',
+      passed: true,
+      description: validation.description,
+      json_pointer: '/resource',
+    };
+  }
   return {
     check: 'resource_equals_agent_url',
-    passed,
+    passed: false,
     description: validation.description,
     error: redactedError,
+    json_pointer: '/resource',
+    expected,
+    actual,
   };
 }
 
@@ -502,11 +740,17 @@ function validateResourceEqualsAgentUrl(
 function validateAnyOf(validation: StoryboardValidation, contributions: Set<string>): ValidationResult {
   const flags = Array.isArray(validation.allowed_values) ? validation.allowed_values.map(String) : [];
   const passed = flags.some(f => contributions.has(f));
+  if (passed) {
+    return { check: 'any_of', passed: true, description: validation.description };
+  }
   return {
     check: 'any_of',
-    passed,
+    passed: false,
     description: validation.description,
-    error: passed ? undefined : `None of the required contributions were recorded: ${JSON.stringify(flags)}`,
+    error: `None of the required contributions were recorded: ${JSON.stringify(flags)}`,
+    json_pointer: null,
+    expected: flags,
+    actual: Array.from(contributions),
   };
 }
 

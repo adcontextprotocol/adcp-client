@@ -60,10 +60,24 @@ export interface ComplianceFailure {
   step_title: string;
   task: string;
   error?: string;
-  /** What a correct response looks like (from storyboard YAML) */
+  /** Human-readable expected behavior (from storyboard YAML). */
   expected?: string;
   /** CLI command to re-run just this step for debugging */
   fix_command: string;
+  /**
+   * Structured failure details from the first failed validation, per the
+   * runner-output contract. `undefined` when the step itself failed before
+   * any validation ran.
+   */
+  validation?: {
+    check: string;
+    description: string;
+    json_pointer?: string | null;
+    expected?: unknown;
+    actual?: unknown;
+    schema_id?: string | null;
+    schema_url?: string | null;
+  };
 }
 
 export interface ComplianceResult {
@@ -100,6 +114,19 @@ export interface ComplianceSummary {
   tracks_partial: number;
   /** One-line status */
   headline: string;
+  /** Total storyboard steps executed (per the runner-output contract). */
+  total_steps?: number;
+  /** Storyboard steps that passed. */
+  steps_passed?: number;
+  /** Storyboard steps that failed. */
+  steps_failed?: number;
+  /** Storyboard steps that were skipped. */
+  steps_skipped?: number;
+  /**
+   * Schemas applied across all storyboards. Implementors can re-validate
+   * locally against the same artifacts the runner used.
+   */
+  schemas_used?: Array<{ schema_id: string; schema_url: string }>;
 }
 
 // ============================================================

@@ -124,7 +124,7 @@ describe('storyboard skip counting', () => {
       assert.strictEqual(trackResult.status, 'fail', 'track with all-failed steps should have fail status');
     });
 
-    test('missing_test_harness skip_reason maps to test harness warning', () => {
+    test('missing_test_controller skip_reason surfaces controller detail', () => {
       const result = storyboardResult({
         passed_count: 2,
         failed_count: 0,
@@ -140,7 +140,11 @@ describe('storyboard skip counting', () => {
               stepResult({
                 step_id: 'step-3',
                 skipped: true,
-                skip_reason: 'missing_test_harness',
+                skip_reason: 'missing_test_controller',
+                skip: {
+                  reason: 'missing_test_controller',
+                  detail: 'Deterministic-testing phase requires comply_test_controller; agent tools: [get_products].',
+                },
                 duration_ms: 0,
               }),
             ],

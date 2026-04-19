@@ -8,6 +8,7 @@
  */
 
 import type { TaskResult } from '../types';
+import { readExtractionPath } from '../../utils/response-unwrapper';
 
 /**
  * Map of AdCP task names to SingleAgentClient method names.
@@ -135,9 +136,11 @@ export async function executeStoryboardTask(
     }
   }
 
+  const extractionPath = readExtractionPath(result.data);
   return {
     success: result.success ?? true,
     data: result.data,
     error: result.error,
+    ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
   };
 }

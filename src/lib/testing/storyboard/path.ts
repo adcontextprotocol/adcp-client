@@ -54,6 +54,23 @@ export function resolvePath(obj: unknown, path: string): unknown {
   return current;
 }
 
+/**
+ * Convert a dot/bracket path (`accounts[0].account_id`) into an RFC 6901
+ * JSON Pointer (`/accounts/0/account_id`). Returns `""` for the empty path
+ * (the root per RFC 6901). Per RFC 6901 §3, `~` is escaped as `~0` and `/`
+ * as `~1`.
+ */
+export function toJsonPointer(path: string): string {
+  const segments = parsePath(path);
+  if (segments.length === 0) return '';
+  return (
+    '/' +
+    segments
+      .map(seg => (typeof seg === 'number' ? String(seg) : String(seg).replace(/~/g, '~0').replace(/\//g, '~1')))
+      .join('/')
+  );
+}
+
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

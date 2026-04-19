@@ -1090,11 +1090,21 @@ async function handleStoryboardRun(args) {
     console.log('═'.repeat(50));
     for (const phase of result.phases) {
       console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
-      const SKIP_ICONS = { missing_test_harness: '🔧', not_testable: '⏭️', dependency_failed: '⏭️' };
+      const SKIP_ICONS = {
+        missing_tool: '🔧',
+        missing_test_controller: '🔧',
+        not_applicable: '⏭️',
+        no_phases: '⏭️',
+        prerequisite_failed: '⏭️',
+        unsatisfied_contract: '⏭️',
+      };
       const SKIP_LABELS = {
-        missing_test_harness: ' [needs test harness]',
-        not_testable: ' [not testable]',
-        dependency_failed: ' [dependency failed]',
+        missing_tool: ' [missing tool]',
+        missing_test_controller: ' [needs test controller]',
+        not_applicable: ' [not applicable]',
+        no_phases: ' [no phases]',
+        prerequisite_failed: ' [prerequisite failed]',
+        unsatisfied_contract: ' [contract out of scope]',
       };
       for (const step of phase.steps) {
         const icon = step.skipped ? (SKIP_ICONS[step.skip_reason] ?? '⏭️') : step.passed ? '✅' : '❌';

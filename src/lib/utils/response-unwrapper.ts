@@ -74,26 +74,42 @@ export function unwrapProtocolResponse(
 
   // Extract response from protocol wrapper
   let unwrapped: any;
+  let mcpExtractionPath: McpExtractionPath | undefined;
   if (protocol === 'mcp') {
-    unwrapped = unwrapMCPResponse(protocolResponse);
+    const outcome = unwrapMCPResponse(protocolResponse);
+    unwrapped = outcome.result;
+    mcpExtractionPath = outcome.extractionPath;
   } else if (protocol === 'a2a') {
     unwrapped = unwrapA2AResponse(protocolResponse);
   } else {
     // Auto-detect protocol if not specified
     if (isMCPResponse(protocolResponse)) {
-      unwrapped = unwrapMCPResponse(protocolResponse);
+      const outcome = unwrapMCPResponse(protocolResponse);
+      unwrapped = outcome.result;
+      mcpExtractionPath = outcome.extractionPath;
     } else if (isA2AResponse(protocolResponse)) {
       unwrapped = unwrapA2AResponse(protocolResponse);
     } else {
       throw new Error('Unable to extract AdCP response from protocol wrapper');
     }
   }
+  // Preserve the extraction path across Zod's `safeParse` (which returns a
+  // fresh object). `retag` re-attaches the provenance to whichever object we
+  // return so the tag survives validation, filtering, and _message merging.
+  const retag = <T extends AdCPResponse & { _message?: string }>(value: T): T => {
+    if (mcpExtractionPath !== undefined) tagExtractionPath(value, mcpExtractionPath);
+    return value;
+  };
+
+  if (mcpExtractionPath !== undefined) {
+    tagExtractionPath(unwrapped, mcpExtractionPath);
+  }
 
   // Skip schema validation for error responses — they don't include
   // tool-specific fields like `products`. Handles both AdCP-standard
   // { errors: [...] } and legacy singular { error: "..." } patterns.
   if (isAdcpError(unwrapped) || (unwrapped?.error && typeof unwrapped.error === 'string')) {
-    return unwrapped;
+    return retag(unwrapped);
   }
 
   // Validate success responses against tool schema if tool name provided
@@ -112,7 +128,7 @@ export function unwrapProtocolResponse(
           if (filtered) {
             const validated = filtered as unknown as AdCPResponse & { _message?: string };
             if (_msg) validated._message = _msg as string;
-            return validated;
+            return retag(validated);
           }
         }
 
@@ -135,11 +151,11 @@ export function unwrapProtocolResponse(
       // Re-attach _message after validation so it's available for text summaries
       const validated = result.data as AdCPResponse & { _message?: string };
       if (_msg) validated._message = _msg as string;
-      return validated;
+      return retag(validated);
     }
   }
 
-  // Return unwrapped response (no validation)
+  // Return unwrapped response (no validation) — already tagged above.
   return unwrapped as AdCPResponse;
 }
 
@@ -199,16 +215,35 @@ function isA2AResponse(response: any): boolean {
 }
 
 /**
- * Unwrap MCP response - all MCP logic in one place
+ * MCP response extraction provenance. Set as a non-enumerable `_extraction_path`
+ * property on the unwrapped object so the storyboard runner can surface it in
+ * its runner-output contract without leaking into JSON-serialized or spread
+ * responses. See `src/lib/testing/storyboard/types.ts` → `RunnerExtractionPath`.
  */
-function unwrapMCPResponse(response: any): AdCPResponse {
+export type McpExtractionPath = 'structured_content' | 'text_fallback' | 'error' | 'none';
+
+export const EXTRACTION_PATH_KEY = '_extraction_path' as const;
+
+interface McpUnwrapOutcome {
+  result: AdCPResponse;
+  extractionPath: McpExtractionPath;
+}
+
+/**
+ * Unwrap MCP response - all MCP logic in one place.
+ *
+ * Also records which branch produced the parsed response (structuredContent
+ * vs text content) so downstream tooling can tell a runner extraction bug
+ * apart from an agent bug.
+ */
+function unwrapMCPResponse(response: any): McpUnwrapOutcome {
   // MCP error response — preserve full structured data (context, ext, adcp_error)
   if (response.isError === true) {
     // L3: structuredContent has the full error payload.
     // Trust boundary: this is untrusted agent content passed through as-is.
     // Consumers must sanitize fields like suggestion/details before rendering.
     if (response.structuredContent && typeof response.structuredContent === 'object') {
-      return response.structuredContent as AdCPResponse;
+      return { result: response.structuredContent as AdCPResponse, extractionPath: 'error' };
     }
 
     // L2: JSON in text content
@@ -218,7 +253,7 @@ function unwrapMCPResponse(response: any): AdCPResponse {
           try {
             const parsed = JSON.parse(item.text);
             if (parsed?.adcp_error && typeof parsed.adcp_error.code === 'string') {
-              return parsed as AdCPResponse;
+              return { result: parsed as AdCPResponse, extractionPath: 'error' };
             }
           } catch {
             // not JSON, continue to raw text fallback
@@ -233,12 +268,15 @@ function unwrapMCPResponse(response: any): AdCPResponse {
       : response.content?.text || 'Unknown error';
 
     return {
-      adcp_error: {
-        code: ERROR_CODES.MCP_ERROR,
-        message: errorContent || 'MCP tool call failed',
-        synthetic: true,
-      },
-    } as unknown as AdCPResponse;
+      result: {
+        adcp_error: {
+          code: ERROR_CODES.MCP_ERROR,
+          message: errorContent || 'MCP tool call failed',
+          synthetic: true,
+        },
+      } as unknown as AdCPResponse,
+      extractionPath: 'error',
+    };
   }
 
   // MCP success response with structuredContent
@@ -258,12 +296,15 @@ function unwrapMCPResponse(response: any): AdCPResponse {
     // Include text messages if present (same pattern as A2A)
     if (textMessages.length > 0) {
       return {
-        ...data,
-        _message: textMessages.join('\n'),
+        result: {
+          ...data,
+          _message: textMessages.join('\n'),
+        },
+        extractionPath: 'structured_content',
       };
     }
 
-    return data;
+    return { result: data, extractionPath: 'structured_content' };
   }
 
   // MCP text content fallback (try parsing as JSON)
@@ -271,24 +312,59 @@ function unwrapMCPResponse(response: any): AdCPResponse {
     const textContent = response.content.find((c: any) => c.type === 'text');
     if (textContent?.text) {
       try {
-        return JSON.parse(textContent.text);
+        return { result: JSON.parse(textContent.text), extractionPath: 'text_fallback' };
       } catch {
         // Include snippet of text for debugging (max 100 chars)
         const snippet = textContent.text.length > 100 ? textContent.text.substring(0, 100) + '...' : textContent.text;
 
         return {
-          errors: [
-            {
-              code: ERROR_CODES.INVALID_RESPONSE,
-              message: `Response does not contain structured AdCP data. Text content: "${snippet}"`,
-            },
-          ],
+          result: {
+            errors: [
+              {
+                code: ERROR_CODES.INVALID_RESPONSE,
+                message: `Response does not contain structured AdCP data. Text content: "${snippet}"`,
+              },
+            ],
+          },
+          extractionPath: 'text_fallback',
         };
       }
     }
   }
 
   throw new Error('Invalid MCP response format');
+}
+
+/**
+ * Attach the extraction path to an unwrapped object as a non-enumerable
+ * property. Non-enumerable so `JSON.stringify`, `Object.keys`, and spread
+ * ignore it — the storyboard runner reads it via a direct property access
+ * but the rest of the system sees the unwrapped data unchanged.
+ */
+function tagExtractionPath(result: AdCPResponse, path: McpExtractionPath): AdCPResponse {
+  if (result === null || typeof result !== 'object') return result;
+  try {
+    Object.defineProperty(result, EXTRACTION_PATH_KEY, {
+      value: path,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    // Frozen / sealed objects reject defineProperty; drop the tag silently —
+    // the runner's fallback inference in extractionFromTaskResult still works.
+  }
+  return result;
+}
+
+/**
+ * Read the extraction path from an unwrapped AdCP response, or `undefined`
+ * if the response did not originate from an MCP unwrap path.
+ */
+export function readExtractionPath(data: unknown): McpExtractionPath | undefined {
+  if (data === null || typeof data !== 'object') return undefined;
+  const path = (data as Record<string, unknown>)[EXTRACTION_PATH_KEY];
+  return typeof path === 'string' ? (path as McpExtractionPath) : undefined;
 }
 
 /**

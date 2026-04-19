@@ -260,6 +260,7 @@ export async function rawMcpProbe(options: {
           success: false,
           data: undefined,
           error: `Non-JSON response body (content-type: ${httpResult.headers['content-type'] ?? 'unknown'}).`,
+          _extraction_path: 'error',
         },
       };
     }
@@ -274,7 +275,12 @@ export async function rawMcpProbe(options: {
     if (httpResult.status >= 400) {
       return {
         httpResult,
-        taskResult: { success: false, data: undefined, error: rpc.error?.message ?? `HTTP ${httpResult.status}` },
+        taskResult: {
+          success: false,
+          data: undefined,
+          error: rpc.error?.message ?? `HTTP ${httpResult.status}`,
+          _extraction_path: 'error',
+        },
       };
     }
     if (rpc.error) {
@@ -293,11 +299,25 @@ export async function rawMcpProbe(options: {
           error: isSessionInit
             ? `MCP session not initialized (${code}: ${rpc.error.message ?? 'no message'}). rawMcpProbe skips the initialize handshake; strict servers will reject here before auth is evaluated.`
             : (rpc.error.message ?? `JSON-RPC error ${code}`),
+          _extraction_path: 'error',
         },
       };
     }
-    const data = rpc.result?.structuredContent ?? rpc.result?.content;
-    return { httpResult, taskResult: { success: !rpc.result?.isError, data } };
+    // Record which branch produced the data — rawMcpProbe reads the JSON-RPC
+    // envelope directly, so the provenance is knowable here (unlike the SDK
+    // path where we have to plumb it through the unwrapper).
+    const structured = rpc.result?.structuredContent;
+    const hasStructured = structured !== undefined && structured !== null;
+    const data = hasStructured ? structured : rpc.result?.content;
+    const isError = !!rpc.result?.isError;
+    const extractionPath: 'structured_content' | 'text_fallback' | 'error' | 'none' = isError
+      ? 'error'
+      : hasStructured
+        ? 'structured_content'
+        : data !== undefined && data !== null
+          ? 'text_fallback'
+          : 'none';
+    return { httpResult, taskResult: { success: !isError, data, _extraction_path: extractionPath } };
   } catch (err) {
     httpResult.error = err instanceof Error ? err.message : String(err);
     return { httpResult };

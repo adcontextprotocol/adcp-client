@@ -264,6 +264,133 @@ export interface StoryboardRunOptions extends TestOptions {
 }
 
 // ────────────────────────────────────────────────────────────
+// Runner-output contract shapes
+//
+// See `static/compliance/source/universal/runner-output-contract.yaml`
+// (adcontextprotocol/adcp PR #2364). The contract defines the minimum
+// failure-result shape every AdCP compliance runner MUST emit so buyers
+// can self-diagnose agent conformance failures. Optional fields stay
+// `undefined` when they don't apply (e.g., schema_url on a non-schema
+// check).
+// ────────────────────────────────────────────────────────────
+
+export type RunnerTransport = 'mcp' | 'a2a' | 'http';
+
+export interface RunnerRequestRecord {
+  transport: RunnerTransport;
+  /** Task/tool/skill name actually invoked (after test-kit resolution). */
+  operation: string;
+  /** Fully-resolved JSON payload with secrets redacted as "[redacted]". */
+  payload: unknown;
+  /**
+   * Observed request headers. Deliberately NOT populated today — the runner
+   * builds `Authorization: Bearer <token>` headers in-flight and echoing them
+   * into a shared compliance report would be a credential leak. The field is
+   * kept in the type for future auth-override request captures that carry a
+   * redacted form.
+   */
+  headers?: Record<string, string>;
+  /** Full URL for http/a2a; omitted for stdio MCP. */
+  url?: string;
+}
+
+export interface RunnerResponseRecord {
+  transport: RunnerTransport;
+  /** Exact response payload, per transport. */
+  payload: unknown;
+  /** HTTP status where applicable. */
+  status?: number;
+  /** Observed response headers. */
+  headers?: Record<string, string>;
+  /** Wall-clock time for the request. */
+  duration_ms?: number;
+}
+
+/**
+ * Which MCP extraction path produced the parsed response. Recording this
+ * lets implementors distinguish runner extraction bugs from agent bugs.
+ * Populated by the response unwrapper (normal SDK path) and by the raw MCP
+ * probe (auth-override path); the runner falls back to inference when the
+ * provenance tag is missing.
+ *
+ *   - `structured_content` — parsed from `result.structuredContent`.
+ *   - `text_fallback` — parsed from `result.content[].text` JSON.
+ *   - `error` — `result.isError` or transport-level failure; payload is the error.
+ *   - `none` — no MCP response (HTTP-probe step, synthetic step, or skipped).
+ */
+export type RunnerExtractionPath = 'structured_content' | 'text_fallback' | 'error' | 'none';
+
+export interface RunnerExtractionRecord {
+  path: RunnerExtractionPath;
+  /** Optional note, e.g. "structuredContent contained only adcp_error". */
+  note?: string;
+}
+
+/**
+ * Spec skip reasons. Runners MUST distinguish these so an implementor knows
+ * whether a skip is informative (agent didn't claim the protocol) or masking
+ * (runner couldn't apply the storyboard even though the agent claimed it).
+ */
+export type RunnerSkipReason =
+  | 'not_applicable'
+  | 'no_phases'
+  | 'prerequisite_failed'
+  | 'missing_tool'
+  | 'missing_test_controller'
+  | 'unsatisfied_contract';
+
+/**
+ * Grader-specific skip reasons. These are narrower than the six canonical
+ * `RunnerSkipReason` values — they carry runner-local context (which probe,
+ * which operator opt-out) that the contract neither requires nor forbids.
+ * The runner records them on `skip_reason` for legacy consumers, and also
+ * emits the structured `skip: RunnerSkipResult` block with the canonical
+ * equivalent per `DETAILED_SKIP_TO_CANONICAL`.
+ */
+export type RunnerDetailedSkipReason =
+  | 'probe_skipped'
+  | 'rate_abuse_opt_out'
+  | 'missing_test_kit_contract'
+  | 'live_side_effect_opt_in_required'
+  | 'operator_skip'
+  | 'not_in_only_vectors'
+  | 'grader_skipped'
+  /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
+  | 'mcp_mode_flattens_url_edges';
+
+/**
+ * Map detailed grader skip reasons onto the six canonical spec values so
+ * consumers reading `skip.reason` get a stable enum regardless of which
+ * subsystem produced the skip.
+ */
+export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, RunnerSkipReason> = {
+  probe_skipped: 'not_applicable',
+  not_in_only_vectors: 'not_applicable',
+  grader_skipped: 'not_applicable',
+  mcp_mode_flattens_url_edges: 'not_applicable',
+  rate_abuse_opt_out: 'unsatisfied_contract',
+  missing_test_kit_contract: 'unsatisfied_contract',
+  live_side_effect_opt_in_required: 'unsatisfied_contract',
+  operator_skip: 'unsatisfied_contract',
+};
+
+export interface RunnerSkipResult {
+  reason: RunnerSkipReason;
+  detail: string;
+}
+
+/**
+ * Machine-readable Zod/AJV-style validation error. Emitted in
+ * `ValidationResult.actual` for `response_schema` failures.
+ */
+export interface SchemaValidationError {
+  instance_path: string;
+  schema_path: string;
+  keyword: string;
+  message: string;
+}
+
+// ────────────────────────────────────────────────────────────
 // Results
 // ────────────────────────────────────────────────────────────
 
@@ -271,8 +398,26 @@ export interface ValidationResult {
   check: string;
   passed: boolean;
   description: string;
+  /** Dot/bracket JSON path (legacy). See `json_pointer` for the RFC 6901 form. */
   path?: string;
+  /** Human-readable failure detail. */
   error?: string;
+  /** RFC 6901 pointer to the failing field. Null when the failure is transport-level. */
+  json_pointer?: string | null;
+  /** Machine-readable expected value / schema $id / acceptable forms. */
+  expected?: unknown;
+  /** Machine-readable actual value / schema errors / observed non-object. */
+  actual?: unknown;
+  /** Schema $id applied; set only for `response_schema`. */
+  schema_id?: string | null;
+  /** Resolvable schema URL; set only for `response_schema`. */
+  schema_url?: string | null;
+  /** Exact request the runner sent (present on failure when available). */
+  request?: RunnerRequestRecord;
+  /** Exact response observed (present on failure when available). */
+  response?: RunnerResponseRecord;
+  /** Optional remediation hint. */
+  remediation?: string;
 }
 
 export interface StoryboardStepPreview {
@@ -287,6 +432,8 @@ export interface StoryboardStepPreview {
 }
 
 export interface StoryboardStepResult {
+  /** Storyboard that produced this step result. */
+  storyboard_id?: string;
   step_id: string;
   phase_id: string;
   title: string;
@@ -294,26 +441,20 @@ export interface StoryboardStepResult {
   passed: boolean;
   /** True when the step was not executed */
   skipped?: boolean;
-  /** Why the step was skipped */
-  skip_reason?:
-    | 'not_testable'
-    | 'dependency_failed'
-    | 'missing_test_harness'
-    | 'missing_tool'
-    /** Storyboard predates the agent's declared adcp.major_versions (#606). */
-    | 'not_applicable'
-    /** Request-signing grader skip paths (#585, #617). */
-    | 'probe_skipped'
-    | 'rate_abuse_opt_out'
-    | 'missing_test_kit_contract'
-    | 'live_side_effect_opt_in_required'
-    | 'operator_skip'
-    | 'not_in_only_vectors'
-    | 'grader_skipped'
-    | 'mcp_mode_flattens_url_edges';
+  /**
+   * Skip reason. Accepts either a canonical `RunnerSkipReason` (the six
+   * spec-required values) or one of the grader-specific variants introduced
+   * by the RFC 9421 request-signing grader (#585, #617). The structured
+   * `skip` field below always carries the canonical spec reason so consumers
+   * of the runner-output contract don't need to know the grader vocabulary.
+   */
+  skip_reason?: RunnerSkipReason | RunnerDetailedSkipReason;
+  /** Structured skip result with canonical spec reason + human-readable detail. */
+  skip?: RunnerSkipResult;
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;
+  /** Raw parsed response body (legacy field; new code reads `response_record`). */
   response?: unknown;
   validations: ValidationResult[];
   /** Accumulated context after this step */
@@ -325,6 +466,12 @@ export interface StoryboardStepResult {
   agent_url?: string;
   /** 1-based index of the agent instance (multi-instance mode). Absent in single-URL mode. */
   agent_index?: number;
+  /** Exact request the runner sent (contract-required on failures). */
+  request?: RunnerRequestRecord;
+  /** Exact response observed, including transport, status, headers. */
+  response_record?: RunnerResponseRecord;
+  /** Which extraction path produced the parsed response (required per contract). */
+  extraction: RunnerExtractionRecord;
 }
 
 export interface StoryboardPhaseResult {
@@ -353,4 +500,10 @@ export interface StoryboardResult {
   failed_count: number;
   skipped_count: number;
   tested_at: string;
+  /**
+   * Schemas applied during this run. Per the runner-output contract, runners
+   * MUST surface the exact schema identities so implementors can re-validate
+   * locally against the same artifacts.
+   */
+  schemas_used?: Array<{ schema_id: string; schema_url: string }>;
 }

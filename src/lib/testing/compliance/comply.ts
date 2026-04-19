@@ -617,6 +617,7 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
         duration_ms: 0,
         steps: [
           {
+            storyboard_id: na.storyboard_id,
             step_id: 'not_applicable',
             phase_id: 'not_applicable',
             // Bake the reason into the title so reports show the specific
@@ -627,9 +628,11 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
             passed: true,
             skipped: true,
             skip_reason: 'not_applicable',
+            skip: { reason: 'not_applicable', detail: na.reason },
             duration_ms: 0,
             validations: [],
             context: {},
+            extraction: { path: 'none' },
           },
         ],
       },
@@ -685,6 +688,20 @@ function extractFailures(
           }
         }
 
+        const firstFailedValidation = step.validations.find(v => !v.passed);
+        const validationSummary = firstFailedValidation
+          ? {
+              check: firstFailedValidation.check,
+              description: firstFailedValidation.description,
+              ...(firstFailedValidation.json_pointer !== undefined && {
+                json_pointer: firstFailedValidation.json_pointer,
+              }),
+              ...(firstFailedValidation.expected !== undefined && { expected: firstFailedValidation.expected }),
+              ...(firstFailedValidation.actual !== undefined && { actual: firstFailedValidation.actual }),
+              ...(firstFailedValidation.schema_id !== undefined && { schema_id: firstFailedValidation.schema_id }),
+              ...(firstFailedValidation.schema_url !== undefined && { schema_url: firstFailedValidation.schema_url }),
+            }
+          : undefined;
         failures.push({
           track,
           storyboard_id: result.storyboard_id,
@@ -694,6 +711,7 @@ function extractFailures(
           error: step.error,
           expected,
           fix_command: `adcp storyboard step ${agentRef} ${result.storyboard_id} ${step.step_id} --json`,
+          ...(validationSummary && { validation: validationSummary }),
         });
       }
     }
@@ -935,7 +953,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       }
     }
 
-    const summary = buildSummary(trackResults);
+    const summary = buildSummary(trackResults, storyboardResults);
     const testedTracks = trackResults.filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial');
     const skippedTracks = trackResults
       .filter(t => t.status === 'skip')
@@ -1095,7 +1113,7 @@ async function runWithDegradedProfile(
     }
   }
 
-  const summary = buildSummary(trackResults);
+  const summary = buildSummary(trackResults, storyboardResults);
   const overallStatus = computeOverallStatus(summary);
   const agentRef = options.agent_alias || agentUrl;
   const failures = extractFailures(storyboardResults, storyboards, agentRef);
@@ -1168,7 +1186,7 @@ export function computeOverallStatus(summary: ComplianceSummary): OverallStatus 
   return 'partial';
 }
 
-function buildSummary(tracks: TrackResult[]): ComplianceSummary {
+function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult[] = []): ComplianceSummary {
   const passed = tracks.filter(t => t.status === 'pass').length;
   const failed = tracks.filter(t => t.status === 'fail').length;
   const skipped = tracks.filter(t => t.status === 'skip').length;
@@ -1191,12 +1209,34 @@ function buildSummary(tracks: TrackResult[]): ComplianceSummary {
     headline = parts.join(', ');
   }
 
+  // Per the runner-output contract, the top-level summary exposes step-level
+  // counts and the schemas the runner applied so implementors can re-validate
+  // locally against the same artifacts.
+  const stepsPassed = storyboardResults.reduce((s, r) => s + r.passed_count, 0);
+  const stepsFailed = storyboardResults.reduce((s, r) => s + r.failed_count, 0);
+  const stepsSkipped = storyboardResults.reduce((s, r) => s + r.skipped_count, 0);
+  const totalSteps = stepsPassed + stepsFailed + stepsSkipped;
+  const schemasUsed: Array<{ schema_id: string; schema_url: string }> = [];
+  const seenSchemas = new Set<string>();
+  for (const r of storyboardResults) {
+    for (const s of r.schemas_used ?? []) {
+      if (seenSchemas.has(s.schema_id)) continue;
+      seenSchemas.add(s.schema_id);
+      schemasUsed.push(s);
+    }
+  }
+
   return {
     tracks_passed: passed,
     tracks_failed: failed,
     tracks_skipped: skipped,
     tracks_partial: partial,
     headline,
+    total_steps: totalSteps,
+    steps_passed: stepsPassed,
+    steps_failed: stepsFailed,
+    steps_skipped: stepsSkipped,
+    ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
   };
 }
 
@@ -1264,8 +1304,20 @@ export function formatComplianceResults(result: ComplianceResult): string {
     output += `${'─'.repeat(50)}\n`;
     for (const f of failuresWithExpected.slice(0, 5)) {
       output += `❌ ${f.storyboard_id}/${f.step_id} (${f.task})\n`;
-      if (f.error) output += `   Error: ${f.error}\n`;
-      output += `   Expected: ${f.expected!.split('\n')[0]}\n`;
+      // Agent-controlled strings (step.error, validation.actual) are fenced
+      // so downstream LLM summarizers of this output can't be hijacked by an
+      // error message containing hostile instructions. See `fenceAgentText()`.
+      if (f.error) output += `   Error: ${fenceAgentText(f.error, 400)}\n`;
+      if (f.validation?.json_pointer) output += `   At: ${f.validation.json_pointer}\n`;
+      if (f.validation && 'expected' in f.validation) {
+        output += `   Expected: ${formatMachineValue(f.validation.expected)}\n`;
+      } else {
+        output += `   Expected: ${f.expected!.split('\n')[0]}\n`;
+      }
+      if (f.validation && 'actual' in f.validation) {
+        output += `   Actual:   ${fenceAgentText(formatMachineValue(f.validation.actual), 400)}\n`;
+      }
+      if (f.validation?.schema_url) output += `   Schema: ${f.validation.schema_url}\n`;
       output += `   Debug: ${f.fix_command}\n`;
     }
     if (failuresWithExpected.length > 5) {
@@ -1309,4 +1361,16 @@ export function formatComplianceResults(result: ComplianceResult): string {
  */
 export function formatComplianceResultsJSON(result: ComplianceResult): string {
   return JSON.stringify(result, null, 2);
+}
+
+/**
+ * Single-line renderer for `validation.expected` / `validation.actual`.
+ * JSON-encodes objects so structured values (schema-error arrays, expected
+ * enums) survive into the terminal, but truncates after 120 chars so one
+ * overlong value doesn't push the rest of the failure off-screen.
+ */
+function formatMachineValue(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+  const str = typeof value === 'string' ? value : JSON.stringify(value);
+  return str.length > 120 ? `${str.slice(0, 120)}…` : str;
 }
