@@ -88,7 +88,16 @@ export class ProtocolClient {
         const signingContext = buildAgentSigningContext(agent);
         if (signingContext && toolName !== CAPABILITY_OP) {
           await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
-            ProtocolClient.callTool(agent, CAPABILITY_OP, primeArgs, debugLogs, undefined, undefined, undefined, serverVersion)
+            ProtocolClient.callTool(
+              agent,
+              CAPABILITY_OP,
+              primeArgs,
+              debugLogs,
+              undefined,
+              undefined,
+              undefined,
+              serverVersion
+            )
           );
         }
 

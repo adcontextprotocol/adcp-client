@@ -45,9 +45,7 @@ function a2aCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: str
   // 64-bit hash prefix — cache key disambiguator, not a security boundary.
   // The cached client closes over the full authToken; a hypothetical hash
   // collision still sends the original token, not the colliding one.
-  const tokenSuffix = authToken
-    ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
-    : '';
+  const tokenSuffix = authToken ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}` : '';
   const signingSuffix = signingCacheKey ? `::${signingCacheKey}` : '';
   return `${agentUrl}${tokenSuffix}${signingSuffix}`;
 }
@@ -218,7 +216,16 @@ export async function callA2ATool(
         got401Ref: { value: false },
       };
       return callContextStorage.run(context, () =>
-        callA2AToolImpl(agentUrl, toolName, parameters, authToken, debugLogs, pushNotificationConfig, context, signingContext)
+        callA2AToolImpl(
+          agentUrl,
+          toolName,
+          parameters,
+          authToken,
+          debugLogs,
+          pushNotificationConfig,
+          context,
+          signingContext
+        )
       );
     }
   );

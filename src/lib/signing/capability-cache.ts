@@ -79,9 +79,7 @@ export const defaultCapabilityCache = new CapabilityCache();
  * token (the cache key is not the auth credential itself).
  */
 export function buildCapabilityCacheKey(agentUri: string, authToken?: string, signerKid?: string): string {
-  const tokenSuffix = authToken
-    ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
-    : '';
+  const tokenSuffix = authToken ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}` : '';
   const signerSuffix = signerKid ? `::kid=${signerKid}` : '';
   return `${agentUri}${tokenSuffix}${signerSuffix}`;
 }
