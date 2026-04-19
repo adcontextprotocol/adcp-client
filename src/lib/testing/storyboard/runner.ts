@@ -24,7 +24,10 @@ import {
 } from './probes';
 import { validateTestKit } from './test-kit';
 import type {
+  ExtractionRecord,
   HttpProbeResult,
+  RecordedRequest,
+  RecordedResponse,
   StepAuthDirective,
   Storyboard,
   StoryboardStep,
@@ -123,6 +126,7 @@ export async function runStoryboard(
     for (const step of phase.steps) {
       // Skip remaining steps if a stateful dependency failed
       if (statefulFailed && step.stateful) {
+        const priorFailedId = findLastFailedStatefulId(stepResults);
         stepResults.push({
           step_id: step.id,
           phase_id: phase.id,
@@ -130,7 +134,10 @@ export async function runStoryboard(
           task: step.task,
           passed: false,
           skipped: true,
-          skip_reason: 'dependency_failed',
+          skip_reason: 'prerequisite_failed',
+          skip_detail: priorFailedId
+            ? `Prerequisite step "${priorFailedId}" did not pass.`
+            : 'A prior stateful step did not pass.',
           duration_ms: 0,
           validations: [],
           context,
@@ -337,6 +344,7 @@ async function executeStep(
   // Check requires_tool — skip if agent doesn't have it
   if (step.requires_tool && options.agentTools && !options.agentTools.includes(step.requires_tool)) {
     const next = getNextStepPreview(step.id, allSteps, context);
+    const isController = step.requires_tool === 'comply_test_controller';
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -344,7 +352,10 @@ async function executeStep(
       task: step.task,
       passed: true,
       skipped: true,
-      skip_reason: step.requires_tool === 'comply_test_controller' ? 'missing_test_harness' : 'not_testable',
+      skip_reason: isController ? 'missing_test_controller' : 'missing_tool',
+      skip_detail: isController
+        ? `Deterministic-testing step requires comply_test_controller; agent advertises: ${options.agentTools.join(', ') || '(none)'}.`
+        : `Step requires tool "${step.requires_tool}"; agent advertises: ${options.agentTools.join(', ') || '(none)'}.`,
       duration_ms: 0,
       validations: [],
       context,
@@ -363,6 +374,7 @@ async function executeStep(
       passed: true,
       skipped: true,
       skip_reason: 'missing_tool',
+      skip_detail: `Agent does not advertise "${effectiveStep.task}". Advertised tools: ${options.agentTools.join(', ') || '(none)'}.`,
       duration_ms: 0,
       validations: [],
       context,
@@ -434,7 +446,8 @@ async function executeStep(
       task: step.task,
       passed: false,
       skipped: true,
-      skip_reason: 'dependency_failed',
+      skip_reason: 'prerequisite_failed',
+      skip_detail: `Unresolved context variables from prior steps: ${unresolvedVars.join(', ')}. A producing step did not run or failed.`,
       duration_ms: 0,
       validations: [],
       context,
@@ -510,7 +523,10 @@ async function executeStep(
       task: step.task,
       passed: true,
       skipped: true,
-      skip_reason: isUnknownTool ? 'missing_tool' : 'not_testable',
+      skip_reason: 'missing_tool',
+      skip_detail: isUnknownTool
+        ? `Agent rejected "${effectiveStep.task}" as an unknown tool.`
+        : `Agent reported the feature is not supported for "${effectiveStep.task}".`,
       duration_ms: stepResult.duration_ms,
       validations: [],
       context,
@@ -583,6 +599,15 @@ async function executeStep(
   // Build next step preview
   const next = getNextStepPreview(step.id, allSteps, updatedContext);
 
+  const extraction = classifyExtraction(taskResult, httpResult);
+  const request_record = buildRequestRecord(
+    effectiveStep.task,
+    request,
+    step.auth !== undefined ? 'http' : 'mcp',
+    step.auth !== undefined ? runState.agentUrl : undefined
+  );
+  const response_record = buildResponseRecord(taskResult, httpResult, step.auth !== undefined ? 'http' : 'mcp');
+
   return {
     step_id: step.id,
     phase_id: phaseId,
@@ -595,6 +620,9 @@ async function executeStep(
     validations,
     context: updatedContext,
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
+    request_record,
+    response_record,
+    extraction,
     next,
   };
 }
@@ -653,6 +681,21 @@ async function executeProbeStep(
     validations,
     context,
     error: httpResult?.error ?? (passed ? undefined : 'Probe validations failed.'),
+    ...(httpResult && {
+      request_record: {
+        transport: 'http' as const,
+        operation: step.task,
+        payload: null,
+        url: httpResult.url,
+      },
+      response_record: {
+        transport: 'http' as const,
+        payload: httpResult.body,
+        status: httpResult.status,
+        headers: httpResult.headers,
+      },
+    }),
+    extraction: classifyExtraction(undefined, httpResult),
     next: getNextStepPreview(step.id, allSteps, context),
   };
 }
@@ -1021,6 +1064,115 @@ function annotateMultiInstanceFailure(
   // so a hostile agent can't forge terminal escape sequences in CI output.
   const base = sanitizeAgentText(result.error ?? 'Step failed');
   result.error = `${base}\n\n${lines.join('\n')}`;
+}
+
+// ────────────────────────────────────────────────────────────
+// Runner-output-contract helpers
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Best-effort extraction-path classification per the runner-output contract.
+ *
+ * Knowable from the storyboard layer:
+ *   - `error`           — transport/agent returned an error (synthetic or otherwise)
+ *   - `none`            — no data and no error (e.g. probe with no response)
+ *   - `structured_content` — default for successful MCP responses; the response
+ *                            unwrapper prefers structuredContent and falls back
+ *                            to parsing text-as-JSON. Agents that serve text
+ *                            without JSON are surfaced via a synthetic error.
+ *
+ * Distinguishing L3 (structuredContent) from L2 (text-parsed-as-JSON) requires
+ * a side-channel from the SDK that doesn't exist today; both land in the same
+ * "structured_content" bucket here and the `note` field calls it out.
+ */
+function classifyExtraction(
+  taskResult: TaskResult | undefined,
+  httpResult: HttpProbeResult | undefined
+): ExtractionRecord {
+  if (httpResult) {
+    if (httpResult.error) return { path: 'error', note: httpResult.error };
+    if (httpResult.body === undefined || httpResult.body === null) return { path: 'none' };
+    return { path: 'structured_content', note: 'HTTP probe body' };
+  }
+  if (!taskResult) return { path: 'none' };
+  const data = taskResult.data as Record<string, unknown> | undefined;
+  const adcpError = data?.adcp_error as Record<string, unknown> | undefined;
+  if (adcpError?.synthetic === true) {
+    return { path: 'text_fallback', note: 'synthesized from non-JSON text content' };
+  }
+  if (!taskResult.success || taskResult.error) {
+    return { path: 'error' };
+  }
+  if (data === undefined || data === null) return { path: 'none' };
+  return { path: 'structured_content' };
+}
+
+/** Redact header values that commonly carry secrets. Values themselves may still leak. */
+const REDACTED = '[redacted]';
+const SECRET_HEADER_KEYS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie']);
+
+function redactHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k] = SECRET_HEADER_KEYS.has(k.toLowerCase()) ? REDACTED : v;
+  }
+  return out;
+}
+
+/** Redact payload fields that carry secrets. Shallow; agents that nest are their own problem. */
+const SECRET_PAYLOAD_KEYS = new Set(['authorization', 'api_key', 'apikey', 'token', 'password', 'secret']);
+
+function redactPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const input = payload as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    output[k] = SECRET_PAYLOAD_KEYS.has(k.toLowerCase()) && typeof v === 'string' ? REDACTED : v;
+  }
+  return output;
+}
+
+function buildRequestRecord(
+  taskName: string,
+  payload: Record<string, unknown>,
+  transport: 'mcp' | 'a2a' | 'http',
+  url?: string
+): RecordedRequest {
+  return {
+    transport,
+    operation: taskName,
+    payload: redactPayload(payload),
+    ...(url && { url }),
+  };
+}
+
+function buildResponseRecord(
+  taskResult: TaskResult | undefined,
+  httpResult: HttpProbeResult | undefined,
+  transport: 'mcp' | 'a2a' | 'http'
+): RecordedResponse | undefined {
+  if (httpResult) {
+    return {
+      transport: 'http',
+      payload: httpResult.body,
+      status: httpResult.status,
+      headers: redactHeaders(httpResult.headers),
+    };
+  }
+  if (!taskResult) return undefined;
+  return {
+    transport,
+    payload: taskResult.data ?? (taskResult.error ? { error: taskResult.error } : null),
+  };
+}
+
+function findLastFailedStatefulId(results: StoryboardStepResult[]): string | undefined {
+  for (let i = results.length - 1; i >= 0; i--) {
+    const r = results[i]!;
+    if (!r.skipped && !r.passed) return r.step_id;
+  }
+  return undefined;
 }
 
 /**

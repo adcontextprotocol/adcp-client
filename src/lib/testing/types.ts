@@ -252,6 +252,23 @@ export interface TestResult {
   agent_profile?: AgentProfile;
 }
 
+/**
+ * Structured skip detail per the runner-output contract
+ * (universal/runner-output-contract.yaml). `reason` distinguishes actionable
+ * skips (`missing_tool`) from informative ones (`not_applicable`).
+ */
+export interface ScenarioSkip {
+  scenario: TestScenario;
+  reason:
+    | 'not_applicable'
+    | 'missing_tool'
+    | 'missing_test_controller'
+    | 'no_phases'
+    | 'prerequisite_failed'
+    | 'unsatisfied_contract';
+  detail: string;
+}
+
 export interface SuiteResult {
   agent_url: string;
   agent_profile: AgentProfile;
@@ -259,6 +276,8 @@ export interface SuiteResult {
   scenarios_run: TestScenario[];
   /** Scenarios skipped because the agent does not advertise the required tools */
   scenarios_skipped: TestScenario[];
+  /** Structured skip detail, one entry per scenario in `scenarios_skipped`. */
+  scenarios_skipped_detail?: ScenarioSkip[];
   results: TestResult[];
   /**
    * True only when at least one scenario ran and none failed.

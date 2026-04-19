@@ -7,7 +7,7 @@
 
 import { testAgent } from './agent-tester';
 import { createTestClient, discoverAgentProfile, getOrCreateClient, getOrDiscoverProfile } from './client';
-import type { TestScenario, TestOptions, TestResult, SuiteResult } from './types';
+import type { TestScenario, TestOptions, TestResult, SuiteResult, ScenarioSkip } from './types';
 
 /**
  * Minimum tools required for each scenario to be applicable.
@@ -179,6 +179,36 @@ export function getApplicableScenarios(tools: string[], filter?: readonly TestSc
 }
 
 /**
+ * Produce a `ScenarioSkip` record for each scenario not applicable for an
+ * agent with the given tool list. Emits the runner-output contract's
+ * `reason` / `detail` distinction so consumers know whether a skip is
+ * informative (agent didn't claim the protocol — `not_applicable`) or
+ * actionable (agent claimed it but lacks a required tool — `missing_tool`
+ * or `missing_test_controller`).
+ */
+export function getScenarioSkips(tools: string[], filter?: readonly TestScenario[]): ScenarioSkip[] {
+  const candidates = filter ?? DEFAULT_SCENARIOS;
+  const skips: ScenarioSkip[] = [];
+  for (const scenario of candidates) {
+    if (isApplicable(scenario, tools)) continue;
+    const requirements = SCENARIO_REQUIREMENTS[scenario] ?? [];
+    const missing = requirements.filter(t => !tools.includes(t));
+    const detail =
+      missing.length === 0
+        ? `Scenario "${scenario}" is not registered.`
+        : `Agent advertises: ${tools.join(', ') || '(none)'}. Missing: ${missing.join(', ')}.`;
+
+    const reason: ScenarioSkip['reason'] = missing.includes('comply_test_controller')
+      ? 'missing_test_controller'
+      : missing.length === 0
+        ? 'not_applicable'
+        : 'missing_tool';
+    skips.push({ scenario, reason, detail });
+  }
+  return skips;
+}
+
+/**
  * Run all applicable test scenarios against an agent and return aggregated results.
  *
  * Scenarios are run sequentially. Each scenario re-uses the same TestOptions
@@ -229,6 +259,7 @@ export async function testAllScenarios(agentUrl: string, options: OrchestratorOp
   const applicable = getApplicableScenarios(profile.tools, scenarioFilter);
   const candidates: readonly TestScenario[] = scenarioFilter ?? DEFAULT_SCENARIOS;
   const skipped = (candidates as TestScenario[]).filter(s => !applicable.includes(s));
+  const skippedDetail = getScenarioSkips(profile.tools, scenarioFilter);
 
   // Run each applicable scenario sequentially
   const results: TestResult[] = [];
@@ -245,6 +276,7 @@ export async function testAllScenarios(agentUrl: string, options: OrchestratorOp
     agent_profile: profile,
     scenarios_run: applicable,
     scenarios_skipped: skipped,
+    scenarios_skipped_detail: skippedDetail,
     results,
     overall_passed: failedCount === 0 && passedCount > 0,
     passed_count: passedCount,
@@ -270,7 +302,15 @@ export function formatSuiteResults(suite: SuiteResult): string {
   }
 
   if (suite.scenarios_skipped.length > 0) {
-    output += `**Skipped (agent does not advertise required tools):** ${suite.scenarios_skipped.join(', ')}\n\n`;
+    output += `**Skipped:**\n`;
+    const detailByScenario = new Map((suite.scenarios_skipped_detail ?? []).map(d => [d.scenario, d]));
+    for (const s of suite.scenarios_skipped) {
+      const d = detailByScenario.get(s);
+      output += d
+        ? `- \`${s}\` — ${d.reason}: ${d.detail}\n`
+        : `- \`${s}\` — missing_tool\n`;
+    }
+    output += '\n';
   }
 
   output += `### Scenario Results\n\n`;

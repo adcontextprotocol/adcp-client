@@ -8,10 +8,11 @@
  * - status_code: check the TaskResult status
  */
 
-import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
+import { TOOL_RESPONSE_SCHEMAS, getResponseSchemaLocator } from '../../utils/response-schemas';
+import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
 import type { HttpProbeResult, StoryboardValidation, ValidationResult } from './types';
-import { resolvePath } from './path';
+import { resolvePath, toJsonPointer } from './path';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
 /**
@@ -122,6 +123,7 @@ function validateResponseSchema(
   taskName: string,
   taskResult: TaskResult
 ): ValidationResult {
+  const locator = getResponseSchemaLocator(taskName, ADCP_VERSION);
   const schema = TOOL_RESPONSE_SCHEMAS[taskName];
   if (!schema) {
     return {
@@ -129,6 +131,8 @@ function validateResponseSchema(
       passed: false,
       description: validation.description,
       error: `No schema registered for task "${taskName}"`,
+      expected: locator?.schema_id,
+      ...(locator && { schema_id: locator.schema_id, schema_url: locator.schema_url }),
     };
   }
 
@@ -141,20 +145,37 @@ function validateResponseSchema(
       check: 'response_schema',
       passed: true,
       description: validation.description,
+      ...(locator && { schema_id: locator.schema_id, schema_url: locator.schema_url }),
     };
   }
 
-  // Format Zod errors
-  const issues = parseResult.error.issues
-    .slice(0, 5)
-    .map(i => `${i.path.join('.')}: ${i.message}`)
-    .join('; ');
+  // AJV-style structured actual per runner-output contract.
+  const actual = parseResult.error.issues.slice(0, 20).map(i => ({
+    instance_path: i.path.length > 0 ? '/' + i.path.map(p => String(p).replace(/~/g, '~0').replace(/\//g, '~1')).join('/') : '',
+    keyword: i.code,
+    message: i.message,
+  }));
+
+  // Pin the json_pointer to the first offending field for the actionability
+  // "one-line read" the contract calls out. Multiple issues are still in `actual`.
+  const firstIssue = parseResult.error.issues[0];
+  const json_pointer =
+    firstIssue && firstIssue.path.length > 0
+      ? '/' + firstIssue.path.map(p => String(p).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')
+      : '';
 
   return {
     check: 'response_schema',
     passed: false,
     description: validation.description,
-    error: issues,
+    error: parseResult.error.issues
+      .slice(0, 5)
+      .map(i => `${i.path.join('.')}: ${i.message}`)
+      .join('; '),
+    json_pointer,
+    expected: locator?.schema_id,
+    actual,
+    ...(locator && { schema_id: locator.schema_id, schema_url: locator.schema_url }),
   };
 }
 
@@ -181,6 +202,9 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
     passed: present,
     description: validation.description,
     path: validation.path,
+    json_pointer: toJsonPointer(validation.path),
+    expected: 'present',
+    actual: present ? value : null,
     error: present ? undefined : `Field not found at path: ${validation.path}`,
   };
 }
@@ -208,6 +232,7 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
   }
 
   const actual = resolvePath(taskResult.data, validation.path);
+  const json_pointer = toJsonPointer(validation.path);
 
   // allowed_values: pass if actual matches any value in the list
   if (validation.allowed_values?.length) {
@@ -217,6 +242,9 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
       passed,
       description: validation.description,
       path: validation.path,
+      json_pointer,
+      expected: validation.allowed_values,
+      actual,
       error: passed
         ? undefined
         : `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(actual)}`,
@@ -231,6 +259,9 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
     passed,
     description: validation.description,
     path: validation.path,
+    json_pointer,
+    expected: validation.value,
+    actual,
     error: passed ? undefined : `Expected ${JSON.stringify(validation.value)}, got ${JSON.stringify(actual)}`,
   };
 }
@@ -247,6 +278,8 @@ function validateStatusCode(validation: StoryboardValidation, taskResult: TaskRe
     check: 'status_code',
     passed,
     description: validation.description,
+    expected: 'success',
+    actual: passed ? 'success' : 'failed',
     error: passed ? undefined : `Task failed: ${taskResult.error || 'unknown error'}`,
   };
 }
@@ -277,12 +310,15 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
     extractCodeFromErrorString(taskResult.error);
 
   if (validation.allowed_values?.length) {
-    const actual = errorCode !== undefined && errorCode !== null ? String(errorCode) : undefined;
-    const passed = actual !== undefined && validation.allowed_values.some(v => String(v) === actual);
+    const actualStr = errorCode !== undefined && errorCode !== null ? String(errorCode) : undefined;
+    const passed = actualStr !== undefined && validation.allowed_values.some(v => String(v) === actualStr);
     return {
       check: 'error_code',
       passed,
       description: validation.description,
+      json_pointer: '/adcp_error/code',
+      expected: validation.allowed_values,
+      actual: errorCode ?? null,
       error: passed
         ? undefined
         : `Expected one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(errorCode)}`,
@@ -296,6 +332,9 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
       check: 'error_code',
       passed: hasCode,
       description: validation.description,
+      json_pointer: '/adcp_error/code',
+      expected: 'present',
+      actual: errorCode ?? null,
       error: hasCode ? undefined : 'No error code found in response',
     };
   }
@@ -305,6 +344,9 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
     check: 'error_code',
     passed,
     description: validation.description,
+    json_pointer: '/adcp_error/code',
+    expected: validation.value,
+    actual: errorCode ?? null,
     error: passed ? undefined : `Expected error code "${validation.value}", got "${errorCode}"`,
   };
 }
@@ -320,6 +362,8 @@ function validateHttpStatus(validation: StoryboardValidation, hr: HttpProbeResul
     check: 'http_status',
     passed,
     description: validation.description,
+    expected,
+    actual: hr.status,
     error: passed ? undefined : `Expected HTTP ${expected}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
   };
 }
@@ -328,7 +372,13 @@ function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeRes
   const allowed = Array.isArray(validation.allowed_values) ? validation.allowed_values : [];
   const passed = allowed.some(v => v === hr.status);
   if (passed) {
-    return { check: 'http_status_in', passed: true, description: validation.description };
+    return {
+      check: 'http_status_in',
+      passed: true,
+      description: validation.description,
+      expected: allowed,
+      actual: hr.status,
+    };
   }
   // Disambiguate two failure modes that produce the same HTTP-status mismatch:
   // (a) the kit's `probe_task` requires non-empty params, so the agent 400s on
@@ -344,6 +394,8 @@ function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeRes
       check: 'http_status_in',
       passed: false,
       description: validation.description,
+      expected: allowed,
+      actual: hr.status,
       error:
         `Agent returned HTTP ${hr.status} with a schema-validation body before any auth response. ` +
         `Two possible causes: (1) \`test_kit.auth.probe_task\` points at a task that requires ` +
@@ -357,6 +409,8 @@ function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeRes
     check: 'http_status_in',
     passed: false,
     description: validation.description,
+    expected: allowed,
+    actual: hr.status,
     error: `Expected HTTP status in ${JSON.stringify(allowed)}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
   };
 }
@@ -417,7 +471,13 @@ function validateOn401RequireHeader(validation: StoryboardValidation, hr: HttpPr
   // Silent pass when the response isn't a 401 — the conditional is part of
   // the spec (RFC 6750 §3 only applies to 401s).
   if (hr.status !== 401) {
-    return { check: 'on_401_require_header', passed: true, description: validation.description };
+    return {
+      check: 'on_401_require_header',
+      passed: true,
+      description: validation.description,
+      expected: 'not_applicable',
+      actual: hr.status,
+    };
   }
   const value = hr.headers[header];
   const passed = typeof value === 'string' && value.length > 0;
@@ -425,6 +485,9 @@ function validateOn401RequireHeader(validation: StoryboardValidation, hr: HttpPr
     check: 'on_401_require_header',
     passed,
     description: validation.description,
+    json_pointer: `/headers/${header}`,
+    expected: `non-empty ${header} header`,
+    actual: value ?? null,
     error: passed ? undefined : `401 response missing required header "${header}".`,
   };
 }
@@ -463,9 +526,9 @@ function validateResourceEqualsAgentUrl(
       error: 'Response body missing string `resource` field.',
     };
   }
-  const expected = normalizeAgentUrl(agentUrl);
-  const actual = normalizeAgentUrl(resource);
-  const passed = actual === expected;
+  const expectedUrl = normalizeAgentUrl(agentUrl);
+  const actualUrl = normalizeAgentUrl(resource);
+  const passed = actualUrl === expectedUrl;
   // Don't echo the advertised value verbatim — compliance reports may be
   // shared publicly and the raw diff helps attackers probe victim agents.
   // Surface just enough for the operator to self-diagnose: their own URL,
@@ -478,10 +541,10 @@ function validateResourceEqualsAgentUrl(
     } catch {
       /* ignore */
     }
-    const expectedHost = new URL(expected).host;
+    const expectedHost = new URL(expectedUrl).host;
     const hostDiffers = actualHost !== expectedHost;
     redactedError =
-      `RFC 9728 \`resource\` does not equal the URL clients call (${expected}). ` +
+      `RFC 9728 \`resource\` does not equal the URL clients call (${expectedUrl}). ` +
       (hostDiffers
         ? `Advertised host differs from the agent host — the most common cause is copying your authorization server origin into \`resource\`. `
         : `Advertised path differs from the agent path. `) +
@@ -491,6 +554,11 @@ function validateResourceEqualsAgentUrl(
     check: 'resource_equals_agent_url',
     passed,
     description: validation.description,
+    json_pointer: '/resource',
+    expected: expectedUrl,
+    // Pass through the host-diff signal only; don't echo the raw advertised
+    // URL to avoid leaking victim-agent probe targets in shared reports.
+    actual: passed ? expectedUrl : '<differs>',
     error: redactedError,
   };
 }
@@ -506,6 +574,8 @@ function validateAnyOf(validation: StoryboardValidation, contributions: Set<stri
     check: 'any_of',
     passed,
     description: validation.description,
+    expected: flags,
+    actual: [...contributions],
     error: passed ? undefined : `None of the required contributions were recorded: ${JSON.stringify(flags)}`,
   };
 }

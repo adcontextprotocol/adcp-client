@@ -6,6 +6,19 @@
  */
 
 /**
+ * Convert a dot-path with array indexing to an RFC 6901 JSON Pointer.
+ *
+ *   "adcp.idempotency"        → "/adcp/idempotency"
+ *   "accounts[0].account_id"  → "/accounts/0/account_id"
+ *   "a/b~c"                   → "/a~1b~0c"  (escaped per RFC 6901)
+ */
+export function toJsonPointer(path: string): string {
+  const segments = parsePath(path);
+  if (segments.length === 0) return '';
+  return '/' + segments.map(s => String(s).replace(/~/g, '~0').replace(/\//g, '~1')).join('/');
+}
+
+/**
  * Parse a path string into segments.
  * "accounts[0].account_id" → ["accounts", 0, "account_id"]
  */

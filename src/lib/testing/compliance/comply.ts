@@ -685,6 +685,7 @@ function extractFailures(
           }
         }
 
+        const failedValidations = step.validations.filter(v => !v.passed);
         failures.push({
           track,
           storyboard_id: result.storyboard_id,
@@ -694,6 +695,27 @@ function extractFailures(
           error: step.error,
           expected,
           fix_command: `adcp storyboard step ${agentRef} ${result.storyboard_id} ${step.step_id} --json`,
+          ...(failedValidations.length > 0 && {
+            validations: failedValidations.map(v => ({
+              check: v.check,
+              description: v.description,
+              ...(v.json_pointer !== undefined && { json_pointer: v.json_pointer }),
+              ...(v.expected !== undefined && { expected: v.expected }),
+              ...(v.actual !== undefined && { actual: v.actual }),
+              ...(v.schema_id && { schema_id: v.schema_id }),
+              ...(v.schema_url && { schema_url: v.schema_url }),
+              ...(v.error && { error: v.error }),
+            })),
+          }),
+          ...(step.extraction && { extraction: step.extraction }),
+          ...(step.request_record && { request: step.request_record }),
+          ...(step.response_record && {
+            response: {
+              transport: step.response_record.transport,
+              payload: step.response_record.payload,
+              ...(step.response_record.status !== undefined && { status: step.response_record.status }),
+            },
+          }),
         });
       }
     }
@@ -1266,6 +1288,18 @@ export function formatComplianceResults(result: ComplianceResult): string {
       output += `❌ ${f.storyboard_id}/${f.step_id} (${f.task})\n`;
       if (f.error) output += `   Error: ${f.error}\n`;
       output += `   Expected: ${f.expected!.split('\n')[0]}\n`;
+      // Surface runner-output-contract detail so reports name the offending
+      // field and schema without forcing consumers into --json.
+      const firstValidation = f.validations?.[0];
+      if (firstValidation?.json_pointer) {
+        output += `   Field: ${firstValidation.json_pointer}\n`;
+      }
+      if (firstValidation?.schema_url) {
+        output += `   Schema: ${firstValidation.schema_url}\n`;
+      }
+      if (f.extraction) {
+        output += `   Extraction: ${f.extraction.path}${f.extraction.note ? ` (${f.extraction.note})` : ''}\n`;
+      }
       output += `   Debug: ${f.fix_command}\n`;
     }
     if (failuresWithExpected.length > 5) {

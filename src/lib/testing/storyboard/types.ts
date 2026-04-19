@@ -232,13 +232,88 @@ export interface StoryboardRunOptions extends TestOptions {
 // Results
 // ────────────────────────────────────────────────────────────
 
+/**
+ * Machine-readable detail emitted per the runner-output contract
+ * (universal/runner-output-contract.yaml). Populated on failures so an
+ * implementor can self-diagnose without re-running the call by hand.
+ */
 export interface ValidationResult {
   check: string;
   passed: boolean;
   description: string;
   path?: string;
+  /** Human-readable fallback message. Structured fields below are authoritative. */
   error?: string;
+  /** RFC 6901 JSON Pointer to the failing field. */
+  json_pointer?: string;
+  /** Machine-readable expected value (or schema $id for response_schema). */
+  expected?: unknown;
+  /** Machine-readable observed value (or AJV-style error array for response_schema). */
+  actual?: unknown;
+  /** $id of the response schema applied. Set when check === "response_schema". */
+  schema_id?: string;
+  /** Resolvable URL for the response schema. Set when check === "response_schema". */
+  schema_url?: string;
+  /** Runner-suggested remediation for known failure signatures. */
+  remediation?: string;
 }
+
+/**
+ * Request the runner sent on the wire, per the runner-output contract.
+ * `payload` is the fully-resolved body after test-kit substitution and
+ * context injection. Secrets are redacted.
+ */
+export interface RecordedRequest {
+  transport: 'mcp' | 'a2a' | 'http';
+  operation: string;
+  payload: unknown;
+  headers?: Record<string, string>;
+  url?: string;
+}
+
+/**
+ * Response the runner observed from the agent, per the runner-output contract.
+ */
+export interface RecordedResponse {
+  transport: 'mcp' | 'a2a' | 'http';
+  payload: unknown;
+  status?: number;
+  headers?: Record<string, string>;
+  duration_ms?: number;
+}
+
+/**
+ * Transport-extraction record per the runner-output contract. Lets an
+ * implementor separate runner extraction bugs from agent bugs.
+ */
+export interface ExtractionRecord {
+  path: 'structured_content' | 'text_fallback' | 'error' | 'none';
+  note?: string;
+}
+
+/**
+ * Contract skip reasons from universal/runner-output-contract.yaml.
+ *
+ * - `not_applicable`: agent did not declare the protocol/specialism.
+ * - `no_phases`: storyboard is a placeholder (no phases to run).
+ * - `prerequisite_failed`: prior dependency step did not pass.
+ * - `missing_tool`: agent is missing a tool the step requires.
+ * - `missing_test_controller`: deterministic-testing phase requires
+ *   `comply_test_controller` and the agent did not advertise it.
+ * - `unsatisfied_contract`: harness-contract key (e.g., signed-requests-runner)
+ *   permits SKIP for this specialism.
+ */
+export type StoryboardSkipReason =
+  | 'not_applicable'
+  | 'no_phases'
+  | 'prerequisite_failed'
+  | 'missing_tool'
+  | 'missing_test_controller'
+  | 'unsatisfied_contract'
+  /** Legacy values kept for backward compatibility — map to the contract set above. */
+  | 'not_testable'
+  | 'dependency_failed'
+  | 'missing_test_harness';
 
 export interface StoryboardStepPreview {
   step_id: string;
@@ -259,14 +334,15 @@ export interface StoryboardStepResult {
   passed: boolean;
   /** True when the step was not executed */
   skipped?: boolean;
-  /** Why the step was skipped */
-  skip_reason?:
-    | 'not_testable'
-    | 'dependency_failed'
-    | 'missing_test_harness'
-    | 'missing_tool'
-    /** Storyboard predates the agent's declared adcp.major_versions. */
-    | 'not_applicable';
+  /** Why the step was skipped. See `StoryboardSkipReason` for contract semantics. */
+  skip_reason?: StoryboardSkipReason;
+  /**
+   * Human-readable detail for the skip — MUST cite declared supported_protocols
+   * / specialisms (not_applicable), the missing tool (missing_tool), the
+   * prerequisite step id (prerequisite_failed), or the contract key
+   * (unsatisfied_contract).
+   */
+  skip_detail?: string;
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;
@@ -275,6 +351,12 @@ export interface StoryboardStepResult {
   /** Accumulated context after this step */
   context: StoryboardContext;
   error?: string;
+  /** Exact request the runner sent (populated when the step made a call). */
+  request_record?: RecordedRequest;
+  /** Exact response the agent returned (populated when the step made a call). */
+  response_record?: RecordedResponse;
+  /** MCP/A2A extraction path the runner used to parse the response. */
+  extraction?: ExtractionRecord;
   /** Preview of the next step (for LLM consumption) */
   next?: StoryboardStepPreview;
   /** Agent URL that served this step (multi-instance mode). Absent in single-URL mode. */

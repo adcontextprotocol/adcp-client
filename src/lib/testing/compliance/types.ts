@@ -64,6 +64,23 @@ export interface ComplianceFailure {
   expected?: string;
   /** CLI command to re-run just this step for debugging */
   fix_command: string;
+  /** Validation failures with runner-output-contract detail (json_pointer, expected, actual, schema_id/url). */
+  validations?: Array<{
+    check: string;
+    description: string;
+    json_pointer?: string;
+    expected?: unknown;
+    actual?: unknown;
+    schema_id?: string;
+    schema_url?: string;
+    error?: string;
+  }>;
+  /** MCP/A2A extraction path the runner used — separates extraction bugs from agent bugs. */
+  extraction?: { path: 'structured_content' | 'text_fallback' | 'error' | 'none'; note?: string };
+  /** Exact request the runner sent (secrets redacted). */
+  request?: { transport: 'mcp' | 'a2a' | 'http'; operation: string; payload: unknown; url?: string };
+  /** Exact response observed. */
+  response?: { transport: 'mcp' | 'a2a' | 'http'; payload: unknown; status?: number };
 }
 
 export interface ComplianceResult {
