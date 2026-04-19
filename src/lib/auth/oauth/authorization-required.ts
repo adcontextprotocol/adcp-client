@@ -11,6 +11,7 @@
  * bespoke `OAuthFlowHandler`) so library behavior is predictable.
  */
 import { ssrfSafeFetch, decodeBodyAsJsonOrText } from '../../net';
+import { AuthenticationRequiredError, type OAuthMetadataInfo } from '../../errors';
 import { parseWWWAuthenticate, type WWWAuthenticateChallenge } from './diagnostics';
 
 /**
@@ -71,19 +72,43 @@ export interface AuthorizationRequirements {
  * Error raised when an agent returns a 401 and we do not have credentials
  * to satisfy it. Carries everything needed to run an interactive OAuth flow
  * or show the operator an actionable prompt.
+ *
+ * Extends {@link AuthenticationRequiredError} so existing callers that catch
+ * `AuthenticationRequiredError` automatically receive the richer variant —
+ * they can downcast with `instanceof NeedsAuthorizationError` when they
+ * want walked discovery metadata.
+ *
+ * Note: the inherited `code` is `'AUTHENTICATION_REQUIRED'` so that code
+ * comparisons done by pre-existing callers still match. The specific
+ * `'needs_authorization'` discriminator is available as `subCode`.
  */
-export class NeedsAuthorizationError extends Error {
-  /** Stable error code for `instanceof`-averse consumers. */
-  readonly code = 'needs_authorization' as const;
-  readonly agentUrl: string;
+export class NeedsAuthorizationError extends AuthenticationRequiredError {
+  /** Narrow discriminator for consumers that already know about this class. */
+  readonly subCode = 'needs_authorization' as const;
   readonly requirements: AuthorizationRequirements;
 
   constructor(requirements: AuthorizationRequirements, message?: string) {
-    super(message ?? defaultMessage(requirements));
+    super(requirements.agentUrl, synthesizeOAuthMetadata(requirements), message ?? defaultMessage(requirements));
     this.name = 'NeedsAuthorizationError';
-    this.agentUrl = requirements.agentUrl;
     this.requirements = requirements;
   }
+}
+
+/**
+ * Build an {@link OAuthMetadataInfo} for the base-class constructor so that
+ * legacy callers still see a non-empty `oauthMetadata` + working
+ * `hasOAuth`/`authorizationUrl` getters on the error. When discovery didn't
+ * yield enough info, return undefined and let the base class degrade
+ * gracefully.
+ */
+function synthesizeOAuthMetadata(req: AuthorizationRequirements): OAuthMetadataInfo | undefined {
+  if (!req.authorizationEndpoint || !req.tokenEndpoint) return undefined;
+  return {
+    authorization_endpoint: req.authorizationEndpoint,
+    token_endpoint: req.tokenEndpoint,
+    ...(req.registrationEndpoint ? { registration_endpoint: req.registrationEndpoint } : {}),
+    ...(req.authorizationServer ? { issuer: req.authorizationServer } : {}),
+  };
 }
 
 function defaultMessage(req: AuthorizationRequirements): string {

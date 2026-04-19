@@ -40,6 +40,7 @@ import {
   getAgentStorage,
 } from '../auth/oauth';
 import { is401Error } from '../errors';
+import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION } from '../version';
@@ -212,7 +213,7 @@ async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string): Prom
   // If the caller has already connected to the agent URL, they've implicitly
   // trusted it — inherit that trust for the discovery probe so loopback /
   // private-IP development agents work the same way as public ones.
-  const allowPrivateIp = isLikelyPrivateHost(agentUrl);
+  const allowPrivateIp = isLikelyPrivateUrl(agentUrl);
 
   // discoverAuthorizationRequirements internally catches network failures and
   // returns null rather than throwing — anything that escapes is a genuine
@@ -222,38 +223,6 @@ async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string): Prom
     throw new NeedsAuthorizationError(requirements);
   }
   // No requirements walked; let the caller re-throw the original error.
-}
-
-function isLikelyPrivateHost(agentUrl: string): boolean {
-  try {
-    const u = new URL(agentUrl);
-    const host = u.hostname.toLowerCase();
-    if (host === 'localhost') return true;
-    // `isIP` guards against matching domain names that happen to start with
-    // a number (e.g. `10.corp.example.com`) — private-IP regex only fires
-    // when the host is an actual IP literal.
-    const { isIP } = require('net') as typeof import('net');
-    if (isIP(host) === 4) {
-      return (
-        /^10\./.test(host) ||
-        /^192\.168\./.test(host) ||
-        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
-        /^127\./.test(host) ||
-        /^169\.254\./.test(host) || // link-local
-        /^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./.test(host) // CGNAT 100.64.0.0/10
-      );
-    }
-    if (isIP(host) === 6) {
-      return (
-        host === '::1' ||
-        host.startsWith('fe80:') || // link-local
-        /^f[cd][0-9a-f]{0,2}:/.test(host) // ULA fc00::/7
-      );
-    }
-    return false;
-  } catch {
-    return false;
-  }
 }
 
 /**

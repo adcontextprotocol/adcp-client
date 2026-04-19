@@ -68,7 +68,10 @@ describe('NeedsAuthorizationError', () => {
       },
     });
     assert.ok(err instanceof Error);
-    assert.strictEqual(err.code, 'needs_authorization');
+    // Inherits from AuthenticationRequiredError, so the high-level code is
+    // the legacy constant; the narrow discriminator is `subCode`.
+    assert.strictEqual(err.code, 'AUTHENTICATION_REQUIRED');
+    assert.strictEqual(err.subCode, 'needs_authorization');
     assert.strictEqual(err.agentUrl, 'https://agent.example.com/mcp');
     assert.match(err.message, /requires OAuth authorization/);
     assert.match(err.message, /as\.example\.com/);

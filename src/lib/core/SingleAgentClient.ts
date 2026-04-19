@@ -90,6 +90,7 @@ import {
   TaskTimeoutError,
   is401Error,
 } from '../errors';
+import { isLikelyPrivateUrl } from '../net';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -435,8 +436,18 @@ export class SingleAgentClient {
 
       return this.computeBaseUrl(agentUri);
     } catch (error: unknown) {
-      // If we got a 401, throw AuthenticationRequiredError
+      // If we got a 401, throw the richer NeedsAuthorizationError when the
+      // full discovery walk succeeds; otherwise fall back to the simpler
+      // one-hop AuthenticationRequiredError so behavior degrades gracefully.
       if (is401Error(error, got401)) {
+        const { discoverAuthorizationRequirements, NeedsAuthorizationError } =
+          await import('../auth/oauth/authorization-required');
+        const requirements = await discoverAuthorizationRequirements(agentUri, {
+          allowPrivateIp: isLikelyPrivateUrl(agentUri),
+        });
+        if (requirements) {
+          throw new NeedsAuthorizationError(requirements);
+        }
         const oauthMetadata = await discoverOAuthMetadata(agentUri);
         throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined);
       }
@@ -562,11 +573,21 @@ export class SingleAgentClient {
       return firstWorkingUrl;
     }
 
-    // If we got 401 from any endpoint, throw AuthenticationRequiredError
+    // If we got 401 from any endpoint, throw an authentication-required error.
+    // Prefer the richer NeedsAuthorizationError when we can walk the full
+    // RFC 9728 chain (PRM → AS metadata → endpoints + scopes + DCR hint).
+    // Fall back to the simpler AuthenticationRequiredError with one-hop AS
+    // metadata when the walk doesn't yield enough.
     if (got401) {
-      // Try to fetch OAuth metadata to provide helpful guidance
+      const { discoverAuthorizationRequirements, NeedsAuthorizationError } =
+        await import('../auth/oauth/authorization-required');
+      const requirements = await discoverAuthorizationRequirements(providedUri, {
+        allowPrivateIp: isLikelyPrivateUrl(providedUri),
+      });
+      if (requirements) {
+        throw new NeedsAuthorizationError(requirements);
+      }
       const oauthMetadata = await discoverOAuthMetadata(providedUri);
-
       throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined);
     }
 

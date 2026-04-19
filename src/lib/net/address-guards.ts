@@ -98,3 +98,27 @@ export function isPrivateIp(address: string): boolean {
   if (!n) return false;
   return privateIp.check(n.addr, n.family);
 }
+
+/**
+ * Best-effort check that a URL targets a development/private host, without
+ * doing a DNS lookup. Matches loopback hostnames (`localhost`) and any IP
+ * literal that {@link isPrivateIp} would reject. Public domain names always
+ * return `false`.
+ *
+ * Used by higher layers that need to inherit the operator's "private is OK"
+ * trust from a primary probe and propagate it to same-origin chain hops —
+ * callers that pass this flag into `ssrfSafeFetch` should do so only when
+ * they've already decided the target origin is trusted.
+ *
+ * Returns `false` on unparseable inputs.
+ */
+export function isLikelyPrivateUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (host === 'localhost') return true;
+    return isPrivateIp(host);
+  } catch {
+    return false;
+  }
+}

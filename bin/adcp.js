@@ -2568,7 +2568,7 @@ async function main() {
           JSON.stringify(
             {
               error: {
-                code: error.code,
+                code: error.subCode,
                 message: error.message,
                 requirements: error.requirements,
               },
