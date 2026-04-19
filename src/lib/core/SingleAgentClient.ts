@@ -1964,7 +1964,9 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
-    const normalizedParams = normalizeRequestParams(taskName, params);
+    const normalizedParams = normalizeRequestParams(taskName, params, {
+      skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+    });
     await this.validateTaskFeatures(taskName);
     const agent = await this.ensureEndpointDiscovered();
 
