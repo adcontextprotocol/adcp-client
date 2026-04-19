@@ -391,6 +391,28 @@ test('priming failure → fail-open: next call proceeds unsigned, always_sign st
   }
 });
 
+test('ensureCapabilityLoaded: network-level fetch rejection → 60s negative cache', async () => {
+  await resetGlobalState();
+  const { ensureCapabilityLoaded } = require('../dist/lib/signing/client.js');
+  // Synthesize an agent + signing context without a live server so we can
+  // drive ensureCapabilityLoaded with a rejecting fetchRaw directly — the
+  // integration test above only exercises the error-response path (tool
+  // handler throws → CallToolResult.isError). This test covers the
+  // transport-level rejection that maps to .catch in capability-priming.ts.
+  const agent = agentFor('http://127.0.0.1:0/mcp');
+  const signingContext = buildAgentSigningContext(agent);
+  const before = Math.floor(Date.now() / 1000);
+  const entry = await ensureCapabilityLoaded(agent, signingContext, async () => {
+    throw new Error('ECONNREFUSED');
+  });
+  const after = Math.floor(Date.now() / 1000);
+  assert.strictEqual(entry.requestSigning, undefined, 'failed priming caches an empty capability');
+  assert.ok(entry.staleAt !== undefined, 'failed priming sets an explicit staleAt');
+  const window = entry.staleAt - entry.fetchedAt;
+  assert.strictEqual(window, 60, 'negative-cache window is 60s (shorter than the 300s positive TTL)');
+  assert.ok(entry.fetchedAt >= before && entry.fetchedAt <= after, 'fetchedAt is "now"');
+});
+
 test('teardown: close pooled MCP connections', async () => {
   await resetGlobalState();
 });
