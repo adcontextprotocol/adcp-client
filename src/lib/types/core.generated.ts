@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-19T20:03:45.392Z
+// Generated at: 2026-04-19T20:27:11.965Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -7829,9 +7829,9 @@ export type VendorPricingOption = {
   pricing_option_id: string;
 } & VendorPricing;
 /**
- * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), or 'per_unit' (fixed price per unit of work).
+ * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), 'per_unit' (fixed price per unit of work), or 'custom' (escape hatch for models not covered by the enumerated forms — requires a description and structured metadata).
  */
-export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing;
+export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing | CustomPricing;
 
 /**
  * Response from creative library query with filtered results, metadata, and optional enriched data
@@ -8127,6 +8127,30 @@ export interface PerUnitPricing {
    * ISO 4217 currency code
    */
   currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Escape hatch for pricing constructs that do not fit cpm, percent_of_media, flat_fee, or per_unit. Use when a vendor prices via performance kickers, tiered volume, hybrid formulas, outcome-sharing, or any other model the standard forms cannot express. Requires a human-readable description and a structured metadata object that captures the parameters a buyer needs to reason about the charge. Buyers SHOULD route custom pricing through operator review before commitment — automatic selection is not recommended.
+ */
+export interface CustomPricing {
+  model: 'custom';
+  /**
+   * Human-readable description of the custom pricing model. Buyers display this to the operator when requesting approval.
+   */
+  description: string;
+  /**
+   * Structured parameters for the custom model. Keys follow lowercase_snake_case. Values may be primitives, arrays, or nested objects. Must be sufficient for a human to understand the pricing basis and for a downstream system to reconstruct the charge. Vendors SHOULD include a `summary_for_operator` string (one or two sentences, suitable for display in a buyer's operator-review UI) so reviewers across vendors see a consistent prompt. Required operator-review fields (approver role, dollar threshold for automatic approval, escalation contact) MAY be surfaced via additional keys the buyer's review surface recognizes.
+   */
+  metadata: {
+    /**
+     * One or two sentences describing the pricing construct in plain language, displayed to the buyer's operator when requesting approval. Should not repeat the top-level `description` verbatim — summarize the charge mechanic instead (e.g., 'Base $12 CPM plus $0.50 per qualifying post-view conversion, capped at $45 CPM').
+     */
+    summary_for_operator?: string;
+  };
+  /**
+   * ISO 4217 currency code. Present when the pricing resolves to a monetary charge in a specific currency.
+   */
+  currency?: string;
   ext?: ExtensionObject;
 }
 
@@ -12126,6 +12150,10 @@ export interface GetAdCPCapabilitiesResponse {
    * Extension namespaces this agent supports. Buyers can expect meaningful data in ext.{namespace} fields on responses from this agent. Extension schemas are published in the AdCP extension registry.
    */
   extensions_supported?: string[];
+  /**
+   * Experimental AdCP surfaces this agent implements. A surface is experimental when its schema carries x-status: experimental and the working group has not yet frozen it. Sellers that implement any experimental surface MUST list its feature id here. Buyers inspect this array before relying on experimental surfaces — a seller that does not list a surface is asserting it does not implement it. Experimental surfaces MAY break between any two 3.x releases with at least 6 weeks notice; the full contract is in docs/reference/experimental-status.
+   */
+  experimental_features?: string[];
   /**
    * ISO 8601 timestamp of when capabilities were last updated. Buyers can use this for cache invalidation.
    */

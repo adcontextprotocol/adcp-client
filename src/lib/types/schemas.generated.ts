@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-19T20:03:51.626Z
+// Generated at: 2026-04-19T20:28:00.594Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1971,6 +1971,16 @@ export const PerUnitPricingSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const CustomPricingSchema = z.object({
+    model: z.literal("custom"),
+    description: z.string(),
+    metadata: z.object({
+        summary_for_operator: z.string().optional()
+    }).passthrough(),
+    currency: z.string().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CreativeVariableSchema = z.object({
     variable_id: z.string(),
     name: z.string(),
@@ -3429,7 +3439,7 @@ export const SignalDefinitionSchema = z.object({
     }).passthrough().optional()
 }).passthrough();
 
-export const VendorPricingSchema = z.union([CpmPricingSchema, PercentOfMediaPricingSchema, FlatFeePricingSchema, PerUnitPricingSchema]);
+export const VendorPricingSchema = z.union([CpmPricingSchema, PercentOfMediaPricingSchema, FlatFeePricingSchema, PerUnitPricingSchema, CustomPricingSchema]);
 
 export const CatchmentSchema = z.object({
     catchment_id: z.string(),
@@ -5204,6 +5214,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     }).passthrough().optional(),
     specialisms: z.array(AdCPSpecialismSchema).optional(),
     extensions_supported: z.array(z.string()).optional(),
+    experimental_features: z.array(z.string()).optional(),
     last_updated: z.string().optional(),
     errors: z.array(ErrorSchema).optional(),
     context: ContextObjectSchema.optional(),
