@@ -22,6 +22,7 @@ export { computeContentDigest, contentDigestMatches, parseContentDigest } from '
 export { jwkToPublicKey, verifySignature } from './crypto';
 export { RequestSignatureError, type RequestSignatureErrorCode } from './errors';
 export { StaticJwksResolver, type JwksResolver } from './jwks';
+export { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
 export { parseSignature, parseSignatureInput, type ParsedSignature, type ParsedSignatureInput } from './parser';
 export {
   InMemoryReplayStore,
@@ -30,6 +31,7 @@ export {
   type ReplayStore,
 } from './replay';
 export { InMemoryRevocationStore, type RevocationStore } from './revocation';
+export { HttpsRevocationStore, type HttpsRevocationStoreOptions } from './revocation-https';
 export {
   ALLOWED_ALGS,
   CLOCK_SKEW_TOLERANCE_SECONDS,
@@ -41,6 +43,7 @@ export {
   type RevocationSnapshot,
   type VerifiedSigner,
   type VerifierCapability,
+  type VerifyResult,
 } from './types';
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 export { createExpressVerifier, type ExpressLike, type ExpressMiddlewareOptions } from './middleware';

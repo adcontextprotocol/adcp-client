@@ -15,7 +15,8 @@ export type RequestSignatureErrorCode =
   | 'request_signature_invalid'
   | 'request_signature_digest_mismatch'
   | 'request_signature_replayed'
-  | 'request_signature_rate_abuse';
+  | 'request_signature_rate_abuse'
+  | 'request_signature_revocation_stale';
 
 export class RequestSignatureError extends ADCPError {
   readonly code: RequestSignatureErrorCode;
