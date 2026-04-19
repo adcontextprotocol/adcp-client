@@ -27,7 +27,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 
 | Specialism | Status | Delta from baseline | See |
 |---|---|---|---|
-| `sales-guaranteed` | stable | IO approval: return `status: 'submitted'` + `setup{url,message}` + `estimated_completion`; transition to `pending_approval` then `active` via `forceMediaBuyStatus` | [§ sales-guaranteed](#specialism-sales-guaranteed) |
+| `sales-guaranteed` | stable | IO approval is **task-layer**, not MediaBuy-layer. Return an A2A task envelope with `status: 'submitted'` + `task_id` + `message`. Do NOT return `media_buy_id` or `packages` yet — those land on the final artifact when the task completes. There is no `pending_approval` MediaBuy status. | [§ sales-guaranteed](#specialism-sales-guaranteed) |
 | `sales-non-guaranteed` | stable | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
 | `sales-broadcast-tv` | stable | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv) |
 | `sales-streaming-tv` | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products | Baseline only |
@@ -60,19 +60,41 @@ Even if you don't claim `signed-requests`, a buyer may send `Signature-Input` / 
 <a name="composing-oauth-signing-and-idempotency"></a>
 ### Composing OAuth, signing, and idempotency
 
-Each concern above is straightforward in isolation. The pitfalls are at their boundaries. A production seller that claims both `sales-guaranteed` and `signed-requests` and sits behind OAuth wires them together through `serve()`'s composition hooks — not external Express middleware.
+Each concern above is straightforward in isolation. The pitfalls are at their boundaries. A production seller that claims both `sales-guaranteed` and `signed-requests` and sits behind OAuth wires them through `serve()`'s composition hooks — not external Express middleware.
 
-**The pipeline.** `serve({ authenticate, preTransport })` runs steps in this order and buffers the raw body into `req.rawBody` so signature verifiers can hash it without racing the MCP transport:
+**The pipeline.** `serve({ authenticate, preTransport })` runs steps in this order and buffers the request body into `req.rawBody` so the signature verifier can hash it without racing the MCP transport:
 
 ```typescript
-import { serve, verifyBearer } from '@adcp/client';
-import { createExpressVerifier } from '@adcp/client/signing/server';
+import { serve } from '@adcp/client';
+// verifyBearer / verifyApiKey / anyOf live on the server subpath, not the root barrel:
+import { verifyBearer } from '@adcp/client/server';
+// Low-level verifier is preTransport-shaped: use it instead of createExpressVerifier
+// (which is Express (req, res, next) middleware and won't type-check against preTransport):
+import {
+  verifyRequestSignature,
+  RequestSignatureError,
+  StaticJwksResolver,
+  InMemoryReplayStore,
+  InMemoryRevocationStore,
+  type VerifierCapability,
+} from '@adcp/client/signing/server';
+
+const capability: VerifierCapability = {
+  supported: true,
+  required_for: ['create_media_buy', 'update_media_buy', 'acquire_rights'],
+  supported_for: ['sync_creatives', 'sync_audiences', 'sync_accounts'],
+  covers_content_digest: 'required',
+  agent_url: 'https://seller.example.com/mcp',
+};
+const jwks = new StaticJwksResolver({ /* ... */ });
+const replayStore = new InMemoryReplayStore();
+const revocationStore = new InMemoryRevocationStore();
 
 serve(createAgent, {
   publicUrl: 'https://seller.example.com/mcp',
 
   // 1. authenticate runs first. Bad/missing bearer → 401 Bearer challenge.
-  //    Never runs the verifier or transport on unauthenticated requests.
+  //    serve() populates extra.authInfo, which createAdcpServer surfaces as ctx.authInfo.
   authenticate: verifyBearer({
     jwksUri: 'https://auth.example.com/.well-known/jwks.json',
     issuer: 'https://auth.example.com',
@@ -81,35 +103,56 @@ serve(createAgent, {
   }),
   protectedResource: { authorization_servers: ['https://auth.example.com'] },
 
-  // 2. preTransport runs after authenticate, before MCP dispatch.
-  //    req.rawBody is pre-buffered — the signing verifier uses it for
-  //    content-digest without a parallel body read.
-  preTransport: createExpressVerifier({ /* VerifierCapability, stores, ... */ }),
+  // 2. preTransport: raw http (req, res) => Promise<boolean>. Verify the
+  //    RFC 9421 signature here, using req.rawBody pre-buffered by serve().
+  //    Return true only if you wrote the response yourself; return false to
+  //    continue into MCP dispatch. Throwing produces a generic 500.
+  preTransport: async (req, res) => {
+    try {
+      await verifyRequestSignature(
+        { method: req.method!, url: req.url!, headers: req.headers, body: req.rawBody ?? '' },
+        { capability, jwks, replayStore, revocationStore, operation: resolveOperation(req) },
+      );
+    } catch (err) {
+      if (err instanceof RequestSignatureError) {
+        res.statusCode = 401;
+        res.setHeader('WWW-Authenticate', `Signature error="${err.code}"`);
+        res.end();
+        return true;  // handled
+      }
+      throw err;
+    }
+    return false;  // continue to MCP dispatch
+  },
 
-  // 3. MCP transport parses JSON, dispatches to createAdcpServer.
+  // 3. MCP transport parses JSON and dispatches to createAdcpServer.
   // 4. Framework applies the idempotency store per handler — you don't mount it.
 });
 ```
 
-If your stack isn't Express, the same ordering applies conceptually: authenticate first, signature-verify on the raw body, then dispatch.
-
-**Principal threading.** Your idempotency store scopes keys on the principal returned from `resolveSessionKey(ctx)`. That principal MUST come from a trusted, authenticated identity — the OAuth subject (via `ctx.auth.principal` populated by `verifyBearer`), or the verified signing `keyid`, or a composition of both. Never use the buyer's self-declared `operator` or `brand.domain` — two buyers in the same tenant collide.
-
-`verifyBearer` already validates `aud`/`iss`/`requiredScopes` for you; the JWT `sub` lands in the authenticated principal. You only need to handle composition across trust boundaries:
+**Principal threading.** `resolveSessionKey(ctx)` receives only `{toolName, params, account}` — no auth info. To compose the OAuth subject into the idempotency key you need `resolveIdempotencyPrincipal`, which receives the full `HandlerContext` including `ctx.authInfo` (populated by `verifyBearer` through MCP's `extra.authInfo`):
 
 ```typescript
-resolveSessionKey: (ctx) => {
-  const p = ctx.auth?.principal;
-  if (!p) throw new Error('unauthenticated request reached idempotency scope — check authenticate is configured');
-  // Multi-tenant AS: if the JWT carries tenant claim (scp tenant_xyz, org_id, or similar),
-  // compose it in so sub collisions across tenants don't share a replay namespace.
-  const identity = p.tenant ? `${p.tenant}:${p.sub}` : p.sub;
-  // If you also claim signed-requests, fold the verified keyid in so one buyer rotating
-  // signing keys without re-authenticating gets a fresh namespace.
-  const keyid = ctx.auth?.verifiedKeyid;
-  return keyid ? `${identity}:${keyid}` : identity;
-}
+createAdcpServer({
+  // ...
+  // SessionKeyContext has no authInfo — use this for coarse per-account scoping:
+  resolveSessionKey: (ctx) => ctx.account?.id,
+
+  // HandlerContext has authInfo — use this when the idempotency namespace must
+  // be scoped to the authenticated principal:
+  resolveIdempotencyPrincipal: (ctx) => {
+    const clientId = ctx.authInfo?.clientId;
+    if (!clientId) throw new Error('unauthenticated request reached idempotency scope — check authenticate is configured');
+    // Multi-tenant AS: if the JWT carries a tenant claim, verifyBearer surfaces
+    // it in ctx.authInfo.extra. Compose so sub collisions across tenants don't
+    // share a replay namespace:
+    const tenant = ctx.authInfo?.extra?.tenant_id as string | undefined;
+    return tenant ? `${tenant}:${clientId}` : clientId;
+  },
+});
 ```
+
+Composing the verified signing `keyid` in is possible but lives outside the handler context: the signing middleware stashes it on `req.verifiedSigner.keyid` (raw HTTP request), which doesn't flow into `HandlerContext` by default. Either accept that the idempotency namespace is OAuth-principal-only (most setups), or write a custom `authenticate` that promotes the verified keyid into `authInfo.extra` so your `resolveIdempotencyPrincipal` can read it uniformly.
 
 **401 disambiguation.** A request can fail both OAuth and signature verification. Per RFC 7235, you can emit multiple `WWW-Authenticate` challenges — but order them so the client's most promising next step is first:
 
@@ -119,7 +162,7 @@ resolveSessionKey: (ctx) => {
 
 **Idempotency semantics for `submitted` responses.** The framework caches **every successful mutation** including async `submitted` envelopes — not only terminal ones. A replay of the same key within the TTL returns the cached `submitted` response with `replayed: true` injected. A second IO is **not** created. Parallel calls with the same key within the 120-second in-flight window get `adcpError('SERVICE_UNAVAILABLE', { retry_after: 1 })` and should retry — buyer SDKs auto-retry on the `transient` class. The framework emits this for you; you don't handle it in handler code.
 
-This means: the `setup.url` you return on a `sales-guaranteed` `create_media_buy` is stable under replay. The human-review URL you hand back on the first call is the same URL the buyer sees on any retry within the replay window.
+This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` is stable under replay. The buyer polls (or gets webhooks on) the same task handle on any retry within the replay window — you don't create a second IO.
 
 **The three idempotency error codes the framework emits:**
 
@@ -914,26 +957,33 @@ When storyboard output shows failures, fix each one:
 
 ### <a name="specialism-sales-guaranteed"></a>sales-guaranteed
 
-Storyboard: `media_buy_guaranteed_approval`. The compliance runner expects a three-state transition the baseline example does not show.
+Storyboard: `sales_guaranteed`. Guaranteed media buys with human IO signing are modelled as **A2A tasks**, not as a stepwise MediaBuy status machine. There is no `pending_approval` value in `MediaBuy.status` — review lives at the task layer, and the MediaBuy itself doesn't exist as a queryable object until the task completes.
 
-`create_media_buy` returns **`submitted`** (not `pending_creatives`) with setup and completion estimate:
+**What `create_media_buy` must return when IO signing is required:** a task envelope in `submitted` state. No `media_buy_id`, no `packages`, no `setup` or `estimated_completion` on a MediaBuy object yet.
 
 ```typescript
-return {
-  media_buy_id: `mb_${Date.now()}`,
-  status: 'submitted' as const,
-  estimated_completion: new Date(Date.now() + 24 * 3600_000).toISOString(),
-  setup: {
-    url: `https://your-platform.example.com/io/${id}/sign`,
-    message: 'Review and sign the IO to confirm the order.',
+// Use an A2A-task-capable tool registration for async operations.
+// See src/lib/server/tasks.ts — registerAdcpTaskTool wraps the MCP SDK's
+// server.experimental.tasks.registerToolTask(). Your create_media_buy handler
+// initiates a task and returns the submitted envelope:
+import { taskToolResponse } from '@adcp/client/server';
+
+// Inside your create_media_buy task handler:
+return taskToolResponse(
+  {
+    status: 'submitted',   // TASK status, not MediaBuy.status
+    task_id: taskId,       // the handle the buyer polls or gets webhooks on
+    message: 'Awaiting IO signature from sales team; typical turnaround 2–4 hours',
   },
-  packages: params.packages?.map((pkg, i) => ({ /* ... */ })) ?? [],
-};
+  'IO signature pending',
+);
 ```
 
-`get_media_buys` during the pending_approval window returns `setup` on the media_buy entry; after approval returns `confirmed_at` and status `active`. The runner drives the transitions via `forceMediaBuyStatus` — implement it in your `TestControllerStore` for `submitted → pending_approval → active`.
+**When the task completes** (after your humans sign the IO), your platform emits the final `create_media_buy` result — now carrying `media_buy_id` and `packages` — to the buyer's `push_notification_config.url` (or the next `tasks/get` poll). The buyer calls `get_media_buys` with that `media_buy_id` and sees the buy `active`.
 
-Declare the `requires_io_approval` capability on the agent: add it to `capabilities.features` in your `createAdcpServer` config.
+Declare `requires_io_approval` in your `capabilities.features` so buyers can filter for agents that will return task envelopes on guaranteed buys.
+
+For deterministic compliance testing, implement `forceTaskStatus` (not `forceMediaBuyStatus`) in your `TestControllerStore` to drive the task from `submitted → completed` without waiting for a human.
 
 ### <a name="specialism-sales-non-guaranteed"></a>sales-non-guaranteed
 
