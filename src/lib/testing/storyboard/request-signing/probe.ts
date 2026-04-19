@@ -191,7 +191,6 @@ function splitChallenges(headerValue: string): string[] {
   const parts: string[] = [];
   let current = '';
   let inQuotes = false;
-  let lastTokenWasScheme = false;
   for (let i = 0; i < headerValue.length; i++) {
     const ch = headerValue[i]!;
     if (ch === '"' && headerValue[i - 1] !== '\\') {
@@ -207,14 +206,11 @@ function splitChallenges(headerValue: string): string[] {
       if (/^\s*[A-Za-z][A-Za-z0-9-]*\s+/.test(rest)) {
         parts.push(current.trim());
         current = '';
-        lastTokenWasScheme = false;
         continue;
       }
     }
     current += ch;
-    if (!inQuotes && /\s/.test(ch)) lastTokenWasScheme = true;
   }
   if (current.trim().length > 0) parts.push(current.trim());
-  void lastTokenWasScheme; // reserved for stricter validation if needed later
   return parts.filter(p => p.length > 0);
 }

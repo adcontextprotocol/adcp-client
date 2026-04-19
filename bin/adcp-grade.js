@@ -76,18 +76,10 @@ async function handleGradeCommand(argv) {
         }
         break;
       case '--skip':
-        options.skipVectors =
-          args[++i]
-            ?.split(',')
-            .map(s => s.trim())
-            .filter(Boolean) ?? [];
+        options.skipVectors = parseVectorList(args[++i], '--skip');
         break;
       case '--only':
-        options.onlyVectors =
-          args[++i]
-            ?.split(',')
-            .map(s => s.trim())
-            .filter(Boolean) ?? [];
+        options.onlyVectors = parseVectorList(args[++i], '--only');
         break;
       case '--allow-live-side-effects':
         options.allowLiveSideEffects = true;
@@ -128,6 +120,22 @@ async function handleGradeCommand(argv) {
     console.error(`grade-request-signing failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(2);
   }
+}
+
+function parseVectorList(raw, flagName) {
+  if (!raw) {
+    console.error(`ERROR: ${flagName} requires a comma-separated vector-id list\n`);
+    process.exit(2);
+  }
+  const list = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (list.length === 0) {
+    console.error(`ERROR: ${flagName} list is empty\n`);
+    process.exit(2);
+  }
+  return list;
 }
 
 function printHumanReport(report) {

@@ -6,6 +6,7 @@ const {
   buildPositiveRequest,
   buildNegativeRequest,
   listSupportedNegativeVectors,
+  gradeOneVector,
 } = require('../dist/lib/testing/storyboard/request-signing/index.js');
 
 const {
@@ -197,4 +198,32 @@ describe('negative builder — one mutation per vector', () => {
       if (assertion) assertion(signed);
     });
   }
+});
+
+describe('preflightSkip — operator-facing skip paths', () => {
+  const FAKE_URL = 'https://agent.example.invalid';
+
+  test('onlyVectors filter skips every vector not in the list', async () => {
+    const result = await gradeOneVector('016-replayed-nonce', 'negative', FAKE_URL, {
+      onlyVectors: ['020-rate-abuse'],
+    });
+    assert.strictEqual(result.skipped, true);
+    assert.strictEqual(result.skip_reason, 'not_in_only_vectors');
+  });
+
+  test('skipVectors list skips by vector id', async () => {
+    const result = await gradeOneVector('002-wrong-tag', 'negative', FAKE_URL, {
+      skipVectors: ['002-wrong-tag'],
+    });
+    assert.strictEqual(result.skipped, true);
+    assert.strictEqual(result.skip_reason, 'operator_skip');
+  });
+
+  test('skipRateAbuse skips 020 with the rate_abuse_opt_out reason', async () => {
+    const result = await gradeOneVector('020-rate-abuse', 'negative', FAKE_URL, {
+      skipRateAbuse: true,
+    });
+    assert.strictEqual(result.skipped, true);
+    assert.strictEqual(result.skip_reason, 'rate_abuse_opt_out');
+  });
 });

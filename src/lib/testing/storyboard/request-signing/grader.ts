@@ -142,7 +142,10 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   return {
     agent_url: agentUrl,
     harness_mode: 'black_box',
-    live_endpoint_warning: Boolean(contract) && contract!.endpoint_scope !== 'sandbox',
+    // Default to TRUE when no contract is loaded — we can't prove the endpoint
+    // is sandbox, so warn the operator that 016/020 could produce live side
+    // effects. Only FALSE when a contract is loaded AND declares sandbox.
+    live_endpoint_warning: !contract || contract.endpoint_scope !== 'sandbox',
     contract_loaded: Boolean(contract),
     positive,
     negative,
