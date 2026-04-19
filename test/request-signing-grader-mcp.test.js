@@ -8,14 +8,32 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+const { existsSync } = require('node:fs');
 const path = require('node:path');
 
 const { gradeRequestSigning } = require('../dist/lib/testing/storyboard/request-signing/index.js');
 
-// MCP signed agent is compiled to test-agents/dist/ — build it first if
-// not already compiled. The test relies on the same compiled output.
+// MCP signed agent is compiled to test-agents/dist/. The suite auto-builds
+// it if missing — CI runs `npm test` without an explicit build:test-agents
+// step, so the fallback keeps CI green without an extra workflow line.
 const MCP_AGENT_SCRIPT = path.join(__dirname, '..', 'test-agents', 'dist', 'seller-agent-signed-mcp.js');
+const TEST_AGENTS_TSCONFIG = path.join(__dirname, '..', 'test-agents', 'tsconfig.json');
+const REPO_ROOT = path.join(__dirname, '..');
+
+function ensureMcpAgentBuilt() {
+  if (existsSync(MCP_AGENT_SCRIPT)) return;
+  const result = spawnSync(
+    process.execPath,
+    [path.join(REPO_ROOT, 'node_modules', '.bin', 'tsc'), '-p', TEST_AGENTS_TSCONFIG, '--rootDir', 'test-agents'],
+    { cwd: REPO_ROOT, stdio: 'inherit' }
+  );
+  if (result.status !== 0 || !existsSync(MCP_AGENT_SCRIPT)) {
+    throw new Error(
+      `Could not build test-agents (tsc exited ${result.status}). Run \`npm run build:test-agents\` manually to diagnose.`
+    );
+  }
+}
 
 function startMcpAgent(port) {
   return new Promise((resolve, reject) => {
@@ -58,7 +76,8 @@ function startMcpAgent(port) {
     });
     // Hard cap: if the banner never arrives, reject rather than "assume
     // started" — the earlier fallback hid crashes behind 20s of connect
-    // errors inside the grader.
+    // errors inside the grader. 15s leaves headroom for `tsx` first-run
+    // transpile on a cold CI runner.
     setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -68,8 +87,8 @@ function startMcpAgent(port) {
       } catch {
         /* already gone */
       }
-      reject(new Error(`MCP agent did not signal ready within 5s:\n${tail}`));
-    }, 5000);
+      reject(new Error(`MCP agent did not signal ready within 10s:\n${tail}`));
+    }, 10000);
     // Reap orphan on abnormal parent exit (CI runner crash, OOM) so the
     // next run doesn't hit EADDRINUSE on the same port.
     const reap = () => {
@@ -108,6 +127,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
   let agent;
 
   before(async () => {
+    ensureMcpAgentBuilt();
     agent = await startMcpAgent(PORT);
   });
 
