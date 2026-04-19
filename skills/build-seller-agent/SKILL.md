@@ -105,6 +105,45 @@ The command probes both metadata documents, ranks failure hypotheses, and tells 
 
 Even if you don't claim `signed-requests`, a buyer may send `Signature-Input` / `Signature` headers. Your MCP transport must pass the request through without rejecting it. If you do claim the specialism, verify per [§ signed-requests](#specialism-signed-requests) below.
 
+### Composing OAuth, signing, and idempotency
+
+The three concerns above are each straightforward in isolation. The pitfalls are at their boundaries. A production seller that claims both `sales-guaranteed` and `signed-requests` and is behind OAuth needs the pipeline below.
+
+**Middleware mount order.** The order matters — signature verification needs the raw body, JSON parsing consumes the stream, and OAuth validation needs to happen before you spend compute on signature canonicalization.
+
+```typescript
+app.use('/mcp', oauthBearerMiddleware);     // 1. Validate bearer first. Reject with 401 Bearer challenge.
+app.use('/mcp', verifier);                  // 2. Verify RFC 9421 signature on the raw body.
+app.use('/mcp', express.json());            // 3. Parse JSON for downstream.
+app.use('/mcp', mcpTransport);              // 4. MCP transport dispatches to createAdcpServer.
+                                            // 5. The framework applies the idempotency store per handler.
+```
+
+The framework owns step 5 — `createAdcpServer({ idempotency })` wraps handlers, so you don't mount the idempotency middleware yourself.
+
+**Principal threading.** Your idempotency store scopes keys on the principal returned from `resolveSessionKey(ctx)`. That principal MUST come from a trusted, authenticated identity — the OAuth subject, or the verified signing `keyid`, or a composition of both. Don't use the buyer's self-declared `operator` or `brand.domain` — two buyers sharing a tenant can collide.
+
+```typescript
+// Populate ctx.account from the authenticated principal before createAdcpServer sees the request.
+// Your bearer middleware should set `req.adcpPrincipal = { subject, keyid? }`;
+// a small adapter maps that into ctx.account for the framework.
+resolveSessionKey: (ctx) => {
+  const p = ctx.account;
+  if (!p?.subject) throw new Error('unauthenticated request reached idempotency scope — middleware ordering is wrong');
+  return p.keyid ? `${p.subject}:${p.keyid}` : p.subject;   // include keyid in multi-tenant setups so two buyers on one OAuth tenant don't share a replay namespace
+}
+```
+
+**401 disambiguation.** A request can fail both OAuth and signature verification. Per RFC 7235, you can emit multiple `WWW-Authenticate` challenges — but order them so the client's most promising next step is first:
+
+- OAuth failure (no/expired bearer) → `WWW-Authenticate: Bearer error="invalid_token", resource_metadata=...`. **Do this first** — the client can't sign correctly until it has a valid identity. The signed-requests grader does not exercise this combined case.
+- OAuth valid, signature failed → `WWW-Authenticate: Signature error="<code>"` per the grader. The `<code>` matches the test-vector's `expected_outcome.error_code` byte-for-byte.
+- Both failing on an optional-signature operation → emit only the Bearer challenge; signature is advisory on `supported_for` operations.
+
+**Idempotency semantics for `submitted` responses.** The framework caches **every successful mutation** including async `submitted` envelopes — not only terminal ones. A replay of the same key within the TTL returns the cached `submitted` response with `replayed: true` injected. A second IO is **not** created. Parallel calls with the same key within the 120-second in-flight window see an `in-flight` claim and should retry (the framework emits the right error — you don't handle this manually).
+
+This means: the `setup.url` you return on a `sales-guaranteed` `create_media_buy` is stable under replay. The human-review URL you hand back on the first call is the same URL the buyer sees on any retry within the replay window.
+
 ## Before Writing Code
 
 Determine these five things. Ask the user — don't guess.
