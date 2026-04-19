@@ -25,6 +25,10 @@ import {
 import { validateTestKit } from './test-kit';
 import type {
   HttpProbeResult,
+  RunnerExtractionRecord,
+  RunnerRequestRecord,
+  RunnerResponseRecord,
+  RunnerSkipReason,
   StepAuthDirective,
   Storyboard,
   StoryboardStep,
@@ -38,6 +42,93 @@ import type {
   ValidationResult,
 } from './types';
 import type { TaskResult } from '../types';
+
+// ────────────────────────────────────────────────────────────
+// Runner-output contract helpers
+// ────────────────────────────────────────────────────────────
+
+const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
+  not_applicable: 'Not applicable: agent did not declare the protocol or specialism this storyboard targets.',
+  no_phases: 'Storyboard has no executable phases (placeholder).',
+  prerequisite_failed: 'Skipped: a prerequisite step or contract did not pass.',
+  missing_tool: 'Skipped: agent did not advertise the required tool.',
+  missing_test_controller:
+    'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
+  unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
+};
+
+function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
+  return { reason, detail: detail ?? SKIP_DETAILS[reason] };
+}
+
+function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExtractionRecord {
+  if (!taskResult) return { path: 'none' };
+  if (!taskResult.success && taskResult.error) return { path: 'error' };
+  return taskResult.data !== undefined && taskResult.data !== null ? { path: 'structured_content' } : { path: 'none' };
+}
+
+/**
+ * Keys whose values must never appear verbatim in a compliance report.
+ * Matching is case-insensitive and structural: any property whose final
+ * path segment matches is replaced with `'[redacted]'` before the payload
+ * is persisted on a step result. The contract spec calls for exactly this:
+ * "Secrets SHOULD be redacted with the literal string '[redacted]'".
+ */
+const SECRET_KEY_PATTERN =
+  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|offering[_-]token|cookie|set[_-]cookie)$/i;
+
+export function __redactSecretsForTest(value: unknown): unknown {
+  return redactSecrets(value);
+}
+
+export function __filterResponseHeadersForTest(
+  headers: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  return filterResponseHeaders(headers);
+}
+
+function redactSecrets(value: unknown, depth = 0): unknown {
+  if (depth > 32) return value; // cheap cycle guard
+  if (Array.isArray(value)) return value.map(v => redactSecrets(v, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] =
+        SECRET_KEY_PATTERN.test(k) && (typeof v === 'string' || typeof v === 'number')
+          ? '[redacted]'
+          : redactSecrets(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Response headers to echo on a RunnerResponseRecord. Everything else is
+ * dropped — agents can (and do) include `set-cookie`, echoed `authorization`,
+ * reverse-proxy breadcrumbs (`x-amz-*`, `x-azure-*`, `x-internal-*`) that a
+ * hostile agent could use to bait us into publishing internal state in a
+ * shared compliance report.
+ */
+const RESPONSE_HEADER_ALLOWLIST = new Set([
+  'content-type',
+  'content-length',
+  'content-encoding',
+  'www-authenticate',
+  'location',
+  'retry-after',
+  'x-request-id',
+  'x-correlation-id',
+]);
+
+function filterResponseHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (RESPONSE_HEADER_ALLOWLIST.has(k.toLowerCase())) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 // ────────────────────────────────────────────────────────────
 // runStoryboard: execute all phases/steps
@@ -103,6 +194,40 @@ export async function runStoryboard(
   const allSteps = flattenSteps(storyboard);
   const dispatch = createDispatcher(agentUrls, clients, options.multi_instance_strategy ?? 'round-robin');
 
+  // Placeholder storyboards with no executable phases get a distinct skip
+  // reason per the runner-output contract. Without this, the overall result
+  // would pass vacuously — `passed_count === 0 && failed_count === 0` — and
+  // an implementor reading the report can't tell "nothing tested" from
+  // "everything passed".
+  const hasExecutableSteps = storyboard.phases.some(p => p.steps.length > 0);
+  if (!hasExecutableSteps) {
+    const detail = `Storyboard "${storyboard.id}" has no executable phases — populate \`phases[].steps\` or remove the storyboard.`;
+    const syntheticStep: StoryboardStepResult = {
+      storyboard_id: storyboard.id,
+      step_id: '__no_phases__',
+      phase_id: '__no_phases__',
+      title: 'Storyboard has no executable phases',
+      task: '',
+      passed: true,
+      skipped: true,
+      skip_reason: 'no_phases',
+      skip: buildSkip('no_phases', detail),
+      duration_ms: 0,
+      validations: [],
+      context,
+      error: detail,
+      extraction: { path: 'none' },
+    };
+    phaseResults.push({
+      phase_id: '__no_phases__',
+      phase_title: 'No phases',
+      passed: false,
+      steps: [syntheticStep],
+      duration_ms: 0,
+    });
+    skippedCount++;
+  }
+
   for (const phase of storyboard.phases) {
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
@@ -123,18 +248,22 @@ export async function runStoryboard(
     for (const step of phase.steps) {
       // Skip remaining steps if a stateful dependency failed
       if (statefulFailed && step.stateful) {
+        const detail = 'Skipped: prior stateful step failed.';
         stepResults.push({
+          storyboard_id: storyboard.id,
           step_id: step.id,
           phase_id: phase.id,
           title: step.title,
           task: step.task,
           passed: false,
           skipped: true,
-          skip_reason: 'dependency_failed',
+          skip_reason: 'prerequisite_failed',
+          skip: buildSkip('prerequisite_failed', detail),
           duration_ms: 0,
           validations: [],
           context,
-          error: 'Skipped: prior stateful step failed',
+          error: detail,
+          extraction: { path: 'none' },
         });
         skippedCount++;
         phasePassed = false;
@@ -142,12 +271,13 @@ export async function runStoryboard(
       }
 
       const assignment = dispatch.nextFor(step);
-      const result = await executeStep(assignment.client, step, phase.id, context, allSteps, options, {
+      const rawResult = await executeStep(assignment.client, step, phase.id, context, allSteps, options, {
         contributions,
         priorStepResults,
         priorProbes,
         agentUrl: assignment.agentUrl,
       });
+      const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance) {
         result.agent_url = assignment.agentUrl;
         result.agent_index = assignment.instanceIndex + 1;
@@ -205,6 +335,7 @@ export async function runStoryboard(
     if (!phaseDef || phaseDef.optional || !p.passed) return false;
     return p.steps.some(s => !s.skipped && s.passed);
   });
+  const schemasUsed = collectSchemasUsed(phaseResults);
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
@@ -219,6 +350,7 @@ export async function runStoryboard(
     failed_count: failedCount,
     skipped_count: skippedCount,
     tested_at: new Date().toISOString(),
+    ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
   };
 
   // Close protocol connections when the runner created its own client. The
@@ -229,6 +361,27 @@ export async function runStoryboard(
   }
 
   return result;
+}
+
+/**
+ * Collect a deduplicated list of schemas applied during this run. Drawn
+ * from every validation result with a schema_id; dropping empties keeps
+ * the list proportional to what actually ran.
+ */
+function collectSchemasUsed(phases: StoryboardPhaseResult[]): Array<{ schema_id: string; schema_url: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ schema_id: string; schema_url: string }> = [];
+  for (const phase of phases) {
+    for (const step of phase.steps) {
+      for (const v of step.validations) {
+        if (v.schema_id && v.schema_url && !seen.has(v.schema_id)) {
+          seen.add(v.schema_id);
+          out.push({ schema_id: v.schema_id, schema_url: v.schema_url });
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -330,6 +483,7 @@ async function executeStep(
       validations: [],
       context,
       error: `Step task "${step.task}" references a test-kit field that resolved to nothing and no task_default is set.`,
+      extraction: { path: 'none' },
     };
   }
   const effectiveStep: StoryboardStep = resolvedTask === step.task ? step : { ...step, task: resolvedTask };
@@ -337,6 +491,12 @@ async function executeStep(
   // Check requires_tool — skip if agent doesn't have it
   if (step.requires_tool && options.agentTools && !options.agentTools.includes(step.requires_tool)) {
     const next = getNextStepPreview(step.id, allSteps, context);
+    const reason: RunnerSkipReason =
+      step.requires_tool === 'comply_test_controller' ? 'missing_test_controller' : 'missing_tool';
+    const detail =
+      reason === 'missing_test_controller'
+        ? `Deterministic-testing phase requires comply_test_controller; agent tools: [${(options.agentTools ?? []).join(', ')}].`
+        : `Required tool "${step.requires_tool}" not advertised; agent tools: [${(options.agentTools ?? []).join(', ')}].`;
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -344,17 +504,20 @@ async function executeStep(
       task: step.task,
       passed: true,
       skipped: true,
-      skip_reason: step.requires_tool === 'comply_test_controller' ? 'missing_test_harness' : 'not_testable',
+      skip_reason: reason,
+      skip: buildSkip(reason, detail),
       duration_ms: 0,
       validations: [],
       context,
       next,
+      extraction: { path: 'none' },
     };
   }
 
   // Skip if agent doesn't implement the tool this step calls.
   if (options.agentTools && !options.agentTools.includes(effectiveStep.task)) {
     const next = getNextStepPreview(step.id, allSteps, context);
+    const detail = `Agent did not advertise tool "${effectiveStep.task}"; agent tools: [${(options.agentTools ?? []).join(', ')}].`;
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -363,10 +526,12 @@ async function executeStep(
       passed: true,
       skipped: true,
       skip_reason: 'missing_tool',
+      skip: buildSkip('missing_tool', detail),
       duration_ms: 0,
       validations: [],
       context,
       next,
+      extraction: { path: 'none' },
     };
   }
 
@@ -427,6 +592,7 @@ async function executeStep(
   const unresolvedVars = findUnresolvedContextVars(request);
   if (unresolvedVars.length > 0 && !step.expect_error) {
     const next = getNextStepPreview(step.id, allSteps, context);
+    const detail = `Skipped: unresolved context variables from prior steps: ${unresolvedVars.join(', ')}.`;
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -434,12 +600,14 @@ async function executeStep(
       task: step.task,
       passed: false,
       skipped: true,
-      skip_reason: 'dependency_failed',
+      skip_reason: 'prerequisite_failed',
+      skip: buildSkip('prerequisite_failed', detail),
       duration_ms: 0,
       validations: [],
       context,
-      error: `Skipped: unresolved context variables: ${unresolvedVars.join(', ')}`,
+      error: detail,
       next,
+      extraction: { path: 'none' },
     };
   }
 
@@ -462,6 +630,7 @@ async function executeStep(
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
   let httpResult: HttpProbeResult | undefined;
+  let responseRecord: RunnerResponseRecord | undefined;
 
   if (step.auth !== undefined) {
     const started = Date.now();
@@ -476,10 +645,19 @@ async function executeStep(
       });
       httpResult = probe.httpResult;
       taskResult = probe.taskResult;
+      const durationMs = Date.now() - started;
       stepResult = {
-        duration_ms: Date.now() - started,
+        duration_ms: durationMs,
         passed: !httpResult.error,
         error: httpResult.error,
+      };
+      const filteredHeaders = filterResponseHeaders(httpResult.headers);
+      responseRecord = {
+        transport: 'mcp',
+        payload: redactSecrets(httpResult.body),
+        ...(typeof httpResult.status === 'number' ? { status: httpResult.status } : {}),
+        ...(filteredHeaders && { headers: filteredHeaders }),
+        duration_ms: durationMs,
       };
     } catch (err) {
       stepResult = {
@@ -496,13 +674,31 @@ async function executeStep(
     );
     taskResult = run.result;
     stepResult = run.step;
+    if (taskResult) {
+      responseRecord = {
+        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+        payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
+        duration_ms: stepResult.duration_ms,
+      };
+    }
   }
+
+  const requestRecord: RunnerRequestRecord = {
+    transport: step.auth !== undefined ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
+    operation: effectiveStep.task,
+    payload: redactSecrets(request),
+    ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+  };
 
   // Feature-unsupported or unknown-tool errors → treat as skip
   const isUnsupported = stepResult.error?.includes('does not support:');
   const isUnknownTool = stepResult.error && /Unknown tool[:\s]/i.test(stepResult.error);
   if (!taskResult && (isUnsupported || isUnknownTool)) {
     const next = getNextStepPreview(step.id, allSteps, context);
+    const reason: RunnerSkipReason = isUnknownTool ? 'missing_tool' : 'not_applicable';
+    const detail = isUnknownTool
+      ? `Agent rejected tool "${effectiveStep.task}" as unknown: ${stepResult.error}`
+      : `Agent reported feature not supported: ${stepResult.error}`;
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -510,12 +706,14 @@ async function executeStep(
       task: step.task,
       passed: true,
       skipped: true,
-      skip_reason: isUnknownTool ? 'missing_tool' : 'not_testable',
+      skip_reason: reason,
+      skip: buildSkip(reason, detail),
       duration_ms: stepResult.duration_ms,
       validations: [],
       context,
       error: stepResult.error,
       next,
+      extraction: { path: 'none' },
     };
   }
 
@@ -555,6 +753,9 @@ async function executeStep(
       ...(httpResult && { httpResult }),
       agentUrl: runState.agentUrl,
       contributions: runState.contributions,
+      ...(effectiveStep.response_schema_ref && { responseSchemaRef: effectiveStep.response_schema_ref }),
+      request: requestRecord,
+      ...(responseRecord && { response: responseRecord }),
     };
     validations = runValidations(resolvedValidations, vctx);
   }
@@ -596,6 +797,9 @@ async function executeStep(
     context: updatedContext,
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
     next,
+    request: requestRecord,
+    ...(responseRecord && { response_record: responseRecord }),
+    extraction: extractionFromTaskResult(taskResult),
   };
 }
 
@@ -627,11 +831,31 @@ async function executeProbeStep(
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);
 
+  const duration = Date.now() - start;
+  const requestRecord: RunnerRequestRecord = {
+    transport: 'http',
+    operation: step.task,
+    payload: null,
+    ...(httpResult?.url ? { url: httpResult.url } : runState.agentUrl ? { url: runState.agentUrl } : {}),
+  };
+  const filteredProbeHeaders = filterResponseHeaders(httpResult?.headers);
+  const responseRecord: RunnerResponseRecord | undefined = httpResult
+    ? {
+        transport: 'http',
+        payload: redactSecrets(httpResult.body),
+        status: httpResult.status,
+        ...(filteredProbeHeaders && { headers: filteredProbeHeaders }),
+        duration_ms: duration,
+      }
+    : undefined;
+
   const vctx: ValidationContext = {
     taskName: step.task,
     httpResult,
     agentUrl: runState.agentUrl,
     contributions: runState.contributions,
+    request: requestRecord,
+    ...(responseRecord && { response: responseRecord }),
   };
   const validations = step.validations?.length ? runValidations(step.validations, vctx) : [];
   const allValidationsPassed = validations.every(v => v.passed);
@@ -642,18 +866,27 @@ async function executeProbeStep(
   const fetchOk = httpResult ? !httpResult.error : true;
   const passed = fetchOk && allValidationsPassed;
 
+  const extraction: RunnerExtractionRecord = httpResult
+    ? httpResult.error
+      ? { path: 'error' }
+      : { path: 'structured_content', note: 'http-probe body parsed as JSON' }
+    : { path: 'none' };
+
   return {
     step_id: step.id,
     phase_id: phaseId,
     title: step.title,
     task: step.task,
     passed,
-    duration_ms: Date.now() - start,
+    duration_ms: duration,
     response: httpResult ?? undefined,
     validations,
     context,
     error: httpResult?.error ?? (passed ? undefined : 'Probe validations failed.'),
     next: getNextStepPreview(step.id, allSteps, context),
+    request: requestRecord,
+    ...(responseRecord && { response_record: responseRecord }),
+    extraction,
   };
 }
 
