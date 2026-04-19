@@ -20,13 +20,36 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyOptions } from 'jose';
 
 /**
+ * Default JWT algorithm allowlist. Asymmetric only — HS-family is intentionally
+ * excluded to prevent algorithm-confusion attacks where a JWKS public key is
+ * used as an HMAC secret. Callers can override via {@link VerifyBearerOptions.jwtOptions}.
+ */
+export const DEFAULT_JWT_ALGORITHMS = Object.freeze([
+  'RS256',
+  'RS384',
+  'RS512',
+  'ES256',
+  'ES384',
+  'PS256',
+  'PS384',
+  'EdDSA',
+]);
+
+/** Default `exp`/`nbf` tolerance to reduce flakes under minor clock drift. */
+export const DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS = 30;
+
+/**
  * Successful authentication result. Attach whatever claims you want —
  * `principal` is recommended (an opaque identifier for who's calling).
  */
 export interface AuthPrincipal {
   principal: string;
+  /** Raw credential that authenticated the request. Propagated into `req.auth.token` for MCP tool handlers. */
+  token?: string;
   scopes?: string[];
-  claims?: JWTPayload | Record<string, unknown>;
+  claims?: JWTPayload;
+  /** Token expiry (seconds since epoch) when known — propagated to MCP `AuthInfo.expiresAt`. */
+  expiresAt?: number;
   [key: string]: unknown;
 }
 
@@ -44,6 +67,23 @@ export type AuthResult = AuthPrincipal | null;
  * a query parameter, as needed.
  */
 export type Authenticator = (req: IncomingMessage) => AuthResult | Promise<AuthResult>;
+
+/**
+ * Error class signalling "credentials presented but rejected". Carries a
+ * sanitized public `message` safe to surface to clients and a `cause` with
+ * the underlying implementation error for server-side logs. `serve()` uses
+ * this to avoid leaking library-internal messages (e.g. expected `aud` values
+ * from `jose`) into `WWW-Authenticate` / response bodies.
+ */
+export class AuthError extends Error {
+  readonly publicMessage: string;
+  constructor(publicMessage: string, options?: { cause?: unknown }) {
+    super(publicMessage);
+    this.name = 'AuthError';
+    this.publicMessage = publicMessage;
+    if (options?.cause !== undefined) (this as Error & { cause?: unknown }).cause = options.cause;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Token extraction
@@ -109,10 +149,11 @@ export function verifyApiKey(options: VerifyApiKeyOptions): Authenticator {
     const token = extractBearerToken(req);
     if (!token) return null;
     if (options.keys && Object.prototype.hasOwnProperty.call(options.keys, token)) {
-      return options.keys[token]!;
+      return { ...options.keys[token]!, token };
     }
     if (options.verify) {
-      return options.verify(token);
+      const result = await options.verify(token);
+      return result ? { ...result, token: result.token ?? token } : null;
     }
     return null;
   };
@@ -134,9 +175,14 @@ export interface VerifyBearerOptions {
    * {@link ServeOptions.protectedResource}, set this to the same URL.
    */
   audience: string;
-  /** Optional: required scopes (all must be present in the `scope` claim). */
+  /** Optional: required scopes (all must be present in the `scope` / `scp` claim). */
   requiredScopes?: string[];
-  /** Optional: JWT verification options passthrough (algorithms, clock tolerance). */
+  /**
+   * Optional: JWT verification options passthrough. Defaults to the secure
+   * asymmetric-only algorithm allowlist and a 30s clock tolerance — override
+   * only if you know why. HS256/HS384/HS512 are rejected by default to prevent
+   * algorithm-confusion attacks against the JWKS.
+   */
   jwtOptions?: Omit<JWTVerifyOptions, 'issuer' | 'audience'>;
 }
 
@@ -161,29 +207,62 @@ export interface VerifyBearerOptions {
  */
 export function verifyBearer(options: VerifyBearerOptions): Authenticator {
   const jwks = createRemoteJWKSet(new URL(options.jwksUri));
+  const verifyOptions: JWTVerifyOptions = {
+    algorithms: DEFAULT_JWT_ALGORITHMS.slice(),
+    clockTolerance: DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
+    ...options.jwtOptions,
+    issuer: options.issuer,
+    audience: options.audience,
+  };
   return async req => {
     const token = extractBearerToken(req);
     if (!token) return null;
-    // jose throws on any validation failure. Propagate as a hard rejection so
-    // combinators don't silently fall through to a less-strict authenticator.
-    const { payload } = await jwtVerify(token, jwks, {
-      issuer: options.issuer,
-      audience: options.audience,
-      ...options.jwtOptions,
-    });
+    let payload: JWTPayload;
+    try {
+      ({ payload } = await jwtVerify(token, jwks, verifyOptions));
+    } catch (err) {
+      // Never surface jose's message to the client — it echoes expected audience,
+      // issuer, or token-shape details that probing attackers can use.
+      throw new AuthError('Token validation failed.', { cause: err });
+    }
+    const scopes = extractScopes(payload);
     if (options.requiredScopes?.length) {
-      const scopeClaim = typeof payload.scope === 'string' ? payload.scope.split(/\s+/) : [];
-      const missing = options.requiredScopes.filter(s => !scopeClaim.includes(s));
+      const missing = options.requiredScopes.filter(s => !scopes.includes(s));
       if (missing.length > 0) {
-        throw new Error(`Missing required scope(s): ${missing.join(', ')}`);
+        throw new AuthError('Insufficient scope.', {
+          cause: new Error(`Missing required scope(s): ${missing.join(', ')}`),
+        });
       }
     }
-    return {
+    const principal: AuthPrincipal = {
       principal: typeof payload.sub === 'string' ? payload.sub : 'unknown',
-      scopes: typeof payload.scope === 'string' ? payload.scope.split(/\s+/) : undefined,
+      token,
+      scopes,
       claims: payload,
     };
+    if (typeof payload.exp === 'number') principal.expiresAt = payload.exp;
+    return principal;
   };
+}
+
+/**
+ * Extract scopes from a JWT payload. Handles both RFC 8693 `scope` (string,
+ * space-delimited) and RFC 9068 / Azure AD / Okta `scp` (string or string[]).
+ */
+function extractScopes(payload: JWTPayload): string[] {
+  const out: string[] = [];
+  if (typeof payload.scope === 'string') {
+    out.push(...payload.scope.split(/\s+/).filter(Boolean));
+  } else if (Array.isArray(payload.scope)) {
+    out.push(...(payload.scope as unknown[]).filter((s): s is string => typeof s === 'string'));
+  }
+  const scp = (payload as JWTPayload & { scp?: unknown }).scp;
+  if (typeof scp === 'string') {
+    out.push(...scp.split(/\s+/).filter(Boolean));
+  } else if (Array.isArray(scp)) {
+    out.push(...scp.filter((s): s is string => typeof s === 'string'));
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,20 +272,26 @@ export function verifyBearer(options: VerifyBearerOptions): Authenticator {
 /**
  * Pass if any authenticator succeeds. A `null` from one falls through to the
  * next; a thrown error short-circuits to 401 (credentials were presented but
- * rejected — not a "no credentials" case).
+ * rejected — not a "no credentials" case). Errors are wrapped in an
+ * {@link AuthError} with a generic public message so the client can't tell
+ * which mechanism rejected them.
  */
 export function anyOf(...authenticators: Authenticator[]): Authenticator {
   return async req => {
-    let lastError: unknown;
+    let rejected = false;
+    const causes: unknown[] = [];
     for (const auth of authenticators) {
       try {
         const result = await auth(req);
         if (result) return result;
       } catch (err) {
-        lastError = err;
+        rejected = true;
+        causes.push(err);
       }
     }
-    if (lastError) throw lastError;
+    if (rejected) {
+      throw new AuthError('Credentials rejected.', { cause: causes });
+    }
     return null;
   };
 }
@@ -217,8 +302,8 @@ export function anyOf(...authenticators: Authenticator[]): Authenticator {
 
 export interface RespondUnauthorizedOptions {
   /**
-   * Bearer realm value. Defaults to the request host. Appears in
-   * `WWW-Authenticate: Bearer realm="..."`.
+   * Bearer realm value. Defaults to `"mcp"` — a stable value that won't reflect
+   * an attacker-controlled `Host` header into the challenge.
    */
   realm?: string;
   /** RFC 6750 error code. Defaults to `invalid_token`. */
@@ -240,15 +325,15 @@ export interface RespondUnauthorizedOptions {
  * returns `null` or throws.
  */
 export function respondUnauthorized(
-  req: IncomingMessage,
+  _req: IncomingMessage,
   res: ServerResponse,
   options: RespondUnauthorizedOptions = {}
 ): void {
-  const realm = options.realm ?? req.headers.host ?? 'adcp-agent';
-  const parts = [`realm="${realm}"`];
+  const realm = options.realm ?? 'mcp';
+  const parts = [`realm="${escapeQuotes(realm)}"`];
   if (options.error) parts.push(`error="${options.error}"`);
   if (options.errorDescription) parts.push(`error_description="${escapeQuotes(options.errorDescription)}"`);
-  if (options.resourceMetadata) parts.push(`resource_metadata="${options.resourceMetadata}"`);
+  if (options.resourceMetadata) parts.push(`resource_metadata="${escapeQuotes(options.resourceMetadata)}"`);
 
   res.writeHead(options.status ?? 401, {
     'Content-Type': 'application/json',

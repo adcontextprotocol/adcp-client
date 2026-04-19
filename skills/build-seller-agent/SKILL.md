@@ -708,10 +708,11 @@ import { serve, verifyBearer } from '@adcp/client';
 const AGENT_URL = 'https://my-agent.example.com/mcp';
 
 serve(createAgent, {
+  publicUrl: AGENT_URL, // canonical RFC 8707 audience
   authenticate: verifyBearer({
     jwksUri: 'https://auth.example.com/.well-known/jwks.json',
     issuer: 'https://auth.example.com',
-    audience: AGENT_URL,  // MUST equal the URL clients actually call
+    audience: AGENT_URL, // MUST equal publicUrl
   }),
   protectedResource: {
     authorization_servers: ['https://auth.example.com'],
@@ -720,7 +721,7 @@ serve(createAgent, {
 });
 ```
 
-The `protectedResource` config makes the framework serve `/.well-known/oauth-protected-resource/mcp` with the correct `resource` URL derived from the request host. Buyer clients use that URL as the RFC 8707 `resource` parameter on token requests so the IdP mints tokens bound to the right audience. **Getting this wrong (advertising a different `resource` URL than the host being called) is the most common OAuth misconfiguration — it silently breaks every token.**
+Set `publicUrl` to the canonical https:// URL clients use — the framework serves `/.well-known/oauth-protected-resource/mcp` with that exact `resource` value, and the JWT `audience` check rejects tokens minted for any other URL. Deriving the resource URL from `publicUrl` (not the incoming `Host` header) is what stops a phishing attacker from making your server advertise `https://evil.example/mcp` as the audience.
 
 ### Both
 
@@ -728,6 +729,7 @@ The `protectedResource` config makes the framework serve `/.well-known/oauth-pro
 import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
 
 serve(createAgent, {
+  publicUrl: AGENT_URL,
   authenticate: anyOf(
     verifyApiKey({ verify: lookupApiKey }),
     verifyBearer({ jwksUri, issuer, audience: AGENT_URL }),
@@ -742,7 +744,7 @@ The `security_baseline` storyboard verifies:
 
 1. Unauthenticated request → MUST return 401 (or 403) with a `WWW-Authenticate: Bearer ...` header. The framework does this for you when `authenticate` returns `null` or throws.
 2. At least one of API-key or OAuth discovery must succeed.
-3. If OAuth is advertised, `protectedResource.resource` MUST match the URL being called.
+3. If OAuth is advertised, the `resource` field in `/.well-known/oauth-protected-resource` MUST match the URL being called. Set `publicUrl` once — the framework enforces this automatically.
 
 ## Validation
 

@@ -215,6 +215,18 @@ export interface HandlerContext<TAccount = unknown> {
   sessionKey?: string;
   /** State store for persisting domain objects (media buys, accounts, creatives). */
   store: AdcpStateStore;
+  /**
+   * Authentication info for the caller, when `ServeOptions.authenticate` is configured.
+   * Populated from the MCP SDK's `extra.authInfo`, which `serve()` sets from the auth
+   * principal. Use this to enforce per-principal authorization in handlers.
+   */
+  authInfo?: {
+    token: string;
+    clientId: string;
+    scopes: string[];
+    expiresAt?: number;
+    extra?: Record<string, unknown>;
+  };
 }
 
 /** Request metadata passed to `resolveSessionKey` so the hook can derive a key from any field. */
@@ -1051,8 +1063,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const hasAccount = 'account' in schema.shape;
 
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
-      const toolHandler = async (params: any, _extra: any) => {
+      const toolHandler = async (params: any, extra: any) => {
         const ctx: HandlerContext<TAccount> = { store: stateStore };
+        if (extra?.authInfo) ctx.authInfo = extra.authInfo;
 
         // Echo params.context into any response (success or error) so buyers
         // can trace correlation_id end-to-end. Framework-generated errors

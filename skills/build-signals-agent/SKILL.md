@@ -322,23 +322,26 @@ serve(createAgent, {
 });
 
 // OAuth — best when buyers authenticate as themselves
+const AGENT_URL = 'https://my-agent.example.com/mcp';
 serve(createAgent, {
+  publicUrl: AGENT_URL, // canonical RFC 8707 audience — also served as `resource` in protected-resource metadata
   authenticate: verifyBearer({
     jwksUri: 'https://auth.example.com/.well-known/jwks.json',
     issuer: 'https://auth.example.com',
-    audience: 'https://my-agent.example.com/mcp', // MUST match the URL clients call
+    audience: AGENT_URL, // MUST equal publicUrl
   }),
   protectedResource: { authorization_servers: ['https://auth.example.com'] },
 });
 
 // Both
 serve(createAgent, {
-  authenticate: anyOf(verifyApiKey({ verify: lookupKey }), verifyBearer({ jwksUri, issuer, audience })),
+  publicUrl: AGENT_URL,
+  authenticate: anyOf(verifyApiKey({ verify: lookupKey }), verifyBearer({ jwksUri, issuer, audience: AGENT_URL })),
   protectedResource: { authorization_servers: [issuer] },
 });
 ```
 
-The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with the correct `resource` URL (auto-derived from the request host so buyers get tokens bound to the right audience).
+The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
 ## Validation

@@ -75,7 +75,16 @@ export type {
 export { serve } from './serve';
 export type { ServeContext, ServeOptions, ProtectedResourceMetadata } from './serve';
 
-export { verifyApiKey, verifyBearer, anyOf, extractBearerToken, respondUnauthorized } from './auth';
+export {
+  verifyApiKey,
+  verifyBearer,
+  anyOf,
+  extractBearerToken,
+  respondUnauthorized,
+  AuthError,
+  DEFAULT_JWT_ALGORITHMS,
+  DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
+} from './auth';
 export type {
   Authenticator,
   AuthPrincipal,
