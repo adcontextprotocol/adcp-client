@@ -155,8 +155,17 @@ function enforceStrictSchema(schema: any): any {
   // rejects scalar values the spec allows (e.g. `check_governance` conditions[].required_value
   // returning a number). Annotate with tsType so the emitted TS is unknown.
   const metadataOnlyKeys = new Set([
-    'description', 'title', '$comment', 'examples', 'default', 'deprecated',
-    'readOnly', 'writeOnly', '$id', '$anchor', '$schema',
+    'description',
+    'title',
+    '$comment',
+    'examples',
+    'default',
+    'deprecated',
+    'readOnly',
+    'writeOnly',
+    '$id',
+    '$anchor',
+    '$schema',
   ]);
   const allKeys = Object.keys(strictSchema);
   if (allKeys.length > 0 && allKeys.every(k => metadataOnlyKeys.has(k))) {
@@ -181,7 +190,16 @@ function enforceStrictSchema(schema: any): any {
     strictSchema.additionalProperties = enforceStrictSchema(strictSchema.additionalProperties);
   }
 
-  for (const key of ['not', 'if', 'then', 'else', 'contains', 'propertyNames', 'unevaluatedItems', 'unevaluatedProperties']) {
+  for (const key of [
+    'not',
+    'if',
+    'then',
+    'else',
+    'contains',
+    'propertyNames',
+    'unevaluatedItems',
+    'unevaluatedProperties',
+  ]) {
     if (strictSchema[key] && typeof strictSchema[key] === 'object') {
       strictSchema[key] = enforceStrictSchema(strictSchema[key]);
     }
@@ -192,9 +210,10 @@ function enforceStrictSchema(schema: any): any {
   for (const key of ['dependentSchemas', 'dependencies']) {
     if (strictSchema[key] && typeof strictSchema[key] === 'object' && !Array.isArray(strictSchema[key])) {
       strictSchema[key] = Object.fromEntries(
-        Object.entries(strictSchema[key]).map(([name, value]) =>
-          [name, value && typeof value === 'object' && !Array.isArray(value) ? enforceStrictSchema(value) : value]
-        )
+        Object.entries(strictSchema[key]).map(([name, value]) => [
+          name,
+          value && typeof value === 'object' && !Array.isArray(value) ? enforceStrictSchema(value) : value,
+        ])
       );
     }
   }

@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-18
+> Generated at: 2026-04-19
 > Library: @adcp/client v5.1.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -636,7 +636,8 @@ Flow: `sync_accounts → get_products → create_media_buy → comply_test_contr
 
 ### Signals
 
-**Signals baseline** — Baseline domain storyboard — every signal agent must discover signals, return typed signal responses, and support activation handoff to media-buy agents.
+**Signals baseline** — Baseline domain storyboard — every signals agent must discover signals and return an activation, regardless of whether they are owned or marketplace.
+Flow: `get_adcp_capabilities → get_signals → activate_signal`
 
 **Marketplace signal agent** — Signal agent that resells third-party data provider signals with verifiable catalog provenance.
 Flow: `get_adcp_capabilities → get_signals → activate_signal`
@@ -694,6 +695,8 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists �
 
 **Generative creative agent** — Agent that takes a brief and generates finished creatives from scratch — no input assets required.
 Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
+
+**Runner output contract** — Required failure-detail shape that AdCP storyboard runners MUST emit so implementors can self-diagnose validation failures.
 
 ### Media Buy
 

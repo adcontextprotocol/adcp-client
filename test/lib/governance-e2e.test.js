@@ -1228,7 +1228,6 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
       assert.ok(entries[i].timestamp >= entries[i - 1].timestamp, 'Expected entries sorted by timestamp');
     }
   });
-
 });
 
 describe('Governance E2E: Multiple findings in single check', { skip: skipReason }, () => {
