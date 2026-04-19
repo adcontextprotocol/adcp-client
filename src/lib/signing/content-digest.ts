@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'crypto';
+import { parseDictionary } from 'structured-headers';
 
-const SHA256_MEMBER_RE = /(^|[,\s])sha-256=:([A-Za-z0-9+/_-]+={0,2}):/;
+const SHA256_MEMBER_RE = /(?:^|[,\s])sha-256=:([A-Za-z0-9+/_-]+={0,2}):/;
 
 export function computeContentDigest(body: string | Uint8Array): string {
   const buf = toBuffer(body);
@@ -10,14 +11,20 @@ export function computeContentDigest(body: string | Uint8Array): string {
 
 /**
  * Extract the `sha-256` member from an RFC 9530 Content-Digest header. The
- * header is an RFC 8941 Dictionary and MAY list multiple algorithms
- * (e.g. `sha-256=:...:, sha-512=:...:`); we look up the `sha-256` member
- * without requiring any particular position.
+ * header is an RFC 8941 Dictionary and MAY list multiple algorithms; we look
+ * up the `sha-256` member without requiring any particular position.
  */
 export function parseContentDigest(header: string): Buffer | null {
-  const m = header.trim().match(SHA256_MEMBER_RE);
-  if (!m || !m[2]) return null;
-  return Buffer.from(m[2], 'base64');
+  try {
+    const dict = parseDictionary(header);
+    const entry = dict.get('sha-256');
+    if (entry && entry[0] instanceof ArrayBuffer) return Buffer.from(entry[0]);
+  } catch {
+    // Fall through: a malformed filler member (e.g. truncated sha-512) should
+    // not mask the sha-256 entry we actually verify against.
+  }
+  const m = header.match(SHA256_MEMBER_RE);
+  return m && m[1] ? Buffer.from(m[1], 'base64') : null;
 }
 
 export function contentDigestMatches(header: string, body: string | Uint8Array): boolean {
