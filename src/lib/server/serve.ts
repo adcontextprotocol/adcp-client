@@ -172,7 +172,7 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
     } catch {
       throw new Error(`serve(): \`publicUrl\` is not a valid URL: ${publicUrl}`);
     }
-    if (parsed.pathname.replace(/\/+$/, '') !== mountPath.replace(/\/+$/, '')) {
+    if (trimTrailingSlashes(parsed.pathname) !== trimTrailingSlashes(mountPath)) {
       throw new Error(
         `serve(): \`publicUrl\` path (${parsed.pathname}) must match mount path (${mountPath}). ` +
           'The public URL is the full MCP endpoint URL, including the path.'
@@ -306,6 +306,12 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
   });
 
   return httpServer;
+}
+
+function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  return s.slice(0, end);
 }
 
 function attachAuthInfo(req: IncomingMessage, principal: AuthPrincipal): void {
