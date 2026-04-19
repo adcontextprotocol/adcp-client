@@ -47,61 +47,11 @@ Three requirements apply to **every** production seller, regardless of which spe
 
 ### `idempotency_key` is required on every mutating request
 
-`create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `provide_performance_feedback` — every mutating call now carries a client-supplied `idempotency_key`. Your handler must return the **same response** when the same key is replayed.
+`create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `provide_performance_feedback` — every mutating call carries a client-supplied `idempotency_key`. Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })` and the framework handles replay detection, payload-hash conflict (`IDEMPOTENCY_CONFLICT`), expiry (`IDEMPOTENCY_EXPIRED`), and in-flight parallelism. Don't implement this in handler code. See [§ Idempotency](#idempotency) below for the full wire-up.
 
-**Use the SDK helper.** Pass `idempotency: createIdempotencyStore(...)` into `createAdcpServer` and the framework handles replay detection, payload-hash conflict detection, and the `IDEMPOTENCY_KEY_CONFLICT` error — don't write your own cache in `ctx.store`.
+### Authentication is mandatory
 
-```typescript
-import { createAdcpServer, serve } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
-
-const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),    // for production: pgBackend(pool) or a redis adapter
-  ttlSeconds: 86400,            // must be in [3600, 604800] — throws on out-of-range
-  clockSkewSeconds: 60,         // default — how long past expiry a key still replays cleanly
-});
-
-serve(() => createAdcpServer({
-  name: 'My Seller Agent',
-  version: '1.0.0',
-  idempotency,
-  // Principal scope — same key from different buyers must not collide.
-  // MUST never return undefined; `(ctx) => ctx.account?.id` is typical for
-  // multi-tenant agents. A constant is fine for single-tenant demos.
-  resolveSessionKey: (ctx) => ctx.account?.id ?? 'default-principal',
-
-  mediaBuy: { /* handlers — no idempotency code inside them */ },
-}));
-```
-
-Keys are scoped per `(principal, tool, key)`. Same key + same payload within TTL → replay the cached response. Same key + different payload → the framework emits `IDEMPOTENCY_KEY_CONFLICT`. The spec requires `ttlSeconds` in `[3600, 604800]` (1h to 7d) and auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`.
-
-### OAuth, when your agent is behind an authorization server
-
-If your MCP endpoint requires OAuth, the only thing you need to do right is the **401 challenge**. Client SDKs walk the discovery chain automatically (AdCP 3.0 GA landed zero-config OAuth discovery on 401) — but they can only discover what you advertise.
-
-On any unauthenticated request, return **`401`** with this header:
-
-```
-WWW-Authenticate: Bearer error="invalid_token", resource_metadata="https://seller.example.com/.well-known/oauth-protected-resource"
-```
-
-Then host two metadata documents:
-
-- **RFC 9728 protected-resource metadata** at the URL in `resource_metadata`. Point its `authorization_servers[0]` at your OAuth AS.
-- **RFC 8414 authorization-server metadata** at `<as-url>/.well-known/oauth-authorization-server`. Standard OAuth — any conformant AS has it.
-
-Clients use `discoverAuthorizationRequirements` and throw `NeedsAuthorizationError` (from `@adcp/client`'s auth module) carrying the discovered OAuth hints; the CLI surfaces this as a guided browser flow. Your seller agent itself just needs the 401 challenge + metadata documents — the rest is client plumbing.
-
-**Validate with the diagnostic CLI** before claiming an OAuth-protected deployment is ready:
-
-```bash
-npx @adcp/client diagnose-auth https://seller.example.com/mcp --json
-```
-
-The command probes both metadata documents, ranks failure hypotheses, and tells you exactly which fix is missing — "emit `WWW-Authenticate: Bearer …, resource_metadata=…`" is the most common verdict for agents that almost got it right.
-
-**If you also claim `signed-requests` or run a multi-tenant AS:** read [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) below. The middleware mount order, 401 disambiguation rules, and the OAuth-claim → idempotency-principal mapping live there.
+An agent that accepts unauthenticated requests is non-compliant — the universal `security_baseline` storyboard enforces this. Wire `serve({ authenticate })` with `verifyApiKey`, `verifyBearer`, or `anyOf(...)` before you claim any specialism. See [§ Protecting your agent](#protecting-your-agent) below.
 
 ### Don't break when RFC 9421 Signature headers arrive
 
@@ -110,40 +60,54 @@ Even if you don't claim `signed-requests`, a buyer may send `Signature-Input` / 
 <a name="composing-oauth-signing-and-idempotency"></a>
 ### Composing OAuth, signing, and idempotency
 
-The three concerns above are each straightforward in isolation. The pitfalls are at their boundaries. A production seller that claims both `sales-guaranteed` and `signed-requests` and is behind OAuth needs the pipeline below.
+Each concern above is straightforward in isolation. The pitfalls are at their boundaries. A production seller that claims both `sales-guaranteed` and `signed-requests` and sits behind OAuth wires them together through `serve()`'s composition hooks — not external Express middleware.
 
-**Middleware mount order.** The order matters — signature verification needs the raw body, JSON parsing consumes the stream, and OAuth validation needs to happen before you spend compute on signature canonicalization.
+**The pipeline.** `serve({ authenticate, preTransport })` runs steps in this order and buffers the raw body into `req.rawBody` so signature verifiers can hash it without racing the MCP transport:
 
 ```typescript
-app.use('/mcp', oauthBearerMiddleware);     // 1. Validate bearer first. Reject with 401 Bearer challenge.
-app.use('/mcp', verifier);                  // 2. Verify RFC 9421 signature on the raw body.
-app.use('/mcp', express.json());            // 3. Parse JSON for downstream.
-app.use('/mcp', mcpTransport);              // 4. MCP transport dispatches to createAdcpServer.
-                                            // 5. The framework applies the idempotency store per handler.
+import { serve, verifyBearer } from '@adcp/client';
+import { createExpressVerifier } from '@adcp/client/signing/server';
+
+serve(createAgent, {
+  publicUrl: 'https://seller.example.com/mcp',
+
+  // 1. authenticate runs first. Bad/missing bearer → 401 Bearer challenge.
+  //    Never runs the verifier or transport on unauthenticated requests.
+  authenticate: verifyBearer({
+    jwksUri: 'https://auth.example.com/.well-known/jwks.json',
+    issuer: 'https://auth.example.com',
+    audience: 'https://seller.example.com/mcp',
+    requiredScopes: ['adcp:seller'],
+  }),
+  protectedResource: { authorization_servers: ['https://auth.example.com'] },
+
+  // 2. preTransport runs after authenticate, before MCP dispatch.
+  //    req.rawBody is pre-buffered — the signing verifier uses it for
+  //    content-digest without a parallel body read.
+  preTransport: createExpressVerifier({ /* VerifierCapability, stores, ... */ }),
+
+  // 3. MCP transport parses JSON, dispatches to createAdcpServer.
+  // 4. Framework applies the idempotency store per handler — you don't mount it.
+});
 ```
 
-The framework owns step 5 — `createAdcpServer({ idempotency })` wraps handlers, so you don't mount the idempotency middleware yourself.
+If your stack isn't Express, the same ordering applies conceptually: authenticate first, signature-verify on the raw body, then dispatch.
 
-**Principal threading.** Your idempotency store scopes keys on the principal returned from `resolveSessionKey(ctx)`. That principal MUST come from a trusted, authenticated identity — the OAuth subject, or the verified signing `keyid`, or a composition of both. Don't use the buyer's self-declared `operator` or `brand.domain` — two buyers sharing a tenant can collide.
+**Principal threading.** Your idempotency store scopes keys on the principal returned from `resolveSessionKey(ctx)`. That principal MUST come from a trusted, authenticated identity — the OAuth subject (via `ctx.auth.principal` populated by `verifyBearer`), or the verified signing `keyid`, or a composition of both. Never use the buyer's self-declared `operator` or `brand.domain` — two buyers in the same tenant collide.
 
-**What the OAuth subject is.** Inside your bearer middleware, verify the JWT against your AS's JWKS (RFC 7517), then:
-
-- Validate `aud` contains your agent's canonical URL (RFC 7519 §4.1.3). Mismatches = 401, not 403 — a token minted for someone else shouldn't even parse as yours.
-- Validate `iss` matches the `authorization_servers[0]` from your protected-resource metadata.
-- Check required `scope`s (your agent-specific set) are present.
-- Use the `sub` claim as the AdCP principal. If your AS issues multi-tenant tokens, also read a tenant claim (e.g. `tenant_id` or `org_id`) and compose `${tenant_id}:${sub}` — `sub` alone collides across tenants when the AS reuses user IDs.
-
-**Reconciling OAuth sub with signing keyid.** When both are present on a request, treat them as independent identities that must agree: the signing `keyid`'s advertised owner (from its JWKS metadata) must match the OAuth `sub` (or its tenant). Composition pattern below keeps the replay namespace correct when one buyer rotates signing keys without re-authenticating, and when one OAuth tenant holds multiple buyers with different keys.
+`verifyBearer` already validates `aud`/`iss`/`requiredScopes` for you; the JWT `sub` lands in the authenticated principal. You only need to handle composition across trust boundaries:
 
 ```typescript
-// Populate ctx.account from the authenticated principal before createAdcpServer sees the request.
-// Your bearer middleware sets `req.adcpPrincipal = { subject, tenant?, keyid? }` after
-// validating aud/iss/scope; a small adapter maps that into ctx.account for the framework.
 resolveSessionKey: (ctx) => {
-  const p = ctx.account;
-  if (!p?.subject) throw new Error('unauthenticated request reached idempotency scope — middleware ordering is wrong');
-  const identity = p.tenant ? `${p.tenant}:${p.subject}` : p.subject;
-  return p.keyid ? `${identity}:${p.keyid}` : identity;
+  const p = ctx.auth?.principal;
+  if (!p) throw new Error('unauthenticated request reached idempotency scope — check authenticate is configured');
+  // Multi-tenant AS: if the JWT carries tenant claim (scp tenant_xyz, org_id, or similar),
+  // compose it in so sub collisions across tenants don't share a replay namespace.
+  const identity = p.tenant ? `${p.tenant}:${p.sub}` : p.sub;
+  // If you also claim signed-requests, fold the verified keyid in so one buyer rotating
+  // signing keys without re-authenticating gets a fresh namespace.
+  const keyid = ctx.auth?.verifiedKeyid;
+  return keyid ? `${identity}:${keyid}` : identity;
 }
 ```
 
@@ -729,6 +693,7 @@ Key points:
 6. Use `adcpError()` for business validation failures
 7. Use `as const` on string literal arrays and union-typed fields in product definitions — TypeScript infers `string[]` from `['display', 'olv']` but the SDK requires specific union types like `MediaChannel[]`. Apply `as const` to `channels`, `delivery_type`, `selection_type`, and `pricing_model` values.
 
+<a name="idempotency"></a>
 ## Idempotency
 
 AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, that's `create_media_buy`, `update_media_buy`, `sync_creatives`, and any `sync_*` tools you implement. Idempotency is wired in the Implementation example above — this section explains what the framework does for you and the subtleties to know.
@@ -816,6 +781,7 @@ Two things the example doesn't wire (app-specific):
 - **Authentication** — the quick-start has no auth. Production agents need bearer-token or OAuth in front of `serve()`. The library provides OAuth helpers; bearer is middleware territory (Express/Fastify).
 - **Connection-pool sizing** — pass `max`, `idleTimeoutMillis`, `connectionTimeoutMillis` on `new Pool({...})` per your deployment's concurrency characteristics. The pg driver defaults are fine for low traffic.
 
+<a name="protecting-your-agent"></a>
 ## Protecting your agent
 
 **An AdCP agent that accepts unauthenticated requests is non-compliant.** The compliance runner enforces this via the `security_baseline` storyboard (every agent regardless of specialism). You MUST pick at least one of:
