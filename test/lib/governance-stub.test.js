@@ -99,10 +99,10 @@ describe('GovernanceAgentStub', () => {
     stub.clearCallLog();
 
     await callMCPTool(stubUrl, 'report_plan_outcome', {
+      idempotency_key: randomUUID(),
       plan_id: 'plan-outcome-test',
       outcome: 'completed',
       governance_context: 'test-gc-for-outcome',
-      idempotency_key: randomUUID(),
     });
 
     const calls = stub.getCallsForTool('report_plan_outcome');
@@ -115,6 +115,7 @@ describe('GovernanceAgentStub', () => {
     stub.clearCallLog();
 
     await callMCPTool(stubUrl, 'sync_plans', {
+      idempotency_key: randomUUID(),
       plans: [
         {
           plan_id: 'plan-sync-test',
@@ -129,7 +130,6 @@ describe('GovernanceAgentStub', () => {
           countries: ['US'],
         },
       ],
-      idempotency_key: randomUUID(),
     });
 
     const calls = stub.getCallsForTool('sync_plans');
@@ -160,10 +160,10 @@ describe('GovernanceAgentStub', () => {
     });
 
     await callMCPTool(stubUrl, 'report_plan_outcome', {
+      idempotency_key: randomUUID(),
       plan_id: 'plan-multi',
       outcome: 'completed',
       governance_context: 'gc-multi-test',
-      idempotency_key: randomUUID(),
     });
 
     const allCalls = stub.getCallLog();

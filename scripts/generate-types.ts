@@ -1076,6 +1076,20 @@ function methodNameToTypeName(methodName: string): string {
   return typeName;
 }
 
+/**
+ * Determine whether a tool's request requires `idempotency_key`.
+ *
+ * Mirrors `deriveMutatingTasks()` in src/lib/utils/idempotency.ts: a tool is
+ * "mutating" when its request schema has `idempotency_key` in the top-level
+ * `required` array. `si_terminate_session` is excluded by name — it's naturally
+ * idempotent via session_id, so its signature stays strict.
+ */
+function isMutatingTool(tool: ToolDefinition): boolean {
+  if (tool.name === 'si_terminate_session') return false;
+  const required = tool.paramsSchema?.required;
+  return Array.isArray(required) && required.includes('idempotency_key');
+}
+
 function generateAgentClasses(tools: ToolDefinition[]) {
   console.log('🔧 Generating Agent and AgentCollection classes...');
 
@@ -1096,6 +1110,7 @@ import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import { validateAgentUrl } from '../validation';
 import { getCircuitBreaker, unwrapProtocolResponse } from '../utils';
+import type { MutatingRequestInput } from '../utils/idempotency';
 import type {
   ${paramImports.join(',\n  ')}
 } from '../types/tools.generated';
@@ -1146,7 +1161,9 @@ export class Agent {
     const baseName = methodNameToTypeName(tool.methodName);
     const paramType = tool.paramsSchema ? `${baseName}Request` : 'void';
     const responseType = tool.responseSchema ? `${baseName}Response` : 'any';
-    const paramDecl = paramType === 'void' ? '' : `params: ${paramType}`;
+    const paramTypeAnnotation =
+      paramType === 'void' ? paramType : isMutatingTool(tool) ? `MutatingRequestInput<${paramType}>` : paramType;
+    const paramDecl = paramType === 'void' ? '' : `params: ${paramTypeAnnotation}`;
 
     agentClass += `  /**
    * ${tool.description}
@@ -1184,7 +1201,9 @@ export class AgentCollection {
     const baseName = methodNameToTypeName(tool.methodName);
     const paramType = tool.paramsSchema ? `${baseName}Request` : 'void';
     const responseType = tool.responseSchema ? `${baseName}Response` : 'any';
-    const paramDecl = paramType === 'void' ? '' : `params: ${paramType}`;
+    const paramTypeAnnotation =
+      paramType === 'void' ? paramType : isMutatingTool(tool) ? `MutatingRequestInput<${paramType}>` : paramType;
+    const paramDecl = paramType === 'void' ? '' : `params: ${paramTypeAnnotation}`;
 
     agentClass += `  /**
    * ${tool.description} (across multiple agents)
