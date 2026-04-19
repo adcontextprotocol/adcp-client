@@ -263,6 +263,25 @@ Event tracking tools (`syncEventSources`, `logEvent`, `syncCatalogs`, `syncAudie
 
 The skill contains everything you need. Do not read additional docs before writing code.
 
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request — for retail media networks that means `create_media_buy`, `update_media_buy`, and `sync_creatives`, plus the mutating event-tracking tools (`sync_event_sources`, `sync_catalogs`, `sync_audiences`, `log_event`) where retail-specific replay matters for catalog uploads and conversion ingestion. Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`).
+
+```typescript
+import { createIdempotencyStore, memoryBackend, pgBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // or pgBackend(pool) for production
+  ttlSeconds: 86400,                // 1h–7d, clamped to spec bounds
+});
+
+const server = createAdcpServer({
+  idempotency,
+  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
+  // ... mediaBuy + eventTracking handlers
+});
+```
+
 ## Validation
 
 **After writing the agent, validate it. Fix failures. Repeat.**

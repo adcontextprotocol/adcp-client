@@ -68,6 +68,7 @@ import type {
   SITerminateSessionRequest,
   SITerminateSessionResponse,
 } from '../types/tools.generated';
+import type { MutatingRequestInput } from '../utils/idempotency';
 
 /**
  * Type mapping for task names to their response types
@@ -223,7 +224,7 @@ export class AgentClient {
    * Create a new media buy
    */
   async createMediaBuy(
-    params: CreateMediaBuyRequest,
+    params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
@@ -243,7 +244,7 @@ export class AgentClient {
    * Update an existing media buy
    */
   async updateMediaBuy(
-    params: UpdateMediaBuyRequest,
+    params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
@@ -263,7 +264,7 @@ export class AgentClient {
    * Sync creative assets
    */
   async syncCreatives(
-    params: SyncCreativesRequest,
+    params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
@@ -343,7 +344,7 @@ export class AgentClient {
    * Provide performance feedback
    */
   async providePerformanceFeedback(
-    params: ProvidePerformanceFeedbackRequest,
+    params: MutatingRequestInput<ProvidePerformanceFeedbackRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
@@ -382,7 +383,7 @@ export class AgentClient {
    * Activate audience signals
    */
   async activateSignal(
-    params: ActivateSignalRequest,
+    params: MutatingRequestInput<ActivateSignalRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
@@ -452,7 +453,7 @@ export class AgentClient {
    * Build a creative from format and brand context
    */
   async buildCreative(
-    params: BuildCreativeRequest,
+    params: MutatingRequestInput<BuildCreativeRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<BuildCreativeResponse>> {
@@ -490,7 +491,7 @@ export class AgentClient {
    * Sync accounts
    */
   async syncAccounts(
-    params: SyncAccountsRequest,
+    params: MutatingRequestInput<SyncAccountsRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncAccountsResponse>> {
@@ -508,7 +509,7 @@ export class AgentClient {
    * Sync audiences
    */
   async syncAudiences(
-    params: SyncAudiencesRequest,
+    params: MutatingRequestInput<SyncAudiencesRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncAudiencesResponse>> {
@@ -528,7 +529,7 @@ export class AgentClient {
    * Create a property list
    */
   async createPropertyList(
-    params: CreatePropertyListRequest,
+    params: MutatingRequestInput<CreatePropertyListRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreatePropertyListResponse>> {
@@ -564,7 +565,7 @@ export class AgentClient {
    * Update a property list
    */
   async updatePropertyList(
-    params: UpdatePropertyListRequest,
+    params: MutatingRequestInput<UpdatePropertyListRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdatePropertyListResponse>> {
@@ -600,7 +601,7 @@ export class AgentClient {
    * Delete a property list
    */
   async deletePropertyList(
-    params: DeletePropertyListRequest,
+    params: MutatingRequestInput<DeletePropertyListRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<DeletePropertyListResponse>> {
@@ -654,7 +655,7 @@ export class AgentClient {
    * Calibrate content against standards
    */
   async calibrateContent(
-    params: CalibrateContentRequest,
+    params: MutatingRequestInput<CalibrateContentRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CalibrateContentResponse>> {
@@ -710,7 +711,7 @@ export class AgentClient {
    * Initiate an SI session
    */
   async siInitiateSession(
-    params: SIInitiateSessionRequest,
+    params: MutatingRequestInput<SIInitiateSessionRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SIInitiateSessionResponse>> {
@@ -728,7 +729,7 @@ export class AgentClient {
    * Send a message in an SI session
    */
   async siSendMessage(
-    params: SISendMessageRequest,
+    params: MutatingRequestInput<SISendMessageRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SISendMessageResponse>> {

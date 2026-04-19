@@ -158,6 +158,49 @@ createAdcpServer({
 
 If `resolveAccount` returns `null`, the framework responds with `ACCOUNT_NOT_FOUND` and the handler never runs.
 
+### Idempotency (mutating tools)
+
+AdCP v3 requires `idempotency_key` on every mutating request and requires sellers to declare a replay window. `@adcp/client/server` ships `createIdempotencyStore` which handles validation, JCS canonicalization, replay, and capability declaration:
+
+```typescript
+import {
+  createAdcpServer,
+  createIdempotencyStore,
+  memoryBackend,
+  pgBackend,
+  serve,
+} from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),       // or pgBackend(pool) — run getIdempotencyMigration() once
+  ttlSeconds: 86400,              // 1h–7d, clamped to spec bounds
+});
+
+serve(() => createAdcpServer({
+  name: 'My Publisher',
+  version: '1.0.0',
+  idempotency,
+  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
+  mediaBuy: {
+    createMediaBuy: async (params, ctx) => ({
+      media_buy_id: `mb_${Date.now()}`,
+      packages: [],
+    }),
+  },
+}));
+```
+
+The framework auto-handles:
+- `INVALID_REQUEST` when the key is missing on mutating tools
+- `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leak in the error body)
+- `IDEMPOTENCY_EXPIRED` past the TTL, with ±60s clock-skew tolerance
+- `replayed: true` injection on the envelope when replaying a cached response
+- `adcp.idempotency.replay_ttl_seconds` declared on `get_adcp_capabilities`
+
+Scoping is per-principal — `resolveSessionKey` doubles as the idempotency principal, so two buyers with different session keys won't share cache entries. Override with `resolveIdempotencyPrincipal` if you need a different scope (e.g., `operator_id`).
+
+**Only successful responses are cached.** Handler errors re-execute on retry rather than replaying — so a transient 5xx doesn't lock a failure into the cache.
+
 ### createTaskCapableServer (Low-Level)
 
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` uses this internally.

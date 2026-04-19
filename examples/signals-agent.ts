@@ -2,8 +2,7 @@
  * Example: Signals Agent (Server)
  *
  * Demonstrates building an AdCP signals agent that serves audience segments
- * via the get_signals tool. Uses createTaskCapableServer for MCP task support
- * and generated Zod schemas for type-safe input validation.
+ * via `get_signals` and accepts `activate_signal` with idempotency.
  *
  * Run with:
  *
@@ -17,7 +16,8 @@
  *   npx @adcp/client http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
  */
 
-import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 import type { GetSignalsResponse, ServeContext } from '@adcp/client';
 
 // ---------------------------------------------------------------------------
@@ -132,29 +132,67 @@ function querySegments(args: {
 // ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),
+  ttlSeconds: 86400,
+});
+
 function createSignalsAgent({ taskStore }: ServeContext) {
-  const server = createTaskCapableServer('Example Signals Agent', '1.0.0', {
+  return createAdcpServer({
+    name: 'Example Signals Agent',
+    version: '1.0.0',
     taskStore,
+    idempotency,
+    // Principal scope for idempotency. A constant works for a no-auth
+    // demo; multi-tenant agents type the account via
+    // `createAdcpServer<MyAccount>({...})` and use `ctx.account?.id`.
+    resolveSessionKey: () => 'default-principal',
     instructions: 'Signals agent providing audience segment discovery via get_signals.',
+
+    signals: {
+      getSignals: async params => {
+        const signals = querySegments({
+          signal_spec: params.signal_spec,
+          signal_ids: params.signal_ids,
+          catalog_types: params.filters?.catalog_types,
+          max_results: params.max_results,
+        });
+        return { signals, sandbox: true };
+      },
+      activateSignal: async params => {
+        // Per the compliance spec: platform (DSP) activation is ASYNC,
+        // agent (sales-agent) activation is SYNC. The buyer polls for
+        // platform activations (subsequent activate_signal call) until
+        // is_live flips to true.
+        const deployments = params.destinations.map(dest => {
+          if (dest.type === 'platform') {
+            return {
+              type: 'platform' as const,
+              platform: dest.platform,
+              is_live: false,
+              estimated_activation_duration_minutes: 30,
+              activation_key: {
+                type: 'segment_id' as const,
+                segment_id: `${dest.platform}_${params.signal_agent_segment_id}`,
+              },
+            };
+          }
+          return {
+            type: 'agent' as const,
+            agent_url: dest.agent_url,
+            is_live: true,
+            activation_key: {
+              type: 'key_value' as const,
+              key: 'audience',
+              value: params.signal_agent_segment_id,
+            },
+            deployed_at: new Date().toISOString(),
+          };
+        });
+        return { deployments, sandbox: true };
+      },
+    },
   });
-
-  server.tool(
-    'get_signals',
-    'Discover audience segments. Supports natural language discovery via signal_spec or exact lookup via signal_ids.',
-    GetSignalsRequestSchema.shape,
-    async args => {
-      const signals = querySegments({
-        signal_spec: args.signal_spec,
-        signal_ids: args.signal_ids,
-        catalog_types: args.filters?.catalog_types,
-        max_results: args.max_results,
-      });
-
-      return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} audience segment(s)`);
-    }
-  );
-
-  return server;
 }
 
 // ---------------------------------------------------------------------------

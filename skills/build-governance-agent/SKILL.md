@@ -81,7 +81,7 @@ Evaluate a media buy against the registered plan. The response needs `check_id`,
 // Approved:
 taskToolResponse({
   check_id: string,              // required — unique check identifier
-  status: 'approved',            // required — 'approved' | 'denied' | 'escalate'
+  status: 'approved',            // required — 'approved' | 'denied' | 'conditions'
   plan_id: string,               // required — echo from request
   explanation: string,           // required — human-readable explanation
   governance_context: string,    // pass to create_media_buy
@@ -338,11 +338,22 @@ Minimal `tsconfig.json`:
 6. Handlers receive `(params, ctx)` — `ctx.store` for state, `ctx.account` for resolved account
 
 ```typescript
+import { randomUUID } from 'node:crypto';
 import { createAdcpServer, serve } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),
+  ttlSeconds: 86400,
+});
 
 serve(() => createAdcpServer({
   name: 'Governance Agent',
   version: '1.0.0',
+  idempotency,
+  // MUST never return undefined — or every mutating request rejects as
+  // SERVICE_UNAVAILABLE. See the Idempotency section for production guidance.
+  resolveSessionKey: () => 'default-principal',
 
   governance: {
     syncPlans: async (params, ctx) => {
@@ -361,8 +372,8 @@ serve(() => createAdcpServer({
       const plan = await ctx.store.get('plan', params.plan_id);
       // ... decision logic ...
       return {
-        check_id: `chk_${Date.now()}`,
-        status: 'approved',
+        check_id: `chk_${randomUUID()}`,
+        status: 'approved' as const,
         plan_id: params.plan_id,
         explanation: 'Within spending authority',
       };
@@ -380,7 +391,28 @@ Route decisions based on the plan state and request parameters:
 - If policy conditions match → approve with conditions
 - If `phase: 'delivery'` → check delivery_metrics for drift
 
-The skill contains everything you need. Do not read additional docs before writing code.
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request — for governance agents that's `create_property_list` / `update_property_list` / `delete_property_list`, `create_content_standards` / `update_content_standards`, `sync_plans`, and `report_plan_outcome` (`check_governance` and the various `get_*` / `list_*` tools are read-only and exempt). Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry so a failed `sync_plans` or outcome report can be retried cleanly. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) — typically the operator / tenant id.
+
+```typescript
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // or pgBackend(pool) for production
+  ttlSeconds: 86400,                // 3600–604800 per spec; throws if out of range
+});
+
+const server = createAdcpServer({
+  idempotency,
+  // MUST never return undefined — or every mutating request rejects as
+  // SERVICE_UNAVAILABLE. A constant works for a demo; for multi-tenant
+  // production, type the account via `createAdcpServer<MyAccount>({...})`
+  // and use `(ctx) => ctx.account?.id`.
+  resolveSessionKey: () => 'default-principal',
+  // ... governance handlers (create/update/delete property lists, content standards, syncPlans, reportPlanOutcome)
+});
+```
 
 ## Validation
 
@@ -404,7 +436,7 @@ npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --js
 | Using `server.tool()` instead of domain groups   | Use `governance: { syncPlans, checkGovernance, ... }` — framework wires schemas and response builders |
 | Using in-memory Maps for state                   | Use `ctx.store.put/get/patch/delete/list` — built-in state persistence                   |
 | `check_governance` missing `check_id`            | Generate a unique ID per check — required field                                          |
-| `check_governance` returns `decision` not `status` | Field is `status`, not `decision`. Values: `approved`, `denied`, `escalate`            |
+| `check_governance` returns `decision` not `status` | Field is `status`, not `decision`. Values: `approved`, `denied`, `conditions`          |
 | Conditions use `description` instead of `reason`   | Condition schema requires `field` and `reason`, not `condition_id` and `description`  |
 | Findings use `code`/`message` instead of proper fields | Finding schema requires `category_id`, `severity`, `explanation`                   |
 | `sync_plans` response missing `version`          | Each plan needs `version: 1` (integer) — required field                                  |

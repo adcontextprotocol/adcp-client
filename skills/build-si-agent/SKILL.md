@@ -163,20 +163,39 @@ Minimal `tsconfig.json`:
 5. Handlers receive `(params, ctx)` — `ctx.store` for state, `ctx.account` for resolved account
 
 ```typescript
+import { randomUUID } from 'node:crypto';
 import { createAdcpServer, serve, adcpError } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),
+  ttlSeconds: 86400,
+});
 
 serve(() => createAdcpServer({
   name: 'SI Agent',
   version: '1.0.0',
+  idempotency,
+  // Principal scope for idempotency. MUST never return undefined. A
+  // constant is fine for a demo; for multi-tenant production, type the
+  // account via `createAdcpServer<MyAccount>({...})` and use
+  // `(ctx) => ctx.account?.id`. The framework additionally auto-scopes
+  // `si_send_message` by `session_id`, so the same key under two
+  // sessions doesn't cross-replay.
+  resolveSessionKey: () => 'default-principal',
 
   sponsoredIntelligence: {
     getOffering: async (params, ctx) => ({
       available: true,
-      offering_token: `tok_${Date.now()}`,
+      offering_token: `tok_${randomUUID()}`,
       ttl_seconds: 300,
     }),
     initiateSession: async (params, ctx) => {
-      const sessionId = `sess_${Date.now()}`;
+      // session_id MUST be high-entropy (≥122 bits) per spec — it's the
+      // scope key for conversational isolation. Never use Date.now() or
+      // predictable counters; a guessable session_id lets one buyer
+      // impersonate another's session.
+      const sessionId = `sess_${randomUUID()}`;
       await ctx.store.put('session', sessionId, { status: 'active' });
       return {
         session_id: sessionId,
@@ -185,10 +204,13 @@ serve(() => createAdcpServer({
     },
     sendMessage: async (params, ctx) => {
       const session = await ctx.store.get('session', params.session_id);
-      if (!session) throw adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
+      // Return the error — the framework echoes returned adcpError
+      // responses verbatim. Thrown errors are caught and converted to
+      // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
+      if (!session) return adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
       return {
         session_id: params.session_id,
-        session_status: 'active',
+        session_status: 'active' as const,
         response: {
           content: 'Sponsored content response',
           content_type: 'text',
@@ -206,7 +228,21 @@ serve(() => createAdcpServer({
 }));
 ```
 
-The skill contains everything you need. Do not read additional docs before writing code.
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request — for SI agents that's `si_initiate_session` and `si_send_message`. `si_terminate_session` is exempt (naturally idempotent via `session_id`; terminating a terminated session is a no-op, and its schema keeps `idempotency_key` optional). `si_get_offering` is read-only.
+
+Idempotency is wired in the example above. What the framework handles for you:
+
+- Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — short test keys like `"key1"` fail length, not idempotency logic.
+- **`si_send_message` is auto-scoped by `session_id`** in addition to the principal. The same `idempotency_key` used across two sessions does NOT cross-replay — each session has its own idempotency namespace. You don't have to implement this; the framework does it.
+- JCS-canonicalized payload hashing; `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leak — error body is code + message only).
+- `IDEMPOTENCY_EXPIRED` past the TTL (±60s clock-skew tolerance).
+- `replayed: true` on `result.structuredContent.replayed` for cache hits; fresh executions omit the field.
+- Auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`.
+- Only successful responses cache — a failed generation re-executes on retry so buyers can safely retry transient errors without burning the key or double-billing.
+
+`ttlSeconds` must be in `[3600, 604800]` — out of range throws at `createIdempotencyStore` construction. Don't pass minutes thinking they're seconds.
 
 ## Validation
 

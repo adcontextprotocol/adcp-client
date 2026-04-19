@@ -8,7 +8,7 @@
 export type ErrorRecovery = 'transient' | 'correctable' | 'terminal';
 
 /**
- * The 26 standard error codes defined in the AdCP specification.
+ * Standard error codes defined in the AdCP specification.
  * Use these for type-safe error handling in agent recovery logic.
  */
 export type StandardErrorCode =
@@ -33,6 +33,8 @@ export type StandardErrorCode =
   | 'BUDGET_EXHAUSTED'
   | 'BUDGET_EXCEEDED'
   | 'CONFLICT'
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'IDEMPOTENCY_EXPIRED'
   | 'INVALID_STATE'
   | 'MEDIA_BUY_NOT_FOUND'
   | 'NOT_CANCELLABLE'
@@ -131,6 +133,16 @@ export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
   },
   CONFLICT: {
     description: 'The request conflicts with the current state of the resource',
+    recovery: 'correctable',
+  },
+  IDEMPOTENCY_CONFLICT: {
+    description:
+      'An earlier request with the same idempotency_key was processed with a different canonical payload. Use a fresh UUID v4 for the new request, or resend the exact original payload to get the cached response.',
+    recovery: 'correctable',
+  },
+  IDEMPOTENCY_EXPIRED: {
+    description:
+      "The idempotency_key is past the seller's replay window. If the prior call succeeded, look up the resource by natural key before retrying; otherwise mint a fresh UUID v4.",
     recovery: 'correctable',
   },
   INVALID_STATE: {

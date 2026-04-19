@@ -5,6 +5,7 @@ import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import { validateAgentUrl } from '../validation';
 import { getCircuitBreaker, unwrapProtocolResponse } from '../utils';
+import type { MutatingRequestInput } from '../utils/idempotency';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -166,14 +167,14 @@ export class Agent {
   /**
    * Official AdCP create_media_buy tool schema
    */
-  async createMediaBuy(params: CreateMediaBuyRequest): Promise<CreateMediaBuyResponse> {
+  async createMediaBuy(params: MutatingRequestInput<CreateMediaBuyRequest>): Promise<CreateMediaBuyResponse> {
     return this.callTool<CreateMediaBuyResponse>('create_media_buy', params);
   }
 
   /**
    * Official AdCP update_media_buy tool schema
    */
-  async updateMediaBuy(params: UpdateMediaBuyRequest): Promise<UpdateMediaBuyResponse> {
+  async updateMediaBuy(params: MutatingRequestInput<UpdateMediaBuyRequest>): Promise<UpdateMediaBuyResponse> {
     return this.callTool<UpdateMediaBuyResponse>('update_media_buy', params);
   }
 
@@ -194,42 +195,42 @@ export class Agent {
   /**
    * Official AdCP provide_performance_feedback tool schema
    */
-  async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest): Promise<ProvidePerformanceFeedbackResponse> {
+  async providePerformanceFeedback(params: MutatingRequestInput<ProvidePerformanceFeedbackRequest>): Promise<ProvidePerformanceFeedbackResponse> {
     return this.callTool<ProvidePerformanceFeedbackResponse>('provide_performance_feedback', params);
   }
 
   /**
    * Official AdCP sync_event_sources tool schema
    */
-  async syncEventSources(params: SyncEventSourcesRequest): Promise<SyncEventSourcesResponse> {
+  async syncEventSources(params: MutatingRequestInput<SyncEventSourcesRequest>): Promise<SyncEventSourcesResponse> {
     return this.callTool<SyncEventSourcesResponse>('sync_event_sources', params);
   }
 
   /**
    * Official AdCP log_event tool schema
    */
-  async logEvent(params: LogEventRequest): Promise<LogEventResponse> {
+  async logEvent(params: MutatingRequestInput<LogEventRequest>): Promise<LogEventResponse> {
     return this.callTool<LogEventResponse>('log_event', params);
   }
 
   /**
    * Official AdCP sync_audiences tool schema
    */
-  async syncAudiences(params: SyncAudiencesRequest): Promise<SyncAudiencesResponse> {
+  async syncAudiences(params: MutatingRequestInput<SyncAudiencesRequest>): Promise<SyncAudiencesResponse> {
     return this.callTool<SyncAudiencesResponse>('sync_audiences', params);
   }
 
   /**
    * Official AdCP sync_catalogs tool schema
    */
-  async syncCatalogs(params: SyncCatalogsRequest): Promise<SyncCatalogsResponse> {
+  async syncCatalogs(params: MutatingRequestInput<SyncCatalogsRequest>): Promise<SyncCatalogsResponse> {
     return this.callTool<SyncCatalogsResponse>('sync_catalogs', params);
   }
 
   /**
    * Official AdCP build_creative tool schema
    */
-  async buildCreative(params: BuildCreativeRequest): Promise<BuildCreativeResponse> {
+  async buildCreative(params: MutatingRequestInput<BuildCreativeRequest>): Promise<BuildCreativeResponse> {
     return this.callTool<BuildCreativeResponse>('build_creative', params);
   }
 
@@ -257,7 +258,7 @@ export class Agent {
   /**
    * Official AdCP sync_creatives tool schema
    */
-  async syncCreatives(params: SyncCreativesRequest): Promise<SyncCreativesResponse> {
+  async syncCreatives(params: MutatingRequestInput<SyncCreativesRequest>): Promise<SyncCreativesResponse> {
     return this.callTool<SyncCreativesResponse>('sync_creatives', params);
   }
 
@@ -271,21 +272,21 @@ export class Agent {
   /**
    * Official AdCP activate_signal tool schema
    */
-  async activateSignal(params: ActivateSignalRequest): Promise<ActivateSignalResponse> {
+  async activateSignal(params: MutatingRequestInput<ActivateSignalRequest>): Promise<ActivateSignalResponse> {
     return this.callTool<ActivateSignalResponse>('activate_signal', params);
   }
 
   /**
    * Official AdCP create_property_list tool schema
    */
-  async createPropertyList(params: CreatePropertyListRequest): Promise<CreatePropertyListResponse> {
+  async createPropertyList(params: MutatingRequestInput<CreatePropertyListRequest>): Promise<CreatePropertyListResponse> {
     return this.callTool<CreatePropertyListResponse>('create_property_list', params);
   }
 
   /**
    * Official AdCP update_property_list tool schema
    */
-  async updatePropertyList(params: UpdatePropertyListRequest): Promise<UpdatePropertyListResponse> {
+  async updatePropertyList(params: MutatingRequestInput<UpdatePropertyListRequest>): Promise<UpdatePropertyListResponse> {
     return this.callTool<UpdatePropertyListResponse>('update_property_list', params);
   }
 
@@ -306,21 +307,21 @@ export class Agent {
   /**
    * Official AdCP delete_property_list tool schema
    */
-  async deletePropertyList(params: DeletePropertyListRequest): Promise<DeletePropertyListResponse> {
+  async deletePropertyList(params: MutatingRequestInput<DeletePropertyListRequest>): Promise<DeletePropertyListResponse> {
     return this.callTool<DeletePropertyListResponse>('delete_property_list', params);
   }
 
   /**
    * Official AdCP create_collection_list tool schema
    */
-  async createCollectionList(params: CreateCollectionListRequest): Promise<CreateCollectionListResponse> {
+  async createCollectionList(params: MutatingRequestInput<CreateCollectionListRequest>): Promise<CreateCollectionListResponse> {
     return this.callTool<CreateCollectionListResponse>('create_collection_list', params);
   }
 
   /**
    * Official AdCP update_collection_list tool schema
    */
-  async updateCollectionList(params: UpdateCollectionListRequest): Promise<UpdateCollectionListResponse> {
+  async updateCollectionList(params: MutatingRequestInput<UpdateCollectionListRequest>): Promise<UpdateCollectionListResponse> {
     return this.callTool<UpdateCollectionListResponse>('update_collection_list', params);
   }
 
@@ -341,7 +342,7 @@ export class Agent {
   /**
    * Official AdCP delete_collection_list tool schema
    */
-  async deleteCollectionList(params: DeleteCollectionListRequest): Promise<DeleteCollectionListResponse> {
+  async deleteCollectionList(params: MutatingRequestInput<DeleteCollectionListRequest>): Promise<DeleteCollectionListResponse> {
     return this.callTool<DeleteCollectionListResponse>('delete_collection_list', params);
   }
 
@@ -362,21 +363,21 @@ export class Agent {
   /**
    * Official AdCP create_content_standards tool schema
    */
-  async createContentStandards(params: CreateContentStandardsRequest): Promise<CreateContentStandardsResponse> {
+  async createContentStandards(params: MutatingRequestInput<CreateContentStandardsRequest>): Promise<CreateContentStandardsResponse> {
     return this.callTool<CreateContentStandardsResponse>('create_content_standards', params);
   }
 
   /**
    * Official AdCP update_content_standards tool schema
    */
-  async updateContentStandards(params: UpdateContentStandardsRequest): Promise<UpdateContentStandardsResponse> {
+  async updateContentStandards(params: MutatingRequestInput<UpdateContentStandardsRequest>): Promise<UpdateContentStandardsResponse> {
     return this.callTool<UpdateContentStandardsResponse>('update_content_standards', params);
   }
 
   /**
    * Official AdCP calibrate_content tool schema
    */
-  async calibrateContent(params: CalibrateContentRequest): Promise<CalibrateContentResponse> {
+  async calibrateContent(params: MutatingRequestInput<CalibrateContentRequest>): Promise<CalibrateContentResponse> {
     return this.callTool<CalibrateContentResponse>('calibrate_content', params);
   }
 
@@ -404,14 +405,14 @@ export class Agent {
   /**
    * Official AdCP sync_plans tool schema
    */
-  async syncPlans(params: SyncPlansRequest): Promise<SyncPlansResponse> {
+  async syncPlans(params: MutatingRequestInput<SyncPlansRequest>): Promise<SyncPlansResponse> {
     return this.callTool<SyncPlansResponse>('sync_plans', params);
   }
 
   /**
    * Official AdCP report_plan_outcome tool schema
    */
-  async reportPlanOutcome(params: ReportPlanOutcomeRequest): Promise<ReportPlanOutcomeResponse> {
+  async reportPlanOutcome(params: MutatingRequestInput<ReportPlanOutcomeRequest>): Promise<ReportPlanOutcomeResponse> {
     return this.callTool<ReportPlanOutcomeResponse>('report_plan_outcome', params);
   }
 
@@ -439,14 +440,14 @@ export class Agent {
   /**
    * Official AdCP si_initiate_session tool schema
    */
-  async siInitiateSession(params: SIInitiateSessionRequest): Promise<SIInitiateSessionResponse> {
+  async siInitiateSession(params: MutatingRequestInput<SIInitiateSessionRequest>): Promise<SIInitiateSessionResponse> {
     return this.callTool<SIInitiateSessionResponse>('si_initiate_session', params);
   }
 
   /**
    * Official AdCP si_send_message tool schema
    */
-  async siSendMessage(params: SISendMessageRequest): Promise<SISendMessageResponse> {
+  async siSendMessage(params: MutatingRequestInput<SISendMessageRequest>): Promise<SISendMessageResponse> {
     return this.callTool<SISendMessageResponse>('si_send_message', params);
   }
 
@@ -474,21 +475,21 @@ export class Agent {
   /**
    * Official AdCP sync_accounts tool schema
    */
-  async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse> {
+  async syncAccounts(params: MutatingRequestInput<SyncAccountsRequest>): Promise<SyncAccountsResponse> {
     return this.callTool<SyncAccountsResponse>('sync_accounts', params);
   }
 
   /**
    * Official AdCP sync_governance tool schema
    */
-  async syncGovernance(params: SyncGovernanceRequest): Promise<SyncGovernanceResponse> {
+  async syncGovernance(params: MutatingRequestInput<SyncGovernanceRequest>): Promise<SyncGovernanceResponse> {
     return this.callTool<SyncGovernanceResponse>('sync_governance', params);
   }
 
   /**
    * Official AdCP report_usage tool schema
    */
-  async reportUsage(params: ReportUsageRequest): Promise<ReportUsageResponse> {
+  async reportUsage(params: MutatingRequestInput<ReportUsageRequest>): Promise<ReportUsageResponse> {
     return this.callTool<ReportUsageResponse>('report_usage', params);
   }
 
@@ -554,42 +555,42 @@ export class AgentCollection {
   /**
    * Official AdCP provide_performance_feedback tool schema (across multiple agents)
    */
-  async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest): Promise<ProvidePerformanceFeedbackResponse[]> {
+  async providePerformanceFeedback(params: MutatingRequestInput<ProvidePerformanceFeedbackRequest>): Promise<ProvidePerformanceFeedbackResponse[]> {
     return this.callToolOnAll<ProvidePerformanceFeedbackResponse>('provide_performance_feedback', params);
   }
 
   /**
    * Official AdCP sync_event_sources tool schema (across multiple agents)
    */
-  async syncEventSources(params: SyncEventSourcesRequest): Promise<SyncEventSourcesResponse[]> {
+  async syncEventSources(params: MutatingRequestInput<SyncEventSourcesRequest>): Promise<SyncEventSourcesResponse[]> {
     return this.callToolOnAll<SyncEventSourcesResponse>('sync_event_sources', params);
   }
 
   /**
    * Official AdCP log_event tool schema (across multiple agents)
    */
-  async logEvent(params: LogEventRequest): Promise<LogEventResponse[]> {
+  async logEvent(params: MutatingRequestInput<LogEventRequest>): Promise<LogEventResponse[]> {
     return this.callToolOnAll<LogEventResponse>('log_event', params);
   }
 
   /**
    * Official AdCP sync_audiences tool schema (across multiple agents)
    */
-  async syncAudiences(params: SyncAudiencesRequest): Promise<SyncAudiencesResponse[]> {
+  async syncAudiences(params: MutatingRequestInput<SyncAudiencesRequest>): Promise<SyncAudiencesResponse[]> {
     return this.callToolOnAll<SyncAudiencesResponse>('sync_audiences', params);
   }
 
   /**
    * Official AdCP sync_catalogs tool schema (across multiple agents)
    */
-  async syncCatalogs(params: SyncCatalogsRequest): Promise<SyncCatalogsResponse[]> {
+  async syncCatalogs(params: MutatingRequestInput<SyncCatalogsRequest>): Promise<SyncCatalogsResponse[]> {
     return this.callToolOnAll<SyncCatalogsResponse>('sync_catalogs', params);
   }
 
   /**
    * Official AdCP build_creative tool schema (across multiple agents)
    */
-  async buildCreative(params: BuildCreativeRequest): Promise<BuildCreativeResponse[]> {
+  async buildCreative(params: MutatingRequestInput<BuildCreativeRequest>): Promise<BuildCreativeResponse[]> {
     return this.callToolOnAll<BuildCreativeResponse>('build_creative', params);
   }
 
@@ -617,7 +618,7 @@ export class AgentCollection {
   /**
    * Official AdCP sync_creatives tool schema (across multiple agents)
    */
-  async syncCreatives(params: SyncCreativesRequest): Promise<SyncCreativesResponse[]> {
+  async syncCreatives(params: MutatingRequestInput<SyncCreativesRequest>): Promise<SyncCreativesResponse[]> {
     return this.callToolOnAll<SyncCreativesResponse>('sync_creatives', params);
   }
 
@@ -631,7 +632,7 @@ export class AgentCollection {
   /**
    * Official AdCP activate_signal tool schema (across multiple agents)
    */
-  async activateSignal(params: ActivateSignalRequest): Promise<ActivateSignalResponse[]> {
+  async activateSignal(params: MutatingRequestInput<ActivateSignalRequest>): Promise<ActivateSignalResponse[]> {
     return this.callToolOnAll<ActivateSignalResponse>('activate_signal', params);
   }
 
@@ -652,14 +653,14 @@ export class AgentCollection {
   /**
    * Official AdCP create_collection_list tool schema (across multiple agents)
    */
-  async createCollectionList(params: CreateCollectionListRequest): Promise<CreateCollectionListResponse[]> {
+  async createCollectionList(params: MutatingRequestInput<CreateCollectionListRequest>): Promise<CreateCollectionListResponse[]> {
     return this.callToolOnAll<CreateCollectionListResponse>('create_collection_list', params);
   }
 
   /**
    * Official AdCP update_collection_list tool schema (across multiple agents)
    */
-  async updateCollectionList(params: UpdateCollectionListRequest): Promise<UpdateCollectionListResponse[]> {
+  async updateCollectionList(params: MutatingRequestInput<UpdateCollectionListRequest>): Promise<UpdateCollectionListResponse[]> {
     return this.callToolOnAll<UpdateCollectionListResponse>('update_collection_list', params);
   }
 
@@ -680,7 +681,7 @@ export class AgentCollection {
   /**
    * Official AdCP delete_collection_list tool schema (across multiple agents)
    */
-  async deleteCollectionList(params: DeleteCollectionListRequest): Promise<DeleteCollectionListResponse[]> {
+  async deleteCollectionList(params: MutatingRequestInput<DeleteCollectionListRequest>): Promise<DeleteCollectionListResponse[]> {
     return this.callToolOnAll<DeleteCollectionListResponse>('delete_collection_list', params);
   }
 
@@ -701,7 +702,7 @@ export class AgentCollection {
   /**
    * Official AdCP calibrate_content tool schema (across multiple agents)
    */
-  async calibrateContent(params: CalibrateContentRequest): Promise<CalibrateContentResponse[]> {
+  async calibrateContent(params: MutatingRequestInput<CalibrateContentRequest>): Promise<CalibrateContentResponse[]> {
     return this.callToolOnAll<CalibrateContentResponse>('calibrate_content', params);
   }
 
@@ -729,14 +730,14 @@ export class AgentCollection {
   /**
    * Official AdCP sync_plans tool schema (across multiple agents)
    */
-  async syncPlans(params: SyncPlansRequest): Promise<SyncPlansResponse[]> {
+  async syncPlans(params: MutatingRequestInput<SyncPlansRequest>): Promise<SyncPlansResponse[]> {
     return this.callToolOnAll<SyncPlansResponse>('sync_plans', params);
   }
 
   /**
    * Official AdCP report_plan_outcome tool schema (across multiple agents)
    */
-  async reportPlanOutcome(params: ReportPlanOutcomeRequest): Promise<ReportPlanOutcomeResponse[]> {
+  async reportPlanOutcome(params: MutatingRequestInput<ReportPlanOutcomeRequest>): Promise<ReportPlanOutcomeResponse[]> {
     return this.callToolOnAll<ReportPlanOutcomeResponse>('report_plan_outcome', params);
   }
 
@@ -764,7 +765,7 @@ export class AgentCollection {
   /**
    * Official AdCP si_send_message tool schema (across multiple agents)
    */
-  async siSendMessage(params: SISendMessageRequest): Promise<SISendMessageResponse[]> {
+  async siSendMessage(params: MutatingRequestInput<SISendMessageRequest>): Promise<SISendMessageResponse[]> {
     return this.callToolOnAll<SISendMessageResponse>('si_send_message', params);
   }
 
@@ -785,21 +786,21 @@ export class AgentCollection {
   /**
    * Official AdCP sync_accounts tool schema (across multiple agents)
    */
-  async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse[]> {
+  async syncAccounts(params: MutatingRequestInput<SyncAccountsRequest>): Promise<SyncAccountsResponse[]> {
     return this.callToolOnAll<SyncAccountsResponse>('sync_accounts', params);
   }
 
   /**
    * Official AdCP sync_governance tool schema (across multiple agents)
    */
-  async syncGovernance(params: SyncGovernanceRequest): Promise<SyncGovernanceResponse[]> {
+  async syncGovernance(params: MutatingRequestInput<SyncGovernanceRequest>): Promise<SyncGovernanceResponse[]> {
     return this.callToolOnAll<SyncGovernanceResponse>('sync_governance', params);
   }
 
   /**
    * Official AdCP report_usage tool schema (across multiple agents)
    */
-  async reportUsage(params: ReportUsageRequest): Promise<ReportUsageResponse[]> {
+  async reportUsage(params: MutatingRequestInput<ReportUsageRequest>): Promise<ReportUsageResponse[]> {
     return this.callToolOnAll<ReportUsageResponse>('report_usage', params);
   }
 

@@ -322,6 +322,25 @@ Use `ctx.store` to persist synced creatives. The framework provides `InMemorySta
 
 The `sync_creatives` handler adds/updates entries via `ctx.store.put('creatives', id, data)`. The `list_creatives` handler queries via `ctx.store.list('creatives')` (include `created_date` and `updated_date` in each creative). The `preview_creative` handler previews the `creative_manifest` sent in the request (no library lookup needed). The `build_creative` handler finds a synced creative by `target_format_id` (matching the format), then builds a serving tag from it.
 
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request — for creative agents that's `sync_creatives`, `build_creative`, and `calibrate_content`. Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — a failed render or generation re-executes on retry so buyers can safely retry transient errors. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`).
+
+```typescript
+import { createIdempotencyStore, memoryBackend, pgBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // or pgBackend(pool) for production
+  ttlSeconds: 86400,                // 1h–7d, clamped to spec bounds
+});
+
+const server = createAdcpServer({
+  idempotency,
+  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
+  // ... creative.syncCreatives, buildCreative, calibrateContent
+});
+```
+
 ## Validation
 
 **After writing the agent, validate it. Fix failures. Repeat.**

@@ -29,6 +29,7 @@ import type {
   ActivateSignalRequest,
   ActivateSignalResponse,
 } from '../types/tools.generated';
+import type { MutatingRequestInput } from '../utils/idempotency';
 
 /**
  * Collection of agent clients for parallel operations across multiple AdCP agents.
@@ -121,7 +122,7 @@ export class AgentCollection {
    * Note: This might not make sense for all use cases, but provided for completeness
    */
   async createMediaBuy(
-    params: CreateMediaBuyRequest,
+    params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>[]> {
@@ -132,7 +133,7 @@ export class AgentCollection {
    * Execute updateMediaBuy on all agents in parallel
    */
   async updateMediaBuy(
-    params: UpdateMediaBuyRequest,
+    params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>[]> {
@@ -143,7 +144,7 @@ export class AgentCollection {
    * Execute syncCreatives on all agents in parallel
    */
   async syncCreatives(
-    params: SyncCreativesRequest,
+    params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>[]> {
@@ -176,7 +177,7 @@ export class AgentCollection {
    * Execute providePerformanceFeedback on all agents in parallel
    */
   async providePerformanceFeedback(
-    params: ProvidePerformanceFeedbackRequest,
+    params: MutatingRequestInput<ProvidePerformanceFeedbackRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>[]> {
@@ -198,7 +199,7 @@ export class AgentCollection {
    * Execute activateSignal on all agents in parallel
    */
   async activateSignal(
-    params: ActivateSignalRequest,
+    params: MutatingRequestInput<ActivateSignalRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>[]> {

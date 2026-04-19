@@ -32,6 +32,7 @@ import type {
 } from './GovernanceTypes';
 import { toolRequiresGovernance, parseCheckResponse } from './GovernanceTypes';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import { generateIdempotencyKey } from '../utils/idempotency';
 
 /**
  * Typed debug log entries for governance operations.
@@ -80,11 +81,55 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
   current[parts[parts.length - 1]!] = value;
 }
 
+/**
+ * Upper bound on cached `(checkId, outcome)` idempotency keys. Chosen to
+ * cover a full day of outcome reporting at ~100/minute without unbounded
+ * growth for long-lived buyers. Each entry is ~100 bytes, so the cap
+ * caps memory at ~1MB.
+ */
+const OUTCOME_KEY_CACHE_MAX = 10_000;
+
 export class GovernanceMiddleware {
+  /**
+   * Cache of idempotency keys per `(checkId, outcome)` tuple. The
+   * governance agent dedups on this tuple already, but the SDK keeps its
+   * own cache so retries of `reportOutcome` with the same logical intent
+   * reuse the same idempotency_key — re-generating on each call defeats
+   * the whole retry-safety point of the envelope. Bounded LRU: once full,
+   * inserting a new key evicts the oldest. Retries of evicted
+   * (checkId, outcome) tuples will mint a fresh key — still functional
+   * because the governance agent's own dedup takes over — but won't get
+   * the SDK-level retry guarantee.
+   */
+  private outcomeKeys = new Map<string, string>();
+
   constructor(
     private governanceConfig: GovernanceConfig,
     private onActivity?: (activity: Activity) => void | Promise<void>
   ) {}
+
+  /**
+   * Get or mint the idempotency key for a `(checkId, outcome)` tuple.
+   * Uses the Map's insertion-order semantics for LRU eviction.
+   */
+  private getOrMintOutcomeKey(checkId: string, outcome: OutcomeType): string {
+    const tupleKey = `${checkId}\u001f${outcome}`;
+    const cached = this.outcomeKeys.get(tupleKey);
+    if (cached !== undefined) {
+      // Touch: move to end so it becomes most-recently-used.
+      this.outcomeKeys.delete(tupleKey);
+      this.outcomeKeys.set(tupleKey, cached);
+      return cached;
+    }
+    const fresh = generateIdempotencyKey();
+    if (this.outcomeKeys.size >= OUTCOME_KEY_CACHE_MAX) {
+      // Evict oldest (first inserted) entry.
+      const oldest = this.outcomeKeys.keys().next().value;
+      if (oldest !== undefined) this.outcomeKeys.delete(oldest);
+    }
+    this.outcomeKeys.set(tupleKey, fresh);
+    return fresh;
+  }
 
   /**
    * Check whether this tool requires a governance check.
@@ -239,12 +284,17 @@ export class GovernanceMiddleware {
 
     const gc = governanceContext ?? config.governanceContext ?? '';
 
+    // Reuse the same idempotency_key for retries of the same
+    // (checkId, outcome) intent so the governance agent treats them as
+    // one logical outcome report rather than distinct submissions.
+    const idempotencyKey = this.getOrMintOutcomeKey(checkId, outcome);
+
     const request: ReportPlanOutcomeRequest = {
+      idempotency_key: idempotencyKey,
       plan_id: config.planId,
       check_id: checkId,
       outcome,
       governance_context: gc,
-      idempotency_key: randomUUID(),
     };
 
     if (outcome === 'completed' && sellerResponse) {

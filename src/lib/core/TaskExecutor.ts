@@ -11,6 +11,7 @@ import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
+import { generateIdempotencyKey, isMutatingTask } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import type {
   Message,
@@ -19,6 +20,7 @@ import type {
   ConversationContext,
   TaskOptions,
   TaskResult,
+  TaskResultMetadata,
   TaskState,
   TaskStatus,
   TaskInfo,
@@ -59,6 +61,20 @@ export class InputRequiredError extends Error {
     super(`Server requires input but no handler provided. Question: ${question}`);
     this.name = 'InputRequiredError';
   }
+}
+
+/**
+ * Return the idempotency_key this task should use: the caller's value if
+ * present, otherwise a fresh UUID v4 for mutating tasks, otherwise undefined.
+ */
+function resolveIdempotencyKey(taskName: string, params: any): string | undefined {
+  const callerSupplied =
+    params && typeof params === 'object' && typeof params.idempotency_key === 'string'
+      ? params.idempotency_key
+      : undefined;
+  if (callerSupplied) return callerSupplied;
+  if (isMutatingTask(taskName)) return generateIdempotencyKey();
+  return undefined;
 }
 
 /**
@@ -144,6 +160,42 @@ export class TaskExecutor {
   /**
    * Generate webhook URL for protocol-level webhook support
    */
+  /**
+   * Build TaskResultMetadata, including the idempotency fields. The key is
+   * pulled from the tracked task state so every result reports the key that
+   * was actually sent (auto-generated or caller-supplied); `replayed` is
+   * extracted from the response envelope when a response is available.
+   */
+  private buildMetadata(args: {
+    taskId: string;
+    taskName: string;
+    agent: AgentConfig | { id: string; name: string; protocol: 'mcp' | 'a2a' };
+    startTime?: number;
+    responseTimeMs?: number;
+    status: TaskStatus;
+    clarificationRounds?: number;
+    response?: any;
+    inputRequest?: InputRequest;
+  }): TaskResultMetadata {
+    const meta: TaskResultMetadata = {
+      taskId: args.taskId,
+      taskName: args.taskName,
+      agent: { id: args.agent.id, name: args.agent.name, protocol: args.agent.protocol },
+      responseTimeMs: args.responseTimeMs ?? (args.startTime !== undefined ? Date.now() - args.startTime : 0),
+      timestamp: new Date().toISOString(),
+      clarificationRounds: args.clarificationRounds ?? 0,
+      status: args.status,
+    };
+    if (args.inputRequest) meta.inputRequest = args.inputRequest;
+    const key = this.activeTasks.get(args.taskId)?.idempotencyKey;
+    if (key) meta.idempotency_key = key;
+    if (args.response !== undefined) {
+      const replayed = this.responseParser.getReplayed(args.response);
+      if (replayed !== undefined) meta.replayed = replayed;
+    }
+    return meta;
+  }
+
   private generateWebhookUrl(taskName: string, operationId: string): string | undefined {
     if (!this.config.webhookUrlTemplate || !this.config.agentId) {
       return undefined;
@@ -172,6 +224,14 @@ export class TaskExecutor {
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
 
+    // Auto-generate idempotency_key for mutating tasks when the caller didn't
+    // supply one. The key lives on TaskState so internal retries reuse it —
+    // re-generating on retry defeats the whole point of the envelope.
+    const idempotencyKey = resolveIdempotencyKey(taskName, params);
+    if (idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
+      params = { ...params, idempotency_key: idempotencyKey };
+    }
+
     // Register task in active tasks
     const taskState: TaskState = {
       taskId,
@@ -184,6 +244,7 @@ export class TaskExecutor {
       maxAttempts: options.maxClarifications || this.config.defaultMaxClarifications || 3,
       options,
       agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+      idempotencyKey,
     };
     this.activeTasks.set(taskId, taskState);
 
@@ -383,15 +444,7 @@ export class TaskExecutor {
       status: 'governance-denied',
       error: govResult.explanation || 'Governance governance-denied',
       governance: govResult,
-      metadata: {
-        taskId,
-        taskName,
-        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-        responseTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        clarificationRounds: 0,
-        status: 'governance-denied',
-      },
+      metadata: this.buildMetadata({ taskId, taskName, agent, startTime, status: 'governance-denied' }),
       conversation: [],
       debug_logs: debugLogs,
     };
@@ -435,15 +488,14 @@ export class TaskExecutor {
             success: true as const,
             status: 'completed' as const,
             data: completedData,
-            metadata: {
+            metadata: this.buildMetadata({
               taskId,
               taskName,
-              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-              responseTimeMs: Date.now() - startTime,
-              timestamp: new Date().toISOString(),
-              clarificationRounds: 0,
-              status: 'completed' as const,
-            },
+              agent,
+              startTime,
+              status: 'completed',
+              response,
+            }),
             conversation: messages,
             debug_logs: debugLogs,
           };
@@ -455,15 +507,14 @@ export class TaskExecutor {
           error: finalError ?? 'Unknown error',
           adcpError: extractAdcpErrorInfo(completedData),
           correlationId: extractCorrelationId(completedData),
-          metadata: {
+          metadata: this.buildMetadata({
             taskId,
             taskName,
-            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-            responseTimeMs: Date.now() - startTime,
-            timestamp: new Date().toISOString(),
-            clarificationRounds: 0,
-            status: 'failed' as const,
-          },
+            agent,
+            startTime,
+            status: 'failed',
+            response,
+          }),
           conversation: messages,
           debug_logs: debugLogs,
         };
@@ -518,15 +569,14 @@ export class TaskExecutor {
           error: typeof failedError === 'string' ? failedError : `Task ${status}`,
           adcpError: adcpErrorInfo,
           correlationId: extractCorrelationId(failedData),
-          metadata: {
+          metadata: this.buildMetadata({
             taskId,
             taskName,
-            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-            responseTimeMs: Date.now() - startTime,
-            timestamp: new Date().toISOString(),
-            clarificationRounds: 0,
-            status: 'failed' as const,
-          },
+            agent,
+            startTime,
+            status: 'failed',
+            response,
+          }),
           conversation: messages,
           debug_logs: debugLogs,
         };
@@ -557,15 +607,14 @@ export class TaskExecutor {
               success: true as const,
               status: 'completed' as const,
               data: defaultData,
-              metadata: {
+              metadata: this.buildMetadata({
                 taskId,
                 taskName,
-                agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-                responseTimeMs: Date.now() - startTime,
-                timestamp: new Date().toISOString(),
-                clarificationRounds: 0,
-                status: 'completed' as const,
-              },
+                agent,
+                startTime,
+                status: 'completed',
+                response,
+              }),
               conversation: messages,
               debug_logs: debugLogs,
             };
@@ -577,15 +626,14 @@ export class TaskExecutor {
             error: defaultFinalError!,
             adcpError: extractAdcpErrorInfo(defaultData),
             correlationId: extractCorrelationId(defaultData),
-            metadata: {
+            metadata: this.buildMetadata({
               taskId,
               taskName,
-              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-              responseTimeMs: Date.now() - startTime,
-              timestamp: new Date().toISOString(),
-              clarificationRounds: 0,
-              status: 'failed' as const,
-            },
+              agent,
+              startTime,
+              status: 'failed',
+              response,
+            }),
             conversation: messages,
             debug_logs: debugLogs,
           };
@@ -742,15 +790,14 @@ export class TaskExecutor {
       success: true, // The task is progressing, not failed
       status: 'working',
       data: partialData,
-      metadata: {
+      metadata: this.buildMetadata({
         taskId,
         taskName,
-        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-        responseTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        clarificationRounds: 0,
+        agent,
+        startTime,
         status: 'working',
-      },
+        response: initialResponse,
+      }),
       conversation: messages,
       debug_logs: debugLogs,
     };
@@ -792,15 +839,14 @@ export class TaskExecutor {
       status: 'submitted',
       submitted,
       data: partialData,
-      metadata: {
+      metadata: this.buildMetadata({
         taskId,
         taskName,
-        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-        responseTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        clarificationRounds: 0,
+        agent,
+        startTime,
         status: 'submitted',
-      },
+        response,
+      }),
       conversation: messages,
       debug_logs: debugLogs,
     };
@@ -838,16 +884,15 @@ export class TaskExecutor {
         success: true, // The task is progressing, not failed
         status: 'input-required',
         data: partialData,
-        metadata: {
+        metadata: this.buildMetadata({
           taskId,
           taskName,
-          agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-          responseTimeMs: Date.now() - startTime,
-          timestamp: new Date().toISOString(),
-          clarificationRounds: 0,
+          agent,
+          startTime,
           status: 'input-required',
-          inputRequest, // Include the input request details for the caller
-        },
+          response,
+          inputRequest,
+        }),
         conversation: messages,
         debug_logs: debugLogs,
       };
@@ -927,15 +972,14 @@ export class TaskExecutor {
         success: true, // The task is progressing, not failed
         status: 'deferred',
         deferred,
-        metadata: {
+        metadata: this.buildMetadata({
           taskId,
           taskName,
-          agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-          responseTimeMs: Date.now() - startTime,
-          timestamp: new Date().toISOString(),
-          clarificationRounds: 1,
+          agent,
+          startTime,
           status: 'deferred',
-        },
+          clarificationRounds: 1,
+        }),
         conversation: messages,
         debug_logs: debugLogs,
       };
@@ -1032,15 +1076,14 @@ export class TaskExecutor {
             success: true as const,
             status: 'completed' as const,
             data: status.result,
-            metadata: {
+            metadata: this.buildMetadata({
               taskId,
               taskName: status.taskType,
-              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              agent,
               responseTimeMs: Date.now() - status.createdAt,
-              timestamp: new Date().toISOString(),
-              clarificationRounds: 0,
-              status: 'completed' as const,
-            },
+              status: 'completed',
+              response: status.result,
+            }),
           };
         }
         return {
@@ -1050,15 +1093,14 @@ export class TaskExecutor {
           error: this.extractOperationError(status.result),
           adcpError: extractAdcpErrorInfo(status.result),
           correlationId: extractCorrelationId(status.result),
-          metadata: {
+          metadata: this.buildMetadata({
             taskId,
             taskName: status.taskType,
-            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            agent,
             responseTimeMs: Date.now() - status.createdAt,
-            timestamp: new Date().toISOString(),
-            clarificationRounds: 0,
-            status: 'failed' as const,
-          },
+            status: 'failed',
+            response: status.result,
+          }),
         };
       }
 
@@ -1070,15 +1112,14 @@ export class TaskExecutor {
           error: status.error || `Task ${status.status}`,
           adcpError: extractAdcpErrorInfo(status.result),
           correlationId: extractCorrelationId(status.result),
-          metadata: {
+          metadata: this.buildMetadata({
             taskId,
             taskName: status.taskType,
-            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            agent,
             responseTimeMs: Date.now() - status.createdAt,
-            timestamp: new Date().toISOString(),
-            clarificationRounds: 0,
-            status: 'failed' as const,
-          },
+            status: 'failed',
+            response: status.result,
+          }),
         };
       }
 
@@ -1204,15 +1245,13 @@ export class TaskExecutor {
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
       correlationId,
-      metadata: {
+      metadata: this.buildMetadata({
         taskId,
         taskName: 'unknown',
-        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-        responseTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        clarificationRounds: 0,
-        status: 'failed' as const,
-      },
+        agent,
+        startTime,
+        status: 'failed',
+      }),
       debug_logs: debugLogs,
     };
   }
