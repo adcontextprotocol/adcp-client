@@ -106,3 +106,53 @@ function verifyWebhook(payload: string, signature: string, secret: string): bool
   return expected === signature;
 }
 ```
+
+## Deduplication
+
+AdCP webhooks use at-least-once delivery — publishers retry until they see a 2xx response, so the same event can arrive more than once. Every MCP webhook payload carries a required `idempotency_key` the publisher keeps stable across retries; receivers dedupe by it.
+
+Wire the client's `webhookDedup` on the `AsyncHandler` to get this for free:
+
+```typescript
+import { AdCPClient } from '@adcp/client';
+import { memoryBackend } from '@adcp/client/server';
+
+const client = new AdCPClient(agents, {
+  webhookUrlTemplate: 'https://your-app.com/adcp/webhook/{task_type}/{agent_id}/{operation_id}',
+  webhookSecret: process.env.WEBHOOK_SECRET,
+  handlers: {
+    webhookDedup: { backend: memoryBackend(), ttlSeconds: 86_400 }, // 24h
+    onCreateMediaBuyStatusChange: async (result, metadata) => {
+      // First delivery for this idempotency_key runs here; retries are dropped.
+    },
+  },
+});
+```
+
+Scope is per-agent so keys from different senders never collide. Swap `memoryBackend()` for `pgBackend(...)` when running multiple replicas — the same backend can be shared with the request-side idempotency store, the scoped key is namespaced under a reserved `adcp\u001fwebhook\u001fv1\u001f…` prefix so there is no collision risk.
+
+### Activity stream emits both events
+
+On a duplicate the typed handler (e.g. `onCreateMediaBuyStatusChange`) is NOT called, but the `onActivity` stream DOES fire — once as `webhook_received` for the first delivery and once as `webhook_duplicate` for each retry. If you wire side effects into `onActivity`, branch on `activity.type` so metrics and logs don't double-count:
+
+```typescript
+onActivity: (activity) => {
+  if (activity.type === 'webhook_duplicate') {
+    metrics.increment('webhook.duplicate', { agent: activity.agent_id });
+    return;
+  }
+  if (activity.type === 'webhook_received') {
+    metrics.increment('webhook.received', { agent: activity.agent_id });
+  }
+},
+```
+
+The `webhook_duplicate` event intentionally omits `payload` (the original `webhook_received` already carries it) but includes `idempotency_key` on both events for correlation.
+
+### Migrating from ad-hoc dedup
+
+If you previously tracked processed webhooks by `(task_id, status, timestamp)`, replace that with `webhookDedup`. The tuple is fragile — two status transitions sharing a millisecond collide, and governance/artifact webhooks have no `task_id` to key on. `idempotency_key` is the canonical dedup field per AdCP 3.0. Running both layers in parallel is a silent footgun: the ad-hoc tuple can drop events that the key-based layer would have dispatched correctly.
+
+### A2A and missing keys
+
+A2A webhooks do not carry `idempotency_key` — the field is an MCP envelope addition. With `webhookDedup` configured, A2A deliveries dispatch without dedup and no warning is logged (the absence is expected). MCP senders that omit the field, or emit a value that fails the spec regex `^[A-Za-z0-9_.:-]{16,255}$`, fall back to dispatch-without-dedup and log a `console.warn` so you notice non-conforming publishers.

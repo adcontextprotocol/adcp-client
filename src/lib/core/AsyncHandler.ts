@@ -3,6 +3,7 @@
  * Provides type-safe callbacks for each AdCP tool completion
  */
 
+import type { IdempotencyBackend } from '../server/idempotency/store';
 import type {
   ListCreativeFormatsResponse,
   ListCreativesResponse,
@@ -81,6 +82,18 @@ export interface WebhookMetadata {
   timestamp: string;
   /** raw HTTP payload */
   rawHTTPPayload?: any;
+  /**
+   * Wire protocol that delivered this webhook. Useful for handler code
+   * that needs to treat MCP and A2A transports differently (e.g.,
+   * `idempotency_key` is only present on MCP payloads).
+   */
+  protocol?: 'mcp' | 'a2a';
+  /**
+   * Sender-generated key stable across retries of the same webhook event
+   * (MCP envelope only — A2A webhooks do not carry this field). Use this
+   * as the canonical dedup key; see `AsyncHandlerConfig.webhookDedup`.
+   */
+  idempotency_key?: string;
 }
 
 /**
@@ -167,6 +180,7 @@ export interface Activity {
     | 'protocol_response'
     | 'status_change'
     | 'webhook_received'
+    | 'webhook_duplicate'
     | 'governance_check'
     | 'governance_outcome';
   operation_id: string;
@@ -175,7 +189,20 @@ export interface Activity {
   task_id?: string;
   task_type: string;
   status?: string;
+  /**
+   * Full AdCP response payload. Populated on `webhook_received` and
+   * protocol/status events. INTENTIONALLY omitted on `webhook_duplicate`
+   * to avoid re-logging potentially-sensitive data on every retry — the
+   * originating `webhook_received` event already carries it. Correlate
+   * the two via `idempotency_key`.
+   */
   payload?: any;
+  /**
+   * Webhook idempotency key when available. Present on `webhook_received`
+   * and `webhook_duplicate` events from MCP envelopes, enabling
+   * correlation between a first delivery and its retry echoes.
+   */
+  idempotency_key?: string;
   timestamp: string;
 }
 
@@ -265,6 +292,31 @@ export interface AsyncHandlerConfig {
   // Activity logging (low-level protocol events)
   onActivity?: (activity: Activity) => void | Promise<void>;
 
+  /**
+   * Receiver-side deduplication of webhook payloads by `idempotency_key`.
+   *
+   * AdCP webhooks use at-least-once delivery — publishers retry until they
+   * see a 2xx, so the same event may arrive more than once. When configured,
+   * the first delivery for a given `(agent_id, idempotency_key)` tuple
+   * dispatches to handlers; subsequent deliveries are dropped and surface
+   * as a `webhook_duplicate` activity.
+   *
+   * Reuses `IdempotencyBackend` from `@adcp/client/server` — you can share
+   * the same backend across request-side and webhook-side dedup, or use a
+   * dedicated one. Scope is per-agent so keys from different senders are
+   * independent, matching the spec's "scoped to authenticated sender
+   * identity" rule.
+   *
+   * If a payload arrives without `idempotency_key` (non-conforming sender,
+   * or A2A transport which does not carry the field), dispatch proceeds
+   * without dedup and a warning is logged.
+   */
+  webhookDedup?: {
+    backend: IdempotencyBackend;
+    /** Retention for dedup keys. Defaults to 86_400 (24h). */
+    ttlSeconds?: number;
+  };
+
   // Notification handlers (agent-initiated, no operation_id)
   onMediaBuyDeliveryNotification?: (
     notification: MediaBuyDeliveryNotification,
@@ -288,9 +340,25 @@ export class AsyncHandler {
     result: AdCPAsyncResponseData | undefined;
     metadata: WebhookMetadata;
   }): Promise<void> {
+    if (await this.isDuplicate(metadata)) {
+      await this.emitActivity({
+        type: 'webhook_duplicate',
+        operation_id: metadata.operation_id,
+        agent_id: metadata.agent_id,
+        context_id: metadata.context_id,
+        task_id: metadata.task_id,
+        task_type: metadata.task_type,
+        status: metadata.status,
+        idempotency_key: metadata.idempotency_key,
+        timestamp: metadata.timestamp,
+      });
+      return;
+    }
+
     // Emit activity
     await this.emitActivity({
       type: 'webhook_received',
+      idempotency_key: metadata.idempotency_key,
       operation_id: metadata.operation_id,
       agent_id: metadata.agent_id,
       context_id: metadata.context_id,
@@ -409,7 +477,59 @@ export class AsyncHandler {
   private async emitActivity(activity: Activity): Promise<void> {
     await this.config.onActivity?.(activity);
   }
+
+  /**
+   * Claim the webhook for processing, returning true if the event has
+   * already been delivered for this `(agent_id, idempotency_key)` tuple.
+   *
+   * Uses `IdempotencyBackend.putIfAbsent` so concurrent retries race on a
+   * single claim: exactly one caller gets `true` and proceeds, the rest
+   * observe the existing entry and return.
+   */
+  private async isDuplicate(metadata: WebhookMetadata): Promise<boolean> {
+    const dedup = this.config.webhookDedup;
+    if (!dedup) return false;
+
+    const key = metadata.idempotency_key;
+    if (!key || !IDEMPOTENCY_KEY_PATTERN.test(key)) {
+      // No valid key. MCP senders MUST emit one per AdCP 3.0; A2A
+      // transport doesn't carry the field at all. Warn MCP (so
+      // integrators notice non-conforming publishers) and stay quiet
+      // for A2A (expected and unactionable).
+      if (metadata.protocol !== 'a2a') {
+        console.warn(
+          `[AdCP] webhookDedup enabled but webhook from agent=${metadata.agent_id} task=${metadata.task_id} has ${
+            key ? 'an invalid' : 'no'
+          } idempotency_key. Expected format: ${IDEMPOTENCY_KEY_PATTERN.source}. ` +
+            'Dispatching without dedup — duplicate deliveries from this sender will re-trigger handlers. ' +
+            'See docs/guides/PUSH-NOTIFICATION-CONFIG.md#deduplication'
+        );
+      }
+      return false;
+    }
+
+    const ttlSeconds = dedup.ttlSeconds ?? 86_400;
+    // Reserved prefix `adcp\u001fwebhook\u001fv1\u001f...` namespaces the
+    // claim so webhook dedup entries can coexist with request-side
+    // idempotency entries in a shared backend — a request-side principal
+    // can never produce a scoped key with this prefix because the
+    // principal regex excludes U+001F.
+    const scopedKey = `adcp\u001fwebhook\u001fv1\u001f${metadata.agent_id}\u001f${key}`;
+    const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+
+    const claimed = await dedup.backend.putIfAbsent(scopedKey, {
+      payloadHash: '',
+      response: null,
+      expiresAt,
+    });
+    return !claimed;
+  }
 }
+
+// AdCP spec: `^[A-Za-z0-9_.:-]{16,255}$`. Any key not matching this
+// pattern is malformed — treat as missing rather than forming a scoped
+// key from arbitrary sender-supplied bytes.
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
 
 /**
  * Factory function to create async handler
