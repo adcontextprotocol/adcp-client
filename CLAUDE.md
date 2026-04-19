@@ -66,6 +66,8 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 
 **Preview specialisms** have `phases: []` in their `index.yaml` — the storyboard is a placeholder and the agent passes the protocol baseline only. Claim a preview specialism to advertise intent; expect `phases` to populate in a subsequent AdCP release.
 
+**Migrating from 5.1.0?** See [`docs/migration-5.1-to-5.2.md`](./docs/migration-5.1-to-5.2.md) for the before/after of `authority_level` → `human_review_required`, `inventory-lists` → `property-lists`, the `idempotency_key` requirement, and the new `serve({ authenticate })` surface.
+
 **Protocol-Wide Requirements.** Two requirements apply to every mutating AdCP operation regardless of specialism:
 - **`idempotency_key`** — required on every mutating request. Applies to every tool marked as mutating in the spec (the SDK's `MUTATING_TASKS` constant is authoritative): `create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `sync_plans`, `sync_governance`, `provide_performance_feedback`, `acquire_rights`, `activate_signal`, `log_event`, `report_usage`, `report_plan_outcome`, `create_property_list` / `update_property_list` / `delete_property_list`, `create_collection_list` / `update_collection_list` / `delete_collection_list`, `create_content_standards` / `update_content_standards` / `calibrate_content`, `si_initiate_session` / `si_send_message`. Handlers must return the same response when the same key is replayed. Landed in AdCP 3.0 GA.
 - **RFC 9421 HTTP Signatures** — optional but recommended. If you claim `signed-requests`, you verify incoming signatures; regardless, you must not break when signature headers are present.
