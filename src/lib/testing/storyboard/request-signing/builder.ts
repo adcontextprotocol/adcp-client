@@ -154,12 +154,13 @@ const MUTATIONS: Record<string, Mutator> = {
     };
     // Sign the request WITH content-digest in covered components, without
     // letting `signRequest` recompute the digest over the real body.
-    return signWithComponents(
-      key,
-      vectorWithBadDigest,
-      options,
-      ['@method', '@target-uri', '@authority', 'content-type', 'content-digest']
-    );
+    return signWithComponents(key, vectorWithBadDigest, options, [
+      '@method',
+      '@target-uri',
+      '@authority',
+      'content-type',
+      'content-digest',
+    ]);
   },
 
   '011-malformed-header': (vector, keys, options) => {
@@ -450,10 +451,7 @@ function stripSignatureHeaders(headers: Record<string, string>): Record<string, 
   return out;
 }
 
-function mergeHeaders(
-  from: Record<string, string>,
-  signed: Record<string, string>
-): Record<string, string> {
+function mergeHeaders(from: Record<string, string>, signed: Record<string, string>): Record<string, string> {
   // Drop original Signature/Signature-Input/Content-Digest before overlaying fresh ones.
   const base = stripSignatureHeaders(from);
   return { ...base, ...signed };

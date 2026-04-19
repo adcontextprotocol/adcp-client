@@ -70,12 +70,7 @@ export type {
 
 export { CONTRACT_IDS } from './types';
 
-export {
-  loadRequestSigningVectors,
-  findKey,
-  type LoadVectorsOptions,
-  type LoadedVectors,
-} from './vector-loader';
+export { loadRequestSigningVectors, findKey, type LoadVectorsOptions, type LoadedVectors } from './vector-loader';
 
 export {
   buildPositiveRequest,
@@ -95,9 +90,4 @@ export {
   type SignedRequestsRunnerContract,
 } from './test-kit';
 
-export {
-  probeSignedRequest,
-  extractSignatureErrorCode,
-  type ProbeOptions,
-  type ProbeResult,
-} from './probe';
+export { probeSignedRequest, extractSignatureErrorCode, type ProbeOptions, type ProbeResult } from './probe';

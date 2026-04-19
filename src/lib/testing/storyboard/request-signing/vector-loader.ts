@@ -3,14 +3,7 @@ import { basename, join } from 'path';
 import { getComplianceCacheDir } from '../compliance';
 import type { RequestSignatureErrorCode } from '../../../signing';
 import { CONTRACT_IDS } from './types';
-import type {
-  ContractId,
-  NegativeVector,
-  PositiveVector,
-  TestKeypair,
-  TestKeyset,
-  Vector,
-} from './types';
+import type { ContractId, NegativeVector, PositiveVector, TestKeypair, TestKeyset, Vector } from './types';
 
 export interface LoadVectorsOptions {
   complianceDir?: string;
@@ -107,8 +100,7 @@ function parsePositive(id: string, raw: unknown): PositiveVector {
     request: parseRequest(id, r.request),
     verifier_capability: parseCapability(id, r.verifier_capability),
     jwks_ref: strArray(r.jwks_ref, `${id}.jwks_ref`),
-    expected_signature_base:
-      typeof r.expected_signature_base === 'string' ? r.expected_signature_base : undefined,
+    expected_signature_base: typeof r.expected_signature_base === 'string' ? r.expected_signature_base : undefined,
     spec_reference: typeof r.spec_reference === 'string' ? r.spec_reference : undefined,
   };
 }

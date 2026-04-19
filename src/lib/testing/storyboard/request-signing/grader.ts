@@ -2,10 +2,7 @@ import { randomBytes } from 'crypto';
 import { buildNegativeRequest, buildPositiveRequest, type SignedHttpRequest } from './builder';
 import { probeSignedRequest, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
-import {
-  loadSignedRequestsRunnerContract,
-  type SignedRequestsRunnerContract,
-} from './test-kit';
+import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
 import type { NegativeVector, PositiveVector } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
@@ -102,10 +99,7 @@ export interface GradeReport {
  *     a live valid request that will be accepted before the second (rejected)
  *     copy fires.
  */
-export async function gradeRequestSigning(
-  agentUrl: string,
-  options: GradeOptions = {}
-): Promise<GradeReport> {
+export async function gradeRequestSigning(agentUrl: string, options: GradeOptions = {}): Promise<GradeReport> {
   const start = Date.now();
   const loaded = loadRequestSigningVectors(options);
   const contract = loadSignedRequestsRunnerContract(options);
@@ -242,9 +236,7 @@ export async function gradeOneVector(
   const buildOpts = { baseUrl: agentUrl };
 
   const vector =
-    kind === 'positive'
-      ? loaded.positive.find(v => v.id === vectorId)
-      : loaded.negative.find(v => v.id === vectorId);
+    kind === 'positive' ? loaded.positive.find(v => v.id === vectorId) : loaded.negative.find(v => v.id === vectorId);
   if (!vector) throw new Error(`Unknown ${kind} vector "${vectorId}"`);
 
   const skip = preflightSkip(vector, kind, contract, options);
@@ -267,9 +259,7 @@ function gradePositive(vector: PositiveVector, probe: ProbeResult): VectorGradeR
     kind: 'positive',
     passed: accepted && !probe.error,
     http_status: probe.status,
-    diagnostic: accepted
-      ? undefined
-      : buildPositiveDiagnostic(vector, probe),
+    diagnostic: accepted ? undefined : buildPositiveDiagnostic(vector, probe),
     probe_duration_ms: probe.duration_ms,
   };
 }
@@ -430,4 +420,3 @@ function buildNegativeDiagnostic(vector: NegativeVector, probe: ProbeResult): st
   }
   return `expected error="${vector.expected_error_code}", got error="${actual}". Check verifier step ordering — several vectors (015/017/020) depend on revocation/cap checks firing BEFORE crypto verify.`;
 }
-

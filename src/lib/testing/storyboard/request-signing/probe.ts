@@ -35,10 +35,7 @@ export interface ProbeResult {
  * when content-type matches; otherwise returned as text. `redirect: 'manual'`
  * is enforced so an agent that 301s can't smuggle the grader elsewhere.
  */
-export async function probeSignedRequest(
-  signed: SignedHttpRequest,
-  options: ProbeOptions = {}
-): Promise<ProbeResult> {
+export async function probeSignedRequest(signed: SignedHttpRequest, options: ProbeOptions = {}): Promise<ProbeResult> {
   const start = Date.now();
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const result: ProbeResult = { url: signed.url, status: 0, headers: {}, body: null, duration_ms: 0 };

@@ -203,10 +203,7 @@ function loadStoryboardsFromDir(dir: string): Storyboard[] {
 
 /** Load storyboards for a single bundle (universal YAML file, domain dir, or specialism dir). */
 export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
-  const raw =
-    ref.kind === 'universal'
-      ? safeLoadUniversal(ref.path)
-      : loadStoryboardsFromDir(ref.path);
+  const raw = ref.kind === 'universal' ? safeLoadUniversal(ref.path) : loadStoryboardsFromDir(ref.path);
   return raw.map(postProcessStoryboard);
 }
 

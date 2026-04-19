@@ -114,8 +114,7 @@ async function startReferenceVerifier({
     jwks,
     replayStore,
     revocationStore,
-    resolveOperation: req =>
-      new URL('http://x' + req.originalUrl).pathname.split('/').filter(Boolean).pop(),
+    resolveOperation: req => new URL('http://x' + req.originalUrl).pathname.split('/').filter(Boolean).pop(),
   });
 
   const server = http.createServer(async (req, res) => {

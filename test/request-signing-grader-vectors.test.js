@@ -178,7 +178,10 @@ describe('negative builder — one mutation per vector', () => {
     '015-signature-invalid': signed => {
       const match = /sig1=:([^:]+):/.exec(signed.headers['Signature']);
       const decoded = Buffer.from(match[1], 'base64url');
-      assert.ok(decoded.every(b => b === 0), 'all-zero signature bytes');
+      assert.ok(
+        decoded.every(b => b === 0),
+        'all-zero signature bytes'
+      );
     },
     '019-signature-without-signature-input': signed => {
       assert.ok(signed.headers['Signature'], 'Signature present');

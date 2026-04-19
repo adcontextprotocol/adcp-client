@@ -11,10 +11,7 @@ const {
   StaticJwksResolver,
 } = require('../dist/lib/signing/index.js');
 
-const {
-  loadComplianceIndex,
-  loadBundleStoryboards,
-} = require('../dist/lib/testing/storyboard/compliance.js');
+const { loadComplianceIndex, loadBundleStoryboards } = require('../dist/lib/testing/storyboard/compliance.js');
 
 const {
   synthesizeRequestSigningSteps,
@@ -96,8 +93,7 @@ function startReferenceVerifier({ replayCap = 1000 } = {}) {
     jwks,
     replayStore,
     revocationStore,
-    resolveOperation: req =>
-      new URL('http://x' + req.originalUrl).pathname.split('/').filter(Boolean).pop(),
+    resolveOperation: req => new URL('http://x' + req.originalUrl).pathname.split('/').filter(Boolean).pop(),
   });
   const server = http.createServer(async (req, res) => {
     const body = await readRawBody(req);

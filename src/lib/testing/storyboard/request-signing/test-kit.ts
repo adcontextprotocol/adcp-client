@@ -86,9 +86,7 @@ function parseSigningKeys(raw: unknown): RunnerSigningKey[] {
   });
 }
 
-function parseStatefulContracts(
-  raw: unknown
-): SignedRequestsRunnerContract['stateful_vector_contract'] {
+function parseStatefulContracts(raw: unknown): SignedRequestsRunnerContract['stateful_vector_contract'] {
   if (!raw || typeof raw !== 'object') {
     throw new Error('stateful_vector_contract block missing');
   }

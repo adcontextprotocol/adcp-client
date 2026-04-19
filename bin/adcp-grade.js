@@ -76,10 +76,18 @@ async function handleGradeCommand(argv) {
         }
         break;
       case '--skip':
-        options.skipVectors = args[++i]?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
+        options.skipVectors =
+          args[++i]
+            ?.split(',')
+            .map(s => s.trim())
+            .filter(Boolean) ?? [];
         break;
       case '--only':
-        options.onlyVectors = args[++i]?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
+        options.onlyVectors =
+          args[++i]
+            ?.split(',')
+            .map(s => s.trim())
+            .filter(Boolean) ?? [];
         break;
       case '--allow-live-side-effects':
         options.allowLiveSideEffects = true;
@@ -131,13 +139,9 @@ function printHumanReport(report) {
 
   console.log();
   console.log(`Agent: ${report.agent_url}`);
-  console.log(
-    `Harness: ${report.harness_mode}${report.contract_loaded ? ' (contract loaded)' : ' (no contract)'}`
-  );
+  console.log(`Harness: ${report.harness_mode}${report.contract_loaded ? ' (contract loaded)' : ' (no contract)'}`);
   if (report.live_endpoint_warning) {
-    console.log(
-      `⚠  Contract does not declare endpoint_scope: sandbox. Vectors 016/020 produce live side effects.`
-    );
+    console.log(`⚠  Contract does not declare endpoint_scope: sandbox. Vectors 016/020 produce live side effects.`);
   }
   console.log();
   console.log(`${'vector'.padEnd(idWidth)}  ${'status'.padEnd(statusWidth)}  detail`);
@@ -162,8 +166,8 @@ function formatRow(r) {
   const detail = r.skipped
     ? (r.skip_reason ?? '')
     : r.passed
-    ? `${r.http_status}${r.actual_error_code ? ` ${r.actual_error_code}` : ''}`
-    : r.diagnostic ?? 'see report';
+      ? `${r.http_status}${r.actual_error_code ? ` ${r.actual_error_code}` : ''}`
+      : (r.diagnostic ?? 'see report');
   return { id, status, detail };
 }
 

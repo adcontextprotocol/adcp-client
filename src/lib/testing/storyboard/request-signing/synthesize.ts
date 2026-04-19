@@ -20,10 +20,7 @@ export interface SynthesizeOptions extends LoadVectorsOptions {
  *
  * Returns the input storyboard unchanged if it isn't signed-requests.
  */
-export function synthesizeRequestSigningSteps(
-  storyboard: Storyboard,
-  options: SynthesizeOptions = {}
-): Storyboard {
+export function synthesizeRequestSigningSteps(storyboard: Storyboard, options: SynthesizeOptions = {}): Storyboard {
   if (storyboard.id !== 'signed_requests') return storyboard;
 
   const loaded = loadRequestSigningVectors(options);
