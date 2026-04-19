@@ -479,90 +479,12 @@ Throw `TestControllerError` from store methods for typed errors. The SDK validat
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
-### Session-backed stores (factory shape)
+### Advanced patterns (session-backed stores, map caps, custom wrappers)
 
-**Don't close over module-scoped maps.** If your session state is persisted (Postgres, Redis, JSONB) and rehydrated into a _new_ object per request, a store whose methods close over a module-level `WeakMap<SessionState, …>` or module-scoped cache will silently drop entries between calls — the cached ref was GC'd when the session was serialized out and rebuilt.
+For production test controllers with persisted-session state (Postgres/Redis/JSONB), the per-session factory shape, `enforceMapCap` for bounded session maps, and custom MCP wrappers with `AsyncLocalStorage` or sandbox gating — see [`docs/guides/BUILD-AN-AGENT.md`](../../docs/guides/BUILD-AN-AGENT.md) § createTaskCapableServer.
 
-Use the factory shape. `scenarios` declares the static capability set — the SDK answers `list_scenarios` from this field and **never invokes `createStore` for capability probes**, so it's safe to throw on missing `session_id`. `createStore` runs per request for every other scenario, returning a store bound to the live session.
+Key SDK pieces you'll import from `@adcp/client`: `CONTROLLER_SCENARIOS`, `enforceMapCap`, `SESSION_ENTRY_CAP`, `handleTestControllerRequest`, `toMcpResponse`, `TOOL_INPUT_SHAPE`.
 
-```
-import {
-  registerTestController,
-  CONTROLLER_SCENARIOS,
-  enforceMapCap,
-  TestControllerError,
-} from '@adcp/client';
-
-registerTestController(server, {
-  scenarios: [
-    CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS,
-    CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS,
-    CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS,
-    CONTROLLER_SCENARIOS.SIMULATE_DELIVERY,
-    CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND,
-  ],
-  async createStore(input) {
-    const sessionId = (input.context as { session_id?: string })?.session_id;
-    if (!sessionId) throw new TestControllerError('INVALID_PARAMS', 'context.session_id is required');
-    const session = await loadSession(sessionId);
-
-    return {
-      async forceAccountStatus(accountId, status) {
-        // enforceMapCap only rejects NET-NEW keys at the cap; updating an
-        // existing accountId always passes, so calling it before every set()
-        // is safe.
-        enforceMapCap(session.accountStatuses, accountId, 'account statuses');
-        const prev = session.accountStatuses.get(accountId) ?? 'active';
-        session.accountStatuses.set(accountId, status);
-        await saveSession(session);
-        return { success: true, previous_state: prev, current_state: status };
-      },
-
-      async forceMediaBuyStatus(mediaBuyId, status) {
-        const prev = session.mediaBuyStatuses.get(mediaBuyId);
-        if (!prev) throw new TestControllerError('NOT_FOUND', `Media buy ${mediaBuyId} not found`);
-        const terminal = ['completed', 'rejected', 'canceled'];
-        if (terminal.includes(prev)) {
-          throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from ${prev}`, prev);
-        }
-        enforceMapCap(session.mediaBuyStatuses, mediaBuyId, 'media buy states');
-        session.mediaBuyStatuses.set(mediaBuyId, status);
-        await saveSession(session);
-        return { success: true, previous_state: prev, current_state: status };
-      },
-
-      // ...implement other scenarios from your `scenarios` list the same way
-    };
-  },
-});
-```
-
-### Cap per-session maps
-
-Wrap every `Map.set` on session-scoped state with `enforceMapCap` to reject unbounded growth with a typed `INVALID_STATE` error (vs. silent LRU eviction, which would make compliance tests nondeterministic). Existing-key overwrites always pass — only _net-new_ keys are rejected at the cap. Default cap is `SESSION_ENTRY_CAP` (1000).
-
-### Custom MCP wrappers
-
-If you need `AsyncLocalStorage`, sandbox gating, or a custom task store around the controller tool, bypass `registerTestController` and call the exported building blocks directly. `toMcpResponse` and `TOOL_INPUT_SHAPE` are the exact pieces the default registration uses — reusing them keeps the envelope shape identical.
-
-```
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { handleTestControllerRequest, toMcpResponse, TOOL_INPUT_SHAPE } from '@adcp/client';
-
-const sessionContext = new AsyncLocalStorage<{ sessionId: string }>();
-const store = { async forceAccountStatus(id, status) { /* ... */ } };
-
-server.tool('comply_test_controller', 'Sandbox only.', TOOL_INPUT_SHAPE, async input => {
-  if (!sandboxEnabled()) {
-    return toMcpResponse({ success: false, error: 'FORBIDDEN', error_detail: 'Sandbox disabled' });
-  }
-  const sessionId = (input.context as { session_id: string }).session_id;
-  return sessionContext.run({ sessionId }, async () => {
-    const response = await handleTestControllerRequest(store, input as Record<string, unknown>);
-    return toMcpResponse(response);
-  });
-});
-```
 
 ## SDK Quick Reference
 
@@ -785,69 +707,9 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 
 ## Going to Production
 
-The quick-start uses `memoryBackend()` for idempotency and `InMemoryStateStore` for state — both reset on process restart and don't scale across replicas. Production swaps three pieces:
+The quick-start uses `memoryBackend()` + `InMemoryStateStore` — both reset on process restart and don't scale across replicas. Production swaps three pieces: `createIdempotencyStore({ backend: pgBackend(pool) })`, `PostgresStateStore(pool)`, `PostgresTaskStore(pool)`. Run the three migrations at boot (`getIdempotencyMigration()`, `getAdcpStateMigration()`, `MCP_TASKS_MIGRATION`), wire `cleanupExpiredIdempotency(pool)` on an hourly cron, and set `resolveAccount` to hit your real DB instead of `InMemoryStateStore`. Full worked example with Pool sizing and multi-tenant principal resolution lives in [`docs/guides/BUILD-AN-AGENT.md`](../../docs/guides/BUILD-AN-AGENT.md) § Going to Production.
 
-```typescript
-import { Pool } from 'pg';
-import {
-  createIdempotencyStore,
-  pgBackend,
-  getIdempotencyMigration,
-  PostgresStateStore,
-  getAdcpStateMigration,
-  PostgresTaskStore,
-  MCP_TASKS_MIGRATION,
-  cleanupExpiredIdempotency,
-} from '@adcp/client/server';
-
-// Fail fast — pg silently defaults to localhost+OS-user if DATABASE_URL is
-// missing, which works on a dev laptop and breaks cryptically in CI.
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is required');
-}
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-// Run once per deployment before starting the server (e.g., as a
-// separate migrate step, or at boot with a feature flag).
-await pool.query(getIdempotencyMigration());
-await pool.query(getAdcpStateMigration());
-await pool.query(MCP_TASKS_MIGRATION);
-
-const idempotency = createIdempotencyStore({
-  backend: pgBackend(pool),
-  ttlSeconds: 86400,
-});
-const stateStore = new PostgresStateStore(pool);
-const taskStore = new PostgresTaskStore(pool);
-
-// Cleanup expired idempotency rows hourly so the cache table doesn't
-// grow unboundedly. Schedule via cron in production.
-setInterval(() => cleanupExpiredIdempotency(pool).catch(console.error), 3600 * 1000);
-
-serve(() =>
-  createAdcpServer({
-    name: 'My Seller Agent',
-    version: '1.0.0',
-    taskStore,
-    stateStore,
-    idempotency,
-
-    // Real multi-tenant principal resolution — derived from an authenticated
-    // session (e.g., JWT claims middleware before serve()), not a constant.
-    resolveAccount: async ref => db.findAccount(ref),
-    resolveSessionKey: ctx => (ctx.account as { id?: string } | undefined)?.id ?? 'unknown-principal',
-
-    mediaBuy: {
-      /* handlers */
-    },
-  })
-);
-```
-
-Two things the example doesn't wire (app-specific):
-
-- **Authentication** — the quick-start has no auth. Production agents need bearer-token or OAuth in front of `serve()`. The library provides OAuth helpers; bearer is middleware territory (Express/Fastify).
-- **Connection-pool sizing** — pass `max`, `idleTimeoutMillis`, `connectionTimeoutMillis` on `new Pool({...})` per your deployment's concurrency characteristics. The pg driver defaults are fine for low traffic.
+Auth is not wired in the example — see [§ Protecting your agent](#protecting-your-agent) below.
 
 <a name="protecting-your-agent"></a>
 ## Protecting your agent
@@ -980,6 +842,19 @@ When storyboard output shows failures, fix each one:
 | Missing `@types/node` in devDependencies                   | `process.env` doesn't resolve without it — see Setup section                                                                                                                     |
 | Dropping `context` from responses                          | Echo `args.context` back unchanged in every response — buyers use it for correlation                                                                                             |
 | `channels` typed as `string[]` instead of `MediaChannel[]` | Use `as const` on channel arrays: `channels: ['display', 'olv'] as const`. TypeScript infers `string[]` from array literals, but the SDK requires the `MediaChannel` union type. |
+
+### Translating storyboard runner output
+
+When `adcp storyboard run <url> <storyboard> --json` reports a failure, the `details` / `error` strings fall into these categories:
+
+| Storyboard signal                                   | What it means                                                               | Fix                                                                                                       |
+| --------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `✗ Response matches <tool>-response.json schema`    | Your return shape doesn't match the spec response schema                    | Return fields the schema requires; don't add top-level fields the schema rejects                          |
+| `✗ field_present` (path: …)                         | Required field missing or at the wrong path                                 | Check the spec's `*-response.json` for the field; common miss: `context.correlation_id` not echoed back   |
+| `✗ field_value` expected X got Y                    | Value mismatch on a specific path                                           | Most often `context.correlation_id` drift or a status enum value that's stale                             |
+| `mcp_error -32602: Input validation error`          | SDK Zod schema rejected the **incoming** request — your handler never ran   | Drift between the SDK schema and the storyboard yaml. File upstream if the storyboard is authoritative    |
+| `Agent did not advertise tool "X"` (as a warning)   | Storyboard expects a tool you haven't registered                            | Register the tool; if it lives in another agent (e.g., governance tools from a seller), ignore the warning |
+| Missing `idempotency_key` → handler never runs      | Mutating request without an idempotency key                                 | SDK rejects at the idempotency layer. File runner bug if the storyboard yaml's `sample_request` omits it  |
 
 ## Specialism Details
 
