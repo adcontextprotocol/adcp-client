@@ -6,6 +6,12 @@ import type { VerifiedSigner } from './types';
 
 declare module 'http' {
   interface IncomingMessage {
+    /**
+     * Populated by {@link createExpressVerifier} iff a real signature was
+     * verified. Unsigned-but-acceptable requests leave this `undefined` so
+     * downstream handlers can read `req.verifiedSigner !== undefined` as
+     * "signed and verified."
+     */
     verifiedSigner?: VerifiedSigner;
     rawBody?: string;
   }
@@ -24,7 +30,22 @@ export interface ExpressLike {
 }
 
 export interface ExpressMiddlewareOptions extends Omit<VerifyRequestOptions, 'operation'> {
-  resolveOperation: (req: ExpressLike) => string;
+  /**
+   * Extract the AdCP operation name from the incoming request so the verifier
+   * can consult `capability.required_for`. Return `undefined` for requests
+   * that don't map to an AdCP operation (health checks, discovery probes) —
+   * the verifier will then treat the request as "not in any required_for"
+   * and accept unsigned traffic rather than rejecting.
+   *
+   * SECURITY: a `resolveOperation` that always returns `undefined` — for
+   * example, a routing helper that silently fails to match — disables
+   * `required_for` enforcement globally. Unsigned requests on signed-only
+   * operations will pass. Verify the implementation actually resolves the
+   * operation name for every AdCP route you care to protect; a unit test
+   * asserting `resolveOperation(req)` is non-undefined for sample signed
+   * requests is the simplest guard.
+   */
+  resolveOperation: (req: ExpressLike) => string | undefined;
   /**
    * Override how the request's full URL is reconstructed. Use when the server
    * sits behind a TLS-terminating or path-rewriting load balancer, since
@@ -51,11 +72,17 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
         headers: req.headers,
         body,
       };
-      const verified = await verifyRequestSignature(requestLike, {
+      const result = await verifyRequestSignature(requestLike, {
         ...options,
         operation: options.resolveOperation(req),
       });
-      req.verifiedSigner = verified;
+      if (result.status === 'verified') {
+        req.verifiedSigner = {
+          keyid: result.keyid,
+          agent_url: result.agent_url,
+          verified_at: result.verified_at,
+        };
+      }
       next();
     } catch (err) {
       if (err instanceof RequestSignatureError) {

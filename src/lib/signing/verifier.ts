@@ -12,8 +12,8 @@ import {
   MANDATORY_COMPONENTS,
   MAX_SIGNATURE_WINDOW_SECONDS,
   REQUEST_SIGNING_TAG,
-  type VerifiedSigner,
   type VerifierCapability,
+  type VerifyResult,
 } from './types';
 
 export interface VerifyRequestOptions {
@@ -22,28 +22,36 @@ export interface VerifyRequestOptions {
   replayStore: ReplayStore;
   revocationStore: RevocationStore;
   now?: () => number;
-  operation: string;
+  /**
+   * The AdCP operation being requested, used to consult
+   * `capability.required_for` when an unsigned request arrives. When omitted,
+   * the verifier treats the operation as "not in any required_for list" and
+   * returns an unsigned result rather than rejecting — callers in
+   * always-verify mode (where every request is signed) can leave this blank.
+   */
+  operation?: string;
   agentUrlForKeyid?: (keyid: string) => string | undefined;
 }
 
 export async function verifyRequestSignature(
   request: RequestLike,
   options: VerifyRequestOptions
-): Promise<VerifiedSigner> {
+): Promise<VerifyResult> {
   const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
   const sigInputHeader = getHeaderValue(request.headers, 'Signature-Input');
   const sigHeader = getHeaderValue(request.headers, 'Signature');
 
   // Pre-check: both headers present or both absent.
   if (!sigInputHeader && !sigHeader) {
-    if (options.capability.required_for.includes(options.operation)) {
+    const operation = options.operation;
+    if (operation && options.capability.required_for.includes(operation)) {
       throw new RequestSignatureError(
         'request_signature_required',
         0,
-        `Operation "${options.operation}" requires a signed request`
+        `Operation "${operation}" requires a signed request`
       );
     }
-    return { keyid: '', verified_at: now };
+    return { status: 'unsigned', verified_at: now };
   }
   if (!sigInputHeader || !sigHeader) {
     throw new RequestSignatureError(
@@ -187,7 +195,7 @@ export async function verifyRequestSignature(
   }
 
   const agent_url = options.agentUrlForKeyid?.(jwk.kid);
-  return { keyid: jwk.kid, agent_url, verified_at: now };
+  return { status: 'verified', keyid: jwk.kid, agent_url, verified_at: now };
 }
 
 function requireParams(parsed: ParsedSignatureInput): void {
