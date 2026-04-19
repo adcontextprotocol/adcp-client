@@ -101,10 +101,13 @@ npx @adcp/client diagnose-auth https://seller.example.com/mcp --json
 
 The command probes both metadata documents, ranks failure hypotheses, and tells you exactly which fix is missing — "emit `WWW-Authenticate: Bearer …, resource_metadata=…`" is the most common verdict for agents that almost got it right.
 
+**If you also claim `signed-requests` or run a multi-tenant AS:** read [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) below. The middleware mount order, 401 disambiguation rules, and the OAuth-claim → idempotency-principal mapping live there.
+
 ### Don't break when RFC 9421 Signature headers arrive
 
 Even if you don't claim `signed-requests`, a buyer may send `Signature-Input` / `Signature` headers. Your MCP transport must pass the request through without rejecting it. If you do claim the specialism, verify per [§ signed-requests](#specialism-signed-requests) below.
 
+<a name="composing-oauth-signing-and-idempotency"></a>
 ### Composing OAuth, signing, and idempotency
 
 The three concerns above are each straightforward in isolation. The pitfalls are at their boundaries. A production seller that claims both `sales-guaranteed` and `signed-requests` and is behind OAuth needs the pipeline below.
@@ -123,14 +126,24 @@ The framework owns step 5 — `createAdcpServer({ idempotency })` wraps handlers
 
 **Principal threading.** Your idempotency store scopes keys on the principal returned from `resolveSessionKey(ctx)`. That principal MUST come from a trusted, authenticated identity — the OAuth subject, or the verified signing `keyid`, or a composition of both. Don't use the buyer's self-declared `operator` or `brand.domain` — two buyers sharing a tenant can collide.
 
+**What the OAuth subject is.** Inside your bearer middleware, verify the JWT against your AS's JWKS (RFC 7517), then:
+
+- Validate `aud` contains your agent's canonical URL (RFC 7519 §4.1.3). Mismatches = 401, not 403 — a token minted for someone else shouldn't even parse as yours.
+- Validate `iss` matches the `authorization_servers[0]` from your protected-resource metadata.
+- Check required `scope`s (your agent-specific set) are present.
+- Use the `sub` claim as the AdCP principal. If your AS issues multi-tenant tokens, also read a tenant claim (e.g. `tenant_id` or `org_id`) and compose `${tenant_id}:${sub}` — `sub` alone collides across tenants when the AS reuses user IDs.
+
+**Reconciling OAuth sub with signing keyid.** When both are present on a request, treat them as independent identities that must agree: the signing `keyid`'s advertised owner (from its JWKS metadata) must match the OAuth `sub` (or its tenant). Composition pattern below keeps the replay namespace correct when one buyer rotates signing keys without re-authenticating, and when one OAuth tenant holds multiple buyers with different keys.
+
 ```typescript
 // Populate ctx.account from the authenticated principal before createAdcpServer sees the request.
-// Your bearer middleware should set `req.adcpPrincipal = { subject, keyid? }`;
-// a small adapter maps that into ctx.account for the framework.
+// Your bearer middleware sets `req.adcpPrincipal = { subject, tenant?, keyid? }` after
+// validating aud/iss/scope; a small adapter maps that into ctx.account for the framework.
 resolveSessionKey: (ctx) => {
   const p = ctx.account;
   if (!p?.subject) throw new Error('unauthenticated request reached idempotency scope — middleware ordering is wrong');
-  return p.keyid ? `${p.subject}:${p.keyid}` : p.subject;   // include keyid in multi-tenant setups so two buyers on one OAuth tenant don't share a replay namespace
+  const identity = p.tenant ? `${p.tenant}:${p.subject}` : p.subject;
+  return p.keyid ? `${identity}:${p.keyid}` : identity;
 }
 ```
 
@@ -140,9 +153,17 @@ resolveSessionKey: (ctx) => {
 - OAuth valid, signature failed → `WWW-Authenticate: Signature error="<code>"` per the grader. The `<code>` matches the test-vector's `expected_outcome.error_code` byte-for-byte.
 - Both failing on an optional-signature operation → emit only the Bearer challenge; signature is advisory on `supported_for` operations.
 
-**Idempotency semantics for `submitted` responses.** The framework caches **every successful mutation** including async `submitted` envelopes — not only terminal ones. A replay of the same key within the TTL returns the cached `submitted` response with `replayed: true` injected. A second IO is **not** created. Parallel calls with the same key within the 120-second in-flight window see an `in-flight` claim and should retry (the framework emits the right error — you don't handle this manually).
+**Idempotency semantics for `submitted` responses.** The framework caches **every successful mutation** including async `submitted` envelopes — not only terminal ones. A replay of the same key within the TTL returns the cached `submitted` response with `replayed: true` injected. A second IO is **not** created. Parallel calls with the same key within the 120-second in-flight window get `adcpError('SERVICE_UNAVAILABLE', { retry_after: 1 })` and should retry — buyer SDKs auto-retry on the `transient` class. The framework emits this for you; you don't handle it in handler code.
 
 This means: the `setup.url` you return on a `sales-guaranteed` `create_media_buy` is stable under replay. The human-review URL you hand back on the first call is the same URL the buyer sees on any retry within the replay window.
+
+**The three idempotency error codes the framework emits:**
+
+| Code | When | Buyer's next step |
+|---|---|---|
+| `SERVICE_UNAVAILABLE` (`retry_after: 1`) | Parallel call with the same key, still within the 120s in-flight window | Wait the `retry_after` seconds and retry — eventually replays the cached response or hits CONFLICT |
+| `IDEMPOTENCY_CONFLICT` | Same key, different payload hash | Don't retry — buyer has a client bug generating the same key for different requests |
+| `IDEMPOTENCY_EXPIRED` | Key replayed after the TTL (default 24h, configurable 1h–7d) | Mint a new key and retry |
 
 ## Before Writing Code
 
@@ -1157,6 +1178,8 @@ createAdcpServer({
 ### <a name="specialism-signed-requests"></a>signed-requests
 
 Storyboard: `signed_requests`. Transport-layer security specialism — certifies that your agent correctly verifies incoming RFC 9421 HTTP Signatures on mutating AdCP operations.
+
+**If you run this behind OAuth or combine it with idempotency,** also read [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) for middleware mount order, 401 disambiguation (Bearer vs Signature challenge), and how the verified signing `keyid` threads into the idempotency principal.
 
 The specialism yaml still carries `status: preview`, but the conformance grader shipped. Phases are `capability_discovery`, `positive_vectors`, `negative_vectors`. Test vectors live at `compliance/cache/latest/test-vectors/request-signing/`; the test kit is `test-kits/signed-requests-runner.yaml`.
 
