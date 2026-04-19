@@ -418,6 +418,47 @@ const server = createAdcpServer({
 });
 ```
 
+
+## Protecting your agent
+
+**An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
+
+```typescript
+import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+
+// API key — simplest, good for B2B integrations
+serve(createAgent, {
+  authenticate: verifyApiKey({
+    verify: async (token) => {
+      const row = await db.api_keys.findUnique({ where: { token } });
+      return row ? { principal: row.account_id } : null;
+    },
+  }),
+});
+
+// OAuth — best when buyers authenticate as themselves
+const AGENT_URL = 'https://my-agent.example.com/mcp';
+serve(createAgent, {
+  publicUrl: AGENT_URL, // canonical RFC 8707 audience — also served as `resource` in protected-resource metadata
+  authenticate: verifyBearer({
+    jwksUri: 'https://auth.example.com/.well-known/jwks.json',
+    issuer: 'https://auth.example.com',
+    audience: AGENT_URL, // MUST equal publicUrl
+  }),
+  protectedResource: { authorization_servers: ['https://auth.example.com'] },
+});
+
+// Both
+serve(createAgent, {
+  publicUrl: AGENT_URL,
+  authenticate: anyOf(verifyApiKey({ verify: lookupKey }), verifyBearer({ jwksUri, issuer, audience: AGENT_URL })),
+  protectedResource: { authorization_servers: [issuer] },
+});
+```
+
+The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
+
+
 ## Validation
 
 **After writing the agent, validate it. Fix failures. Repeat.**

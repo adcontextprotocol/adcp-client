@@ -19,10 +19,13 @@
  */
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer, type Server as HttpServer } from 'http';
+import { createServer, type IncomingMessage, type Server as HttpServer } from 'http';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/interfaces.js';
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import type { AuthPrincipal, Authenticator } from './auth';
+import { AuthError, respondUnauthorized } from './auth';
 
 /**
  * Context passed to the agent factory on each request.
@@ -37,6 +40,29 @@ import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/
 export interface ServeContext {
   /** Shared task store — use this when creating your McpServer so tasks persist across requests. */
   taskStore: TaskStore;
+}
+
+/**
+ * OAuth 2.0 Protected Resource Metadata (RFC 9728) advertised at
+ * `/.well-known/oauth-protected-resource<mountPath>`.
+ *
+ * The `resource` URL itself is taken from `ServeOptions.publicUrl` — set
+ * that to the canonical MCP endpoint (e.g. `https://my-agent.example.com/mcp`)
+ * so clients request tokens bound to the right RFC 8707 audience.
+ */
+export interface ProtectedResourceMetadata {
+  /** URLs of authorization servers that issue tokens for this resource. */
+  authorization_servers: string[];
+  /** Scopes this resource accepts. Optional. */
+  scopes_supported?: string[];
+  /** Bearer token methods supported. Defaults to `['header']`. */
+  bearer_methods_supported?: Array<'header' | 'body' | 'query'>;
+  /** Human-readable resource docs URL. Optional. */
+  resource_documentation?: string;
+  /** Per-resource policy URL. Optional. */
+  resource_policy_uri?: string;
+  /** Per-resource ToS URL. Optional. */
+  resource_tos_uri?: string;
 }
 
 export interface ServeOptions {
@@ -54,8 +80,36 @@ export interface ServeOptions {
    * provide a store with automatic eviction to prevent unbounded memory growth.
    */
   taskStore?: TaskStore;
+
   /**
-   * Pre-MCP middleware — runs after path-matching but before MCP transport
+   * Canonical public URL of this MCP endpoint (e.g. `https://my-agent.example.com/mcp`).
+   * Required when `protectedResource` is configured — the RFC 9728 `resource`
+   * field, the RFC 6750 `resource_metadata` URL on 401 challenges, and the
+   * JWT audience your tokens must carry are all derived from it. Setting this
+   * defends against attacker-controlled `Host` header phishing: without it,
+   * the server would advertise whatever host a caller happened to send.
+   *
+   * Must be an absolute https:// URL whose path matches the mount path.
+   */
+  publicUrl?: string;
+
+  /**
+   * Authentication middleware applied to every request. When configured,
+   * missing or invalid credentials produce a 401 with a compliant
+   * `WWW-Authenticate` header — no request reaches the MCP transport
+   * without passing. Use helpers from `./auth`: `verifyApiKey`,
+   * `verifyBearer`, or `anyOf(verifyApiKey(...), verifyBearer(...))`.
+   */
+  authenticate?: Authenticator;
+
+  /**
+   * Advertise OAuth 2.0 protected-resource metadata at
+   * `/.well-known/oauth-protected-resource<mountPath>`. Requires {@link publicUrl}.
+   */
+  protectedResource?: ProtectedResourceMetadata;
+
+  /**
+   * Pre-MCP middleware — runs after authentication but before MCP transport
    * is connected. Intended for transport-layer concerns like RFC 9421
    * request-signature verification: the agent's body is already buffered
    * into `(req as any).rawBody` before the middleware fires so signature
@@ -102,9 +156,87 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
   const taskStore = options?.taskStore ?? new InMemoryTaskStore();
   const ctx: ServeContext = { taskStore };
 
+  if (options?.protectedResource && !options.publicUrl) {
+    throw new Error(
+      'serve(): `protectedResource` requires `publicUrl` (the canonical https:// URL clients use for this MCP endpoint). ' +
+        'Without it, the server would advertise an attacker-controlled Host header as the OAuth resource URL.'
+    );
+  }
+
+  const publicUrl = options?.publicUrl;
+  let publicOrigin: string | undefined;
+  if (publicUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(publicUrl);
+    } catch {
+      throw new Error(`serve(): \`publicUrl\` is not a valid URL: ${publicUrl}`);
+    }
+    if (trimTrailingSlashes(parsed.pathname) !== trimTrailingSlashes(mountPath)) {
+      throw new Error(
+        `serve(): \`publicUrl\` path (${parsed.pathname}) must match mount path (${mountPath}). ` +
+          'The public URL is the full MCP endpoint URL, including the path.'
+      );
+    }
+    publicOrigin = parsed.origin;
+  }
+
+  if (options?.authenticate == null && process.env.NODE_ENV === 'production') {
+    console.warn(
+      '[adcp/serve] No `authenticate` configured — this agent will accept unauthenticated requests. ' +
+        'AdCP security_baseline requires authentication in production.'
+    );
+  }
+
+  const protectedResourcePath = `/.well-known/oauth-protected-resource${mountPath}`;
+  const resourceMetadataUrl =
+    options?.protectedResource && publicOrigin ? `${publicOrigin}${protectedResourcePath}` : undefined;
+
   const httpServer = createServer(async (req, res) => {
     const { pathname } = new URL(req.url || '', 'http://localhost');
+
+    // RFC 9728 protected-resource metadata — intentionally auth-free so
+    // clients can discover the authorization server before they have a token.
+    if (options?.protectedResource && pathname === protectedResourcePath) {
+      const body = {
+        resource: publicUrl!,
+        ...options.protectedResource,
+        bearer_methods_supported: options.protectedResource.bearer_methods_supported ?? ['header'],
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+
     if (pathname === mountPath || pathname === `${mountPath}/`) {
+      // Enforce authentication before any body processing or transport work.
+      if (options?.authenticate) {
+        let principal: AuthPrincipal | null;
+        try {
+          principal = await options.authenticate(req);
+        } catch (err) {
+          // Surface only sanitized messages to the client; log internal cause server-side.
+          const publicMessage = err instanceof AuthError ? err.publicMessage : 'Credentials rejected.';
+          console.error('[adcp/auth] rejected:', err);
+          respondUnauthorized(req, res, {
+            error: 'invalid_token',
+            errorDescription: publicMessage,
+            resourceMetadata: resourceMetadataUrl,
+          });
+          return;
+        }
+        if (!principal) {
+          respondUnauthorized(req, res, {
+            error: 'invalid_token',
+            errorDescription: 'Missing or unrecognized credentials.',
+            resourceMetadata: resourceMetadataUrl,
+          });
+          return;
+        }
+        // Propagate to MCP transport so tool handlers see `extra.authInfo`.
+        attachAuthInfo(req, principal);
+      }
+
       // Buffer the request body once when preTransport middleware is wired —
       // RFC 9421 verifiers need the raw bytes for Content-Digest recompute,
       // and the MCP transport's own body read would race the verifier otherwise.
@@ -131,6 +263,7 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
           return;
         }
       }
+
       const agentServer = createAgent(ctx);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
@@ -173,6 +306,23 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
   });
 
   return httpServer;
+}
+
+function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  return s.slice(0, end);
+}
+
+function attachAuthInfo(req: IncomingMessage, principal: AuthPrincipal): void {
+  const info: AuthInfo = {
+    token: principal.token ?? '',
+    clientId: principal.principal,
+    scopes: principal.scopes ?? [],
+    ...(principal.expiresAt !== undefined ? { expiresAt: principal.expiresAt } : {}),
+    ...(principal.claims !== undefined ? { extra: { ...principal.claims } } : {}),
+  };
+  (req as IncomingMessage & { auth?: AuthInfo }).auth = info;
 }
 
 function bufferBody(req: import('http').IncomingMessage): Promise<string> {
