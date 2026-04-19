@@ -435,7 +435,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   sync_plans(step, context, options) {
     // Governance storyboards define scenario-specific plans in sample_request
-    // (e.g., custom_policies for conditions, authority_level for denied).
+    // (e.g., custom_policies for conditions, reallocation_threshold for denied).
     // Delegate to sample_request when present.
     if (step.sample_request) {
       return injectContext({ ...step.sample_request }, context);
@@ -449,7 +449,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
           plan_id: `test-plan-${Date.now()}`,
           brand: resolveBrand(options),
           objectives: 'E2E test campaign — maximize reach across digital channels',
-          budget: { total: options.budget ?? 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: options.budget ?? 10000, currency: 'USD', reallocation_unlimited: true },
           flight: { start: startDate, end: endDate },
           approved_sellers: null,
         },

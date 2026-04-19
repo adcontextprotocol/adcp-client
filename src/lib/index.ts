@@ -150,6 +150,25 @@ export type {
 export { GovernanceMiddleware } from './core/GovernanceMiddleware';
 export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
 
+// ====== GOVERNANCE PLAN HELPERS (Annex III / GDPR Art 22) ======
+export {
+  buildAnnexIIIPlan,
+  buildHumanOverride,
+  validateGovernancePlan,
+  REGULATED_HUMAN_REVIEW_CATEGORIES,
+  ANNEX_III_POLICY_IDS,
+} from './governance';
+export type {
+  BuildAnnexIIIPlanInput,
+  BuildHumanOverrideInput,
+  DataSubjectContestation,
+  GovernancePlan,
+  GovernanceValidationIssue,
+  HumanOverride,
+  PlanBudget,
+  ReallocationAutonomy,
+} from './governance';
+
 // ====== TASK EVENT TYPES ======
 export type {
   BaseTaskEvent,

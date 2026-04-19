@@ -109,7 +109,7 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
           budget: {
             total: 10000,
             currency: 'USD',
-            authority_level: 'agent_full',
+            reallocation_unlimited: true,
             per_seller_max_pct: 60,
           },
           flight: {
@@ -311,7 +311,7 @@ describe('Governance E2E: Delivery monitoring', { skip: skipReason }, () => {
           budget: {
             total: 10000,
             currency: 'USD',
-            authority_level: 'agent_full',
+            reallocation_unlimited: true,
           },
           flight: {
             start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
@@ -431,7 +431,7 @@ describe('Governance E2E: Capabilities discovery', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Capabilities test',
-          budget: { total: 1000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 1000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -466,7 +466,6 @@ describe('Governance E2E: Human-review denial', { skip: skipReason }, () => {
           budget: {
             total: 10000,
             currency: 'USD',
-            authority_level: 'human_required',
             reallocation_threshold: 5000,
           },
           flight: {
@@ -552,7 +551,7 @@ describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () =>
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Advisory mode test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -605,7 +604,7 @@ describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () =>
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Audit mode test',
-          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 5000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -658,7 +657,7 @@ describe('Governance E2E: Channel compliance', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Channel compliance test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -736,7 +735,7 @@ describe('Governance E2E: Flight compliance', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Flight compliance test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: planStart.toISOString(),
             end: planEnd.toISOString(),
@@ -821,7 +820,7 @@ describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Delegation authority test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -873,7 +872,7 @@ describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
           plan_id: expiredPlanId,
           brand: { domain: 'test.example' },
           objectives: 'Expired delegation test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -947,7 +946,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Version test',
-          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 5000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -965,7 +964,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Updated version test',
-          budget: { total: 8000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 8000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -988,7 +987,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Categories test',
-          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 5000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -1024,7 +1023,7 @@ describe('Governance E2E: Outcome reporting', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Outcome reporting test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -1147,7 +1146,7 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Audit detail test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -1248,7 +1247,7 @@ describe('Governance E2E: Multiple findings in single check', { skip: skipReason
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Multiple findings test',
-          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 5000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -1305,7 +1304,7 @@ describe('Governance E2E: Approval expiration', { skip: skipReason }, () => {
           plan_id: planId,
           brand: { domain: 'test.example' },
           objectives: 'Expiry test',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           flight: {
             start: new Date().toISOString(),
             end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),

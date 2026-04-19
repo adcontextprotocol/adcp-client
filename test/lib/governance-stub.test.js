@@ -121,7 +121,7 @@ describe('GovernanceAgentStub', () => {
           plan_id: 'plan-sync-test',
           brand: { domain: 'test.example' },
           objectives: 'Increase brand awareness in US market',
-          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          budget: { total: 10000, currency: 'USD', reallocation_unlimited: true },
           channels: { required: ['display'] },
           flight: {
             start: '2026-04-01T00:00:00Z',
