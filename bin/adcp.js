@@ -706,6 +706,8 @@ USAGE:
 
 COMMANDS:
   storyboard <subcommand>     Test agent flows (run, list, show, step)
+  grade <subject> <url>       Conformance graders (e.g. request-signing)
+  signing <subcommand>        RFC 9421 signing key tools (generate, verify)
   check-network               Validate managed publisher network deployment
   diagnose-auth <alias|url>   Diagnose OAuth handshake with ranked hypotheses
   comply <agent> [options]    DEPRECATED — use "storyboard run" instead
@@ -2003,6 +2005,12 @@ async function main() {
   if (args[0] === 'signing') {
     const { handleSigningCommand } = require('./adcp-signing.js');
     await handleSigningCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'grade') {
+    const { handleGradeCommand } = require('./adcp-grade.js');
+    await handleGradeCommand(args.slice(1));
     return;
   }
 

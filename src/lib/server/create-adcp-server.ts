@@ -447,6 +447,22 @@ export interface AdcpCapabilitiesConfig {
   creative?: Partial<CreativeCapabilities>;
   extensions_supported?: string[];
   /**
+   * RFC 9421 request-signing verifier capability. See
+   * docs/building/implementation/security.mdx#signed-requests-transport-layer.
+   * Emitted verbatim in `get_adcp_capabilities.request_signing`. Omit unless
+   * the agent actually verifies incoming signatures — a `supported: true`
+   * claim without a working verifier is graded as FAIL by the conformance
+   * runner (see `@adcp/client/testing/storyboard/request-signing`).
+   */
+  request_signing?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>;
+  /**
+   * Specialism claims the agent supports. Each entry maps to a storyboard
+   * bundle under `/compliance/{version}/specialisms/{id}/`; the AAO
+   * compliance runner executes the matching storyboards to verify. Only
+   * list specialisms the agent actually implements.
+   */
+  specialisms?: NonNullable<GetAdCPCapabilitiesResponse['specialisms']>;
+  /**
    * Seller-declared idempotency replay window, required on `get_adcp_capabilities`
    * responses per AdCP spec. Defaults to 86400 (24h). Spec bounds are 3600
    * (1h) to 604800 (7d); `clampReplayTtl` enforces the range on output.
@@ -1410,6 +1426,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   if (capConfig?.extensions_supported?.length) {
     capabilitiesData.extensions_supported = capConfig.extensions_supported;
+  }
+
+  if (capConfig?.request_signing) {
+    capabilitiesData.request_signing = capConfig.request_signing;
+  }
+
+  if (capConfig?.specialisms?.length) {
+    capabilitiesData.specialisms = capConfig.specialisms;
   }
 
   const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;

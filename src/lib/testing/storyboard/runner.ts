@@ -23,8 +23,10 @@ import {
   generateRandomInvalidJwt,
 } from './probes';
 import { validateTestKit } from './test-kit';
+import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import type {
   HttpProbeResult,
+  RunnerDetailedSkipReason,
   RunnerExtractionRecord,
   RunnerRequestRecord,
   RunnerResponseRecord,
@@ -41,6 +43,7 @@ import type {
   StoryboardStepPreview,
   ValidationResult,
 } from './types';
+import { DETAILED_SKIP_TO_CANONICAL } from './types';
 import type { TaskResult } from '../types';
 
 // ────────────────────────────────────────────────────────────
@@ -827,6 +830,8 @@ async function executeProbeStep(
   } else if (step.task === 'assert_contribution') {
     // Synthetic: evaluate only through validations (any_of). No network call.
     httpResult = undefined;
+  } else if (step.task === 'request_signing_probe') {
+    httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
   }
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);
@@ -848,6 +853,35 @@ async function executeProbeStep(
         duration_ms: duration,
       }
     : undefined;
+
+  // Probe may self-skip (request_signing_probe uses this for operator opt-outs
+  // and capability-profile mismatches). Surface as a skipped step without
+  // running validations — skip ≠ fail. The detailed reason goes on
+  // `skip_reason`; the canonical spec reason goes on `skip` so contract
+  // consumers see a stable enum.
+  if (httpResult?.skipped) {
+    const detailedReason = (httpResult.skip_reason ?? 'probe_skipped') as RunnerDetailedSkipReason;
+    const canonicalReason = DETAILED_SKIP_TO_CANONICAL[detailedReason] ?? 'not_applicable';
+    const detail = httpResult.error ?? SKIP_DETAILS[canonicalReason];
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: detailedReason,
+      skip: { reason: canonicalReason, detail },
+      duration_ms: duration,
+      response: httpResult,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context),
+      request: requestRecord,
+      ...(responseRecord && { response_record: responseRecord }),
+      extraction: { path: 'none', note: 'probe self-skipped' },
+    };
+  }
 
   const vctx: ValidationContext = {
     taskName: step.task,

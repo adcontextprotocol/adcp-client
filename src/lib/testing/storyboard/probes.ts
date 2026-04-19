@@ -31,6 +31,7 @@ export const PROBE_TASKS = new Set([
   'protected_resource_metadata',
   'oauth_auth_server_metadata',
   'assert_contribution',
+  'request_signing_probe',
 ]);
 
 // ---------------------------------------------------------------------------

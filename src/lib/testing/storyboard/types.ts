@@ -194,6 +194,14 @@ export interface HttpProbeResult {
   body: unknown;
   /** Optional error — set when the fetch failed (network, SSRF guard, etc.). */
   error?: string;
+  /**
+   * Probe was intentionally skipped (e.g. operator opted out of a vector,
+   * capability profile mismatch, or test-kit contract not in scope). When
+   * set, the runner marks the step `skipped: true` and does NOT run
+   * validations — skipped probes neither pass nor fail.
+   */
+  skipped?: boolean;
+  skip_reason?: string;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -221,7 +229,34 @@ export interface StoryboardRunOptions extends TestOptions {
    */
   allow_http?: boolean;
   /**
-   * Distribution strategy across agent URLs in multi-instance mode.
+   * Request-signing grader knobs (applied when the runner encounters
+   * synthesized `request_signing_probe` steps from the signed-requests
+   * specialism).
+   */
+  request_signing?: {
+    /** Skip the rate-abuse vector — it sends cap+1 requests and is slow. */
+    skipRateAbuse?: boolean;
+    /** Override the per-keyid cap the grader targets. */
+    rateAbuseCap?: number;
+    /**
+     * Vector IDs to skip (e.g., capability-profile mismatches for vectors
+     * 007/018 when the agent's `covers_content_digest` policy differs).
+     */
+    skipVectors?: string[];
+    /**
+     * Run only the named vector ids — all others auto-skip. Takes precedence
+     * over `skipVectors`.
+     */
+    onlyVectors?: string[];
+    /**
+     * Opt in to running vectors that produce live agent-side effects
+     * (016 replay, 020 rate-abuse). Required unless the test-kit declares
+     * `endpoint_scope: sandbox`.
+     */
+    allowLiveSideEffects?: boolean;
+  };
+  /**
+   * Distribution strategy across agent URLs in multi-instance mode (#608).
    * Only consulted when the runner is given 2+ URLs. Defaults to 'round-robin'.
    * Reserved enum; additional strategies may land without a signature change.
    */
@@ -305,6 +340,38 @@ export type RunnerSkipReason =
   | 'missing_test_controller'
   | 'unsatisfied_contract';
 
+/**
+ * Grader-specific skip reasons. These are narrower than the six canonical
+ * `RunnerSkipReason` values — they carry runner-local context (which probe,
+ * which operator opt-out) that the contract neither requires nor forbids.
+ * The runner records them on `skip_reason` for legacy consumers, and also
+ * emits the structured `skip: RunnerSkipResult` block with the canonical
+ * equivalent per `DETAILED_SKIP_TO_CANONICAL`.
+ */
+export type RunnerDetailedSkipReason =
+  | 'probe_skipped'
+  | 'rate_abuse_opt_out'
+  | 'missing_test_kit_contract'
+  | 'live_side_effect_opt_in_required'
+  | 'operator_skip'
+  | 'not_in_only_vectors'
+  | 'grader_skipped';
+
+/**
+ * Map detailed grader skip reasons onto the six canonical spec values so
+ * consumers reading `skip.reason` get a stable enum regardless of which
+ * subsystem produced the skip.
+ */
+export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, RunnerSkipReason> = {
+  probe_skipped: 'not_applicable',
+  not_in_only_vectors: 'not_applicable',
+  grader_skipped: 'not_applicable',
+  rate_abuse_opt_out: 'unsatisfied_contract',
+  missing_test_kit_contract: 'unsatisfied_contract',
+  live_side_effect_opt_in_required: 'unsatisfied_contract',
+  operator_skip: 'unsatisfied_contract',
+};
+
 export interface RunnerSkipResult {
   reason: RunnerSkipReason;
   detail: string;
@@ -373,13 +440,14 @@ export interface StoryboardStepResult {
   /** True when the step was not executed */
   skipped?: boolean;
   /**
-   * Spec skip reason (see `RunnerSkipReason`). `not_applicable` covers the
-   * `introduced_in` version-mismatch case that main previously emitted with
-   * its narrower enum — it's the right spec reason for "this storyboard
-   * didn't exist at the version the agent certified against."
+   * Skip reason. Accepts either a canonical `RunnerSkipReason` (the six
+   * spec-required values) or one of the grader-specific variants introduced
+   * by the RFC 9421 request-signing grader (#585). The structured `skip`
+   * field below always carries the canonical spec reason so consumers of the
+   * runner-output contract don't need to know the grader vocabulary.
    */
-  skip_reason?: RunnerSkipReason;
-  /** Structured skip result with human-readable detail (spec contract). */
+  skip_reason?: RunnerSkipReason | RunnerDetailedSkipReason;
+  /** Structured skip result with canonical spec reason + human-readable detail. */
   skip?: RunnerSkipResult;
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
