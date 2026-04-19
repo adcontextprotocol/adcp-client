@@ -167,9 +167,21 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   };
 }
 
+// Positive vectors whose edge-case coverage survives only under raw transport
+// (per-operation endpoint URLs). Listed explicitly rather than heuristically
+// so a spec author adding a new canonicalization-edge vector has to opt into
+// the skip.
+const MCP_FLATTENED_VECTORS = new Set([
+  '005-default-port-stripped',
+  '006-dot-segment-path',
+  '007-query-byte-preserved',
+  '008-percent-encoded-path',
+]);
+
 /**
  * Centralized skip decisions. Checks (in order): onlyVectors filter, operator
- * skipVectors, rate-abuse opt-out, stateful-contract missing, side-effect gate.
+ * skipVectors, MCP-mode URL-edge flattening, rate-abuse opt-out,
+ * stateful-contract missing, side-effect gate.
  */
 function preflightSkip(
   vector: PositiveVector | NegativeVector,
@@ -192,6 +204,23 @@ function preflightSkip(
   }
   if (options.skipVectors?.includes(vector.id)) {
     return { ...base, skipped: true, skip_reason: 'operator_skip' };
+  }
+  // Canonicalization-edge positive vectors (005–008) bake their edge case
+  // into the vector URL path, query, or port. MCP mode flattens every vector
+  // to the same baseUrl (JSON-RPC single endpoint), so these vectors become
+  // indistinguishable from vector 001 — passing under MCP is not evidence
+  // the edge was tested. Skip with a distinct reason so the report doesn't
+  // claim coverage it didn't deliver.
+  if (kind === 'positive' && options.transport === 'mcp' && MCP_FLATTENED_VECTORS.has(vector.id)) {
+    return {
+      ...base,
+      skipped: true,
+      skip_reason: 'mcp_mode_flattens_url_edges',
+      diagnostic:
+        `Vector ${vector.id} tests a URL-canonicalization edge (port/path/query/encoding) ` +
+        `that MCP mode neutralizes by routing every vector to the MCP endpoint. ` +
+        `Grade this edge with \`--transport raw\` against a per-operation AdCP agent.`,
+    };
   }
   if (kind === 'negative') {
     const neg = vector as NegativeVector;

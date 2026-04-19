@@ -24,28 +24,63 @@ function startMcpAgent(port) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let settled = false;
-    const onLog = chunk => {
+    const stderrTail = [];
+    const stdoutTail = [];
+    const onStdout = chunk => {
       if (settled) return;
       const s = chunk.toString();
+      stdoutTail.push(s);
       if (s.includes(`listening`) || s.includes(`running at`)) {
         settled = true;
         resolve(child);
       }
     };
-    child.stdout.on('data', onLog);
-    child.stderr.on('data', onLog);
+    const onStderr = chunk => {
+      if (settled) return;
+      stderrTail.push(chunk.toString());
+    };
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
     child.on('error', err => {
       if (!settled) {
         settled = true;
         reject(err);
       }
     });
+    // If the child exits before the startup banner, it crashed — reject with
+    // captured stderr/stdout so the failure is actionable instead of surfacing
+    // as opaque grader-level connect errors 20s later.
+    child.on('exit', code => {
+      if (settled) return;
+      settled = true;
+      const tail = (stderrTail.join('') + stdoutTail.join('')).trim() || '(no output)';
+      reject(new Error(`MCP agent exited with code ${code} before signaling ready:\n${tail}`));
+    });
+    // Hard cap: if the banner never arrives, reject rather than "assume
+    // started" — the earlier fallback hid crashes behind 20s of connect
+    // errors inside the grader.
     setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        resolve(child); // assume started — let the grader fail out if not
+      if (settled) return;
+      settled = true;
+      const tail = (stderrTail.join('') + stdoutTail.join('')).trim() || '(no output)';
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
       }
-    }, 3000);
+      reject(new Error(`MCP agent did not signal ready within 5s:\n${tail}`));
+    }, 5000);
+    // Reap orphan on abnormal parent exit (CI runner crash, OOM) so the
+    // next run doesn't hit EADDRINUSE on the same port.
+    const reap = () => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    };
+    process.once('exit', reap);
+    child.once('exit', () => process.removeListener('exit', reap));
   });
 }
 
@@ -136,5 +171,29 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
       () => buildPositiveRequest(vector, loaded.keys, { transport: 'mcp' }),
       /transport: 'mcp' requires a baseUrl/
     );
+  });
+
+  test('every negative mutation produces an MCP-shaped request under transport: mcp', () => {
+    // Locks the invariant that every path in MUTATIONS routes through
+    // applyTransport. A regression that bypasses applyTransport (e.g. a new
+    // mutator that sets url/body directly from vector.request.*) shows up
+    // here before it reaches the e2e grader.
+    const {
+      buildNegativeRequest,
+      loadRequestSigningVectors,
+    } = require('../dist/lib/testing/storyboard/request-signing/index.js');
+    const loaded = loadRequestSigningVectors();
+    const BASE = 'http://127.0.0.1:9999/mcp';
+    for (const vector of loaded.negative) {
+      const signed = buildNegativeRequest(vector, loaded.keys, { baseUrl: BASE, transport: 'mcp' });
+      assert.strictEqual(signed.url, BASE, `${vector.id}: url must be baseUrl (MCP single endpoint)`);
+      // Body is expected on every mutation — the vectors all have bodies.
+      assert.ok(signed.body, `${vector.id}: body must be present`);
+      const envelope = JSON.parse(signed.body);
+      assert.strictEqual(envelope.jsonrpc, '2.0', `${vector.id}: jsonrpc`);
+      assert.strictEqual(envelope.method, 'tools/call', `${vector.id}: method`);
+      const originalOp = new URL(vector.request.url).pathname.split('/').filter(Boolean).pop();
+      assert.strictEqual(envelope.params.name, originalOp, `${vector.id}: params.name from vector URL tail`);
+    }
   });
 });

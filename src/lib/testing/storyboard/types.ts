@@ -302,14 +302,15 @@ export interface StoryboardStepResult {
     | 'missing_tool'
     /** Storyboard predates the agent's declared adcp.major_versions (#606). */
     | 'not_applicable'
-    /** Request-signing grader skip paths (#585). */
+    /** Request-signing grader skip paths (#585, #617). */
     | 'probe_skipped'
     | 'rate_abuse_opt_out'
     | 'missing_test_kit_contract'
     | 'live_side_effect_opt_in_required'
     | 'operator_skip'
     | 'not_in_only_vectors'
-    | 'grader_skipped';
+    | 'grader_skipped'
+    | 'mcp_mode_flattens_url_edges';
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;

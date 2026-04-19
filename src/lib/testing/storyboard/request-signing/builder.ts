@@ -1,4 +1,4 @@
-import { createPrivateKey, randomBytes, sign as nodeSign, type JsonWebKey } from 'crypto';
+import { createPrivateKey, randomBytes, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
 import {
   buildSignatureBase,
   formatSignatureParams,
@@ -45,10 +45,11 @@ export interface BuildOptions {
    */
   transport?: 'raw' | 'mcp';
   /**
-   * JSON-RPC `id` for the MCP envelope. Defaults to a per-call incrementing
-   * counter. Override for tests that want a stable id.
+   * JSON-RPC `id` for the MCP envelope. Defaults to `crypto.randomUUID()`
+   * so concurrent runs never collide. Override for tests that need a stable
+   * id — JSON-RPC 2.0 permits number, string, or null.
    */
-  mcpJsonRpcId?: number;
+  mcpJsonRpcId?: number | string;
 }
 
 export interface SignedHttpRequest {
@@ -364,28 +365,21 @@ function extractOperationFromVectorUrl(vectorUrl: string): string {
   return last;
 }
 
-let mcpRequestIdCounter = 0;
-
-function wrapMcpEnvelope(operation: string, rawBody: string | undefined, idOverride: number | undefined): string {
-  const id = idOverride ?? ++mcpRequestIdCounter;
-  const args = rawBody && rawBody.length > 0 ? safeJsonParse(rawBody) : {};
+function wrapMcpEnvelope(
+  operation: string,
+  rawBody: string | undefined,
+  idOverride: number | string | undefined
+): string {
+  const id = idOverride ?? randomUUID();
+  // Conformance vectors' bodies are spec-typed as JSON. A parse failure is
+  // a vector drift, not a runtime input-validation case — let it surface.
+  const args = rawBody && rawBody.length > 0 ? JSON.parse(rawBody) : {};
   return JSON.stringify({
     jsonrpc: '2.0',
     id,
     method: 'tools/call',
     params: { name: operation, arguments: args },
   });
-}
-
-function safeJsonParse(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    // Vectors whose body isn't valid JSON (none today, but defensive) pass
-    // through as a string — MCP servers will reject with a schema error
-    // which is fine for grading purposes.
-    return s;
-  }
 }
 
 interface ParamOverride {

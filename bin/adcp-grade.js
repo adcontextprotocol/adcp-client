@@ -126,7 +126,7 @@ async function handleGradeCommand(argv) {
     if (emitJson) {
       process.stdout.write(JSON.stringify(report, null, 2) + '\n');
     } else {
-      printHumanReport(report);
+      printHumanReport(report, options);
     }
     process.exit(report.passed ? 0 : 1);
   } catch (err) {
@@ -151,7 +151,7 @@ function parseVectorList(raw, flagName) {
   return list;
 }
 
-function printHumanReport(report) {
+function printHumanReport(report, options = {}) {
   const { positive, negative } = report;
   const all = [...positive, ...negative];
   const rows = all.map(formatRow);
@@ -175,7 +175,36 @@ function printHumanReport(report) {
     `${report.passed_count} passed, ${report.failed_count} failed, ${report.skipped_count} skipped — total ${report.total_duration_ms}ms`
   );
   console.log(`Overall: ${report.passed ? 'PASS' : 'FAIL'}`);
+  // Only hint when the operator didn't already ask for MCP — if they did and
+  // everything still fails, it's a different problem (agent down, wrong URL).
+  if (!report.passed && (!options || options.transport !== 'mcp')) {
+    const hint = detectTransportMismatch(report);
+    if (hint) {
+      console.log();
+      console.log(`💡 ${hint}`);
+    }
+  }
   console.log();
+}
+
+/**
+ * Heuristic: if the grader ran in `raw` mode and every non-skipped vector
+ * failed with a 404 / 405 / fetch-failed shape, the agent likely speaks MCP.
+ * Raw mode POSTs to per-operation paths (`/mcp/adcp/create_media_buy`), which
+ * an MCP agent — single endpoint at `/mcp` — will 404. Suggest the retry so
+ * operators don't have to read the PR thread to learn about `--transport mcp`.
+ */
+function detectTransportMismatch(report) {
+  if (report.passed_count > 0) return undefined; // something worked — not a transport mismatch
+  const graded = [...report.positive, ...report.negative].filter(v => !v.skipped);
+  if (graded.length < 5) return undefined; // not enough signal
+  const mcpShaped = graded.filter(v => {
+    if (v.http_status === 404 || v.http_status === 405) return true;
+    const diag = String(v.diagnostic ?? '');
+    return /fetch failed|ECONNREFUSED|Not found/i.test(diag);
+  });
+  if (mcpShaped.length / graded.length < 0.8) return undefined;
+  return `Every graded vector failed with a 404/405 or fetch error — the agent likely speaks MCP (single /mcp endpoint). Retry with --transport mcp.`;
 }
 
 function formatRow(r) {
