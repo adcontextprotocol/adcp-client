@@ -401,6 +401,7 @@ async function executeStep(
         toolName: effectiveStep.task,
         args: request,
         headers,
+        allowPrivateIp: options.allow_http === true,
       });
       httpResult = probe.httpResult;
       taskResult = probe.taskResult;

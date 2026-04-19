@@ -11,16 +11,20 @@
  * - `assert_contribution` — no network; evaluates accumulated flags set by
  *   prior steps that carried `contributes_to`.
  */
-import { lookup as dnsLookup } from 'dns/promises';
-import { isIP } from 'net';
 import { randomBytes } from 'crypto';
-import { Agent, fetch as undiciFetch } from 'undici';
+import {
+  ssrfSafeFetch,
+  decodeBodyAsJsonOrText,
+  SsrfRefusedError,
+  isAlwaysBlocked as sharedIsAlwaysBlocked,
+  isPrivateIp as sharedIsPrivateIp,
+} from '../../net';
 import type { HttpProbeResult } from './types';
 import type { TaskResult } from '../types';
 
-const PROBE_TIMEOUT_MS = 10_000;
-const MAX_BODY_BYTES = 64 * 1024;
-const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
+// Timeout + body-cap defaults come from `ssrfSafeFetch` (10 s, 64 KiB).
+// The probe wrappers deliberately don't override them so probe behavior
+// stays in sync with the shared primitive.
 
 /** Task names dispatched via HTTP probes (not via the MCP client). */
 export const PROBE_TASKS = new Set([
@@ -119,115 +123,27 @@ export interface FetchProbeOptions {
  *   - Body capped at 64 KiB, total fetch time capped at 10 s.
  */
 export async function fetchProbe(url: string, options: FetchProbeOptions = {}): Promise<HttpProbeResult> {
-  const timeout = options.timeoutMs ?? PROBE_TIMEOUT_MS;
-  const result: HttpProbeResult = { url, status: 0, headers: {}, body: null };
-
-  let parsed: URL;
   try {
-    parsed = new URL(url);
-  } catch {
-    result.error = `Invalid URL: ${url}`;
-    return result;
-  }
-
-  // Scheme gate: only http/https ever reachable. http only under dev opt-in.
-  if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
-    result.error = `Refusing to probe URL with unsupported scheme: ${parsed.protocol}`;
-    return result;
-  }
-  if (parsed.protocol !== 'https:' && !options.allowPrivateIp) {
-    result.error = `Refusing to probe non-HTTPS URL: ${url}`;
-    return result;
-  }
-
-  // Resolve every A/AAAA once and validate the full set — `dnsLookup` without
-  // `{ all: true }` picks one at random. An attacker that publishes a public
-  // address alongside a private one would slip past a single-record check.
-  let addresses: { address: string; family: number }[];
-  try {
-    addresses = await dnsLookup(parsed.hostname, { all: true });
-  } catch (err) {
-    result.error = `DNS lookup failed for ${parsed.hostname}: ${err instanceof Error ? err.message : String(err)}`;
-    return result;
-  }
-  if (addresses.length === 0) {
-    result.error = `DNS returned no addresses for ${parsed.hostname}`;
-    return result;
-  }
-  // Always block IMDS / link-local, even when allowPrivateIp is set.
-  for (const a of addresses) {
-    if (isAlwaysBlocked(a.address)) {
-      result.error = `Refusing to probe always-blocked address ${a.address} for ${parsed.hostname}`;
-      return result;
-    }
-  }
-  if (!options.allowPrivateIp) {
-    for (const a of addresses) {
-      if (isPrivateIp(a.address)) {
-        result.error = `Refusing to probe private/loopback address ${a.address} for ${parsed.hostname}`;
-        return result;
-      }
-    }
-  }
-  // Pin the connection to the resolved IP so undici doesn't re-resolve and
-  // see a rebind. Picks the first address; all addresses were validated above.
-  const pinned = addresses[0]!;
-  const dispatcher = new Agent({
-    connect: { lookup: (_h, _o, cb) => cb(null, pinned.address, pinned.family) },
-  });
-
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeout);
-  try {
-    const res = await undiciFetch(url, {
+    const res = await ssrfSafeFetch(url, {
       method: 'GET',
-      redirect: 'manual',
-      signal: ac.signal,
       headers: { accept: 'application/json' },
-      dispatcher,
+      allowPrivateIp: options.allowPrivateIp ?? false,
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
-    result.status = res.status;
-    const headers: Record<string, string> = {};
-    res.headers.forEach((v, k) => {
-      headers[k.toLowerCase()] = v;
-    });
-    result.headers = headers;
-
-    const reader = res.body?.getReader();
-    if (reader) {
-      const chunks: Uint8Array[] = [];
-      let bytes = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.byteLength;
-        if (bytes > MAX_BODY_BYTES) {
-          await reader.cancel();
-          result.error = `Response body exceeded ${MAX_BODY_BYTES} bytes`;
-          return result;
-        }
-        chunks.push(value);
-      }
-      const buf = Buffer.concat(chunks.map(c => Buffer.from(c.buffer, c.byteOffset, c.byteLength)));
-      const contentType = headers['content-type'] ?? '';
-      if (contentType.includes('application/json')) {
-        try {
-          result.body = JSON.parse(buf.toString('utf8'));
-        } catch {
-          result.body = buf.toString('utf8');
-        }
-      } else {
-        result.body = buf.toString('utf8');
-      }
-    }
-
-    return result;
+    return {
+      url,
+      status: res.status,
+      headers: res.headers,
+      body: decodeBodyAsJsonOrText(res.body, res.headers['content-type']),
+    };
   } catch (err) {
-    result.error = err instanceof Error ? err.message : String(err);
-    return result;
-  } finally {
-    clearTimeout(timer);
-    await dispatcher.close().catch(() => {});
+    return {
+      url,
+      status: 0,
+      headers: {},
+      body: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -297,8 +213,10 @@ export async function rawMcpProbe(options: {
   toolName: string;
   args: Record<string, unknown>;
   headers?: Record<string, string>;
+  /** Allow http:// and private-IP agent URLs (dev loops). Default false. */
+  allowPrivateIp?: boolean;
 }): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
-  const { agentUrl, toolName, args, headers = {} } = options;
+  const { agentUrl, toolName, args, headers = {}, allowPrivateIp = false } = options;
   const body = JSON.stringify({
     jsonrpc: '2.0',
     id: ++probeRequestId,
@@ -307,32 +225,25 @@ export async function rawMcpProbe(options: {
   });
 
   const httpResult: HttpProbeResult = { url: agentUrl, status: 0, headers: {}, body: null };
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), PROBE_TIMEOUT_MS);
   try {
     // Accept only JSON. Streamable-HTTP MCP servers that prefer SSE framing
     // will 406 or downgrade to JSON; we can't robustly parse event-stream
     // wire format in a probe without reimplementing the transport, and silently
     // misreading an SSE body would make expect_error steps falsely pass.
-    const res = await fetch(agentUrl, {
+    const res = await ssrfSafeFetch(agentUrl, {
       method: 'POST',
-      redirect: 'manual',
-      signal: ac.signal,
       headers: {
         'content-type': 'application/json',
         accept: 'application/json',
         ...headers,
       },
       body,
+      allowPrivateIp,
     });
     httpResult.status = res.status;
-    const respHeaders: Record<string, string> = {};
-    res.headers.forEach((v, k) => {
-      respHeaders[k.toLowerCase()] = v;
-    });
-    httpResult.headers = respHeaders;
+    httpResult.headers = res.headers;
 
-    const text = await res.text();
+    const text = Buffer.from(res.body.buffer, res.body.byteOffset, res.body.byteLength).toString('utf8');
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
@@ -389,87 +300,13 @@ export async function rawMcpProbe(options: {
   } catch (err) {
     httpResult.error = err instanceof Error ? err.message : String(err);
     return { httpResult };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-/**
- * Fold IPv4-mapped and 6to4 IPv6 encodings back to their underlying IPv4
- * address so the classifier catches `::ffff:10.0.0.1`, `::ffff:169.254.169.254`,
- * `64:ff9b::a.b.c.d` (NAT64), and `2002:a.b.c.d::` (6to4). Returns null for
- * native IPv6 addresses.
- */
-function extractEmbeddedIpv4(address: string): string | null {
-  const lower = address.toLowerCase();
-  // ::ffff:a.b.c.d or ::ffff:<hex>:<hex>
-  const mapped = /^::ffff:(?:([0-9a-f]{1,4}):([0-9a-f]{1,4})|((?:\d{1,3}\.){3}\d{1,3}))$/i.exec(lower);
-  if (mapped) {
-    if (mapped[3]) return mapped[3]!;
-    const hi = parseInt(mapped[1]!, 16);
-    const lo = parseInt(mapped[2]!, 16);
-    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-  }
-  // NAT64 well-known prefix 64:ff9b::a.b.c.d
-  const nat64 = /^64:ff9b::((?:\d{1,3}\.){3}\d{1,3})$/i.exec(lower);
-  if (nat64) return nat64[1]!;
-  // 6to4: 2002:<v4-in-hex>::...
-  const sixtofour = /^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})(::|:)/i.exec(lower);
-  if (sixtofour) {
-    const hi = parseInt(sixtofour[1]!, 16);
-    const lo = parseInt(sixtofour[2]!, 16);
-    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-  }
-  return null;
-}
-
-/**
- * Addresses we block even when the dev opt-in `allowPrivateIp` is on — there
- * is no legitimate reason for a compliance probe to hit cloud metadata
- * endpoints (AWS IMDS, GCP metadata, Azure IMDS), and landing there in a CI
- * runner exfiltrates credentials.
- */
-export function isAlwaysBlocked(address: string): boolean {
-  const v4 = isIP(address) === 4 ? address : (extractEmbeddedIpv4(address) ?? '');
-  if (v4) {
-    const [a, b] = v4.split('.').map(Number);
-    // 169.254/16 — link-local + IMDS (169.254.169.254).
-    if (a === 169 && b === 254) return true;
-  }
-  const lower = address.toLowerCase();
-  if (lower.startsWith('fe80:')) return true; // IPv6 link-local
-  return false;
-}
-
-/**
- * Reject loopback, link-local, RFC 1918 private ranges, CGNAT (RFC 6598),
- * broadcast, multicast, the unspecified address, and IPv6 equivalents.
- * Unwraps IPv4-mapped/NAT64/6to4 IPv6 encodings before classifying.
- */
-export function isPrivateIp(address: string): boolean {
-  // Broadcast.
-  if (address === '255.255.255.255') return true;
-
-  const embedded = extractEmbeddedIpv4(address);
-  const v4 = isIP(address) === 4 ? address : embedded;
-  if (v4) {
-    const [a, b] = v4.split('.').map(Number);
-    if (a === 0) return true;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 100 && b! >= 64 && b! <= 127) return true; // RFC 6598 CGNAT 100.64/10
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b! >= 16 && b! <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a! >= 224 && a! <= 239) return true; // multicast
-    if (a === 255) return true;
-  }
-  if (isIP(address) === 6) {
-    const lower = address.toLowerCase();
-    if (lower === '::1' || lower === '::') return true;
-    if (lower.startsWith('fe80:')) return true;
-    if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
-    if (lower.startsWith('ff')) return true; // multicast
-  }
-  return false;
-}
+// IP classifiers live in `src/lib/net/address-guards.ts` so the SSRF-safe
+// fetch primitive can use them without depending on the testing module.
+// Re-exported here for existing import sites (storyboard-security test + any
+// external probe consumers).
+export const isAlwaysBlocked = sharedIsAlwaysBlocked;
+export const isPrivateIp = sharedIsPrivateIp;
+export { SsrfRefusedError };
