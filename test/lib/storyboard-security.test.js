@@ -388,6 +388,7 @@ describe('rawMcpProbe', () => {
         toolName: 'list_creatives',
         args: { page: 1 },
         headers: { authorization: 'Bearer sk_test' },
+        allowPrivateIp: true,
       });
       assert.strictEqual(httpResult.status, 200);
       assert.strictEqual(seenAuth, 'Bearer sk_test');
@@ -413,12 +414,50 @@ describe('rawMcpProbe', () => {
         agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
         toolName: 'list_creatives',
         args: {},
+        allowPrivateIp: true,
       });
       assert.strictEqual(httpResult.status, 401);
       assert.match(httpResult.headers['www-authenticate'], /Bearer realm/);
     } finally {
       server.close();
     }
+  });
+
+  it('refuses https:// localhost agent URLs by default (no allowPrivateIp)', async () => {
+    // Under the DNS-pinning + SSRF hardening, rawMcpProbe resolves and
+    // validates the agent URL before dispatching. Private/loopback addresses
+    // are refused unless the caller opts in — a compliance probe running in
+    // CI should never punch into the host's private network by accident.
+    const { httpResult } = await rawMcpProbe({
+      agentUrl: 'https://127.0.0.1:1/mcp',
+      toolName: 'list_creatives',
+      args: {},
+    });
+    assert.strictEqual(httpResult.status, 0);
+    assert.match(httpResult.error ?? '', /private\/loopback/);
+  });
+
+  it('refuses IMDS (169.254.169.254) even when allowPrivateIp is on', async () => {
+    // Cloud metadata endpoints are always blocked — no dev loop needs them,
+    // and landing there in CI exfiltrates credentials.
+    const { httpResult } = await rawMcpProbe({
+      agentUrl: 'http://169.254.169.254/latest/meta-data/',
+      toolName: 'list_creatives',
+      args: {},
+      allowPrivateIp: true,
+    });
+    assert.strictEqual(httpResult.status, 0);
+    assert.match(httpResult.error ?? '', /always-blocked/);
+  });
+
+  it('refuses non-HTTPS URLs by default', async () => {
+    const { httpResult } = await rawMcpProbe({
+      agentUrl: 'http://example.com/mcp',
+      toolName: 'list_creatives',
+      args: {},
+    });
+    assert.strictEqual(httpResult.status, 0);
+    assert.match(httpResult.error ?? '', /non-HTTPS/);
   });
 });
 
@@ -497,12 +536,13 @@ describe('storyboard runner: auth-override dispatch', () => {
     const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
       const { rawMcpProbe: probe } = require('../../dist/lib/testing/storyboard/probes');
-      await probe({ agentUrl, toolName: 'list_creatives', args: {} }); // no headers
+      await probe({ agentUrl, toolName: 'list_creatives', args: {}, allowPrivateIp: true }); // no headers
       await probe({
         agentUrl,
         toolName: 'list_creatives',
         args: {},
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
+        allowPrivateIp: true,
       });
       // req.headers.authorization is undefined when absent; the server logs ?? null.
       assert.strictEqual(observed[0], null, 'first call has no Authorization');
