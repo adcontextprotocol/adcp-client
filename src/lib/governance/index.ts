@@ -40,9 +40,7 @@ export const ANNEX_III_POLICY_IDS = Object.freeze(['eu_ai_act_annex_iii'] as con
  * type does not enforce mutual exclusion because `PlanBudget` carries an
  * index signature for forward-compatibility with schema additions.
  */
-export type ReallocationAutonomy =
-  | { reallocation_unlimited: true }
-  | { reallocation_threshold: number };
+export type ReallocationAutonomy = { reallocation_unlimited: true } | { reallocation_threshold: number };
 
 export interface PlanBudget {
   total: number;
@@ -138,9 +136,7 @@ function assertParseableIsoTimestamp(value: string, field: string): void {
 export function buildHumanOverride(input: BuildHumanOverrideInput): HumanOverride {
   const reason = input.reason.trim();
   if (reason.length < MIN_REASON_LENGTH) {
-    throw new Error(
-      `human_override.reason must be at least ${MIN_REASON_LENGTH} characters (got ${reason.length})`
-    );
+    throw new Error(`human_override.reason must be at least ${MIN_REASON_LENGTH} characters (got ${reason.length})`);
   }
   if (CONTROL_CHAR_PATTERN.test(reason)) {
     throw new Error('human_override.reason must not contain control characters');
@@ -211,15 +207,13 @@ export function validateGovernancePlan(plan: Partial<GovernancePlan>): Governanc
       issues.push({
         code: 'budget.reallocation_both_set',
         path: 'budget',
-        message:
-          'budget.reallocation_threshold and budget.reallocation_unlimited are mutually exclusive',
+        message: 'budget.reallocation_threshold and budget.reallocation_unlimited are mutually exclusive',
       });
     } else if (!hasThreshold && !hasUnlimited) {
       issues.push({
         code: 'budget.reallocation_missing',
         path: 'budget',
-        message:
-          'budget must set exactly one of reallocation_threshold or reallocation_unlimited',
+        message: 'budget must set exactly one of reallocation_threshold or reallocation_unlimited',
       });
     }
 
@@ -235,9 +229,7 @@ export function validateGovernancePlan(plan: Partial<GovernancePlan>): Governanc
   const regulatedCategories = (plan.policy_categories ?? []).filter(c =>
     (REGULATED_HUMAN_REVIEW_CATEGORIES as readonly string[]).includes(c)
   );
-  const annexIIIIds = (plan.policy_ids ?? []).filter(id =>
-    (ANNEX_III_POLICY_IDS as readonly string[]).includes(id)
-  );
+  const annexIIIIds = (plan.policy_ids ?? []).filter(id => (ANNEX_III_POLICY_IDS as readonly string[]).includes(id));
 
   if ((regulatedCategories.length > 0 || annexIIIIds.length > 0) && plan.human_review_required !== true) {
     const reasons: string[] = [];
