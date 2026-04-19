@@ -5,7 +5,7 @@ const { captureStdoutLogs, writeJsonOutput } = require('../../bin/adcp-json-stdo
 function withWritePatch(stream, fn) {
   const original = stream.write;
   const captured = [];
-  stream.write = (chunk) => {
+  stream.write = chunk => {
     captured.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
     return true;
   };
@@ -43,18 +43,17 @@ test('captureStdoutLogs restores original console methods', () => {
 });
 
 test('writeJsonOutput writes stringified JSON plus newline to stdout', async () => {
-  const stdoutText = await new Promise((resolve) => {
+  const stdoutText = await new Promise(resolve => {
     const chunks = [];
     const original = process.stdout.write;
-    process.stdout.write = (chunk) => {
+    process.stdout.write = chunk => {
       chunks.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
       return true;
     };
-    writeJsonOutput({ a: 1, b: 'x' })
-      .finally(() => {
-        process.stdout.write = original;
-        resolve(chunks.join(''));
-      });
+    writeJsonOutput({ a: 1, b: 'x' }).finally(() => {
+      process.stdout.write = original;
+      resolve(chunks.join(''));
+    });
   });
   assert.ok(stdoutText.endsWith('\n'), 'output should end with newline');
   const parsed = JSON.parse(stdoutText);
@@ -63,18 +62,17 @@ test('writeJsonOutput writes stringified JSON plus newline to stdout', async () 
 
 test('writeJsonOutput passes strings through unchanged (already formatted)', async () => {
   const preformatted = '{\n  "already": "stringified"\n}';
-  const stdoutText = await new Promise((resolve) => {
+  const stdoutText = await new Promise(resolve => {
     const chunks = [];
     const original = process.stdout.write;
-    process.stdout.write = (chunk) => {
+    process.stdout.write = chunk => {
       chunks.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
       return true;
     };
-    writeJsonOutput(preformatted)
-      .finally(() => {
-        process.stdout.write = original;
-        resolve(chunks.join(''));
-      });
+    writeJsonOutput(preformatted).finally(() => {
+      process.stdout.write = original;
+      resolve(chunks.join(''));
+    });
   });
   assert.strictEqual(stdoutText, preformatted + '\n');
 });
