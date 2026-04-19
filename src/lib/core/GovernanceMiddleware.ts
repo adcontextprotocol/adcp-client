@@ -6,7 +6,6 @@
  * - approved: proceed with execution
  * - denied: return denial to caller
  * - conditions: auto-apply machine-actionable conditions and re-check
- * - escalated: return escalation continuation to caller
  *
  * After execution, reports the outcome back to the governance agent.
  */
@@ -152,7 +151,6 @@ export class GovernanceMiddleware {
    * Returns the governance result. The caller decides how to handle each status:
    * - approved: proceed with execution (params may be modified by conditions)
    * - denied: do not execute
-   * - escalated: do not execute, return continuation to caller
    *
    * When conditions are returned with required_value, this method auto-applies
    * them and re-checks, up to maxConditionsIterations.
@@ -217,7 +215,7 @@ export class GovernanceMiddleware {
         return { result: checkResult, params: currentParams };
       }
 
-      if (checkResult.status === 'denied' || checkResult.status === 'escalated') {
+      if (checkResult.status === 'denied') {
         return { result: checkResult, params: currentParams };
       }
 

@@ -938,8 +938,8 @@ export async function testCampaignGovernance(
       );
       step.observation_data = { governance_context: data.governance_context || null };
 
-      // Any status is valid — we're testing the protocol, not the policy
-      if (!['approved', 'denied', 'conditions', 'escalated'].includes(status)) {
+      // Only spec-valid statuses are accepted — we're testing the protocol, not the policy
+      if (!['approved', 'denied', 'conditions'].includes(status)) {
         step.passed = false;
         step.error = `Unexpected governance status: ${status}`;
       }

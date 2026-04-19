@@ -111,7 +111,7 @@ export interface GovernanceEscalation {
  */
 export interface GovernanceCheckResult {
   checkId: string;
-  status: 'approved' | 'denied' | 'conditions' | 'escalated';
+  status: 'approved' | 'denied' | 'conditions';
   explanation: string;
   findings?: GovernanceFinding[];
   conditions?: GovernanceCondition[];

@@ -13,7 +13,7 @@ This page covers the four migration patterns every consumer hits.
 type TaskResult<T> =
   | { success: true;  status: 'completed';                                             data: T }
   | { success: true;  status: 'working' | 'submitted' | 'input-required' | 'deferred'; data?: T }
-  | { success: false; status: 'failed' | 'governance-denied' | 'governance-escalated'; data?: T;
+  | { success: false; status: 'failed' | 'governance-denied'; data?: T;
       error: string;
       adcpError?: { code: string; recovery?: string; retryAfterMs?: number; /* ... */ };
       correlationId?: string };
@@ -113,9 +113,6 @@ if (!result.success) {
     case 'governance-denied':
       notifyApprover(result.adcpError);
       break;
-    case 'governance-escalated':
-      trackPending(result.correlationId);
-      break;
   }
   return;
 }
@@ -156,7 +153,6 @@ switch (result.status) {
 
   case 'failed':
   case 'governance-denied':
-  case 'governance-escalated':
     // see Pattern 2
     return;
 }
@@ -182,7 +178,6 @@ switch (result.status) {
   case 'deferred': ...
   case 'failed': ...
   case 'governance-denied': ...
-  case 'governance-escalated': ...
   default: assertNever(result);  // TS errors if you miss a status
 }
 ```
