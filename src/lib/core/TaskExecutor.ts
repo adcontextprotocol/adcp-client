@@ -204,7 +204,10 @@ export class TaskExecutor {
    * task state because the server intentionally omits it from error bodies
    * (it's a read-oracle).
    */
-  private buildErrorInstance(taskId: string, adcpError: ReturnType<typeof extractAdcpErrorInfo>): ADCPError | undefined {
+  private buildErrorInstance(
+    taskId: string,
+    adcpError: ReturnType<typeof extractAdcpErrorInfo>
+  ): ADCPError | undefined {
     if (!adcpError) return undefined;
     const key = this.activeTasks.get(taskId)?.idempotencyKey;
     return adcpErrorToTypedError(adcpError, key);
