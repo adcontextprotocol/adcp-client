@@ -984,13 +984,18 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     // Normalize params for backwards compatibility before validation
-    let normalizedParams = normalizeRequestParams(taskType, params);
+    let normalizedParams = normalizeRequestParams(taskType, params, {
+      skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+    });
 
     // Inject an idempotency_key for mutating tools before schema validation
     // so callers don't have to supply one. TaskExecutor also guards against
     // missing keys, but validation happens here first — do the injection up
     // front so the request passes the spec's required-field check.
+    // `options.skipIdempotencyAutoInject` disables this for compliance
+    // testing that needs to exercise server-side missing-key behavior.
     if (
+      !options?.skipIdempotencyAutoInject &&
       isMutatingTask(taskType) &&
       normalizedParams &&
       typeof normalizedParams === 'object' &&
@@ -999,8 +1004,13 @@ export class SingleAgentClient {
       normalizedParams = { ...normalizedParams, idempotency_key: generateIdempotencyKey() };
     }
 
-    // Validate request params against schema
-    this.validateRequest(taskType, normalizedParams);
+    // Validate request params against schema. When compliance testing has
+    // asked us to suppress idempotency auto-injection, also skip the
+    // client-side required-field check — the whole point of the test is to
+    // send a missing-key request through and observe the server's response.
+    if (!options?.skipIdempotencyAutoInject) {
+      this.validateRequest(taskType, normalizedParams);
+    }
 
     // Validate required features before sending request
     await this.validateTaskFeatures(taskType);

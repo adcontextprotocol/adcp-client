@@ -9,10 +9,11 @@
 import { getOrCreateClient, getOrDiscoverProfile, runStep } from '../client';
 import { closeConnections } from '../../protocols';
 import { executeStoryboardTask } from './task-map';
-import { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
+import { extractContext, injectContext, applyContextOutputs, applyContextInputs, forwardAliasCache } from './context';
 import { runValidations, type ValidationContext } from './validations';
 import { buildRequest, hasRequestBuilder } from './request-builder';
 import { resolveBrand } from '../client';
+import { isMutatingTask } from '../../utils/idempotency';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -64,6 +65,7 @@ export async function runStoryboard(
   }
 
   let context: StoryboardContext = { ...options.context };
+  if (options.context) forwardAliasCache(options.context, context);
   const contributions = new Set<string>();
   const priorStepResults = new Map<string, StoryboardStepResult>();
   const priorProbes = new Map<string, HttpProbeResult>();
@@ -214,6 +216,7 @@ export async function runStoryboardStep(
   }
 
   const context: StoryboardContext = { ...options.context };
+  if (options.context) forwardAliasCache(options.context, context);
 
   // Find the step
   const allSteps = flattenSteps(storyboard);
@@ -225,7 +228,12 @@ export async function runStoryboardStep(
     );
   }
 
-  const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options);
+  const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options, {
+    contributions: new Set(),
+    priorStepResults: new Map(),
+    priorProbes: new Map(),
+    agentUrl,
+  });
 
   if (!options._client) {
     await closeConnections(options.protocol);
@@ -335,17 +343,25 @@ async function executeStep(
   } else if (hasRequestBuilder(effectiveStep.task)) {
     request = buildRequest(effectiveStep, context, options);
     // Merge pass-through envelope fields from sample_request — builders
-    // don't include these, but storyboards define them for compliance testing.
-    // Only context and ext are merged: they are opaque pass-through fields with
-    // no schema validation. Other envelope fields (push_notification_config,
-    // governance_context, idempotency_key) have structured schemas and are
-    // handled by the request builder when needed.
+    // don't include these, but storyboards define them for compliance
+    // testing. `context` and `ext` are opaque pass-through. `idempotency_key`
+    // must be forwarded so compliance storyboards can test replay semantics:
+    // the same `$generate:uuid_v4#<alias>` across two steps resolves to the
+    // same UUID, and the server sees both calls with that UUID (no auto-
+    // generated UUID overriding it at the client layer).
     if (step.sample_request) {
       if (step.sample_request.context !== undefined && request.context === undefined) {
         request.context = injectContext({ context: step.sample_request.context }, context).context;
       }
       if (step.sample_request.ext !== undefined && request.ext === undefined) {
         request.ext = step.sample_request.ext;
+      }
+      if (step.sample_request.idempotency_key !== undefined && request.idempotency_key === undefined) {
+        const resolved = injectContext(
+          { idempotency_key: step.sample_request.idempotency_key },
+          context
+        ).idempotency_key;
+        if (typeof resolved === 'string') request.idempotency_key = resolved;
       }
     }
   } else if (step.sample_request) {
@@ -391,6 +407,18 @@ async function executeStep(
   // probe so we can (a) strip credentials or send arbitrary Bearer values
   // (which the SDK transport doesn't expose), and (b) capture the HTTP status
   // + `WWW-Authenticate` header for http_* validations.
+  //
+  // Tests for envelope validation on mutating tasks (e.g., "missing
+  // idempotency_key returns INVALID_REQUEST") need to suppress the AdCP
+  // client's auto-inject — otherwise the client helpfully generates a
+  // UUID and the server never sees a missing-key request. Narrow trigger:
+  // the step expects an error, the task is mutating, and the request
+  // doesn't provide idempotency_key.
+  const testsMissingIdempotencyKey =
+    step.expect_error === true &&
+    isMutatingTask(effectiveStep.task) &&
+    (request as Record<string, unknown>).idempotency_key === undefined;
+
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
   let httpResult: HttpProbeResult | undefined;
@@ -422,7 +450,9 @@ async function executeStep(
     }
   } else {
     const run = await runStep(step.title, effectiveStep.task, () =>
-      executeStoryboardTask(client, effectiveStep.task, request)
+      executeStoryboardTask(client, effectiveStep.task, request, {
+        skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+      })
     );
     taskResult = run.result;
     stepResult = run.step;
@@ -464,9 +494,23 @@ async function executeStep(
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
 
-  // Run validations
+  // Run validations. Resolve `$context.<key>` placeholders in `value` and
+  // `allowed_values` fields so expected values can reference prior steps
+  // (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`).
   let validations: ValidationResult[] = [];
   if (step.validations?.length && (taskResult || httpResult)) {
+    const resolvedValidations = step.validations.map(v => {
+      const resolved = { ...v };
+      if (resolved.value !== undefined) {
+        resolved.value = injectContext({ __v: resolved.value }, context).__v;
+      }
+      if (Array.isArray(resolved.allowed_values)) {
+        resolved.allowed_values = resolved.allowed_values.map(
+          av => injectContext({ __v: av }, context).__v
+        );
+      }
+      return resolved;
+    });
     const vctx: ValidationContext = {
       taskName: effectiveStep.task,
       ...(taskResult && { taskResult }),
@@ -474,13 +518,16 @@ async function executeStep(
       agentUrl: runState.agentUrl,
       contributions: runState.contributions,
     };
-    validations = runValidations(step.validations, vctx);
+    validations = runValidations(resolvedValidations, vctx);
   }
 
   const allValidationsPassed = validations.every(v => v.passed);
 
-  // Extract context from responses
+  // Extract context from responses. Forward the alias cache so
+  // `$generate:uuid_v4#<alias>` placeholders in subsequent steps resolve
+  // to the same UUID as prior steps with the same alias.
   const updatedContext = { ...context };
+  forwardAliasCache(context, updatedContext);
   const hasData = taskResult?.data !== undefined && taskResult?.data !== null;
 
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)

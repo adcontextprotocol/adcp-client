@@ -131,6 +131,18 @@ export interface TaskOptions {
   debug?: boolean;
   /** Additional metadata to include */
   metadata?: Record<string, any>;
+  /**
+   * INTERNAL — compliance-test-only escape hatch.
+   *
+   * Suppresses the client's automatic `idempotency_key` generation on
+   * mutating requests. The sole caller is the storyboard runner, which
+   * needs to exercise servers' missing-key validation. Auto-injection
+   * is the retry-safety contract for every real buyer — bypassing it
+   * in production breaks at-most-once semantics on network retries.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  skipIdempotencyAutoInject?: boolean;
 }
 
 /**

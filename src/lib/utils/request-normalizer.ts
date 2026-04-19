@@ -82,7 +82,7 @@ export function normalizePackageParams(pkg: any): any {
  * Infers missing fields that can be derived from deprecated params so callers
  * written against older schema versions keep working.
  */
-export function normalizeRequestParams(taskType: string, params: any): any {
+export function normalizeRequestParams(taskType: string, params: any, opts: { skipIdempotencyAutoInject?: boolean } = {}): any {
   if (!params) {
     return params;
   }
@@ -94,7 +94,9 @@ export function normalizeRequestParams(taskType: string, params: any): any {
   // AdCP spec. When the caller omits it, mint a fresh UUID v4. Most buyer
   // code never needs to track keys of its own — retries via a kept-around
   // key are the less-common path, and those callers supply their own.
+  // `opts.skipIdempotencyAutoInject` disables this for compliance testing.
   if (
+    !opts.skipIdempotencyAutoInject &&
     TASKS_REQUIRING_IDEMPOTENCY_KEY.has(taskType) &&
     (typeof normalized.idempotency_key !== 'string' || normalized.idempotency_key.length === 0)
   ) {

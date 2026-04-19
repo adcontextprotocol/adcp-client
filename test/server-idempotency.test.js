@@ -85,6 +85,22 @@ describe('createAdcpServer with idempotency', () => {
     assert.equal(second.replayed, true, 'replay must set replayed:true');
   });
 
+  it('replay echoes the CURRENT retry context, not the first caller\'s', async () => {
+    // Each buyer retry carries its own correlation_id; the envelope must
+    // reflect the current retry, not a cached echo from the first caller.
+    // Otherwise end-to-end tracing breaks — the replayed response would
+    // surface a correlation_id the current caller never sent.
+    const { server } = makeServer();
+    const key = 'replay_key_abcdefghij';
+    const req = { ...basePayload, idempotency_key: key };
+
+    await callTool(server, 'create_media_buy', { ...req, context: { correlation_id: 'first-attempt' } });
+    const replay = await callTool(server, 'create_media_buy', { ...req, context: { correlation_id: 'retry-attempt' } });
+
+    assert.equal(replay.context?.correlation_id, 'retry-attempt');
+    assert.equal(replay.replayed, true);
+  });
+
   it('key-reordering in payload is treated as equivalent', async () => {
     const { server, calls } = makeServer();
     const key = 'replay_key_abcdefghij';

@@ -116,8 +116,19 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     const pricingOption = selectPricingOption(product);
 
     const now = Date.now();
-    const startTime = new Date(now + 24 * 60 * 60 * 1000).toISOString();
-    const endTime = new Date(now + 8 * 24 * 60 * 60 * 1000).toISOString();
+    const defaultStart = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const defaultEnd = new Date(now + 8 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Respect sample_request dates when they're future-dated — needed for
+    // storyboards that test replay semantics where initial + replay must
+    // produce byte-for-byte identical canonical payloads. Two calls
+    // generated 5ms apart with `Date.now()` would hash differently,
+    // triggering IDEMPOTENCY_CONFLICT on replay. Stale sample dates
+    // (authored before the run date) fall back to the dynamic default.
+    const sampleStart = typeof step.sample_request?.start_time === 'string' ? step.sample_request.start_time : undefined;
+    const sampleEnd = typeof step.sample_request?.end_time === 'string' ? step.sample_request.end_time : undefined;
+    const startTime = sampleStart && Date.parse(sampleStart) >= now ? sampleStart : defaultStart;
+    const endTime = sampleEnd && Date.parse(sampleEnd) >= now ? sampleEnd : defaultEnd;
 
     // Merge any hand-authored package fields from sample_request (targeting_overlay,
     // measurement_terms, creative_assignments, performance_standards, etc.) so
