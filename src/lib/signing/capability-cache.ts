@@ -38,6 +38,14 @@ const DEFAULT_TTL_SECONDS = 300;
  */
 export class CapabilityCache {
   private readonly entries = new Map<string, CachedCapability>();
+  /**
+   * In-flight priming fetches keyed by `cacheKey`. Lives on the instance so
+   * two `CapabilityCache` objects — e.g., one per tenant in a multi-tenant
+   * embedding — don't share an `ensureCapabilityLoaded` promise map across
+   * instances and race each other's writes. The default process-global
+   * cache uses its own map via `defaultCapabilityCache`.
+   */
+  private readonly inFlight = new Map<string, Promise<CachedCapability>>();
   private readonly ttlSeconds: number;
   private readonly now: () => number;
 
@@ -60,6 +68,7 @@ export class CapabilityCache {
 
   clear(): void {
     this.entries.clear();
+    this.inFlight.clear();
   }
 
   isStale(entry: CachedCapability | undefined): boolean {
@@ -67,6 +76,21 @@ export class CapabilityCache {
     const now = this.now();
     if (entry.staleAt !== undefined) return now >= entry.staleAt;
     return now - entry.fetchedAt > this.ttlSeconds;
+  }
+
+  /** @internal Pending-fetch table used by `ensureCapabilityLoaded`. */
+  _getInFlight(cacheKey: string): Promise<CachedCapability> | undefined {
+    return this.inFlight.get(cacheKey);
+  }
+
+  /** @internal */
+  _setInFlight(cacheKey: string, promise: Promise<CachedCapability>): void {
+    this.inFlight.set(cacheKey, promise);
+  }
+
+  /** @internal */
+  _deleteInFlight(cacheKey: string): void {
+    this.inFlight.delete(cacheKey);
   }
 }
 

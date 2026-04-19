@@ -26,6 +26,13 @@ export interface AgentSigningContext {
   cache: CapabilityCache;
   /** Stable cache key used against the capability cache itself. */
   capabilityCacheKey: string;
+  /**
+   * Evict this context's capability entry so the next outbound call
+   * re-primes `get_adcp_capabilities`. Use after a seller-side rotation
+   * signal — or on a 401 / protocol-signature error — without having to
+   * rebuild the cache key from the agent's identifying fields.
+   */
+  invalidate(): void;
 }
 
 /**
@@ -56,6 +63,7 @@ export function buildAgentSigningContext(
     cache,
     capabilityCacheKey,
     getCapability: () => cache.get(capabilityCacheKey),
+    invalidate: () => cache.invalidate(capabilityCacheKey),
   };
 }
 

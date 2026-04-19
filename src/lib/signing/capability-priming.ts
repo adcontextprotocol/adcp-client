@@ -14,9 +14,12 @@ type FetchRaw = (args: Record<string, unknown>) => Promise<unknown>;
 
 /**
  * Extract the `request_signing` capability block from a `get_adcp_capabilities`
- * response regardless of how the transport wrapped it (raw MCP
- * `CallToolResult` with `structuredContent` / `content[].text`, A2A task
- * result, or already-unwrapped payload).
+ * response regardless of how the transport wrapped it:
+ *
+ *   - MCP `CallToolResult` — `structuredContent` or `content[].text` (JSON).
+ *   - A2A JSON-RPC `SendMessageResponse` — `result` is a `Task` (with
+ *     `artifacts[].parts[].data`) or a `Message` (with `parts[].data`).
+ *   - Already-unwrapped payload — returned as-is.
  */
 function extractCapability(response: unknown): {
   requestSigning: VerifierCapability | undefined;
@@ -38,7 +41,11 @@ function extractCapability(response: unknown): {
 function unwrapResponse(response: unknown): unknown {
   if (!response || typeof response !== 'object') return response;
   const r = response as Record<string, unknown>;
+
+  // MCP CallToolResult — structuredContent wins when present.
   if (r.structuredContent && typeof r.structuredContent === 'object') return r.structuredContent;
+
+  // MCP CallToolResult — content[].text parsed as JSON.
   const content = r.content;
   if (Array.isArray(content)) {
     for (const chunk of content) {
@@ -51,16 +58,38 @@ function unwrapResponse(response: unknown): unknown {
       }
     }
   }
+
+  // A2A JSON-RPC response — .result is the Task or Message.
+  const result = r.result;
+  if (result && typeof result === 'object') {
+    // A2A Task: artifacts[0].parts[0].data carries the AdCP payload.
+    const artifacts = (result as Record<string, unknown>).artifacts;
+    if (Array.isArray(artifacts)) {
+      for (const artifact of artifacts) {
+        const parts = (artifact as { parts?: unknown }).parts;
+        const data = findFirstDataPart(parts);
+        if (data) return data;
+      }
+    }
+    // A2A Message: parts[0].data directly on the result.
+    const parts = (result as { parts?: unknown }).parts;
+    const data = findFirstDataPart(parts);
+    if (data) return data;
+  }
+
   return response;
 }
 
-/**
- * In-flight capability fetches, keyed by the caller's capability-cache key.
- * Serializes concurrent `callTool` invocations against the same cold agent
- * so that exactly one `get_adcp_capabilities` request fires — matches the
- * pending-connection pattern in the MCP transport.
- */
-const pendingFetches = new Map<string, Promise<CachedCapability>>();
+function findFirstDataPart(parts: unknown): unknown {
+  if (!Array.isArray(parts)) return undefined;
+  for (const part of parts) {
+    if (part && typeof part === 'object') {
+      const p = part as { kind?: unknown; data?: unknown };
+      if (p.kind === 'data' && p.data && typeof p.data === 'object') return p.data;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Refresh window applied to a negative-cache entry written after a failed
@@ -92,11 +121,11 @@ export async function ensureCapabilityLoaded(
   signingContext: AgentSigningContext,
   fetchRaw: FetchRaw
 ): Promise<CachedCapability> {
-  const key = signingContext.capabilityCacheKey;
-  const existing = signingContext.cache.get(key);
-  if (existing && !signingContext.cache.isStale(existing)) return existing;
+  const { cache, capabilityCacheKey: key } = signingContext;
+  const existing = cache.get(key);
+  if (existing && !cache.isStale(existing)) return existing;
 
-  const pending = pendingFetches.get(key);
+  const pending = cache._getInFlight(key);
   if (pending) return pending;
 
   const promise = fetchRaw({})
@@ -107,7 +136,7 @@ export async function ensureCapabilityLoaded(
         adcpVersion,
         fetchedAt: Math.floor(Date.now() / 1000),
       };
-      signingContext.cache.set(key, entry);
+      cache.set(key, entry);
       return entry;
     })
     .catch(() => {
@@ -118,13 +147,13 @@ export async function ensureCapabilityLoaded(
         fetchedAt: now,
         staleAt: now + NEGATIVE_CACHE_TTL_SECONDS,
       };
-      signingContext.cache.set(key, entry);
+      cache.set(key, entry);
       return entry;
     })
     .finally(() => {
-      pendingFetches.delete(key);
+      cache._deleteInFlight(key);
     });
 
-  pendingFetches.set(key, promise);
+  cache._setInFlight(key, promise);
   return promise;
 }

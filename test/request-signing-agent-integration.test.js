@@ -120,7 +120,7 @@ function agentFor(url) {
       kid: 'test-ed25519-2026',
       alg: 'ed25519',
       private_key: privateJwk,
-      agent_url: 'https://buyer.example/.well-known/adcp-jwks.json',
+      agent_url: 'https://buyer.example.com',
     },
   };
 }
@@ -247,11 +247,9 @@ test('capability rotation: seller adds op to required_for → cache refresh pick
       required_for: ['create_media_buy', 'another_op'],
     };
     // Simulate the cache TTL expiry / explicit invalidation that would
-    // force a re-fetch on the next outbound call. The context derives its
-    // own cache key from the agent's signing identity — using it guarantees
-    // the test invalidates the exact entry the transport reads from.
-    const signingContext = buildAgentSigningContext(agent);
-    defaultCapabilityCache.invalidate(signingContext.capabilityCacheKey);
+    // force a re-fetch on the next outbound call. Use the context's own
+    // invalidate() so the test doesn't reach back into the cache-key shape.
+    buildAgentSigningContext(agent).invalidate();
 
     // Second call: capability re-fetched, another_op now in required_for → signed.
     await ProtocolClient.callTool(agent, 'another_op', {});

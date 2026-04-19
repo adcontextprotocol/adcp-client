@@ -34,8 +34,13 @@ Behavior:
   might have listed in `required_for` reach the wire unsigned and are
   rejected visibly with `request_signature_required`, which retries re-prime.
 - Concurrent cold-cache fans-out share one `get_adcp_capabilities` fetch
-  via an in-flight pending-map — same pattern the MCP transport already
-  uses for connections.
+  via an in-flight pending-map stored on the `CapabilityCache` instance
+  itself — so two tenants with separate `CapabilityCache` instances get
+  independent in-flight tables, and embedders who construct their own
+  cache don't race against the default cache.
+- `AgentSigningContext.invalidate()` evicts this context's capability
+  entry so callers don't have to rebuild the cache key from the agent's
+  identifying fields when they want to force a re-prime.
 - Signing-reserved headers (`Signature`, `Signature-Input`, `Content-Digest`)
   supplied by a caller's `customHeaders` are scrubbed before the signer
   runs — a misconfigured header cannot silently break or bypass the RFC
@@ -66,7 +71,9 @@ New exports on `@adcp/client/signing/client`: `CapabilityCache`,
 `buildAgentSigningContext`, `buildAgentSigningFetch`,
 `ensureCapabilityLoaded`, `extractAdcpOperation`, `shouldSignOperation`,
 `resolveCoverContentDigest`, `toSignerKey`, `CAPABILITY_OP`,
-`CoverContentDigestPredicate`.
+`CoverContentDigestPredicate`. `AgentSigningContext` gains an
+`invalidate()` method. `CachedCapability` gains an optional `staleAt`
+deadline for negative-cache entries.
 
 `createSigningFetch` now accepts `coverContentDigest` as either `boolean`
 or `(url, init) => boolean` so the seller policy can be resolved per

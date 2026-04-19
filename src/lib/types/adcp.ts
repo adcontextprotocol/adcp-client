@@ -262,8 +262,16 @@ export interface AgentRequestSigningConfig {
    */
   private_key: AdcpPrivateJsonWebKey;
   /**
-   * Fully-qualified HTTPS URL at which the signer publishes its JWKS. Sellers
-   * read this side-channel to discover the signer's verification material.
+   * Agent's base URL (e.g., `https://buyer.example.com`). Consistent with
+   * every other `agent_url` field across AdCP — formats, creatives, signals,
+   * brand. Sellers derive the JWKS endpoint via the conventional well-known
+   * suffix (`{agent_url}/.well-known/adcp-jwks.json`); a handful of deploys
+   * override the path via seller-side resolver configuration.
+   *
+   * The client does not read this field — the signer only needs the local
+   * private key — but it's carried here so the field sits next to `kid` /
+   * `alg` / `private_key` and is available to downstream audit logging or
+   * custom verifier wiring.
    */
   agent_url: string;
   /**
