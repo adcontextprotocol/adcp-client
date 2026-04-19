@@ -25,7 +25,11 @@ the step by hand.
 
 - `extraction: { path: "structured_content" | "text_fallback" | "error" | "none" }`
   — records which MCP extraction path produced the parsed response so
-  runner extraction bugs are separable from agent bugs.
+  runner extraction bugs are separable from agent bugs. The response
+  unwrapper and raw MCP probe stamp the provenance as a non-enumerable
+  `_extraction_path` tag on the unwrapped `AdCPResponse`; the runner reads
+  it via `readExtractionPath()` and surfaces it here. All four values are
+  emitted in practice (previously `text_fallback` was unreachable).
 - `request` / `response_record` — the full transport-level exchange
   (omitted for synthetic / skipped steps).
 - `storyboard_id` — each step is self-describing.

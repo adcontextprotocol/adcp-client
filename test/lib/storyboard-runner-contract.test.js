@@ -213,6 +213,61 @@ describe('runner-output contract: secret redaction', () => {
   });
 });
 
+describe('runner-output contract: MCP extraction provenance', () => {
+  const { unwrapProtocolResponse, readExtractionPath } = require('../../dist/lib/utils/response-unwrapper');
+
+  test('structuredContent response tags structured_content', () => {
+    const unwrapped = unwrapProtocolResponse(
+      {
+        structuredContent: { tools: [{ name: 'get_products' }], adcp_major_versions: [3] },
+        content: [],
+      },
+      undefined,
+      'mcp'
+    );
+    assert.strictEqual(readExtractionPath(unwrapped), 'structured_content');
+  });
+
+  test('text-only JSON response tags text_fallback', () => {
+    const unwrapped = unwrapProtocolResponse(
+      {
+        content: [{ type: 'text', text: JSON.stringify({ tools: [{ name: 'get_products' }] }) }],
+      },
+      undefined,
+      'mcp'
+    );
+    assert.strictEqual(readExtractionPath(unwrapped), 'text_fallback');
+  });
+
+  test('isError response tags error', () => {
+    const unwrapped = unwrapProtocolResponse(
+      {
+        isError: true,
+        structuredContent: { adcp_error: { code: 'VALIDATION_ERROR', message: 'bad input' } },
+      },
+      undefined,
+      'mcp'
+    );
+    assert.strictEqual(readExtractionPath(unwrapped), 'error');
+  });
+
+  test('extraction tag is non-enumerable (does not pollute JSON output)', () => {
+    const unwrapped = unwrapProtocolResponse(
+      {
+        structuredContent: { tools: [], adcp_major_versions: [3] },
+      },
+      undefined,
+      'mcp'
+    );
+    assert.strictEqual(readExtractionPath(unwrapped), 'structured_content');
+    // JSON.stringify MUST NOT include _extraction_path
+    const serialized = JSON.parse(JSON.stringify(unwrapped));
+    assert.strictEqual(serialized._extraction_path, undefined);
+    // Object.keys MUST NOT include _extraction_path
+    assert.ok(!Object.keys(unwrapped).includes('_extraction_path'));
+  });
+});
+
 describe('runner-output contract: top-level summary', () => {
   const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks.js');
 

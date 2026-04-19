@@ -278,6 +278,13 @@ export interface TaskResult {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- response shape varies by tool; typed per-access in scenarios
   data?: any;
   error?: string;
+  /**
+   * Internal: which MCP extraction path produced `data`. Set by the response
+   * unwrapper and the raw MCP probe so the storyboard runner can surface it
+   * in its output contract. Consumers outside the runner should treat this
+   * as implementation detail — it's NOT part of the public `AdCPResponse`.
+   */
+  _extraction_path?: 'structured_content' | 'text_fallback' | 'error' | 'none';
 }
 
 // Logger interface for library use

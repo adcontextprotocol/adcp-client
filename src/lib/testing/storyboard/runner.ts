@@ -66,6 +66,10 @@ function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerS
 
 function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExtractionRecord {
   if (!taskResult) return { path: 'none' };
+  // Prefer the explicit provenance stamped by the response unwrapper / raw
+  // MCP probe. Fall back to inference only when the tag is missing (e.g.,
+  // synthetic TaskResults built by validation harnesses).
+  if (taskResult._extraction_path !== undefined) return { path: taskResult._extraction_path };
   if (!taskResult.success && taskResult.error) return { path: 'error' };
   return taskResult.data !== undefined && taskResult.data !== null ? { path: 'structured_content' } : { path: 'none' };
 }

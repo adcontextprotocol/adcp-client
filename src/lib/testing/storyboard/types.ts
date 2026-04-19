@@ -309,13 +309,12 @@ export interface RunnerResponseRecord {
 /**
  * Which MCP extraction path produced the parsed response. Recording this
  * lets implementors distinguish runner extraction bugs from agent bugs.
+ * Populated by the response unwrapper (normal SDK path) and by the raw MCP
+ * probe (auth-override path); the runner falls back to inference when the
+ * provenance tag is missing.
  *
- *   - `structured_content` — the MCP SDK returned parsed structured data.
- *   - `text_fallback` — parsed from `result.content[].text` JSON. Reserved;
- *     the current SDK collapses structured vs text into a single
- *     `TaskResult.data` before the runner sees it, so this value is not
- *     yet emitted. Will be populated when extraction provenance is
- *     plumbed through `TaskResult`.
+ *   - `structured_content` — parsed from `result.structuredContent`.
+ *   - `text_fallback` — parsed from `result.content[].text` JSON.
  *   - `error` — `result.isError` or transport-level failure; payload is the error.
  *   - `none` — no MCP response (HTTP-probe step, synthetic step, or skipped).
  */
