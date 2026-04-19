@@ -22,6 +22,11 @@ export interface HttpsRevocationStoreOptions {
    * seconds after `updated` — a hostile or misconfigured origin could
    * otherwise return `next_update: "9999-12-31Z"` and disable the grace
    * check indefinitely. Default 7 days (604800s).
+   *
+   * NOTE: LARGER values LOOSEN the bound. The default 7 days is already
+   * tight; only raise it if a specific counterparty publishes longer-lived
+   * snapshots for an operationally justified reason. Lowering to hours or
+   * minutes is a hardening move; raising to months is not.
    */
   maxValidityWindowSeconds?: number;
   /**
@@ -39,6 +44,7 @@ export interface HttpsRevocationStoreOptions {
 
 interface SnapshotState {
   revokedKids: Set<string>;
+  revokedJtis: Set<string>;
   /** Parsed from `RevocationSnapshot.updated` (epoch seconds). */
   updated: number;
   /** Parsed from `RevocationSnapshot.next_update` (epoch seconds). */
@@ -191,8 +197,13 @@ export class HttpsRevocationStore implements RevocationStore {
       );
     }
 
+    // Filter non-string entries in both `revoked_kids` and `revoked_jtis`.
+    // `revoked_jtis` isn't consumed today, but validating here keeps the
+    // SnapshotState shape honest for future callers and stops a hostile
+    // snapshot from smuggling non-string values into downstream code.
     this.snapshot = {
       revokedKids: new Set(snapshot.revoked_kids.filter((k): k is string => typeof k === 'string')),
+      revokedJtis: new Set(snapshot.revoked_jtis.filter((k): k is string => typeof k === 'string')),
       updated,
       nextUpdate,
     };

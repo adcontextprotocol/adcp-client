@@ -516,6 +516,29 @@ describe('HttpsRevocationStore', () => {
     }
   });
 
+  it('filters non-string entries in revoked_kids / revoked_jtis rather than crashing', async () => {
+    const issuedAt = 1_000_000;
+    // Hostile-shape snapshot: valid top-level, but the kid list mixes strings
+    // with numbers and nulls. The store MUST accept the snapshot (its shape
+    // is valid) and silently drop the non-string entries.
+    const server = await startRevocationServer({
+      issuer: 'urn:test',
+      updated: new Date(issuedAt * 1000).toISOString(),
+      next_update: new Date((issuedAt + 600) * 1000).toISOString(),
+      revoked_kids: ['real-bad-kid', 123, null, { obj: 'nope' }, 'another-bad-kid'],
+      revoked_jtis: ['a-jti', 42, null],
+    });
+    try {
+      const store = new HttpsRevocationStore(server.url, { allowPrivateIp: true, now: () => issuedAt });
+      assert.strictEqual(await store.isRevoked('real-bad-kid'), true);
+      assert.strictEqual(await store.isRevoked('another-bad-kid'), true);
+      assert.strictEqual(await store.isRevoked('123'), false, 'numeric-ish lookups stay non-revoked');
+      assert.strictEqual(await store.isRevoked('unknown'), false);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it('refuses a snapshot whose issuer does not match expectedIssuer', async () => {
     const issuedAt = 1_000_000;
     const server = await startRevocationServer(

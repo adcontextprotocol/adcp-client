@@ -1,4 +1,4 @@
-import { ssrfSafeFetch, SsrfRefusedError } from '../net';
+import { ssrfSafeFetch } from '../net';
 import type { AdcpJsonWebKey } from './types';
 import type { JwksResolver } from './jwks';
 
