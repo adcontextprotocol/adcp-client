@@ -1,0 +1,24 @@
+# DEV ONLY — local storyboard-testing harness. Do NOT deploy this Caddyfile
+# to production: `X-Replica` exposes internal container hostports, and the
+# listener is plain HTTP without TLS.
+#
+# Round-robin proxy for the two-replica AdCP agent harness.
+# http://localhost:4099/mcp/ → agent-a:8080 / agent-b:8080 round-robin.
+
+:4099 {
+	handle_path /* {
+		reverse_proxy agent-a:8080 agent-b:8080 {
+			lb_policy round_robin
+			# Surface which replica answered so failing storyboard runs
+			# can read it in the response headers. Leaks internal hostport
+			# information — acceptable for a dev harness, NOT for prod.
+			header_up X-Forwarded-For {remote_host}
+			header_down +X-Replica {upstream_hostport}
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
