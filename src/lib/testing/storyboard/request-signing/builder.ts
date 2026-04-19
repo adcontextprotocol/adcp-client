@@ -10,7 +10,7 @@ import {
   type SignerKey,
 } from '../../../signing';
 import { findKey } from './vector-loader';
-import type { NegativeVector, PositiveVector, TestKeyset, TestKeypair, VectorRequest } from './types';
+import type { NegativeVector, PositiveVector, TestKeyset, TestKeypair } from './types';
 
 export interface BuildOptions {
   /** Override the signer clock (unix seconds). Defaults to `Date.now()/1000`. */
@@ -19,6 +19,19 @@ export interface BuildOptions {
   nonce?: string;
   /** Override the `expires - created` window (seconds). Defaults to 300. */
   windowSeconds?: number;
+  /**
+   * Agent base URL. When set, the vector's request URL has its origin replaced
+   * with this base before signing — the vectors point at `seller.example.com`
+   * but real agents live elsewhere. The path and query are preserved so the
+   * operation intent (e.g., `/adcp/create_media_buy`) is unchanged.
+   *
+   * Canonicalization-edge vectors (005 default-port, 006 dot-segment path,
+   * 007 query preservation, 008 percent-encoded path) bake their edge case
+   * into the vector URL; replacing the origin keeps that edge intact in the
+   * path/query, but vectors sensitive to the port or scheme will no longer
+   * exercise the edge against a mismatched agent base.
+   */
+  baseUrl?: string;
 }
 
 export interface SignedHttpRequest {
@@ -69,9 +82,9 @@ export function listSupportedNegativeVectors(): string[] {
 type Mutator = (vector: NegativeVector, keys: TestKeyset, options: BuildOptions) => SignedHttpRequest;
 
 const MUTATIONS: Record<string, Mutator> = {
-  '001-no-signature-header': (vector) => ({
+  '001-no-signature-header': (vector, _keys, options) => ({
     method: vector.request.method,
-    url: vector.request.url,
+    url: retargetUrl(vector.request.url, options.baseUrl),
     headers: stripSignatureHeaders(vector.request.headers),
     body: vector.request.body,
   }),
@@ -213,7 +226,13 @@ interface SignArgs extends BuildOptions {
 }
 
 function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: SignArgs): SignedHttpRequest {
-  const request = toRequestLike(vector.request);
+  const url = retargetUrl(vector.request.url, args.baseUrl);
+  const request: RequestLike = {
+    method: vector.request.method,
+    url,
+    headers: vector.request.headers,
+    body: vector.request.body,
+  };
   const signed = signRequest(request, key, {
     coverContentDigest: args.coverContentDigest === true,
     now: args.now !== undefined ? () => args.now! : undefined,
@@ -222,10 +241,19 @@ function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: Sig
   });
   return {
     method: vector.request.method,
-    url: vector.request.url,
+    url,
     headers: mergeHeaders(vector.request.headers, signed.headers),
     body: vector.request.body,
   };
+}
+
+function retargetUrl(vectorUrl: string, baseUrl: string | undefined): string {
+  if (!baseUrl) return vectorUrl;
+  const v = new URL(vectorUrl);
+  const b = new URL(baseUrl);
+  v.protocol = b.protocol;
+  v.host = b.host;
+  return v.toString();
 }
 
 interface ParamOverride {
@@ -249,7 +277,13 @@ function signWithParamOverride(
   options: BuildOptions,
   override: ParamOverride
 ): SignedHttpRequest {
-  const request = toRequestLike(vector.request);
+  const url = retargetUrl(vector.request.url, options.baseUrl);
+  const request: RequestLike = {
+    method: vector.request.method,
+    url,
+    headers: vector.request.headers,
+    body: vector.request.body,
+  };
   const hasBody = (request.body ?? '').length > 0;
   const components = hasBody
     ? ['@method', '@target-uri', '@authority', 'content-type']
@@ -272,7 +306,7 @@ function signWithParamOverride(
 
   return {
     method: vector.request.method,
-    url: vector.request.url,
+    url,
     headers: {
       ...vector.request.headers,
       'Signature-Input': `sig1=${paramsString}`,
@@ -288,7 +322,13 @@ function signWithComponents(
   options: BuildOptions,
   components: string[]
 ): SignedHttpRequest {
-  const request = toRequestLike(vector.request);
+  const url = retargetUrl(vector.request.url, options.baseUrl);
+  const request: RequestLike = {
+    method: vector.request.method,
+    url,
+    headers: vector.request.headers,
+    body: vector.request.body,
+  };
   const now = nowSeconds(options);
   const windowSeconds = options.windowSeconds ?? 300;
   const params: SignatureParams = {
@@ -304,7 +344,7 @@ function signWithComponents(
   const signature = produceSignature(key, Buffer.from(base, 'utf8'));
   return {
     method: vector.request.method,
-    url: vector.request.url,
+    url,
     headers: {
       ...vector.request.headers,
       'Signature-Input': `sig1=${paramsString}`,
@@ -395,15 +435,6 @@ function mergeHeaders(
   // Drop original Signature/Signature-Input/Content-Digest before overlaying fresh ones.
   const base = stripSignatureHeaders(from);
   return { ...base, ...signed };
-}
-
-function toRequestLike(request: VectorRequest): RequestLike {
-  return {
-    method: request.method,
-    url: request.url,
-    headers: request.headers,
-    body: request.body,
-  };
 }
 
 function nowSeconds(options: BuildOptions): number {
