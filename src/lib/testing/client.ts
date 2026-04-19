@@ -19,8 +19,6 @@ import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } fr
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
 
-const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example' };
-
 /**
  * Extract a principal identifier from TestOptions auth.
  * For bearer auth this is the token; for basic auth this is the username;
@@ -38,9 +36,15 @@ export function resolveAuthPrincipal(options: TestOptions): string | undefined {
   }
 }
 
+const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example' };
+
 /**
  * Resolve the brand reference to use for a test call.
  * Prefers the new brand field, falls back to converting a legacy brand_manifest.
+ *
+ * The runner enforces a storyboard-run-scoped brand invariant on every
+ * outgoing request, so a missing brand yields a stable default that stays
+ * consistent across create/get/update/delete within a single run.
  */
 export function resolveBrand(options: TestOptions): BrandReference {
   return (

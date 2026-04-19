@@ -320,6 +320,25 @@ The sync_creatives handler must check the format_id to decide how to process:
 - Validate the brand domain from the account — return `action: 'failed'` with an error if invalid
 - Return `action: 'created'` for both generative and standard creatives
 
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request — for generative sellers that's `create_media_buy`, `update_media_buy`, and `sync_creatives` (including brief-based creatives whose generation is expensive and must not double-bill). Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry, so a failed generation can be retried without burning the key. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`).
+
+```typescript
+import { createIdempotencyStore, memoryBackend, pgBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // or pgBackend(pool) for production
+  ttlSeconds: 86400,                // 1h–7d, clamped to spec bounds
+});
+
+const server = createAdcpServer({
+  idempotency,
+  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
+  // ... your domain handlers (mediaBuy.createMediaBuy, updateMediaBuy, creative.syncCreatives)
+});
+```
+
 ## Validation
 
 **After writing the agent, validate it. Fix failures. Repeat.**

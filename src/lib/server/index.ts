@@ -126,6 +126,25 @@ export type {
 
 export { DEFAULT_REPORTING_CAPABILITIES } from './product-defaults';
 
+export {
+  createIdempotencyStore,
+  memoryBackend,
+  pgBackend,
+  getIdempotencyMigration,
+  IDEMPOTENCY_MIGRATION,
+  cleanupExpiredIdempotency,
+  hashPayload,
+} from './idempotency';
+export type {
+  IdempotencyStore,
+  IdempotencyStoreConfig,
+  IdempotencyBackend,
+  IdempotencyCacheEntry,
+  IdempotencyCheckResult,
+  MemoryBackendOptions,
+  PgBackendOptions,
+} from './idempotency';
+
 export { checkGovernance, governanceDeniedError } from './governance';
 export type {
   CheckGovernanceOptions,

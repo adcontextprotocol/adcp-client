@@ -105,32 +105,32 @@ getSignalsResponse({
 
 **`activate_signal`** — handled by `signals.activateSignal`
 
-Look up by `signal_agent_segment_id`. Validate `pricing_option_id`. Return deployments matching the requested destinations.
+Look up by `signal_agent_segment_id`. Validate `pricing_option_id`. Return deployments matching the requested destinations. **Platform activation is async; agent activation is sync** — different shape per destination type, driven by the compliance contract:
 
 ```
 activateSignalResponse({
-  deployments: [{
-    // Match the destination type from the request:
-    type: 'platform',              // for platform destinations
-    platform: string,              // echo from request destination
-    account: string | null,        // echo from request
-    is_live: true,                 // signal is now active
-    activation_key: {
-      type: 'segment_id',
-      segment_id: string,          // platform-specific segment ID
+  deployments: [
+    // Platform (DSP) — ASYNC. First response returns is_live:false plus
+    // an ETA AND the planned activation_key. Buyer re-sends activate_signal
+    // to poll until is_live:true; final response adds deployed_at.
+    {
+      type: 'platform',
+      platform: string,
+      account: string | null,                              // echo from request
+      is_live: false,                                      // flips true on completion
+      estimated_activation_duration_minutes: number,       // present while activating
+      activation_key: { type: 'segment_id', segment_id: string },  // committed up front
+      deployed_at: string,                                 // ISO; present when is_live:true
     },
-  }],
-  // OR for agent destinations:
-  deployments: [{
-    type: 'agent',
-    agent_url: string,
-    is_live: true,
-    activation_key: {
-      type: 'key_value',
-      key: string,
-      value: string,
+    // Agent (sales-agent) — SYNC. First response is the final response.
+    {
+      type: 'agent',
+      agent_url: string,
+      is_live: true,
+      activation_key: { type: 'key_value', key: string, value: string },
+      deployed_at: string,                                 // ISO timestamp
     },
-  }],
+  ],
   sandbox: true,
 })
 ```
@@ -221,7 +221,10 @@ serve(() => createAdcpServer({
 
     activateSignal: async (params, ctx) => {
       const signal = signals.find(s => s.signal_agent_segment_id === params.signal_agent_segment_id);
-      if (!signal) throw adcpError('SIGNAL_NOT_FOUND', { message: `Unknown segment: ${params.signal_agent_segment_id}` });
+      // Return the error — the framework echoes returned adcpError
+      // responses verbatim. Thrown errors are caught and converted to
+      // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
+      if (!signal) return adcpError('SIGNAL_NOT_FOUND', { message: `Unknown segment: ${params.signal_agent_segment_id}` });
 
       // Persist activation in state store
       await ctx.store.put('activations', params.signal_agent_segment_id, {
@@ -230,20 +233,70 @@ serve(() => createAdcpServer({
         activated_at: new Date().toISOString(),
       });
 
-      const deployments = params.destinations.map(dest => ({
-        ...dest,
-        is_live: true,
-        activation_key: dest.type === 'platform'
-          ? { type: 'segment_id' as const, segment_id: `seg_${signal.signal_id.id}_${dest.platform}` }
-          : { type: 'key_value' as const, key: 'audience', value: signal.signal_id.id },
-      }));
+      // Platform (DSP) activation is ASYNC per spec — return `is_live: false`
+      // with `estimated_activation_duration_minutes`. The buyer polls
+      // (a subsequent `activate_signal` with the same destinations, or a
+      // provider-specific status tool) until `is_live: true`.
+      //
+      // Agent (sales-agent) activation is SYNC — return `is_live: true` with
+      // `activation_key.type: 'key_value'` and a `deployed_at` timestamp.
+      //
+      // Both shapes include `activation_key` so the buyer knows how to
+      // reference the segment when building media buys through the DSP or SA.
+      const deployments = params.destinations.map(dest => {
+        if (dest.type === 'platform') {
+          return {
+            type: 'platform' as const,
+            platform: dest.platform,
+            is_live: false,
+            estimated_activation_duration_minutes: 30,
+            // Return activation_key even while is_live is false — the
+            // buyer needs to know the planned segment_id now so it can
+            // reference it in downstream media buys. `is_live` just
+            // flags whether the DSP has confirmed provisioning;
+            // `activation_key` is the agent's commitment.
+            activation_key: {
+              type: 'segment_id' as const,
+              segment_id: `${dest.platform}_${signal.signal_id.id}`,
+            },
+          };
+        }
+        return {
+          type: 'agent' as const,
+          agent_url: dest.agent_url,
+          is_live: true,
+          activation_key: { type: 'key_value' as const, key: 'audience', value: signal.signal_id.id },
+          deployed_at: new Date().toISOString(),
+        };
+      });
       return { deployments, sandbox: true };
     },
   },
 }));
 ```
 
-The skill contains everything you need. Do not read additional docs before writing code.
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request — for signals agents that's `activate_signal` (`get_signals` is read-only and exempt). Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — a failed activation re-executes on retry so buyers can safely retry transient errors. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) so two buyers requesting the same destinations won't collide.
+
+```typescript
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // or pgBackend(pool) for production
+  ttlSeconds: 86400,                // 3600–604800 per spec; throws if out of range
+});
+
+const server = createAdcpServer({
+  idempotency,
+  // MUST never return undefined — or every mutating request rejects as
+  // SERVICE_UNAVAILABLE. A constant works for a demo; for multi-tenant
+  // production, type the account via `createAdcpServer<MyAccount>({...})`
+  // and use `(ctx) => ctx.account?.id`.
+  resolveSessionKey: () => 'default-principal',
+  // ... your signals.activateSignal handler
+});
+```
 
 ## Validation
 
@@ -260,7 +313,7 @@ npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace --j
 **Sandbox validation** (if ports are blocked):
 
 ```bash
-npx tsc --noEmit agent.ts
+npx tsc --noEmit
 ```
 
 **Keep iterating until all steps pass.**

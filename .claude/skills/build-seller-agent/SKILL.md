@@ -441,7 +441,10 @@ Minimal `tsconfig.json`:
 
 Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
 
+**Imports**: most things live at `@adcp/client`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/client/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
+
 ```typescript
+import { randomUUID } from 'node:crypto';
 import {
   createAdcpServer,
   serve,
@@ -449,11 +452,19 @@ import {
   InMemoryStateStore,
   checkGovernance,
   governanceDeniedError,
-  DEFAULT_REPORTING_CAPABILITIES,
 } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 import type { ServeContext } from '@adcp/client';
 
 const stateStore = new InMemoryStateStore(); // shared across requests
+
+// Idempotency — required for any v3-compliant seller that accepts mutating
+// requests. `createIdempotencyStore` throws if `ttlSeconds` is outside the
+// spec bounds (3600–604800).
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(), // pgBackend(pool) for production
+  ttlSeconds: 86400, // 24 hours
+});
 
 function createAgent({ taskStore }: ServeContext) {
   return createAdcpServer({
@@ -461,10 +472,17 @@ function createAgent({ taskStore }: ServeContext) {
     version: '1.0.0',
     taskStore,
     stateStore,
+    idempotency,
+
+    // Principal scoping for idempotency. MUST never return undefined — or
+    // every mutating request rejects as SERVICE_UNAVAILABLE. A constant is
+    // fine for a demo; for multi-tenant production use ctx.account typed
+    // via `createAdcpServer<MyAccount>({...})`.
+    resolveSessionKey: () => 'default-principal',
 
     resolveAccount: async ref => {
       if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
-      return null; // or resolve by brand+operator
+      return null;
     },
 
     accounts: {
@@ -489,12 +507,15 @@ function createAgent({ taskStore }: ServeContext) {
           });
           if (!gov.approved) return governanceDeniedError(gov);
         }
+        // Use randomUUID (not Date.now) so ids are unguessable — a guessable
+        // media_buy_id lets another buyer probe or cancel. Same applies to
+        // any seller-issued id (package_id, creative_id, etc.).
         const buy = {
-          media_buy_id: `mb_${Date.now()}`,
-          status: 'pending_creatives',
+          media_buy_id: `mb_${randomUUID()}`,
+          status: 'pending_creatives' as const,
           packages:
-            params.packages?.map((pkg, i) => ({
-              package_id: `pkg_${i}`,
+            params.packages?.map(pkg => ({
+              package_id: `pkg_${randomUUID()}`,
               product_id: pkg.product_id,
               pricing_option_id: pkg.pricing_option_id,
               budget: pkg.budget,
@@ -502,6 +523,26 @@ function createAgent({ taskStore }: ServeContext) {
         };
         await ctx.store.put('media_buys', buy.media_buy_id, buy);
         return buy; // mediaBuyResponse() auto-applied (sets revision, confirmed_at, valid_actions)
+      },
+      updateMediaBuy: async (params, ctx) => {
+        const existing = await ctx.store.get('media_buys', params.media_buy_id);
+        if (!existing) {
+          return adcpError('MEDIA_BUY_NOT_FOUND', {
+            message: `No media buy with id ${params.media_buy_id}`,
+            field: 'media_buy_id',
+          });
+        }
+        // Only merge the fields you want to persist — do NOT spread `params`
+        // wholesale. `params` carries envelope fields (idempotency_key,
+        // context) that have no business in your domain state. Spreading
+        // them pollutes `get_media_buys` responses and breaks dedup.
+        const updated = { ...existing, status: params.active === false ? 'paused' : 'active' };
+        await ctx.store.put('media_buys', params.media_buy_id, updated);
+        return {
+          media_buy_id: params.media_buy_id,
+          status: updated.status as 'paused' | 'active',
+          affected_packages: [],
+        };
       },
       getMediaBuys: async (params, ctx) => {
         const result = await ctx.store.list('media_buys');
@@ -514,7 +555,15 @@ function createAgent({ taskStore }: ServeContext) {
         /* ... */
       },
       syncCreatives: async (params, ctx) => {
-        /* ... */
+        return {
+          // Response shape is `creatives: [{ creative_id, action }]` per the
+          // sync_creatives response schema — NOT `synced_creatives`.
+          creatives:
+            params.creatives?.map(c => ({
+              creative_id: c.creative_id ?? `cr_${randomUUID()}`,
+              action: 'created' as const,
+            })) ?? [],
+        };
       },
     },
     capabilities: {
@@ -529,14 +578,99 @@ serve(createAgent);
 Key points:
 
 1. Single `.ts` file — all domain handlers in one `createAdcpServer` call
-2. `get_adcp_capabilities` is auto-generated from your handlers — don't register it manually
+2. `get_adcp_capabilities` is auto-generated from your handlers — don't register it manually (idempotency capability is auto-declared too)
 3. Response builders are auto-applied — just return the data
 4. Use `ctx.store` for state — persists across stateless HTTP requests
 5. Set `sandbox: true` on all mock/demo responses
 6. Use `adcpError()` for business validation failures
 7. Use `as const` on string literal arrays and union-typed fields in product definitions — TypeScript infers `string[]` from `['display', 'olv']` but the SDK requires specific union types like `MediaChannel[]`. Apply `as const` to `channels`, `delivery_type`, `selection_type`, and `pricing_model` values.
 
-The skill contains everything you need. Do not read additional docs before writing code.
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, that's `create_media_buy`, `update_media_buy`, `sync_creatives`, and any `sync_*` tools you implement. Idempotency is wired in the Implementation example above — this section explains what the framework does for you and the subtleties to know.
+
+**What the framework handles when you pass `idempotency` to `createAdcpServer`:**
+
+- Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic.
+- Hashes the request payload with RFC 8785 JCS; returns `IDEMPOTENCY_CONFLICT` on same-key-different-payload. The error body carries only `code` + `message` — no payload hash, no field pointer, no leaked cached content.
+- Returns `IDEMPOTENCY_EXPIRED` when a key is past the TTL (with ±60s clock-skew tolerance).
+- Injects `replayed: true` on `result.structuredContent.replayed` when returning a cached response; fresh executions omit the field.
+- Auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`.
+- Only caches successful responses — errors re-execute on retry so transient failures don't lock into the cache.
+- Atomic claim on `check()` so concurrent retries with a fresh key don't all race to execute side effects.
+
+**Scoping**: the principal comes from `resolveSessionKey` (or override with `resolveIdempotencyPrincipal(ctx, params, toolName)` for per-tool custom scopes). Two callers with the same principal share a cache namespace; different principals are isolated.
+
+**Two things to know**:
+
+1. `ttlSeconds` must be `3600` (1h) to `604800` (7d) — out of range throws at `createIdempotencyStore` construction. Don't pass minutes thinking they're seconds.
+2. If you register mutating handlers without passing `idempotency`, the framework logs an error at server-creation time (v3 non-compliance). Silence it by either wiring idempotency or setting `capabilities.idempotency.replay_ttl_seconds` in your config (declares non-compliance to buyers).
+
+## Going to Production
+
+The quick-start uses `memoryBackend()` for idempotency and `InMemoryStateStore` for state — both reset on process restart and don't scale across replicas. Production swaps three pieces:
+
+```typescript
+import { Pool } from 'pg';
+import {
+  createIdempotencyStore,
+  pgBackend,
+  getIdempotencyMigration,
+  PostgresStateStore,
+  getAdcpStateMigration,
+  PostgresTaskStore,
+  MCP_TASKS_MIGRATION,
+  cleanupExpiredIdempotency,
+} from '@adcp/client/server';
+
+// Fail fast — pg silently defaults to localhost+OS-user if DATABASE_URL is
+// missing, which works on a dev laptop and breaks cryptically in CI.
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL environment variable is required');
+}
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Run once per deployment before starting the server (e.g., as a
+// separate migrate step, or at boot with a feature flag).
+await pool.query(getIdempotencyMigration());
+await pool.query(getAdcpStateMigration());
+await pool.query(MCP_TASKS_MIGRATION);
+
+const idempotency = createIdempotencyStore({
+  backend: pgBackend(pool),
+  ttlSeconds: 86400,
+});
+const stateStore = new PostgresStateStore(pool);
+const taskStore = new PostgresTaskStore(pool);
+
+// Cleanup expired idempotency rows hourly so the cache table doesn't
+// grow unboundedly. Schedule via cron in production.
+setInterval(() => cleanupExpiredIdempotency(pool).catch(console.error), 3600 * 1000);
+
+serve(() =>
+  createAdcpServer({
+    name: 'My Seller Agent',
+    version: '1.0.0',
+    taskStore,
+    stateStore,
+    idempotency,
+
+    // Real multi-tenant principal resolution — derived from an authenticated
+    // session (e.g., JWT claims middleware before serve()), not a constant.
+    resolveAccount: async ref => db.findAccount(ref),
+    resolveSessionKey: ctx => (ctx.account as { id?: string } | undefined)?.id ?? 'unknown-principal',
+
+    mediaBuy: {
+      /* handlers */
+    },
+  })
+);
+```
+
+Two things the example doesn't wire (app-specific):
+
+- **Authentication** — the quick-start has no auth. Production agents need bearer-token or OAuth in front of `serve()`. The library provides OAuth helpers; bearer is middleware territory (Express/Fastify).
+- **Connection-pool sizing** — pass `max`, `idleTimeoutMillis`, `connectionTimeoutMillis` on `new Pool({...})` per your deployment's concurrency characteristics. The pg driver defaults are fine for low traffic.
 
 ## Validation
 

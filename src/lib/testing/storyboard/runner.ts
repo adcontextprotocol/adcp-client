@@ -12,6 +12,7 @@ import { executeStoryboardTask } from './task-map';
 import { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 import { runValidations, type ValidationContext } from './validations';
 import { buildRequest, hasRequestBuilder } from './request-builder';
+import { resolveBrand } from '../client';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -355,6 +356,13 @@ async function executeStep(
     request = applyContextInputs(request, step.context_inputs, context);
   }
 
+  // Brand/account is a storyboard-run-scoped invariant: every step in a run
+  // targets the same brand, so every outgoing request's brand context must
+  // match the options. Enforcing this here (after builder + sample_request)
+  // prevents session-key divergence across create/get/update/delete steps
+  // when individual builders or sample_request YAML omit brand.
+  request = applyBrandInvariant(request, options);
+
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
   const unresolvedVars = findUnresolvedContextVars(request);
@@ -658,6 +666,46 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
   const stepId = match[1]!;
   const prior = priorStepResults.get(stepId);
   return !!prior?.passed && !prior.skipped;
+}
+
+// ────────────────────────────────────────────────────────────
+// Brand/account invariant
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Force every outgoing request onto the storyboard's brand context.
+ *
+ * Sellers that scope session state by brand (spec-required for multi-tenant
+ * isolation) derive a session key from `brand.domain` — or, when brand is
+ * absent, from `account.brand.domain`. If any step in a run targets a
+ * different brand, it lands in a different session and can't see state
+ * created by earlier steps.
+ *
+ * This helper runs after builder / sample_request resolution and overwrites
+ * any conflicting brand on the request with `options.brand`. When the
+ * request carries an `account` object, we also set `account.brand` so both
+ * addressing forms converge.
+ *
+ * `AccountReference` is a union of `{account_id}` or `{brand, operator, sandbox?}`.
+ * Injecting `brand` into an `{account_id}`-branch account still passes schema
+ * validation (request schemas use `.passthrough()`) but is semantically
+ * redundant. No storyboard currently uses the `{account_id}` branch.
+ */
+export function applyBrandInvariant(
+  request: Record<string, unknown>,
+  options: StoryboardRunOptions
+): Record<string, unknown> {
+  // Only force the invariant when the caller has actually supplied a brand.
+  // Storyboards that don't exercise brand-scoped tools (e.g. security
+  // probes) legitimately run without one and should pass through unchanged.
+  if (!options.brand && !options.brand_manifest) return request;
+  const brand = resolveBrand(options);
+  const result: Record<string, unknown> = { ...request, brand };
+  const existingAccount = request.account;
+  if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
+    result.account = { ...(existingAccount as Record<string, unknown>), brand };
+  }
+  return result;
 }
 
 // ────────────────────────────────────────────────────────────

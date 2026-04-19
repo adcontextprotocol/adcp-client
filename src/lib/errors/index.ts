@@ -243,6 +243,70 @@ export class AuthenticationRequiredError extends ADCPError {
 }
 
 /**
+ * Error thrown when a request reused an `idempotency_key` with a different
+ * canonical payload within the seller's replay window.
+ *
+ * Recovery: `correctable` — the caller either reused a key by mistake (mint
+ * a fresh UUID v4 for the new request) or re-planned with a different payload
+ * (an agent whose LLM re-ran and emitted a different request must treat that
+ * as a new intent, not a retry).
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.createMediaBuy({...});
+ * } catch (error) {
+ *   if (error instanceof IdempotencyConflictError) {
+ *     // Either the key was reused by mistake, or the agent re-planned with
+ *     // a different payload. Mint a fresh key and try again.
+ *   }
+ * }
+ * ```
+ */
+export class IdempotencyConflictError extends ADCPError {
+  readonly code = 'IDEMPOTENCY_CONFLICT';
+
+  constructor(
+    public readonly idempotencyKey: string | undefined,
+    message?: string
+  ) {
+    super(
+      message ||
+        'idempotency_key was used earlier with a different canonical payload. ' +
+          'Use a fresh UUID v4 for the new request, or resend the exact original payload to get the cached response.'
+    );
+  }
+}
+
+/**
+ * Error thrown when a request carries an `idempotency_key` that is past the
+ * seller's declared replay window (plus clock-skew tolerance).
+ *
+ * Recovery: `correctable`. If the caller knows the prior call succeeded
+ * (e.g., they saw the response once, then crashed), they SHOULD fall back
+ * to a natural-key lookup (e.g., `get_media_buys` by
+ * `context.internal_campaign_id`) rather than minting a new key — otherwise
+ * the seller treats the new request as fresh and silently creates a duplicate.
+ *
+ * If the caller doesn't know whether the prior call succeeded, a fresh key
+ * is safe.
+ */
+export class IdempotencyExpiredError extends ADCPError {
+  readonly code = 'IDEMPOTENCY_EXPIRED';
+
+  constructor(
+    public readonly idempotencyKey: string | undefined,
+    message?: string
+  ) {
+    super(
+      message ||
+        "idempotency_key is past the seller's replay window. " +
+          'If you know the prior call succeeded, look up the resource by natural key before retrying. Otherwise, mint a fresh UUID v4.'
+    );
+  }
+}
+
+/**
  * Error thrown when a required feature is not supported by the seller
  */
 export class FeatureUnsupportedError extends ADCPError {

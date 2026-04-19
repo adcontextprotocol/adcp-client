@@ -209,6 +209,8 @@ export {
   ConfigurationError,
   AuthenticationRequiredError,
   FeatureUnsupportedError,
+  IdempotencyConflictError,
+  IdempotencyExpiredError,
   isADCPError,
   isErrorOfType,
   extractErrorInfo,
@@ -216,6 +218,17 @@ export {
 } from './errors';
 export type { OAuthMetadataInfo } from './errors';
 export { InputRequiredError } from './core/TaskExecutor';
+
+// ====== IDEMPOTENCY ======
+export {
+  generateIdempotencyKey,
+  isMutatingTask,
+  isValidIdempotencyKey,
+  IDEMPOTENCY_KEY_PATTERN,
+  MUTATING_TASKS,
+} from './utils/idempotency';
+export type { MutatingRequestInput } from './utils/idempotency';
+export { canonicalize, canonicalJsonSha256 } from './utils/jcs';
 
 // ====== CORE TYPES ======
 export * from './types';
@@ -596,7 +609,14 @@ export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPRe
 
 // ====== PROTOCOL CLIENTS ======
 // Low-level protocol clients for MCP and A2A (primarily for testing)
-export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2AClient } from './protocols';
+export {
+  ProtocolClient,
+  callMCPTool,
+  callA2ATool,
+  createMCPClient,
+  createA2AClient,
+  closeMCPConnections,
+} from './protocols';
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses

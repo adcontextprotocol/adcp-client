@@ -302,6 +302,25 @@ serve(() =>
 
 The skill contains everything you need. Do not read additional docs before writing code.
 
+## Idempotency
+
+AdCP v3 requires an `idempotency_key` on every mutating request — for brand rights agents that's `acquire_rights` (once the schema lands; `get_brand_identity` and `get_rights` are read-only and exempt). Acquiring rights issues credentials and may trigger billing, so replay safety is non-negotiable. Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — a failed acquisition re-executes on retry without issuing duplicate grants. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) so two buyers don't share each other's grants.
+
+```typescript
+import { createIdempotencyStore, memoryBackend, pgBackend } from '@adcp/client/server';
+
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // or pgBackend(pool) for production
+  ttlSeconds: 86400,                // 1h–7d, clamped to spec bounds
+});
+
+const server = createAdcpServer({
+  idempotency,
+  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
+  // ... brandRights.acquireRights
+});
+```
+
 ## Validation
 
 ```bash
