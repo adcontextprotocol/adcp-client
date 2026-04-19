@@ -125,7 +125,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // generated 5ms apart with `Date.now()` would hash differently,
     // triggering IDEMPOTENCY_CONFLICT on replay. Stale sample dates
     // (authored before the run date) fall back to the dynamic default.
-    const sampleStart = typeof step.sample_request?.start_time === 'string' ? step.sample_request.start_time : undefined;
+    const sampleStart =
+      typeof step.sample_request?.start_time === 'string' ? step.sample_request.start_time : undefined;
     const sampleEnd = typeof step.sample_request?.end_time === 'string' ? step.sample_request.end_time : undefined;
     const startTime = sampleStart && Date.parse(sampleStart) >= now ? sampleStart : defaultStart;
     const endTime = sampleEnd && Date.parse(sampleEnd) >= now ? sampleEnd : defaultEnd;

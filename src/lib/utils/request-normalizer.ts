@@ -82,7 +82,11 @@ export function normalizePackageParams(pkg: any): any {
  * Infers missing fields that can be derived from deprecated params so callers
  * written against older schema versions keep working.
  */
-export function normalizeRequestParams(taskType: string, params: any, opts: { skipIdempotencyAutoInject?: boolean } = {}): any {
+export function normalizeRequestParams(
+  taskType: string,
+  params: any,
+  opts: { skipIdempotencyAutoInject?: boolean } = {}
+): any {
   if (!params) {
     return params;
   }

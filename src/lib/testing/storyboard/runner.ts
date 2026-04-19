@@ -505,9 +505,7 @@ async function executeStep(
         resolved.value = injectContext({ __v: resolved.value }, context).__v;
       }
       if (Array.isArray(resolved.allowed_values)) {
-        resolved.allowed_values = resolved.allowed_values.map(
-          av => injectContext({ __v: av }, context).__v
-        );
+        resolved.allowed_values = resolved.allowed_values.map(av => injectContext({ __v: av }, context).__v);
       }
       return resolved;
     });

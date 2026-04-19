@@ -69,7 +69,11 @@ describe('createAdcpServer with idempotency', () => {
     });
     assert.equal(calls.length, 1);
     assert.equal(result.media_buy_id, 'mb_1');
-    assert.equal(result.replayed, false, 'fresh execution must set replayed:false so buyers can distinguish retry-vs-first');
+    assert.equal(
+      result.replayed,
+      false,
+      'fresh execution must set replayed:false so buyers can distinguish retry-vs-first'
+    );
   });
 
   it('replay with same key + equivalent payload returns cached response with replayed:true', async () => {
@@ -85,7 +89,7 @@ describe('createAdcpServer with idempotency', () => {
     assert.equal(second.replayed, true, 'replay must set replayed:true');
   });
 
-  it('replay echoes the CURRENT retry context, not the first caller\'s', async () => {
+  it("replay echoes the CURRENT retry context, not the first caller's", async () => {
     // Each buyer retry carries its own correlation_id; the envelope must
     // reflect the current retry, not a cached echo from the first caller.
     // Otherwise end-to-end tracing breaks — the replayed response would
