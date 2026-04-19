@@ -23,6 +23,17 @@ const KEYS_PATH = path.join(
 );
 
 const keys = JSON.parse(readFileSync(KEYS_PATH, 'utf8')).keys;
+
+function jwkFor(kid) {
+  const raw = keys.find(k => k.kid === kid);
+  if (!raw) throw new Error(`No key in test vectors for kid=${kid}`);
+  const jwk = { ...raw, d: raw._private_d_for_test_only };
+  delete jwk._private_d_for_test_only;
+  delete jwk.key_ops;
+  delete jwk.use;
+  return jwk;
+}
+
 const ed = keys.find(k => k.kid === 'test-ed25519-2026');
 const privateJwk = { ...ed, d: ed._private_d_for_test_only };
 delete privateJwk._private_d_for_test_only;
@@ -409,6 +420,95 @@ test('ensureCapabilityLoaded: network-level fetch rejection → 60s negative cac
   const window = entry.staleAt - entry.fetchedAt;
   assert.strictEqual(window, 60, 'negative-cache window is 60s (shorter than the 300s positive TTL)');
   assert.ok(entry.fetchedAt >= before && entry.fetchedAt <= after, 'fetchedAt is "now"');
+});
+
+test('ALS: concurrent callTool invocations with distinct signingContexts do not cross-contaminate', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: ['create_media_buy'],
+  });
+  try {
+    // Two agents with distinct signing identities. Same seller URL so the
+    // only thing differentiating them is the signingContext — if the ALS
+    // refactor leaks, one agent's Signature-Input would end up labelled with
+    // the other agent's keyid.
+    const agentA = agentFor(stub.url);
+    agentA.id = 'agent-a';
+    agentA.request_signing = {
+      kid: 'test-ed25519-2026',
+      alg: 'ed25519',
+      private_key: privateJwk,
+      agent_url: 'https://buyer-a.example.com',
+    };
+
+    const agentB = agentFor(stub.url);
+    agentB.id = 'agent-b';
+    agentB.request_signing = {
+      kid: 'test-es256-2026',
+      alg: 'ecdsa-p256-sha256',
+      private_key: jwkFor('test-es256-2026'),
+      agent_url: 'https://buyer-b.example.com',
+    };
+
+    await Promise.all([
+      ProtocolClient.callTool(agentA, 'create_media_buy', { plan_id: 'a1' }),
+      ProtocolClient.callTool(agentB, 'create_media_buy', { plan_id: 'b1' }),
+      ProtocolClient.callTool(agentA, 'create_media_buy', { plan_id: 'a2' }),
+      ProtocolClient.callTool(agentB, 'create_media_buy', { plan_id: 'b2' }),
+    ]);
+
+    const cmbCalls = stub.state.toolCallHeaders.filter(r => r.toolName === 'create_media_buy');
+    assert.strictEqual(cmbCalls.length, 4, 'four create_media_buy requests landed on the stub');
+
+    const keyids = cmbCalls.map(c => {
+      const match = /keyid="([^"]+)"/.exec(c.headers['signature-input'] || '');
+      return match ? match[1] : undefined;
+    });
+    const countA = keyids.filter(k => k === 'test-ed25519-2026').length;
+    const countB = keyids.filter(k => k === 'test-es256-2026').length;
+    assert.strictEqual(countA, 2, 'agentA signed exactly 2 requests with its own keyid');
+    assert.strictEqual(countB, 2, 'agentB signed exactly 2 requests with its own keyid');
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('ALS: signing call followed by non-signing call in the same async chain does not leak context', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: ['create_media_buy'],
+  });
+  try {
+    const signingAgent = agentFor(stub.url);
+    const nonSigningAgent = {
+      id: 'unsigned-agent',
+      name: 'Unsigned Agent',
+      agent_uri: stub.url,
+      protocol: 'mcp',
+      // no request_signing block
+    };
+
+    // Sequential in the same async chain — if the ALS scope leaked past the
+    // first call's resolution, the second call would pick up a stale
+    // signingContext and sign create_media_buy.
+    await ProtocolClient.callTool(signingAgent, 'create_media_buy', { plan_id: 'first' });
+    await ProtocolClient.callTool(nonSigningAgent, 'create_media_buy', { plan_id: 'second' });
+
+    const cmbCalls = stub.state.toolCallHeaders.filter(r => r.toolName === 'create_media_buy');
+    assert.strictEqual(cmbCalls.length, 2);
+    assert.ok(cmbCalls[0].headers['signature-input'], 'first call (signing agent) was signed');
+    assert.strictEqual(
+      cmbCalls[1].headers['signature-input'],
+      undefined,
+      'second call (unsigned agent) did not inherit the signing context from the first'
+    );
+  } finally {
+    await cleanup(stub);
+  }
 });
 
 test('teardown: close pooled MCP connections', async () => {

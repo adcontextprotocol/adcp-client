@@ -15,7 +15,7 @@ import type { TaskInfo } from '../core/ConversationTypes';
 import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
-import type { AgentSigningContext } from '../signing/client';
+import { signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 
 /** Response shape returned by MCPClient.callTool(). */
@@ -166,41 +166,36 @@ export async function callMCPToolWithTasks(
       'adcp.tool': toolName,
       'http.url': agentUrl,
     },
-    async () => {
-      const authHeaders = buildAuthHeaders(authToken, customHeaders);
-      const workingTimeout = options?.workingTimeout ?? 120_000;
+    async () =>
+      signingContextStorage.run(options?.signingContext, async () => {
+        const authHeaders = buildAuthHeaders(authToken, customHeaders);
+        const workingTimeout = options?.workingTimeout ?? 120_000;
 
-      // Log auth configuration (matching callMCPTool debug format for test compatibility)
-      debugLogs.push({
-        type: 'info',
-        message: `MCP: Auth configuration`,
-        timestamp: new Date().toISOString(),
-        hasAuth: !!authToken,
-        headers: authToken ? { 'x-adcp-auth': '***' } : {},
-        customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
-      });
-
-      debugLogs.push({
-        type: 'info',
-        message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactArgsForLog(args))}`,
-        timestamp: new Date().toISOString(),
-      });
-
-      if (authToken) {
+        // Log auth configuration (matching callMCPTool debug format for test compatibility)
         debugLogs.push({
           type: 'info',
-          message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
+          message: `MCP: Auth configuration`,
+          timestamp: new Date().toISOString(),
+          hasAuth: !!authToken,
+          headers: authToken ? { 'x-adcp-auth': '***' } : {},
+          customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
+        });
+
+        debugLogs.push({
+          type: 'info',
+          message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactArgsForLog(args))}`,
           timestamp: new Date().toISOString(),
         });
-      }
 
-      return withCachedConnection(
-        agentUrl,
-        authToken,
-        authHeaders,
-        debugLogs,
-        toolName,
-        async client => {
+        if (authToken) {
+          debugLogs.push({
+            type: 'info',
+            message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, async client => {
           // Check if server supports MCP Tasks
           if (!serverSupportsTasks(client)) {
             debugLogs.push({
@@ -347,10 +342,8 @@ export async function callMCPToolWithTasks(
           }
 
           throw new Error(`MCP Tasks: callToolStream for ${toolName} ended without result or task`);
-        },
-        options?.signingContext
-      );
-    }
+        });
+      })
   );
 }
 

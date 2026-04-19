@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import type { AgentConfig, AgentRequestSigningConfig } from '../types/adcp';
 import {
@@ -34,6 +35,20 @@ export interface AgentSigningContext {
    */
   invalidate(): void;
 }
+
+/**
+ * AsyncLocalStorage carrying the signing context across the transport layer.
+ * Top-level protocol entries (`callMCPTool`, `callA2ATool`, etc.) push a
+ * context onto this storage for the duration of the call; internal helpers
+ * (`withCachedConnection`, `connectMCPWithFallback`, `buildFetchImpl`) read
+ * it when building cache keys and signing-fetch wrappers, avoiding the need
+ * to thread `signingContext` through every intermediate signature.
+ *
+ * The top-level entries always call `run()` — including with `undefined` —
+ * so a non-signing call cannot inherit a stale context from an enclosing
+ * scope.
+ */
+export const signingContextStorage = new AsyncLocalStorage<AgentSigningContext | undefined>();
 
 /**
  * Build an `AgentSigningContext` from an `AgentConfig` when signing is
