@@ -13,6 +13,8 @@ export type {
   StoryboardPhase,
   StoryboardStep,
   StoryboardValidation,
+  StoryboardValidationCheck,
+  WebhookFilterSpec,
   ContextOutput,
   ContextInput,
   StoryboardContext,
@@ -23,6 +25,16 @@ export type {
   StoryboardPhaseResult,
   StoryboardResult,
 } from './types';
+
+// Webhook receiver (publisher-side conformance testing)
+export { createWebhookReceiver } from './webhook-receiver';
+export type {
+  CapturedWebhook,
+  CreateWebhookReceiverOptions,
+  WebhookFilter,
+  WebhookReceiver,
+  WebhookWaitResult,
+} from './webhook-receiver';
 
 // Runner
 export { runStoryboard, runStoryboardStep, getFirstStepPreview } from './runner';

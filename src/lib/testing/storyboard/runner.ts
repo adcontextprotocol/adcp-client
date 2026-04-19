@@ -24,6 +24,7 @@ import {
 } from './probes';
 import { validateTestKit } from './test-kit';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
+import { createWebhookReceiver, type CapturedWebhook, type WebhookReceiver } from './webhook-receiver';
 import type {
   HttpProbeResult,
   RunnerDetailedSkipReason,
@@ -197,6 +198,21 @@ export async function runStoryboard(
   let failedCount = 0;
   let skippedCount = 0;
 
+  // Start an ephemeral webhook receiver when the run opts in. The URL is
+  // seeded into the context up-front so steps that fire webhook-triggering
+  // tasks can inject `$context.webhook_receiver_url` into push_notification_config.
+  const webhookReceiver = options.webhook_receiver?.enabled
+    ? await createWebhookReceiver({
+        ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
+        ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
+        ...(options.webhook_receiver.path !== undefined && { path: options.webhook_receiver.path }),
+        ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
+      })
+    : undefined;
+  if (webhookReceiver) {
+    context = { ...context, webhook_receiver_url: webhookReceiver.url };
+  }
+
   // Flatten all steps for next-step preview lookups
   const allSteps = flattenSteps(storyboard);
   const dispatch = createDispatcher(agentUrls, clients, options.multi_instance_strategy ?? 'round-robin');
@@ -283,6 +299,7 @@ export async function runStoryboard(
         priorStepResults,
         priorProbes,
         agentUrl: assignment.agentUrl,
+        webhookReceiver,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance) {
@@ -367,6 +384,8 @@ export async function runStoryboard(
     await closeConnections(options.protocol);
   }
 
+  if (webhookReceiver) await webhookReceiver.close();
+
   return result;
 }
 
@@ -415,13 +434,26 @@ export async function runStoryboardStep(
     await getOrDiscoverProfile(client, options);
   }
 
-  const context: StoryboardContext = { ...options.context };
+  let context: StoryboardContext = { ...options.context };
   if (options.context) forwardAliasCache(options.context, context);
+
+  const webhookReceiver = options.webhook_receiver?.enabled
+    ? await createWebhookReceiver({
+        ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
+        ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
+        ...(options.webhook_receiver.path !== undefined && { path: options.webhook_receiver.path }),
+        ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
+      })
+    : undefined;
+  if (webhookReceiver) {
+    context = { ...context, webhook_receiver_url: webhookReceiver.url };
+  }
 
   // Find the step
   const allSteps = flattenSteps(storyboard);
   const found = allSteps.find(s => s.step.id === stepId);
   if (!found) {
+    if (webhookReceiver) await webhookReceiver.close();
     throw new Error(
       `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
         `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
@@ -433,11 +465,14 @@ export async function runStoryboardStep(
     priorStepResults: new Map(),
     priorProbes: new Map(),
     agentUrl,
+    webhookReceiver,
   });
 
   if (!options._client) {
     await closeConnections(options.protocol);
   }
+
+  if (webhookReceiver) await webhookReceiver.close();
 
   return result;
 }
@@ -451,6 +486,8 @@ interface ExecutionState {
   priorStepResults: Map<string, StoryboardStepResult>;
   priorProbes: Map<string, HttpProbeResult>;
   agentUrl: string;
+  /** Shared ephemeral webhook receiver, when the run has one enabled. */
+  webhookReceiver?: WebhookReceiver;
 }
 
 async function executeStep(
@@ -739,11 +776,15 @@ async function executeStep(
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
 
-  // Run validations. Resolve `$context.<key>` placeholders in `value` and
-  // `allowed_values` fields so expected values can reference prior steps
-  // (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`).
+  // Run validations. Resolve `$context.<key>` placeholders in `value`,
+  // `allowed_values`, and `filter.body` so expected values can reference
+  // prior steps (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`,
+  // expect_webhook filters reference a task_id produced by the triggering step).
   let validations: ValidationResult[] = [];
-  if (step.validations?.length && (taskResult || httpResult)) {
+  // `expect_webhook` can match even when the step produced neither a
+  // taskResult nor an httpResult — the webhook is the observable effect.
+  const hasWebhookCheck = step.validations?.some(v => v.check === 'expect_webhook') ?? false;
+  if (step.validations?.length && (taskResult || httpResult || hasWebhookCheck)) {
     const resolvedValidations = step.validations.map(v => {
       const resolved = { ...v };
       if (resolved.value !== undefined) {
@@ -752,8 +793,15 @@ async function executeStep(
       if (Array.isArray(resolved.allowed_values)) {
         resolved.allowed_values = resolved.allowed_values.map(av => injectContext({ __v: av }, context).__v);
       }
+      if (resolved.filter?.body && Object.keys(resolved.filter.body).length > 0) {
+        resolved.filter = { body: injectContext({ ...resolved.filter.body }, context) };
+      }
       return resolved;
     });
+    // Resolve any `expect_webhook` waits before running the sync validator.
+    // Each entry in `webhookMatches` aligns by index with the validations
+    // list; non-webhook checks get `undefined`.
+    const webhookMatches = await resolveWebhookMatches(resolvedValidations, runState.webhookReceiver);
     const vctx: ValidationContext = {
       taskName: effectiveStep.task,
       ...(taskResult && { taskResult }),
@@ -763,6 +811,7 @@ async function executeStep(
       ...(effectiveStep.response_schema_ref && { responseSchemaRef: effectiveStep.response_schema_ref }),
       request: requestRecord,
       ...(responseRecord && { response: responseRecord }),
+      ...(webhookMatches && { webhookMatches }),
     };
     validations = runValidations(resolvedValidations, vctx);
   }
@@ -1071,6 +1120,45 @@ export function applyBrandInvariant(
 // ────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────
+
+const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
+
+/**
+ * Resolve every `expect_webhook` validation in a step by awaiting a
+ * matching arrival on the shared receiver. Returns `undefined` when there
+ * are no webhook checks — so the validation context can omit the field
+ * entirely. For checks running without a configured receiver, a synthetic
+ * failure is recorded so the validator renders a pointed error.
+ */
+async function resolveWebhookMatches(
+  validations: ReadonlyArray<{ check: string; timeout_ms?: number; filter?: { body?: Record<string, unknown> } }>,
+  receiver: WebhookReceiver | undefined
+): Promise<Array<CapturedWebhook | { error: string } | undefined> | undefined> {
+  const hasAny = validations.some(v => v.check === 'expect_webhook');
+  if (!hasAny) return undefined;
+
+  const results = await Promise.all(
+    validations.map(async v => {
+      if (v.check !== 'expect_webhook') return undefined;
+      if (!receiver) {
+        return {
+          error:
+            '`expect_webhook` requires `webhook_receiver.enabled: true` on the run options. ' +
+            'Without a receiver the runner cannot observe outbound webhooks.',
+        } as const;
+      }
+      const timeoutMs = typeof v.timeout_ms === 'number' ? v.timeout_ms : DEFAULT_WEBHOOK_TIMEOUT_MS;
+      const result = await receiver.wait(v.filter, timeoutMs);
+      if (result.timed_out || !result.webhook) {
+        return {
+          error: `Timed out after ${timeoutMs}ms waiting for a matching webhook.`,
+        } as const;
+      }
+      return result.webhook;
+    })
+  );
+  return results;
+}
 
 const MAX_ERROR_LENGTH = 2000;
 

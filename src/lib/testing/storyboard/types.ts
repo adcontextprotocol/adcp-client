@@ -166,7 +166,18 @@ export type StoryboardValidationCheck =
   | 'on_401_require_header'
   // Cross-cutting
   | 'resource_equals_agent_url'
-  | 'any_of';
+  | 'any_of'
+  // Outbound-webhook checks (require `webhook_receiver.enabled` on the run options)
+  | 'expect_webhook';
+
+/**
+ * Filter applied to a captured webhook body when waiting. Keys are
+ * dot-delimited paths into the parsed JSON body; values are compared with
+ * deep equality. An empty or omitted filter matches the first arrival.
+ */
+export interface WebhookFilterSpec {
+  body?: Record<string, unknown>;
+}
 
 export interface StoryboardValidation {
   check: StoryboardValidationCheck;
@@ -177,6 +188,16 @@ export interface StoryboardValidation {
   /** Accepted values for list-match checks (passes if actual matches any). */
   allowed_values?: unknown[];
   description: string;
+  /**
+   * Timeout for `expect_webhook`: millis to wait for a matching webhook
+   * before failing the check. Defaults to 5000.
+   */
+  timeout_ms?: number;
+  /**
+   * Match predicate for `expect_webhook`. The check passes when a webhook
+   * arrives whose body matches every entry in `filter.body`.
+   */
+  filter?: WebhookFilterSpec;
 }
 
 /**
@@ -261,6 +282,27 @@ export interface StoryboardRunOptions extends TestOptions {
    * Reserved enum; additional strategies may land without a signature change.
    */
   multi_instance_strategy?: 'round-robin';
+  /**
+   * Host an ephemeral webhook receiver for the duration of the run. When
+   * enabled, the runner exposes the receiver URL as
+   * `$context.webhook_receiver_url` so storyboards can inject it into
+   * `push_notification_config.url`, and `expect_webhook` validations wait
+   * for matching webhooks to arrive.
+   */
+  webhook_receiver?: {
+    enabled: true;
+    /** Bind host for the ephemeral listener. Defaults to `127.0.0.1`. */
+    host?: string;
+    /** Bind port. `0` (default) lets the kernel assign one. */
+    port?: number;
+    /** Path under which POSTs are accepted. Defaults to `/webhook`. */
+    path?: string;
+    /**
+     * Advertise this URL to storyboards instead of the bound
+     * `http://host:port` pair. Use when the listener sits behind a tunnel.
+     */
+    public_url?: string;
+  };
 }
 
 // ────────────────────────────────────────────────────────────

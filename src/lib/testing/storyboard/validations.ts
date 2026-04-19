@@ -21,6 +21,7 @@ import type {
 } from './types';
 import { resolvePath, toJsonPointer } from './path';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
+import type { CapturedWebhook } from './webhook-receiver';
 
 /**
  * Broader validation context that carries the run-level state a single
@@ -44,13 +45,21 @@ export interface ValidationContext {
   request?: RunnerRequestRecord;
   /** Exact response observed — echoed on failed validations. */
   response?: RunnerResponseRecord;
+  /**
+   * Per-validation webhook match result, aligned by index with the
+   * validations array passed to `runValidations`. Only populated for
+   * `expect_webhook` checks; non-webhook indices are `undefined`. The
+   * runner resolves waits before calling the sync validator so this stays
+   * a plain read-through.
+   */
+  webhookMatches?: Array<CapturedWebhook | { error: string } | undefined>;
 }
 
 /**
  * Run all validations for a storyboard step.
  */
 export function runValidations(validations: StoryboardValidation[], context: ValidationContext): ValidationResult[] {
-  return validations.map(v => attachOnFailure(runValidation(v, context), context));
+  return validations.map((v, index) => attachOnFailure(runValidation(v, context, index), context));
 }
 
 /**
@@ -67,7 +76,7 @@ function attachOnFailure(result: ValidationResult, context: ValidationContext): 
   return augmented;
 }
 
-function runValidation(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+function runValidation(validation: StoryboardValidation, ctx: ValidationContext, index: number): ValidationResult {
   switch (validation.check) {
     case 'response_schema':
       return requireTaskResult(ctx, validation, tr => validateResponseSchema(validation, ctx, tr));
@@ -91,6 +100,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return requireHttpResult(ctx, validation, hr => validateResourceEqualsAgentUrl(validation, hr, ctx.agentUrl));
     case 'any_of':
       return validateAnyOf(validation, ctx.contributions);
+    case 'expect_webhook':
+      return validateExpectWebhook(validation, ctx.webhookMatches?.[index]);
     default:
       return {
         check: validation.check,
@@ -751,6 +762,66 @@ function validateAnyOf(validation: StoryboardValidation, contributions: Set<stri
     json_pointer: null,
     expected: flags,
     actual: Array.from(contributions),
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// expect_webhook: assert an outbound webhook arrived with idempotency_key
+// ────────────────────────────────────────────────────────────
+
+function validateExpectWebhook(
+  validation: StoryboardValidation,
+  match: CapturedWebhook | { error: string } | undefined
+): ValidationResult {
+  if (match === undefined) {
+    return {
+      check: 'expect_webhook',
+      passed: false,
+      description: validation.description,
+      error:
+        'expect_webhook validation ran without a resolved webhook match. This indicates a runner wiring bug — ' +
+        'the runner is expected to resolve waits before invoking validations.',
+      json_pointer: null,
+    };
+  }
+  if ('error' in match) {
+    return {
+      check: 'expect_webhook',
+      passed: false,
+      description: validation.description,
+      error: match.error,
+      json_pointer: null,
+      expected: 'webhook delivery matching filter',
+      actual: null,
+    };
+  }
+
+  const body = match.body;
+  const hasBodyObject = body !== null && typeof body === 'object' && !Array.isArray(body);
+  const idempotencyKey = hasBodyObject ? (body as Record<string, unknown>).idempotency_key : undefined;
+
+  if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0) {
+    return {
+      check: 'expect_webhook',
+      passed: false,
+      description: validation.description,
+      error:
+        match.parse_error !== undefined
+          ? `Webhook body was not valid JSON: ${match.parse_error}`
+          : !hasBodyObject
+            ? 'Webhook body was not a JSON object.'
+            : 'Webhook body is missing a non-empty `idempotency_key` — required by AdCP 3.0.',
+      json_pointer: '/idempotency_key',
+      expected: 'non-empty string',
+      actual: idempotencyKey ?? null,
+    };
+  }
+
+  return {
+    check: 'expect_webhook',
+    passed: true,
+    description: validation.description,
+    json_pointer: '/idempotency_key',
   };
 }
 
