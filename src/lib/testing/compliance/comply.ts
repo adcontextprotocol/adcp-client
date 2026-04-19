@@ -12,11 +12,13 @@ import { createTestClient, discoverAgentProfile } from '../client';
 import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { runStoryboard } from '../storyboard/runner';
+import { validateTestKit } from '../storyboard/test-kit';
 import {
   resolveStoryboardsForCapabilities,
   resolveBundleOrStoryboard,
   listAllComplianceStoryboards,
 } from '../storyboard/compliance';
+import type { NotApplicableStoryboard } from '../storyboard/compliance';
 import type { Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
 import type {
   ComplianceTrack,
@@ -509,12 +511,16 @@ function resolveExplicitStoryboards(ids: string[]): Storyboard[] {
   return resolved;
 }
 
-function resolveFromCapabilities(profile: AgentProfile): Storyboard[] {
-  const { storyboards } = resolveStoryboardsForCapabilities({
+function resolveFromCapabilities(profile: AgentProfile): {
+  storyboards: Storyboard[];
+  not_applicable: NotApplicableStoryboard[];
+} {
+  const { storyboards, not_applicable } = resolveStoryboardsForCapabilities({
     supported_protocols: profile.supported_protocols,
     specialisms: profile.specialisms,
+    major_versions: profile.adcp_major_versions,
   });
-  return storyboards;
+  return { storyboards, not_applicable };
 }
 
 /**
@@ -560,10 +566,14 @@ function expandScenarios(storyboards: Storyboard[]): Storyboard[] {
 
 /**
  * Group storyboard results by track.
+ *
+ * Accepts optional not-applicable entries so version-gated storyboards land
+ * in the right track row even though they were never executed.
  */
 function groupByTrack(
   results: StoryboardResult[],
-  storyboards: Storyboard[]
+  storyboards: Storyboard[],
+  notApplicable: NotApplicableStoryboard[] = []
 ): Map<ComplianceTrack, StoryboardResult[]> {
   // Build a storyboard ID → track lookup
   const trackLookup = new Map<string, ComplianceTrack>();
@@ -571,6 +581,9 @@ function groupByTrack(
     if (sb.track) {
       trackLookup.set(sb.id, sb.track as ComplianceTrack);
     }
+  }
+  for (const na of notApplicable) {
+    if (na.track) trackLookup.set(na.storyboard_id, na.track as ComplianceTrack);
   }
 
   const grouped = new Map<ComplianceTrack, StoryboardResult[]>();
@@ -581,6 +594,53 @@ function groupByTrack(
     grouped.get(track)!.push(result);
   }
   return grouped;
+}
+
+/**
+ * Synthesize a StoryboardResult for a version-gated storyboard so it surfaces
+ * in the track rollup as a distinct skip row. Overall_passed is true because
+ * not-applicable is not a failure — the storyboard didn't exist at the spec
+ * version the agent certified against.
+ */
+function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableStoryboard): StoryboardResult {
+  const now = new Date().toISOString();
+  return {
+    storyboard_id: na.storyboard_id,
+    storyboard_title: na.storyboard_title,
+    agent_url: agentUrl,
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'not_applicable',
+        phase_title: 'Not applicable',
+        passed: true,
+        duration_ms: 0,
+        steps: [
+          {
+            step_id: 'not_applicable',
+            phase_id: 'not_applicable',
+            // Bake the reason into the title so reports show the specific
+            // mismatch ("introduced in 3.1, agent declares [3]") on the step
+            // row. The `error` field stays undefined because nothing failed.
+            title: `Not applicable — ${na.reason}`,
+            task: '',
+            passed: true,
+            skipped: true,
+            skip_reason: 'not_applicable',
+            duration_ms: 0,
+            validations: [],
+            context: {},
+          },
+        ],
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    tested_at: now,
+  };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -662,6 +722,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       throw new TypeError(`timeout_ms must be a positive finite number, got: ${timeout_ms}`);
     }
   }
+
+  // Fail fast on malformed test kits before we spin up any agent connection.
+  validateTestKit(testOptions.test_kit);
 
   // Build a combined AbortSignal from timeout_ms and/or external signal
   const needsAbort = timeout_ms !== undefined || externalSignal !== undefined;
@@ -774,7 +837,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
         const candidate = explicitStoryboards?.length
           ? resolveExplicitStoryboards(explicitStoryboards)
-          : resolveFromCapabilities(degraded);
+          : resolveFromCapabilities(degraded).storyboards;
         const runnable = candidate.filter(sb => (sb.required_tools?.length ?? 0) === 0 || sb.track === 'security');
         if (runnable.length > 0) {
           allObservations.push(...authCheck.observations);
@@ -798,9 +861,15 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     // Resolve storyboards: explicit IDs override capability-driven selection.
-    const initialStoryboards = explicitStoryboards?.length
-      ? resolveExplicitStoryboards(explicitStoryboards)
-      : resolveFromCapabilities(profile);
+    let initialStoryboards: Storyboard[];
+    let notApplicable: NotApplicableStoryboard[] = [];
+    if (explicitStoryboards?.length) {
+      initialStoryboards = resolveExplicitStoryboards(explicitStoryboards);
+    } else {
+      const resolved = resolveFromCapabilities(profile);
+      initialStoryboards = resolved.storyboards;
+      notApplicable = resolved.not_applicable;
+    }
     const applicableStoryboards = expandScenarios(initialStoryboards);
 
     // Run storyboards
@@ -816,14 +885,27 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       storyboardResults.push(result);
     }
 
+    // Surface storyboards the agent's declared major version predates as a
+    // distinct skip row. Not running them is correct (they didn't exist at
+    // the spec the agent certified against), but hiding them risks silent
+    // green builds against agents that haven't bumped their declared
+    // major_versions.
+    for (const na of notApplicable) {
+      storyboardResults.push(buildNotApplicableStoryboardResult(agentUrl, na));
+    }
+
     // Group results by track and build TrackResults
-    const grouped = groupByTrack(storyboardResults, applicableStoryboards);
+    const grouped = groupByTrack(storyboardResults, applicableStoryboards, notApplicable);
     const trackResults: TrackResult[] = [];
 
-    // Tracks represented by the selected storyboards (used for deciding which rows to emit)
+    // Tracks represented by the selected storyboards (used for deciding which rows to emit).
+    // Includes not-applicable entries so a version-gated track still gets a row.
     const poolTrackSet = new Set<ComplianceTrack>();
     for (const sb of applicableStoryboards) {
       if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
+    }
+    for (const na of notApplicable) {
+      if (na.track) poolTrackSet.add(na.track as ComplianceTrack);
     }
 
     const trackFilterSet = trackFilter?.length ? new Set(trackFilter) : null;

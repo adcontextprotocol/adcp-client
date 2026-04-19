@@ -21,6 +21,7 @@ import {
   generateRandomInvalidApiKey,
   generateRandomInvalidJwt,
 } from './probes';
+import { validateTestKit } from './test-kit';
 import type {
   HttpProbeResult,
   StepAuthDirective,
@@ -49,6 +50,7 @@ export async function runStoryboard(
   storyboard: Storyboard,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
+  validateTestKit(options.test_kit);
   const start = Date.now();
   const client = getOrCreateClient(agentUrl, options);
 
@@ -203,6 +205,7 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
+  validateTestKit(options.test_kit);
   const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile for standalone step execution

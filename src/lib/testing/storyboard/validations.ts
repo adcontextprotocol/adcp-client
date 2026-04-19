@@ -12,6 +12,7 @@ import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import type { TaskResult } from '../types';
 import type { HttpProbeResult, StoryboardValidation, ValidationResult } from './types';
 import { resolvePath } from './path';
+import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
 /**
  * Broader validation context that carries the run-level state a single
@@ -326,14 +327,77 @@ function validateHttpStatus(validation: StoryboardValidation, hr: HttpProbeResul
 function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeResult): ValidationResult {
   const allowed = Array.isArray(validation.allowed_values) ? validation.allowed_values : [];
   const passed = allowed.some(v => v === hr.status);
+  if (passed) {
+    return { check: 'http_status_in', passed: true, description: validation.description };
+  }
+  // Disambiguate two failure modes that produce the same HTTP-status mismatch:
+  // (a) the kit's `probe_task` requires non-empty params, so the agent 400s on
+  // schema before auth ever runs (operator's fault), or (b) the agent really
+  // does evaluate schema before auth (agent's fault — itself a conformance
+  // gap). Both are real; the text names both so compliance reports don't
+  // unilaterally blame the operator for an agent that games the probe by
+  // returning a schema-shaped body.
+  const expectedAuthReject = allowed.includes(401) || allowed.includes(403);
+  const schemaRejected = (hr.status === 400 || hr.status === 422) && looksLikeSchemaValidationBody(hr.body);
+  if (expectedAuthReject && schemaRejected) {
+    return {
+      check: 'http_status_in',
+      passed: false,
+      description: validation.description,
+      error:
+        `Agent returned HTTP ${hr.status} with a schema-validation body before any auth response. ` +
+        `Two possible causes: (1) \`test_kit.auth.probe_task\` points at a task that requires ` +
+        `non-empty parameters, so schema validation rejected the probe before auth ran (fix: set ` +
+        `\`probe_task\` to one of ${PROBE_TASK_ALLOWLIST.join(', ')}); or (2) the agent evaluates ` +
+        `schema before auth, which is itself a conformance gap (protected endpoints must return ` +
+        `401/403 on invalid credentials regardless of body shape).`,
+    };
+  }
   return {
     check: 'http_status_in',
-    passed,
+    passed: false,
     description: validation.description,
-    error: passed
-      ? undefined
-      : `Expected HTTP status in ${JSON.stringify(allowed)}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
+    error: `Expected HTTP status in ${JSON.stringify(allowed)}, got ${hr.status}${hr.error ? ` (${hr.error})` : ''}`,
   };
+}
+
+const SCHEMA_KEYWORD_RE = /invalid[_ ]?params|validation|schema|required|must be/i;
+const SCHEMA_CODE_RE = /VALIDATION|INVALID|SCHEMA|BAD_REQUEST/i;
+
+/**
+ * Detect bodies that look like JSON-RPC / MCP schema-validation rejections.
+ *
+ * Conservative: only returns true when the body has a recognizable error
+ * envelope AND either a JSON-RPC invalid-params code (-32602) or a
+ * message/field-level hint pointing at schema/validation. Returning true
+ * on a real auth response would hide genuine agent bugs, so we over-reject.
+ *
+ * Handles both parsed JSON object bodies and plain-text bodies — the HTTP
+ * probe returns a decoded string when content-type isn't JSON, and agents
+ * that 400 with `text/plain` short messages like "missing required field"
+ * deserve the same kit-config diagnostic. String detection is deliberately
+ * tight: a recognizable schema-keyword substring in a short body (≤ 1 KiB).
+ */
+function looksLikeSchemaValidationBody(body: unknown): boolean {
+  if (typeof body === 'string') {
+    return body.length > 0 && body.length <= 1024 && SCHEMA_KEYWORD_RE.test(body);
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const obj = body as Record<string, unknown>;
+  // JSON-RPC error envelope
+  const rpcError = obj.error as Record<string, unknown> | undefined;
+  if (rpcError && typeof rpcError === 'object') {
+    const code = rpcError.code;
+    if (typeof code === 'number' && (code === -32602 || code === -32600)) return true;
+    const msg = rpcError.message;
+    if (typeof msg === 'string' && SCHEMA_KEYWORD_RE.test(msg)) return true;
+  }
+  // AdCP / REST-style validation envelope
+  if (Array.isArray(obj.errors) && obj.errors.length > 0) return true;
+  if (Array.isArray(obj.validation_errors) && obj.validation_errors.length > 0) return true;
+  const topCode = obj.error_code ?? obj.code;
+  if (typeof topCode === 'string' && SCHEMA_CODE_RE.test(topCode)) return true;
+  return false;
 }
 
 // ────────────────────────────────────────────────────────────

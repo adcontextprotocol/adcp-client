@@ -14,6 +14,15 @@ const {
 } = require('../../dist/lib/testing/storyboard/probes');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
 const { comply } = require('../../dist/lib/testing/compliance/comply');
+const {
+  validateTestKit,
+  TestKitValidationError,
+  PROBE_TASK_ALLOWLIST,
+} = require('../../dist/lib/testing/storyboard/test-kit');
+const { resolveStoryboardsForCapabilities } = require('../../dist/lib/testing/storyboard/compliance');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 // ────────────────────────────────────────────────────────────
 // isPrivateIp
@@ -888,5 +897,391 @@ describe('comply() observation fencing for agent-controlled error text', () => {
     // on the full message is enough; the point is we're not dumping 2000 x's.
     assert.ok(obs.message.length < 1000, `message too long: ${obs.message.length}`);
     assert.match(obs.message, /…/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Test-kit schema validation (Option A from #565 round 2)
+// ────────────────────────────────────────────────────────────
+
+describe('validateTestKit', () => {
+  it('is a no-op when test_kit is undefined', () => {
+    assert.doesNotThrow(() => validateTestKit(undefined));
+  });
+
+  it('is a no-op when test_kit has no auth block', () => {
+    assert.doesNotThrow(() => validateTestKit({ name: 'acme' }));
+  });
+
+  it('throws when auth is declared without probe_task', () => {
+    assert.throws(
+      () => validateTestKit({ auth: { api_key: 'sk_test' } }),
+      err => err instanceof TestKitValidationError && /probe_task is required/.test(err.message)
+    );
+  });
+
+  it('throws when probe_task is not a string', () => {
+    assert.throws(
+      () => validateTestKit({ auth: { api_key: 'sk', probe_task: 123 } }),
+      err => err instanceof TestKitValidationError && /non-empty string/.test(err.message)
+    );
+  });
+
+  it('throws when probe_task is not in the allowlist', () => {
+    assert.throws(
+      () => validateTestKit({ auth: { api_key: 'sk', probe_task: 'create_media_buy' } }),
+      err => err instanceof TestKitValidationError && /not in the allowlist/.test(err.message)
+    );
+  });
+
+  it('accepts each allowlisted probe_task', () => {
+    for (const task of PROBE_TASK_ALLOWLIST) {
+      assert.doesNotThrow(
+        () => validateTestKit({ auth: { api_key: 'sk', probe_task: task } }),
+        `should accept ${task}`
+      );
+    }
+  });
+
+  it('allowlist includes read-only auth-required tasks only', () => {
+    // Guard against accidental inclusion of write tasks — retesting the list
+    // here catches an allowlist edit that would make probes destructive.
+    assert.deepStrictEqual(
+      new Set(PROBE_TASK_ALLOWLIST),
+      new Set([
+        'list_creatives',
+        'get_media_buy_delivery',
+        'list_authorized_properties',
+        'get_signals',
+        'list_si_sessions',
+      ])
+    );
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Probe-task error disambiguation (round 2, probe-task vs auth)
+// ────────────────────────────────────────────────────────────
+
+describe('http_status_in: kit-config disambiguation', () => {
+  it('fails with a dual-hypothesis message when agent returns 400 with a JSON-RPC invalid-params body', () => {
+    const [r] = runOne([{ check: 'http_status_in', allowed_values: [401, 403], description: 'auth rejection' }], {
+      httpResult: {
+        url: '',
+        status: 400,
+        headers: {},
+        body: {
+          jsonrpc: '2.0',
+          id: 1,
+          error: { code: -32602, message: 'Invalid params: required field "account_id" missing' },
+        },
+      },
+    });
+    assert.strictEqual(r.passed, false);
+    assert.match(r.error, /Two possible causes/);
+    assert.match(r.error, /probe_task/);
+    // Dual-hypothesis message must name both the kit-config cause AND the
+    // agent-schema-before-auth conformance gap — an adversarial agent could
+    // otherwise game the probe by returning schema-shaped bodies and get the
+    // report to blame the operator.
+    assert.match(r.error, /agent evaluates schema before auth/);
+    // Must not fall through to the generic mismatch message.
+    assert.doesNotMatch(r.error, /Expected HTTP status in/);
+  });
+
+  it('fails with kit-config hints when agent returns 422 with a validation-errors array', () => {
+    const [r] = runOne([{ check: 'http_status_in', allowed_values: [401, 403], description: 'auth rejection' }], {
+      httpResult: {
+        url: '',
+        status: 422,
+        headers: {},
+        body: { errors: [{ field: 'brand', message: 'required' }] },
+      },
+    });
+    assert.strictEqual(r.passed, false);
+    assert.match(r.error, /Two possible causes/);
+  });
+
+  it('triggers kit-config path for plain-text 400 bodies with schema keywords', () => {
+    // Not every agent returns JSON error envelopes — some 400 with `text/plain`
+    // short messages. The probe fetch decodes those as strings; the detector
+    // needs to catch them too or the operator gets the generic mismatch
+    // message and misdiagnoses the kit config.
+    const [r] = runOne([{ check: 'http_status_in', allowed_values: [401, 403], description: 'auth rejection' }], {
+      httpResult: { url: '', status: 400, headers: {}, body: 'invalid params: missing required field account_id' },
+    });
+    assert.strictEqual(r.passed, false);
+    assert.match(r.error, /Two possible causes/);
+  });
+
+  it('does NOT trigger kit-config path for huge plain-text bodies (avoid false positives)', () => {
+    // A 4-KiB HTML error page that happens to contain the word "validation"
+    // shouldn't be classified as schema-validation — cap protects against
+    // log-poisoned agent bodies masking real auth bugs.
+    const giant = 'validation ' + 'x'.repeat(5000);
+    const [r] = runOne([{ check: 'http_status_in', allowed_values: [401, 403], description: 'auth rejection' }], {
+      httpResult: { url: '', status: 400, headers: {}, body: giant },
+    });
+    assert.strictEqual(r.passed, false);
+    assert.doesNotMatch(r.error, /Two possible causes/);
+    assert.match(r.error, /Expected HTTP status in/);
+  });
+
+  it('does NOT trigger kit-config path when body does not look like a schema error', () => {
+    const [r] = runOne([{ check: 'http_status_in', allowed_values: [401, 403], description: 'auth rejection' }], {
+      // Empty body / 400 without a validation-error shape → plain mismatch.
+      httpResult: { url: '', status: 400, headers: {}, body: null },
+    });
+    assert.strictEqual(r.passed, false);
+    assert.match(r.error, /Expected HTTP status in/);
+    assert.doesNotMatch(r.error, /Two possible causes/);
+  });
+
+  it('does NOT trigger kit-config path when allowed_values is not auth-rejection-intent', () => {
+    // A check that expects 200/204 and gets 400 with a schema body should NOT
+    // be rewritten to a kit-config message — that's a different kind of test.
+    const [r] = runOne([{ check: 'http_status_in', allowed_values: [200, 204], description: 'success status' }], {
+      httpResult: {
+        url: '',
+        status: 400,
+        headers: {},
+        body: { error: { code: -32602, message: 'Invalid params' } },
+      },
+    });
+    assert.strictEqual(r.passed, false);
+    assert.doesNotMatch(r.error, /Two possible causes/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Version-gated storyboard resolution (round 2)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Build a minimal fake compliance cache on disk so we can exercise
+ * `resolveStoryboardsForCapabilities` end-to-end without mocking internals.
+ * Returns the root directory; caller is responsible for cleanup.
+ */
+function makeFakeComplianceCache({ universalStoryboards }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-compliance-'));
+  fs.mkdirSync(path.join(root, 'universal'));
+  const index = {
+    adcp_version: '3.1.0',
+    generated_at: new Date().toISOString(),
+    universal: universalStoryboards.map(s => s.id),
+    protocols: [],
+    specialisms: [],
+  };
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index));
+  for (const sb of universalStoryboards) {
+    const yaml =
+      `id: ${sb.id}\n` +
+      `version: "1.0.0"\n` +
+      `title: "${sb.title}"\n` +
+      `category: capability_discovery\n` +
+      `summary: "test"\n` +
+      `narrative: "test"\n` +
+      `track: ${sb.track ?? 'core'}\n` +
+      (sb.introduced_in ? `introduced_in: "${sb.introduced_in}"\n` : '') +
+      `agent:\n  interaction_model: stateless_transform\n  capabilities: []\n` +
+      `caller:\n  role: buyer_agent\n` +
+      `phases:\n` +
+      `  - id: p1\n    title: "phase"\n    steps:\n      - id: s1\n        title: "step"\n        task: get_adcp_capabilities\n`;
+    fs.writeFileSync(path.join(root, 'universal', `${sb.id}.yaml`), yaml);
+  }
+  return root;
+}
+
+describe('resolveStoryboardsForCapabilities: version gate', () => {
+  it("runs storyboards introduced in the agent's declared major version", () => {
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [
+        { id: 'always_applies', title: 'No gate' },
+        { id: 'v3_feature', title: 'Introduced in 3.0', introduced_in: '3.0' },
+      ],
+    });
+    try {
+      const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+        { major_versions: [3] },
+        { complianceDir: dir }
+      );
+      const ids = storyboards.map(s => s.id).sort();
+      assert.deepStrictEqual(ids, ['always_applies', 'v3_feature']);
+      assert.deepStrictEqual(not_applicable, []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('gates out storyboards introduced in a later major than the agent declares', () => {
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [
+        { id: 'old', title: 'No gate' },
+        { id: 'future', title: 'Introduced in 9.0', introduced_in: '9.0' },
+        { id: 'future_minor', title: 'Introduced in 9.1', introduced_in: '9.1' },
+      ],
+    });
+    try {
+      const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+        { major_versions: [3] },
+        { complianceDir: dir }
+      );
+      assert.deepStrictEqual(
+        storyboards.map(s => s.id),
+        ['old']
+      );
+      const naIds = not_applicable.map(n => n.storyboard_id).sort();
+      assert.deepStrictEqual(naIds, ['future', 'future_minor']);
+      // Reason must name the storyboard's version so the operator knows which
+      // spec release to bump to.
+      const reason = not_applicable.find(n => n.storyboard_id === 'future').reason;
+      assert.match(reason, /9\.0/);
+      assert.match(reason, /\[3\]/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not gate when the agent has not declared major_versions', () => {
+    // v2 agents / failed-discovery profiles have no declared majors. Running
+    // every storyboard is the correct fallback — the storyboard's own
+    // required_tools filter will handle applicability.
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [{ id: 'future', title: 'Introduced in 9.0', introduced_in: '9.0' }],
+    });
+    try {
+      const { storyboards, not_applicable } = resolveStoryboardsForCapabilities({}, { complianceDir: dir });
+      assert.deepStrictEqual(
+        storyboards.map(s => s.id),
+        ['future']
+      );
+      assert.deepStrictEqual(not_applicable, []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not gate when major_versions is an explicit empty array', () => {
+    // An agent that declared `adcp.major_versions: []` is equivalent to "no
+    // declaration" — gating would drop every versioned storyboard and report
+    // nothing, which is worse than running the full set.
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [{ id: 'future', title: 'Introduced in 9.0', introduced_in: '9.0' }],
+    });
+    try {
+      const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+        { major_versions: [] },
+        { complianceDir: dir }
+      );
+      assert.deepStrictEqual(
+        storyboards.map(s => s.id),
+        ['future']
+      );
+      assert.deepStrictEqual(not_applicable, []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores unparseable introduced_in values (fail open)', () => {
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [{ id: 'garbage', title: 'Bad version', introduced_in: 'not-a-version' }],
+    });
+    try {
+      const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+        { major_versions: [3] },
+        { complianceDir: dir }
+      );
+      assert.deepStrictEqual(
+        storyboards.map(s => s.id),
+        ['garbage']
+      );
+      assert.deepStrictEqual(not_applicable, []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts an agent that declares multiple majors spanning the introduced version', () => {
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [
+        { id: 'v2_era', title: 'v2', introduced_in: '2' },
+        { id: 'v3_era', title: 'v3', introduced_in: '3.0' },
+      ],
+    });
+    try {
+      const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+        { major_versions: [2, 3] },
+        { complianceDir: dir }
+      );
+      assert.deepStrictEqual(storyboards.map(s => s.id).sort(), ['v2_era', 'v3_era']);
+      assert.deepStrictEqual(not_applicable, []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// validateTestKit at storyboard-runner entry points
+// ────────────────────────────────────────────────────────────
+
+describe('validateTestKit: enforced at runStoryboard / runStoryboardStep entry', () => {
+  const { runStoryboardStep: runStep } = require('../../dist/lib/testing/storyboard/runner');
+
+  // Minimal storyboard shape the runner will accept — we only care that
+  // validateTestKit throws before any network work is attempted.
+  const toyStoryboard = {
+    id: 'toy',
+    version: '1.0.0',
+    title: 'toy',
+    category: 'capability_discovery',
+    summary: 't',
+    narrative: 't',
+    agent: { interaction_model: 'stateless_transform', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    phases: [
+      {
+        id: 'p',
+        title: 'p',
+        steps: [{ id: 's', title: 's', task: 'get_adcp_capabilities' }],
+      },
+    ],
+  };
+
+  it('runStoryboard throws TestKitValidationError on malformed auth block', async () => {
+    await assert.rejects(
+      runStoryboard('https://agent.example/mcp', toyStoryboard, {
+        test_kit: { auth: { api_key: 'sk_test' } }, // probe_task missing
+      }),
+      err => err instanceof TestKitValidationError && /probe_task is required/.test(err.message)
+    );
+  });
+
+  it('runStoryboardStep throws TestKitValidationError on malformed auth block', async () => {
+    await assert.rejects(
+      runStep('https://agent.example/mcp', toyStoryboard, 's', {
+        test_kit: { auth: { probe_task: 'create_media_buy' } }, // not in allowlist
+      }),
+      err => err instanceof TestKitValidationError && /not in the allowlist/.test(err.message)
+    );
+  });
+
+  it('allowlist error does not leak the raw probe_task value outside a JSON-escaped quote', () => {
+    // Defensive: a hostile kit value must not break out of the error string
+    // (control chars, ANSI escapes, megabyte strings). validateTestKit
+    // JSON.stringify-encodes and truncates before interpolating.
+    const hostile = 'evil_\x1b[31mRED\n\x00' + 'x'.repeat(500);
+    try {
+      validateTestKit({ auth: { probe_task: hostile } });
+      assert.fail('expected throw');
+    } catch (err) {
+      assert.ok(err instanceof TestKitValidationError);
+      // No raw control characters reach the message — JSON encoding escapes them.
+      assert.doesNotMatch(err.message, /\x1b\[31m/);
+      assert.doesNotMatch(err.message, /\n\x00/);
+      // And the echoed value is length-bounded.
+      assert.ok(err.message.length < 1000, `message too long: ${err.message.length}`);
+    }
   });
 });

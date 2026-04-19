@@ -120,6 +120,7 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
               missing_tool: 'Skipped: agent does not implement this tool',
               not_testable: 'Not testable: agent lacks required tool',
               dependency_failed: 'Skipped: prior stateful step failed',
+              not_applicable: 'Not applicable: storyboard introduced in a later AdCP version',
             } as Record<string, string>
           )[stepResult.skip_reason ?? ''] ?? 'Step skipped',
         ]

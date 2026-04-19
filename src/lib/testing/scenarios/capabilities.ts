@@ -62,6 +62,7 @@ export async function testCapabilityDiscovery(
     if (result?.success && result?.data) {
       capabilities = parseCapabilitiesResponse(result.data);
       profile.adcp_version = capabilities.version;
+      profile.adcp_major_versions = [...capabilities.majorVersions];
       profile.supported_protocols = capabilities.protocols;
       profile.supports_governance = capabilities.protocols.includes('governance');
       profile.supports_si = capabilities.protocols.includes('sponsored_intelligence');
