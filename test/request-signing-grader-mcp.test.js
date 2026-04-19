@@ -36,9 +36,12 @@ function ensureMcpAgentBuilt() {
 }
 
 function startMcpAgent(port, overrides = {}) {
+  // Spread overrides first so `PORT` always wins — callers shouldn't be able
+  // to clobber the explicit `port` argument through the overrides bag.
+  const env = { ...process.env, ...overrides, PORT: String(port) };
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [MCP_AGENT_SCRIPT], {
-      env: { ...process.env, PORT: String(port), ...overrides },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let settled = false;
@@ -122,6 +125,9 @@ const CAPABILITY_PROFILE_VECTORS = ['007-missing-content-digest', '018-digest-co
 
 describe('request-signing grader — MCP transport vs. reference MCP agent', () => {
   // Dynamic port so the test is safe to run in parallel; fallback to 3111.
+  // The rate-abuse subtest spins up a second agent on PORT+1, so parallel
+  // runs of this file MUST set ADCP_MCP_TEST_PORT values that differ by at
+  // least 2 (e.g. 3111 and 3113) to avoid the +1 sibling colliding.
   const PORT = Number.parseInt(process.env.ADCP_MCP_TEST_PORT ?? '3111', 10);
   const AGENT_URL = `http://127.0.0.1:${PORT}/mcp`;
   let agent;
