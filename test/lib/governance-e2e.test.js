@@ -27,7 +27,7 @@ try {
     process.execPath,
     [
       '-e',
-      `fetch('${AGENT_URL}',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"jsonrpc":"2.0","method":"ping","id":0}',signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok||r.status===400?0:1)).catch(()=>process.exit(1))`,
+      `fetch('${AGENT_URL}',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json, text/event-stream'},body:'{"jsonrpc":"2.0","method":"ping","id":0}',signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok||r.status===400?0:1)).catch(()=>process.exit(1))`,
     ],
     { timeout: 5000, stdio: 'ignore' }
   );
@@ -467,6 +467,7 @@ describe('Governance E2E: Human-review denial', { skip: skipReason }, () => {
             total: 10000,
             currency: 'USD',
             authority_level: 'human_required',
+            reallocation_threshold: 5000,
           },
           flight: {
             start: new Date().toISOString(),
