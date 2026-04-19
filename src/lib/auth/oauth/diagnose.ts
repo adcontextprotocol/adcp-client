@@ -770,7 +770,11 @@ function jwtFromDecoded(_decoded: DecodedAccessToken): string {
 function base64url(input: string): string {
   // `base64` output has at most 2 trailing `=` characters; the bounded form
   // `={0,2}$` avoids the polynomial-regex flag CodeQL raises on `=+$`.
-  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/={0,2}$/, '');
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/={0,2}$/, '');
 }
 
 function formatError(err: unknown): string {
