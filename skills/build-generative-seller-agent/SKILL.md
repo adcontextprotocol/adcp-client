@@ -309,6 +309,65 @@ Minimal `tsconfig.json`:
 
 Creative tools (`listCreativeFormats`, `syncCreatives`, `buildCreative`, `listCreatives`, `getCreativeDelivery`) belong in the `creative` domain group. Media buy tools (`getProducts`, `createMediaBuy`, `getMediaBuys`, `getMediaBuyDelivery`) belong in `mediaBuy`.
 
+```typescript
+import { randomUUID } from 'node:crypto';
+import { createAdcpServer, serve, adcpError } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+
+// Idempotency — required for v3. Generative creation is expensive and
+// non-deterministic, so caching successful responses per key is critical:
+// a buyer retry must replay the same ad, not re-burn model tokens.
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // pgBackend(pool) for production
+  ttlSeconds: 86400,                // 24 hours (spec bounds: 1h–7d)
+});
+
+serve(() => createAdcpServer({
+  name: 'My Generative Seller',
+  version: '1.0.0',
+  idempotency,
+
+  // Principal scoping. MUST never return undefined — or every mutating
+  // request rejects as SERVICE_UNAVAILABLE.
+  resolveSessionKey: () => 'default-principal',
+
+  mediaBuy: {
+    getProducts: async (params, ctx) => ({ products: PRODUCTS, sandbox: true }),
+    createMediaBuy: async (params, ctx) => {
+      const buy = {
+        media_buy_id: `mb_${randomUUID()}`,
+        status: 'pending_creatives' as const,
+        packages: params.packages?.map(p => ({
+          package_id: `pkg_${randomUUID()}`,
+          product_id: p.product_id,
+          pricing_option_id: p.pricing_option_id,
+          budget: p.budget,
+        })) ?? [],
+      };
+      await ctx.store.put('media_buys', buy.media_buy_id, buy);
+      return buy;
+    },
+    // ... updateMediaBuy, getMediaBuys, getMediaBuyDelivery
+  },
+
+  creative: {
+    listCreativeFormats: async () => ({ formats: FORMATS }),
+    syncCreatives: async (params, ctx) => {
+      // Generative formats take a `brief`; standard formats carry assets.
+      // Check the format_id to decide processing. Framework idempotency
+      // ensures a retry of the same (key, payload) replays the prior
+      // response instead of re-running generation.
+      const results = params.creatives.map(c => ({
+        creative_id: c.creative_id ?? `cr_${randomUUID()}`,
+        action: 'created' as const,
+      }));
+      return { creatives: results };
+    },
+    // ... buildCreative, listCreatives, getCreativeDelivery
+  },
+}));
+```
+
 The skill contains everything you need. Do not read additional docs before writing code.
 
 ### Key implementation detail: sync_creatives handler
@@ -322,22 +381,17 @@ The sync_creatives handler must check the format_id to decide how to process:
 
 ## Idempotency
 
-AdCP v3 requires an `idempotency_key` on every mutating request — for generative sellers that's `create_media_buy`, `update_media_buy`, and `sync_creatives` (including brief-based creatives whose generation is expensive and must not double-bill). Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry, so a failed generation can be retried without burning the key. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`).
+AdCP v3 requires an `idempotency_key` on every mutating request — for generative sellers that's `create_media_buy`, `update_media_buy`, and `sync_creatives` (including brief-based creatives whose generation is expensive and must not double-bill). Idempotency is already wired in the Implementation example above. The framework then handles:
 
-```typescript
-import { createIdempotencyStore, memoryBackend, pgBackend } from '@adcp/client/server';
+- Missing/malformed key → `INVALID_REQUEST` (spec pattern `^[A-Za-z0-9_.:-]{16,255}$`)
+- JCS-canonicalized payload hashing with same-key-different-payload → `IDEMPOTENCY_CONFLICT` (no payload leaked in the error body)
+- Past-TTL replay → `IDEMPOTENCY_EXPIRED` (±60s clock-skew tolerance)
+- Cache hits replay the cached envelope with `replayed: true` injected
+- `adcp.idempotency.replay_ttl_seconds` auto-declared on `get_adcp_capabilities`
+- Only successful responses cache — a failed generation re-executes on retry without locking the key
+- Atomic claim so concurrent retries with the same key don't all race to generate
 
-const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),         // or pgBackend(pool) for production
-  ttlSeconds: 86400,                // 1h–7d, clamped to spec bounds
-});
-
-const server = createAdcpServer({
-  idempotency,
-  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
-  // ... your domain handlers (mediaBuy.createMediaBuy, updateMediaBuy, creative.syncCreatives)
-});
-```
+Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal`). `ttlSeconds` must be 3600–604800 — out of range throws at construction.
 
 ## Validation
 

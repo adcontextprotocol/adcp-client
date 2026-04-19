@@ -261,26 +261,91 @@ Minimal `tsconfig.json`:
 
 Event tracking tools (`syncEventSources`, `logEvent`, `syncCatalogs`, `syncAudiences`) belong in the `eventTracking` domain group, not `mediaBuy`.
 
+```typescript
+import { randomUUID } from 'node:crypto';
+import { createAdcpServer, serve, adcpError } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+
+// Idempotency — required for v3. Retail media has many mutating tools:
+// create/update_media_buy, sync_creatives, sync_catalogs, sync_event_sources,
+// sync_audiences, log_event. Without this, the framework logs a non-
+// compliance error at startup.
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // pgBackend(pool) for production
+  ttlSeconds: 86400,                // 24 hours (spec bounds: 1h–7d)
+});
+
+serve(() => createAdcpServer({
+  name: 'My Retail Media Agent',
+  version: '1.0.0',
+  idempotency,
+
+  // Principal scoping. MUST never return undefined — or every mutating
+  // request rejects as SERVICE_UNAVAILABLE. Multi-tenant prod uses
+  // ctx.account.
+  resolveSessionKey: () => 'default-principal',
+
+  mediaBuy: {
+    getProducts: async (params, ctx) => ({ products: PRODUCTS, sandbox: true }),
+    createMediaBuy: async (params, ctx) => {
+      const buy = {
+        media_buy_id: `mb_${randomUUID()}`,
+        status: 'pending_creatives' as const,
+        packages: params.packages?.map(p => ({
+          package_id: `pkg_${randomUUID()}`,
+          product_id: p.product_id,
+          pricing_option_id: p.pricing_option_id,
+          budget: p.budget,
+        })) ?? [],
+      };
+      await ctx.store.put('media_buys', buy.media_buy_id, buy);
+      return buy;
+    },
+    // ... updateMediaBuy, getMediaBuyDelivery, syncCreatives, listCreativeFormats
+  },
+
+  eventTracking: {
+    syncCatalogs: async (params, ctx) => ({
+      catalogs: params.catalogs.map(c => ({
+        catalog_id: c.catalog_id,
+        action: 'created' as const,
+        item_count: c.items?.length ?? 0,
+        items_approved: c.items?.length ?? 0,
+      })),
+      sandbox: true,
+    }),
+    syncEventSources: async (params, ctx) => ({
+      event_sources: params.event_sources.map(s => ({
+        event_source_id: s.event_source_id,
+        action: 'created' as const,
+      })),
+      sandbox: true,
+    }),
+    logEvent: async (params, ctx) => ({
+      events_received: params.events?.length ?? 0,
+      events_processed: params.events?.length ?? 0,
+      sandbox: true,
+    }),
+    // ... syncAudiences
+  },
+}));
+```
+
 The skill contains everything you need. Do not read additional docs before writing code.
 
 ## Idempotency
 
-AdCP v3 requires an `idempotency_key` on every mutating request — for retail media networks that means `create_media_buy`, `update_media_buy`, and `sync_creatives`, plus the mutating event-tracking tools (`sync_event_sources`, `sync_catalogs`, `sync_audiences`, `log_event`) where retail-specific replay matters for catalog uploads and conversion ingestion. Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`).
+AdCP v3 requires an `idempotency_key` on every mutating request — for retail media that's `create_media_buy`, `update_media_buy`, `sync_creatives`, `sync_event_sources`, `sync_catalogs`, `sync_audiences`, and `log_event`. Idempotency is already wired in the Implementation example above. The framework then handles:
 
-```typescript
-import { createIdempotencyStore, memoryBackend, pgBackend } from '@adcp/client/server';
+- Missing/malformed key → `INVALID_REQUEST` (spec pattern `^[A-Za-z0-9_.:-]{16,255}$`)
+- JCS-canonicalized payload hashing with same-key-different-payload → `IDEMPOTENCY_CONFLICT` (no payload leaked in the error body)
+- Past-TTL replay → `IDEMPOTENCY_EXPIRED` (±60s clock-skew tolerance)
+- Cache hits replay the cached envelope with `replayed: true` injected
+- `adcp.idempotency.replay_ttl_seconds` auto-declared on `get_adcp_capabilities`
+- Only successful responses cache — failed catalog syncs or event ingests re-execute on retry
+- Atomic claim so concurrent retries with the same key don't all race
 
-const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),         // or pgBackend(pool) for production
-  ttlSeconds: 86400,                // 1h–7d, clamped to spec bounds
-});
-
-const server = createAdcpServer({
-  idempotency,
-  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
-  // ... mediaBuy + eventTracking handlers
-});
-```
+Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal`). `ttlSeconds` must be 3600–604800 — out of range throws at construction.
 
 ## Validation
 

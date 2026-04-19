@@ -235,13 +235,28 @@ import {
   createAdcpServer, serve, adcpError,
   previewCreativeResponse, PreviewCreativeSingleRequestSchema,
 } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 
 const formats = [ /* your format objects */ ];
+
+// Idempotency — required for v3 compliance on any agent with mutating
+// handlers. `sync_creatives`, `build_creative`, and `calibrate_content`
+// are all mutating for creative agents.
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),         // pgBackend(pool) for production
+  ttlSeconds: 86400,                // 24 hours (spec bounds: 1h–7d)
+});
 
 serve(() => {
   const server = createAdcpServer({
     name: 'My Creative Agent',
     version: '1.0.0',
+    idempotency,
+
+    // Principal scoping for idempotency. MUST never return undefined —
+    // every mutating request would reject as SERVICE_UNAVAILABLE. A
+    // constant works for a demo; use ctx.account for multi-tenant prod.
+    resolveSessionKey: () => 'default-principal',
 
     creative: {
       listCreativeFormats: async (params, ctx) => {
@@ -324,22 +339,17 @@ The `sync_creatives` handler adds/updates entries via `ctx.store.put('creatives'
 
 ## Idempotency
 
-AdCP v3 requires an `idempotency_key` on every mutating request — for creative agents that's `sync_creatives`, `build_creative`, and `calibrate_content`. Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — a failed render or generation re-executes on retry so buyers can safely retry transient errors. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`).
+AdCP v3 requires an `idempotency_key` on every mutating request — for creative agents that's `sync_creatives`, `build_creative`, and `calibrate_content`. Idempotency is already wired in the Implementation example above. The framework then handles:
 
-```typescript
-import { createIdempotencyStore, memoryBackend, pgBackend } from '@adcp/client/server';
+- Missing/malformed key → `INVALID_REQUEST` (spec pattern `^[A-Za-z0-9_.:-]{16,255}$`)
+- JCS-canonicalized payload hashing with same-key-different-payload → `IDEMPOTENCY_CONFLICT` (no payload leaked in the error body)
+- Past-TTL replay → `IDEMPOTENCY_EXPIRED` (±60s clock-skew tolerance)
+- Cache hits replay the cached envelope with `replayed: true` injected
+- `adcp.idempotency.replay_ttl_seconds` auto-declared on `get_adcp_capabilities`
+- Only successful responses cache — failed renders re-execute on retry
+- Atomic claim so concurrent retries with a fresh key don't all race to run
 
-const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),         // or pgBackend(pool) for production
-  ttlSeconds: 86400,                // 1h–7d, clamped to spec bounds
-});
-
-const server = createAdcpServer({
-  idempotency,
-  resolveSessionKey: (ctx) => ctx.account?.id,  // doubles as idempotency principal
-  // ... creative.syncCreatives, buildCreative, calibrateContent
-});
-```
+Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal` for custom scoping). `ttlSeconds` must be 3600–604800 — out of range throws at construction. If you register mutating handlers without wiring `idempotency`, the framework logs an error at server-creation time.
 
 ## Validation
 
