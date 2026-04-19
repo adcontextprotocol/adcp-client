@@ -245,3 +245,32 @@ export {
   type OAuthMetadata,
   type DiscoveryOptions,
 } from './discovery';
+
+// Diagnostics utilities — for `adcp diagnose-auth` and consumer introspection
+export {
+  parseWWWAuthenticate,
+  decodeAccessTokenClaims,
+  validateTokenAudience,
+  type WWWAuthenticateChallenge,
+  type DecodedJWTHeader,
+  type DecodedJWTClaims,
+  type DecodedAccessToken,
+  type TokenAudienceResult,
+} from './diagnostics';
+
+// End-to-end OAuth handshake diagnosis (powers `adcp diagnose-auth`)
+export {
+  runAuthDiagnosis,
+  AUTH_DIAGNOSIS_SCHEMA_VERSION,
+  type DiagnoseOptions,
+  type HttpCapture,
+  type DiagnosisStep,
+  type Hypothesis,
+  type HypothesisVerdict,
+  type AuthDiagnosisReport,
+} from './diagnose';
+
+// Re-exported MCP SDK OAuth error types so consumers can discriminate 401 causes
+// without string-matching on error messages. These originate from the MCP server
+// auth module but are the canonical OAuth error classes for client-side handling too.
+export { InvalidTokenError, InsufficientScopeError } from '@modelcontextprotocol/sdk/server/auth/errors.js';

@@ -709,6 +709,7 @@ COMMANDS:
   grade <subject> <url>       Conformance graders (e.g. request-signing)
   signing <subcommand>        RFC 9421 signing key tools (generate, verify)
   check-network               Validate managed publisher network deployment
+  diagnose-auth <alias|url>   Diagnose OAuth handshake with ranked hypotheses
   comply <agent> [options]    DEPRECATED — use "storyboard run" instead
   test <agent> [scenario]     Run individual test scenarios (legacy)
   registry <command>          Brand/property registry lookups
@@ -1448,6 +1449,220 @@ EXAMPLES:
   }
 }
 
+// ────────────────────────────────────────────────────────────
+// diagnose-auth command
+// ────────────────────────────────────────────────────────────
+
+async function handleDiagnoseAuthCommand(args) {
+  if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+    console.log(`
+Diagnose the OAuth handshake for a saved agent or URL.
+
+Use this when: tools/call returns 401/403; a saved token has stopped working;
+a refresh succeeds but the next call fails; or you're not sure whether the
+agent or your client is at fault.
+
+Probes the RFC 9728 protected-resource metadata, RFC 8414 auth-server metadata,
+decodes the saved access token, optionally attempts a refresh with resource
+indicator (RFC 8707), and calls tools/list + a tool on the agent. Reports
+ranked hypotheses about what's likely wrong.
+
+USAGE:
+  adcp diagnose-auth <alias|url> [options]
+
+OPTIONS:
+  --json              Emit the full structured report as JSON
+  --allow-http        Allow http:// and private-IP targets (dev loops only)
+  --skip-refresh      Do not attempt a token refresh
+  --skip-tool-call    Do not attempt the authenticated tool_call probe
+  --tool NAME         Tool to exercise in the tool_call probe (default: get_products)
+  --include-tokens    Include raw access/refresh tokens in JSON output (default: redacted)
+  --help, -h          Show this help
+
+EXIT CODES:
+  0   No likely failures identified
+  1   At least one hypothesis flagged as 'likely'
+  2   Usage error (missing arg, invalid flag)
+
+EXAMPLES:
+  adcp diagnose-auth myagent
+  adcp diagnose-auth myagent --json > diagnosis.json
+  adcp diagnose-auth https://agent.example.com/mcp --allow-http
+`);
+    return;
+  }
+
+  const jsonOutput = args.includes('--json');
+  const allowPrivateIp = args.includes('--allow-http');
+  const skipRefresh = args.includes('--skip-refresh');
+  const skipToolCall = args.includes('--skip-tool-call');
+  const includeTokens = args.includes('--include-tokens');
+  const toolIndex = args.indexOf('--tool');
+  let probeToolName;
+  if (toolIndex !== -1) {
+    const value = args[toolIndex + 1];
+    if (!value || value.startsWith('--')) {
+      console.error('ERROR: --tool requires a tool name\n');
+      process.exit(2);
+    }
+    probeToolName = value;
+  }
+
+  const positional = args.filter((a, i) => {
+    if (a.startsWith('--')) return false;
+    if (i > 0 && args[i - 1] === '--tool') return false;
+    return true;
+  });
+  const target = positional[0];
+  if (!target) {
+    console.error('ERROR: diagnose-auth requires an alias or URL\n');
+    console.error('Run "adcp diagnose-auth --help" for usage');
+    process.exit(2);
+  }
+
+  // Resolve the agent config (alias, built-in, or bare URL). Protocol is fixed
+  // to MCP because diagnose-auth exercises MCP-specific wire behavior.
+  let agentConfig;
+  if (BUILT_IN_AGENTS[target]) {
+    const builtIn = BUILT_IN_AGENTS[target];
+    agentConfig = {
+      id: target,
+      name: target,
+      agent_uri: builtIn.url,
+      protocol: builtIn.protocol || 'mcp',
+      auth_token: builtIn.auth_token,
+    };
+  } else if (isAlias(target)) {
+    const saved = getAgent(target);
+    agentConfig = {
+      id: target,
+      name: target,
+      agent_uri: saved.url,
+      protocol: saved.protocol || 'mcp',
+      oauth_tokens: saved.oauth_tokens,
+      oauth_client: saved.oauth_client,
+      auth_token: saved.auth_token,
+    };
+  } else if (target.startsWith('http://') || target.startsWith('https://')) {
+    agentConfig = {
+      id: target,
+      name: target,
+      agent_uri: target,
+      protocol: 'mcp',
+    };
+  } else {
+    console.error(`ERROR: '${target}' is not a valid alias or URL\n`);
+    process.exit(2);
+  }
+
+  const { runAuthDiagnosis } = require('../dist/lib/auth/oauth/index.js');
+  const report = await runAuthDiagnosis(agentConfig, {
+    allowPrivateIp,
+    skipRefresh,
+    skipToolCall,
+    probeToolName,
+    includeTokens,
+  });
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(report, null, 2));
+    process.exit(hasLikelyHypothesis(report) ? 1 : 0);
+  }
+
+  renderDiagnosisReport(report);
+  process.exit(hasLikelyHypothesis(report) ? 1 : 0);
+}
+
+function hasLikelyHypothesis(report) {
+  return report.hypotheses.some(h => h.verdict === 'likely');
+}
+
+const STEP_LABELS = {
+  probe_protected_resource_metadata: 'RFC 9728 protected-resource metadata',
+  probe_authorization_server_metadata: 'RFC 8414 authorization-server metadata',
+  decode_current_token: 'Decode current access token',
+  token_refresh_attempt: 'Refresh grant (RFC 8707 `resource`)',
+  decode_refreshed_token: 'Decode refreshed access token',
+  list_tools_probe: 'Unauthenticated tools/list probe',
+  tool_call_probe: 'Authenticated tool_call probe',
+};
+
+function renderDiagnosisReport(report) {
+  console.log(`\n🔍 OAuth Diagnosis — ${report.agentUrl}`);
+  if (report.aliasId && report.aliasId !== report.agentUrl) {
+    console.log(`   Alias: ${report.aliasId}`);
+  }
+  console.log(`   Generated: ${report.generatedAt}\n`);
+
+  console.log(`WIRE STEPS`);
+  for (const step of report.steps) {
+    const label = STEP_LABELS[step.name] || step.name;
+    const prefix = `  • ${label}`;
+    if (step.error) {
+      console.log(`${prefix}  ↳ skipped: ${step.error}`);
+      continue;
+    }
+    if (step.http) {
+      const statusBadge = step.http.status === 0 ? 'ERR' : `HTTP ${step.http.status}`;
+      console.log(`${prefix}  ↳ ${step.http.method} ${step.http.url}  ${statusBadge}`);
+      if (step.http.error) console.log(`      error: ${step.http.error}`);
+      const wwwAuth = step.http.headers['www-authenticate'];
+      if (wwwAuth) console.log(`      WWW-Authenticate: ${wwwAuth}`);
+    } else if (step.decodedToken) {
+      const audClaim = step.decodedToken.claims.aud;
+      const aud = audClaim === undefined ? '(missing)' : JSON.stringify(audClaim);
+      const iss = step.decodedToken.claims.iss ?? '(missing)';
+      const exp = step.decodedToken.claims.exp;
+      const expStr = exp ? new Date(exp * 1000).toISOString() : '(missing)';
+      console.log(`${prefix}  ↳ JWT: iss=${iss}  aud=${aud}  exp=${expStr}`);
+    } else {
+      console.log(`${prefix}  ↳ (no token / opaque token)`);
+    }
+    if (step.notes) {
+      for (const note of step.notes) console.log(`      note: ${note}`);
+    }
+  }
+
+  console.log(`\nHYPOTHESES (ranked)`);
+  for (const h of report.hypotheses) {
+    const badge = formatVerdict(h.verdict);
+    const id = h.id.padEnd(3);
+    console.log(`\n  ${id} ${badge}  ${h.title}`);
+    console.log(`       ${h.summary}`);
+    for (const ev of h.evidence) console.log(`       · ${ev}`);
+  }
+
+  const likely = report.hypotheses.filter(h => h.verdict === 'likely');
+  if (likely.length === 0) {
+    console.log(`\n✅ No likely failures identified.\n`);
+  } else {
+    console.log(`\n⚠️  ${likely.length} likely issue(s) identified.\n`);
+    console.log(`NEXT STEPS`);
+    for (const h of likely) {
+      const fix = h.evidence.find(e => e.startsWith('Fix:'));
+      if (fix) {
+        console.log(`  ${h.id}: ${fix.replace(/^Fix:\s*/, '')}`);
+      } else {
+        console.log(`  ${h.id}: ${h.summary}`);
+      }
+    }
+    console.log();
+  }
+}
+
+function formatVerdict(verdict) {
+  switch (verdict) {
+    case 'likely':
+      return '[likely]   ';
+    case 'possible':
+      return '[possible] ';
+    case 'ruled_out':
+      return '[ruled-out]';
+    default:
+      return '[n/a]      ';
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -1486,6 +1701,11 @@ async function main() {
   if (args[0] === 'grade') {
     const { handleGradeCommand } = require('./adcp-grade.js');
     await handleGradeCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'diagnose-auth') {
+    await handleDiagnoseAuthCommand(args.slice(1));
     return;
   }
 
