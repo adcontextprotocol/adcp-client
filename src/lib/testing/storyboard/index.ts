@@ -50,6 +50,7 @@ export type {
   ComplianceIndex,
   ComplianceIndexProtocol,
   ComplianceIndexSpecialism,
+  NotApplicableStoryboard,
   ResolveOptions,
   ResolvedBundle,
   ResolvedStoryboards,
@@ -69,6 +70,9 @@ export { buildRequest, hasRequestBuilder } from './request-builder';
 
 // Validations
 export { runValidations } from './validations';
+
+// Test-kit schema validation
+export { validateTestKit, TestKitValidationError, PROBE_TASK_ALLOWLIST } from './test-kit';
 
 // Sandbox entities
 export type { SandboxBrand, SandboxAgent, SandboxEntities, BrandJson } from './sandbox-entities';

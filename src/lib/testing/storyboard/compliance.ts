@@ -67,6 +67,22 @@ export interface AgentCapabilities {
   supported_protocols?: string[];
   /** Optional specialisms the agent claims. */
   specialisms?: string[];
+  /**
+   * AdCP major versions the agent declared (from `get_adcp_capabilities.adcp.major_versions`).
+   * When set, storyboards carrying `introduced_in: <major.minor>` whose major
+   * isn't in this list are filtered into `not_applicable` instead of being
+   * run against an agent that predates them. Unset → no version gating.
+   */
+  major_versions?: number[];
+}
+
+/** Reason a storyboard was not run against an agent. */
+export interface NotApplicableStoryboard {
+  storyboard_id: string;
+  storyboard_title: string;
+  /** Track this storyboard would have contributed to, if known. */
+  track?: string;
+  reason: string;
 }
 
 export interface ResolveOptions {
@@ -84,6 +100,13 @@ export interface ResolvedBundle {
 export interface ResolvedStoryboards {
   bundles: ResolvedBundle[];
   storyboards: Storyboard[];
+  /**
+   * Storyboards the agent's declared `major_versions` predates. Surfaced so
+   * callers can render a `not_applicable` row — silently dropping them would
+   * mean an agent that hasn't certified against a later spec version passes
+   * vacuously.
+   */
+  not_applicable: NotApplicableStoryboard[];
 }
 
 function getRepoRoot(): string {
@@ -285,6 +308,7 @@ export function resolveStoryboardsForCapabilities(
   const cacheDir = getComplianceCacheDir(options);
   const bundles: ResolvedBundle[] = [];
   const storyboards: Storyboard[] = [];
+  const notApplicable: NotApplicableStoryboard[] = [];
   const seenStoryboards = new Set<string>();
 
   const push = (ref: BundleRef) => {
@@ -293,6 +317,16 @@ export function resolveStoryboardsForCapabilities(
     for (const sb of sbs) {
       if (seenStoryboards.has(sb.id)) continue;
       seenStoryboards.add(sb.id);
+      const gate = checkVersionGate(sb, caps.major_versions);
+      if (gate) {
+        notApplicable.push({
+          storyboard_id: sb.id,
+          storyboard_title: sb.title,
+          track: sb.track,
+          reason: gate,
+        });
+        continue;
+      }
       storyboards.push(sb);
     }
   };
@@ -363,5 +397,38 @@ export function resolveStoryboardsForCapabilities(
     });
   }
 
-  return { bundles, storyboards };
+  return { bundles, storyboards, not_applicable: notApplicable };
+}
+
+/**
+ * Compare a storyboard's `introduced_in` (e.g., "3.1") against an agent's
+ * declared `major_versions` (e.g., `[3]`). Returns a reason string when the
+ * storyboard should be gated out; undefined when it applies.
+ *
+ * Grammar: `introduced_in` is `<major>` or `<major>.<minor>` — only the major
+ * is consulted for filtering. Minor/patch components are kept on the storyboard
+ * for reporting but don't drive the gate because the spec's `major_versions`
+ * array only carries majors.
+ *
+ * When either side is absent the gate is a no-op: agents that don't declare
+ * `major_versions` (v2 synthetic profiles, discovery failures) run every
+ * storyboard, and storyboards without `introduced_in` always apply.
+ */
+function checkVersionGate(sb: Storyboard, agentMajors: number[] | undefined): string | undefined {
+  if (!sb.introduced_in || !agentMajors || agentMajors.length === 0) return undefined;
+  const parsed = parseIntroducedIn(sb.introduced_in);
+  if (parsed === undefined) return undefined; // unparseable → don't block
+  if (agentMajors.includes(parsed)) return undefined;
+  const declared = agentMajors
+    .slice()
+    .sort((a, b) => a - b)
+    .join(', ');
+  return `Introduced in AdCP ${sb.introduced_in}; agent declares major_versions [${declared}].`;
+}
+
+function parseIntroducedIn(value: string): number | undefined {
+  const match = /^\s*(\d+)(?:\.\d+)*\s*$/.exec(value);
+  if (!match?.[1]) return undefined;
+  const major = Number.parseInt(match[1], 10);
+  return Number.isFinite(major) ? major : undefined;
 }

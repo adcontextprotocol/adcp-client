@@ -21,6 +21,14 @@ export interface Storyboard {
   narrative: string;
   /** Maps to a ComplianceTrack for comply() integration */
   track?: string;
+  /**
+   * AdCP spec version that introduced this storyboard, e.g. "3.1".
+   * When set, the runner skips the storyboard for agents whose declared
+   * `adcp.major_versions` does not include the major component — the
+   * storyboard did not exist at the version the agent certified against.
+   * Unset (the default) means the storyboard has always applied.
+   */
+  introduced_in?: string;
   /** Tools that make this storyboard applicable (at least one must be present) */
   required_tools?: string[];
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
@@ -246,7 +254,13 @@ export interface StoryboardStepResult {
   /** True when the step was not executed */
   skipped?: boolean;
   /** Why the step was skipped */
-  skip_reason?: 'not_testable' | 'dependency_failed' | 'missing_test_harness' | 'missing_tool';
+  skip_reason?:
+    | 'not_testable'
+    | 'dependency_failed'
+    | 'missing_test_harness'
+    | 'missing_tool'
+    /** Storyboard predates the agent's declared adcp.major_versions. */
+    | 'not_applicable';
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;

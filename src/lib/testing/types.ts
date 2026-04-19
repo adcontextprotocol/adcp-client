@@ -166,9 +166,12 @@ export interface TestOptions {
       api_key?: string;
       /**
        * Auth-required, read-only tool the runner uses for unauth + invalid-key probes.
-       * Defaults to `list_creatives`. Override per test-kit when the agent doesn't support it.
+       * Required whenever `auth` is declared — no default is substituted. Must be one of
+       * the values in `PROBE_TASK_ALLOWLIST`. Kits that miss this or pick a task outside
+       * the allowlist fail at `comply()` / `runStoryboard()` entry with
+       * `TestKitValidationError`.
        */
-      probe_task?: string;
+      probe_task: string;
     };
     [key: string]: unknown;
   };
@@ -218,6 +221,12 @@ export interface AgentProfile {
   }>;
   // v3 capabilities
   adcp_version?: 'v2' | 'v3';
+  /**
+   * AdCP major versions the agent declared in `get_adcp_capabilities.adcp.major_versions`.
+   * Drives version-gated storyboard filtering so a v3.0 agent isn't failed against a
+   * storyboard introduced in a later minor version.
+   */
+  adcp_major_versions?: number[];
   supported_protocols?: string[];
   /** Specialism claims from get_adcp_capabilities.specialisms */
   specialisms?: string[];
