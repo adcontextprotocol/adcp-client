@@ -69,7 +69,7 @@ describe('createAdcpServer with idempotency', () => {
     });
     assert.equal(calls.length, 1);
     assert.equal(result.media_buy_id, 'mb_1');
-    assert.notEqual(result.replayed, true, 'fresh execution should not set replayed:true');
+    assert.equal(result.replayed, false, 'fresh execution must set replayed:false so buyers can distinguish retry-vs-first');
   });
 
   it('replay with same key + equivalent payload returns cached response with replayed:true', async () => {

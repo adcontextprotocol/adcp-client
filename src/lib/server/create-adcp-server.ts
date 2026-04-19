@@ -590,13 +590,15 @@ function clampReplayTtl(seconds: number): number {
 }
 
 /**
- * Set `replayed: true` on the response envelope (MCP structuredContent).
- * Fresh executions omit the field; seller injects it at response time
- * on replay.
+ * Set `replayed` on the response envelope (MCP structuredContent).
+ * Both fresh executions (`false`) and replays (`true`) carry the field,
+ * per spec — a buyer that checks `replayed` to decide whether side
+ * effects already fired needs the field present on every mutating
+ * response, not just replays.
  */
-function injectReplayed(response: McpToolResponse): void {
+function injectReplayed(response: McpToolResponse, value: boolean): void {
   if (response.structuredContent && typeof response.structuredContent === 'object') {
-    (response.structuredContent as Record<string, unknown>).replayed = true;
+    (response.structuredContent as Record<string, unknown>).replayed = value;
   }
 }
 
@@ -1118,7 +1120,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // read, but belt-and-suspenders: handler-returned objects
               // can alias pieces of the formatted envelope.
               const cachedFormatted = cloneFormattedResponse(checkResult.response as McpToolResponse);
-              injectReplayed(cachedFormatted);
+              injectReplayed(cachedFormatted, true);
               return finalize(cachedFormatted);
             }
             if (checkResult.kind === 'conflict') {
@@ -1196,6 +1198,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   error: reason,
                 });
               }
+              // Stamp replayed:false AFTER caching so the cached copy has
+              // no pre-baked value. On replay we inject replayed:true
+              // from the replay path, overwriting anything.
+              injectReplayed(formatted, false);
             } else {
               try {
                 await idempotency.release({

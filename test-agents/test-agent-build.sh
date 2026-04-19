@@ -9,6 +9,7 @@ AGENT_TYPE="${2:-signals}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK_DIR=$(mktemp -d)
 SKILL_FILE="$REPO_ROOT/skills/build-${AGENT_TYPE}-agent/SKILL.md"
+AGENT_PORT="${PORT:-3001}"
 
 echo "=== Agent Build Test ==="
 echo "Tool: $TOOL"
@@ -46,6 +47,10 @@ For a signals agent: build a marketplace agent with 4 audience segments, CPM pri
 For a seller agent: build an SSP with non-guaranteed display + video, auction pricing.
 For a si agent: build a toy sponsored-intelligence agent with keyword-based recommendations.
 For a governance agent: build a campaign governance agent that approves plans under a budget threshold and maintains a property list.
+For a creative agent: build a creative management agent with 2 display formats, sync/build/preview/list creatives.
+For a brand-rights agent: build a brand rights agent with one brand (acme_outdoor) offering one rights package; implement get_brand_identity, get_rights, acquire_rights.
+For a retail-media agent: build a retail media network with 2 on-site placements, sync_catalogs for product feeds, log_event for conversions.
+For a generative-seller agent: build an AI ad network with one standard display format and one generative format; sync_creatives handles both.
 
 Implement ALL tools listed in the skill. Use createAdcpServer as instructed. Use ctx.store for state.
 
@@ -102,8 +107,8 @@ if [ -f agent.ts ]; then
 
     # Try running storyboard
     echo ""
-    echo "Starting agent for storyboard test..."
-    npx tsx agent.ts &
+    echo "Starting agent for storyboard test (PORT=$AGENT_PORT)..."
+    PORT=$AGENT_PORT npx tsx agent.ts &
     AGENT_PID=$!
     sleep 4
 
@@ -112,19 +117,21 @@ if [ -f agent.ts ]; then
       signals) STORYBOARD="signal_marketplace" ;;
       si) STORYBOARD="si_baseline" ;;
       governance) STORYBOARD="governance_spend_authority" ;;
-      *) STORYBOARD="signal_marketplace" ;;
+      creative) STORYBOARD="creative_lifecycle" ;;
+      brand-rights) STORYBOARD="brand_rights" ;;
+      retail-media) STORYBOARD="sales_catalog_driven" ;;
+      generative-seller) STORYBOARD="creative_generative/seller" ;;
+      *) STORYBOARD="idempotency" ;;
     esac
 
-    echo "Running storyboard: $STORYBOARD"
     STORYBOARD_BIN="$REPO_ROOT/bin/adcp.js"
-    node "$STORYBOARD_BIN" storyboard run http://localhost:3001/mcp "$STORYBOARD" --json 2>/dev/null | grep -v '^\[AdCP\]' | python3 -c "
+    run_storyboard() {
+      local sb="$1"
+      echo ""
+      echo "Running storyboard: $sb"
+      node "$STORYBOARD_BIN" storyboard run http://localhost:${AGENT_PORT}/mcp "$sb" --json --allow-http 2>/dev/null | grep -v '^\[AdCP\]' | python3 -c "
 import json, sys
 try:
-    # strict=False tolerates raw control characters (newlines, tabs) in
-    # JSON string values — agent responses sometimes carry multi-line
-    # text fields whose control chars didn't get escaped upstream. The
-    # real fix is upstream serialization, but lenient parsing gives us
-    # usable storyboard output until then.
     data = json.loads(sys.stdin.read(), strict=False)
     s = data.get('summary') or {}
     passed = s.get('tracks_passed', 0)
@@ -143,6 +150,14 @@ try:
 except Exception as e:
     print(f'Could not parse storyboard output: {e}')
 " 2>&1 || echo "Storyboard failed to run"
+    }
+
+    run_storyboard "$STORYBOARD"
+    # Universal idempotency storyboard — validates the v3 contract that
+    # all mutating tools enforce idempotency_key, JCS replay, and
+    # IDEMPOTENCY_CONFLICT. Runs on every agent type since it's required
+    # for v3 compliance regardless of domain.
+    run_storyboard "idempotency"
 
     kill $AGENT_PID 2>/dev/null
     wait $AGENT_PID 2>/dev/null
