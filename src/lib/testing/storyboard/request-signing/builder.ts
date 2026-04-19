@@ -32,6 +32,23 @@ export interface BuildOptions {
    * exercise the edge against a mismatched agent base.
    */
   baseUrl?: string;
+  /**
+   * Transport-layer framing. `'raw'` (default) sends the vector body to the
+   * retargeted vector URL verbatim — matches the conformance vectors' intent
+   * of testing a per-operation HTTP endpoint. `'mcp'` wraps the vector body
+   * in a JSON-RPC `tools/call` envelope and posts to `baseUrl` as-is (no
+   * path join); operation name comes from the vector URL's last segment.
+   *
+   * MCP mode trades the canonicalization-edge coverage for reach: vectors
+   * 005–008 fold into plain POSTs against the MCP endpoint, but the grader
+   * works against any MCP agent that wires a verifier at the HTTP layer.
+   */
+  transport?: 'raw' | 'mcp';
+  /**
+   * JSON-RPC `id` for the MCP envelope. Defaults to a per-call incrementing
+   * counter. Override for tests that want a stable id.
+   */
+  mcpJsonRpcId?: number;
 }
 
 export interface SignedHttpRequest {
@@ -82,12 +99,15 @@ export function listSupportedNegativeVectors(): string[] {
 type Mutator = (vector: NegativeVector, keys: TestKeyset, options: BuildOptions) => SignedHttpRequest;
 
 const MUTATIONS: Record<string, Mutator> = {
-  '001-no-signature-header': (vector, _keys, options) => ({
-    method: vector.request.method,
-    url: retargetUrl(vector.request.url, options.baseUrl),
-    headers: stripSignatureHeaders(vector.request.headers),
-    body: vector.request.body,
-  }),
+  '001-no-signature-header': (vector, _keys, options) => {
+    const shaped = applyTransport(vector, options);
+    return {
+      method: shaped.method,
+      url: shaped.url,
+      headers: stripSignatureHeaders(shaped.headers),
+      body: shaped.body,
+    };
+  },
 
   '002-wrong-tag': (vector, keys, options) => {
     const key = signerKeyFor(vector, keys);
@@ -248,12 +268,12 @@ interface SignArgs extends BuildOptions {
 }
 
 function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: SignArgs): SignedHttpRequest {
-  const url = retargetUrl(vector.request.url, args.baseUrl);
+  const shaped = applyTransport(vector, args);
   const request: RequestLike = {
-    method: vector.request.method,
-    url,
-    headers: vector.request.headers,
-    body: vector.request.body,
+    method: shaped.method,
+    url: shaped.url,
+    headers: shaped.headers,
+    body: shaped.body,
   };
   const signed = signRequest(request, key, {
     coverContentDigest: args.coverContentDigest === true,
@@ -262,10 +282,10 @@ function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: Sig
     windowSeconds: args.windowSeconds,
   });
   return {
-    method: vector.request.method,
-    url,
-    headers: mergeHeaders(vector.request.headers, signed.headers),
-    body: vector.request.body,
+    method: shaped.method,
+    url: shaped.url,
+    headers: mergeHeaders(shaped.headers, signed.headers),
+    body: shaped.body,
   };
 }
 
@@ -289,6 +309,85 @@ function retargetUrl(vectorUrl: string, baseUrl: string | undefined): string {
   return v.toString();
 }
 
+interface TransportShapedRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+/**
+ * Apply the transport transform to a vector's request shape. In `'raw'` mode
+ * (default) this is just origin-swap path-merge. In `'mcp'` mode:
+ *   - URL becomes `baseUrl` exactly (no path join — MCP agents expose a single
+ *     JSON-RPC endpoint; the operation is named in the body).
+ *   - Body is wrapped in a JSON-RPC `tools/call` envelope; the operation name
+ *     comes from the vector's last URL segment.
+ *   - `Accept: application/json, text/event-stream` added so MCP Streamable
+ *     HTTP servers don't 406 on the probe.
+ *
+ * Shared call site for `sign`, `signWithParamOverride`, `signWithComponents`
+ * so every mutation path produces MCP-shaped requests when requested.
+ */
+function applyTransport(vector: PositiveVector | NegativeVector, options: BuildOptions): TransportShapedRequest {
+  const headers = { ...vector.request.headers };
+  if (options.transport === 'mcp') {
+    if (!options.baseUrl) {
+      throw new Error(`transport: 'mcp' requires a baseUrl (the MCP endpoint, e.g. http://agent/mcp)`);
+    }
+    const operation = extractOperationFromVectorUrl(vector.request.url);
+    const envelope = wrapMcpEnvelope(operation, vector.request.body, options.mcpJsonRpcId);
+    // Accept header added for MCP Streamable HTTP negotiation. Not in the
+    // signed components list (MANDATORY_COMPONENTS doesn't include `accept`),
+    // so adding it after the vector's headers doesn't affect the signature.
+    headers['Accept'] = 'application/json, text/event-stream';
+    return {
+      method: vector.request.method,
+      url: options.baseUrl,
+      headers,
+      body: envelope,
+    };
+  }
+  return {
+    method: vector.request.method,
+    url: retargetUrl(vector.request.url, options.baseUrl),
+    headers,
+    body: vector.request.body,
+  };
+}
+
+function extractOperationFromVectorUrl(vectorUrl: string): string {
+  const parsed = new URL(vectorUrl);
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const last = segments[segments.length - 1];
+  if (!last) throw new Error(`Cannot extract operation from vector URL: ${vectorUrl}`);
+  return last;
+}
+
+let mcpRequestIdCounter = 0;
+
+function wrapMcpEnvelope(operation: string, rawBody: string | undefined, idOverride: number | undefined): string {
+  const id = idOverride ?? ++mcpRequestIdCounter;
+  const args = rawBody && rawBody.length > 0 ? safeJsonParse(rawBody) : {};
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id,
+    method: 'tools/call',
+    params: { name: operation, arguments: args },
+  });
+}
+
+function safeJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    // Vectors whose body isn't valid JSON (none today, but defensive) pass
+    // through as a string — MCP servers will reject with a schema error
+    // which is fine for grading purposes.
+    return s;
+  }
+}
+
 interface ParamOverride {
   tag?: string;
   alg?: string;
@@ -310,12 +409,13 @@ function signWithParamOverride(
   options: BuildOptions,
   override: ParamOverride
 ): SignedHttpRequest {
-  const url = retargetUrl(vector.request.url, options.baseUrl);
+  const shaped = applyTransport(vector, options);
+  const url = shaped.url;
   const request: RequestLike = {
-    method: vector.request.method,
+    method: shaped.method,
     url,
-    headers: vector.request.headers,
-    body: vector.request.body,
+    headers: shaped.headers,
+    body: shaped.body,
   };
   const hasBody = (request.body ?? '').length > 0;
   const components = hasBody
@@ -338,14 +438,14 @@ function signWithParamOverride(
   const signature = produceSignature(key, Buffer.from(base, 'utf8'));
 
   return {
-    method: vector.request.method,
+    method: shaped.method,
     url,
     headers: {
-      ...vector.request.headers,
+      ...shaped.headers,
       'Signature-Input': `sig1=${paramsString}`,
       Signature: `sig1=:${Buffer.from(signature).toString('base64url')}:`,
     },
-    body: vector.request.body,
+    body: shaped.body,
   };
 }
 
@@ -355,12 +455,13 @@ function signWithComponents(
   options: BuildOptions,
   components: string[]
 ): SignedHttpRequest {
-  const url = retargetUrl(vector.request.url, options.baseUrl);
+  const shaped = applyTransport(vector, options);
+  const url = shaped.url;
   const request: RequestLike = {
-    method: vector.request.method,
+    method: shaped.method,
     url,
-    headers: vector.request.headers,
-    body: vector.request.body,
+    headers: shaped.headers,
+    body: shaped.body,
   };
   const now = nowSeconds(options);
   const windowSeconds = options.windowSeconds ?? 300;
@@ -376,14 +477,14 @@ function signWithComponents(
   const base = buildSignatureBase(components, request, params, paramsString);
   const signature = produceSignature(key, Buffer.from(base, 'utf8'));
   return {
-    method: vector.request.method,
+    method: shaped.method,
     url,
     headers: {
-      ...vector.request.headers,
+      ...shaped.headers,
       'Signature-Input': `sig1=${paramsString}`,
       Signature: `sig1=:${Buffer.from(signature).toString('base64url')}:`,
     },
-    body: vector.request.body,
+    body: shaped.body,
   };
 }
 

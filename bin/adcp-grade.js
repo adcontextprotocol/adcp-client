@@ -26,6 +26,10 @@ Options:
   --allow-live-side-effects  Opt in to vectors 016/020 against non-sandbox
                              endpoints (USE WITH CARE — creates real orders)
   --allow-http               Allow http:// URLs + private-IP targets (dev loops)
+  --transport <mode>         \`raw\` (default) posts to per-operation AdCP
+                             endpoints; \`mcp\` wraps each vector body in a
+                             JSON-RPC tools/call envelope and posts to the
+                             agent's MCP mount (see #612).
   --timeout <ms>             Per-probe timeout (default 10000)
   --json                     Emit the full GradeReport as JSON
   -h, --help                 Show this help
@@ -87,6 +91,15 @@ async function handleGradeCommand(argv) {
       case '--allow-http':
         options.allowPrivateIp = true;
         break;
+      case '--transport': {
+        const mode = args[++i];
+        if (mode !== 'raw' && mode !== 'mcp') {
+          console.error(`ERROR: --transport must be \"raw\" or \"mcp\", got \"${mode}\"\n`);
+          process.exit(2);
+        }
+        options.transport = mode;
+        break;
+      }
       case '--timeout':
         options.timeoutMs = Number.parseInt(args[++i], 10);
         if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 1) {
