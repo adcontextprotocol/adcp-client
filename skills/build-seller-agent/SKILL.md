@@ -36,7 +36,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | `sales-catalog-driven` | stable | See `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too | Different skill |
 | `sales-retail-media` | preview | See `skills/build-retail-media-agent/` | Different skill |
 | `sales-proposal-mode` | stable | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages` | [§ sales-proposal-mode](#specialism-sales-proposal-mode) |
-| `audience-sync` | stable | Track: `audiences`. Implement `sync_audiences`, `list_accounts`, `delete_audience`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on `sync_audiences` response. | [§ audience-sync](#specialism-audience-sync) |
+| `audience-sync` | stable | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response. | [§ audience-sync](#specialism-audience-sync) |
 | `signed-requests` | preview | RFC 9421 HTTP Signature verification on every mutating request. Required headers: `Signature-Input`, `Signature`. Verify covered components, keyid, expiry, nonce. Preview — runner not yet implemented (adcontextprotocol/adcp#2331). | [§ signed-requests](#specialism-signed-requests) |
 
 Specialism ID (kebab-case) = storyboard directory. The storyboard's `id:` field (snake_case, e.g. `media_buy_broadcast_seller`) is the category name, not the specialism name. One specialism can apply to multiple product lines — a seller with both CTV inventory and broadcast TV inventory can claim `sales-streaming-tv` and `sales-broadcast-tv` simultaneously.
@@ -1022,9 +1022,15 @@ createMediaBuy: async (params, ctx) => {
 
 ### <a name="specialism-audience-sync"></a>audience-sync
 
-Storyboard: `audience_sync`. Reclassified from governance to media-buy in AdCP 3.0 GA. Track is `audiences` — separate from the core seller lifecycle, but lives here because identifier sync and account discovery sit next to media-buying.
+Storyboard: `audience_sync`. Track is `audiences` — separate from the core seller lifecycle, but lives in this skill because identifier sync and account discovery sit next to media-buying.
 
-Required tools: `sync_audiences`, `list_accounts`, `delete_audience`. Wire them under `accounts` and `eventTracking`:
+Required tools: `sync_audiences` and `list_accounts`. `sync_audiences` is overloaded — it handles three cases through its request payload:
+
+- **Discovery**: call with no `audiences` array (or empty). Returns the audiences already on the platform for the account.
+- **Add**: each audience entry has an `add: [{ hashed_email }, { hashed_phone }, ...]` array of hashed identifiers.
+- **Delete**: each audience entry has `delete: true`.
+
+There is no separate `delete_audience` tool — deletion rides on `sync_audiences`.
 
 ```typescript
 createAdcpServer({
@@ -1037,27 +1043,40 @@ createAdcpServer({
     },
   },
   eventTracking: {
-    syncAudiences: async (params, ctx) => ({
-      audiences: params.audiences.map((a) => ({
-        audience_id: a.audience_id,
-        name: a.name,
-        status: 'active' as const,
-        action: a.delete ? 'deleted' : 'created',   // empty audiences array = discovery mode
-        uploaded_count: a.members?.length ?? 0,
-        matched_count: Math.floor((a.members?.length ?? 0) * 0.72),   // simulated match rate
-        effective_match_rate: 0.72,
-      })),
-    }),
-    deleteAudience: async (params, ctx) => ({
-      audience_id: params.audience_id,
-      status: 'deleted' as const,
-      deleted_at: new Date().toISOString(),
-    }),
+    syncAudiences: async (params, ctx) => {
+      // Discovery mode — no audiences in request
+      if (!params.audiences?.length) {
+        const { items } = await ctx.store.list('audiences');
+        return { audiences: items.map((a) => ({ audience_id: a.audience_id, name: a.name, status: 'active' as const })) };
+      }
+      // Add / delete mode
+      return {
+        audiences: await Promise.all(params.audiences.map(async (a) => {
+          if (a.delete) {
+            await ctx.store.delete('audiences', a.audience_id);
+            return { audience_id: a.audience_id, name: a.name, action: 'deleted' as const, status: 'inactive' as const };
+          }
+          const identifiers = a.add ?? [];
+          const uploaded = identifiers.length;
+          const matched = Math.floor(uploaded * 0.72);   // simulated match rate
+          await ctx.store.put('audiences', a.audience_id, { ...a, uploaded, matched });
+          return {
+            audience_id: a.audience_id,
+            name: a.name,
+            action: 'created' as const,
+            status: 'active' as const,
+            uploaded_count: uploaded,
+            matched_count: matched,
+            effective_match_rate: uploaded ? matched / uploaded : 0,
+          };
+        })),
+      };
+    },
   },
 });
 ```
 
-**Identifier rules:** hashed emails/phones use SHA-256 on lowercased, trimmed input. Salting/normalization is out-of-band between buyer and platform — accept what the buyer sends and document your expected input format.
+**Identifier rules:** each `add` entry is a single-identifier object (`{hashed_email}` OR `{hashed_phone}`, not both). Values are SHA-256 of lowercased, trimmed input. Salting/normalization is out-of-band between buyer and platform — document your expected input format.
 
 **Platform types:** destinations span `['dsp', 'retail_media', 'social', 'audio', 'pmax']`. Each has its own `activation_key` shape — see `skills/build-signals-agent/SKILL.md` for activation patterns, which are shared across signals and audience sync.
 

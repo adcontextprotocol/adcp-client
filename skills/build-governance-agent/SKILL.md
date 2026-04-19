@@ -29,9 +29,9 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 |---|---|---|---|
 | `governance-spend-authority` | stable | `check_governance` evaluates `binding` against Plan's `authority_level` + `custom_policies`; return conditions or denial | [§ governance-spend-authority](#specialism-governance-spend-authority) |
 | `governance-delivery-monitor` | stable | `check_governance` with `phase: 'delivery'` + `delivery_evidence`; compute drift vs Plan's `reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
-| `property-lists` | stable | Tool family `property_list` — implement CRUD plus `validate_property_delivery` with full `violations[]`. (Was `inventory-lists` before AdCP 3.0 GA.) | [§ property-lists](#specialism-property-lists) |
+| `property-lists` | stable | Tool family `property_list` — implement CRUD plus `validate_property_delivery` with full `violations[]` | [§ property-lists](#specialism-property-lists) |
 | `collection-lists` | stable | Tool family `collection_list` — program-level brand safety (shows, series, podcasts) identified by platform-independent IDs: IMDb, Gracenote, EIDR. Mirrors property-lists CRUD plus collection resolution. | [§ collection-lists](#specialism-collection-lists) |
-| `content-standards` | stable | `policy` on create/update is a **prose string** with inline `(must)`/`(should)` severity — not the array shape shown in the baseline below; `validate_content_delivery` uses `records[].artifact`, not `results[].creative_id` | [§ content-standards](#specialism-content-standards) |
+| `content-standards` | stable | `policies[]` is an array of `{ policy_id, enforcement, policy, policy_categories?, channels? }`; `validate_content_delivery` uses `records[].artifact` (not `creative_id`); re-read policies per call for `standards_version_change` | [§ content-standards](#specialism-content-standards) |
 | `measurement-verification` | preview | v3.1 placeholder (empty `phases`). Pass universal + governance baseline only. Advertise `measurement_verification` capability for discoverability. | Baseline only |
 
 **Not in this skill:** `audience-sync` was reclassified to `protocol: media-buy` in AdCP 3.0 GA (was governance). Build it in `skills/build-seller-agent/` instead — it uses `sync_audiences`, `list_accounts`, `delete_audience` under the `accounts` / `eventTracking` domain groups.
@@ -98,19 +98,25 @@ Evaluate a media buy against the registered plan. The request carries a `binding
 // Request shape:
 {
   plan_id: string,              // required — previously registered via sync_plans
-  phase: 'create' | 'delivery', // required — gating create_media_buy vs monitoring active flight
-  binding: {                    // what to evaluate
+  binding: {                    // what to evaluate (create-phase)
     type: 'media_buy',
+    media_buy_id?: string,      // on delivery phase, the already-created buy
     account: { brand: {...}, operator: string },
     total_budget: { amount: number, currency: string },
     packages: [{ product_id, pricing_option_id, budget }],
   },
-  delivery_evidence?: {         // only on phase: 'delivery'
-    packages: [{ package_id, budget, spend_to_date, flight_progress }],
+  delivery_metrics?: {          // on delivery-phase checks — NOT delivery_evidence
+    reporting_period: { start: string, end: string },
+    spend: number,
+    cumulative_spend: number,
+    channel_distribution: { [channel: string]: number },  // percent by channel
+    pacing: 'ahead' | 'on_pace' | 'behind',
   },
   governance_context?: string,  // prior check's context, for re-evaluation
 }
 ```
+
+The presence of `delivery_metrics` vs a bare binding is how you tell create-phase from delivery-phase checks — there is no explicit `phase` field on the wire.
 
 The Plan object (stored via `sync_plans`) drives decisions. Expected shape:
 
@@ -118,11 +124,22 @@ The Plan object (stored via `sync_plans`) drives decisions. Expected shape:
 {
   plan_id: string,
   brand: { domain: string },
-  operator: string,
-  budget: { total: number, currency: string },
-  authority_level: 'agent_full' | 'agent_limited' | 'human_required',
-  custom_policies: string[],        // free-form rules, e.g. "CTV buys require weekly delivery reporting (must)"
-  reallocation_threshold: number,   // drift % that triggers re-approval during delivery
+  objectives: string,
+  budget: {
+    total: number,
+    currency: string,
+    reallocation_threshold: number,   // absolute currency amount (NOT a ratio) — nested under budget
+  },
+  flight: { start: string, end: string },
+  countries: string[],
+  custom_policies: [                  // array of structured policy objects — NOT bare strings
+    {
+      policy_id: string,
+      enforcement: 'must' | 'should',
+      policy: string,                 // prose description of the rule
+    },
+  ],
+  authority_level?: 'agent_full' | 'agent_limited' | 'human_required',
 }
 ```
 
@@ -297,16 +314,32 @@ taskToolResponse({
 
 **`get_content_standards`** — `GetContentStandardsRequestSchema.shape`
 
-`policy` is a free-text string with embedded `(must)` and `(should)` severity markers. Parse them at check time — `(must)` is blocking, `(should)` is advisory. Do not model as a structured array; the storyboard sends prose.
+`policies` is an array of structured rules. Each entry has a `policy_id`, enforcement level (`must` or `should`), a prose `policy` description, optional `policy_categories`, and optional `channels` scope. The prose lives **inside each entry**, not at the container level.
 
 ```
 taskToolResponse({
   standards_id: string,
   name: string,
-  policy: 'No tobacco advertising on family-programming properties (must). Weekly pacing reports required for CTV buys (should).',
-  scope: { languages_any: ['en', 'es'], brand: { domain: string } },
+  policies: [
+    {
+      policy_id: 'no_violent_imagery',
+      policy_categories: ['brand_safety'],
+      enforcement: 'must',
+      policy: 'No violent or controversial imagery',
+    },
+    {
+      policy_id: 'min_display_dpi',
+      policy_categories: ['imagery_quality'],
+      enforcement: 'should',
+      channels: ['display'],
+      policy: 'Minimum 72 DPI for display assets',
+    },
+  ],
+  scope: { languages_any: ['en'], description: 'Acme Outdoor creative standards' },
 })
 ```
+
+On `create_content_standards` / `update_content_standards`, the buyer sends the same `policies[]` array. Store it indexed by `standards_id` and re-read on every `calibrate_content` / `validate_content_delivery` call — the `standards_version_change` storyboard phase re-issues policies and expects the next calibration to reflect the update (a memoized calibration will fail that phase).
 
 **`update_content_standards`** — `UpdateContentStandardsRequestSchema.shape`
 
@@ -318,6 +351,8 @@ taskToolResponse({
 ```
 
 **`calibrate_content`** — `CalibrateContentRequestSchema.shape`
+
+Verdict mapping: any `enforcement: 'must'` violation → `'fail'`. Only `'should'` violations → `'review'`. No violations → `'pass'`. The `standards_version_change` phase depends on this — after policies update, the same artifact must flip verdicts.
 
 ```
 taskToolResponse({
@@ -562,7 +597,8 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 npx @adcp/client storyboard run http://localhost:3001/mcp campaign_governance_conditions --json
 npx @adcp/client storyboard run http://localhost:3001/mcp campaign_governance_denied --json
-npx @adcp/client storyboard run http://localhost:3001/mcp property_governance --json
+npx @adcp/client storyboard run http://localhost:3001/mcp property_lists --json
+npx @adcp/client storyboard run http://localhost:3001/mcp collection_lists --json
 npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --json
 ```
 
@@ -591,7 +627,8 @@ npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --js
 | `campaign_governance_conditions`  | Approved with conditions flow                                  |
 | `campaign_governance_delivery`    | Delivery monitoring with drift re-evaluation                   |
 | `campaign_governance_denied`      | Denied — buy exceeds spending authority                        |
-| `property_governance`             | Property list lifecycle: create, query, update, delete, validate |
+| `property_lists`                  | Property list lifecycle: create, query, update, delete, validate |
+| `collection_lists`                | Collection list lifecycle: create, query (resolve), update, delete |
 | `content_standards`               | Content standards lifecycle: create, calibrate, validate       |
 
 ## Specialism Details
@@ -622,11 +659,11 @@ checkGovernance: async (params, ctx) => {
     };
   }
 
-  // 2. Custom policy matching (free-form strings)
+  // 2. Custom policy matching — custom_policies is an array of structured objects
   const conditions = [];
   for (const policy of plan.custom_policies ?? []) {
-    if (policy.toLowerCase().includes('ctv') && hasCtv(params.binding)) {
-      conditions.push({ field: 'reporting.frequency', reason: policy });
+    if (policy.policy.toLowerCase().includes('ctv') && hasCtv(params.binding)) {
+      conditions.push({ field: 'reporting.frequency', reason: policy.policy, policy_id: policy.policy_id });
     }
   }
 
@@ -645,50 +682,61 @@ checkGovernance: async (params, ctx) => {
 
 ### <a name="specialism-governance-delivery-monitor"></a>governance-delivery-monitor
 
-Storyboard category: `campaign_governance_delivery`. Same `check_governance` tool, different `phase` and payload.
+Storyboard: `governance_delivery_monitor`. Same `check_governance` tool, but the request carries `delivery_metrics` instead of a bare binding — that's the cue to run drift logic.
 
 ```typescript
 checkGovernance: async (params, ctx) => {
-  if (params.phase === 'delivery') {
+  if (params.delivery_metrics) {
     const plan = await ctx.store.get('plan', params.plan_id);
-    const threshold = plan.reallocation_threshold ?? 0.15;  // e.g. 15% drift
+    const reallocationThreshold = plan.budget.reallocation_threshold;   // absolute $, e.g. 8000
 
-    const driftedPackages = [];
-    for (const pkg of params.delivery_evidence?.packages ?? []) {
-      const expected = pkg.budget * pkg.flight_progress;     // what should have spent by now
-      const actual = pkg.spend_to_date;
-      const drift = Math.abs(actual - expected) / pkg.budget;
-      if (drift > threshold) driftedPackages.push({ ...pkg, drift });
-    }
+    // Check total-spend drift against the reallocation threshold
+    const cumulative = params.delivery_metrics.cumulative_spend;
+    const overage = cumulative - plan.budget.total;
+    const exceeded = Math.abs(overage) > reallocationThreshold;
 
-    if (driftedPackages.length === 0) {
+    // Also flag pacing mismatches that imply channel reallocation
+    const driftedChannels = Object.entries(params.delivery_metrics.channel_distribution ?? {})
+      .filter(([channel, percent]) => {
+        const planAllocation = plan.channel_allocations?.[channel];
+        return planAllocation != null && Math.abs(percent - planAllocation) > 10;   // 10pp threshold
+      });
+
+    if (!exceeded && driftedChannels.length === 0) {
       return { check_id: `chk_${Date.now()}`, status: 'approved' as const, plan_id: params.plan_id,
-        explanation: 'Delivery within threshold',
-        governance_context: params.governance_context ?? `gov_ctx_${params.plan_id}_delivery` };
+        explanation: 'Delivery within reallocation threshold',
+        governance_context: params.governance_context ?? `gov_ctx_${params.plan_id}_delivery_approved` };
     }
 
     return {
       check_id: `chk_${Date.now()}`,
       status: 'approved' as const,    // approved with reallocation conditions
       plan_id: params.plan_id,
-      explanation: `Drift exceeded ${threshold * 100}% on ${driftedPackages.length} package(s)`,
-      conditions: driftedPackages.map((pkg) => ({
-        field: `packages[${pkg.package_id}].budget`,
-        reason: `Reallocate to match delivered pace (drift ${(pkg.drift * 100).toFixed(1)}%)`,
+      explanation: `Drift exceeded threshold: ${overage > 0 ? 'overage' : 'underage'} of ${Math.abs(overage)}`,
+      conditions: driftedChannels.map(([channel, percent]) => ({
+        field: `channel_distribution.${channel}`,
+        reason: `Rebalance away from ${channel} — currently ${percent}%, plan targets ${plan.channel_allocations?.[channel] ?? 'unspecified'}%`,
       })),
       findings: [{ category_id: 'BUDGET_DRIFT_EXCEEDED', severity: 'warning',
-        explanation: `${driftedPackages.length} package(s) outside reallocation threshold` }],
+        explanation: `Cumulative spend ${cumulative} outside reallocation threshold ±${reallocationThreshold}` }],
     };
   }
   // ... create-phase logic above
 },
+
+// Policy matching in create-phase checks — custom_policies is an array of objects, not strings:
+for (const policy of plan.custom_policies ?? []) {
+  if (policy.policy.toLowerCase().includes('ctv') && hasCtv(params.binding)) {
+    conditions.push({ field: 'reporting.frequency', reason: policy.policy });
+  }
+}
 ```
 
-If the storyboard's `findings` shape (using `code`, `severity: 'should'`) diverges from the schema's (`category_id`, `severity: 'info'|'warning'|'critical'`), trust the schema — file an issue against adcp spec to reconcile. Current skill guidance uses `category_id`/`severity`.
+The `findings[].category_id` / `severity: 'info' | 'warning' | 'critical'` enum is the schema-canonical shape per [adcontextprotocol/adcp#2286](https://github.com/adcontextprotocol/adcp/issues/2286). Storyboard validations today only check `field_present: findings`, so either spelling passes — but use the schema shape.
 
 ### <a name="specialism-property-lists"></a>property-lists
 
-Storyboard: `property_lists`. Specialism and tool family now share the same name (in AdCP 3.0 GA the specialism was renamed from `inventory-lists`). Your agent owns both inclusion and exclusion list semantics — track `list_type` on the stored list even though the request schema may not surface it.
+Storyboard: `property_lists`. Specialism and tool family share the same name. Your agent owns both inclusion and exclusion list semantics — track `list_type` on the stored list. Wrap identifiers with `selection_type: 'identifiers'`:
 
 ```typescript
 createPropertyList: async (params, ctx) => {
@@ -698,7 +746,7 @@ createPropertyList: async (params, ctx) => {
     name: params.name,
     description: params.description,
     list_type: 'inclusion' as const,        // caller-modeled — infer from context or add as ext
-    base_properties: params.base_properties ?? [],
+    base_properties: params.base_properties ?? [],    // each entry: { selection_type: 'identifiers', identifiers: [{ type, value }] }
     property_count: countIdentifiers(params.base_properties),
     status: 'active' as const,
   };
@@ -708,15 +756,26 @@ createPropertyList: async (params, ctx) => {
     auth_token: `tok_${list_id}`,
   };
 },
+
+// Shape of a base_properties entry (matches the storyboard sample):
+type BaseProperty = {
+  selection_type: 'identifiers';
+  identifiers: Array<{
+    type: 'domain' | 'bundle_id' | 'app_store_url' | 'podcast_rss_feed' | 'property_rid';
+    value: string;
+  }>;
+};
 ```
 
 `validate_property_delivery` returns `violations[]` with `list_id`, `list_type`, `severity: 'critical'`, and an explanation per non-compliant record — see the response shape in the tool section above.
 
+The three mutating tools (`create_property_list`, `update_property_list`, `delete_property_list`) require `idempotency_key` per AdCP 3.0 GA — cache the response and return the same object on replay.
+
 ### <a name="specialism-collection-lists"></a>collection-lists
 
-Storyboard: `collection_lists`. Where `property-lists` curate surfaces (domains, app bundle IDs), `collection-lists` curate **content programs** (shows, series, podcasts, series arcs) identified by platform-independent IDs: IMDb (`tt0944947`), Gracenote, EIDR. Used for program-level brand safety — "keep my ads out of all episodes of [show]" cuts across every surface that carries that show.
+Storyboard: `collection_lists`. Where `property-lists` curate surfaces (domains, app bundle IDs), `collection-lists` curate **content programs** (shows, series, podcasts, series arcs) identified by platform-independent IDs: IMDb (`tt0944947`), Gracenote, EIDR. Program-level brand safety — "keep my ads out of all episodes of [show]" cuts across every surface that carries that show.
 
-Tool family is `collection_list` (note the singular prefix on create/update). Response shape mirrors `property_list`:
+**Request shape** — `base_collections[]` wraps identifiers with a `selection_type`, and `filters` is an object (not an array):
 
 ```typescript
 createCollectionList: async (params, ctx) => {
@@ -725,37 +784,70 @@ createCollectionList: async (params, ctx) => {
     list_id,
     name: params.name,
     description: params.description,
-    list_type: params.list_type,         // 'inclusion' | 'exclusion' — the storyboard does surface this
-    base_collections: params.base_collections ?? [],   // e.g. [{ id_type: 'imdb_id', id: 'tt0944947' }]
-    filters: params.filters ?? [],                     // genre/rating/language filters applied on top of base
-    program_count: resolveProgramCount(params.base_collections, params.filters),
+    base_collections: params.base_collections ?? [],   // see shape below
+    filters: params.filters ?? {},                     // object — e.g. { kinds: ['series'] }
+    collection_count: resolveCollectionCount(params.base_collections, params.filters),
     status: 'active' as const,
   };
   await ctx.store.put('collection_list', list_id, stored);
   return { list: summarize(stored), auth_token: `tok_${list_id}` };
 },
+
+// Shape of a base_collections entry:
+type BaseCollection = {
+  selection_type: 'distribution_ids';
+  identifiers: Array<{
+    type: 'imdb_id' | 'gracenote_id' | 'eidr';
+    value: string;                                     // e.g. "tt9999901"
+  }>;
+};
+
+// Shape of filters:
+type Filters = {
+  kinds?: ('series' | 'movie' | 'podcast' | 'episode')[];
+  // other filter families added in 3.1
+};
 ```
 
-On `get_collection_list` the response includes `resolved_programs[]` — the concrete list of program IDs after filters are applied. Sellers cache this and enforce it at bid time.
+**`get_collection_list`** with `resolve: true` returns the concrete `collections[]` (not `resolved_programs`) — the resolved list of program IDs after filters are applied. Sellers cache this at bid time.
 
-No `validate_collection_delivery` tool exists yet (preview in 3.1). For now, delivery enforcement is a receiving-seller concern — your governance agent's job ends at publishing the resolved list.
+```typescript
+{
+  list: {
+    list_id: string,
+    name: string,
+    collection_count: number,
+    collections: Array<{ type, value }>,     // resolved programs
+    cache_valid_until: string,               // ISO timestamp — sellers respect this TTL
+  },
+}
+```
+
+No `validate_collection_delivery` tool exists yet (preview in 3.1). Delivery enforcement is a receiving-seller concern; the governance agent's job ends at publishing the resolved list with a `cache_valid_until`.
 
 ### <a name="specialism-content-standards"></a>content-standards
 
-Storyboard: `content_standards`. Two load-bearing protocol quirks the baseline above does not cover:
+Storyboard: `content_standards`. Two load-bearing protocol shapes the baseline above does not cover:
 
-1. **`policy` is a prose string**, not a structured array. Parse `(must)` vs `(should)` at check time:
+1. **`policies` is an array of structured entries**, not a prose string. Each entry carries its own `enforcement` level — don't parse severity from inline `(must)` / `(should)` markers; read it off the `enforcement` field:
 
 ```typescript
-function severityFor(rule: string): 'must' | 'should' {
-  return /\(must\)/i.test(rule) ? 'must' : 'should';
-}
+type Policy = {
+  policy_id: string;
+  enforcement: 'must' | 'should';
+  policy: string;                        // prose description of the rule
+  policy_categories?: string[];          // e.g. ['brand_safety', 'imagery_quality']
+  channels?: string[];                   // e.g. ['display'] — scoped enforcement
+};
 
-// Splitting a policy into rules:
-const rules = policy.split(/\.\s+/).filter(Boolean);   // sentence-per-rule convention
+function applies(p: Policy, artifact: { channel: string }): boolean {
+  return !p.channels || p.channels.includes(artifact.channel);
+}
 ```
 
 2. **`validate_content_delivery` uses `records[].artifact`**, not `results[].creative_id`. See the tool section above for the full shape.
+
+**Re-read policies per call.** The `standards_version_change` phase issues an update, then re-calibrates the same artifact and expects the new verdict. A memoized calibrator that caches by artifact_id will fail that phase. Always fetch the latest policies from `ctx.store.get('content_standards', standards_id)` inside `calibrate_content` / `validate_content_delivery`.
 
 `calibrate_content` should return per-rule results, not just a top-level verdict:
 
@@ -779,7 +871,8 @@ calibrateContent: async (params, ctx) => ({
 
 - `storyboards/campaign_governance_conditions.yaml` — conditional approval flow
 - `storyboards/campaign_governance_denied.yaml` — denial flow
-- `storyboards/property_governance.yaml` — property list lifecycle
+- `storyboards/property_lists.yaml` — property list lifecycle
+- `storyboards/collection_lists.yaml` — collection list lifecycle
 - `storyboards/content_standards.yaml` — content standards lifecycle
 - `docs/guides/BUILD-AN-AGENT.md` — SDK patterns
 - `docs/TYPE-SUMMARY.md` — curated type signatures
