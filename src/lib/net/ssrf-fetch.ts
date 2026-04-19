@@ -30,7 +30,7 @@
  * Returns a fully-buffered result. Callers that need streaming or large bodies
  * should extend this primitive rather than bypass it.
  */
-import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'dns';
+import { type LookupAddress, type LookupOptions } from 'dns';
 import { lookup as dnsLookupAsync } from 'dns/promises';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isAlwaysBlocked, isPrivateIp } from './address-guards';

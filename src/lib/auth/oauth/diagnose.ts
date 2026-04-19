@@ -445,7 +445,6 @@ interface RankInput {
 function rankHypotheses(input: RankInput): Hypothesis[] {
   const out: Hypothesis[] = [];
   const prmStep = input.steps.find(s => s.name === 'probe_protected_resource_metadata');
-  const asStep = input.steps.find(s => s.name === 'probe_authorization_server_metadata');
   const listStep = input.steps.find(s => s.name === 'list_tools_probe');
   const toolStep = input.steps.find(s => s.name === 'tool_call_probe');
   const refreshStep = input.steps.find(s => s.name === 'token_refresh_attempt');
@@ -709,12 +708,6 @@ function extractTokenEndpoint(as: HttpCapture): string | undefined {
   if (as.status !== 200 || !as.body || typeof as.body !== 'object') return undefined;
   const endpoint = (as.body as { token_endpoint?: unknown }).token_endpoint;
   return typeof endpoint === 'string' ? endpoint : undefined;
-}
-
-function extractResourceUri(prm: HttpCapture): string | undefined {
-  if (prm.status !== 200 || !prm.body || typeof prm.body !== 'object') return undefined;
-  const resource = (prm.body as { resource?: unknown }).resource;
-  return typeof resource === 'string' ? resource : undefined;
 }
 
 /** Fields in an OAuth token-endpoint response that should never leak to disk/logs. */
