@@ -5,10 +5,13 @@ const {
   generateIdempotencyKey,
   isMutatingTask,
   isValidIdempotencyKey,
+  useIdempotencyKey,
+  redactIdempotencyKey,
   IDEMPOTENCY_KEY_PATTERN,
   MUTATING_TASKS,
   IdempotencyConflictError,
   IdempotencyExpiredError,
+  adcpErrorToTypedError,
   isADCPError,
 } = require('../../dist/lib/index.js');
 
@@ -124,5 +127,67 @@ describe('IdempotencyExpiredError', () => {
   it('default message nudges callers toward natural-key lookup', () => {
     const err = new IdempotencyExpiredError('abc-123');
     assert.match(err.message, /natural key|replay window/i);
+  });
+});
+
+describe('adcpErrorToTypedError', () => {
+  it('maps IDEMPOTENCY_CONFLICT to IdempotencyConflictError with the caller-supplied key', () => {
+    const typed = adcpErrorToTypedError({ code: 'IDEMPOTENCY_CONFLICT', message: 'seller msg' }, 'abc-123');
+    assert.ok(typed instanceof IdempotencyConflictError);
+    assert.equal(typed.idempotencyKey, 'abc-123');
+    assert.equal(typed.message, 'seller msg');
+  });
+
+  it('maps IDEMPOTENCY_EXPIRED to IdempotencyExpiredError', () => {
+    const typed = adcpErrorToTypedError({ code: 'IDEMPOTENCY_EXPIRED' }, 'abc-123');
+    assert.ok(typed instanceof IdempotencyExpiredError);
+  });
+
+  it('returns undefined for codes without a typed mapping', () => {
+    assert.equal(adcpErrorToTypedError({ code: 'RATE_LIMITED' }, 'abc'), undefined);
+    assert.equal(adcpErrorToTypedError({ code: 'INVALID_REQUEST' }), undefined);
+  });
+});
+
+describe('useIdempotencyKey', () => {
+  it('returns a spread-able object for valid keys', () => {
+    const fragment = useIdempotencyKey('abcdefghij1234-abc');
+    assert.deepEqual(fragment, { idempotency_key: 'abcdefghij1234-abc' });
+  });
+
+  it('throws on keys that fail the spec pattern', () => {
+    assert.throws(() => useIdempotencyKey('too-short'), /Invalid idempotency_key/);
+    assert.throws(() => useIdempotencyKey('has space here-1234'), /Invalid idempotency_key/);
+    assert.throws(() => useIdempotencyKey(null), /Invalid idempotency_key/);
+  });
+
+  it('error message does not leak the full key', () => {
+    const longKey = 'a'.repeat(500);
+    try {
+      useIdempotencyKey(longKey);
+      assert.fail('should have thrown');
+    } catch (e) {
+      assert.ok(e.message.length < longKey.length, 'error should truncate the offending key');
+    }
+  });
+});
+
+describe('redactIdempotencyKey', () => {
+  it('truncates to first 8 chars plus ellipsis by default', () => {
+    delete process.env.ADCP_LOG_IDEMPOTENCY_KEYS;
+    const key = 'abcdefgh-1234-5678-ij-this-is-sensitive';
+    const redacted = redactIdempotencyKey(key);
+    assert.equal(redacted, 'abcdefgh…');
+    assert.ok(!redacted.includes('sensitive'));
+  });
+
+  it('returns the full key when ADCP_LOG_IDEMPOTENCY_KEYS is enabled', () => {
+    process.env.ADCP_LOG_IDEMPOTENCY_KEYS = '1';
+    try {
+      const key = 'abcdefgh-1234-5678-ij-full';
+      assert.equal(redactIdempotencyKey(key), key);
+    } finally {
+      delete process.env.ADCP_LOG_IDEMPOTENCY_KEYS;
+    }
   });
 });

@@ -16,6 +16,7 @@ import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import type { AgentSigningContext } from '../signing/client';
+import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -110,13 +111,24 @@ function buildAuthHeaders(authToken?: string, customHeaders?: Record<string, str
 
 /**
  * Redact sensitive fields from tool args before logging.
+ *
+ * Redacts:
+ * - `push_notification_config.authentication` — webhook signing secret
+ * - `idempotency_key` — retry-pattern oracle within the seller's TTL; opt-in
+ *   full logging via `ADCP_LOG_IDEMPOTENCY_KEYS=1`
  */
 function redactArgsForLog(args: Record<string, unknown>): Record<string, unknown> {
-  if (!args.push_notification_config) return args;
-  return {
-    ...args,
-    push_notification_config: { ...(args.push_notification_config as object), authentication: '***' },
-  };
+  let redacted: Record<string, unknown> = args;
+  if (redacted.push_notification_config) {
+    redacted = {
+      ...redacted,
+      push_notification_config: {
+        ...(redacted.push_notification_config as object),
+        authentication: '***',
+      },
+    };
+  }
+  return redactIdempotencyKeyInArgs(redacted);
 }
 
 /**

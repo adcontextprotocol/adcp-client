@@ -432,6 +432,16 @@ export class AgentClient {
   }
 
   /**
+   * Return the seller's declared `adcp.idempotency.replay_ttl_seconds`, or
+   * throw when a v3 seller omits the (required) declaration.
+   *
+   * Returns `undefined` for v2 agents — v2 pre-dates the idempotency envelope.
+   */
+  async getIdempotencyReplayTtlSeconds(): Promise<number | undefined> {
+    return this.client.getIdempotencyReplayTtlSeconds();
+  }
+
+  /**
    * Preview a creative
    */
   async previewCreative(

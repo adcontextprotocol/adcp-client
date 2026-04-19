@@ -361,6 +361,31 @@ export function is401Error(error: unknown, got401Flag = false): boolean {
 }
 
 /**
+ * Map a structured AdCP error (code + message) to a typed ADCPError subclass
+ * when the code has a dedicated class. Returns `undefined` for codes that
+ * don't have a typed mapping — callers should continue to use the untyped
+ * `AdcpErrorInfo` for those.
+ *
+ * Pass the `idempotencyKey` the SDK sent so the constructed error carries it
+ * for the caller's recovery logic. The server intentionally omits the key
+ * from error bodies (it's a read-oracle), so the transport-layer caller is
+ * the authoritative source.
+ */
+export function adcpErrorToTypedError(
+  adcpError: { code: string; message?: string },
+  idempotencyKey?: string
+): ADCPError | undefined {
+  switch (adcpError.code) {
+    case 'IDEMPOTENCY_CONFLICT':
+      return new IdempotencyConflictError(idempotencyKey, adcpError.message);
+    case 'IDEMPOTENCY_EXPIRED':
+      return new IdempotencyExpiredError(idempotencyKey, adcpError.message);
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Type guard to check if an error is an ADCP error
  */
 export function isADCPError(error: unknown): error is ADCPError {

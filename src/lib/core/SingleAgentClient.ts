@@ -83,7 +83,13 @@ import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { createMCPAuthHeaders } from '../auth';
-import { AuthenticationRequiredError, FeatureUnsupportedError, TaskTimeoutError, is401Error } from '../errors';
+import {
+  AuthenticationRequiredError,
+  ConfigurationError,
+  FeatureUnsupportedError,
+  TaskTimeoutError,
+  is401Error,
+} from '../errors';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -2554,6 +2560,30 @@ export class SingleAgentClient {
   async supportsVersion(version: 2 | 3): Promise<boolean> {
     const capabilities = await this.getCapabilities();
     return capabilities.majorVersions.includes(version);
+  }
+
+  /**
+   * Return the seller's declared `adcp.idempotency.replay_ttl_seconds`.
+   *
+   * BYOK callers use this to compare the age of persisted keys against the
+   * seller's replay window — past the window, the safe recovery is a
+   * natural-key lookup rather than reusing the key.
+   *
+   * Fails closed when the seller is v3 but does not declare the field: the
+   * spec makes the declaration REQUIRED, and silently defaulting to 24h
+   * would mislead buyers about retry safety. Callers on v2 servers get
+   * `undefined` instead of a throw — v2 pre-dates the idempotency envelope.
+   */
+  async getIdempotencyReplayTtlSeconds(): Promise<number | undefined> {
+    const capabilities = await this.getCapabilities();
+    if (capabilities.idempotency) return capabilities.idempotency.replayTtlSeconds;
+    if (capabilities.version !== 'v3') return undefined;
+    throw new ConfigurationError(
+      `Agent "${this.agent.id}" is v3 but does not declare adcp.idempotency.replay_ttl_seconds. ` +
+        `The spec requires this for v3 sellers — treating the agent as non-compliant rather than ` +
+        `defaulting to 24h, which would silently mislead retry-sensitive flows.`,
+      'adcp.idempotency.replay_ttl_seconds'
+    );
   }
 
   /**
