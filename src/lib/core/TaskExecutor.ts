@@ -236,25 +236,11 @@ export class TaskExecutor {
         const isBlocking = true;
 
         if (govResult.status === 'denied' && isBlocking) {
-          return this.buildGovernanceResult<T>(
-            govResult,
-            taskId,
-            taskName,
-            agent,
-            startTime,
-            debugLogs
-          );
+          return this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
         }
 
         if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
-          return this.buildGovernanceResult<T>(
-            govResult,
-            taskId,
-            taskName,
-            agent,
-            startTime,
-            debugLogs
-          );
+          return this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
         }
 
         // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
