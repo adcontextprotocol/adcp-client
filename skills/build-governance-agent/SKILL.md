@@ -386,8 +386,12 @@ serve(() => createAdcpServer({
 **Decision logic for check_governance:**
 
 Route decisions based on the plan state and request parameters:
-- Compare request budget against plan's `budget.total` and `authority_level`
-- If `authority_level: 'agent_limited'` and buy exceeds threshold → deny
+- Compare request budget against plan's `budget.total`; enforce reallocation autonomy using `budget.reallocation_threshold` (denominated in `budget.currency`) or `budget.reallocation_unlimited: true` — exactly one must be set
+- If `reallocation_threshold` is set and a reallocation exceeds it → require human review / deny
+- If `plan.human_review_required: true` → action must escalate regardless of `mode` (advisory/audit cannot downgrade)
+- Auto-flip `plan.human_review_required: true` when resolved `policy_categories` include `fair_housing | fair_lending | fair_employment | pharmaceutical_advertising`, or when `policy_ids` include `eu_ai_act_annex_iii`
+- If `human_review_required: true` but the brand/brand-ref has no `data_subject_contestation` contact → emit a critical finding
+- Require a `human_override` artifact (reason ≥20 chars, approver email) on re-sync to downgrade `human_review_required: true → false`
 - If policy conditions match → approve with conditions
 - If `phase: 'delivery'` → check delivery_metrics for drift
 

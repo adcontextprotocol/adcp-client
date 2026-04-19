@@ -839,7 +839,7 @@ export async function testCampaignGovernance(
               budget: {
                 total: options.budget || 10000,
                 currency: 'USD',
-                authority_level: 'agent_full',
+                reallocation_unlimited: true,
               },
               flight: {
                 start: flightStart.toISOString(),
@@ -1082,7 +1082,6 @@ export async function testCampaignGovernanceDenied(
             budget: {
               total: 500,
               currency: 'USD',
-              authority_level: 'agent_limited',
               reallocation_threshold: 100,
             },
             flight: {
@@ -1285,7 +1284,6 @@ export async function testCampaignGovernanceConditions(
             budget: {
               total: 5000,
               currency: 'USD',
-              authority_level: 'agent_limited',
               per_seller_max_pct: 50,
               reallocation_threshold: 500,
             },
@@ -1477,7 +1475,7 @@ export async function testCampaignGovernanceDelivery(
               budget: {
                 total: 10000,
                 currency: 'USD',
-                authority_level: 'agent_full',
+                reallocation_unlimited: true,
               },
               flight: {
                 start: flightStart.toISOString(),
