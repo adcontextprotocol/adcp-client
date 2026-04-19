@@ -13764,7 +13764,7 @@ export interface GetAccountFinancialsError {
 
 // comply_test_controller parameters
 /**
- * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production.
+ * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production. Naturally idempotent: the `scenario` enum is either a lookup (`list_scenarios`) or a state-forcing operation whose target state is carried in the payload (`force_*_status`, `simulate_*`), so replays converge to the same observable state without needing an idempotency_key. The compliance harness drives this tool deterministically and does not rely on the seller's at-most-once replay cache.
  */
 export type ComplyTestControllerRequest = {
   [k: string]: unknown | undefined;
