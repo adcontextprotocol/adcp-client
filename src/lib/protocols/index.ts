@@ -80,11 +80,15 @@ export class ProtocolClient {
 
         const authToken = getAuthToken(agent);
 
-        // RFC 9421 signing context. Built once per call; the transport
-        // attaches a fetch wrapper that reads the cached capability on every
-        // outbound request. `get_adcp_capabilities` is exempt from signing
-        // (it's the discovery call itself) and also triggers cache priming
-        // for any other op on agents with `request_signing` configured.
+        // RFC 9421 signing context. Built once per call and passed through
+        // to each protocol-layer entry (`callMCPToolWithTasks`, `callA2ATool`,
+        // `callMCPToolWithOAuth`) — those entries seed `signingContextStorage`
+        // (AsyncLocalStorage) so the internal transport helpers read it
+        // without an explicit parameter. Keep the explicit arg here: it's the
+        // ALS seed, not incidental plumbing. `get_adcp_capabilities` is
+        // exempt from signing (it's the discovery call itself) and also
+        // triggers cache priming for any other op on agents with
+        // `request_signing` configured.
         const signingContext = buildAgentSigningContext(agent);
         if (signingContext && toolName !== CAPABILITY_OP) {
           await ensureCapabilityLoaded(agent, signingContext, primeArgs =>

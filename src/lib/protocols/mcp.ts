@@ -653,6 +653,13 @@ export async function connectMCP(options: {
  * incompatible with connection pooling. This is acceptable because OAuth flows
  * are interactive and infrequent.
  *
+ * Signing: this path consumes `options.signingContext` via the transport —
+ * `connectMCP` attaches a signing-fetch wrapper at transport-creation time —
+ * rather than via `signingContextStorage`. Because each OAuth call creates a
+ * fresh transport that isn't shared across calls, there's no cache-key
+ * disambiguation concern and no need to seed ALS. The non-OAuth fallback
+ * (`callMCPTool`) does enter ALS.
+ *
  * @param options Call options
  * @returns Tool response
  * @throws UnauthorizedError if OAuth is required (with transport attached)

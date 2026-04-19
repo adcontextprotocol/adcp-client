@@ -349,6 +349,14 @@ export async function callMCPToolWithTasks(
 
 /**
  * Get task status via MCP Tasks protocol method (not tool call).
+ *
+ * Task lifecycle methods (`tasks/get`, `tasks/result`, `tasks/list`,
+ * `tasks/cancel`) are MCP protocol methods, not AdCP operations.
+ * `extractAdcpOperation` returns `undefined` for them, so the signing fetch
+ * passes them through unsigned regardless of whether an `AgentSigningContext`
+ * is present in ALS. That matches the RFC 9421 signing profile, which only
+ * covers AdCP tool calls (`tools/call` / `message/send`).
+ *
  * Re-throws auth errors (401) — only catches protocol capability errors.
  */
 export async function getMCPTaskStatus(
