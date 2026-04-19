@@ -10,6 +10,7 @@ import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
+import { buildAgentSigningFetch, type AgentSigningContext } from '../signing/client';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
@@ -40,13 +41,13 @@ const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
 const a2aClientCache = new Map<string, InstanceType<typeof A2AClient>>();
 const pendingA2AClients = new Map<string, Promise<InstanceType<typeof A2AClient>>>();
 
-function a2aCacheKey(agentUrl: string, authToken?: string): string {
-  if (!authToken) return agentUrl;
+function a2aCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: string): string {
   // 64-bit hash prefix — cache key disambiguator, not a security boundary.
   // The cached client closes over the full authToken; a hypothetical hash
   // collision still sends the original token, not the colliding one.
-  const tokenHash = createHash('sha256').update(authToken).digest('hex').slice(0, 16);
-  return `${agentUrl}::${tokenHash}`;
+  const tokenSuffix = authToken ? `::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}` : '';
+  const signingSuffix = signingCacheKey ? `::${signingCacheKey}` : '';
+  return `${agentUrl}${tokenSuffix}${signingSuffix}`;
 }
 
 /**
@@ -61,16 +62,17 @@ export function closeA2AConnections(): void {
 
 async function getOrCreateA2AClient(
   agentUrl: string,
-  authToken: string | undefined
+  authToken: string | undefined,
+  signingContext: AgentSigningContext | undefined
 ): Promise<InstanceType<typeof A2AClient>> {
-  const cacheKey = a2aCacheKey(agentUrl, authToken);
+  const cacheKey = a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey);
   const cached = a2aClientCache.get(cacheKey);
   if (cached) return cached;
 
   const pending = pendingA2AClients.get(cacheKey);
   if (pending) return pending;
 
-  const promise = createA2AClient(agentUrl, authToken)
+  const promise = createA2AClient(agentUrl, authToken, signingContext)
     .then(client => {
       a2aClientCache.set(cacheKey, client);
       return client;
@@ -85,9 +87,10 @@ async function getOrCreateA2AClient(
 
 async function createA2AClient(
   agentUrl: string,
-  authToken: string | undefined
+  authToken: string | undefined,
+  signingContext: AgentSigningContext | undefined
 ): Promise<InstanceType<typeof A2AClient>> {
-  const fetchImpl = buildFetchImpl(authToken);
+  const fetchImpl = buildFetchImpl(authToken, signingContext);
   const cardUrls = buildCardUrls(agentUrl);
 
   const context = callContextStorage.getStore();
@@ -113,8 +116,12 @@ async function createA2AClient(
   return client;
 }
 
-function buildFetchImpl(authToken: string | undefined) {
-  return async (url: string | URL | Request, options?: RequestInit) => {
+function buildFetchImpl(authToken: string | undefined, signingContext: AgentSigningContext | undefined) {
+  // Inner fetch handles auth/header injection and 401 detection. If the
+  // agent has request-signing configured, we wrap it with the AdCP signing
+  // fetch so the signature covers the exact bytes we're about to send (auth
+  // headers included, since the signer re-reads the final header record).
+  const baseFetch = async (url: string | URL | Request, options?: RequestInit) => {
     const context = callContextStorage.getStore();
 
     const existingHeaders: Record<string, string> = {};
@@ -170,6 +177,20 @@ function buildFetchImpl(authToken: string | undefined) {
 
     return response;
   };
+
+  if (!signingContext) return baseFetch;
+
+  // The signing wrapper assembles headers into the signature base. We invoke
+  // it first so the signer sees the caller-supplied headers; baseFetch then
+  // overlays auth/trace headers afterwards — A2A's auth scheme (bearer) is
+  // not among the MANDATORY_COMPONENTS and is injected by the counterparty's
+  // transport layer, not signed.
+  const signingFetch = buildAgentSigningFetch({
+    upstream: (input, init) => baseFetch(input as any, init),
+    signing: signingContext.signing,
+    getCapability: signingContext.getCapability,
+  });
+  return signingFetch;
 }
 
 export async function callA2ATool(
@@ -179,7 +200,8 @@ export async function callA2ATool(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   pushNotificationConfig?: PushNotificationConfig,
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  signingContext?: AgentSigningContext
 ): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
@@ -194,7 +216,16 @@ export async function callA2ATool(
         got401Ref: { value: false },
       };
       return callContextStorage.run(context, () =>
-        callA2AToolImpl(agentUrl, toolName, parameters, authToken, debugLogs, pushNotificationConfig, context)
+        callA2AToolImpl(
+          agentUrl,
+          toolName,
+          parameters,
+          authToken,
+          debugLogs,
+          pushNotificationConfig,
+          context,
+          signingContext
+        )
       );
     }
   );
@@ -207,10 +238,11 @@ async function callA2AToolImpl(
   authToken: string | undefined,
   debugLogs: DebugLogEntry[],
   pushNotificationConfig: PushNotificationConfig | undefined,
-  context: A2ACallContext
+  context: A2ACallContext,
+  signingContext: AgentSigningContext | undefined
 ): Promise<unknown> {
   try {
-    const client = await getOrCreateA2AClient(agentUrl, authToken);
+    const client = await getOrCreateA2AClient(agentUrl, authToken, signingContext);
 
     const requestPayload: {
       message: {
@@ -281,7 +313,7 @@ async function callA2AToolImpl(
   } catch (error: unknown) {
     if (is401Error(error, context.got401Ref.value)) {
       // Evict this cache entry — token may have expired or been revoked.
-      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken));
+      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey));
 
       debugLogs.push({
         type: 'error',

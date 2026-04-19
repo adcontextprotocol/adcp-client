@@ -40,6 +40,16 @@
       "import": "./dist/lib/signing/index.js",
       "require": "./dist/lib/signing/index.js",
       "types": "./dist/lib/signing/index.d.ts"
+    },
+    "./signing/client": {
+      "import": "./dist/lib/signing/client.js",
+      "require": "./dist/lib/signing/client.js",
+      "types": "./dist/lib/signing/client.d.ts"
+    },
+    "./signing/server": {
+      "import": "./dist/lib/signing/server.js",
+      "require": "./dist/lib/signing/server.js",
+      "types": "./dist/lib/signing/server.d.ts"
     }
   },
   "typesVersions": {
@@ -61,6 +71,12 @@
       ],
       "signing": [
         "dist/lib/signing/index.d.ts"
+      ],
+      "signing/client": [
+        "dist/lib/signing/client.d.ts"
+      ],
+      "signing/server": [
+        "dist/lib/signing/server.d.ts"
       ]
     }
   },

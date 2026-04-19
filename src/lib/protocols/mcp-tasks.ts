@@ -15,6 +15,7 @@ import type { TaskInfo } from '../core/ConversationTypes';
 import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
+import type { AgentSigningContext } from '../signing/client';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -145,7 +146,7 @@ export async function callMCPToolWithTasks(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
-  options?: { workingTimeout?: number }
+  options?: { workingTimeout?: number; signingContext?: AgentSigningContext }
 ): Promise<unknown> {
   return withSpan(
     'adcp.mcp.call_tool',
@@ -181,116 +182,149 @@ export async function callMCPToolWithTasks(
         });
       }
 
-      return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, async client => {
-        // Check if server supports MCP Tasks
-        if (!serverSupportsTasks(client)) {
-          debugLogs.push({
-            type: 'info',
-            message: `MCP Tasks: Server does not support tasks, using standard callTool for ${toolName}`,
-            timestamp: new Date().toISOString(),
-          });
-          const response = (await client.callTool({ name: toolName, arguments: args })) as CallToolResponse;
-
-          debugLogs.push({
-            type: response?.isError ? 'error' : 'success',
-            message: `MCP: Tool ${toolName} response received (${response?.isError ? 'error' : 'success'})`,
-            timestamp: new Date().toISOString(),
-            response: response,
-          });
-
-          return response;
-        }
-
-        // Ensure tool metadata is cached so the SDK's isToolTask() works correctly.
-        // Without this, callToolStream silently skips task creation for tools that
-        // declare taskSupport: 'optional' | 'required'.
-        await ensureToolsListed(client);
-
-        debugLogs.push({
-          type: 'info',
-          message: `MCP Tasks: Server supports tasks, using callToolStream for ${toolName}`,
-          timestamp: new Date().toISOString(),
-        });
-
-        // Use callToolStream which handles the full task lifecycle
-        const stream = client.experimental.tasks.callToolStream({ name: toolName, arguments: args }, undefined, {
-          timeout: workingTimeout,
-          resetTimeoutOnProgress: true,
-        });
-
-        let capturedTaskId: string | undefined;
-        let capturedTask: { taskId: string; status: string; pollInterval?: number } | undefined;
-
-        try {
-          for await (const message of stream) {
-            switch (message.type) {
-              case 'taskCreated':
-                capturedTaskId = message.task.taskId;
-                capturedTask = message.task;
-                debugLogs.push({
-                  type: 'info',
-                  message: `MCP Tasks: Task created ${capturedTaskId} for ${toolName}`,
-                  timestamp: new Date().toISOString(),
-                });
-                break;
-
-              case 'taskStatus':
-                capturedTask = message.task;
-                debugLogs.push({
-                  type: 'info',
-                  message: `MCP Tasks: Status update for ${capturedTaskId}: ${message.task.status}`,
-                  timestamp: new Date().toISOString(),
-                });
-                break;
-
-              case 'result': {
-                debugLogs.push({
-                  type: 'success',
-                  message: `MCP: Tool ${toolName} response received (success)`,
-                  timestamp: new Date().toISOString(),
-                  response: message.result,
-                });
-                return message.result as CallToolResponse;
-              }
-
-              case 'error': {
-                debugLogs.push({
-                  type: 'error',
-                  message: `MCP Tasks: Error for ${toolName}: ${message.error.message}`,
-                  timestamp: new Date().toISOString(),
-                });
-                // The MCP Tasks SDK error event may strip structured content.
-                // If we have a taskId, fetch the full result to recover adcp_error data
-                // and return it as a proper isError response for downstream unwrapping.
-                if (capturedTaskId) {
-                  try {
-                    const taskResult = await client.experimental.tasks.getTaskResult(capturedTaskId);
-                    const content = taskResult?.content as Array<{ type: string; text?: string }> | undefined;
-                    if (content) {
-                      return {
-                        isError: true,
-                        content,
-                        structuredContent: taskResult?.structuredContent,
-                      } as unknown as CallToolResponse;
-                    }
-                  } catch {
-                    // Failed to fetch task result — fall through to throw
-                  }
-                }
-                throw message.error;
-              }
-            }
-          }
-        } catch (error) {
-          // If we timed out but have a taskId, return a working status
-          // so the caller can poll via getMCPTaskStatus/getMCPTaskResult
-          if (capturedTaskId && error instanceof Error && error.message.includes('Timeout')) {
+      return withCachedConnection(
+        agentUrl,
+        authToken,
+        authHeaders,
+        debugLogs,
+        toolName,
+        async client => {
+          // Check if server supports MCP Tasks
+          if (!serverSupportsTasks(client)) {
             debugLogs.push({
               type: 'info',
-              message: `MCP Tasks: Timeout for ${toolName}, returning working status with taskId ${capturedTaskId}`,
+              message: `MCP Tasks: Server does not support tasks, using standard callTool for ${toolName}`,
               timestamp: new Date().toISOString(),
             });
+            const response = (await client.callTool({ name: toolName, arguments: args })) as CallToolResponse;
 
+            debugLogs.push({
+              type: response?.isError ? 'error' : 'success',
+              message: `MCP: Tool ${toolName} response received (${response?.isError ? 'error' : 'success'})`,
+              timestamp: new Date().toISOString(),
+              response: response,
+            });
+
+            return response;
+          }
+
+          // Ensure tool metadata is cached so the SDK's isToolTask() works correctly.
+          // Without this, callToolStream silently skips task creation for tools that
+          // declare taskSupport: 'optional' | 'required'.
+          await ensureToolsListed(client);
+
+          debugLogs.push({
+            type: 'info',
+            message: `MCP Tasks: Server supports tasks, using callToolStream for ${toolName}`,
+            timestamp: new Date().toISOString(),
+          });
+
+          // Use callToolStream which handles the full task lifecycle
+          const stream = client.experimental.tasks.callToolStream({ name: toolName, arguments: args }, undefined, {
+            timeout: workingTimeout,
+            resetTimeoutOnProgress: true,
+          });
+
+          let capturedTaskId: string | undefined;
+          let capturedTask: { taskId: string; status: string; pollInterval?: number } | undefined;
+
+          try {
+            for await (const message of stream) {
+              switch (message.type) {
+                case 'taskCreated':
+                  capturedTaskId = message.task.taskId;
+                  capturedTask = message.task;
+                  debugLogs.push({
+                    type: 'info',
+                    message: `MCP Tasks: Task created ${capturedTaskId} for ${toolName}`,
+                    timestamp: new Date().toISOString(),
+                  });
+                  break;
+
+                case 'taskStatus':
+                  capturedTask = message.task;
+                  debugLogs.push({
+                    type: 'info',
+                    message: `MCP Tasks: Status update for ${capturedTaskId}: ${message.task.status}`,
+                    timestamp: new Date().toISOString(),
+                  });
+                  break;
+
+                case 'result': {
+                  debugLogs.push({
+                    type: 'success',
+                    message: `MCP: Tool ${toolName} response received (success)`,
+                    timestamp: new Date().toISOString(),
+                    response: message.result,
+                  });
+                  return message.result as CallToolResponse;
+                }
+
+                case 'error': {
+                  debugLogs.push({
+                    type: 'error',
+                    message: `MCP Tasks: Error for ${toolName}: ${message.error.message}`,
+                    timestamp: new Date().toISOString(),
+                  });
+                  // The MCP Tasks SDK error event may strip structured content.
+                  // If we have a taskId, fetch the full result to recover adcp_error data
+                  // and return it as a proper isError response for downstream unwrapping.
+                  if (capturedTaskId) {
+                    try {
+                      const taskResult = await client.experimental.tasks.getTaskResult(capturedTaskId);
+                      const content = taskResult?.content as Array<{ type: string; text?: string }> | undefined;
+                      if (content) {
+                        return {
+                          isError: true,
+                          content,
+                          structuredContent: taskResult?.structuredContent,
+                        } as unknown as CallToolResponse;
+                      }
+                    } catch {
+                      // Failed to fetch task result — fall through to throw
+                    }
+                  }
+                  throw message.error;
+                }
+              }
+            }
+          } catch (error) {
+            // If we timed out but have a taskId, return a working status
+            // so the caller can poll via getMCPTaskStatus/getMCPTaskResult
+            if (capturedTaskId && error instanceof Error && error.message.includes('Timeout')) {
+              debugLogs.push({
+                type: 'info',
+                message: `MCP Tasks: Timeout for ${toolName}, returning working status with taskId ${capturedTaskId}`,
+                timestamp: new Date().toISOString(),
+              });
+
+              return {
+                structuredContent: {
+                  status: 'working',
+                  task_id: capturedTaskId,
+                  poll_interval: capturedTask?.pollInterval,
+                },
+              };
+            }
+            // Servers may return a synchronous tool error (e.g. VERSION_UNSUPPORTED)
+            // rather than creating a task. The Tasks SDK rejects these with a Zod
+            // validation error about a missing `task` field. When no task was
+            // captured, fall back to standard callTool so the error response
+            // reaches the caller intact.
+            const msg = error instanceof Error ? error.message : String(error);
+            if (!capturedTaskId && /Invalid task creation result/i.test(msg)) {
+              debugLogs.push({
+                type: 'info',
+                message: `MCP Tasks: Server returned synchronous response for ${toolName}, falling back to callTool`,
+                timestamp: new Date().toISOString(),
+              });
+              return (await client.callTool({ name: toolName, arguments: args })) as CallToolResponse;
+            }
+            throw error;
+          }
+
+          // Stream ended without result — shouldn't happen with well-behaved servers
+          if (capturedTaskId) {
             return {
               structuredContent: {
                 status: 'working',
@@ -299,36 +333,11 @@ export async function callMCPToolWithTasks(
               },
             };
           }
-          // Servers may return a synchronous tool error (e.g. VERSION_UNSUPPORTED)
-          // rather than creating a task. The Tasks SDK rejects these with a Zod
-          // validation error about a missing `task` field. When no task was
-          // captured, fall back to standard callTool so the error response
-          // reaches the caller intact.
-          const msg = error instanceof Error ? error.message : String(error);
-          if (!capturedTaskId && /Invalid task creation result/i.test(msg)) {
-            debugLogs.push({
-              type: 'info',
-              message: `MCP Tasks: Server returned synchronous response for ${toolName}, falling back to callTool`,
-              timestamp: new Date().toISOString(),
-            });
-            return (await client.callTool({ name: toolName, arguments: args })) as CallToolResponse;
-          }
-          throw error;
-        }
 
-        // Stream ended without result — shouldn't happen with well-behaved servers
-        if (capturedTaskId) {
-          return {
-            structuredContent: {
-              status: 'working',
-              task_id: capturedTaskId,
-              poll_interval: capturedTask?.pollInterval,
-            },
-          };
-        }
-
-        throw new Error(`MCP Tasks: callToolStream for ${toolName} ended without result or task`);
-      });
+          throw new Error(`MCP Tasks: callToolStream for ${toolName} ended without result or task`);
+        },
+        options?.signingContext
+      );
     }
   );
 }

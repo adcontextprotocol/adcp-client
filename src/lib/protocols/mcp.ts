@@ -13,6 +13,7 @@ import { createMCPAuthHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
+import { buildAgentSigningFetch, type AgentSigningContext } from '../signing/client';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -66,10 +67,11 @@ function trackStreamableHTTPUrl(url: string): void {
   }
 }
 
-function connectionCacheKey(agentUrl: string, authToken?: string): string {
-  if (!authToken) return agentUrl;
-  const tokenHash = createHash('sha256').update(authToken).digest('hex').slice(0, 16);
-  return `${agentUrl}::${tokenHash}`;
+function connectionCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: string): string {
+  const base = authToken
+    ? `${agentUrl}::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
+    : agentUrl;
+  return signingCacheKey ? `${base}::${signingCacheKey}` : base;
 }
 
 /** Get a cached connection, refreshing its LRU position. */
@@ -121,7 +123,8 @@ async function getOrCreateConnection(
   baseUrl: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[],
-  label: string
+  label: string,
+  signingContext?: AgentSigningContext
 ): Promise<MCPClient> {
   const cached = getCachedConnection(cacheKey);
   if (cached) return cached;
@@ -129,7 +132,7 @@ async function getOrCreateConnection(
   const pending = pendingConnections.get(cacheKey);
   if (pending) return pending;
 
-  const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label)
+  const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label, signingContext)
     .then(client => {
       connectionCache.set(cacheKey, client);
       evictLeastRecentlyUsed();
@@ -157,12 +160,13 @@ export async function withCachedConnection<T>(
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[],
   label: string,
-  fn: (client: MCPClient) => Promise<T>
+  fn: (client: MCPClient) => Promise<T>,
+  signingContext?: AgentSigningContext
 ): Promise<T> {
-  const cacheKey = connectionCacheKey(agentUrl, authToken);
+  const cacheKey = connectionCacheKey(agentUrl, authToken, signingContext?.cacheKey);
   const baseUrl = new URL(agentUrl);
 
-  const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label);
+  const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label, signingContext);
 
   try {
     return await fn(mcpClient);
@@ -199,7 +203,14 @@ export async function withCachedConnection<T>(
       /* ignore */
     }
 
-    const retryClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, `${label} (retry)`);
+    const retryClient = await getOrCreateConnection(
+      cacheKey,
+      baseUrl,
+      authHeaders,
+      debugLogs,
+      `${label} (retry)`,
+      signingContext
+    );
 
     try {
       return await fn(retryClient);
@@ -231,6 +242,8 @@ export interface MCPCallOptions {
   debugLogs?: DebugLogEntry[];
   /** Additional headers to send with every request (auth headers take precedence) */
   customHeaders?: Record<string, string>;
+  /** RFC 9421 signing context — when set, the transport signs outbound ops per seller capability. */
+  signingContext?: AgentSigningContext;
 }
 
 /**
@@ -259,7 +272,8 @@ export async function connectMCPWithFallback(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  signingContext?: AgentSigningContext
 ): Promise<MCPClient> {
   return withSpan(
     'adcp.mcp.connect',
@@ -268,7 +282,7 @@ export async function connectMCPWithFallback(
       'adcp.connection_label': label,
     },
     async () => {
-      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label);
+      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label, signingContext);
     }
   );
 }
@@ -277,9 +291,20 @@ async function connectMCPWithFallbackImpl(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  signingContext?: AgentSigningContext
 ): Promise<MCPClient> {
-  const transportOptions = { requestInit: { headers: authHeaders } };
+  const signingFetch = signingContext
+    ? buildAgentSigningFetch({
+        upstream: (input, init) => fetch(input as any, init),
+        signing: signingContext.signing,
+        getCapability: signingContext.getCapability,
+      })
+    : undefined;
+  const transportOptions: StreamableHTTPClientTransportOptions = {
+    requestInit: { headers: authHeaders },
+    ...(signingFetch ? { fetch: signingFetch as typeof fetch } : {}),
+  };
   let failedClient: MCPClient | undefined;
 
   try {
@@ -372,7 +397,12 @@ async function connectMCPWithFallbackImpl(
       timestamp: new Date().toISOString(),
     });
     const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
-    await client.connect(new SSEClientTransport(url, { requestInit: { headers: authHeaders } }));
+    await client.connect(
+      new SSEClientTransport(url, {
+        requestInit: { headers: authHeaders },
+        ...(signingFetch ? { fetch: signingFetch as typeof fetch } : {}),
+      })
+    );
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected via SSE transport for ${label}`,
@@ -388,7 +418,8 @@ export async function callMCPTool(
   args: Record<string, unknown>,
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  signingContext?: AgentSigningContext
 ): Promise<unknown> {
   return withSpan(
     'adcp.mcp.call_tool',
@@ -397,7 +428,7 @@ export async function callMCPTool(
       'http.url': agentUrl,
     },
     async () => {
-      return callMCPToolImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
+      return callMCPToolImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext);
     }
   );
 }
@@ -412,9 +443,10 @@ export async function callMCPToolRaw(
   args: Record<string, unknown>,
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  signingContext?: AgentSigningContext
 ): Promise<unknown> {
-  return callMCPToolRawImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
+  return callMCPToolRawImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext);
 }
 
 async function callMCPToolImpl(
@@ -423,7 +455,8 @@ async function callMCPToolImpl(
   args: Record<string, unknown>,
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  signingContext?: AgentSigningContext
 ): Promise<unknown> {
   // Inject trace context headers for distributed tracing
   const traceHeaders = injectTraceHeaders();
@@ -465,7 +498,8 @@ async function callMCPToolImpl(
     authHeaders,
     debugLogs,
     toolName,
-    client => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>
+    client => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>,
+    signingContext
   );
 
   debugLogs.push({
@@ -487,7 +521,8 @@ async function callMCPToolRawImpl(
   args: Record<string, unknown>,
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  signingContext?: AgentSigningContext
 ): Promise<unknown> {
   const traceHeaders = injectTraceHeaders();
   const authHeaders = {
@@ -496,8 +531,14 @@ async function callMCPToolRawImpl(
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
 
-  return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, client =>
-    client.callTool({ name: toolName, arguments: args })
+  return withCachedConnection(
+    agentUrl,
+    authToken,
+    authHeaders,
+    debugLogs,
+    toolName,
+    client => client.callTool({ name: toolName, arguments: args }),
+    signingContext
   );
 }
 
@@ -541,8 +582,9 @@ export async function connectMCP(options: {
   authProvider?: OAuthClientProvider;
   debugLogs?: DebugLogEntry[];
   customHeaders?: Record<string, string>;
+  signingContext?: AgentSigningContext;
 }): Promise<MCPConnectionResult> {
-  const { agentUrl, authToken, authProvider, debugLogs = [], customHeaders } = options;
+  const { agentUrl, authToken, authProvider, debugLogs = [], customHeaders, signingContext } = options;
   const baseUrl = new URL(agentUrl);
 
   debugLogs.push({
@@ -577,6 +619,17 @@ export async function connectMCP(options: {
       message: 'MCP: Using static token for authentication',
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // RFC 9421 signing — wrap the transport's fetch so the signer sees the final
+  // headers the SDK assembled (including any OAuth-issued Authorization) and
+  // decides per outbound request whether to sign.
+  if (signingContext) {
+    transportOptions.fetch = buildAgentSigningFetch({
+      upstream: (input, init) => fetch(input as string | URL, init),
+      signing: signingContext.signing,
+      getCapability: signingContext.getCapability,
+    }) as typeof fetch;
   }
 
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);
@@ -618,11 +671,11 @@ export async function connectMCP(options: {
  * @throws UnauthorizedError if OAuth is required (with transport attached)
  */
 export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unknown> {
-  const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [], customHeaders } = options;
+  const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [], customHeaders, signingContext } = options;
 
   // If no OAuth provider, use the legacy function
   if (!authProvider) {
-    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
+    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext);
   }
 
   let client: MCPClient | undefined;
@@ -634,6 +687,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
       authProvider,
       debugLogs,
       customHeaders,
+      signingContext,
     });
     client = result.client;
     transport = result.transport;

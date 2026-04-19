@@ -37,6 +37,7 @@ import { createNonInteractiveOAuthProvider } from '../auth/oauth';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION } from '../version';
+import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
@@ -79,6 +80,27 @@ export class ProtocolClient {
 
         const authToken = getAuthToken(agent);
 
+        // RFC 9421 signing context. Built once per call; the transport
+        // attaches a fetch wrapper that reads the cached capability on every
+        // outbound request. `get_adcp_capabilities` is exempt from signing
+        // (it's the discovery call itself) and also triggers cache priming
+        // for any other op on agents with `request_signing` configured.
+        const signingContext = buildAgentSigningContext(agent);
+        if (signingContext && toolName !== CAPABILITY_OP) {
+          await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
+            ProtocolClient.callTool(
+              agent,
+              CAPABILITY_OP,
+              primeArgs,
+              debugLogs,
+              undefined,
+              undefined,
+              undefined,
+              serverVersion
+            )
+          );
+        }
+
         // Declare AdCP major version on every request so sellers can validate compatibility.
         // Skip for v2 servers — they don't recognise the field and strict-schema agents reject it.
         const argsWithVersion = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
@@ -116,12 +138,21 @@ export class ProtocolClient {
               authProvider,
               debugLogs,
               customHeaders: agent.headers,
+              signingContext,
             });
           }
 
           // Use callMCPToolWithTasks which auto-detects server tasks capability
           // and falls back to standard callTool when tasks are not supported
-          return callMCPToolWithTasks(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);
+          return callMCPToolWithTasks(
+            agent.agent_uri,
+            toolName,
+            argsWithWebhook,
+            authToken,
+            debugLogs,
+            agent.headers,
+            signingContext ? { signingContext } : undefined
+          );
         } else if (agent.protocol === 'a2a') {
           // For A2A, pass pushNotificationConfig separately (not in skill parameters)
           return callA2ATool(
@@ -131,7 +162,8 @@ export class ProtocolClient {
             authToken,
             debugLogs,
             pushNotificationConfig,
-            agent.headers
+            agent.headers,
+            signingContext
           );
         } else {
           throw new Error(`Unsupported protocol: ${agent.protocol}`);
