@@ -29,6 +29,13 @@ const MAX_DISPLAY_STRING = 256;
 const MAX_SCOPES = 64;
 
 /**
+ * Maximum number of auth-params we preserve under `challenge.params`. Bounds
+ * memory pressure from hostile servers that pack the `WWW-Authenticate`
+ * header with unknown auth-params.
+ */
+const MAX_CHALLENGE_PARAMS = 32;
+
+/**
  * Strip ASCII control characters (excluding TAB) from a server-supplied
  * string that may be shown to a human. Defeats terminal-hijack tricks like
  * `\x1b]0;pwned\x07` (rewrites terminal title), `\r` (overwrites prompt),
@@ -38,6 +45,33 @@ function sanitizeDisplay(value: string): string {
   const stripped = value.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
   if (stripped.length <= MAX_DISPLAY_STRING) return stripped;
   return `${stripped.slice(0, MAX_DISPLAY_STRING - 1)}…`;
+}
+
+/**
+ * Sanitize the parsed `WWW-Authenticate` challenge before embedding it in a
+ * `NeedsAuthorizationError`. Consumers that render `requirements.challenge`
+ * to a terminal should never see control characters. Caps `params` count to
+ * bound hostile servers.
+ *
+ * The `scheme` is already lowercased + token-constrained by the parser.
+ * Param keys are also token-constrained so they're safe; only values need
+ * sanitizing.
+ */
+function sanitizeChallenge(c: WWWAuthenticateChallenge): WWWAuthenticateChallenge {
+  const params: Record<string, string> = {};
+  for (const [k, v] of Object.entries(c.params)) {
+    if (Object.keys(params).length >= MAX_CHALLENGE_PARAMS) break;
+    params[k] = sanitizeDisplay(v);
+  }
+  return {
+    scheme: c.scheme,
+    ...(c.realm !== undefined ? { realm: sanitizeDisplay(c.realm) } : {}),
+    ...(c.error !== undefined ? { error: sanitizeDisplay(c.error) } : {}),
+    ...(c.error_description !== undefined ? { error_description: sanitizeDisplay(c.error_description) } : {}),
+    ...(c.scope !== undefined ? { scope: sanitizeDisplay(c.scope) } : {}),
+    ...(c.resource_metadata !== undefined ? { resource_metadata: sanitizeDisplay(c.resource_metadata) } : {}),
+    params,
+  };
 }
 
 /**
@@ -78,9 +112,20 @@ export interface AuthorizationRequirements {
  * they can downcast with `instanceof NeedsAuthorizationError` when they
  * want walked discovery metadata.
  *
- * Note: the inherited `code` is `'AUTHENTICATION_REQUIRED'` so that code
- * comparisons done by pre-existing callers still match. The specific
- * `'needs_authorization'` discriminator is available as `subCode`.
+ * Note on `code` vs `subCode`:
+ *   The parent class declares `readonly code = 'AUTHENTICATION_REQUIRED'` as
+ *   a class field that re-initializes on every construction, so a child-side
+ *   override attempt is silently overwritten under `useDefineForClassFields`.
+ *   The narrow discriminator is exposed as `subCode` — prefer
+ *   `instanceof NeedsAuthorizationError` for type-narrowing and use `subCode`
+ *   only for structured-log keying.
+ *
+ * Note on `hasOAuth`:
+ *   The inherited getter returns `true` only when both `authorization_endpoint`
+ *   and `token_endpoint` were walked successfully. A partially-walked
+ *   requirements record (PRM reachable but AS metadata missing) still yields
+ *   `hasOAuth === false` even though `requirements.authorizationServer` is set.
+ *   Treat it as "we have enough to start a flow," not "server wants OAuth."
  */
 export class NeedsAuthorizationError extends AuthenticationRequiredError {
   /** Narrow discriminator for consumers that already know about this class. */
@@ -91,6 +136,10 @@ export class NeedsAuthorizationError extends AuthenticationRequiredError {
     super(requirements.agentUrl, synthesizeOAuthMetadata(requirements), message ?? defaultMessage(requirements));
     this.name = 'NeedsAuthorizationError';
     this.requirements = requirements;
+    // Extend the parent's `details` payload so structured-logging consumers
+    // that read `err.details` (via `extractErrorInfo` or equivalent) see the
+    // full walked chain, not just the synthesized one-hop oauthMetadata.
+    this.details = { ...(this.details as object | undefined), requirements };
   }
 }
 
@@ -191,7 +240,7 @@ export async function discoverAuthorizationRequirements(
     agentUrl,
     resourceMetadataUrl: challenge.resource_metadata ? sanitizeDisplay(challenge.resource_metadata) : undefined,
     challengeScope: challenge.scope ? sanitizeDisplay(challenge.scope) : undefined,
-    challenge,
+    challenge: sanitizeChallenge(challenge),
   };
 
   // Walk protected-resource metadata (RFC 9728 §3). Private-IP targets are

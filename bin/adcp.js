@@ -2564,11 +2564,15 @@ async function main() {
     // so the user gets a browser prompt instead of a cold error message.
     if (error instanceof NeedsAuthorizationError) {
       if (jsonOutput) {
+        // Emit both `code` (inherited from AuthenticationRequiredError) and
+        // `subCode` (narrow discriminator) so downstream tools see the same
+        // shape the in-process error object exposes. Keying on either works.
         console.log(
           JSON.stringify(
             {
               error: {
-                code: error.subCode,
+                code: error.code,
+                subCode: error.subCode,
                 message: error.message,
                 requirements: error.requirements,
               },

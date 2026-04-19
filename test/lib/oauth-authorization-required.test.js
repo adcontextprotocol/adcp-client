@@ -210,6 +210,50 @@ describe('discoverAuthorizationRequirements', () => {
     assert.doesNotMatch(err.message, /[\x00-\x08\x0b-\x1f\x7f]/, 'error message must be sanitized');
   });
 
+  test('sanitizes nested challenge params and caps their count', async () => {
+    // Send a challenge with lots of unknown auth-params AND values with ANSI
+    // escape codes via `\t` (the only control char `setHeader` tolerates).
+    const hostileParams = Array.from({ length: 100 }, (_, i) => `custom${i}="evil\tcolor${i}"`).join(', ');
+    state.handlers = {
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader(
+          'www-authenticate',
+          `Bearer realm="api", resource_metadata="${issuer()}/.well-known/oauth-protected-resource/mcp", ${hostileParams}`
+        );
+        res.end();
+      },
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
+    };
+    const result = await discoverAuthorizationRequirements(agentUrl(), { allowPrivateIp: true });
+    assert.ok(result);
+    for (const v of Object.values(result.challenge.params)) {
+      assert.doesNotMatch(v, /[\x00-\x08\x0b-\x1f\x7f]/);
+    }
+    assert.ok(
+      Object.keys(result.challenge.params).length <= 32,
+      `expected ≤32 params, got ${Object.keys(result.challenge.params).length}`
+    );
+  });
+
+  test('attaches requirements to error.details for structured-logging consumers', () => {
+    const requirements = {
+      agentUrl: 'https://agent.example.com/mcp',
+      authorizationServer: 'https://as.example.com',
+      authorizationEndpoint: 'https://as.example.com/oauth/authorize',
+      tokenEndpoint: 'https://as.example.com/oauth/token',
+      challenge: { scheme: 'bearer', params: {} },
+    };
+    const err = new NeedsAuthorizationError(requirements);
+    assert.ok(err.details, 'expected details to be set');
+    assert.strictEqual(err.details.requirements, requirements);
+    // Parent's detail fields should also still be present so existing log
+    // pipelines keep working.
+    assert.strictEqual(err.details.agentUrl, 'https://agent.example.com/mcp');
+    assert.ok(err.details.oauthMetadata);
+  });
+
   test('caps the scopesSupported list to bound hostile metadata', async () => {
     const many = Array.from({ length: 500 }, (_, i) => `scope-${i}`);
     state.handlers = {
