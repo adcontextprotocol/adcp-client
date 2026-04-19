@@ -42,7 +42,19 @@ export {
 
 export {
   gradeRequestSigning,
+  gradeOneVector,
   type GradeOptions,
   type GradeReport,
   type VectorGradeResult,
 } from './grader';
+
+export {
+  synthesizeRequestSigningSteps,
+  parseRequestSigningStepId,
+  REQUEST_SIGNING_PROBE_TASK,
+  POSITIVE_STEP_PREFIX,
+  NEGATIVE_STEP_PREFIX,
+  type SynthesizeOptions,
+} from './synthesize';
+
+export { probeRequestSigningVector } from './probe-dispatch';

@@ -22,6 +22,7 @@ import {
   generateRandomInvalidJwt,
 } from './probes';
 import { validateTestKit } from './test-kit';
+import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import type {
   HttpProbeResult,
   StepAuthDirective,
@@ -538,6 +539,8 @@ async function executeProbeStep(
   } else if (step.task === 'assert_contribution') {
     // Synthetic: evaluate only through validations (any_of). No network call.
     httpResult = undefined;
+  } else if (step.task === 'request_signing_probe') {
+    httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
   }
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);

@@ -31,6 +31,9 @@ const HARNESS_TASKS = new Set([
   'protected_resource_metadata',
   'oauth_auth_server_metadata',
   'assert_contribution',
+  // Synthesized request-signing steps — the runner builds each request from
+  // a test-vector fixture; no `sample_request` shape applies.
+  'request_signing_probe',
 ]);
 
 // Tasks that reference test-kit data (e.g. "$test_kit.auth.probe_task"). The

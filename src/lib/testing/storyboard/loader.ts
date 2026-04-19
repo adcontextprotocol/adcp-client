@@ -17,7 +17,11 @@ export function parseStoryboard(yamlContent: string): Storyboard {
     throw new Error('Invalid storyboard YAML: missing required fields (id, phases)');
   }
   // YAML uses `name:` for context outputs but our runtime expects `key:`.
+  // Specialism YAMLs may declare a phase with no `steps:` — the steps are
+  // synthesized at runtime from fixtures (see request-signing/synthesize.ts).
+  // Treat missing steps as an empty list so the parser stays phase-agnostic.
   for (const phase of parsed.phases) {
+    if (!phase.steps) phase.steps = [];
     for (const step of phase.steps) {
       if (step.context_outputs) {
         for (const output of step.context_outputs) {

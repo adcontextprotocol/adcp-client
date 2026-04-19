@@ -220,6 +220,22 @@ export interface StoryboardRunOptions extends TestOptions {
    * in the report when used.
    */
   allow_http?: boolean;
+  /**
+   * Request-signing grader knobs (applied when the runner encounters
+   * synthesized `request_signing_probe` steps from the signed-requests
+   * specialism).
+   */
+  request_signing?: {
+    /** Skip the rate-abuse vector — it sends cap+1 requests and is slow. */
+    skipRateAbuse?: boolean;
+    /** Override the per-keyid cap the grader targets. */
+    rateAbuseCap?: number;
+    /**
+     * Vector IDs to skip (e.g., capability-profile mismatches for vectors
+     * 007/018 when the agent's `covers_content_digest` policy differs).
+     */
+    skipVectors?: string[];
+  };
 }
 
 // ────────────────────────────────────────────────────────────

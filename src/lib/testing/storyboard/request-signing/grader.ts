@@ -175,6 +175,37 @@ export async function gradeRequestSigning(
   };
 }
 
+/**
+ * Grade a single vector. Loads the vectors+keys+contract on every call; for
+ * the storyboard-runner dispatch path where the caller runs many vectors in
+ * sequence, prefer `gradeRequestSigning` which loads once.
+ */
+export async function gradeOneVector(
+  vectorId: string,
+  kind: 'positive' | 'negative',
+  agentUrl: string,
+  options: GradeOptions = {}
+): Promise<VectorGradeResult> {
+  const loaded = loadRequestSigningVectors(options);
+  const contract = loadSignedRequestsRunnerContract(options);
+  const probeOpts = {
+    allowPrivateIp: options.allowPrivateIp === true,
+    timeoutMs: options.timeoutMs,
+  };
+  const buildOpts = { baseUrl: agentUrl };
+
+  if (kind === 'positive') {
+    const vector = loaded.positive.find(v => v.id === vectorId);
+    if (!vector) throw new Error(`Unknown positive vector "${vectorId}"`);
+    const signed = buildPositiveRequest(vector, loaded.keys, buildOpts);
+    const probe = await probeSignedRequest(signed, probeOpts);
+    return gradePositive(vector, probe);
+  }
+  const vector = loaded.negative.find(v => v.id === vectorId);
+  if (!vector) throw new Error(`Unknown negative vector "${vectorId}"`);
+  return gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options);
+}
+
 // ── Phase helpers ─────────────────────────────────────────────
 
 function gradePositive(vector: PositiveVector, probe: ProbeResult): VectorGradeResult {

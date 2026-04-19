@@ -12,6 +12,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
+import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
 import type { Storyboard } from './types';
 
 /**
@@ -202,15 +203,42 @@ function loadStoryboardsFromDir(dir: string): Storyboard[] {
 
 /** Load storyboards for a single bundle (universal YAML file, domain dir, or specialism dir). */
 export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
-  if (ref.kind === 'universal') {
-    // Universal bundles are individual YAML files.
+  const raw =
+    ref.kind === 'universal'
+      ? safeLoadUniversal(ref.path)
+      : loadStoryboardsFromDir(ref.path);
+  return raw.map(postProcessStoryboard);
+}
+
+function safeLoadUniversal(path: string): Storyboard[] {
+  try {
+    return [loadStoryboardFile(path)];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Post-process storyboards loaded from the cache. The signed-requests
+ * specialism ships phases whose steps are generated at runtime from the
+ * request-signing test vectors; synthesize them here so downstream callers
+ * (the runner, CLI tooling, reporting) see a fully-populated storyboard.
+ */
+function postProcessStoryboard(storyboard: Storyboard): Storyboard {
+  if (storyboard.id === 'signed_requests') {
     try {
-      return [loadStoryboardFile(ref.path)];
-    } catch {
-      return [];
+      return synthesizeRequestSigningSteps(storyboard);
+    } catch (err) {
+      // Synthesis failure (e.g., compliance cache missing vectors) leaves the
+      // storyboard with empty phases — the runner will report empty steps
+      // rather than crash. Surface the cause so operators can run sync-schemas.
+      console.warn(
+        `[compliance] Failed to synthesize request-signing steps: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return storyboard;
     }
   }
-  return loadStoryboardsFromDir(ref.path);
+  return storyboard;
 }
 
 /** Enumerate every bundle present in the cache (universal + protocols + specialisms). */
