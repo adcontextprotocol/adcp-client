@@ -1119,28 +1119,45 @@ const capability: VerifierCapability = {
   supported_for: ['sync_creatives', 'sync_audiences', 'sync_accounts'],
   covers_content_digest: 'required',
   agent_url: 'https://seller.example.com/mcp',
+  per_keyid_request_rate_limit: 60,   // vector 020 targets this — match the per-keyid cap in test-kits/signed-requests-runner.yaml
 };
+
+const jwks = new StaticJwksResolver({
+  // Test counterparty keys — load from compliance/cache/latest/test-vectors/request-signing/keys.json:
+  'test-ed25519-2026': { /* public JWK */ },
+  'test-es256-2026':   { /* public JWK */ },
+  'test-revoked-2026': { /* public JWK — still present, but marked revoked below */ },
+});
+
+const revocationStore = new InMemoryRevocationStore();
+// Vector 017 requires this keyid to be revoked before the runner sends its signed request:
+await revocationStore.insert('test-revoked-2026', { revoked_at: new Date().toISOString() });
 
 const verifier = createExpressVerifier({
   capability,
-  jwks: new StaticJwksResolver({
-    // Test counterparty for grading:
-    'test-ed25519-2026': { /* public JWK from compliance/cache/latest/test-vectors/request-signing/keys.json */ },
-    'test-es256-2026':   { /* ... */ },
-    // Pre-revoked keyid per the test kit — mark it revoked in your revocationStore before grading:
-    // 'test-revoked-2026' should be insert()-ed into revocationStore at startup.
-  }),
+  jwks,
   replayStore: new InMemoryReplayStore(),
-  revocationStore: new InMemoryRevocationStore(),
+  revocationStore,
   operationFor: (req) => req.body?.method ?? req.path,
 });
 
-app.use('/mcp', verifier);   // run before the MCP transport
+// MOUNT ORDER MATTERS. The verifier needs the raw request body to compute
+// content-digest — mount it BEFORE express.json() or any other body parser.
+// If a parser has already consumed the stream, covers_content_digest silently fails.
+app.use('/mcp', verifier);          // raw body available here
+app.use(express.json());            // parses for downstream handlers
 ```
 
 **Advertise your policy in `get_adcp_capabilities`.** Put your `VerifierCapability` under `capabilities.request_signing`. Client SDKs fetch this on first call, cache it for 300s, and use it to decide whether to sign outbound calls. If you don't advertise, the grader skips you (and so do auto-signing clients). If you advertise without actually verifying, negative vectors will fail.
 
-**Don't claim unless tested.** Run `adcp storyboard run ... signed_requests --json` against a local instance before claiming — every negative vector must return the exact `expected_outcome.error_code`. A non-claiming agent is not graded against this specialism.
+**Don't claim unless tested.** Before claiming, run the grader against a local instance that has the test kit pre-wired (`test-revoked-2026` revoked, per-keyid cap set to match the test kit):
+
+```bash
+npx tsx agent.ts &
+npx @adcp/client storyboard run http://localhost:3001/mcp signed_requests --json
+```
+
+Every negative vector must return the exact `expected_outcome.error_code` in `WWW-Authenticate: Signature error="<code>"`. A non-claiming agent is not graded against this specialism.
 
 ## Reference
 

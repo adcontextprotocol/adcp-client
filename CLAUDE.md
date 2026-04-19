@@ -45,7 +45,7 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 | `sales-catalog-driven` | media-buy | stable | `skills/build-retail-media-agent/` |
 | `sales-retail-media` | media-buy | preview | `skills/build-retail-media-agent/` |
 | `sales-proposal-mode` | media-buy | stable | `skills/build-seller-agent/` |
-| `audience-sync` | media-buy | stable | `skills/build-seller-agent/` (track: `audiences`; uses `sync_audiences`, `list_accounts`, `delete_audience`) |
+| `audience-sync` | media-buy | stable | `skills/build-seller-agent/` (track: `audiences`; uses `sync_audiences`, `list_accounts`) |
 | `signed-requests` | media-buy | preview | Applies cross-cutting — any agent that receives mutating requests. See `skills/build-seller-agent/` (§ signed-requests) |
 | `creative-ad-server` | creative | stable | `skills/build-creative-agent/` |
 | `creative-template` | creative | stable | `skills/build-creative-agent/` |

@@ -28,7 +28,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | Specialism | Status | Delta from baseline | See |
 |---|---|---|---|
 | `governance-spend-authority` | stable | `check_governance` evaluates `binding` against Plan's `budget.total`, `human_review_required`, and `custom_policies`; return `approved`, `conditions`, or `denied` | [§ governance-spend-authority](#specialism-governance-spend-authority) |
-| `governance-delivery-monitor` | stable | `check_governance` with `phase: 'delivery'` + `delivery_evidence`; compute drift vs Plan's `reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
+| `governance-delivery-monitor` | stable | `check_governance` with `phase: 'delivery'` + `delivery_metrics`; compute drift vs Plan's `budget.reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
 | `property-lists` | stable | Tool family `property_list` — implement CRUD plus `validate_property_delivery` with full `violations[]` | [§ property-lists](#specialism-property-lists) |
 | `collection-lists` | stable | Tool family `collection_list` — program-level brand safety (shows, series, podcasts) identified by platform-independent IDs: IMDb, Gracenote, EIDR. Mirrors property-lists CRUD plus collection resolution. | [§ collection-lists](#specialism-collection-lists) |
 | `content-standards` | stable | `policies[]` is an array of `{ policy_id, enforcement, policy, policy_categories?, channels? }`; `validate_content_delivery` uses `records[].artifact` (not `creative_id`); re-read policies per call for `standards_version_change` | [§ content-standards](#specialism-content-standards) |
@@ -98,6 +98,7 @@ Evaluate a media buy against the registered plan. The request carries a `binding
 // Request shape:
 {
   plan_id: string,              // required — previously registered via sync_plans
+  phase?: 'create' | 'delivery',  // optional — authoritative when present
   binding: {                    // what to evaluate (create-phase)
     type: 'media_buy',
     media_buy_id?: string,      // on delivery phase, the already-created buy
@@ -116,7 +117,7 @@ Evaluate a media buy against the registered plan. The request carries a `binding
 }
 ```
 
-The presence of `delivery_metrics` vs a bare binding is how you tell create-phase from delivery-phase checks — there is no explicit `phase` field on the wire.
+`phase` is an optional top-level field (`'create' | 'delivery'`). When present, it is authoritative — use it to route. When absent, the presence of `delivery_metrics` is the corroborating signal. The storyboard sends both for delivery-phase checks.
 
 The Plan object (stored via `sync_plans`) drives decisions. Expected shape:
 
@@ -383,7 +384,18 @@ The request uses `records[].artifact`, not `creative_id`. Each record scopes a s
   records: [{
     record_id: string,
     property_rid: string,
-    artifact: { artifact_id: string, assets: {...} },
+    artifact: {
+      artifact_id: string,
+      property_rid: string,
+      description?: string,           // optional prose describing the ad — used by calibration matchers
+      assets: [{                       // ARRAY of assets — not an object
+        type: 'image' | 'video' | 'html' | 'text',
+        url: string,
+        width?: number,
+        height?: number,
+        duration_ms?: number,
+      }],
+    },
     impressions: number,
   }],
 }
@@ -397,7 +409,18 @@ taskToolResponse({
   },
   results: [{
     record_id: string,             // echo from request
-    artifact: { artifact_id: string, assets: {...} },
+    artifact: {
+      artifact_id: string,
+      property_rid: string,
+      description?: string,           // optional prose describing the ad — used by calibration matchers
+      assets: [{                       // ARRAY of assets — not an object
+        type: 'image' | 'video' | 'html' | 'text',
+        url: string,
+        width?: number,
+        height?: number,
+        duration_ms?: number,
+      }],
+    },
     impressions: number,
     compliant: boolean,
     violations: [{                 // empty when compliant
@@ -709,7 +732,7 @@ Storyboard: `governance_delivery_monitor`. Same `check_governance` tool, but the
 
 ```typescript
 checkGovernance: async (params, ctx) => {
-  if (params.delivery_metrics) {
+  if (params.phase === 'delivery' || params.delivery_metrics) {
     const plan = await ctx.store.get('plan', params.plan_id);
     const reallocationThreshold = plan.budget.reallocation_threshold;   // absolute $, e.g. 8000
 
