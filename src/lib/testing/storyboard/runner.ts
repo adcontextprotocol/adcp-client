@@ -23,6 +23,7 @@ import {
   generateRandomInvalidJwt,
 } from './probes';
 import { validateTestKit } from './test-kit';
+import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import type {
   HttpProbeResult,
   StepAuthDirective,
@@ -623,9 +624,31 @@ async function executeProbeStep(
   } else if (step.task === 'assert_contribution') {
     // Synthetic: evaluate only through validations (any_of). No network call.
     httpResult = undefined;
+  } else if (step.task === 'request_signing_probe') {
+    httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
   }
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);
+
+  // Probe may self-skip (request_signing_probe uses this for operator opt-outs
+  // and capability-profile mismatches). Surface as a skipped step without
+  // running validations — skip ≠ fail.
+  if (httpResult?.skipped) {
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: (httpResult.skip_reason ?? 'probe_skipped') as StoryboardStepResult['skip_reason'],
+      duration_ms: Date.now() - start,
+      response: httpResult,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context),
+    };
+  }
 
   const vctx: ValidationContext = {
     taskName: step.task,

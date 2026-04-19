@@ -12,6 +12,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
+import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
 import type { Storyboard } from './types';
 
 /**
@@ -202,15 +203,60 @@ function loadStoryboardsFromDir(dir: string): Storyboard[] {
 
 /** Load storyboards for a single bundle (universal YAML file, domain dir, or specialism dir). */
 export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
-  if (ref.kind === 'universal') {
-    // Universal bundles are individual YAML files.
+  const raw = ref.kind === 'universal' ? safeLoadUniversal(ref.path) : loadStoryboardsFromDir(ref.path);
+  return raw.map(postProcessStoryboard);
+}
+
+function safeLoadUniversal(path: string): Storyboard[] {
+  try {
+    return [loadStoryboardFile(path)];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Post-process storyboards loaded from the cache. The signed-requests
+ * specialism ships phases whose steps are generated at runtime from the
+ * request-signing test vectors; synthesize them here so downstream callers
+ * (the runner, CLI tooling, reporting) see a fully-populated storyboard.
+ */
+function postProcessStoryboard(storyboard: Storyboard): Storyboard {
+  if (storyboard.id === 'signed_requests') {
     try {
-      return [loadStoryboardFile(ref.path)];
-    } catch {
-      return [];
+      return synthesizeRequestSigningSteps(storyboard);
+    } catch (err) {
+      // Synthesis failure = infrastructural problem (cache missing vectors,
+      // schema drift, etc.). Emit a synthetic failing phase so the runner's
+      // existing reporting surfaces the cause — silent empty-phase fallback
+      // would render as a green pass with 0 steps, which is the worst
+      // possible outcome for CI pipelines.
+      return withSynthesisErrorPhase(storyboard, err);
     }
   }
-  return loadStoryboardsFromDir(ref.path);
+  return storyboard;
+}
+
+function withSynthesisErrorPhase(storyboard: Storyboard, err: unknown): Storyboard {
+  const message = err instanceof Error ? err.message : String(err);
+  const errorPhase = {
+    id: 'synthesis_error',
+    title: 'Request-signing vector synthesis failed',
+    narrative:
+      'The signed-requests specialism requires its phases to be synthesized at load time ' +
+      'from the compliance cache. Synthesis failed — the runner cannot grade against the ' +
+      'conformance vectors. Run `npm run sync-schemas` to refresh the cache.',
+    steps: [
+      {
+        id: 'synthesis_error',
+        title: 'Synthesize vector phases',
+        task: 'synthesis_error',
+        narrative: message,
+        expect_error: false,
+      },
+    ],
+  };
+  return { ...storyboard, phases: [errorPhase, ...storyboard.phases] };
 }
 
 /** Enumerate every bundle present in the cache (universal + protocols + specialisms). */
