@@ -43,28 +43,63 @@ Specialism ID (kebab-case) = storyboard directory. The storyboard's `id:` field 
 
 ## Protocol-Wide Requirements (AdCP 3.0 GA)
 
-Two requirements apply to **every** mutating AdCP operation, regardless of which specialism you claim.
+Three requirements apply to **every** production seller, regardless of which specialism you claim. Don't reinvent any of them — the SDK provides helpers for each.
 
 ### `idempotency_key` is required on every mutating request
 
 `create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `provide_performance_feedback` — every mutating call now carries a client-supplied `idempotency_key`. Your handler must return the **same response** when the same key is replayed.
 
+**Use the SDK helper.** Pass `idempotency: createIdempotencyStore(...)` into `createAdcpServer` and the framework handles replay detection, payload-hash conflict detection, and the `IDEMPOTENCY_KEY_CONFLICT` error — don't write your own cache in `ctx.store`.
+
 ```typescript
-createMediaBuy: async (params, ctx) => {
-  // Check idempotency cache first
-  const cached = await ctx.store.get('idempotency', params.idempotency_key);
-  if (cached) return cached;
+import { createAdcpServer, serve } from '@adcp/client';
+import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 
-  // ... normal handler body ...
-  const response = { media_buy_id: `mb_${Date.now()}`, status: 'active' as const, /* ... */ };
+const idempotency = createIdempotencyStore({
+  backend: memoryBackend(),    // for production: pgBackend(pool) or a redis adapter
+  ttlSeconds: 86400,            // must be in [3600, 604800] — throws on out-of-range
+  clockSkewSeconds: 60,         // default — how long past expiry a key still replays cleanly
+});
 
-  // Cache before returning
-  await ctx.store.put('idempotency', params.idempotency_key, response);
-  return response;
-},
+serve(() => createAdcpServer({
+  name: 'My Seller Agent',
+  version: '1.0.0',
+  idempotency,
+  // Principal scope — same key from different buyers must not collide.
+  // MUST never return undefined; `(ctx) => ctx.account?.id` is typical for
+  // multi-tenant agents. A constant is fine for single-tenant demos.
+  resolveSessionKey: (ctx) => ctx.account?.id ?? 'default-principal',
+
+  mediaBuy: { /* handlers — no idempotency code inside them */ },
+}));
 ```
 
-Keys are scoped per-tool + per-account. The cache TTL is implementation-defined but buyers retry within a 24-hour window — size your store accordingly. If the same key arrives with a **different** payload, return `adcpError('IDEMPOTENCY_KEY_CONFLICT', { message })` rather than silently overwriting.
+Keys are scoped per `(principal, tool, key)`. Same key + same payload within TTL → replay the cached response. Same key + different payload → the framework emits `IDEMPOTENCY_KEY_CONFLICT`. The spec requires `ttlSeconds` in `[3600, 604800]` (1h to 7d) and auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`.
+
+### OAuth, when your agent is behind an authorization server
+
+If your MCP endpoint requires OAuth, the only thing you need to do right is the **401 challenge**. Client SDKs walk the discovery chain automatically (AdCP 3.0 GA landed zero-config OAuth discovery on 401) — but they can only discover what you advertise.
+
+On any unauthenticated request, return **`401`** with this header:
+
+```
+WWW-Authenticate: Bearer error="invalid_token", resource_metadata="https://seller.example.com/.well-known/oauth-protected-resource"
+```
+
+Then host two metadata documents:
+
+- **RFC 9728 protected-resource metadata** at the URL in `resource_metadata`. Point its `authorization_servers[0]` at your OAuth AS.
+- **RFC 8414 authorization-server metadata** at `<as-url>/.well-known/oauth-authorization-server`. Standard OAuth — any conformant AS has it.
+
+Clients use `discoverAuthorizationRequirements` and throw `NeedsAuthorizationError` (from `@adcp/client`'s auth module) carrying the discovered OAuth hints; the CLI surfaces this as a guided browser flow. Your seller agent itself just needs the 401 challenge + metadata documents — the rest is client plumbing.
+
+**Validate with the diagnostic CLI** before claiming an OAuth-protected deployment is ready:
+
+```bash
+npx @adcp/client diagnose-auth https://seller.example.com/mcp --json
+```
+
+The command probes both metadata documents, ranks failure hypotheses, and tells you exactly which fix is missing — "emit `WWW-Authenticate: Bearer …, resource_metadata=…`" is the most common verdict for agents that almost got it right.
 
 ### Don't break when RFC 9421 Signature headers arrive
 
