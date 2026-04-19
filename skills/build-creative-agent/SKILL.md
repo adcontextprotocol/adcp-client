@@ -33,6 +33,14 @@ Creative specialisms are three distinct archetypes with materially different too
 
 The `interaction_model` in each specialism's `index.yaml` is the forcing function: `stateful_ad_server`, `stateless_transform`, `stateless_generate`. Decide which one matches your business, then follow the archetype section below.
 
+## Protocol-Wide Requirements
+
+Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers for a creative agent:
+
+- **`idempotency_key`** on every mutating request (`sync_creatives`, `build_creative`, `report_usage`, any `sync_*` you implement). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Signature-header transparency**: accept requests with `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
+
 ## Before Writing Code
 
 Determine these things. Ask the user — don't guess.

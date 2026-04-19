@@ -28,6 +28,14 @@ A signals agent serves audience segments to buyers for campaign targeting. Two t
 | `signal-marketplace` | stable | `signal_id.source: 'catalog'` + resolvable `data_provider_domain`; span ≥2 providers in demos; platform activations are **async** (`is_live: false` → poll to live) | [§ signal-marketplace](#specialism-signal-marketplace) |
 | `signal-owned` | stable | `signal_id.source: 'agent'` + your `agent_url`; `value_type` constraints (`allowed_values` for categorical, `min`/`max` for numeric); `deployed_at` on deployments | [§ signal-owned](#specialism-signal-owned) |
 
+## Protocol-Wide Requirements
+
+Full treatment lives in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers for a signals agent:
+
+- **`idempotency_key`** on every mutating request (`activate_signal`, and any future mutating signals tools). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Signature-header transparency**: accept requests with `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
+
 ## Before Writing Code
 
 Determine these four things. Ask the user — don't guess.
@@ -160,9 +168,12 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `getSignalsResponse(data)`                            | Auto-applied response builder (don't call manually)                    |
 | `activateSignalResponse(data)`                        | Auto-applied response builder (don't call manually)                    |
 | `adcpError(code, { message })`                        | Structured error (`SIGNAL_NOT_FOUND`, `INVALID_DESTINATION`)           |
+| `createIdempotencyStore({ backend, ttlSeconds })`     | Required on every mutating tool — pass via `createAdcpServer({ idempotency })` |
+| `memoryBackend()` / `pgBackend(pool)`                 | Idempotency backends (from `@adcp/client/server`)                      |
 | `type Signal = GetSignalsResponse['signals'][number]` | Type for a single signal object                                        |
 
 Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
+Server-only: `import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';`
 Types: `import type { GetSignalsResponse } from '@adcp/client';`
 
 ## Setup
@@ -410,6 +421,11 @@ activateSignal: async (params, ctx) => {
           account: dest.account ?? null,
           is_live: false,
           estimated_activation_duration_minutes: 45,
+          // Commit the activation_key up front so the buyer can trust it across the poll window:
+          activation_key: {
+            type: 'segment_id' as const,
+            segment_id: `${dest.platform}_${signal.signal_id.id}`,
+          },
         };
         await ctx.store.put('deployments', `${params.signal_agent_segment_id}:${dest.platform}`, pending);
         return pending;

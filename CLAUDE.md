@@ -46,7 +46,7 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 | `sales-retail-media` | media-buy | preview | `skills/build-retail-media-agent/` |
 | `sales-proposal-mode` | media-buy | stable | `skills/build-seller-agent/` |
 | `audience-sync` | media-buy | stable | `skills/build-seller-agent/` (track: `audiences`; uses `sync_audiences`, `list_accounts`) |
-| `signed-requests` | media-buy | preview | Applies cross-cutting — any agent that receives mutating requests. See `skills/build-seller-agent/` (§ signed-requests) |
+| `signed-requests` | media-buy | preview | **Cross-cutting** — applies to any agent that receives mutating requests, regardless of primary specialism. The yaml classifies it under `media-buy` because that's where financial stakes are highest, but the verifier behavior is identical across all protocols. See `skills/build-seller-agent/` (§ signed-requests). |
 | `creative-ad-server` | creative | stable | `skills/build-creative-agent/` |
 | `creative-template` | creative | stable | `skills/build-creative-agent/` |
 | `creative-generative` | creative | stable | `skills/build-creative-agent/` or `skills/build-generative-seller-agent/` (if you also sell inventory) |
@@ -66,8 +66,8 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 
 **Preview specialisms** have `phases: []` in their `index.yaml` — the storyboard is a placeholder and the agent passes the protocol baseline only. Claim a preview specialism to advertise intent; expect `phases` to populate in a subsequent AdCP release.
 
-**Protocol-wide requirements.** Two requirements now apply to every mutating AdCP operation regardless of specialism:
-- **`idempotency_key`** — required on every mutating request (`create_media_buy`, `update_media_buy`, `acquire_rights`, `activate_signal`, `sync_*`). Your handler must return the same response when the same key is replayed. Landed in AdCP 3.0 GA.
+**Protocol-Wide Requirements.** Two requirements apply to every mutating AdCP operation regardless of specialism:
+- **`idempotency_key`** — required on every mutating request. Applies to every tool marked as mutating in the spec (the SDK's `MUTATING_TASKS` constant is authoritative): `create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `sync_plans`, `sync_governance`, `provide_performance_feedback`, `acquire_rights`, `activate_signal`, `log_event`, `report_usage`, `report_plan_outcome`, `create_property_list` / `update_property_list` / `delete_property_list`, `create_collection_list` / `update_collection_list` / `delete_collection_list`, `create_content_standards` / `update_content_standards` / `calibrate_content`, `si_initiate_session` / `si_send_message`. Handlers must return the same response when the same key is replayed. Landed in AdCP 3.0 GA.
 - **RFC 9421 HTTP Signatures** — optional but recommended. If you claim `signed-requests`, you verify incoming signatures; regardless, you must not break when signature headers are present.
 
 **Critical rules**:

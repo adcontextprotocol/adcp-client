@@ -21,6 +21,12 @@ A sponsored intelligence (SI) agent serves conversational sponsored content with
 - Serving audience segments → `skills/build-signals-agent/`
 - Managing creatives → `skills/build-creative-agent/`
 
+## Specialisms This Skill Covers
+
+| Specialism | Status | Delta |
+|---|---|---|
+| _(none yet)_ | — | SI has no specialisms in AdCP 3.0 — pass the `sponsored-intelligence` protocol baseline. Specialism storyboards for conversational-ad-specific patterns are pending future AdCP releases. |
+
 ## Before Writing Code
 
 ### 1. What Offerings?

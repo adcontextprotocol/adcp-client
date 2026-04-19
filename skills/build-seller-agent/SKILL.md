@@ -33,9 +33,9 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | `sales-streaming-tv` | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products | Baseline only |
 | `sales-social` | stable | Walled-garden: no `get_products`/`create_media_buy`; implement `sync_audiences`, `log_event`, `get_account_financials` instead | [§ sales-social](#specialism-sales-social) |
 | `sales-exchange` | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending | Baseline only |
-| `sales-catalog-driven` | stable | See `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too | Different skill |
-| `sales-retail-media` | preview | See `skills/build-retail-media-agent/` | Different skill |
 | `sales-proposal-mode` | stable | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages` | [§ sales-proposal-mode](#specialism-sales-proposal-mode) |
+
+**Not in this skill:** `sales-catalog-driven` and `sales-retail-media` (both in `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too, not only retail).
 | `audience-sync` | stable | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response. | [§ audience-sync](#specialism-audience-sync) |
 | `signed-requests` | preview | RFC 9421 HTTP Signature verification on mutating requests. Advertise `request_signing.supported: true` in capabilities; graded against conformance vectors — positive vectors must produce non-4xx; negative vectors must return `401` with `WWW-Authenticate: Signature error="<code>"` matching the vector's `expected_outcome.error_code` byte-for-byte. | [§ signed-requests](#specialism-signed-requests) |
 
@@ -164,11 +164,27 @@ createAdcpServer({
 
 Composing the verified signing `keyid` in is possible but lives outside the handler context: the signing middleware stashes it on `req.verifiedSigner.keyid` (raw HTTP request), which doesn't flow into `HandlerContext` by default. Either accept that the idempotency namespace is OAuth-principal-only (most setups), or write a custom `authenticate` that promotes the verified keyid into `authInfo.extra` so your `resolveIdempotencyPrincipal` can read it uniformly.
 
-**401 disambiguation.** A request can fail both OAuth and signature verification. Per RFC 7235, you can emit multiple `WWW-Authenticate` challenges — but order them so the client's most promising next step is first:
+**401 disambiguation.** A request can fail both OAuth and signature verification. Per RFC 7235 you can emit multiple `WWW-Authenticate` challenges — order them so the client's most promising next step is first. OAuth's Bearer challenge always fires first (the client can't sign correctly until it has a valid identity); Signature challenge only fires when the request is authenticated but signed wrong.
 
-- OAuth failure (no/expired bearer) → `WWW-Authenticate: Bearer error="invalid_token", resource_metadata=...`. **Do this first** — the client can't sign correctly until it has a valid identity. The signed-requests grader does not exercise this combined case.
-- OAuth valid, signature failed → `WWW-Authenticate: Signature error="<code>"` per the grader. The `<code>` matches the test-vector's `expected_outcome.error_code` byte-for-byte.
-- Both failing on an optional-signature operation → emit only the Bearer challenge; signature is advisory on `supported_for` operations.
+```typescript
+// Inside preTransport, after a RequestSignatureError is raised on an authenticated request:
+res.statusCode = 401;
+res.setHeader('WWW-Authenticate', [
+  // If the bearer also failed, the Bearer challenge would have been emitted by `authenticate`
+  // before preTransport ran — you only reach this branch on authenticated-but-bad-signature.
+  `Signature error="${err.code}"`,
+  // If you want to emit both (e.g., you implement your own authenticator that doesn't
+  // short-circuit on missing bearer), the Bearer challenge goes first:
+  // 'Bearer error="invalid_token", resource_metadata="https://seller.example.com/.well-known/oauth-protected-resource"',
+].join(', '));
+res.end();
+```
+
+Matrix:
+
+- No/expired bearer → framework emits `Bearer error="invalid_token", resource_metadata=...`. Request never reaches `preTransport`.
+- Valid bearer, signature invalid → your `preTransport` emits `Signature error="<code>"` byte-matching the test vector's `expected_outcome.error_code`.
+- Valid bearer, signature absent on a `supported_for`-only operation → accept; signature is advisory on `supported_for`. Only `required_for` rejects unsigned.
 
 **Idempotency semantics for `submitted` responses.** The framework caches **every successful mutation** including async `submitted` envelopes — not only terminal ones. A replay of the same key within the TTL returns the cached `submitted` response with `replayed: true` injected. A second IO is **not** created. Parallel calls with the same key within the 120-second in-flight window get `adcpError('SERVICE_UNAVAILABLE', { retry_after: 1 })` and should retry — buyer SDKs auto-retry on the `transient` class. The framework emits this for you; you don't handle it in handler code.
 
@@ -754,8 +770,7 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 **What the framework handles when you pass `idempotency` to `createAdcpServer`:**
 
 - Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic.
-- Hashes the request payload with RFC 8785 JCS; returns `IDEMPOTENCY_CONFLICT` on same-key-different-payload. The error body carries only `code` + `message` — no payload hash, no field pointer, no leaked cached content.
-- Returns `IDEMPOTENCY_EXPIRED` when a key is past the TTL (with ±60s clock-skew tolerance).
+- Hashes the request payload with RFC 8785 JCS. The emitted error codes and their semantics are in the table at [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency).
 - Injects `replayed: true` on `result.structuredContent.replayed` when returning a cached response; fresh executions omit the field.
 - Auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`.
 - Only caches successful responses — errors re-execute on retry so transient failures don't lock into the cache.
@@ -1016,7 +1031,7 @@ createMediaBuy: async (params, ctx) => {
     }
   }
   return {
-    media_buy_id: `mb_${Date.now()}`,
+    media_buy_id: `mb_${randomUUID()}`,
     status: 'active' as const,   // instant — no IO
     packages: /* ... */,
   };
@@ -1134,7 +1149,7 @@ createMediaBuy: async (params, ctx) => {
     if (!proposal) return adcpError('INVALID_REQUEST', { message: `Unknown proposal_id: ${params.proposal_id}` });
     // TTL check — return PROPOSAL_EXPIRED if the proposal has aged out
     return {
-      media_buy_id: `mb_${Date.now()}`,
+      media_buy_id: `mb_${randomUUID()}`,
       status: 'active' as const,       // instant on proposal accept
       proposal_id: proposal.proposal_id,
       packages: proposal.budget_allocations.map((a, i) => ({ /* expand server-side */ })),

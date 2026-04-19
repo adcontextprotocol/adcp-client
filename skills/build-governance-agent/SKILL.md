@@ -38,6 +38,14 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 
 Specialism ID (kebab-case) = storyboard directory. Storyboard `id:` (snake_case, e.g. `campaign_governance_conditions`) is the category name — multiple specialisms can reference the same storyboard category.
 
+## Protocol-Wide Requirements
+
+Every production governance agent — regardless of specialism — must wire these. Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing OAuth, signing, and idempotency; minimum-viable pointers:
+
+- **`idempotency_key`** on every mutating request (`sync_plans`, `create_property_list`/`update_property_list`/`delete_property_list`, `create_collection_list`/`update_collection_list`/`delete_collection_list`, `create_content_standards`/`update_content_standards`, `calibrate_content`). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **Authentication** via `serve({ authenticate: verifyApiKey(...)/verifyBearer(...) })` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Signature-header transparency**: don't reject requests that carry `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
+
 ## Before Writing Code
 
 ### 1. Which Governance Domains?

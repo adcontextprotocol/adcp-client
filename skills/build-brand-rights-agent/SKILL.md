@@ -25,9 +25,17 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 
 | Specialism | Status | Delta |
 |---|---|---|
-| `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`. `update_rights` and `creative_approval` are spec-tracked but not schema-backed (see Protocol Status below). |
+| `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`. `update_rights` and `creative_approval` are spec-tracked but not schema-backed (see Protocol Status below). | [§ brand-rights](#specialism-brand-rights) |
 
 Storyboard: `brand_rights`. The specialism tests identity discovery → rights search → acquisition → enforcement (including expired-campaign denial).
+
+## Protocol-Wide Requirements
+
+Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers:
+
+- **`idempotency_key`** on every mutating request (`acquire_rights` — and `update_rights` / `creative_approval` once their schemas land). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Signature-header transparency**: accept `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 
 ## Before Writing Code
 
@@ -69,6 +77,7 @@ Three tools are first-class in the `brandRights` domain group. Two additional op
 
 Upstream tracking for the two schema gaps: https://github.com/adcontextprotocol/adcp/issues/2253. The SDK will register handlers for both once schemas land.
 
+<a name="specialism-brand-rights"></a>
 ## Tools and Required Response Shapes
 
 **`get_brand_identity`** — returns brand identity matching `brand/get-brand-identity-response.json`
