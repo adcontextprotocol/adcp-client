@@ -35,10 +35,13 @@ function ensureMcpAgentBuilt() {
   }
 }
 
-function startMcpAgent(port) {
+function startMcpAgent(port, overrides = {}) {
+  // Spread overrides first so `PORT` always wins — callers shouldn't be able
+  // to clobber the explicit `port` argument through the overrides bag.
+  const env = { ...process.env, ...overrides, PORT: String(port) };
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [MCP_AGENT_SCRIPT], {
-      env: { ...process.env, PORT: String(port) },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let settled = false;
@@ -122,6 +125,9 @@ const CAPABILITY_PROFILE_VECTORS = ['007-missing-content-digest', '018-digest-co
 
 describe('request-signing grader — MCP transport vs. reference MCP agent', () => {
   // Dynamic port so the test is safe to run in parallel; fallback to 3111.
+  // The rate-abuse subtest spins up a second agent on PORT+1, so parallel
+  // runs of this file MUST set ADCP_MCP_TEST_PORT values that differ by at
+  // least 2 (e.g. 3111 and 3113) to avoid the +1 sibling colliding.
   const PORT = Number.parseInt(process.env.ADCP_MCP_TEST_PORT ?? '3111', 10);
   const AGENT_URL = `http://127.0.0.1:${PORT}/mcp`;
   let agent;
@@ -191,6 +197,32 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
       () => buildPositiveRequest(vector, loaded.keys, { transport: 'mcp' }),
       /transport: 'mcp' requires a baseUrl/
     );
+  });
+
+  test('rate-abuse vector: (cap+1)th request rejected with request_signature_rate_abuse under MCP', async () => {
+    // Dedicated MCP agent instance with a tight cap matched to the grader's
+    // rateAbuseCap so the flood trips the rejection in ~11 requests rather
+    // than 101. Needs `allowLiveSideEffects: true` because the reference
+    // agent doesn't advertise `endpoint_scope: sandbox` — preflightSkip
+    // otherwise refuses to run 020.
+    const rateAbusePort = PORT + 1;
+    const fresh = await startMcpAgent(rateAbusePort, { ADCP_REPLAY_CAP: '10' });
+    try {
+      const report = await gradeRequestSigning(`http://127.0.0.1:${rateAbusePort}/mcp`, {
+        allowPrivateIp: true,
+        transport: 'mcp',
+        onlyVectors: ['020-rate-abuse'],
+        rateAbuseCap: 10,
+        allowLiveSideEffects: true,
+      });
+      const v020 = report.negative.find(v => v.vector_id === '020-rate-abuse');
+      assert.ok(v020, '020-rate-abuse present in report');
+      assert.ok(v020.passed && !v020.skipped, `020 should pass under MCP: ${v020.diagnostic}`);
+      assert.strictEqual(v020.actual_error_code, 'request_signature_rate_abuse');
+      assert.strictEqual(v020.http_status, 401);
+    } finally {
+      await stopMcpAgent(fresh);
+    }
   });
 
   test('every negative mutation produces an MCP-shaped request under transport: mcp', () => {
