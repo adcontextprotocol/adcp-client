@@ -54,6 +54,23 @@ export interface ServeOptions {
    * provide a store with automatic eviction to prevent unbounded memory growth.
    */
   taskStore?: TaskStore;
+  /**
+   * Pre-MCP middleware — runs after path-matching but before MCP transport
+   * is connected. Intended for transport-layer concerns like RFC 9421
+   * request-signature verification: the agent's body is already buffered
+   * into `(req as any).rawBody` before the middleware fires so signature
+   * verifiers can hash it without racing the transport's own body read.
+   *
+   * Return `true` to signal the middleware handled the response (e.g. a
+   * 401 with `WWW-Authenticate`); the transport is skipped. Return `false`
+   * to continue into MCP dispatch.
+   *
+   * Throwing from the middleware produces a 500 with a generic body.
+   */
+  preTransport?: (
+    req: import('http').IncomingMessage & { rawBody?: string },
+    res: import('http').ServerResponse
+  ) => Promise<boolean>;
 }
 
 /**
@@ -88,13 +105,47 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
   const httpServer = createServer(async (req, res) => {
     const { pathname } = new URL(req.url || '', 'http://localhost');
     if (pathname === mountPath || pathname === `${mountPath}/`) {
+      // Buffer the request body once when preTransport middleware is wired —
+      // RFC 9421 verifiers need the raw bytes for Content-Digest recompute,
+      // and the MCP transport's own body read would race the verifier otherwise.
+      let parsedBody: unknown;
+      if (options?.preTransport) {
+        try {
+          const raw = await bufferBody(req);
+          (req as { rawBody?: string }).rawBody = raw;
+          if (raw.length > 0) {
+            try {
+              parsedBody = JSON.parse(raw);
+            } catch {
+              // Non-JSON body — let transport reject as malformed JSON-RPC.
+            }
+          }
+          const handled = await options.preTransport(req as import('http').IncomingMessage & { rawBody?: string }, res);
+          if (handled) return;
+        } catch (err) {
+          console.error('preTransport middleware error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+          }
+          return;
+        }
+      }
       const agentServer = createAgent(ctx);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       });
       try {
         await agentServer.connect(transport);
-        await transport.handleRequest(req, res);
+        // When preTransport already consumed the request stream, pass the
+        // parsed body through so the transport doesn't re-read (stream is
+        // drained). MCP SDK's `handleRequest(req, res, parsedBody)` accepts
+        // this shape.
+        if (parsedBody !== undefined) {
+          await transport.handleRequest(req, res, parsedBody);
+        } else {
+          await transport.handleRequest(req, res);
+        }
       } catch (err) {
         console.error('Server error:', err);
         if (!res.headersSent) {
@@ -122,4 +173,23 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
   });
 
   return httpServer;
+}
+
+function bufferBody(req: import('http').IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const MAX = 2 * 1024 * 1024; // 2 MiB — generous for MCP JSON-RPC payloads
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > MAX) {
+        reject(new Error(`Request body exceeded ${MAX} bytes`));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk as Buffer);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
 }

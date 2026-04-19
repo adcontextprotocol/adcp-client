@@ -113,19 +113,26 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
     details: validationDetails || undefined,
     observation_data: stepResult.response as Record<string, unknown> | undefined,
     warnings: stepResult.skipped
-      ? [
-          (
-            {
-              missing_test_harness: 'Not testable: requires comply_test_controller harness',
-              missing_tool: 'Skipped: agent does not implement this tool',
-              not_testable: 'Not testable: agent lacks required tool',
-              dependency_failed: 'Skipped: prior stateful step failed',
-              not_applicable: 'Not applicable: storyboard introduced in a later AdCP version',
-            } as Record<string, string>
-          )[stepResult.skip_reason ?? ''] ?? 'Step skipped',
-        ]
+      ? [stepResult.skip?.detail ?? skipReasonLabel(stepResult.skip_reason) ?? 'Step skipped']
       : undefined,
   };
+}
+
+function skipReasonLabel(reason: string | undefined): string | undefined {
+  if (!reason) return undefined;
+  const labels: Record<string, string> = {
+    // `not_applicable` is the spec reason for both
+    // "agent did not declare this protocol/specialism" AND
+    // "storyboard was introduced in a later AdCP version".
+    not_applicable:
+      'Not applicable: agent did not declare this protocol/specialism, or storyboard was introduced in a later AdCP version',
+    no_phases: 'Skipped: storyboard has no executable phases',
+    prerequisite_failed: 'Skipped: a prerequisite did not pass',
+    missing_tool: 'Skipped: agent did not advertise the required tool',
+    missing_test_controller: 'Not testable: requires comply_test_controller',
+    unsatisfied_contract: 'Skipped: test-kit contract is out of scope',
+  };
+  return labels[reason];
 }
 
 /**

@@ -23,8 +23,17 @@ export interface AdcpJsonWebKey {
   use?: string;
   key_ops?: string[];
   adcp_use?: string;
+  /** Public-key X coordinate (Ed25519) or x-coordinate (EC P-256). */
   x?: string;
+  /** Public-key Y coordinate (EC P-256 only). */
   y?: string;
+  /**
+   * Private scalar (RFC 7518 §6.2.2.1 / §6.1.2). Present only when the JWK
+   * represents a private key — never published at `jwks_uri`. Test vectors
+   * ship this under `_private_d_for_test_only` in their `keys.json`; runtime
+   * signers load it into `d`.
+   */
+  d?: string;
   [extra: string]: unknown;
 }
 

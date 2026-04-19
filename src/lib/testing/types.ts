@@ -252,23 +252,6 @@ export interface TestResult {
   agent_profile?: AgentProfile;
 }
 
-/**
- * Structured skip detail per the runner-output contract
- * (universal/runner-output-contract.yaml). `reason` distinguishes actionable
- * skips (`missing_tool`) from informative ones (`not_applicable`).
- */
-export interface ScenarioSkip {
-  scenario: TestScenario;
-  reason:
-    | 'not_applicable'
-    | 'missing_tool'
-    | 'missing_test_controller'
-    | 'no_phases'
-    | 'prerequisite_failed'
-    | 'unsatisfied_contract';
-  detail: string;
-}
-
 export interface SuiteResult {
   agent_url: string;
   agent_profile: AgentProfile;
@@ -276,8 +259,6 @@ export interface SuiteResult {
   scenarios_run: TestScenario[];
   /** Scenarios skipped because the agent does not advertise the required tools */
   scenarios_skipped: TestScenario[];
-  /** Structured skip detail, one entry per scenario in `scenarios_skipped`. */
-  scenarios_skipped_detail?: ScenarioSkip[];
   results: TestResult[];
   /**
    * True only when at least one scenario ran and none failed.
@@ -297,6 +278,13 @@ export interface TaskResult {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- response shape varies by tool; typed per-access in scenarios
   data?: any;
   error?: string;
+  /**
+   * Internal: which MCP extraction path produced `data`. Set by the response
+   * unwrapper and the raw MCP probe so the storyboard runner can surface it
+   * in its output contract. Consumers outside the runner should treat this
+   * as implementation detail — it's NOT part of the public `AdCPResponse`.
+   */
+  _extraction_path?: 'structured_content' | 'text_fallback' | 'error' | 'none';
 }
 
 // Logger interface for library use
