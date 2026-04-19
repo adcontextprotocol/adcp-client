@@ -89,14 +89,16 @@ Required: `brand_id`, `house`, `names` (array of locale-keyed objects).
   logos: [
     {
       url: 'https://cdn.acme.example/logo-primary.svg',
-      orientation: 'horizontal',  // horizontal | vertical | square
-      background: 'light',        // light | dark | transparent
+      orientation: 'horizontal',          // horizontal | vertical | square
+      background: 'transparent-bg',       // dark-bg | light-bg | transparent-bg
       variant: 'primary',
       width: 512,
       height: 128,
     },
   ],
-  voice: 'Confident, outdoorsy, direct.',
+  tone: {                                 // brand voice lives under `tone`, not at the top level
+    voice: 'Confident, outdoorsy, direct.',
+  },
   // context echoed back by the framework when present
 }
 ```
@@ -105,21 +107,23 @@ Required: `brand_id`, `house`, `names` (array of locale-keyed objects).
 
 Each right requires `rights_id`, `brand_id`, `name`, `available_uses`, `pricing_options`.
 
+The `right-use` enum at `/schemas/latest/enums/right-use.json` is: `likeness | voice | name | endorsement | motion_capture | signature | catchphrase | sync | background_music | editorial | commercial`. Note that the storyboard yaml sometimes sends `ai_generated_image` — that token is not in the current enum and any request carrying it will fail SDK validation. Use spec-valid values in your `available_uses` until upstream reconciles (adcontextprotocol/adcp#2418).
+
 ```typescript
 {
   rights: [
     {
-      rights_id: 'img_gen_standard',
+      rights_id: 'likeness_commercial_standard',
       brand_id: 'acme_outdoor',
-      name: 'AI image generation — standard',
-      available_uses: ['ai_generated_image', 'commercial'],  // from right-use enum
+      name: 'Likeness for commercial use — standard',
+      available_uses: ['likeness', 'commercial'],
       pricing_options: [
         {
           pricing_option_id: 'monthly_standard',
-          model: 'flat_rate',                  // from pricing-model enum
+          model: 'flat_rate',                 // from pricing-model enum
           price: 2500,
           currency: 'USD',
-          uses: ['ai_generated_image', 'commercial'],
+          uses: ['likeness', 'commercial'],
           period: 'monthly',
         },
       ],
@@ -130,16 +134,39 @@ Each right requires `rights_id`, `brand_id`, `name`, `available_uses`, `pricing_
 
 **`acquire_rights`** — returns a discriminated union on `status`
 
-Three success variants plus an error variant. The most common is `acquired`:
+Three success variants plus an error variant. The most common is `acquired`. Three shapes need exact field names to satisfy the spec schemas — `terms` must match `rights-terms.json` (required: `pricing_option_id`, `amount`, `currency`, `uses`), `rights_constraint` must match `/schemas/latest/core/rights-constraint.json` (required: `rights_id`, `rights_agent`, `uses`), and `approval_webhook.authentication.credentials` requires `minLength: 32`.
 
 ```typescript
 {
-  rights_id: 'img_gen_standard',     // echoed from request
+  rights_id: 'likeness_commercial_standard',   // echoed from request
   status: 'acquired',
   brand_id: 'acme_outdoor',
-  terms: { /* rights-terms.json shape */ },
+  terms: {
+    pricing_option_id: 'monthly_standard',     // required
+    amount: 2500,                              // required
+    currency: 'USD',                           // required
+    uses: ['likeness', 'commercial'],          // required
+    period: 'monthly',
+    start_date: '2026-04-01T00:00:00Z',
+    end_date:   '2026-05-01T00:00:00Z',
+    exclusivity: { type: 'non_exclusive' },    // object, not a string
+  },
   generation_credentials: [ /* generation-credential refs */ ],
-  rights_constraint: { /* pre-built rights-constraint for creative manifests */ },
+  rights_constraint: {
+    rights_id: 'likeness_commercial_standard', // required — NOT brand_id
+    rights_agent: {                            // required — {url, id} pointing at this agent
+      url: 'https://brand.example/mcp',
+      id: 'acme_outdoor',
+    },
+    uses: ['likeness', 'commercial'],          // required
+  },
+  approval_webhook: {
+    url: 'https://brand.example/webhooks/creative-approval',
+    authentication: {
+      schemes: ['Bearer'],
+      credentials: 'brand-approval-webhook-secret-32chars+',  // minLength: 32
+    },
+  },
 }
 // or
 { rights_id, status: 'pending_approval', brand_id, detail?, estimated_response_time? }
