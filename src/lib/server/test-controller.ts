@@ -256,6 +256,16 @@ export class TestControllerError extends Error {
  */
 export const SESSION_ENTRY_CAP = 1000;
 
+/** Max chars of `label` echoed into `enforceMapCap`'s error message. */
+const MAX_LABEL_LENGTH = 64;
+
+/** Clamp `label` before interpolating into error messages — attacker-controlled
+ * input could otherwise spam logs or derail structured detail parsing. */
+function sanitizeLabel(label: string): string {
+  const trimmed = typeof label === 'string' ? label : String(label);
+  return trimmed.slice(0, MAX_LABEL_LENGTH).replace(/[^\x20-\x7E]/g, '?');
+}
+
 /**
  * Reject new entries when `map` has reached `cap`. Use inside
  * {@link TestControllerStore} methods before `.set()` on any Map that
@@ -269,8 +279,10 @@ export const SESSION_ENTRY_CAP = 1000;
  * LRU eviction that would make compliance tests nondeterministic.
  *
  * @param label - Human-readable plural noun used in the error message
- *   (`"account statuses"`, `"media buy states"`). Must be a caller-controlled
- *   string literal, not user input — it's embedded in `error_detail` verbatim.
+ *   (`"account statuses"`, `"media buy states"`). Intended to be a
+ *   caller-controlled string literal; defensively truncated to 64 chars and
+ *   stripped of non-printable characters before interpolation so user-controlled
+ *   input can't spam logs.
  *
  * @example
  * ```ts
@@ -291,7 +303,7 @@ export function enforceMapCap<V>(
   if (!map.has(key) && map.size >= cap) {
     throw new TestControllerError(
       'INVALID_STATE',
-      `Too many ${label} entries (limit ${cap}). Clear the session or reuse an existing id.`
+      `Too many ${sanitizeLabel(label)} entries (limit ${cap}). Clear the session or reuse an existing id.`
     );
   }
 }
@@ -361,7 +373,10 @@ export async function handleTestControllerRequest(
     if (err instanceof TestControllerError) {
       return controllerError(err.code, err.message, err.currentState);
     }
-    return controllerError('INTERNAL_ERROR', 'Failed to resolve test controller store for this request');
+    return controllerError(
+      'INTERNAL_ERROR',
+      `Failed to resolve test controller store for scenario ${sanitizeLabel(scenario)}`
+    );
   }
 
   const params = input.params as Record<string, unknown> | undefined;
@@ -520,7 +535,25 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
  *
  * Matches `ComplyTestControllerRequest` from the generated schema: `scenario`
  * (required), `params` (scenario-specific), and the universal `context` / `ext`
- * envelope fields.
+ * envelope fields. No top-level `account` — AdCP routes account context
+ * through `context` on this tool.
+ *
+ * **Extending for vendor fields.** Custom wrappers that route sandbox gating
+ * or tenant scoping on top-level fields can extend the shape locally:
+ *
+ * ```ts
+ * const MY_SHAPE = {
+ *   ...TOOL_INPUT_SHAPE,
+ *   account: z.object({ sandbox: z.boolean() }).passthrough().optional(),
+ * };
+ * server.tool('comply_test_controller', 'Sandbox only.', MY_SHAPE, async input => {
+ *   if (input.account?.sandbox !== true) return toMcpResponse({ ... });
+ *   return toMcpResponse(await handleTestControllerRequest(store, input as Record<string, unknown>));
+ * });
+ * ```
+ *
+ * This keeps the default registration protocol-compliant while giving
+ * wrapper authors a documented extension point.
  */
 export const TOOL_INPUT_SHAPE = {
   scenario: z.string().describe('Scenario to execute (e.g., list_scenarios, force_account_status)'),

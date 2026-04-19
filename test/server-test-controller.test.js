@@ -487,6 +487,22 @@ describe('handleTestControllerRequest', () => {
       assert.ok(!result.error_detail.includes('Postgres'));
     });
 
+    it('includes the scenario name in createStore failure detail so sellers can debug', async () => {
+      const factory = {
+        scenarios: ['force_account_status'],
+        createStore() {
+          throw new Error('bug');
+        },
+      };
+      const result = await handleTestControllerRequest(factory, {
+        scenario: 'force_account_status',
+        params: { account_id: 'acct-1', status: 'suspended' },
+      });
+      assert.strictEqual(result.success, false);
+      assert.match(result.error_detail, /force_account_status/);
+      assert.ok(!result.error_detail.includes('bug'));
+    });
+
     it('re-invokes createStore for each request so closures see fresh state', async () => {
       // Simulate a session that gets rehydrated between requests — the canonical
       // WeakMap-keyed-by-session-ref pitfall. createStore binds to the current
@@ -601,6 +617,36 @@ describe('enforceMapCap', () => {
     });
     assert.strictEqual(result.success, false);
     assert.strictEqual(result.error, 'INVALID_STATE');
+  });
+});
+
+describe('enforceMapCap label sanitization', () => {
+  it('truncates label to 64 chars in the error message', () => {
+    const m = new Map();
+    for (let i = 0; i < 3; i++) m.set(`k${i}`, i);
+    const longLabel = 'a'.repeat(200);
+    try {
+      enforceMapCap(m, 'new', longLabel, 3);
+      assert.fail('expected throw');
+    } catch (err) {
+      assert.ok(err instanceof TestControllerError);
+      // Label portion of message should be capped; full 200-char label must not appear verbatim.
+      assert.ok(!err.message.includes(longLabel));
+      assert.ok(err.message.includes('a'.repeat(64)));
+    }
+  });
+
+  it('strips non-printable characters from label', () => {
+    const m = new Map();
+    for (let i = 0; i < 3; i++) m.set(`k${i}`, i);
+    try {
+      enforceMapCap(m, 'new', 'injected\x00\x1bnewline\n', 3);
+      assert.fail('expected throw');
+    } catch (err) {
+      assert.ok(!err.message.includes('\x00'));
+      assert.ok(!err.message.includes('\x1b'));
+      assert.ok(!err.message.includes('\n'));
+    }
   });
 });
 

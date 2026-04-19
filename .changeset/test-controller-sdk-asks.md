@@ -42,3 +42,14 @@ registerTestController(server, {
 **Compatibility**
 
 No breaking changes. Plain-store `registerTestController(server, store)` and single-arity `handleTestControllerRequest(store, input)` keep working unchanged. The `ControllerScenario` type union is unchanged; `CONTROLLER_SCENARIOS` is additive.
+
+**Migration note for custom wrappers using top-level `account`**
+
+Some sellers built custom `server.tool('comply_test_controller', ...)` wrappers that route sandbox gating off a top-level `account` field (e.g., `account.sandbox === true`). `TOOL_INPUT_SHAPE` intentionally matches `ComplyTestControllerRequest` in the generated schema, which declares only `scenario`, `params`, `context`, `ext` — so `account` is not included.
+
+Two migration paths:
+
+1. **Move the check to `context`**: route sandbox gating through `context.sandbox` / `context.account_id`. Recommended — this is where AdCP routes per-request envelope data on tools that don't take a structural `account`.
+2. **Extend the shape locally**: `const MY_SHAPE = { ...TOOL_INPUT_SHAPE, account: z.object({ sandbox: z.boolean() }).passthrough().optional() };` and pass `MY_SHAPE` to `server.tool(...)`. Documented in the `TOOL_INPUT_SHAPE` JSDoc.
+
+Either path keeps your wrapper functional; only the default `registerTestController` registration uses the minimal schema.
