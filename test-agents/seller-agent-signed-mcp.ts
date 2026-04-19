@@ -61,7 +61,11 @@ const publicKeys: AdcpJsonWebKey[] = (JSON.parse(readFileSync(KEYS_PATH, 'utf8')
 });
 
 const jwks = new StaticJwksResolver(publicKeys);
-const replayStore = new InMemoryReplayStore({ maxEntriesPerKeyid: 100 });
+// Per-keyid replay cap defaults to 100 (matches the test-kit's
+// grading_target_per_keyid_cap_requests). Override via ADCP_REPLAY_CAP for
+// the MCP rate-abuse test, which needs a tight cap it can fill quickly.
+const REPLAY_CAP = Number.parseInt(process.env.ADCP_REPLAY_CAP ?? '100', 10);
+const replayStore = new InMemoryReplayStore({ maxEntriesPerKeyid: REPLAY_CAP });
 const revocationStore = new InMemoryRevocationStore({
   issuer: 'http://seller.example.com',
   updated: new Date().toISOString(),

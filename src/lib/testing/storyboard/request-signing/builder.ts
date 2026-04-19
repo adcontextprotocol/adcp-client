@@ -357,11 +357,24 @@ function applyTransport(vector: PositiveVector | NegativeVector, options: BuildO
   };
 }
 
+// AdCP operation names are spec-defined identifiers (lowercase alnum +
+// underscore — `create_media_buy`, `sync_accounts`, etc). Constrain the
+// extractor output to that shape so a compromised compliance cache can't
+// smuggle arbitrary bytes into `params.name` via a weird vector URL.
+// Matches the spec enum `static/schemas/source/enums/operation.json`.
+const OPERATION_NAME_SAFE = /^[a-z][a-z0-9_]*$/;
+
 function extractOperationFromVectorUrl(vectorUrl: string): string {
   const parsed = new URL(vectorUrl);
   const segments = parsed.pathname.split('/').filter(Boolean);
   const last = segments[segments.length - 1];
   if (!last) throw new Error(`Cannot extract operation from vector URL: ${vectorUrl}`);
+  if (!OPERATION_NAME_SAFE.test(last)) {
+    throw new Error(
+      `Operation name "${last}" extracted from ${vectorUrl} fails identifier check. ` +
+        `AdCP operations are lowercase_snake_case; this is likely a corrupted compliance cache.`
+    );
+  }
   return last;
 }
 
