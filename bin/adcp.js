@@ -27,6 +27,7 @@ const {
   saveAgent,
 } = require('./adcp-config.js');
 const { handleRegistryCommand } = require('./adcp-registry.js');
+const { captureStdoutLogs, writeJsonOutput } = require('./adcp-json-stdout.js');
 const {
   createCLIOAuthProvider,
   hasValidOAuthTokens,
@@ -859,7 +860,7 @@ async function handleStoryboardList(args) {
   }
 
   if (jsonOutput) {
-    console.log(JSON.stringify({ bundles: grouped, storyboards: flat }, null, 2));
+    await writeJsonOutput({ bundles: grouped, storyboards: flat });
     return;
   }
 
@@ -916,7 +917,7 @@ async function handleStoryboardShow(args) {
   }
 
   if (jsonOutput) {
-    console.log(JSON.stringify(storyboard, null, 2));
+    await writeJsonOutput(storyboard);
   } else {
     console.log(`\n${storyboard.title}`);
     console.log(`${'─'.repeat(storyboard.title.length)}`);
@@ -1014,23 +1015,17 @@ async function handleStoryboardRun(args) {
   // --dry-run: preview mode — show the plan without executing
   if (dryRun) {
     if (jsonOutput) {
-      console.log(
-        JSON.stringify(
-          {
-            storyboard_id: storyboard.id,
-            storyboard_title: storyboard.title,
-            agent_url: agentUrl,
-            protocol,
-            preview: true,
-            phases: storyboard.phases.map(p => ({
-              phase: p.title,
-              steps: p.steps.map(s => ({ id: s.id, title: s.title, task: s.task })),
-            })),
-          },
-          null,
-          2
-        )
-      );
+      await writeJsonOutput({
+        storyboard_id: storyboard.id,
+        storyboard_title: storyboard.title,
+        agent_url: agentUrl,
+        protocol,
+        preview: true,
+        phases: storyboard.phases.map(p => ({
+          phase: p.title,
+          steps: p.steps.map(s => ({ id: s.id, title: s.title, task: s.task })),
+        })),
+      });
     } else {
       console.log(`\n${storyboard.title} (${storyboard.id})`);
       console.log('═'.repeat(50));
@@ -1050,10 +1045,16 @@ async function handleStoryboardRun(args) {
     ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
   };
 
-  const result = await runStoryboard(agentUrl, storyboard, options);
+  const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
+  let result;
+  try {
+    result = await runStoryboard(agentUrl, storyboard, options);
+  } finally {
+    if (restoreLogs) restoreLogs();
+  }
 
   if (jsonOutput) {
-    console.log(JSON.stringify(result, null, 2));
+    await writeJsonOutput(result);
   } else {
     // Human-readable output
     console.log(`\n${storyboard.title} (${storyboard.id})`);
@@ -1181,6 +1182,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     console.log('');
   }
 
+  const restoreLogs = opts.jsonOutput ? captureStdoutLogs() : null;
   try {
     const { comply, formatComplianceResults, formatComplianceResultsJSON } =
       await import('../dist/lib/testing/compliance/index.js');
@@ -1193,7 +1195,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     const result = await comply(agentUrl, testOptions);
 
     if (opts.jsonOutput) {
-      console.log(formatComplianceResultsJSON(result));
+      restoreLogs();
+      await writeJsonOutput(formatComplianceResultsJSON(result));
     } else {
       console.log(formatComplianceResults(result));
     }
@@ -1201,6 +1204,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     const hasFailures = result.summary.tracks_failed > 0;
     process.exit(hasFailures ? 3 : 0);
   } catch (error) {
+    if (restoreLogs) restoreLogs();
     console.error(`\nAssessment failed: ${error.message}`);
     if (opts.debug) console.error(error.stack);
     process.exit(1);
@@ -1251,10 +1255,16 @@ async function handleStoryboardStepCmd(args) {
     ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
   };
 
-  const result = await runStoryboardStep(agentUrl, storyboard, stepId, options);
+  const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
+  let result;
+  try {
+    result = await runStoryboardStep(agentUrl, storyboard, stepId, options);
+  } finally {
+    if (restoreLogs) restoreLogs();
+  }
 
   if (jsonOutput) {
-    console.log(JSON.stringify(result, null, 2));
+    await writeJsonOutput(result);
   } else {
     const icon = result.passed ? '✅' : '❌';
     console.log(`\n── Step: ${result.title} ──────────────────────────────`);
