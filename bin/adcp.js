@@ -33,6 +33,9 @@ const {
   hasValidOAuthTokens,
   clearOAuthTokens,
   getEffectiveAuthToken,
+  createFileOAuthStorage,
+  bindAgentStorage,
+  NeedsAuthorizationError,
 } = require('../dist/lib/auth/oauth/index.js');
 
 // Test scenarios available
@@ -2444,6 +2447,18 @@ async function main() {
     ...(agentOAuthClient && { oauth_client: agentOAuthClient }),
   };
 
+  // For saved aliases with OAuth, attach a file-backed storage so the MCP
+  // SDK's OAuthProvider can persist refreshed tokens back to the config
+  // file. The storage keys writes under the actual alias regardless of the
+  // synthetic `cli-agent` id we use in memory.
+  if (agentAlias && agentOAuthTokens) {
+    const storage = createFileOAuthStorage({
+      configPath: getConfigPath(),
+      agentKey: agentAlias,
+    });
+    bindAgentStorage(agentConfig, storage);
+  }
+
   try {
     // If no tool name provided, display agent info
     if (!toolName) {
@@ -2862,8 +2877,87 @@ async function main() {
       process.exit(3);
     }
   } catch (error) {
-    // Check if this is an OAuth-required error for MCP and offer auto-authentication
+    // Defense-in-depth: the library already strips ASCII control chars from
+    // server-supplied strings before storing them on `requirements`, but
+    // re-apply at the output call site in case a downstream field is added
+    // that bypasses the library's sanitizer.
+    const safe = s => (typeof s === 'string' ? s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '') : s);
+
+    // NeedsAuthorizationError carries walked discovery metadata. Route it
+    // through the CLI's existing auto-OAuth flow when conditions are right,
+    // so the user gets a browser prompt instead of a cold error message.
+    if (error instanceof NeedsAuthorizationError) {
+      // Auto-browser requires:
+      //   - stdout + stdin are TTYs (the OAuth flow blocks on stdin/terminal focus)
+      //   - no explicit opt-out (ADCP_NO_BROWSER) and not in CI
+      //   - a protocol we can drive interactively (MCP only today)
+      //   - no conflicting auth source already provided
+      //   - not asked for JSON (scripts/dashboards must stay deterministic)
+      const canAutoBrowse =
+        !jsonOutput &&
+        !!process.stdout.isTTY &&
+        !!process.stdin.isTTY &&
+        !process.env.CI &&
+        !process.env.ADCP_NO_BROWSER &&
+        process.env.TERM !== 'dumb' &&
+        protocol === 'mcp' &&
+        !useOAuth &&
+        !authToken;
+
+      if (!canAutoBrowse) {
+        if (jsonOutput) {
+          console.log(
+            JSON.stringify(
+              {
+                error: {
+                  code: error.code,
+                  subCode: error.subCode,
+                  message: error.message,
+                  requirements: error.requirements,
+                },
+              },
+              null,
+              2
+            )
+          );
+        } else {
+          console.error('\n🔐 Agent requires OAuth authorization.');
+          console.error(`   Authorization server: ${safe(error.requirements.authorizationServer) ?? '(unknown)'}`);
+          if (error.requirements.registrationEndpoint) {
+            console.error(`   Dynamic client registration: supported`);
+          }
+          if (error.requirements.scopesSupported?.length) {
+            console.error(`   Scopes: ${error.requirements.scopesSupported.map(safe).join(', ')}`);
+          }
+          if (agentAlias) {
+            console.error(`\n   Run: adcp --save-auth ${agentAlias} ${agentUrl} --oauth`);
+          } else {
+            console.error(`\n   Save the agent with OAuth: adcp --save-auth <alias> ${agentUrl} --oauth`);
+          }
+          console.error('');
+        }
+        process.exit(1);
+      }
+
+      // Interactive context: print a short header on stderr (so stdout stays
+      // clean for the eventual tool result) then fall through to the
+      // auto-OAuth branch below which opens the browser and retries the call.
+      console.error('\n🔐 Agent requires OAuth authorization.');
+      if (error.requirements.authorizationServer) {
+        console.error(`   Authorization server: ${safe(error.requirements.authorizationServer)}`);
+      }
+      if (error.requirements.scopesSupported?.length) {
+        console.error(`   Scopes: ${error.requirements.scopesSupported.map(safe).join(', ')}`);
+      }
+      // Let execution fall through to the auto-OAuth path below.
+    }
+
+    // Check if this is an OAuth-required error for MCP and offer auto-authentication.
+    // `NeedsAuthorizationError` is the richer form (already extended from
+    // AuthenticationRequiredError); the string-match branches cover older
+    // error shapes from the MCP SDK and other 401 paths.
     const isUnauthorized =
+      error instanceof NeedsAuthorizationError ||
       error.name === 'UnauthorizedError' ||
       error.message?.toLowerCase().includes('unauthorized') ||
       error.message?.includes('401');

@@ -369,10 +369,11 @@ export function is401Error(error: unknown, got401Flag = false): boolean {
     return true;
   }
 
-  // Fall back to string matching in error message
-  // This is fragile but necessary since different SDKs format errors differently
+  // Fall back to string matching in error message. Use word boundaries so
+  // we don't misidentify things like "product prod-401-xyz" as an HTTP 401,
+  // and require "Unauthorized" as a whole word rather than as a substring.
   const message = (errorObj as { message?: string })?.message || '';
-  return message.includes('401') || message.includes('Unauthorized');
+  return /\b401\b/.test(message) || /\bunauthorized\b/i.test(message);
 }
 
 /**

@@ -90,6 +90,9 @@ import {
   TaskTimeoutError,
   is401Error,
 } from '../errors';
+import { isLikelyPrivateUrl } from '../net';
+import { discoverAuthorizationRequirements, NeedsAuthorizationError } from '../auth/oauth/authorization-required';
+import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -384,7 +387,6 @@ export class SingleAgentClient {
   private async fetchA2ACanonicalUrl(agentUri: string): Promise<string> {
     const clientModule = require('@a2a-js/sdk/client');
     const A2AClient = clientModule.A2AClient;
-    const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
 
     const authToken = this.normalizedAgent.auth_token;
     let got401 = false;
@@ -435,8 +437,16 @@ export class SingleAgentClient {
 
       return this.computeBaseUrl(agentUri);
     } catch (error: unknown) {
-      // If we got a 401, throw AuthenticationRequiredError
+      // If we got a 401, throw the richer NeedsAuthorizationError when the
+      // full discovery walk succeeds; otherwise fall back to the simpler
+      // one-hop AuthenticationRequiredError so behavior degrades gracefully.
       if (is401Error(error, got401)) {
+        const requirements = await discoverAuthorizationRequirements(agentUri, {
+          allowPrivateIp: isLikelyPrivateUrl(agentUri),
+        });
+        if (requirements) {
+          throw new NeedsAuthorizationError(requirements);
+        }
         const oauthMetadata = await discoverOAuthMetadata(agentUri);
         throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined);
       }
@@ -488,7 +498,6 @@ export class SingleAgentClient {
    */
   private async discoverMCPEndpoint(providedUri: string): Promise<string> {
     const { connectMCPWithFallback } = await import('../protocols/mcp');
-    const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
 
     const authToken = this.agent.auth_token;
     const agentHeaders = this.agent.headers;
@@ -562,11 +571,19 @@ export class SingleAgentClient {
       return firstWorkingUrl;
     }
 
-    // If we got 401 from any endpoint, throw AuthenticationRequiredError
+    // If we got 401 from any endpoint, throw an authentication-required error.
+    // Prefer the richer NeedsAuthorizationError when we can walk the full
+    // RFC 9728 chain (PRM → AS metadata → endpoints + scopes + DCR hint).
+    // Fall back to the simpler AuthenticationRequiredError with one-hop AS
+    // metadata when the walk doesn't yield enough.
     if (got401) {
-      // Try to fetch OAuth metadata to provide helpful guidance
+      const requirements = await discoverAuthorizationRequirements(providedUri, {
+        allowPrivateIp: isLikelyPrivateUrl(providedUri),
+      });
+      if (requirements) {
+        throw new NeedsAuthorizationError(requirements);
+      }
       const oauthMetadata = await discoverOAuthMetadata(providedUri);
-
       throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined);
     }
 

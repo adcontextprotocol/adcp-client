@@ -11,4 +11,4 @@ export {
   type SsrfFetchOptions,
   type SsrfFetchResult,
 } from './ssrf-fetch';
-export { isPrivateIp, isAlwaysBlocked } from './address-guards';
+export { isPrivateIp, isAlwaysBlocked, isLikelyPrivateUrl } from './address-guards';
