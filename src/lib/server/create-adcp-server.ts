@@ -577,6 +577,35 @@ export interface SignedRequestsConfig {
 export const ADCP_PRE_TRANSPORT: unique symbol = Symbol.for('@adcp/client.preTransport');
 
 /**
+ * Diagnostic snapshot of the signed-requests wiring on a returned server.
+ * Read via `server[ADCP_SIGNED_REQUESTS_STATE]` so integration tests and
+ * operator boot diagnostics can assert on the claim/config pairing without
+ * parsing log output. Populated on every `createAdcpServer` call.
+ */
+export interface AdcpSignedRequestsState {
+  /** True when `signedRequests: {...}` was passed and the verifier is auto-wired. */
+  autoWired: boolean;
+  /** True when `capabilities.specialisms` includes `'signed-requests'`. */
+  specialismClaimed: boolean;
+  /** True when `capabilities.request_signing.supported === true`. */
+  capabilitySupported: boolean;
+  /**
+   * Non-fatal mismatch state. `'ok'` when wiring + claim + supported are
+   * all aligned (or all off); `'claim_without_config'` when the claim is
+   * set but no `signedRequests` config was passed (legacy manual
+   * `serve({ preTransport })` path — logged but not thrown).
+   */
+  mismatch: 'ok' | 'claim_without_config';
+}
+
+/**
+ * Symbol under which `createAdcpServer` attaches the `AdcpSignedRequestsState`
+ * snapshot. Use `server[ADCP_SIGNED_REQUESTS_STATE]` to inspect wiring from
+ * tests or boot diagnostics.
+ */
+export const ADCP_SIGNED_REQUESTS_STATE: unique symbol = Symbol.for('@adcp/client.signedRequestsState');
+
+/**
  * Shape of the preTransport function attached by `createAdcpServer` when
  * `signedRequests` is configured. Returns `true` if the middleware has already
  * sent a response (e.g., 401 on verification failure), `false` to continue
@@ -1788,10 +1817,23 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     });
   }
 
+  const signedRequestsState: AdcpSignedRequestsState = {
+    autoWired: Boolean(signedRequests),
+    specialismClaimed: claimsSignedRequests,
+    capabilitySupported: capConfig?.request_signing?.supported === true,
+    mismatch: claimsSignedRequests && !signedRequests ? 'claim_without_config' : 'ok',
+  };
+  Object.defineProperty(server, ADCP_SIGNED_REQUESTS_STATE, {
+    value: signedRequestsState,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+
   logger.info('AdCP server created', {
     tools: [...registeredToolNames],
     protocols,
-    signedRequestsAutoWired: Boolean(signedRequests),
+    signedRequests: signedRequestsState,
   });
 
   return server;

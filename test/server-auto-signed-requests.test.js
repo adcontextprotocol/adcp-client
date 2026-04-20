@@ -3,7 +3,13 @@ const assert = require('node:assert');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 
-const { serve, createAdcpServer, InMemoryStateStore, ADCP_PRE_TRANSPORT } = require('../dist/lib/server/index.js');
+const {
+  serve,
+  createAdcpServer,
+  InMemoryStateStore,
+  ADCP_PRE_TRANSPORT,
+  ADCP_SIGNED_REQUESTS_STATE,
+} = require('../dist/lib/server/index.js');
 const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = require('../dist/lib/signing/server.js');
 const { signRequest } = require('../dist/lib/signing/signer.js');
 
@@ -212,6 +218,57 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       const server = createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: true }));
       const attached = server[ADCP_PRE_TRANSPORT];
       assert.strictEqual(typeof attached, 'function');
+    });
+
+    it('exposes the auto-wire state via ADCP_SIGNED_REQUESTS_STATE so operators can assert the wiring', () => {
+      const onServer = createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: true }));
+      const state = onServer[ADCP_SIGNED_REQUESTS_STATE];
+      assert.deepStrictEqual(state, {
+        autoWired: true,
+        specialismClaimed: true,
+        capabilitySupported: true,
+        mismatch: 'ok',
+      });
+    });
+
+    it('flags claim_without_config in ADCP_SIGNED_REQUESTS_STATE (legacy manual-wiring path)', () => {
+      const offServer = createAdcpServer({
+        ...sellerConfig({ withSignedRequests: false, withSpecialism: true }),
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+      });
+      const state = offServer[ADCP_SIGNED_REQUESTS_STATE];
+      assert.strictEqual(state.autoWired, false);
+      assert.strictEqual(state.specialismClaimed, true);
+      assert.strictEqual(state.mismatch, 'claim_without_config');
+    });
+
+    it('gives the expected error message shape for each misconfiguration pattern', () => {
+      // config + no claim
+      assert.throws(
+        () => createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: false })),
+        err => /signedRequests.*is configured but.*specialisms.*does not include "signed-requests"/.test(err.message)
+      );
+      // claim + supported:false — third guard
+      assert.throws(
+        () =>
+          createAdcpServer({
+            ...sellerConfig({ withSignedRequests: true, withSpecialism: true }),
+            capabilities: {
+              specialisms: ['signed-requests'],
+              request_signing: { supported: false },
+            },
+          }),
+        err => /request_signing\.supported.*not true/.test(err.message)
+      );
+      // claim + request_signing omitted entirely
+      assert.throws(
+        () =>
+          createAdcpServer({
+            ...sellerConfig({ withSignedRequests: true, withSpecialism: true }),
+            capabilities: { specialisms: ['signed-requests'] },
+          }),
+        err => /request_signing\.supported.*not true/.test(err.message)
+      );
     });
 
     it('does not attach preTransport when signedRequests is omitted', () => {
@@ -584,6 +641,92 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       } finally {
         await new Promise(resolve => started.server.close(resolve));
       }
+    });
+  });
+
+  describe('non-tools/call JSON-RPC bodies do not enforce signing', () => {
+    it('accepts an unsigned notifications/initialized — verifier sees operation=undefined and falls through', async () => {
+      const started = await new Promise(resolve => {
+        const srv = serve(() => createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: true })), {
+          port: 0,
+          onListening: url => resolve({ server: srv, url }),
+        });
+      });
+      try {
+        const notificationBody = {
+          jsonrpc: '2.0',
+          method: 'notifications/initialized',
+          params: {},
+        };
+        const res = await fetch(started.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+          body: JSON.stringify(notificationBody),
+        });
+        // The verifier does not enforce (params.name absent → operation
+        // undefined → not in required_for). MCP transport handles the
+        // notification as no-op JSON-RPC. Assertion is narrow: the
+        // response did NOT come back as 401 signature-required.
+        assert.notStrictEqual(res.status, 401, 'non-tools/call body must not trigger 401');
+      } finally {
+        await new Promise(resolve => started.server.close(resolve));
+      }
+    });
+  });
+
+  describe('agentUrlForKeyid config threads through to VerifyResult.agent_url', () => {
+    it('populates VerifyResult.agent_url when the resolver returns a URL for the keyid', async () => {
+      // Unit-level coverage for the config option — exercises the verifier
+      // that `SignedRequestsConfig.agentUrlForKeyid` ultimately forwards
+      // to. Going through the full serve() stack would need ctx.verifiedSigner
+      // exposure on HandlerContext, which is a separate DX ask; this
+      // assertion at the verifier layer is sufficient to fence the
+      // configuration surface.
+      const { verifyRequestSignature } = require('../dist/lib/signing/verifier.js');
+      const { signRequest } = require('../dist/lib/signing/signer.js');
+
+      const targetUrl = 'https://seller.example.com/mcp/create_media_buy';
+      const body = JSON.stringify({ idempotency_key: 'agent-url-test-vectorkeyid01234567890' });
+      const headers = { 'Content-Type': 'application/json' };
+      const signed = signRequest(
+        { method: 'POST', url: targetUrl, headers, body },
+        { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: edPrivate },
+        { coverContentDigest: true }
+      );
+
+      const resolverCalls = [];
+      const result = await verifyRequestSignature(
+        { method: 'POST', url: targetUrl, headers: { ...headers, ...signed.headers }, body },
+        {
+          capability: {
+            supported: true,
+            required_for: ['create_media_buy'],
+            covers_content_digest: 'either',
+          },
+          jwks: new StaticJwksResolver([edPublic]),
+          replayStore: new InMemoryReplayStore({ maxEntriesPerKeyid: 10 }),
+          revocationStore: new InMemoryRevocationStore({
+            issuer: 'test-issuer',
+            updated: new Date().toISOString(),
+            next_update: new Date(Date.now() + 60_000).toISOString(),
+            revoked_kids: [],
+            revoked_jtis: [],
+          }),
+          operation: 'create_media_buy',
+          agentUrlForKeyid: keyid => {
+            resolverCalls.push(keyid);
+            return keyid === 'test-ed25519-2026' ? 'https://seller.example.com/mcp' : undefined;
+          },
+        }
+      );
+      assert.strictEqual(result.status, 'verified');
+      assert.strictEqual(result.keyid, 'test-ed25519-2026');
+      assert.strictEqual(
+        result.agent_url,
+        'https://seller.example.com/mcp',
+        'agentUrlForKeyid return value MUST surface on VerifyResult.agent_url'
+      );
+      assert.deepStrictEqual(resolverCalls, ['test-ed25519-2026']);
     });
   });
 

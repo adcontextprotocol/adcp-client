@@ -84,7 +84,11 @@ export function match<T, R>(result: TaskResult<T>, handlers: Record<string, unkn
  *
  * Non-enumerable so `JSON.stringify(result)`, `{...result}`, and
  * `Object.keys(result)` are unaffected — the method only surfaces through
- * direct property access and autocomplete.
+ * direct property access and autocomplete. **Note:** because the method is
+ * non-enumerable, shallow clones like `const r = {...result}` or
+ * `structuredClone(result)` do NOT carry the method over. Use the free
+ * function `match(clone, handlers)` on clones, or call `attachMatch(clone)`
+ * to re-decorate.
  *
  * Idempotent: if `.match` is already present, the result is returned
  * unchanged. Safe to call on results that have already been decorated

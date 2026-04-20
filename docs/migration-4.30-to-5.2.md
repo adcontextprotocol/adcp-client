@@ -420,9 +420,13 @@ AdCP v2 went unsupported on 2026-04-20 as part of the 3.0 GA cutover ([adcp#2220
 
 **Status in 5.x.** Supported, no behavioral change. The emitter logs a one-time `console.warn` the first time it emits an HMAC-signed webhook per process, so integrations surface the deprecation notice in logs without spamming every retry. The `WebhookAuthentication` type carries an `@deprecated` JSDoc tag flagging the `hmac_sha256` variant. Suppress the warning with `ADCP_SUPPRESS_HMAC_WARNING=1` if you're knowingly staying on HMAC until your buyers migrate.
 
-**SDK vs spec status.** The AdCP spec still supports HMAC as a legacy fallback for buyers that registered `push_notification_config.authentication.credentials` — it is not spec-deprecated. The SDK flags it as deprecated to steer new integrations at the spec-current RFC 9421 path, but the implementation will remain until the spec itself retires the mode. No hard SDK removal date.
+**SDK vs spec status.** The AdCP spec still supports HMAC as a legacy fallback for buyers that registered `push_notification_config.authentication.credentials` — it is not spec-deprecated. The SDK flags it as deprecated to steer new integrations at the spec-current RFC 9421 path, but the implementation will remain until the spec itself retires the mode. No hard SDK removal date; tracking indicator is "post-2026 H2 when buyer 9421-adoption telemetry stabilizes."
 
 **Migration.** Switch emitters to the default 9421 path (omit `authentication` entirely, or pass `null`). Buyers verify with `verifyWebhookSignature` using a `BrandJsonJwksResolver` or a pre-configured JWKS URL — see the seller skill's webhook signing section and the `signed-requests` specialism doc for end-to-end wiring.
+
+**Suppressing the deprecation log.** Two paths, use whichever fits your deployment:
+- Env var: `ADCP_SUPPRESS_HMAC_WARNING=1` — right for CI runners, container images, or anywhere setting env is cheap.
+- Programmatic: `createWebhookEmitter({ suppressLegacyWarnings: true })` — right for libraries embedded in agents where setting env vars is awkward, or where you want the suppression tied to a specific emitter instance.
 
 ## Migration checklist
 

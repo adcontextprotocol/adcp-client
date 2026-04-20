@@ -76,8 +76,9 @@ export type WebhookAuthentication = { type: 'bearer'; token: string } | { type: 
 
 let hmacWarningFired = false;
 
-function maybeWarnHmacDeprecation(): void {
+function maybeWarnHmacDeprecation(suppressLegacyWarnings?: boolean): void {
   if (hmacWarningFired) return;
+  if (suppressLegacyWarnings) return;
   if (process.env.ADCP_SUPPRESS_HMAC_WARNING === '1') return;
   hmacWarningFired = true;
   console.warn(
@@ -85,7 +86,8 @@ function maybeWarnHmacDeprecation(): void {
       'HMAC remains supported in the AdCP spec as a legacy fallback but RFC ' +
       '9421 is the spec-current path; migrate when your counterparties are ' +
       'ready. See docs/migration-4.30-to-5.2.md#webhook-hmac-legacy-deprecation. ' +
-      'Suppress with ADCP_SUPPRESS_HMAC_WARNING=1.'
+      'Suppress with ADCP_SUPPRESS_HMAC_WARNING=1 (env) or ' +
+      'createWebhookEmitter({ suppressLegacyWarnings: true }) (programmatic).'
   );
 }
 
@@ -127,6 +129,15 @@ export interface WebhookEmitterOptions {
    * skip real backoff. Takes (ms, abortSignal) and resolves when slept.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Suppress the one-time `console.warn` emitted on first HMAC-SHA256
+   * webhook delivery. Programmatic equivalent of
+   * `ADCP_SUPPRESS_HMAC_WARNING=1`, for libraries embedded in agents where
+   * setting an env var is awkward. Does not affect the `@deprecated` JSDoc
+   * flag on `WebhookAuthentication` — the type-level deprecation signal
+   * always shows up in IDEs.
+   */
+  suppressLegacyWarnings?: boolean;
 }
 
 export interface WebhookEmitParams {
@@ -223,6 +234,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
             tag: options.tag,
             userAgent: options.userAgent,
             fetch: fetchImpl,
+            suppressLegacyWarnings: options.suppressLegacyWarnings,
           });
           status = response.status;
           lastStatus = status;
@@ -293,6 +305,7 @@ async function deliverOnce(args: {
   tag?: string;
   userAgent?: string;
   fetch: typeof fetch;
+  suppressLegacyWarnings?: boolean;
 }): Promise<DeliveryResponse> {
   const headers = buildHeaders(args);
   const response = await args.fetch(args.url, {
@@ -313,6 +326,7 @@ function buildHeaders(args: {
   authentication: WebhookAuthentication;
   tag?: string;
   userAgent?: string;
+  suppressLegacyWarnings?: boolean;
 }): Record<string, string> {
   const baseHeaders: Record<string, string> = {
     'content-type': 'application/json',
@@ -323,7 +337,7 @@ function buildHeaders(args: {
   // §3.0 legacy section: X-ADCP-Signature + X-ADCP-Timestamp over
   // `${ts}.${raw_body_bytes}`.
   if (args.authentication?.type === 'hmac_sha256') {
-    maybeWarnHmacDeprecation();
+    maybeWarnHmacDeprecation(args.suppressLegacyWarnings);
     const ts = Math.floor(Date.now() / 1000).toString();
     const hmac = createHmac('sha256', args.authentication.secret);
     hmac.update(`${ts}.${args.bodyBytes}`, 'utf8');
