@@ -20,7 +20,12 @@ export {
 } from './canonicalize';
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
 export { jwkToPublicKey, verifySignature } from './crypto';
-export { RequestSignatureError, type RequestSignatureErrorCode } from './errors';
+export {
+  RequestSignatureError,
+  type RequestSignatureErrorCode,
+  WebhookSignatureError,
+  type WebhookSignatureErrorCode,
+} from './errors';
 export { StaticJwksResolver, type JwksResolver } from './jwks';
 export { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
 export { parseSignature, parseSignatureInput, type ParsedSignature, type ParsedSignatureInput } from './parser';
@@ -46,4 +51,11 @@ export {
   type VerifyResult,
 } from './types';
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
+export {
+  verifyWebhookSignature,
+  WEBHOOK_MANDATORY_COMPONENTS,
+  WEBHOOK_SIGNING_TAG,
+  type VerifyWebhookOptions,
+  type VerifyWebhookResult,
+} from './webhook-verifier';
 export { createExpressVerifier, type ExpressLike, type ExpressMiddlewareOptions } from './middleware';

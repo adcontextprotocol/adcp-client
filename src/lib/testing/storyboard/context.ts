@@ -315,28 +315,70 @@ export function forwardAliasCache(from: StoryboardContext, to: StoryboardContext
 }
 
 /**
+ * Runner-owned substitution variables.
+ *
+ * Parallels `$context.*` but lives outside the serialized context object so
+ * implementation details (the receiver's bound URL, per-step operation ids)
+ * stay off the compliance report. Expanded within strings (embedded
+ * substitution), unlike `$context.*` which matches whole strings only.
+ *
+ * Supported patterns:
+ *   - `{{runner.webhook_base}}` — base URL of the receiver.
+ *   - `{{runner.webhook_url:<step_id>}}` — per-step webhook URL
+ *     (`<base>/step/<step_id>/<operation_id>`). The operation_id is minted
+ *     lazily on first expansion and cached for the rest of the run so the
+ *     matching `{{prior_step.<step_id>.operation_id}}` reference downstream
+ *     resolves to the same value.
+ *   - `{{prior_step.<step_id>.operation_id}}` — operation_id the runner
+ *     allocated when expanding `{{runner.webhook_url:<step_id>}}`.
+ */
+export interface RunnerVariables {
+  /** Base URL of the runner's webhook receiver, when enabled. */
+  webhookBase?: string;
+  /** step_id → operation_id, filled lazily on expansion. */
+  stepOperationIds: Map<string, string>;
+}
+
+export function createRunnerVariables(opts: { webhookBase?: string } = {}): RunnerVariables {
+  return {
+    ...(opts.webhookBase !== undefined && { webhookBase: opts.webhookBase }),
+    stepOperationIds: new Map(),
+  };
+}
+
+/**
  * Deep-walk an object and replace recognized placeholder strings:
  *
- * - `$context.<key>` → value from `context[key]`
- * - `$generate:uuid_v4` → fresh UUID v4 per occurrence
- * - `$generate:uuid_v4#<alias>` → fresh UUID v4 on first occurrence,
- *   then the same UUID for every subsequent occurrence of the same
- *   alias within this storyboard run (enables initial + replay testing)
+ * - `$context.<key>` → value from `context[key]` (anchored whole-string match)
+ * - `$generate:uuid_v4` → fresh UUID v4 per occurrence (anchored)
+ * - `$generate:uuid_v4#<alias>` → fresh UUID v4 on first occurrence, then the
+ *   same UUID for every subsequent occurrence of the same alias within this
+ *   run (anchored)
+ * - `{{runner.*}}` / `{{prior_step.<id>.operation_id}}` → embedded runner-
+ *   variable substitution (only when `runnerVars` is supplied)
  *
  * Returns a new object (does not mutate the input).
  */
-export function injectContext(obj: Record<string, unknown>, context: StoryboardContext): Record<string, unknown> {
-  return deepReplace(obj, context) as Record<string, unknown>;
+export function injectContext(
+  obj: Record<string, unknown>,
+  context: StoryboardContext,
+  runnerVars?: RunnerVariables
+): Record<string, unknown> {
+  return deepReplace(obj, context, runnerVars) as Record<string, unknown>;
 }
 
-function deepReplace(value: unknown, context: StoryboardContext): unknown {
+function deepReplace(value: unknown, context: StoryboardContext, runnerVars?: RunnerVariables): unknown {
   if (typeof value === 'string') {
-    const ctxMatch = value.match(/^\$context\.(\w+)$/);
+    // Mustache first — expands in-place within the string, so anchored
+    // patterns below still apply to the post-expansion result.
+    const expanded = runnerVars ? expandMustache(value, runnerVars) : value;
+
+    const ctxMatch = expanded.match(/^\$context\.(\w+)$/);
     if (ctxMatch?.[1]) {
       const key = ctxMatch[1];
-      return key in context ? context[key] : value;
+      return key in context ? context[key] : expanded;
     }
-    const genMatch = value.match(/^\$generate:uuid_v4(?:#([A-Za-z0-9_.-]+))?$/);
+    const genMatch = expanded.match(/^\$generate:uuid_v4(?:#([A-Za-z0-9_.-]+))?$/);
     if (genMatch) {
       const alias = genMatch[1];
       if (alias) {
@@ -346,22 +388,52 @@ function deepReplace(value: unknown, context: StoryboardContext): unknown {
       }
       return randomUUID();
     }
-    return value;
+    return expanded;
   }
 
   if (Array.isArray(value)) {
-    return value.map(item => deepReplace(item, context));
+    return value.map(item => deepReplace(item, context, runnerVars));
   }
 
   if (value !== null && typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      result[k] = deepReplace(v, context);
+      result[k] = deepReplace(v, context, runnerVars);
     }
     return result;
   }
 
   return value;
+}
+
+/**
+ * Expand every `{{runner.*}}` and `{{prior_step.*}}` token in a string.
+ * Unknown tokens are left in place so the runner can surface a pointed
+ * "unresolved substitution" error rather than silently shipping the
+ * literal mustache tokens to an agent.
+ */
+function expandMustache(input: string, runnerVars: RunnerVariables): string {
+  return input.replace(/\{\{(runner\.[^}]+|prior_step\.[^}]+)\}\}/g, (match, inner) => {
+    if (inner === 'runner.webhook_base') {
+      return runnerVars.webhookBase ?? match;
+    }
+    const webhookUrlMatch = /^runner\.webhook_url:([A-Za-z0-9_]+)$/.exec(inner);
+    if (webhookUrlMatch?.[1]) {
+      if (!runnerVars.webhookBase) return match;
+      const stepId = webhookUrlMatch[1];
+      let opId = runnerVars.stepOperationIds.get(stepId);
+      if (!opId) {
+        opId = randomUUID();
+        runnerVars.stepOperationIds.set(stepId, opId);
+      }
+      return `${runnerVars.webhookBase}/step/${stepId}/${opId}`;
+    }
+    const priorMatch = /^prior_step\.([A-Za-z0-9_]+)\.operation_id$/.exec(inner);
+    if (priorMatch?.[1]) {
+      return runnerVars.stepOperationIds.get(priorMatch[1]) ?? match;
+    }
+    return match;
+  });
 }
 
 // ────────────────────────────────────────────────────────────

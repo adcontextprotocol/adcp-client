@@ -17,7 +17,15 @@ export {
   type SignatureParams,
 } from './canonicalize';
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
-export { signRequest, type SignedRequest, type SignerKey, type SignRequestOptions } from './signer';
+export {
+  signRequest,
+  signWebhook,
+  type SignedRequest,
+  type SignerKey,
+  type SignRequestOptions,
+  type SignWebhookOptions,
+} from './signer';
+export { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-verifier';
 export { createSigningFetch, type CoverContentDigestPredicate, type SigningFetchOptions } from './fetch';
 export {
   ALLOWED_ALGS,

@@ -9,7 +9,15 @@
 import { getOrCreateClient, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import { closeConnections } from '../../protocols';
 import { executeStoryboardTask } from './task-map';
-import { extractContext, injectContext, applyContextOutputs, applyContextInputs, forwardAliasCache } from './context';
+import {
+  extractContext,
+  injectContext,
+  applyContextOutputs,
+  applyContextInputs,
+  forwardAliasCache,
+  createRunnerVariables,
+  type RunnerVariables,
+} from './context';
 import { runValidations, type ValidationContext } from './validations';
 import { buildRequest, hasRequestBuilder } from './request-builder';
 import { resolveBrand } from '../client';
@@ -24,7 +32,8 @@ import {
 } from './probes';
 import { validateTestKit } from './test-kit';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
-import { createWebhookReceiver, type CapturedWebhook, type WebhookReceiver } from './webhook-receiver';
+import { createWebhookReceiver, type WebhookReceiver } from './webhook-receiver';
+import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import type {
   HttpProbeResult,
   RunnerDetailedSkipReason,
@@ -198,20 +207,26 @@ export async function runStoryboard(
   let failedCount = 0;
   let skippedCount = 0;
 
-  // Start an ephemeral webhook receiver when the run opts in. The URL is
-  // seeded into the context up-front so steps that fire webhook-triggering
-  // tasks can inject `$context.webhook_receiver_url` into push_notification_config.
-  const webhookReceiver = options.webhook_receiver?.enabled
+  // Start an ephemeral webhook receiver when the run opts in. The base URL
+  // is exposed via `{{runner.webhook_base}}` / `{{runner.webhook_url:<id>}}`
+  // substitutions so storyboards can inject per-step URLs into
+  // `push_notification_config.url`. See adcontextprotocol/adcp#2431.
+  const webhookReceiver = options.webhook_receiver
     ? await createWebhookReceiver({
+        ...(options.webhook_receiver.mode && { mode: options.webhook_receiver.mode }),
         ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
         ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
-        ...(options.webhook_receiver.path !== undefined && { path: options.webhook_receiver.path }),
         ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
       })
     : undefined;
-  if (webhookReceiver) {
-    context = { ...context, webhook_receiver_url: webhookReceiver.url };
-  }
+  const runnerVars = createRunnerVariables({
+    ...(webhookReceiver && { webhookBase: webhookReceiver.base_url }),
+  });
+  // Pre-arm retry-replay policies for any expect_webhook_retry_keys_stable
+  // steps. Ordering matters: the receiver must be rejecting deliveries
+  // before the triggering step fires its webhook, otherwise the first
+  // delivery succeeds and the sender never retries.
+  if (webhookReceiver) armWebhookAssertions(storyboard, runnerVars, webhookReceiver);
 
   // Flatten all steps for next-step preview lookups
   const allSteps = flattenSteps(storyboard);
@@ -300,6 +315,7 @@ export async function runStoryboard(
         priorProbes,
         agentUrl: assignment.agentUrl,
         webhookReceiver,
+        runnerVars,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance) {
@@ -434,20 +450,21 @@ export async function runStoryboardStep(
     await getOrDiscoverProfile(client, options);
   }
 
-  let context: StoryboardContext = { ...options.context };
+  const context: StoryboardContext = { ...options.context };
   if (options.context) forwardAliasCache(options.context, context);
 
-  const webhookReceiver = options.webhook_receiver?.enabled
+  const webhookReceiver = options.webhook_receiver
     ? await createWebhookReceiver({
+        ...(options.webhook_receiver.mode && { mode: options.webhook_receiver.mode }),
         ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
         ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
-        ...(options.webhook_receiver.path !== undefined && { path: options.webhook_receiver.path }),
         ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
       })
     : undefined;
-  if (webhookReceiver) {
-    context = { ...context, webhook_receiver_url: webhookReceiver.url };
-  }
+  const runnerVars = createRunnerVariables({
+    ...(webhookReceiver && { webhookBase: webhookReceiver.base_url }),
+  });
+  if (webhookReceiver) armWebhookAssertions(storyboard, runnerVars, webhookReceiver);
 
   // Find the step
   const allSteps = flattenSteps(storyboard);
@@ -466,6 +483,7 @@ export async function runStoryboardStep(
     priorProbes: new Map(),
     agentUrl,
     webhookReceiver,
+    runnerVars,
   });
 
   if (!options._client) {
@@ -488,6 +506,8 @@ interface ExecutionState {
   agentUrl: string;
   /** Shared ephemeral webhook receiver, when the run has one enabled. */
   webhookReceiver?: WebhookReceiver;
+  /** Shared runner-variable bag for `{{runner.*}}` substitution. */
+  runnerVars?: RunnerVariables;
 }
 
 async function executeStep(
@@ -513,6 +533,12 @@ async function executeStep(
     return executeProbeStep(step, phaseId, context, allSteps, options, runState);
   }
 
+  // Webhook-assertion pseudo-tasks observe the shared receiver instead of
+  // driving the agent. They never reach the MCP/A2A transport.
+  if (WEBHOOK_ASSERTION_TASKS.has(step.task)) {
+    return executeWebhookAssertionStep(step, phaseId, context, allSteps, options, runState);
+  }
+
   // Resolve $test_kit.* task references before any downstream dispatch / skip checks.
   // When the reference resolves to nothing, fall back to `task_default`.
   const resolvedTask = resolveTaskName(step, options);
@@ -534,7 +560,7 @@ async function executeStep(
 
   // Check requires_tool — skip if agent doesn't have it
   if (step.requires_tool && options.agentTools && !options.agentTools.includes(step.requires_tool)) {
-    const next = getNextStepPreview(step.id, allSteps, context);
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     const reason: RunnerSkipReason =
       step.requires_tool === 'comply_test_controller' ? 'missing_test_controller' : 'missing_tool';
     const detail =
@@ -560,7 +586,7 @@ async function executeStep(
 
   // Skip if agent doesn't implement the tool this step calls.
   if (options.agentTools && !options.agentTools.includes(effectiveStep.task)) {
-    const next = getNextStepPreview(step.id, allSteps, context);
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     const detail = `Agent did not advertise tool "${effectiveStep.task}"; agent tools: [${(options.agentTools ?? []).join(', ')}].`;
     return {
       step_id: step.id,
@@ -588,7 +614,7 @@ async function executeStep(
   if (options.request) {
     request = { ...options.request };
   } else if (step.expect_error && step.sample_request) {
-    request = injectContext({ ...step.sample_request }, context);
+    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else if (hasRequestBuilder(effectiveStep.task)) {
     request = buildRequest(effectiveStep, context, options);
     // Merge pass-through envelope fields from sample_request — builders
@@ -600,7 +626,7 @@ async function executeStep(
     // generated UUID overriding it at the client layer).
     if (step.sample_request) {
       if (step.sample_request.context !== undefined && request.context === undefined) {
-        request.context = injectContext({ context: step.sample_request.context }, context).context;
+        request.context = injectContext({ context: step.sample_request.context }, context, runState.runnerVars).context;
       }
       if (step.sample_request.ext !== undefined && request.ext === undefined) {
         request.ext = step.sample_request.ext;
@@ -608,13 +634,14 @@ async function executeStep(
       if (step.sample_request.idempotency_key !== undefined && request.idempotency_key === undefined) {
         const resolved = injectContext(
           { idempotency_key: step.sample_request.idempotency_key },
-          context
+          context,
+          runState.runnerVars
         ).idempotency_key;
         if (typeof resolved === 'string') request.idempotency_key = resolved;
       }
     }
   } else if (step.sample_request) {
-    request = injectContext({ ...step.sample_request }, context);
+    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else {
     request = {};
   }
@@ -635,7 +662,7 @@ async function executeStep(
   // and didn't produce the expected output. Skip rather than sending garbage.
   const unresolvedVars = findUnresolvedContextVars(request);
   if (unresolvedVars.length > 0 && !step.expect_error) {
-    const next = getNextStepPreview(step.id, allSteps, context);
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     const detail = `Skipped: unresolved context variables from prior steps: ${unresolvedVars.join(', ')}.`;
     return {
       step_id: step.id,
@@ -738,7 +765,7 @@ async function executeStep(
   const isUnsupported = stepResult.error?.includes('does not support:');
   const isUnknownTool = stepResult.error && /Unknown tool[:\s]/i.test(stepResult.error);
   if (!taskResult && (isUnsupported || isUnknownTool)) {
-    const next = getNextStepPreview(step.id, allSteps, context);
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     const reason: RunnerSkipReason = isUnknownTool ? 'missing_tool' : 'not_applicable';
     const detail = isUnknownTool
       ? `Agent rejected tool "${effectiveStep.task}" as unknown: ${stepResult.error}`
@@ -776,32 +803,23 @@ async function executeStep(
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
 
-  // Run validations. Resolve `$context.<key>` placeholders in `value`,
-  // `allowed_values`, and `filter.body` so expected values can reference
-  // prior steps (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`,
-  // expect_webhook filters reference a task_id produced by the triggering step).
+  // Run validations. Resolve `$context.<key>` placeholders in `value` and
+  // `allowed_values` fields so expected values can reference prior steps
+  // (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`).
   let validations: ValidationResult[] = [];
-  // `expect_webhook` can match even when the step produced neither a
-  // taskResult nor an httpResult — the webhook is the observable effect.
-  const hasWebhookCheck = step.validations?.some(v => v.check === 'expect_webhook') ?? false;
-  if (step.validations?.length && (taskResult || httpResult || hasWebhookCheck)) {
+  if (step.validations?.length && (taskResult || httpResult)) {
     const resolvedValidations = step.validations.map(v => {
       const resolved = { ...v };
       if (resolved.value !== undefined) {
-        resolved.value = injectContext({ __v: resolved.value }, context).__v;
+        resolved.value = injectContext({ __v: resolved.value }, context, runState.runnerVars).__v;
       }
       if (Array.isArray(resolved.allowed_values)) {
-        resolved.allowed_values = resolved.allowed_values.map(av => injectContext({ __v: av }, context).__v);
-      }
-      if (resolved.filter?.body && Object.keys(resolved.filter.body).length > 0) {
-        resolved.filter = { body: injectContext({ ...resolved.filter.body }, context) };
+        resolved.allowed_values = resolved.allowed_values.map(
+          av => injectContext({ __v: av }, context, runState.runnerVars).__v
+        );
       }
       return resolved;
     });
-    // Resolve any `expect_webhook` waits before running the sync validator.
-    // Each entry in `webhookMatches` aligns by index with the validations
-    // list; non-webhook checks get `undefined`.
-    const webhookMatches = await resolveWebhookMatches(resolvedValidations, runState.webhookReceiver);
     const vctx: ValidationContext = {
       taskName: effectiveStep.task,
       ...(taskResult && { taskResult }),
@@ -811,7 +829,6 @@ async function executeStep(
       ...(effectiveStep.response_schema_ref && { responseSchemaRef: effectiveStep.response_schema_ref }),
       request: requestRecord,
       ...(responseRecord && { response: responseRecord }),
-      ...(webhookMatches && { webhookMatches }),
     };
     validations = runValidations(resolvedValidations, vctx);
   }
@@ -838,7 +855,7 @@ async function executeStep(
   }
 
   // Build next step preview
-  const next = getNextStepPreview(step.id, allSteps, updatedContext);
+  const next = getNextStepPreview(step.id, allSteps, updatedContext, runState.runnerVars);
 
   return {
     step_id: step.id,
@@ -929,7 +946,7 @@ async function executeProbeStep(
       response: httpResult,
       validations: [],
       context,
-      next: getNextStepPreview(step.id, allSteps, context),
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
       request: requestRecord,
       ...(responseRecord && { response_record: responseRecord }),
       extraction: { path: 'none', note: 'probe self-skipped' },
@@ -970,7 +987,7 @@ async function executeProbeStep(
     validations,
     context,
     error: httpResult?.error ?? (passed ? undefined : 'Probe validations failed.'),
-    next: getNextStepPreview(step.id, allSteps, context),
+    next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
     extraction,
@@ -1121,45 +1138,6 @@ export function applyBrandInvariant(
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
-
-/**
- * Resolve every `expect_webhook` validation in a step by awaiting a
- * matching arrival on the shared receiver. Returns `undefined` when there
- * are no webhook checks — so the validation context can omit the field
- * entirely. For checks running without a configured receiver, a synthetic
- * failure is recorded so the validator renders a pointed error.
- */
-async function resolveWebhookMatches(
-  validations: ReadonlyArray<{ check: string; timeout_ms?: number; filter?: { body?: Record<string, unknown> } }>,
-  receiver: WebhookReceiver | undefined
-): Promise<Array<CapturedWebhook | { error: string } | undefined> | undefined> {
-  const hasAny = validations.some(v => v.check === 'expect_webhook');
-  if (!hasAny) return undefined;
-
-  const results = await Promise.all(
-    validations.map(async v => {
-      if (v.check !== 'expect_webhook') return undefined;
-      if (!receiver) {
-        return {
-          error:
-            '`expect_webhook` requires `webhook_receiver.enabled: true` on the run options. ' +
-            'Without a receiver the runner cannot observe outbound webhooks.',
-        } as const;
-      }
-      const timeoutMs = typeof v.timeout_ms === 'number' ? v.timeout_ms : DEFAULT_WEBHOOK_TIMEOUT_MS;
-      const result = await receiver.wait(v.filter, timeoutMs);
-      if (result.timed_out || !result.webhook) {
-        return {
-          error: `Timed out after ${timeoutMs}ms waiting for a matching webhook.`,
-        } as const;
-      }
-      return result.webhook;
-    })
-  );
-  return results;
-}
-
 const MAX_ERROR_LENGTH = 2000;
 
 function truncateError(error: string | undefined): string | undefined {
@@ -1206,7 +1184,8 @@ function flattenSteps(storyboard: Storyboard): FlatStep[] {
 function getNextStepPreview(
   currentStepId: string,
   allSteps: FlatStep[],
-  context: StoryboardContext
+  context: StoryboardContext,
+  runnerVars?: RunnerVariables
 ): StoryboardStepPreview | undefined {
   const currentIdx = allSteps.findIndex(s => s.step.id === currentStepId);
   if (currentIdx === -1 || currentIdx >= allSteps.length - 1) return undefined;
@@ -1216,7 +1195,9 @@ function getNextStepPreview(
   const nextStep = nextFlat.step;
 
   // Inject context into the next step's sample_request for preview
-  const previewRequest = nextStep.sample_request ? injectContext({ ...nextStep.sample_request }, context) : undefined;
+  const previewRequest = nextStep.sample_request
+    ? injectContext({ ...nextStep.sample_request }, context, runnerVars)
+    : undefined;
 
   return {
     step_id: nextStep.id,
@@ -1384,6 +1365,9 @@ function annotateMultiInstanceFailure(
 
 /**
  * Get a preview of the first step in a storyboard (for showing what will happen).
+ *
+ * `{{runner.*}}` tokens are passed through unchanged since no receiver is
+ * bound at preview time. They'll resolve when the step actually runs.
  */
 export function getFirstStepPreview(
   storyboard: Storyboard,

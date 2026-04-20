@@ -152,6 +152,46 @@ export interface StoryboardStep {
    * Unknown expressions → the contribution does NOT fire (fail closed).
    */
   contributes_if?: string;
+  // ──────────────────────────────────────────────────────────
+  // Webhook-assertion step fields (only used when task is one
+  // of `expect_webhook`, `expect_webhook_retry_keys_stable`,
+  // `expect_webhook_signature_valid`). The runner interprets
+  // these pseudo-tasks as receiver observations, not agent calls.
+  // ──────────────────────────────────────────────────────────
+  /**
+   * Step id of the earlier step whose task triggered the webhook under
+   * observation. Used by compliance reports for attribution and (when the
+   * trigger step failed / skipped) to gate the assertion skip.
+   */
+  triggered_by?: string;
+  /** Match predicate scoped to the per-step URL and/or body fields. */
+  filter?: WebhookFilterSpec;
+  /** Seconds to wait for the first matching delivery. Default 30. */
+  timeout_seconds?: number;
+  /** When true (default) assert `idempotency_key` is present and pattern-valid. */
+  expect_idempotency_key?: boolean;
+  /** Optional webhook schema reference; validates the parsed body. */
+  response_schema_webhook_ref?: string;
+  /**
+   * Cap on the number of distinct logical webhook events (grouped by
+   * idempotency_key) delivered within the timeout window. Typical use:
+   * `1` on the replay-side-effect invariant to catch publishers that
+   * re-execute on replay and emit a second webhook under a fresh key.
+   */
+  expect_max_deliveries_per_logical_event?: number;
+  /**
+   * Test-kit contract id this assertion depends on. When the contract is
+   * not in scope the step grades `not_applicable` rather than failing —
+   * lets cross-cutting storyboards (idempotency, governance) reference
+   * webhook assertions without forcing every runner to host a receiver.
+   */
+  requires_contract?: string;
+  /** Retry-replay config for `expect_webhook_retry_keys_stable`. */
+  retry_trigger?: WebhookRetryTriggerSpec;
+  /** Min deliveries to observe for `expect_webhook_retry_keys_stable`. Default 2. */
+  expect_min_deliveries?: number;
+  /** Signature-tag sanity check for `expect_webhook_signature_valid`. Default `adcp/webhook-signing/v1`. */
+  require_tag?: string;
 }
 
 export type StoryboardValidationCheck =
@@ -166,18 +206,7 @@ export type StoryboardValidationCheck =
   | 'on_401_require_header'
   // Cross-cutting
   | 'resource_equals_agent_url'
-  | 'any_of'
-  // Outbound-webhook checks (require `webhook_receiver.enabled` on the run options)
-  | 'expect_webhook';
-
-/**
- * Filter applied to a captured webhook body when waiting. Keys are
- * dot-delimited paths into the parsed JSON body; values are compared with
- * deep equality. An empty or omitted filter matches the first arrival.
- */
-export interface WebhookFilterSpec {
-  body?: Record<string, unknown>;
-}
+  | 'any_of';
 
 export interface StoryboardValidation {
   check: StoryboardValidationCheck;
@@ -188,17 +217,61 @@ export interface StoryboardValidation {
   /** Accepted values for list-match checks (passes if actual matches any). */
   allowed_values?: unknown[];
   description: string;
-  /**
-   * Timeout for `expect_webhook`: millis to wait for a matching webhook
-   * before failing the check. Defaults to 5000.
-   */
-  timeout_ms?: number;
-  /**
-   * Match predicate for `expect_webhook`. The check passes when a webhook
-   * arrives whose body matches every entry in `filter.body`.
-   */
-  filter?: WebhookFilterSpec;
 }
+
+// ────────────────────────────────────────────────────────────
+// Webhook-assertion step types
+//
+// The three `expect_webhook*` tasks are pseudo-tasks: they do not drive the
+// agent over MCP. Instead the runner uses them to observe / assert on the
+// webhook deliveries a prior step triggered. Graded only when the storyboard
+// declares the `webhook_receiver_runner` contract and the runner hosts a
+// receiver. Spec: adcontextprotocol/adcp#2431.
+// ────────────────────────────────────────────────────────────
+
+/** Webhook-body match predicate. Dotted paths, deep equality. */
+export interface WebhookFilterSpec {
+  /** Match by `operation_id` echoed in the per-step URL path. */
+  operation_id?: string;
+  /** Match by dotted-path → value deep equality against the parsed body. */
+  body?: Record<string, unknown>;
+}
+
+/** Receiver behavior that forces the sender to retry so retry-stability can be graded. */
+export interface WebhookRetryTriggerSpec {
+  /** How many deliveries to reject before accepting. Default 3. */
+  count?: number;
+  /** HTTP status code to return for the rejected deliveries. Default 503. */
+  http_status?: number;
+}
+
+/** Error codes per spec (webhook-emission universal, storyboard-schema.yaml). */
+export type WebhookAssertionErrorCode =
+  // expect_webhook
+  | 'no_webhook_received'
+  | 'schema_violation'
+  | 'missing_idempotency_key'
+  | 'invalid_idempotency_key_format'
+  | 'duplicate_webhook_on_replay'
+  // expect_webhook_retry_keys_stable
+  | 'insufficient_retries'
+  | 'idempotency_key_rotated'
+  | 'idempotency_key_format_changed'
+  // expect_webhook_signature_valid
+  | 'signature_invalid'
+  | 'signature_expired'
+  | 'signature_key_unknown'
+  | 'signature_key_purpose_invalid'
+  | 'signature_digest_mismatch'
+  | 'signature_tag_invalid'
+  | 'signature_replayed';
+
+/**
+ * Spec pattern for webhook `idempotency_key`: 16–255 chars of base64url-safe
+ * punctuation. Shared by all three assertion step types; exported so callers
+ * (tests, tooling) can reproduce the grader's exact validation.
+ */
+export const WEBHOOK_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
 
 /**
  * Raw HTTP probe result for tasks like `protected_resource_metadata` that
@@ -283,25 +356,58 @@ export interface StoryboardRunOptions extends TestOptions {
    */
   multi_instance_strategy?: 'round-robin';
   /**
-   * Host an ephemeral webhook receiver for the duration of the run. When
-   * enabled, the runner exposes the receiver URL as
-   * `$context.webhook_receiver_url` so storyboards can inject it into
-   * `push_notification_config.url`, and `expect_webhook` validations wait
-   * for matching webhooks to arrive.
+   * Host an ephemeral webhook receiver during the run so `expect_webhook*`
+   * pseudo-steps can observe outbound webhooks from the agent under test.
+   * Enables the `webhook_receiver_runner` contract referenced by the
+   * `webhook-emission` universal (adcontextprotocol/adcp#2431).
+   *
+   * When enabled, storyboards can substitute `{{runner.webhook_base}}` and
+   * `{{runner.webhook_url:<step_id>}}` into `push_notification_config.url`
+   * and downstream `expect_webhook*` steps observe the deliveries.
+   *
+   * Mode selection matches the spec's `endpoint_modes`:
+   *   - `loopback_mock` (default): bind an HTTP listener on loopback; URLs
+   *     point at `http://127.0.0.1:<port>`. Zero external network setup.
+   *     Suitable for CI lint gates, SDK self-tests, and local dev.
+   *   - `proxy_url`: operator-supplied public URL (tunnel / ingress) routes
+   *     to a local HTTP listener on the configured port. Suitable for AdCP
+   *     Verified grading where the agent under test is remote.
    */
   webhook_receiver?: {
-    enabled: true;
-    /** Bind host for the ephemeral listener. Defaults to `127.0.0.1`. */
+    /** Endpoint mode (default: `loopback_mock`). */
+    mode?: 'loopback_mock' | 'proxy_url';
+    /** Bind host for the local listener. Defaults to `127.0.0.1`. */
     host?: string;
     /** Bind port. `0` (default) lets the kernel assign one. */
     port?: number;
-    /** Path under which POSTs are accepted. Defaults to `/webhook`. */
-    path?: string;
     /**
-     * Advertise this URL to storyboards instead of the bound
-     * `http://host:port` pair. Use when the listener sits behind a tunnel.
+     * Public URL to advertise when `mode: 'proxy_url'`. Must terminate at
+     * the local listener on `port`. Stored verbatim; the runner does not
+     * validate reachability.
      */
     public_url?: string;
+  };
+  /**
+   * Test-kit contract ids that are in scope for this run. A step with
+   * `requires_contract: <id>` grades `not_applicable` when the id is not
+   * listed here. Storyboards that assert webhook behavior typically declare
+   * `webhook_receiver_runner`.
+   */
+  contracts?: string[];
+  /**
+   * Dependencies for `expect_webhook_signature_valid`. When omitted the step
+   * grades `not_applicable` — matches the spec's "pending" gate. Supply the
+   * publisher's JWKS resolver (typically fetched via `brand.json`
+   * `agents[]` `jwks_uri`) to turn the step on. The two optional stores
+   * default to process-local in-memory implementations; override when the
+   * runner needs durable state across runs.
+   */
+  webhook_signing?: {
+    jwks: import('../../signing/jwks').JwksResolver;
+    replayStore?: import('../../signing/replay').ReplayStore;
+    revocationStore?: import('../../signing/revocation').RevocationStore;
+    /** Override the required tag. Defaults to `adcp/webhook-signing/v1`. */
+    required_tag?: string;
   };
 }
 

@@ -15,6 +15,8 @@ export type {
   StoryboardValidation,
   StoryboardValidationCheck,
   WebhookFilterSpec,
+  WebhookRetryTriggerSpec,
+  WebhookAssertionErrorCode,
   ContextOutput,
   ContextInput,
   StoryboardContext,
@@ -25,16 +27,25 @@ export type {
   StoryboardPhaseResult,
   StoryboardResult,
 } from './types';
+export { WEBHOOK_IDEMPOTENCY_KEY_PATTERN } from './types';
 
-// Webhook receiver (publisher-side conformance testing)
+// Webhook receiver (outbound-webhook conformance testing per adcontextprotocol/adcp#2431)
 export { createWebhookReceiver } from './webhook-receiver';
 export type {
   CapturedWebhook,
   CreateWebhookReceiverOptions,
+  RetryReplayPolicy,
   WebhookFilter,
   WebhookReceiver,
   WebhookWaitResult,
 } from './webhook-receiver';
+
+// Runner-variable substitution (`{{runner.*}}` / `{{prior_step.*.operation_id}}`)
+export { createRunnerVariables } from './context';
+export type { RunnerVariables } from './context';
+
+// Webhook-assertion pseudo-tasks
+export { WEBHOOK_ASSERTION_TASKS } from './webhook-assertions';
 
 // Runner
 export { runStoryboard, runStoryboardStep, getFirstStepPreview } from './runner';
