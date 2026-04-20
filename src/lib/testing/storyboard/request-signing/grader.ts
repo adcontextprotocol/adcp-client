@@ -576,8 +576,12 @@ function negativeAcceptedErrorCode(vector: NegativeVector, probe: ProbeResult): 
  * agent's profile.
  *
  * Rules (all three must hold for a graded run):
- *   - `covers_content_digest`: agent's `'either'` is permissive enough
- *     for any vector value. Otherwise, agent and vector must agree.
+ *   - `covers_content_digest`: asymmetric. Vector-side `'either'` is
+ *     permissive (any agent policy can grade the vector). Agent-side
+ *     `'either'` is NOT permissive against a strict vector — an agent
+ *     that declares `'either'` accepts covered AND uncovered requests,
+ *     so it can't pass vectors 007 (`'required'`) or 018
+ *     (`'forbidden'`). Those auto-skip with `capability_profile_mismatch`.
  *   - `required_for`: if the vector asserts a required_for operation,
  *     the agent's `required_for` must include it. The reverse is fine
  *     — an agent that requires MORE operations is still conformant

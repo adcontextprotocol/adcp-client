@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const {
   createAdcpServer,
   verifyApiKey,
+  anyOf,
   respondUnauthorized,
   requireSignatureWhenPresent,
   requireAuthenticatedOrSigned,
@@ -112,12 +113,24 @@ describe('#665 requireSignatureWhenPresent + requiredFor', () => {
     );
   });
 
-  it('throws RequestSignatureError cause when fallback throws on required_for op (bad bearer path)', async () => {
-    // Regression: originally the requiredFor pre-check only ran after a
-    // `fallbackResult === null`, so a bad bearer that made `anyOf` throw
-    // skipped the pre-check entirely and surfaced as `Bearer` challenge.
-    // Fix: pre-check runs regardless of fallback throw/return.
-    const gate = requireSignatureWhenPresent(fakeSig, fakeBearer({ sk_live: { principal: 'acct_1' } }), {
+  it('throws RequestSignatureError cause when anyOf fallback rejects a bad bearer on a required_for op', async () => {
+    // Regression — the EXACT downstream-reported failure mode:
+    // fallback is `anyOf(verifyApiKey(...))`. A caller presents
+    // `Authorization: Bearer wrong-token`. `verifyApiKey` finds no
+    // match and returns null (it only throws if it recognized but
+    // rejected a key); `anyOf` with a single non-matching child
+    // returns null too. If we expand the fallback to multiple
+    // authenticators that legitimately throw on a bad credential
+    // (e.g., verifyBearer with a mismatched signature), the PRE
+    // version of this gate surfaced the wrong challenge. The new
+    // gate fires the requiredFor pre-check before rethrowing.
+    const throwingApiKey = () => {
+      // Simulates an authenticator that recognized but rejected the
+      // token (e.g., verifyBearer with an invalid signature).
+      throw new AuthError('Token validation failed.');
+    };
+    const composedFallback = anyOf(throwingApiKey);
+    const gate = requireSignatureWhenPresent(fakeSig, composedFallback, {
       requiredFor: ['create_media_buy'],
       resolveOperation: () => 'create_media_buy',
     });
@@ -136,18 +149,25 @@ describe('#665 requireSignatureWhenPresent + requiredFor', () => {
     );
   });
 
-  it('rethrows fallback error on ops NOT in requiredFor (bearer challenge preserved)', async () => {
-    // When op isn't in requiredFor, we want the fallback's original
-    // challenge (Bearer) — pre-check must not swallow that error.
-    class ThrowyAuth extends Error {}
-    const throwingFallback = async () => {
-      throw new ThrowyAuth('bearer rejected');
+  it('rethrows the anyOf fallback error on ops NOT in requiredFor — preserves challenge scheme', async () => {
+    // When op isn't in requiredFor, the original fallback error must
+    // propagate so `serve()` emits the correct challenge scheme
+    // (Bearer/invalid_token for this scenario) — NOT the signature
+    // challenge.
+    const throwingApiKey = () => {
+      const err = new AuthError('Token validation failed.');
+      err.publicMessage = 'Token validation failed.';
+      throw err;
     };
-    const gate = requireSignatureWhenPresent(fakeSig, throwingFallback, {
+    const composedFallback = anyOf(throwingApiKey);
+    const gate = requireSignatureWhenPresent(fakeSig, composedFallback, {
       requiredFor: ['create_media_buy'],
       resolveOperation: () => 'get_products',
     });
-    await assert.rejects(() => gate(unsignedReqWithBody('{}')), ThrowyAuth);
+    await assert.rejects(
+      () => gate(unsignedReqWithBody('{}')),
+      err => err instanceof AuthError && !(err.cause instanceof RequestSignatureError)
+    );
   });
 });
 

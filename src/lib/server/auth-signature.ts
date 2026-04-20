@@ -345,14 +345,19 @@ export function requireSignatureWhenPresent(
       fallbackThrew = true;
       fallbackError = err;
     }
+    // Valid fallback principal short-circuits everything: this is the
+    // documented "bearer bypass on required_for" semantic (per adcp#2586 —
+    // a valid credential is sufficient even when signing is required for
+    // unauthenticated callers). Return before the pre-check so the
+    // control flow below only runs on `fallbackResult === null`.
+    if (fallbackResult !== null) return fallbackResult;
     // `requiredFor` pre-check: when the op requires a signature AND no
-    // signature was presented, surface `request_signature_required`
-    // REGARDLESS of whether the fallback threw (bad bearer) or returned
-    // null (no creds). Valid bearer is the only escape — if the fallback
-    // returned a principal, we already returned above.
+    // signature was presented AND no valid fallback credential,
+    // surface `request_signature_required` regardless of whether the
+    // fallback threw (bad bearer) or returned null (no creds).
     if (requiredFor.size > 0 && resolveOperation) {
       const operation = resolveOperation(req as IncomingMessage & { rawBody?: string });
-      if (operation && requiredFor.has(operation) && fallbackResult === null) {
+      if (operation && requiredFor.has(operation)) {
         throw new AuthError(`Signature required for ${operation}.`, {
           cause: new RequestSignatureError(
             'request_signature_required',
@@ -366,7 +371,6 @@ export function requireSignatureWhenPresent(
     // original error so the 401 carries the fallback's challenge
     // (Bearer for bad-bearer, invalid_token for no-creds).
     if (fallbackThrew) throw fallbackError;
-    if (fallbackResult !== null) return fallbackResult;
     return null;
   };
   const anyChildNeedsRawBody = authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth);

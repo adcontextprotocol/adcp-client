@@ -55,7 +55,12 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AdcpServer } from './adcp-server';
 import type { ProtectedResourceMetadata } from './serve';
-import { seedComplianceFixtures, type SeedComplianceFixturesOptions } from '../compliance-fixtures';
+// `SeedComplianceFixturesOptions` is only a type import — zero runtime
+// cost for sellers who don't use `seedFixtures`. The runtime
+// `seedComplianceFixtures` is loaded lazily inside `resetHook` so
+// the fixture set's JS bytes stay out of the server barrel for
+// production sellers who never seed.
+import type { SeedComplianceFixturesOptions } from '../compliance-fixtures';
 
 export interface ExpressAdapterOptions {
   /**
@@ -249,8 +254,16 @@ export function createExpressAdapter(options: ExpressAdapterOptions): ExpressAda
     // at the same IDs. Without this step the first storyboard consumes
     // the seed from pre-run setup, then every storyboard after N+1
     // misses because `reset()` wiped `compliance:*` collections.
+    //
+    // NOT atomic: if `compliance.reset()` succeeds and
+    // `seedComplianceFixtures` throws mid-loop, the state store is
+    // left with a partial seed. For a conformance-runner use case
+    // that's fine — the next storyboard surfaces the error loudly.
+    // Lazy-loaded so sellers who never set `seedFixtures` don't
+    // carry the fixture set's bytes in their server bundle.
     if (options.seedFixtures) {
       const seedOptions: SeedComplianceFixturesOptions = options.seedFixtures === true ? {} : options.seedFixtures;
+      const { seedComplianceFixtures } = await import('../compliance-fixtures');
       await seedComplianceFixtures(options.server, seedOptions);
     }
   };

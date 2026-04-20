@@ -51,12 +51,12 @@
 
 import { ADCP_STATE_STORE, type AdcpServer } from '../server/adcp-server';
 import type { AdcpStateStore } from '../server/state-store';
-// Pull canonical unions/shapes from the generated spec types so fixture
-// typings can't drift from the schema. Hand-typing `pricing_model` as
-// `'cpm' | 'cpc' | 'cpv' | 'flat'` is how we shipped `'flat'` (which
-// doesn't exist in the spec) — the generated `PricingModel` has the
-// authoritative union.
-import type { PricingModel } from '../types/tools.generated';
+// Pull canonical shapes from the generated spec types so fixture typings
+// can't drift from the schema. `PricingOption` is the discriminated
+// union (`CPMPricingOption | VCPMPricingOption | ...`) — typing
+// fixture bodies as this union gives consumers full TS narrowing and
+// guarantees the fixture matches at least one spec variant.
+import type { PricingOption } from '../types/tools.generated';
 
 export type ComplianceFixtureCategory =
   | 'products'
@@ -99,28 +99,15 @@ export interface ComplianceFormatFixture {
   duration_ms?: number;
 }
 
-export interface CompliancePricingOptionFixture {
-  pricing_option_id: string;
-  /** ISO 4217 currency code, per the spec's `PricingOption.currency`. */
-  currency: string;
-  /**
-   * Pricing model — uses the authoritative generated union. The spec
-   * discriminates `PricingOption` on this field across 9 variants
-   * (`cpm`, `vcpm`, `cpc`, `cpcv`, `cpv`, `cpp`, `cpa`, `flat_rate`,
-   * `time`); mismatches here silently fail schema validation in
-   * seller-side `get_products` responses that merge fixture data in.
-   */
-  pricing_model: PricingModel;
-  /**
-   * Fixed price per unit per the matching `*PricingOption.fixed_price`
-   * field (CPM, CPC, etc.). Present when this is a fixed-price option;
-   * omit for auction-based options that advertise `floor_price` /
-   * `price_guidance` instead.
-   */
-  fixed_price?: number;
-  /** Floor price for auction-based options. */
-  floor_price?: number;
-}
+/**
+ * Fixture body for a pricing option. Aliases the spec's discriminated
+ * `PricingOption` union so callers that spread a fixture into a
+ * `get_products` response get full TypeScript narrowing on
+ * `pricing_model`. The shipped bodies are all `CPMPricingOption`
+ * (fixed-price CPM); sellers who need other variants should supply
+ * overrides via {@link SeedComplianceFixturesOptions.overrides}.
+ */
+export type CompliancePricingOptionFixture = PricingOption;
 
 export interface ComplianceCreativeFixture {
   creative_id: string;
