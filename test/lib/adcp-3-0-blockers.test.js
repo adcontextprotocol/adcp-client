@@ -163,6 +163,64 @@ describe('#665 respondUnauthorized signature challenge', () => {
     const e = new Error('x');
     assert.strictEqual(signatureErrorCodeFromCause(e), null);
   });
+
+  it('signatureErrorCodeFromCause breaks on self-referential cause cycle', () => {
+    const a = new Error('a');
+    a.cause = a;
+    assert.strictEqual(signatureErrorCodeFromCause(a), null);
+  });
+
+  it('signatureErrorCodeFromCause breaks on 2-cycle cause chains', () => {
+    const a = new Error('a');
+    const b = new Error('b');
+    a.cause = b;
+    b.cause = a;
+    assert.strictEqual(signatureErrorCodeFromCause(a), null);
+  });
+});
+
+describe('#666 compliance.reset() guardrails', () => {
+  it('refuses to run in NODE_ENV=production without allowProduction', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const server = createAdcpServer({
+        name: 'x',
+        version: '0.0.1',
+        stateStore: new InMemoryStateStore(),
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      await assert.rejects(() => server.compliance.reset(), /NODE_ENV=production/);
+      // Opt-out works:
+      await server.compliance.reset({ allowProduction: true });
+    } finally {
+      if (originalEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalEnv;
+    }
+  });
+
+  it('refuses to run when stateStore is not InMemoryStateStore without force', async () => {
+    // Fake a non-InMemoryStateStore — fulfills the AdcpStateStore shape but isn't the sentinel.
+    const fakeStore = {
+      get: async () => null,
+      getWithVersion: async () => null,
+      put: async () => {},
+      putIfMatch: async () => ({ ok: true, version: 1 }),
+      patch: async () => {},
+      delete: async () => true,
+      list: async () => ({ items: [], nextCursor: undefined }),
+      clear: () => {},
+    };
+    const server = createAdcpServer({
+      name: 'x',
+      version: '0.0.1',
+      stateStore: fakeStore,
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    await assert.rejects(() => server.compliance.reset(), /is not InMemoryStateStore/);
+    // Opt-out works:
+    await server.compliance.reset({ force: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -303,8 +361,40 @@ describe('#664 createExpressAdapter', () => {
     assert.strictEqual(req.rawBody, '{"hi":1}');
   });
 
-  it('getUrl reconstructs the full URL including mount prefix via originalUrl', () => {
+  it('getUrl uses publicUrl origin and ignores x-forwarded-host (closes audience-confusion)', () => {
+    const adapter = createExpressAdapter({
+      mountPath: '/api/agent',
+      publicUrl: 'https://agent.example.com/api/agent/mcp',
+    });
+    const url = adapter.getUrl({
+      url: '/mcp',
+      originalUrl: '/api/agent/mcp',
+      headers: {
+        host: 'evil.example.com',
+        'x-forwarded-host': 'also-evil.example.com',
+        'x-forwarded-proto': 'http',
+      },
+      socket: { encrypted: false },
+    });
+    assert.strictEqual(url, 'https://agent.example.com/api/agent/mcp');
+  });
+
+  it('getUrl throws when neither publicUrl nor trustForwardedHost is set', () => {
     const adapter = createExpressAdapter({ mountPath: '/api/agent' });
+    assert.throws(
+      () =>
+        adapter.getUrl({
+          url: '/mcp',
+          originalUrl: '/api/agent/mcp',
+          headers: { host: 'agent.example.com' },
+          socket: { encrypted: true },
+        }),
+      /neither `publicUrl` nor `trustForwardedHost/
+    );
+  });
+
+  it('getUrl falls back to header reconstruction under trustForwardedHost opt-in', () => {
+    const adapter = createExpressAdapter({ mountPath: '/api/agent', trustForwardedHost: true });
     const url = adapter.getUrl({
       url: '/mcp',
       originalUrl: '/api/agent/mcp',
@@ -314,8 +404,11 @@ describe('#664 createExpressAdapter', () => {
     assert.strictEqual(url, 'https://agent.example.com/api/agent/mcp');
   });
 
-  it('getUrl composes mountPath + req.url when originalUrl is absent', () => {
-    const adapter = createExpressAdapter({ mountPath: '/api/agent' });
+  it('getUrl composes mountPath + req.url when originalUrl is absent (via publicUrl)', () => {
+    const adapter = createExpressAdapter({
+      mountPath: '/api/agent',
+      publicUrl: 'https://agent.example.com/api/agent/mcp',
+    });
     const url = adapter.getUrl({
       url: '/mcp',
       headers: { host: 'agent.example.com' },
@@ -355,9 +448,21 @@ describe('#664 createExpressAdapter', () => {
     assert.deepStrictEqual(body.bearer_methods_supported, ['header']);
   });
 
+  it('createExpressAdapter refuses prm without publicUrl or trustForwardedHost', () => {
+    assert.throws(
+      () =>
+        createExpressAdapter({
+          mountPath: '/api/agent',
+          prm: { authorization_servers: ['https://auth.example.com'] },
+        }),
+      /`prm` requires either `publicUrl`/
+    );
+  });
+
   it('protectedResourceMiddleware calls next() for unrelated paths', () => {
     const adapter = createExpressAdapter({
       mountPath: '/api/agent',
+      publicUrl: 'https://agent.example.com/api/agent/mcp',
       prm: { authorization_servers: ['https://auth.example.com'] },
     });
     let nextCalled = false;
@@ -380,7 +485,11 @@ describe('#664 createExpressAdapter', () => {
       stateStore,
       mediaBuy: { getProducts: async () => ({ products: [] }) },
     });
-    const adapter = createExpressAdapter({ mountPath: '/api/x', server });
+    const adapter = createExpressAdapter({
+      mountPath: '/api/x',
+      publicUrl: 'https://x.example.com/api/x/mcp',
+      server,
+    });
     await adapter.resetHook();
     assert.strictEqual(await stateStore.get('c', 'k'), null);
   });

@@ -103,15 +103,21 @@ export interface AdcpServerComplianceApi {
    * `media_buy_seller/governance_denied` would intercept a $50K buy in
    * `sales_guaranteed`.
    *
-   * Refuses to run in production-like deployments: throws when the
-   * state store doesn't expose a `clear` method (anything other than
-   * the in-memory shipped default), or the idempotency store's backend
-   * doesn't expose `clearAll`. Pass `{ force: true }` to bypass the
-   * guard when you've deliberately wired a Postgres backend for a test
-   * DB — the flush is still scoped to the stores configured on this
-   * server, so the guard is belt-and-suspenders, not a safety net.
+   * Refuses to run by default unless BOTH guardrails hold:
+   *   - `NODE_ENV !== 'production'` (opt out with `allowProduction: true`)
+   *   - The configured stores are the in-memory SDK defaults
+   *     (`InMemoryStateStore` + memory idempotency backend). Opt out
+   *     with `force: true` when you've wired a disposable test
+   *     Postgres cluster and know the flush is safe.
+   *
+   * The two flags are independent on purpose: `force` lets you flush
+   * a non-memory store you've verified is a test DB, WITHOUT also
+   * opening the door to running against a production `NODE_ENV`.
+   * Same the other way: `allowProduction` lets you run in a prod-
+   * labeled CI environment against memory stores, without bypassing
+   * the store-shape safety check.
    */
-  reset(options?: { force?: boolean }): Promise<void>;
+  reset(options?: { force?: boolean; allowProduction?: boolean }): Promise<void>;
 }
 
 /**

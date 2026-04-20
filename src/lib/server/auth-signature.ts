@@ -350,7 +350,15 @@ export function requireSignatureWhenPresent(
     }
     return null;
   };
-  if (authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth)) {
+  const anyChildNeedsRawBody = authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth);
+  // When `resolveOperation` is wired, it almost always reads
+  // `req.rawBody` to parse the JSON-RPC body — the SDK's documented
+  // pattern. If no child is tagged (test stubs, agents whose signature
+  // path is non-SDK), `serve()` won't buffer the body and
+  // `resolveOperation` silently sees `undefined`, bypassing
+  // `requiredFor`. Tag the combined authenticator whenever a resolver
+  // is present so buffering happens regardless of the child shapes.
+  if (anyChildNeedsRawBody || resolveOperation) {
     tagAuthenticatorNeedsRawBody(combined);
   }
   tagAuthenticatorPresenceGated(combined);

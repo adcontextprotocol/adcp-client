@@ -216,9 +216,11 @@ const TRANSPORT_UNGRADABLE: Record<string, string> = {
 };
 
 /**
- * Centralized skip decisions. Checks (in order): onlyVectors filter, operator
- * skipVectors, MCP-mode URL-edge flattening, rate-abuse opt-out,
- * stateful-contract missing, side-effect gate.
+ * Centralized skip decisions. Checks (in order): onlyVectors filter,
+ * operator skipVectors, agent-capability-profile mismatch
+ * (`agentCapability` wired), transport-ungradable, MCP-mode URL-edge
+ * flattening, rate-abuse opt-out, stateful-contract missing, and the
+ * live-side-effect gate.
  */
 function preflightSkip(
   vector: PositiveVector | NegativeVector,
@@ -245,6 +247,13 @@ function preflightSkip(
   if (options.agentCapability) {
     const mismatch = capabilityMismatch(vector.verifier_capability, options.agentCapability);
     if (mismatch) {
+      // Surface the mismatch in the diagnostic so operators can audit
+      // which vectors were dodged. An agent that under-declares its
+      // capability (claims `required_for: []` while it actually
+      // enforces on multiple ops) would hide negative-vector failures
+      // here — the operator needs to see the skip count to catch that
+      // pattern. The caller inspects `report.skipped_count` plus the
+      // individual `skip_reason`/`diagnostic` pairs.
       return {
         ...base,
         skipped: true,

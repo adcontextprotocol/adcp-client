@@ -67,12 +67,30 @@ export interface ExpressAdapterOptions {
   mountPath: string;
   /**
    * Canonical public URL of the MCP endpoint, origin + mount + `/mcp`.
+   *
+   * **Required for any deployment that pipes `getUrl` into an RFC 9421
+   * signature verifier.** Without `publicUrl`, `getUrl` reconstructs
+   * the URL from `x-forwarded-host`/`host` — which an attacker can set
+   * to any value, letting them present a signature signed for a
+   * different audience and have it verify against the wrong origin.
+   * `getUrl` throws when neither `publicUrl` nor the explicit opt-in
+   * `trustForwardedHost` is set, so accidental misconfiguration fails
+   * closed.
+   *
    * When omitted, {@link ExpressAdapter.protectedResourceMiddleware}
-   * reconstructs the resource URL from `x-forwarded-proto` / `host` per
-   * request — convenient for multi-host deployments but subject to
-   * `Host`-header spoofing attacks. Set this explicitly in production.
+   * also refuses to start unless `trustForwardedHost: true` is set —
+   * it can't advertise a stable `resource` URL without one of the two.
    */
   publicUrl?: string;
+  /**
+   * Explicit opt-in for header-derived URL reconstruction in
+   * multi-host deployments where `publicUrl` can't be fixed at adapter
+   * construction. Setting this acknowledges that `x-forwarded-host` /
+   * `host` are trusted inputs (the upstream proxy sanitizes them).
+   * Prefer `publicUrl` when possible — it's the only configuration
+   * that closes the signed-payload audience-confusion attack.
+   */
+  trustForwardedHost?: boolean;
   /**
    * RFC 9728 Protected Resource Metadata body. Required unless you're
    * wiring the PRM response yourself; omitting this disables
@@ -138,6 +156,18 @@ export interface ExpressAdapter {
  */
 export function createExpressAdapter(options: ExpressAdapterOptions): ExpressAdapter {
   const mountPath = normalizeMountPath(options.mountPath);
+  const trustForwardedHost = options.trustForwardedHost === true;
+
+  let fixedOrigin: string | undefined;
+  if (options.publicUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(options.publicUrl);
+    } catch {
+      throw new Error(`createExpressAdapter: \`publicUrl\` is not a valid URL: ${options.publicUrl}`);
+    }
+    fixedOrigin = parsed.origin;
+  }
 
   const rawBodyVerify = (req: IncomingMessage, _res: ServerResponse, buf: Buffer): void => {
     // Attach the raw body as a string — that's what
@@ -148,9 +178,17 @@ export function createExpressAdapter(options: ExpressAdapterOptions): ExpressAda
     (req as IncomingMessage & { rawBody?: string }).rawBody = buf.toString('utf8');
   };
 
-  const protectedResourceMiddleware = options.prm
-    ? buildProtectedResourceMiddleware(options.prm, options.publicUrl)
-    : undefined;
+  let protectedResourceMiddleware: ExpressAdapter['protectedResourceMiddleware'];
+  if (options.prm) {
+    if (!fixedOrigin && !trustForwardedHost) {
+      throw new Error(
+        'createExpressAdapter: `prm` requires either `publicUrl` (fixed origin) or `trustForwardedHost: true` ' +
+          '(acknowledging that upstream sanitizes `x-forwarded-host`/`host`). Header-derived origin reconstruction ' +
+          'without one of these lets an attacker pick the advertised OAuth resource URL.'
+      );
+    }
+    protectedResourceMiddleware = buildProtectedResourceMiddleware(options.prm, options.publicUrl, trustForwardedHost);
+  }
 
   const getUrl = (req: IncomingMessage): string => {
     // Express strips the mount prefix from `req.url`, but leaves the
@@ -159,15 +197,27 @@ export function createExpressAdapter(options: ExpressAdapterOptions): ExpressAda
     // mountPath + req.url composition for non-Express frameworks.
     const reqAny = req as IncomingMessage & { originalUrl?: string };
     const path = reqAny.originalUrl ?? joinPath(mountPath, req.url ?? '/');
+    if (fixedOrigin) {
+      // publicUrl wins unconditionally — ignoring `x-forwarded-host` /
+      // `host` is exactly what closes the signed-payload audience-
+      // confusion attack. Attacker-controlled headers can't influence
+      // the origin the verifier sees.
+      return `${fixedOrigin}${path}`;
+    }
+    if (!trustForwardedHost) {
+      throw new Error(
+        'createExpressAdapter.getUrl: neither `publicUrl` nor `trustForwardedHost: true` is set. ' +
+          'Header-derived URL reconstruction lets an attacker pick the origin a signed payload verifies against — ' +
+          'the verifier would recompute the signature base against the spoofed host and accept a signature signed for a different audience. ' +
+          'Set `publicUrl` at adapter construction, or opt into `trustForwardedHost` with an upstream that sanitizes the headers.'
+      );
+    }
     const forwardedProto = firstHeader(req.headers['x-forwarded-proto']);
     const encrypted = (req.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
     const proto = forwardedProto ?? (encrypted ? 'https' : 'http');
     const host = firstHeader(req.headers['x-forwarded-host']) ?? firstHeader(req.headers['host']);
     if (!host) {
-      throw new Error(
-        'createExpressAdapter.getUrl: missing Host header. Set `ExpressAdapterOptions.publicUrl` ' +
-          'or trust a `x-forwarded-host` header upstream.'
-      );
+      throw new Error('createExpressAdapter.getUrl: missing Host header under `trustForwardedHost`.');
     }
     return `${proto}://${host}${path}`;
   };
@@ -190,7 +240,8 @@ export function createExpressAdapter(options: ExpressAdapterOptions): ExpressAda
 
 function buildProtectedResourceMiddleware(
   prm: ProtectedResourceMetadata,
-  publicUrl?: string
+  publicUrl: string | undefined,
+  trustForwardedHost: boolean
 ): (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => void {
   // OAuth graders probe `/.well-known/oauth-protected-resource/<mount>`.
   // The `<mount>` suffix varies by agent, so match the well-known prefix
@@ -205,7 +256,18 @@ function buildProtectedResourceMiddleware(
       next();
       return;
     }
-    const resource = publicUrl ?? reconstructResource(req, pathname.slice(WELL_KNOWN.length));
+    let resource: string;
+    if (publicUrl) {
+      // Fixed origin — same security property as `getUrl`'s
+      // publicUrl path: attacker-controlled headers can't influence
+      // the advertised resource URL.
+      resource = publicUrl;
+    } else {
+      // trustForwardedHost: true was checked at construction — if we
+      // got here without publicUrl, upstream is responsible for
+      // sanitizing the headers we read below.
+      resource = reconstructResource(req, pathname.slice(WELL_KNOWN.length), trustForwardedHost);
+    }
     const body = {
       resource,
       ...prm,
@@ -216,17 +278,28 @@ function buildProtectedResourceMiddleware(
   };
 }
 
-function reconstructResource(req: IncomingMessage, suffix: string): string {
+function reconstructResource(req: IncomingMessage, suffix: string, trustForwardedHost: boolean): string {
   const forwardedProto = firstHeader(req.headers['x-forwarded-proto']);
   const encrypted = (req.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
   const proto = forwardedProto ?? (encrypted ? 'https' : 'http');
   const host = firstHeader(req.headers['x-forwarded-host']) ?? firstHeader(req.headers['host']);
   if (!host) {
-    // Defensive — should never happen on a valid HTTP request, but if
-    // an upstream proxy stripped `Host`, advertise a placeholder that
-    // will fail audience validation rather than silently lying about
-    // the resource URL.
-    return 'about:invalid-prm';
+    // Fail closed rather than advertising a placeholder: a PRM with a
+    // garbage `resource` would silently mint audience-mismatched tokens
+    // across the fleet. Returning 500 surfaces the misconfiguration to
+    // the operator; the OAuth grader's probe fails loud.
+    throw new Error(
+      'createExpressAdapter.protectedResourceMiddleware: upstream did not forward a Host header. ' +
+        'Set `publicUrl` at adapter construction so the advertised OAuth resource URL is stable.'
+    );
+  }
+  if (!trustForwardedHost && req.headers['x-forwarded-host'] !== undefined) {
+    // Defense-in-depth: reaching this path at all means `publicUrl`
+    // wasn't set. If an upstream forwards `x-forwarded-host` without
+    // the caller opting into trust, that's a misconfiguration.
+    throw new Error(
+      'createExpressAdapter.protectedResourceMiddleware: x-forwarded-host present but trustForwardedHost is false.'
+    );
   }
   const normalizedSuffix = suffix && !suffix.startsWith('/') ? `/${suffix}` : suffix || '/';
   return `${proto}://${host}${normalizedSuffix}`;

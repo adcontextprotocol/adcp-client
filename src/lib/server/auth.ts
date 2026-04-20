@@ -437,10 +437,14 @@ export function respondUnauthorized(
   const realm = options.realm ?? 'mcp';
   const parts = [`realm="${escapeQuotes(realm)}"`];
   const useSignatureChallenge = options.signatureError !== undefined;
+  // The `error` codes are typed unions — the type system gives us the
+  // only quote-safe guarantee. Route through `escapeQuotes` so a future
+  // widening to `string` or a code that happens to include `"` doesn't
+  // inject a new parameter into the challenge header.
   if (useSignatureChallenge) {
-    parts.push(`error="${options.signatureError}"`);
+    parts.push(`error="${escapeQuotes(options.signatureError!)}"`);
   } else if (options.error) {
-    parts.push(`error="${options.error}"`);
+    parts.push(`error="${escapeQuotes(options.error)}"`);
   }
   if (options.errorDescription) parts.push(`error_description="${escapeQuotes(options.errorDescription)}"`);
   if (options.resourceMetadata) parts.push(`resource_metadata="${escapeQuotes(options.resourceMetadata)}"`);
@@ -465,12 +469,19 @@ export function respondUnauthorized(
  * failures. Returns `null` for non-signature errors.
  */
 export function signatureErrorCodeFromCause(err: unknown): RequestSignatureErrorCode | null {
+  // Track visited refs to break arbitrary cycles (self-reference, N-cycles,
+  // or a long non-signature chain that would otherwise exhaust the walker).
+  // The visited set is a belt-and-suspenders companion to the hop cap —
+  // either one alone is enough for legitimate chains, but cycle resistance
+  // is the security-relevant property.
+  const visited = new Set<unknown>();
   let current: unknown = err;
-  // Walk at most 8 links — well above anything legitimate code produces, but
-  // bounded so a self-referential `cause` chain can't spin.
-  for (let i = 0; i < 8 && current != null; i++) {
+  let hops = 0;
+  while (current != null && hops < 32 && !visited.has(current)) {
     if (current instanceof RequestSignatureError) return current.code;
+    visited.add(current);
     current = (current as { cause?: unknown }).cause;
+    hops++;
   }
   return null;
 }

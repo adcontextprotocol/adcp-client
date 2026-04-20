@@ -2009,35 +2009,52 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   });
 
   const compliance = {
-    async reset({ force = false }: { force?: boolean } = {}): Promise<void> {
-      const stateStoreHasClear = typeof (stateStore as unknown as { clear?: unknown }).clear === 'function';
-      const idempotencyBackendHasClearAll = idempotency ? hasIdempotencyClearAll(idempotency) : true;
+    async reset({
+      force = false,
+      allowProduction = false,
+    }: { force?: boolean; allowProduction?: boolean } = {}): Promise<void> {
+      // Check NODE_ENV BEFORE store-shape probes: the environment guard
+      // is the strongest signal that "this is not a test harness." An
+      // operator who reached this call in production by mistake hits the
+      // env gate regardless of which backend they wired.
+      if (!allowProduction && process.env.NODE_ENV === 'production') {
+        throw new Error(
+          'AdcpServer.compliance.reset: refused to run with NODE_ENV=production. ' +
+            'Pass `{ allowProduction: true }` if you deliberately set NODE_ENV=production in a test environment, ' +
+            'or unset NODE_ENV before running storyboards.'
+        );
+      }
+      // Positive allowlist for stores, not method-presence. A
+      // PostgresStateStore might expose `.clear()` for its own test
+      // utility needs — we don't want method-existence alone to permit
+      // a flush that would take out a shared test cluster. `force: true`
+      // is the documented opt-in for non-memory backends.
+      const stateStoreIsMemory = stateStore instanceof InMemoryStateStore;
+      const idempotencyIsFlushable = !idempotency || hasIdempotencyClearAll(idempotency);
       if (!force) {
-        if (!stateStoreHasClear) {
+        if (!stateStoreIsMemory) {
           throw new Error(
-            'AdcpServer.compliance.reset: configured stateStore does not expose `clear()`. ' +
-              'Use the default `InMemoryStateStore` for test harnesses, or pass `{ force: true }` if you know the store is safe to flush.'
+            'AdcpServer.compliance.reset: configured stateStore is not InMemoryStateStore. ' +
+              'Pass `{ force: true }` to acknowledge that flushing the configured backend is safe for this environment ' +
+              '(e.g., a disposable test Postgres).'
           );
         }
-        if (!idempotencyBackendHasClearAll) {
+        if (!idempotencyIsFlushable) {
           throw new Error(
             'AdcpServer.compliance.reset: configured idempotency backend does not expose `clearAll()`. ' +
-              'Use `memoryBackend()` for test harnesses, or pass `{ force: true }` to skip idempotency flush and clear only state.'
-          );
-        }
-        if (process.env.NODE_ENV === 'production') {
-          throw new Error(
-            'AdcpServer.compliance.reset: refused to run with NODE_ENV=production. ' +
-              'Pass `{ force: true }` to acknowledge the flush, or unset NODE_ENV when running storyboards.'
+              'Use `memoryBackend()` for test harnesses, or pass `{ force: true }` to skip idempotency flush.'
           );
         }
       }
-      if (stateStoreHasClear) {
-        (stateStore as unknown as { clear: () => void }).clear();
-      }
-      if (idempotency && idempotency.clearAll) {
-        await idempotency.clearAll();
-      }
+      // `force` bypasses the allowlist checks but never the flush
+      // itself — if we reached here, the caller wants the flush to
+      // happen. `clear()` is only called when the store exposes it;
+      // a store without `clear()` reaching here under `force: true`
+      // is a no-op for the state side, which matches the shape the
+      // caller opted into.
+      const storeWithClear = stateStore as unknown as { clear?: () => void };
+      if (typeof storeWithClear.clear === 'function') storeWithClear.clear();
+      if (idempotency && idempotency.clearAll) await idempotency.clearAll();
     },
   };
   const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance);
