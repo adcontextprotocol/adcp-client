@@ -20,7 +20,7 @@ import {
 } from './context';
 import { runValidations, type ValidationContext } from './validations';
 import { buildRequest, hasRequestBuilder } from './request-builder';
-import { resolveBrand } from '../client';
+import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask } from '../../utils/idempotency';
 import {
   PROBE_TASKS,
@@ -1107,15 +1107,24 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
  * different brand, it lands in a different session and can't see state
  * created by earlier steps.
  *
- * This helper runs after builder / sample_request resolution and overwrites
- * any conflicting brand on the request with `options.brand`. When the
- * request carries an `account` object, we also set `account.brand` so both
- * addressing forms converge.
+ * This helper runs after builder / sample_request resolution and writes the
+ * run-scoped brand into both addressing forms:
+ *
+ *   - Top-level `brand` — for tools whose schema declares it (e.g.
+ *     `get_products`, `create_media_buy`, signal tools).
+ *   - `account.brand` — for tools whose schema declares `account` but not
+ *     top-level `brand` (e.g. `get_media_buys`, `get_media_buy_delivery`,
+ *     `list_creatives`). When the incoming request has no `account`, we
+ *     construct one from `resolveAccount(options)` so the scoping survives
+ *     `adaptRequestForServerVersion`'s schema-aware field stripping.
+ *
+ * For any given tool, only one of the two addressing forms is declared in
+ * its schema; the other is stripped downstream. Setting both here lets the
+ * helper stay tool-agnostic.
  *
  * `AccountReference` is a union of `{account_id}` or `{brand, operator, sandbox?}`.
  * Injecting `brand` into an `{account_id}`-branch account still passes schema
- * validation (request schemas use `.passthrough()`) but is semantically
- * redundant. No storyboard currently uses the `{account_id}` branch.
+ * validation but is semantically redundant.
  */
 export function applyBrandInvariant(
   request: Record<string, unknown>,
@@ -1127,9 +1136,19 @@ export function applyBrandInvariant(
   if (!options.brand && !options.brand_manifest) return request;
   const brand = resolveBrand(options);
   const result: Record<string, unknown> = { ...request, brand };
-  const existingAccount = request.account;
-  if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
-    result.account = { ...(existingAccount as Record<string, unknown>), brand };
+  if ('account' in request) {
+    // Caller sent an account — merge brand in when it's a plain object.
+    // Leave non-object values (null, array) alone so intentionally malformed
+    // requests aren't silently "corrected."
+    const existingAccount = request.account;
+    if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
+      result.account = { ...(existingAccount as Record<string, unknown>), brand };
+    }
+  } else {
+    // No account on the request — construct one so tools whose schema
+    // declares `account` but not top-level `brand` (e.g. get_media_buys,
+    // list_creatives) still carry the run-scoped brand on the wire.
+    result.account = resolveAccount(options);
   }
   return result;
 }
