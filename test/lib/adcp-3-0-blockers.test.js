@@ -4,7 +4,6 @@ const assert = require('node:assert');
 const {
   createAdcpServer,
   verifyApiKey,
-  anyOf,
   respondUnauthorized,
   requireSignatureWhenPresent,
   requireAuthenticatedOrSigned,
