@@ -35,9 +35,10 @@ function makeSignerKey(kid = 'e2e-webhook-key') {
 }
 
 async function callTool(server, toolName, params) {
-  const tool = server._registeredTools[toolName];
-  if (!tool) throw new Error(`Tool "${toolName}" not registered`);
-  const raw = await tool.handler(params, { signal: new AbortController().signal });
+  const raw = await server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: toolName, arguments: params ?? {} },
+  });
   return raw.structuredContent;
 }
 

@@ -33,6 +33,8 @@
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { AdcpServer } from './adcp-server';
+import { getSdkServer } from './adcp-server';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -82,13 +84,18 @@ export interface AdcpTaskToolConfig {
  *
  * Wraps `server.experimental.tasks.registerToolTask()` with AdCP defaults.
  * Sets `execution.taskSupport` (default: 'optional') and passes through to the SDK.
+ *
+ * Accepts either an `AdcpServer` from `createAdcpServer()` or a raw SDK
+ * `McpServer` from `createTaskCapableServer()` — the helper unwraps the
+ * opaque handle when needed so registration reaches the SDK server.
  */
 export function registerAdcpTaskTool(
-  server: McpServer,
+  server: AdcpServer | McpServer,
   name: string,
   config: AdcpTaskToolConfig,
   handler: ToolTaskHandler<any>
 ): RegisteredTool {
+  const mcp = getSdkServer(server as AdcpServer) ?? (server as McpServer);
   const { description, title, inputSchema, outputSchema, annotations, taskSupport = 'optional' } = config;
 
   const execution: TaskToolExecution = { taskSupport };
@@ -102,12 +109,12 @@ export function registerAdcpTaskTool(
   };
 
   if (inputSchema != null) {
-    return server.experimental.tasks.registerToolTask(name, { ...sdkConfig, inputSchema }, handler);
+    return mcp.experimental.tasks.registerToolTask(name, { ...sdkConfig, inputSchema }, handler);
   }
 
-  return server.experimental.tasks.registerToolTask(
+  return mcp.experimental.tasks.registerToolTask(
     name,
-    sdkConfig as Parameters<typeof server.experimental.tasks.registerToolTask>[1],
+    sdkConfig as Parameters<typeof mcp.experimental.tasks.registerToolTask>[1],
     handler as ToolTaskHandler<undefined>
   );
 }

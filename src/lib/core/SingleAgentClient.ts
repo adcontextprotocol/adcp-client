@@ -2771,7 +2771,16 @@ export class SingleAgentClient {
   }
 
   /**
-   * Validate request parameters against AdCP schema
+   * Validate request parameters against AdCP schema.
+   *
+   * Uses default (non-strict) parsing so required fields are still enforced
+   * but unknown top-level keys pass through. This matters because callers —
+   * including the storyboard runner's `applyBrandInvariant` — inject
+   * scoping fields (`brand`, `account`) onto every outgoing request, and
+   * `adaptRequestForServerVersion` strips those fields downstream for tools
+   * whose schema doesn't declare them. A strict parse here rejects the
+   * injected fields before the adapter gets a chance to clean them up, so
+   * the two passes have to agree on "extra keys are fine."
    */
   private validateRequest(taskType: string, params: any): void {
     const schema = this.getRequestSchema(taskType);
@@ -2780,15 +2789,7 @@ export class SingleAgentClient {
     }
 
     try {
-      // Use strict() to reject unknown top-level keys so callers get fast failures
-      // on typos. Strip known deprecated fields that the normalizer preserves
-      // (e.g. brand_manifest, buyer_ref) before the strict check so they don't trigger it.
-      if (schema instanceof z.ZodObject) {
-        const { brand_manifest, buyer_ref, ...validationParams } = params;
-        schema.strict().parse(validationParams);
-      } else {
-        schema.parse(params);
-      }
+      schema.parse(params);
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issues = error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');

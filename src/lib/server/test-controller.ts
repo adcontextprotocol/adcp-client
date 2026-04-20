@@ -84,6 +84,8 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { AdcpServer } from './adcp-server';
+import { getSdkServer } from './adcp-server';
 import type {
   ListScenariosSuccess,
   StateTransitionSuccess,
@@ -573,9 +575,18 @@ export const TOOL_INPUT_SHAPE = {
  * implemented methods) or a {@link TestControllerStoreFactory} (scenarios
  * declared explicitly; `createStore` runs per request for session-backed
  * state). See the module-level examples for both patterns.
+ *
+ * The `server` argument takes either an `AdcpServer` from
+ * `createAdcpServer()` or a raw SDK `McpServer` from
+ * `createTaskCapableServer()` — the helper unwraps the opaque handle
+ * when needed so tool registration reaches the underlying SDK server.
  */
-export function registerTestController(server: McpServer, storeOrFactory: TestControllerStoreOrFactory): void {
-  server.tool(
+export function registerTestController(
+  server: AdcpServer | McpServer,
+  storeOrFactory: TestControllerStoreOrFactory
+): void {
+  const mcp = getSdkServer(server as AdcpServer) ?? (server as McpServer);
+  mcp.tool(
     'comply_test_controller',
     'Triggers seller-side state transitions for compliance testing. Sandbox only.',
     TOOL_INPUT_SHAPE,

@@ -132,10 +132,18 @@ export {
   ADCP_SIGNED_REQUESTS_STATE,
 } from './create-adcp-server';
 export type {
+  AdcpServer,
+  AdcpServerTransport,
+  AdcpTestRequest,
+  AdcpTestToolsCallRequest,
+  AdcpTestResponse,
+} from './adcp-server';
+export type {
   AdcpServerConfig,
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
+  AdcpCustomToolConfig,
   AdcpLogger,
   SignedRequestsConfig,
   AdcpPreTransport,

@@ -27,6 +27,7 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { AuthPrincipal, Authenticator } from './auth';
 import { AuthError, respondUnauthorized } from './auth';
 import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
+import type { AdcpServer } from './adcp-server';
 
 /**
  * Context passed to the agent factory on each request.
@@ -151,15 +152,17 @@ export interface ServeOptions {
  * request via `ServeContext`. This ensures MCP Tasks (create → poll → result)
  * work correctly across stateless HTTP requests.
  *
- * @param createAgent - Factory function that returns a configured McpServer.
- *   Called once per request so each gets a fresh server instance (McpServer
- *   can only be connected once). Receives a `ServeContext` with a shared
- *   `taskStore` — pass it to `createTaskCapableServer()` so tasks persist.
+ * @param createAgent - Factory function that returns a configured server —
+ *   either an `AdcpServer` from `createAdcpServer()` or a raw SDK `McpServer`
+ *   from `createTaskCapableServer()`. Called once per request so each gets a
+ *   fresh instance (a server can only be connected once). Receives a
+ *   `ServeContext` with a shared `taskStore` — pass it to
+ *   `createTaskCapableServer()` so tasks persist across stateless requests.
  * @param options - Port, path, and callback configuration.
  * @returns The http.Server instance. Use the `onListening` callback or
  *   listen for the 'listening' event to know when it's ready.
  */
-export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: ServeOptions): HttpServer {
+export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer, options?: ServeOptions): HttpServer {
   const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
   if (envPort !== undefined && (Number.isNaN(envPort) || envPort < 0 || envPort > 65535)) {
     throw new Error(`Invalid PORT environment variable: "${process.env.PORT}"`);
