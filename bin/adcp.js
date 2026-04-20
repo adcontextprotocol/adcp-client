@@ -995,7 +995,7 @@ async function handleStoryboardShow(args) {
 
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
-  const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs, file: filePath } = opts;
+  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
 
   // Multi-instance mode: repeated --url flags round-robin steps across N
   // seller URLs. Must share a backing store to pass — catches horizontal
