@@ -461,9 +461,9 @@ async function executeStoryboardPass(
  * 2). Cross-replica state-persistence testing at N=2 is primarily the job
  * of single-pass round-robin (which catches adjacent write→read pairs);
  * dependency-aware dispatch that reads `context_inputs` and assigns a
- * different replica than the most recent writer is the spec-aligned fix
- * for non-adjacent pairs and should be preferred over multi-pass for
- * that purpose.
+ * replica different from the writer of the specific state key being read
+ * is the spec-aligned fix for non-adjacent pairs and should be preferred
+ * over multi-pass for that purpose.
  *
  * The aggregated result AND-combines `overall_passed` across passes, sums
  * the pass/fail/skip counts, and exposes the per-pass detail via `passes[]`.

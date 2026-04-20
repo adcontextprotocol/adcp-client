@@ -1343,7 +1343,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     // "full cross-replica state coverage."
     if (strategy === 'multi-pass' && urls.length === 2) {
       console.error(
-        'Note: multi-pass at N=2 does NOT cover cross-replica write→read pairs at\n' +
+        'Caveat: multi-pass at N=2 does NOT cover cross-replica write→read pairs at\n' +
           'even dispatch-index distance (e.g., write at step 0, read at step 2).\n' +
           'Use round-robin for adjacent pairs; see docs/guides/MULTI-INSTANCE-TESTING.md\n' +
           'for the full coverage story. Multi-pass is useful for catching single-replica\n' +

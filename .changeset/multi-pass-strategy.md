@@ -20,9 +20,6 @@ first pass for backward compatibility.
 Known limitation: for N=2, offset-shift preserves pair parity, so a
 write→read pair whose dispatch indices differ by an even amount lands
 same-replica in every pass (the canonical property_lists case:
-write at step 0, read at step 2, distance 2). Closing that gap requires
-dependency-aware dispatch reading `context_inputs` (tracked as #607
-option 2) — which is the recommended path for testing cross-replica
-state at N=2. Use `multi-pass` only to strengthen per-replica-consistency
-coverage (e.g., catch divergent-version or stale-config bugs) at the
-cost of N× run time.
+write at step 0, read at step 2, distance 2). Dependency-aware
+dispatch reading `context_inputs` (tracked as #607 option 2) is the
+recommended path for testing cross-replica state at N=2.
