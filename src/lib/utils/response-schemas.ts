@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
+import { SyncCreativesResponseStrictSchema } from '../validation/sync-creatives';
 
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
@@ -21,7 +22,10 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
   build_creative: schemas.BuildCreativeResponseSchema,
   preview_creative: schemas.PreviewCreativeResponseSchema,
-  sync_creatives: schemas.SyncCreativesResponseSchema,
+  // Override the generated schema — it degrades creatives[] to a bare
+  // record because the JSON Schema inlines the item shape. The strict
+  // variant carries the per-item validator so the pipeline catches drift.
+  sync_creatives: SyncCreativesResponseStrictSchema,
   list_creatives: schemas.ListCreativesResponseSchema,
   get_creative_delivery: schemas.GetCreativeDeliveryResponseSchema,
 
