@@ -248,7 +248,75 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
  * wire-up time (throws synchronously) — invert the order instead:
  * `requireSignatureWhenPresent(sig, anyOf(bearer, apiKey))`.
  */
-export function requireSignatureWhenPresent(signatureAuth: Authenticator, fallbackAuth: Authenticator): Authenticator {
+export interface RequireSignatureWhenPresentOptions {
+  /**
+   * Operations that MUST be signed. When the incoming request carries no
+   * RFC 9421 signature header AND the fallback authenticator returns
+   * `null` (no credentials at all), the gate throws an {@link AuthError}
+   * whose `cause` is {@link RequestSignatureError} with
+   * `request_signature_required` — `serve()` maps that into a 401 with
+   * `WWW-Authenticate: Signature error="request_signature_required"`.
+   *
+   * "Fallback bypass" is deliberately allowed: if the caller presents a
+   * valid bearer (or API key) on a `requiredFor` operation, the fallback
+   * succeeds and the request is accepted without a signature. This
+   * matches the consensus on
+   * [adcp#2586](https://github.com/adcontextprotocol/adcp/issues/2586):
+   * `required_for` signals "signatures are the mandatory mechanism for
+   * unauthenticated callers" — not "signatures are mandatory on top of
+   * every other credential."
+   *
+   * When the request IS signed, `required_for` enforcement happens inside
+   * the signature verifier itself (via `capability.required_for`), not
+   * here — this pre-check is only for the no-signature path.
+   */
+  requiredFor?: readonly string[];
+  /**
+   * Extract the AdCP operation name (or any identifier that can be
+   * matched against `requiredFor`) from the incoming request.
+   *
+   * For MCP agents, this usually parses `req.rawBody` as JSON-RPC and
+   * pulls `params.name` when `method === 'tools/call'`:
+   *
+   * ```ts
+   * resolveOperation: (req) => {
+   *   try {
+   *     const body = JSON.parse(req.rawBody ?? '');
+   *     if (body?.method === 'tools/call') return body.params?.name;
+   *   } catch {}
+   *   return undefined;
+   * }
+   * ```
+   *
+   * When `requiredFor` is set but `resolveOperation` is omitted OR
+   * returns `undefined`, the pre-check is skipped — better to let the
+   * downstream handler produce a precise `INVALID_REQUEST` than to
+   * reject every unsigned call as signature-required.
+   */
+  resolveOperation?: (req: IncomingMessage & { rawBody?: string }) => string | undefined;
+}
+
+/**
+ * Compose a signature authenticator with a fallback under presence-gated
+ * semantics: if the incoming request declares a `Signature-Input` header,
+ * the signature authenticator is the ONLY path — its result (principal,
+ * `null`, or thrown {@link AuthError}) is the final outcome and the fallback
+ * never runs. Without `Signature-Input`, the fallback handles the request.
+ *
+ * Pass {@link RequireSignatureWhenPresentOptions.requiredFor} to enforce
+ * `required_for` for the no-signature path: when the fallback produces no
+ * principal on an operation that MUST be signed, the gate throws an
+ * {@link AuthError} whose cause is a {@link RequestSignatureError} with
+ * code `request_signature_required` — `serve()` maps that into a 401
+ * with the RFC 9421 `WWW-Authenticate: Signature` challenge.
+ */
+export function requireSignatureWhenPresent(
+  signatureAuth: Authenticator,
+  fallbackAuth: Authenticator,
+  options: RequireSignatureWhenPresentOptions = {}
+): Authenticator {
+  const requiredFor = new Set(options.requiredFor ?? []);
+  const resolveOperation = options.resolveOperation;
   const combined: Authenticator = async req => {
     if (hasSignatureHeader(req)) {
       const result = await signatureAuth(req);
@@ -260,13 +328,104 @@ export function requireSignatureWhenPresent(signatureAuth: Authenticator, fallba
       }
       return result;
     }
-    return await fallbackAuth(req);
+    const fallbackResult = await fallbackAuth(req);
+    if (fallbackResult !== null) return fallbackResult;
+    // No signature and fallback produced no principal. If the operation is
+    // in `requiredFor`, reject with a signature challenge so the buyer SDK
+    // surfaces `request_signature_required` — the error code the
+    // signed_requests grader's negative vectors expect on the
+    // missing-signature edge. Without `requiredFor`/`resolveOperation`
+    // wired, fall through so `serve()` emits the default bearer challenge.
+    if (requiredFor.size > 0 && resolveOperation) {
+      const operation = resolveOperation(req as IncomingMessage & { rawBody?: string });
+      if (operation && requiredFor.has(operation)) {
+        throw new AuthError(`Signature required for ${operation}.`, {
+          cause: new RequestSignatureError(
+            'request_signature_required',
+            0,
+            `Operation ${operation} requires an RFC 9421 request signature when no other credentials are presented.`
+          ),
+        });
+      }
+    }
+    return null;
   };
   if (authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth)) {
     tagAuthenticatorNeedsRawBody(combined);
   }
   tagAuthenticatorPresenceGated(combined);
   return combined;
+}
+
+export interface RequireAuthenticatedOrSignedOptions {
+  /** RFC 9421 request-signature authenticator. Usually built with {@link verifySignatureAsAuthenticator}. */
+  signature: Authenticator;
+  /**
+   * Credential authenticator that runs when no signature is present.
+   * Usually {@link anyOf} of `verifyApiKey` / `verifyBearer` — whatever
+   * credential types the agent accepts on unsigned calls.
+   */
+  fallback: Authenticator;
+  /**
+   * Operations that MUST be authenticated with a signature when no other
+   * credential is presented. See
+   * {@link RequireSignatureWhenPresentOptions.requiredFor}.
+   *
+   * Pass `MUTATING_TASKS` (exported from `@adcp/client`) to require
+   * signatures on every mutating AdCP operation — matches the common
+   * declaration in `capabilities.request_signing.required_for`.
+   */
+  requiredFor?: readonly string[];
+  /** See {@link RequireSignatureWhenPresentOptions.resolveOperation}. */
+  resolveOperation?: (req: IncomingMessage & { rawBody?: string }) => string | undefined;
+}
+
+/**
+ * Bundled composition of {@link requireSignatureWhenPresent} with an
+ * operation resolver — one call produces an authenticator that:
+ *
+ *   1. Prefers the RFC 9421 signature path when a `Signature-Input`
+ *      header is present, with no bearer fall-through on invalid
+ *      signatures (matches the `signed-requests` specialism contract).
+ *   2. Accepts bearer / API key when no signature is present, including
+ *      on `requiredFor` operations — valid credentials bypass the
+ *      signature requirement.
+ *   3. Rejects unsigned calls with no credentials on `requiredFor`
+ *      operations with a `WWW-Authenticate: Signature` challenge whose
+ *      error is `request_signature_required`.
+ *
+ * ```ts
+ * import {
+ *   serve,
+ *   verifyApiKey,
+ *   verifyBearer,
+ *   anyOf,
+ *   verifySignatureAsAuthenticator,
+ *   requireAuthenticatedOrSigned,
+ *   MUTATING_TASKS,
+ * } from '@adcp/client/server';
+ *
+ * serve(createAgent, {
+ *   authenticate: requireAuthenticatedOrSigned({
+ *     signature: verifySignatureAsAuthenticator({ jwks, replayStore, revocationStore, capability, resolveOperation }),
+ *     fallback: anyOf(verifyApiKey({ keys }), verifyBearer({ jwksUri, issuer, audience })),
+ *     requiredFor: [...MUTATING_TASKS],
+ *     resolveOperation: req => {
+ *       try {
+ *         const body = JSON.parse(req.rawBody ?? '');
+ *         if (body?.method === 'tools/call') return body.params?.name;
+ *       } catch {}
+ *       return undefined;
+ *     },
+ *   }),
+ * });
+ * ```
+ */
+export function requireAuthenticatedOrSigned(options: RequireAuthenticatedOrSignedOptions): Authenticator {
+  return requireSignatureWhenPresent(options.signature, options.fallback, {
+    requiredFor: options.requiredFor,
+    resolveOperation: options.resolveOperation,
+  });
 }
 
 const SAFE_KEYID = /^[A-Za-z0-9._-]{1,256}$/;

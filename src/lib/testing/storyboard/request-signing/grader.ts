@@ -11,7 +11,7 @@ import {
   verifyRequestSignature,
   type AdcpJsonWebKey,
 } from '../../../signing';
-import type { NegativeVector, PositiveVector } from './types';
+import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
   /** Allow http:// and private-IP destinations. Off by default (match fetchProbe). */
@@ -26,12 +26,29 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   rateAbuseCap?: number;
   /**
-   * Vector IDs to skip. Use for capability-profile mismatches — vectors 007
-   * and 018 each assume the verifier advertises a specific
-   * `covers_content_digest` policy (`"required"` and `"forbidden"`
-   * respectively) that a given agent may not match.
+   * Vector IDs to skip for operator-driven reasons (SDK-internal vectors,
+   * environment-specific quirks, etc.). Capability-profile mismatches
+   * don't belong here — pass {@link agentCapability} and the grader auto-
+   * skips vectors whose `verifier_capability` can't match the agent.
    */
   skipVectors?: string[];
+  /**
+   * Agent's declared `request_signing` capability block — exactly the shape
+   * in `get_adcp_capabilities.response.request_signing`. When provided, the
+   * grader pre-flights every vector's `verifier_capability` against this
+   * profile and auto-skips any vector that asserts a policy the agent
+   * didn't advertise (e.g., vector 007 requires `covers_content_digest:
+   * 'required'`; agent declares `'either'` — auto-skipped with
+   * `skip_reason: 'capability_profile_mismatch'`).
+   *
+   * Without this option, every vector runs and cap-profile mismatches
+   * produce failed vectors that the operator has to manually translate
+   * into `skipVectors` entries — fragile and easy to get wrong per
+   * profile. Set `agentCapability` and `skipVectors` collapses to just
+   * the handful of operator-specific overrides (like vector 025, which
+   * exercises the SDK library rather than the agent).
+   */
+  agentCapability?: VerifierCapabilityFixture;
   /**
    * When set, run only the named vector ids (all others auto-skip). Takes
    * precedence over `skipVectors`. Useful for isolated regression tests
@@ -224,6 +241,17 @@ function preflightSkip(
   }
   if (options.skipVectors?.includes(vector.id)) {
     return { ...base, skipped: true, skip_reason: 'operator_skip' };
+  }
+  if (options.agentCapability) {
+    const mismatch = capabilityMismatch(vector.verifier_capability, options.agentCapability);
+    if (mismatch) {
+      return {
+        ...base,
+        skipped: true,
+        skip_reason: 'capability_profile_mismatch',
+        diagnostic: mismatch,
+      };
+    }
   }
   const transportReason = TRANSPORT_UNGRADABLE[vector.id];
   if (transportReason) {
@@ -529,6 +557,61 @@ function buildPositiveRequestFromNegative(
 
 function negativeAcceptedErrorCode(vector: NegativeVector, probe: ProbeResult): boolean {
   return probe.status === 401 && probe.wwwAuthenticateErrorCode === vector.expected_error_code;
+}
+
+/**
+ * Compare a vector's `verifier_capability` fixture against the agent's
+ * declared capability profile. Returns a human-readable diagnostic when
+ * the two can't coexist — the vector asserts a policy the agent didn't
+ * advertise — or `undefined` when the vector is gradable under the
+ * agent's profile.
+ *
+ * Rules (all three must hold for a graded run):
+ *   - `covers_content_digest`: agent's `'either'` is permissive enough
+ *     for any vector value. Otherwise, agent and vector must agree.
+ *   - `required_for`: if the vector asserts a required_for operation,
+ *     the agent's `required_for` must include it. The reverse is fine
+ *     — an agent that requires MORE operations is still conformant
+ *     against a vector that asserts fewer.
+ *   - `supported`: must match. A vector with `supported: true` doesn't
+ *     grade against an agent that declares `supported: false` (the
+ *     conformance storyboard already skips such agents outright, but
+ *     defense-in-depth).
+ */
+function capabilityMismatch(
+  vectorCap: VerifierCapabilityFixture,
+  agentCap: VerifierCapabilityFixture
+): string | undefined {
+  if (vectorCap.supported !== agentCap.supported) {
+    return (
+      `Vector asserts supported=${vectorCap.supported} but agent declares supported=${agentCap.supported}. ` +
+      `Verify the agent's request_signing capability block.`
+    );
+  }
+  if (
+    vectorCap.covers_content_digest !== 'either' &&
+    agentCap.covers_content_digest !== 'either' &&
+    vectorCap.covers_content_digest !== agentCap.covers_content_digest
+  ) {
+    return (
+      `Vector asserts covers_content_digest='${vectorCap.covers_content_digest}' but agent declares '${agentCap.covers_content_digest}'. ` +
+      `The vector can't grade against this profile — its expected verifier behavior doesn't match what the agent implements.`
+    );
+  }
+  // `required_for` on the vector: every op the vector expects to be
+  // required must also be required by the agent. Otherwise a negative
+  // vector (e.g., missing signature on `create_media_buy`) would test a
+  // rejection path the agent didn't opt into.
+  const vectorRequiredFor = vectorCap.required_for ?? [];
+  const agentRequiredForSet = new Set(agentCap.required_for ?? []);
+  const missingRequiredFor = vectorRequiredFor.filter(op => !agentRequiredForSet.has(op));
+  if (missingRequiredFor.length > 0) {
+    return (
+      `Vector asserts required_for includes [${missingRequiredFor.join(', ')}] but agent's required_for does not. ` +
+      `Either add the operation to the agent's request_signing.required_for, or accept the skip.`
+    );
+  }
+  return undefined;
 }
 
 function buildNegativeDiagnostic(vector: NegativeVector, probe: ProbeResult): string | undefined {

@@ -36,7 +36,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import { wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
+import { ADCP_STATE_STORE, wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
@@ -64,6 +64,12 @@ import {
 } from './responses';
 
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
+
+function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
+  // `clearAll` is optional on `IdempotencyStore` — only present when the
+  // configured backend opts in (memory backend does; pg backend does not).
+  return typeof store.clearAll === 'function';
+}
 import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import type { IdempotencyStore } from './idempotency';
 import {
@@ -2002,7 +2008,39 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     return capabilitiesResponse(data);
   });
 
-  const wrapped: AdcpServerInternal = wrapMcpServer(server);
+  const compliance = {
+    async reset({ force = false }: { force?: boolean } = {}): Promise<void> {
+      const stateStoreHasClear = typeof (stateStore as unknown as { clear?: unknown }).clear === 'function';
+      const idempotencyBackendHasClearAll = idempotency ? hasIdempotencyClearAll(idempotency) : true;
+      if (!force) {
+        if (!stateStoreHasClear) {
+          throw new Error(
+            'AdcpServer.compliance.reset: configured stateStore does not expose `clear()`. ' +
+              'Use the default `InMemoryStateStore` for test harnesses, or pass `{ force: true }` if you know the store is safe to flush.'
+          );
+        }
+        if (!idempotencyBackendHasClearAll) {
+          throw new Error(
+            'AdcpServer.compliance.reset: configured idempotency backend does not expose `clearAll()`. ' +
+              'Use `memoryBackend()` for test harnesses, or pass `{ force: true }` to skip idempotency flush and clear only state.'
+          );
+        }
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error(
+            'AdcpServer.compliance.reset: refused to run with NODE_ENV=production. ' +
+              'Pass `{ force: true }` to acknowledge the flush, or unset NODE_ENV when running storyboards.'
+          );
+        }
+      }
+      if (stateStoreHasClear) {
+        (stateStore as unknown as { clear: () => void }).clear();
+      }
+      if (idempotency && idempotency.clearAll) {
+        await idempotency.clearAll();
+      }
+    },
+  };
+  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance);
 
   // Attach the auto-wired preTransport so `serve()` mounts the verifier
   // on the HTTP transport. Stashed under a non-enumerable symbol property
@@ -2026,6 +2064,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   };
   Object.defineProperty(wrapped, ADCP_SIGNED_REQUESTS_STATE, {
     value: signedRequestsState,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+  Object.defineProperty(wrapped, ADCP_STATE_STORE, {
+    value: stateStore,
     enumerable: false,
     configurable: true,
     writable: false,

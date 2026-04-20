@@ -28,6 +28,8 @@
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyOptions } from 'jose';
+import type { RequestSignatureErrorCode } from '../signing/errors';
+import { RequestSignatureError } from '../signing/errors';
 
 /**
  * Default JWT algorithm allowlist. Asymmetric only — HS-family is intentionally
@@ -402,12 +404,30 @@ export interface RespondUnauthorizedOptions {
   resourceMetadata?: string;
   /** Set to 403 instead of 401 for valid-but-unauthorized scenarios. */
   status?: 401 | 403;
+  /**
+   * RFC 9421 signature error code. When set, the challenge scheme switches
+   * from `Bearer` to `Signature` and the body's `error` field carries the
+   * signature code verbatim — what the `signed_requests` conformance grader
+   * reads from `WWW-Authenticate` to decide pass/fail on negative vectors.
+   *
+   * Set this whenever the rejection is a signature-layer failure (invalid
+   * signature, missing required signature, revoked key, replayed nonce,
+   * etc.). `serve()` auto-detects this from an {@link AuthError} whose
+   * `cause` is a {@link RequestSignatureError}; callers rarely set it
+   * directly.
+   */
+  signatureError?: RequestSignatureErrorCode;
 }
 
 /**
  * Send an RFC 6750-compliant 401/403 response with the `WWW-Authenticate`
  * header set. Called automatically by {@link serve} when `authenticate`
  * returns `null` or throws.
+ *
+ * When {@link RespondUnauthorizedOptions.signatureError} is set, the
+ * challenge scheme becomes `Signature` (per the `signed-requests`
+ * specialism) and the body's `error` field carries the RFC 9421 error
+ * code — the `signed_requests` grader reads both from the challenge.
  */
 export function respondUnauthorized(
   _req: IncomingMessage,
@@ -416,20 +436,43 @@ export function respondUnauthorized(
 ): void {
   const realm = options.realm ?? 'mcp';
   const parts = [`realm="${escapeQuotes(realm)}"`];
-  if (options.error) parts.push(`error="${options.error}"`);
+  const useSignatureChallenge = options.signatureError !== undefined;
+  if (useSignatureChallenge) {
+    parts.push(`error="${options.signatureError}"`);
+  } else if (options.error) {
+    parts.push(`error="${options.error}"`);
+  }
   if (options.errorDescription) parts.push(`error_description="${escapeQuotes(options.errorDescription)}"`);
   if (options.resourceMetadata) parts.push(`resource_metadata="${escapeQuotes(options.resourceMetadata)}"`);
 
+  const scheme = useSignatureChallenge ? 'Signature' : 'Bearer';
   res.writeHead(options.status ?? 401, {
     'Content-Type': 'application/json',
-    'WWW-Authenticate': `Bearer ${parts.join(', ')}`,
+    'WWW-Authenticate': `${scheme} ${parts.join(', ')}`,
   });
   res.end(
     JSON.stringify({
-      error: options.error ?? 'unauthorized',
+      error: useSignatureChallenge ? options.signatureError : (options.error ?? 'unauthorized'),
       error_description: options.errorDescription ?? 'Authentication required.',
     })
   );
+}
+
+/**
+ * Unwrap the first {@link RequestSignatureError} found walking the
+ * `cause` chain of an {@link AuthError} (or any error), so callers can
+ * switch the `WWW-Authenticate` challenge scheme on signature-layer
+ * failures. Returns `null` for non-signature errors.
+ */
+export function signatureErrorCodeFromCause(err: unknown): RequestSignatureErrorCode | null {
+  let current: unknown = err;
+  // Walk at most 8 links — well above anything legitimate code produces, but
+  // bounded so a self-referential `cause` chain can't spin.
+  for (let i = 0; i < 8 && current != null; i++) {
+    if (current instanceof RequestSignatureError) return current.code;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 function escapeQuotes(s: string): string {
