@@ -30,6 +30,7 @@ const STRING_PARAMS = new Set<keyof SignatureParams>(['nonce', 'keyid', 'alg', '
 const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority']);
 
 export function canonicalTargetUri(rawUrl: string): string {
+  rejectNonAsciiHost(rawUrl);
   const u = new URL(rawUrl);
   if (u.username || u.password) {
     throw new RequestSignatureError(
@@ -43,7 +44,15 @@ export function canonicalTargetUri(rawUrl: string): string {
 }
 
 export function canonicalAuthority(rawUrl: string): string {
+  rejectNonAsciiHost(rawUrl);
   const u = new URL(rawUrl);
+  if (u.username || u.password) {
+    throw new RequestSignatureError(
+      'request_signature_header_malformed',
+      1,
+      '@authority must not include userinfo; strip credentials before signing'
+    );
+  }
   return u.host.toLowerCase();
 }
 
@@ -159,4 +168,27 @@ function decodeUnreservedPercentEncoding(input: string): string {
       code === 0x7e;
     return isUnreserved ? String.fromCharCode(code) : match;
   });
+}
+
+/**
+ * Raw non-ASCII bytes in the URL authority (IDN U-label) are a parse-time
+ * anomaly — AdCP @target-uri canonicalization expects A-labels (Punycode).
+ * Reject rather than implicitly normalize: UTS-46 transitional vs.
+ * non-transitional produce different A-labels for the same input, which
+ * would open a signer/verifier canonicalization differential. Accepts
+ * both absolute (`scheme://…`) and scheme-relative (`//…`) URL shapes.
+ */
+export function rejectNonAsciiHost(rawUrl: string): void {
+  const authorityMatch = rawUrl.match(/^(?:[a-z][a-z0-9+.\-]*:)?\/\/([^/?#]*)/i);
+  if (!authorityMatch) return;
+  const authority = authorityMatch[1]!;
+  for (let i = 0; i < authority.length; i++) {
+    if (authority.charCodeAt(i) > 0x7f) {
+      throw new RequestSignatureError(
+        'request_signature_header_malformed',
+        1,
+        'URL authority contains non-ASCII bytes; use the A-label (Punycode) form'
+      );
+    }
+  }
 }

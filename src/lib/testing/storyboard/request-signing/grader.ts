@@ -3,6 +3,14 @@ import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type Sig
 import { probeSignedRequest, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
+import {
+  InMemoryReplayStore,
+  InMemoryRevocationStore,
+  RequestSignatureError,
+  StaticJwksResolver,
+  verifyRequestSignature,
+  type AdcpJsonWebKey,
+} from '../../../signing';
 import type { NegativeVector, PositiveVector } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
@@ -178,6 +186,18 @@ const MCP_FLATTENED_VECTORS = new Set([
   '008-percent-encoded-path',
 ]);
 
+// Vectors whose failure mode can't reach a live agent through HTTP. Document
+// why each entry can't be graded via probe so adding a new entry isn't a
+// silent coverage loss.
+const TRANSPORT_UNGRADABLE: Record<string, string> = {
+  // fetch() and the Node URL parser normalize U-labels to A-labels before
+  // the request leaves the client. A raw non-ASCII Host header reaches the
+  // agent as Punycode, defeating the parse-time check. Direct verifier
+  // tests exercise this edge.
+  '026-non-ascii-host':
+    'HTTP transport punycodes U-labels before the request leaves the client; verified at the library level.',
+};
+
 /**
  * Centralized skip decisions. Checks (in order): onlyVectors filter, operator
  * skipVectors, MCP-mode URL-edge flattening, rate-abuse opt-out,
@@ -204,6 +224,10 @@ function preflightSkip(
   }
   if (options.skipVectors?.includes(vector.id)) {
     return { ...base, skipped: true, skip_reason: 'operator_skip' };
+  }
+  const transportReason = TRANSPORT_UNGRADABLE[vector.id];
+  if (transportReason) {
+    return { ...base, skipped: true, skip_reason: 'transport_ungradable', diagnostic: transportReason };
   }
   // Canonicalization-edge positive vectors (005–008) bake their edge case
   // into the vector URL path, query, or port. MCP mode flattens every vector
@@ -324,6 +348,9 @@ async function gradeNegative(
   buildOpts: BuildOptions,
   options: GradeOptions
 ): Promise<VectorGradeResult> {
+  if (vector.jwks_override) {
+    return gradeJwksOverrideNegative(vector);
+  }
   switch (vector.requires_contract) {
     case 'replay_window':
       return gradeReplayWindow(vector, loaded, probeOpts, buildOpts);
@@ -332,6 +359,58 @@ async function gradeNegative(
     case 'revocation':
     default:
       return gradeStaticNegative(vector, loaded, probeOpts, buildOpts);
+  }
+}
+
+/**
+ * Grade vectors that ship an inline `jwks_override` against the library
+ * verifier directly. The agent's JWKS can't be mutated per-vector at probe
+ * time, so a black-box HTTP grade can't surface these failure modes.
+ * Grading the library verifier is the only path that exercises what the
+ * vector is testing — the inline JWK's kty/crv/alg consistency rules.
+ */
+async function gradeJwksOverrideNegative(vector: NegativeVector): Promise<VectorGradeResult> {
+  const override = vector.jwks_override!;
+  const start = Date.now();
+  const jwks = new StaticJwksResolver(override.keys as unknown as AdcpJsonWebKey[]);
+  const replayStore = new InMemoryReplayStore();
+  const revocationStore = new InMemoryRevocationStore();
+  const operation = new URL(vector.request.url).pathname.split('/').filter(Boolean).pop() ?? '';
+  try {
+    await verifyRequestSignature(vector.request, {
+      capability: vector.verifier_capability,
+      jwks,
+      replayStore,
+      revocationStore,
+      now: () => vector.reference_now,
+      operation,
+    });
+    return {
+      vector_id: vector.id,
+      kind: 'negative',
+      passed: false,
+      http_status: 0,
+      expected_error_code: vector.expected_error_code,
+      diagnostic: `library verifier accepted a request expected to fail with error="${vector.expected_error_code}"`,
+      probe_duration_ms: Date.now() - start,
+    };
+  } catch (err) {
+    if (err instanceof RequestSignatureError) {
+      const passed = err.code === vector.expected_error_code;
+      return {
+        vector_id: vector.id,
+        kind: 'negative',
+        passed,
+        http_status: 0,
+        expected_error_code: vector.expected_error_code,
+        actual_error_code: err.code,
+        diagnostic: passed
+          ? undefined
+          : `library verifier rejected with error="${err.code}" but vector expects "${vector.expected_error_code}"`,
+        probe_duration_ms: Date.now() - start,
+      };
+    }
+    throw err;
   }
 }
 
@@ -443,6 +522,7 @@ function buildPositiveRequestFromNegative(
     request: vector.request,
     verifier_capability: vector.verifier_capability,
     jwks_ref: vector.jwks_ref,
+    jwks_override: vector.jwks_override,
   };
   return buildPositiveRequest(pseudoPositive, loaded.keys, options);
 }

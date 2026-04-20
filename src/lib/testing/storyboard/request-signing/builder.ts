@@ -235,7 +235,7 @@ const MUTATIONS: Record<string, Mutator> = {
     // Use the dedicated revoked key (`test-revoked-2026`) declared by the
     // signed-requests-runner test-kit. For current pre-#2353 caches, vector 017
     // still references test-ed25519-2026; fall back to whatever the vector says.
-    const kid = vector.jwks_ref[0];
+    const kid = vector.jwks_ref?.[0];
     if (!kid) throw new Error(`${vector.id}: jwks_ref missing`);
     const key = keyFor(keys, kid);
     return sign(key, vector, options);
@@ -545,8 +545,13 @@ function produceSignature(key: SignerKey, data: Buffer): Uint8Array {
 // ── Helpers ───────────────────────────────────────────────────
 
 function signerKeyFor(vector: PositiveVector | NegativeVector, keys: TestKeyset): SignerKey {
-  const kid = vector.jwks_ref[0];
-  if (!kid) throw new Error(`${vector.id}: jwks_ref is empty`);
+  const kid = vector.jwks_ref?.[0];
+  if (!kid) {
+    throw new Error(
+      `${vector.id}: jwks_ref missing — vectors signed dynamically by the builder must declare a keys.json kid. ` +
+        `Vectors shipping an inline jwks_override must use a passthrough mutator (no re-signing).`
+    );
+  }
   return keyFor(keys, kid);
 }
 

@@ -35,6 +35,7 @@ function malformed(message: string): never {
 }
 
 export function parseSignatureInput(headerValue: string): ParsedSignatureInput {
+  rejectDuplicateDictionaryKeys(headerValue, 'Signature-Input');
   let dict;
   try {
     dict = parseDictionary(headerValue);
@@ -103,6 +104,96 @@ export function parseSignature(headerValue: string, expectedLabel: string): Pars
 
 function isInnerList(entry: unknown): entry is InnerList {
   return Array.isArray(entry) && Array.isArray((entry as unknown[])[0]);
+}
+
+/**
+ * RFC 8941 §3.2 parsers deduplicate by keeping the last value. The AdCP
+ * profile (step 1) overrides that: duplicate keys are a downgrade vector —
+ * a proxy could smuggle a weaker component set past a verifier that reads
+ * the first. Detect duplicates at the raw-header level before the library
+ * silently drops them.
+ */
+export function rejectDuplicateDictionaryKeys(headerValue: string, headerName: string): void {
+  const keys = extractTopLevelDictKeys(headerValue);
+  const seen = new Set<string>();
+  for (const key of keys) {
+    if (seen.has(key)) {
+      malformed(`${headerName} header declares key "${key}" more than once`);
+    }
+    seen.add(key);
+  }
+}
+
+function extractTopLevelDictKeys(input: string): string[] {
+  const keys: string[] = [];
+  let i = 0;
+  const len = input.length;
+  let atEntryStart = true;
+  while (i < len) {
+    if (atEntryStart) {
+      while (i < len && (input[i] === ' ' || input[i] === '\t')) i++;
+      const keyStart = i;
+      while (i < len && /[A-Za-z0-9_*-]/.test(input[i]!)) i++;
+      if (i > keyStart) keys.push(input.slice(keyStart, i).toLowerCase());
+      atEntryStart = false;
+      continue;
+    }
+    const ch = input[i]!;
+    if (ch === '"') {
+      i++;
+      while (i < len) {
+        if (input[i] === '\\' && i + 1 < len) {
+          i += 2;
+          continue;
+        }
+        if (input[i] === '"') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === ':') {
+      i++;
+      while (i < len && input[i] !== ':') i++;
+      if (i < len) i++;
+      continue;
+    }
+    if (ch === '(') {
+      i++;
+      let depth = 1;
+      while (i < len && depth > 0) {
+        const c = input[i]!;
+        if (c === '"') {
+          i++;
+          while (i < len) {
+            if (input[i] === '\\' && i + 1 < len) {
+              i += 2;
+              continue;
+            }
+            if (input[i] === '"') {
+              i++;
+              break;
+            }
+            i++;
+          }
+          continue;
+        }
+        if (c === '(') depth++;
+        else if (c === ')') depth--;
+        i++;
+      }
+      continue;
+    }
+    if (ch === ',') {
+      atEntryStart = true;
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return keys;
 }
 
 /**
