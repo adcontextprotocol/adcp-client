@@ -599,12 +599,24 @@ function parseAgentOptions(args) {
     timeoutValue = args[timeoutIndex + 1];
   }
 
+  // --file PATH | --file=PATH: ad-hoc storyboard YAML (spec evolution workflow)
+  const fileIndex = args.indexOf('--file');
+  let file = null;
+  if (fileIndex !== -1 && fileIndex + 1 < args.length && !args[fileIndex + 1].startsWith('--')) {
+    file = args[fileIndex + 1];
+  } else {
+    const eqArg = args.find(a => a.startsWith('--file='));
+    if (eqArg) file = eqArg.slice('--file='.length);
+  }
+
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
   const allowHttp = args.includes('--allow-http');
 
-  // Filter out flags and their values to find positional args
+  // Filter out flags and their values to find positional args. The `--file=PATH`
+  // form is already removed by the `startsWith('--')` check; only the
+  // space-separated value needs explicit exclusion.
   const flagValues = [
     authToken,
     protocolFlag,
@@ -615,10 +627,11 @@ function parseAgentOptions(args) {
     storyboardsValue,
     platformTypeValue,
     timeoutValue,
+    fileIndex !== -1 ? file : null,
   ].filter(Boolean);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
-  return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, allowHttp, positionalArgs };
+  return { authToken, protocolFlag, brief, file, jsonOutput, debug, dryRun, allowHttp, positionalArgs };
 }
 
 /**
@@ -982,7 +995,7 @@ async function handleStoryboardShow(args) {
 
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
-  const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = opts;
+  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
 
   // Multi-instance mode: repeated --url flags round-robin steps across N
   // seller URLs. Must share a backing store to pass — catches horizontal
@@ -994,10 +1007,6 @@ async function handleStoryboardRun(args) {
 
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];
-
-  // --file <path>: ad-hoc storyboard load from a local YAML (spec evolution workflow)
-  const fileIndex = args.indexOf('--file');
-  const filePath = fileIndex !== -1 ? args[fileIndex + 1] : null;
 
   if (!agentArg) {
     console.error('Usage: adcp storyboard run <agent> [storyboard_id|--file path] [options]');
@@ -1193,7 +1202,7 @@ function extractRepeatedUrlFlags(args) {
  * dispatch. Use a specific storyboard or bundle ID.
  */
 async function handleMultiInstanceStoryboardRun(args, opts, urls) {
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs } = opts;
+  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
 
   if (urls.length < 2) {
     console.error('ERROR: Multi-instance mode requires 2+ --url flags. Drop --url for single-instance.');
@@ -1212,8 +1221,6 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     process.exit(2);
   }
 
-  const fileIndex = args.indexOf('--file');
-  const filePath = fileIndex !== -1 ? args[fileIndex + 1] : null;
   const storyboardId = firstPositional;
 
   if (filePath && storyboardId) {
