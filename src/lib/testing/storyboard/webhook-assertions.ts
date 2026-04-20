@@ -598,6 +598,10 @@ function mapSignatureErrorCode(
       return 'signature_key_unknown';
     case 'webhook_signature_key_purpose_invalid':
       return 'signature_key_purpose_invalid';
+    case 'webhook_mode_mismatch':
+      return 'signature_mode_mismatch';
+    case 'webhook_target_uri_malformed':
+      return 'signature_target_uri_malformed';
     case 'webhook_signature_key_revoked':
       return 'signature_key_revoked';
     case 'webhook_signature_revocation_stale':

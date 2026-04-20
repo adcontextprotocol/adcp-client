@@ -22,7 +22,7 @@
  * match the security doc.
  */
 
-import { buildSignatureBase, getHeaderValue, type RequestLike } from './canonicalize';
+import { buildSignatureBase, canonicalTargetUri, getHeaderValue, type RequestLike } from './canonicalize';
 import { contentDigestMatches } from './content-digest';
 import { RequestSignatureError, WebhookSignatureError } from './errors';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
@@ -144,6 +144,14 @@ export async function verifyWebhookSignature(
   // Step 6: covered components.
   validateCoveredComponents(parsedInput.components);
 
+  // Step 6a: `@target-uri` syntactic validation. Runs before JWKS resolution
+  // and crypto verify so a malformed URI short-circuits without JWKS
+  // side-effects. Distinct from `header_malformed` (the Signature /
+  // Signature-Input headers themselves) — this flags the covered URI value
+  // that will be fed into the signature base. Non-parseable URLs, non-https
+  // schemes, embedded userinfo, and fragments are all rejected.
+  validateTargetUri(request.url);
+
   // Step 7: resolve keyid.
   const jwk = await options.jwks.resolve(parsedInput.params.keyid);
   if (!jwk) {
@@ -162,11 +170,26 @@ export async function verifyWebhookSignature(
   }
 
   // Step 8: key purpose — MUST be scoped for webhook signing.
-  if (jwk.adcp_use !== 'webhook-signing' || !jwk.key_ops?.includes('verify')) {
+  //
+  // Split failure modes so operators can tell "key isn't scoped at all" (or
+  // lacks the verify key_op) apart from "key is scoped for a different
+  // mode". The former needs the publisher to add a purpose; the latter
+  // needs a new keypair minted for the right mode (a request-signing key
+  // MUST NOT be reused for webhook-signing even if the crypto material is
+  // compatible — purpose binding is the whole point of the `adcp_use`
+  // discriminator).
+  if (jwk.adcp_use === undefined || !jwk.key_ops?.includes('verify')) {
     throw new WebhookSignatureError(
       'webhook_signature_key_purpose_invalid',
       8,
       `JWK "${jwk.kid}" is not scoped for webhook-signing verification.`
+    );
+  }
+  if (jwk.adcp_use !== 'webhook-signing') {
+    throw new WebhookSignatureError(
+      'webhook_mode_mismatch',
+      8,
+      `JWK "${jwk.kid}" declares adcp_use="${jwk.adcp_use}" but this endpoint requires "webhook-signing".`
     );
   }
 
@@ -184,10 +207,16 @@ export async function verifyWebhookSignature(
     throw err;
   }
 
+  // Replay cache is scoped by `(keyid, @target-uri)` per adcp#2460 — a
+  // webhook captured on one receiver path MUST NOT count against the replay
+  // budget for a different path under the same keyid. Canonicalize once and
+  // reuse for both pre-check and commit.
+  const replayScope = canonicalTargetUri(request.url);
+
   // Step 9a: per-keyid rate abuse. Distinct code from step 12's replay —
   // cap exhaustion is a compromised-key / misconfig signal that SHOULD
   // alert operators, not "same nonce twice."
-  if (await options.replayStore.isCapHit(jwk.kid, now)) {
+  if (await options.replayStore.isCapHit(jwk.kid, replayScope, now)) {
     throw new WebhookSignatureError(
       'webhook_signature_rate_abuse',
       9,
@@ -197,7 +226,7 @@ export async function verifyWebhookSignature(
 
   // Pre-check step 12's replay before crypto so a replayed nonce short-
   // circuits an expensive Ed25519/ECDSA verify.
-  if (await options.replayStore.has(jwk.kid, parsedInput.params.nonce, now)) {
+  if (await options.replayStore.has(jwk.kid, replayScope, parsedInput.params.nonce, now)) {
     throw new WebhookSignatureError(
       'webhook_signature_replayed',
       12,
@@ -237,7 +266,7 @@ export async function verifyWebhookSignature(
   // cap (any signature failing at step 10 never consumes an entry).
   const remaining = parsedInput.params.expires - now + CLOCK_SKEW_TOLERANCE_SECONDS;
   const ttl = Math.max(remaining, MAX_SIGNATURE_WINDOW_SECONDS + CLOCK_SKEW_TOLERANCE_SECONDS);
-  const insertResult = await options.replayStore.insert(jwk.kid, parsedInput.params.nonce, ttl, now);
+  const insertResult = await options.replayStore.insert(jwk.kid, replayScope, parsedInput.params.nonce, ttl, now);
   if (insertResult === 'replayed') {
     throw new WebhookSignatureError(
       'webhook_signature_replayed',
@@ -309,4 +338,66 @@ function validateCoveredComponents(components: string[]): void {
       );
     }
   }
+}
+
+/**
+ * Syntactic validation of the `@target-uri` value before signature
+ * computation. Four failure modes:
+ *   - URL doesn't parse at all.
+ *   - Scheme is not https (webhooks MUST be TLS-terminated; loopback
+ *     addresses are exempt so `loopback_mock` test receivers — the
+ *     storyboard runner's default — can operate over plain http).
+ *   - Authority contains userinfo — credentials don't belong in a signed URI.
+ *   - URL carries a fragment — fragments are client-side and never transmitted.
+ *
+ * Each throws `webhook_target_uri_malformed` with the failure reason in the
+ * message. Distinct from `webhook_signature_header_malformed`, which flags
+ * the Signature / Signature-Input headers themselves.
+ */
+function validateTargetUri(rawUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new WebhookSignatureError(
+      'webhook_target_uri_malformed',
+      6,
+      `@target-uri "${rawUrl}" is not a parseable URL.`
+    );
+  }
+  if (url.protocol !== 'https:' && !isLoopbackHost(url.hostname)) {
+    throw new WebhookSignatureError(
+      'webhook_target_uri_malformed',
+      6,
+      `@target-uri must use https; got "${url.protocol}" in "${rawUrl}".`
+    );
+  }
+  if (url.username || url.password) {
+    throw new WebhookSignatureError(
+      'webhook_target_uri_malformed',
+      6,
+      '@target-uri must not embed userinfo.'
+    );
+  }
+  if (url.hash) {
+    throw new WebhookSignatureError(
+      'webhook_target_uri_malformed',
+      6,
+      '@target-uri must not carry a fragment.'
+    );
+  }
+}
+
+/**
+ * Loopback host exemption for the https-only rule. The storyboard runner's
+ * `loopback_mock` webhook receiver binds to 127.0.0.1 (or the IPv6 [::1])
+ * and publishers emit `http://127.0.0.1:<port>/…` URLs for delivery; the
+ * signature covers `@target-uri` byte-for-byte, so the verifier sees the
+ * http scheme. Production traffic never reaches loopback, so this exemption
+ * can't be used to bypass TLS for real webhooks.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  if (!hostname) return false;
+  const normalized = hostname.toLowerCase();
+  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.');
 }

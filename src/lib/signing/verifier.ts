@@ -1,5 +1,5 @@
 import { parseDictionary } from 'structured-headers';
-import { buildSignatureBase, getHeaderValue, rejectNonAsciiHost, type RequestLike } from './canonicalize';
+import { buildSignatureBase, canonicalTargetUri, getHeaderValue, rejectNonAsciiHost, type RequestLike } from './canonicalize';
 import { contentDigestMatches } from './content-digest';
 import { RequestSignatureError } from './errors';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
@@ -127,17 +127,23 @@ export async function verifyRequestSignature(
     throw new RequestSignatureError('request_signature_key_revoked', 9, `JWK "${jwk.kid}" is revoked`);
   }
 
+  // Replay cache is scoped by `(keyid, @target-uri)` per adcp#2460 — a
+  // signature captured on one endpoint (e.g. /create_media_buy) MUST NOT
+  // count against the replay budget for a different endpoint under the
+  // same keyid. Canonicalize once and reuse for both pre-check and commit.
+  const replayScope = canonicalTargetUri(request.url);
+
   // Step 12 pre-checks (rate-abuse cap + replay hit) run before crypto so a
   // compromised-key cache cap or a replayed nonce short-circuits an expensive
   // Ed25519/ECDSA verify. The committing insert happens after step 11.
-  if (await options.replayStore.isCapHit(jwk.kid, now)) {
+  if (await options.replayStore.isCapHit(jwk.kid, replayScope, now)) {
     throw new RequestSignatureError(
       'request_signature_rate_abuse',
       12,
       `Per-keyid replay cache cap exceeded for keyid=${jwk.kid}`
     );
   }
-  if (await options.replayStore.has(jwk.kid, parsedInput.params.nonce, now)) {
+  if (await options.replayStore.has(jwk.kid, replayScope, parsedInput.params.nonce, now)) {
     throw new RequestSignatureError(
       'request_signature_replayed',
       12,
@@ -182,7 +188,7 @@ export async function verifyRequestSignature(
   // replay horizon, and so cross-replica eventual consistency has headroom.
   const remaining = parsedInput.params.expires - now + CLOCK_SKEW_TOLERANCE_SECONDS;
   const ttl = Math.max(remaining, MAX_SIGNATURE_WINDOW_SECONDS + CLOCK_SKEW_TOLERANCE_SECONDS);
-  const insertResult = await options.replayStore.insert(jwk.kid, parsedInput.params.nonce, ttl, now);
+  const insertResult = await options.replayStore.insert(jwk.kid, replayScope, parsedInput.params.nonce, ttl, now);
   if (insertResult === 'replayed') {
     throw new RequestSignatureError(
       'request_signature_replayed',

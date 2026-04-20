@@ -740,6 +740,7 @@ OPTIONS:
   --wait            Wait for async/webhook responses
   --json            Raw JSON output
   --debug           Debug output
+  --allow-v2        Suppress the v2-sunset warning (unsupported since 2026-04-20)
   --help, -h        Show help
 
 BUILT-IN AGENTS:
@@ -1978,6 +1979,14 @@ function formatVerdict(verdict) {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Global: suppress the v2-sunset warning before any subcommand runs.
+  // v2 went unsupported on 2026-04-20 (AdCP 3.0 GA, adcp#2220) — the library
+  // warns whenever an agent advertises v2 capabilities. The flag is for
+  // legacy holdouts who know what they're doing.
+  if (args.includes('--allow-v2')) {
+    process.env.ADCP_ALLOW_V2 = '1';
+  }
 
   // Handle subcommands before global --help so their own --help works
   if (args[0] === 'registry') {

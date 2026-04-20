@@ -28,6 +28,7 @@ const { StaticJwksResolver } = require('../../dist/lib/signing/jwks.js');
 const { InMemoryReplayStore } = require('../../dist/lib/signing/replay.js');
 const { InMemoryRevocationStore } = require('../../dist/lib/signing/revocation.js');
 const { RequestSignatureError, WebhookSignatureError } = require('../../dist/lib/signing/errors.js');
+const { canonicalTargetUri } = require('../../dist/lib/signing/canonicalize.js');
 
 // ────────────────────────────────────────────────────────────
 // Fixtures
@@ -86,10 +87,13 @@ function buildStores(vector) {
   let revocationStore = revocation;
 
   const state = vector.test_harness_state;
+  // Replay entries are scoped by `(keyid, @target-uri)` (adcp#2460) — preload
+  // under the scope the verifier will compute from the vector's request URL.
+  const scope = canonicalTargetUri(vector.request.url);
   if (state?.replay_cache_entries) {
     for (const { keyid, nonce } of state.replay_cache_entries) {
       // TTL well past reference_now so the entry is still in-window.
-      replay.preload(keyid, nonce, 600, vector.reference_now);
+      replay.preload(keyid, scope, nonce, 600, vector.reference_now);
     }
   }
   if (state?.revoked_kids) {

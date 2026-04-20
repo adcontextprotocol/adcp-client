@@ -5,6 +5,17 @@
 Rollup 5.2.0 — bundles the work that went into the unpublished 6.0.0. Treat the
 heads-up section below as "breaking" if you're upgrading directly from 5.1.0.
 
+## ⚠️ 5.1.0 → 5.2.0 — treat as MAJOR
+
+This rollup is labeled `minor` because 5.1.0 had negligible adoption and the jump from 4.x is the intended upgrade path. If you are on 5.1.0, **treat this as a major upgrade** — the following source-level breaks require code changes:
+
+- `VerifyResult` is now a discriminated union (`status: 'verified' | 'unsigned'`); branching on `result.keyid === ''` no longer works.
+- `TaskStatus` narrowed — `'governance-escalated'` removed; fold into `'governance-denied'` and inspect `governance.findings`.
+- `domain` → `protocol` rename threaded through public types, compliance cache paths, and `TasksGetResponse` / `TasksListRequest.filters` / `MCPWebhookPayload`.
+- `BudgetAuthorityLevel` type removed; migrate to `budget.reallocation_threshold` / `budget.reallocation_unlimited` and `plan.human_review_required`.
+
+See the "Heads-up if tracking 5.1.0 → 5.2.0" section below for full migration detail.
+
 ## Heads-up if tracking 5.1.0 → 5.2.0
 
 ### Verifier API v3 (closes #583 items 1 and 2, #584)

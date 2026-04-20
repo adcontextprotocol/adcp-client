@@ -284,6 +284,7 @@ export class SingleAgentClient {
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
+  private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
 
   constructor(
     private agent: AgentConfig,
@@ -2515,6 +2516,7 @@ export class SingleAgentClient {
   async getCapabilities(): Promise<AdcpCapabilities> {
     // Return cached if available
     if (this.cachedCapabilities) {
+      this.maybeWarnV2Sunset(this.cachedCapabilities);
       return this.cachedCapabilities;
     }
 
@@ -2545,6 +2547,7 @@ export class SingleAgentClient {
 
         if (result.success && result.data) {
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          this.maybeWarnV2Sunset(this.cachedCapabilities);
           return this.cachedCapabilities;
         }
         // Log when executeTask returns but success is false — this causes
@@ -2585,6 +2588,34 @@ export class SingleAgentClient {
     );
     this.cachedCapabilities = buildSyntheticCapabilities(tools);
     return this.cachedCapabilities;
+  }
+
+  /**
+   * Emit a one-time warning when the agent reports v2 capabilities.
+   *
+   * v2 went unsupported on 2026-04-20 (AdCP 3.0 GA — adcp#2220). We still
+   * execute v2 code paths (no behaviour change), but clients integrating
+   * against an unsupported agent should hear about it loudly.
+   *
+   * Synthetic capabilities (no `get_adcp_capabilities` tool available) don't
+   * trigger the warning — we don't actually know the agent's version, and
+   * shouting at legitimately-unversioned agents would be noise.
+   *
+   * Suppression: `process.env.ADCP_ALLOW_V2 === '1'`.
+   */
+  private maybeWarnV2Sunset(capabilities: AdcpCapabilities): void {
+    if (this._v2WarningFired) return;
+    if (capabilities.version === 'v3') return;
+    if (capabilities._synthetic) return;
+    if (process.env.ADCP_ALLOW_V2 === '1') return;
+
+    this._v2WarningFired = true;
+    console.warn(
+      `[adcp] Warning: agent ${this.agent.agent_uri} reports v2 capabilities. ` +
+        `v2 went unsupported on 2026-04-20 (AdCP 3.0 GA). ` +
+        `Upgrade the agent to v3 or set ADCP_ALLOW_V2=1 to suppress this warning. ` +
+        `See https://github.com/adcontextprotocol/adcp/issues/2220`
+    );
   }
 
   /**

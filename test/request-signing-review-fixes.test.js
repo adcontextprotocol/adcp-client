@@ -222,9 +222,16 @@ describe('verifier: kid consistency + replay TTL floor (protocol/security findin
     );
     // 61s later (past the 10s validity + 60s skew) — the entry must still be
     // in the cache so a replay is still caught, not silently forgotten.
-    const stillPresent = await replayStore.has('test-ed25519-2026', 'short-window-nonce-xxxx', now + 75);
+    // Probe under the same `(keyid, @target-uri)` scope the verifier committed.
+    const scope = url;
+    const stillPresent = await replayStore.has('test-ed25519-2026', scope, 'short-window-nonce-xxxx', now + 75);
     assert.strictEqual(stillPresent, true);
-    const stillPresentMuchLater = await replayStore.has('test-ed25519-2026', 'short-window-nonce-xxxx', now + 350);
+    const stillPresentMuchLater = await replayStore.has(
+      'test-ed25519-2026',
+      scope,
+      'short-window-nonce-xxxx',
+      now + 350
+    );
     assert.strictEqual(stillPresentMuchLater, true);
   });
 });
