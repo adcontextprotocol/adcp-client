@@ -317,9 +317,7 @@ interface TaskResultBase<T = any> {
    * fixtures or custom middleware) will not have this method — use the
    * free function, or call `attachMatch(result)` first.
    */
-  match?: <R>(
-    handlers: import('./match').MatchHandlers<T, R> | import('./match').PartialMatchHandlers<T, R>
-  ) => R;
+  match?: <R>(handlers: import('./match').MatchHandlers<T, R> | import('./match').PartialMatchHandlers<T, R>) => R;
 }
 
 /** Successful completion — `data` is always present. */

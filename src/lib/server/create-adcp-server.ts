@@ -1189,12 +1189,19 @@ function buildSignedRequestsPreTransport(
     };
 
     let handled = false;
+    let verifierCompleted = false;
     // The verifier calls `next(err?)` in the success / error path, but the
     // 401 RequestSignatureError path writes the response and returns WITHOUT
-    // calling next. Race the next-callback against the response's 'finish'
-    // event so a terminal 401 resolves the promise; otherwise the wrapper
-    // hangs forever and the agent server leaks (one McpServer per unsigned
-    // request under attack).
+    // calling next. Race the next-callback against the response's 'finish' /
+    // 'close' events so a terminal 401 resolves the promise; otherwise the
+    // wrapper hangs forever and the agent server leaks (one McpServer per
+    // unsigned request under attack).
+    //
+    // Security: if 'close' fires before the verifier completes (client
+    // aborted the TCP connection mid-JWKS-fetch), we MUST NOT fall through
+    // to the MCP transport — doing so would execute the tool handler
+    // without a verified signature on an attacker-dropped connection. Mark
+    // handled=true so serve.ts skips dispatch.
     await new Promise<void>(resolve => {
       let resolved = false;
       const done = () => {
@@ -1206,8 +1213,12 @@ function buildSignedRequestsPreTransport(
         if (res.writableEnded) handled = true;
         done();
       });
-      res.once('close', done);
+      res.once('close', () => {
+        if (!verifierCompleted) handled = true;
+        done();
+      });
       verifier(reqShim, resShim, err => {
+        verifierCompleted = true;
         if (err) {
           // Log internally; a leaked stack trace to the caller would
           // enumerate the verifier pipeline (js/stack-trace-exposure).
@@ -1768,10 +1779,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // the normal McpServer surface — it's a private contract between this
   // function and `serve()` for wiring, not part of the McpServer public API.
   if (signedRequests) {
-    const preTransport = buildSignedRequestsPreTransport(
-      signedRequests,
-      capConfig?.request_signing?.required_for
-    );
+    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing?.required_for);
     Object.defineProperty(server, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,

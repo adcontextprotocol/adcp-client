@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-20T05:54:10.361Z
+// Generated at: 2026-04-20T11:17:17.948Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2554,7 +2554,7 @@ export const GetAdCPCapabilitiesRequestSchema = z.object({
 
 export const TransportModeSchema = z.union([z.literal("walking"), z.literal("cycling"), z.literal("driving"), z.literal("public_transport")]);
 
-export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("measurement-verification"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-exchange"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-retail-media"), z.literal("sales-social"), z.literal("sales-streaming-tv"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests")]);
+export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("governance-aware-seller"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("measurement-verification"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-exchange"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-retail-media"), z.literal("sales-social"), z.literal("sales-streaming-tv"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests")]);
 
 export const IdempotencySupportedSchema = z.object({
     supported: z.literal(true),

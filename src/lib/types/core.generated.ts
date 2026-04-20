@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-20T05:54:06.278Z
+// Generated at: 2026-04-20T11:17:14.475Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -11580,6 +11580,7 @@ export type AdCPSpecialism =
   | 'creative-ad-server'
   | 'creative-generative'
   | 'creative-template'
+  | 'governance-aware-seller'
   | 'governance-delivery-monitor'
   | 'governance-spend-authority'
   | 'measurement-verification'

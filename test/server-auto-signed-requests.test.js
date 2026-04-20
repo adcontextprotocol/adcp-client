@@ -432,11 +432,7 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
         // Wait long enough that any reasonable async close has had a chance.
         await new Promise(resolve => setTimeout(resolve, 50));
         assert.ok(agentRef, 'factory must have been invoked to produce an agent server');
-        assert.strictEqual(
-          closeCalls,
-          1,
-          'agentServer.close() must fire exactly once when preTransport emits 401'
-        );
+        assert.strictEqual(closeCalls, 1, 'agentServer.close() must fire exactly once when preTransport emits 401');
       } finally {
         await new Promise(resolve => started.server.close(resolve));
       }
@@ -497,6 +493,97 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
         200,
         'second endpoint must accept the same nonce because replay scope differs by @target-uri'
       );
+    });
+  });
+
+  describe('client-disconnect during verification does not bypass signature check', () => {
+    it('does not dispatch the tool handler when the client aborts before the verifier completes', async () => {
+      // Regression guard for a signature-bypass vector: if the response's
+      // 'close' event fires before the verifier's `next` callback (e.g.,
+      // client aborts mid-JWKS-fetch), the preTransport wrapper must mark
+      // `handled=true` so serve() refuses to dispatch. Otherwise an
+      // attacker could trigger the tool handler with an unsigned request
+      // by dropping the TCP connection early.
+      let createMediaBuyCalled = false;
+
+      const slowJwks = {
+        resolve: async () => {
+          // Stall long enough for the client abort to fire 'close' before
+          // verification completes. 200ms is plenty — the client aborts
+          // after 20ms below.
+          await new Promise(r => setTimeout(r, 200));
+          return edPublic;
+        },
+      };
+
+      const factory = () =>
+        createAdcpServer({
+          name: 'test-seller',
+          version: '1.0.0',
+          capabilities: { specialisms: ['signed-requests'], request_signing: { supported: true } },
+          state: { store: new InMemoryStateStore() },
+          mediaBuy: {
+            createMediaBuy: async () => {
+              createMediaBuyCalled = true;
+              return { media_buy_id: 'should-not-happen', status: 'pending_creatives', packages: [] };
+            },
+          },
+          signedRequests: {
+            jwks: slowJwks,
+            replayStore: new InMemoryReplayStore({ maxEntriesPerKeyid: 100 }),
+            revocationStore: new InMemoryRevocationStore({
+              issuer: 'test-issuer',
+              updated: new Date().toISOString(),
+              next_update: new Date(Date.now() + 60_000).toISOString(),
+              revoked_kids: [],
+              revoked_jtis: [],
+            }),
+          },
+        });
+
+      const started = await new Promise(resolve => {
+        const srv = serve(factory, {
+          port: 0,
+          onListening: url => resolve({ server: srv, url }),
+        });
+      });
+
+      try {
+        const body = mcpCreateMediaBuyBody();
+        const bodyStr = JSON.stringify(body);
+        const headers = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+        };
+        const signed = signRequest(
+          { method: 'POST', url: started.url, headers, body: bodyStr },
+          { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: edPrivate },
+          { coverContentDigest: true }
+        );
+        const controller = new AbortController();
+        const fetchPromise = fetch(started.url, {
+          method: 'POST',
+          headers: { ...headers, ...signed.headers },
+          body: bodyStr,
+          signal: controller.signal,
+        }).catch(() => ({ aborted: true }));
+        // Abort well before the slow JWKS resolves (JWKS stalls 200ms).
+        await new Promise(r => setTimeout(r, 20));
+        controller.abort();
+        await fetchPromise;
+
+        // Give the server 400ms to drain — past the JWKS stall so any
+        // bypass would have dispatched by now.
+        await new Promise(r => setTimeout(r, 400));
+
+        assert.strictEqual(
+          createMediaBuyCalled,
+          false,
+          'tool handler MUST NOT run when client aborts before verifier completes'
+        );
+      } finally {
+        await new Promise(resolve => started.server.close(resolve));
+      }
     });
   });
 

@@ -66,8 +66,13 @@ export type PartialMatchHandlers<T, R> = Partial<{
 export function match<T, R>(result: TaskResult<T>, handlers: MatchHandlers<T, R>): R;
 export function match<T, R>(result: TaskResult<T>, handlers: PartialMatchHandlers<T, R>): R;
 export function match<T, R>(result: TaskResult<T>, handlers: Record<string, unknown>): R {
-  const handler = (handlers[result.status] ?? handlers._) as ((r: TaskResult<T>) => R) | undefined;
-  if (!handler) {
+  // `result.status` originates from server responses (untrusted input on the
+  // client boundary). Look up with `hasOwnProperty` so a hostile value like
+  // `'__proto__'` or `'constructor'` resolves to `handlers._` instead of a
+  // prototype method that fails with an unclear TypeError at call time.
+  const own = Object.prototype.hasOwnProperty.call(handlers, result.status);
+  const handler = (own ? handlers[result.status] : handlers._) as ((r: TaskResult<T>) => R) | undefined;
+  if (typeof handler !== 'function') {
     throw new Error(`match: no handler for status "${result.status}" and no "_" catchall provided`);
   }
   return handler(result);
@@ -90,10 +95,7 @@ export function attachMatch<T>(result: TaskResult<T>): TaskResult<T> {
     return result;
   }
   Object.defineProperty(result, 'match', {
-    value: function matchMethod<R>(
-      this: TaskResult<T>,
-      handlers: MatchHandlers<T, R> | PartialMatchHandlers<T, R>
-    ): R {
+    value: function matchMethod<R>(this: TaskResult<T>, handlers: MatchHandlers<T, R> | PartialMatchHandlers<T, R>): R {
       return match(this, handlers as MatchHandlers<T, R>);
     },
     enumerable: false,

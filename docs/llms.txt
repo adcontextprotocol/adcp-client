@@ -66,23 +66,23 @@ When `result.success` is `false`, use `result.adcpError` for programmatic handli
 
 Use `isRetryable(result)` and `getRetryDelay(result)` for retry logic. `TaskResult` is a discriminated union — `if (result.success)` narrows `data` to `T`; `if (!result.success)` guarantees `error: string` and `status: 'failed'`.
 
-For exhaustive handling across all seven statuses, prefer the `match()` dispatcher (fluent method on every result or free function import):
+For exhaustive handling across all seven statuses, prefer the `match()` dispatcher (fluent method on every result returned from the SDK, or free function import):
 
 ```typescript
-const label = result.match({
+const label = result.match!({
   completed: r => `OK: ${JSON.stringify(r.data)}`,
   failed: r => `Error: ${r.adcpError?.code ?? r.error}`,
-  submitted: r => `Pending: poll ${r.task_id}`,
-  'governance-denied': r => `Denied: ${r.governance?.explanation}`,
-  working: r => `Running: ${r.task_id}`,
-  'input-required': r => `Needs input: ${r.task_id}`,
-  deferred: r => `Deferred: ${r.task_id}`,
+  submitted: r => `Pending: poll ${r.metadata.taskId}`,
+  'governance-denied': r => `Denied: ${r.adcpError?.code ?? r.error}`,
+  working: r => `Running: ${r.metadata.taskId}`,
+  'input-required': r => `Needs input: ${r.metadata.inputRequest?.question}`,
+  deferred: r => `Deferred: ${r.deferred?.token}`,
 });
 // Optional `_` catchall makes every arm optional:
-// const label = result.match({ completed: r => r.data.id, _: r => r.status });
+// const label = result.match!({ completed: r => JSON.stringify(r.data), _: r => r.status });
 ```
 
-TypeScript enforces exhaustiveness at compile time when the `_` catchall is omitted — missing an arm is a type error, not a runtime surprise.
+TypeScript enforces exhaustiveness at compile time when the `_` catchall is omitted — missing an arm is a type error, not a runtime surprise. The `!` is because `TaskResultBase.match` is declared optional so hand-constructed result literals (tests, middleware) stay valid; every result returned from the SDK has `.match` attached. For hand-constructed literals, use the free function `match(result, handlers)` or call `attachMatch(result)` first.
 
 ```typescript
 if (!result.success) {
