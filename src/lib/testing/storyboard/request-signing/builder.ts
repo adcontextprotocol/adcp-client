@@ -261,19 +261,20 @@ const MUTATIONS: Record<string, Mutator> = {
     return sign(key, vector, options);
   },
 
-  // Vectors 021-026 ship fully prebaked requests with deliberately malformed
-  // headers (duplicate labels, multi-valued fields, unquoted params,
-  // non-ASCII host) or a malformed inline JWK. Re-signing would repair the
-  // anomaly and erase the test case — forward the vector's bytes verbatim.
-  '021-duplicate-signature-input-label': (vector, _keys, options) => passthroughVector(vector, options),
-  '022-multi-valued-content-type': (vector, _keys, options) => passthroughVector(vector, options),
-  '023-multi-valued-content-digest': (vector, _keys, options) => passthroughVector(vector, options),
-  '024-unquoted-string-param': (vector, _keys, options) => passthroughVector(vector, options),
-  '025-jwk-alg-crv-mismatch': (vector, _keys, options) => passthroughVector(vector, options),
-  '026-non-ascii-host': (vector, _keys, options) => passthroughVector(vector, options),
+  // Vectors 021-026 ship their exact malformed headers in the fixture — the
+  // adversarial shape (duplicate sig-input label, multi-valued content-type
+  // / content-digest, unquoted string param, malformed JWK, non-ASCII host)
+  // lives in the vector itself, not in a programmatic mutation. Builder just
+  // preserves the fixture's headers verbatim after applying transport.
+  '021-duplicate-signature-input-label': (vector, _keys, options) => passthrough(vector, options),
+  '022-multi-valued-content-type': (vector, _keys, options) => passthrough(vector, options),
+  '023-multi-valued-content-digest': (vector, _keys, options) => passthrough(vector, options),
+  '024-unquoted-string-param': (vector, _keys, options) => passthrough(vector, options),
+  '025-jwk-alg-crv-mismatch': (vector, _keys, options) => passthrough(vector, options),
+  '026-non-ascii-host': (vector, _keys, options) => passthrough(vector, options),
 };
 
-function passthroughVector(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
+function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
   const shaped = applyTransport(vector, options);
   return {
     method: shaped.method,

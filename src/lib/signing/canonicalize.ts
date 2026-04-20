@@ -40,7 +40,7 @@ export function canonicalTargetUri(rawUrl: string): string {
     );
   }
   const assembled = `${u.protocol}//${u.host}${u.pathname}${u.search}`;
-  return decodeUnreservedPercentEncoding(uppercasePercentEncoding(assembled));
+  return uppercasePercentEncoding(decodeUnreservedPercentEncoding(assembled));
 }
 
 export function canonicalAuthority(rawUrl: string): string {
@@ -146,19 +146,27 @@ function uppercasePercentEncoding(input: string): string {
 }
 
 /**
- * RFC 3986 §6.2.2.2: percent-encoded unreserved characters (ALPHA / DIGIT /
- * "-" / "." / "_" / "~") MUST be decoded in the canonical URI. A verifier
- * that skips this step reads `%7E` and `~` as different bytes, breaking
- * signature comparison when a signer emits either form.
+ * RFC 3986 §6.2.2.2: percent-encoded triplets of unreserved characters
+ * (ALPHA / DIGIT / "-" / "." / "_" / "~") MUST be decoded to their literal
+ * form during URI normalization. The spec's RFC 9421 profile step 6
+ * (`@target-uri` canonicalization) requires this decode alongside the
+ * uppercase-hex pass — a verifier that uppercases but does not decode will
+ * produce a `%7E`-vs-`~` mismatch against a signer that decoded correctly.
  */
 function decodeUnreservedPercentEncoding(input: string): string {
-  return input.replace(/%([0-9A-F]{2})/g, (match, hex: string) => {
+  return input.replace(/%([0-9a-fA-F]{2})/g, (match, hex: string) => {
     const code = parseInt(hex, 16);
-    const isAlpha = (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
-    const isDigit = code >= 0x30 && code <= 0x39;
-    const isUnreservedPunct = code === 0x2d || code === 0x2e || code === 0x5f || code === 0x7e;
-    if (isAlpha || isDigit || isUnreservedPunct) return String.fromCharCode(code);
-    return match;
+    // Unreserved: A-Z (0x41-0x5A), a-z (0x61-0x7A), 0-9 (0x30-0x39),
+    // "-" (0x2D), "." (0x2E), "_" (0x5F), "~" (0x7E).
+    const isUnreserved =
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      (code >= 0x30 && code <= 0x39) ||
+      code === 0x2d ||
+      code === 0x2e ||
+      code === 0x5f ||
+      code === 0x7e;
+    return isUnreserved ? String.fromCharCode(code) : match;
   });
 }
 

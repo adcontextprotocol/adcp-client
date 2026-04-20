@@ -162,6 +162,11 @@ function parseJwksSelector(
     if (!Array.isArray(keys) || keys.length === 0) {
       throw new Error(`${id}.jwks_override.keys must be a non-empty array`);
     }
+    for (const k of keys) {
+      if (!k || typeof k !== 'object') {
+        throw new Error(`${id}.jwks_override.keys[] entries must be objects`);
+      }
+    }
     return { jwks_override: { keys: keys as Array<Record<string, unknown>> } };
   }
   return { jwks_ref: strArray(r.jwks_ref, `${id}.jwks_ref`) };

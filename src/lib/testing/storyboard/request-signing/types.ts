@@ -20,10 +20,12 @@ export interface VerifierCapabilityFixture {
 }
 
 /**
- * Inline JWKS shipped with a vector whose key material diverges from
- * `keys.json` — typically a deliberately malformed JWK (alg/crv mismatch,
- * missing private material, etc.) used to exercise verifier key-purpose
- * checks. Mutually exclusive with `jwks_ref`.
+ * Inline JWK set shipped with a negative vector that wants to publish a
+ * deliberately-malformed JWK (e.g., vector 025 declares alg=EdDSA but
+ * crv=P-256 to exercise step-8 parameter consistency). Using `jwks_override`
+ * instead of adding a malformed key to `keys.json` keeps the canonical
+ * keyset clean so other vectors can't inherit the broken shape.
+ * Mutually exclusive with `jwks_ref`.
  */
 export interface JwksOverride {
   keys: Array<Record<string, unknown>>;
