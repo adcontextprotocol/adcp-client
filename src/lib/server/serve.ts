@@ -25,7 +25,7 @@ import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/int
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { AuthPrincipal, Authenticator } from './auth';
-import { AuthError, respondUnauthorized } from './auth';
+import { AuthError, authenticatorNeedsRawBody, respondUnauthorized } from './auth';
 import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
 import type { AdcpServer } from './adcp-server';
 
@@ -227,7 +227,42 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     }
 
     if (pathname === mountPath || pathname === `${mountPath}/`) {
-      // Enforce authentication before any body processing or transport work.
+      // Body buffering happens at most once per request. An idempotent helper
+      // lets the auth path (for signature authenticators) and the preTransport
+      // path share the buffer without re-reading a drained stream.
+      let rawBody: string | undefined;
+      let parsedBody: unknown;
+      const ensureRawBody = async (): Promise<void> => {
+        if (rawBody !== undefined) return;
+        rawBody = await bufferBody(req);
+        (req as { rawBody?: string }).rawBody = rawBody;
+        if (rawBody.length > 0) {
+          try {
+            parsedBody = JSON.parse(rawBody);
+          } catch {
+            // Non-JSON body — let transport reject as malformed JSON-RPC.
+          }
+        }
+      };
+
+      // RFC 9421 signature authenticators need `req.rawBody` for Content-Digest
+      // recompute, so buffer before authentication runs when the authenticator
+      // (or any branch of an anyOf composition) carries the needs-raw-body tag.
+      if (authenticatorNeedsRawBody(options?.authenticate)) {
+        try {
+          await ensureRawBody();
+        } catch (err) {
+          const errName = (err as Error).name || 'Error';
+          console.error(`[adcp/serve] request body read failed before auth: ${errName}`);
+          if (!res.headersSent) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Request body read failed.' }));
+          }
+          return;
+        }
+      }
+
+      // Enforce authentication before transport work.
       if (options?.authenticate) {
         let principal: AuthPrincipal | null;
         try {
@@ -265,21 +300,9 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
       const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;
 
-      // Buffer the request body once when preTransport middleware is wired —
-      // RFC 9421 verifiers need the raw bytes for Content-Digest recompute,
-      // and the MCP transport's own body read would race the verifier otherwise.
-      let parsedBody: unknown;
       if (activePreTransport) {
         try {
-          const raw = await bufferBody(req);
-          (req as { rawBody?: string }).rawBody = raw;
-          if (raw.length > 0) {
-            try {
-              parsedBody = JSON.parse(raw);
-            } catch {
-              // Non-JSON body — let transport reject as malformed JSON-RPC.
-            }
-          }
+          await ensureRawBody();
           const handled = await activePreTransport(req as import('http').IncomingMessage & { rawBody?: string }, res);
           if (handled) {
             // PreTransport already responded (401, etc.). Close the agent

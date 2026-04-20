@@ -523,6 +523,44 @@ export interface AdcpCapabilitiesConfig {
     description?: string;
     advertising_policies?: string;
   };
+  /**
+   * Per-domain capability blocks deep-merged on top of the framework's
+   * auto-derived response. Use when you need to surface fields the top-level
+   * `AdcpCapabilitiesConfig` doesn't model — execution.targeting,
+   * audience_targeting, content_standards channels, conversion_tracking
+   * identifier types, compliance_testing scenarios, etc.
+   *
+   * Deep-merge semantics:
+   * - nested objects merge recursively;
+   * - arrays REPLACE (not concat) so callers stay in control of cardinality;
+   * - primitive overrides replace the auto-derived value.
+   *
+   * Top-level fields the framework owns (`adcp`, `supported_protocols`,
+   * `specialisms`, `extensions_supported`) are not accepted here — configure
+   * them via their dedicated fields on {@link AdcpCapabilitiesConfig}.
+   */
+  overrides?: AdcpCapabilitiesOverrides;
+}
+
+/**
+ * Per-domain capability overrides. See {@link AdcpCapabilitiesConfig.overrides}.
+ *
+ * Each field accepts the same shape as the corresponding block on
+ * {@link GetAdCPCapabilitiesResponse}. A value of `null` explicitly removes
+ * the auto-derived block; `undefined` (omission) is a no-op.
+ */
+export interface AdcpCapabilitiesOverrides {
+  media_buy?: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> | null;
+  creative?: Partial<NonNullable<GetAdCPCapabilitiesResponse['creative']>> | null;
+  signals?: Partial<NonNullable<GetAdCPCapabilitiesResponse['signals']>> | null;
+  governance?: Partial<NonNullable<GetAdCPCapabilitiesResponse['governance']>> | null;
+  brand?: Partial<NonNullable<GetAdCPCapabilitiesResponse['brand']>> | null;
+  sponsored_intelligence?: Partial<NonNullable<GetAdCPCapabilitiesResponse['sponsored_intelligence']>> | null;
+  account?: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> | null;
+  compliance_testing?: GetAdCPCapabilitiesResponse['compliance_testing'] | null;
+  webhook_signing?: GetAdCPCapabilitiesResponse['webhook_signing'] | null;
+  identity?: GetAdCPCapabilitiesResponse['identity'] | null;
+  request_signing?: GetAdCPCapabilitiesResponse['request_signing'] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -844,6 +882,50 @@ function clampReplayTtl(seconds: number): number {
   if (!Number.isFinite(seconds) || seconds < MIN) return MIN;
   if (seconds > MAX) return MAX;
   return Math.floor(seconds);
+}
+
+/**
+ * Deep-merge the per-domain blocks from `overrides` onto `target`. Nested
+ * objects merge recursively; arrays and primitives replace. `null` at the
+ * top-level field explicitly drops the block; `undefined` is a no-op.
+ */
+function applyCapabilityOverrides(
+  target: GetAdCPCapabilitiesResponse,
+  overrides: AdcpCapabilitiesOverrides
+): void {
+  const targetAny = target as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) continue;
+    if (value === null) {
+      delete targetAny[key];
+      continue;
+    }
+    targetAny[key] = deepMergePlainObjects(targetAny[key], value);
+  }
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object') return false;
+  if (Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMergePlainObjects(target: unknown, source: unknown): unknown {
+  if (source === undefined) return target;
+  if (source === null) return null;
+  if (!isPlainObject(source)) return source;
+  if (!isPlainObject(target)) return { ...(source as Record<string, unknown>) };
+  const out: Record<string, unknown> = { ...target };
+  for (const [k, v] of Object.entries(source as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    if (v === null) {
+      delete out[k];
+      continue;
+    }
+    out[k] = deepMergePlainObjects(out[k], v);
+  }
+  return out;
 }
 
 /**
@@ -1904,6 +1986,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   if (capConfig?.specialisms?.length) {
     capabilitiesData.specialisms = capConfig.specialisms;
+  }
+
+  if (capConfig?.overrides) {
+    applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
   }
 
   const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;

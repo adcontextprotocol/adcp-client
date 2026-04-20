@@ -82,6 +82,9 @@ export {
   extractBearerToken,
   respondUnauthorized,
   AuthError,
+  AUTH_NEEDS_RAW_BODY,
+  tagAuthenticatorNeedsRawBody,
+  authenticatorNeedsRawBody,
   DEFAULT_JWT_ALGORITHMS,
   DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
 } from './auth';
@@ -93,6 +96,9 @@ export type {
   VerifyBearerOptions,
   RespondUnauthorizedOptions,
 } from './auth';
+
+export { verifySignatureAsAuthenticator } from './auth-signature';
+export type { VerifySignatureAsAuthenticatorOptions } from './auth-signature';
 
 export {
   InMemoryStateStore,
@@ -143,6 +149,7 @@ export type {
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
+  AdcpCapabilitiesOverrides,
   AdcpCustomToolConfig,
   AdcpLogger,
   SignedRequestsConfig,
