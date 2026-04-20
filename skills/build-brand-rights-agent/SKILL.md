@@ -201,7 +201,24 @@ Three success variants plus an error variant. The most common is `acquired`. Thr
 
 **Payload shapes (spec-tracked, not yet published):** the spec names these `creative-approval-request` and `creative-approval-response` but has not published the JSON schemas (tracked in https://github.com/adcontextprotocol/adcp/issues/2253). Design your endpoint to accept the creative reference (at minimum `rights_grant_id` and the creative being reviewed) and return a decision. Don't ship a concrete shape against this skill until schemas land — your handler contract may need to change.
 
-**Revocation webhook (buyer side).** The `acquire_rights` *request* includes a required `revocation_webhook`. Store it against the rights grant. If you ever need to revoke the grant (credential rotation, terms violation, brand takedown), POST a `revocation-notification` to that URL using its `authentication` block. The `revocation-notification` payload shape is also not yet published — same tracking issue.
+**Revocation webhook (buyer side).** The `acquire_rights` *request* includes a required `revocation_webhook`. Store it against the rights grant. If you ever need to revoke the grant (credential rotation, terms violation, brand takedown), emit a `revocation-notification` to that URL.
+
+**Use `ctx.emitWebhook`, not raw `fetch`.** The SDK ships `createAdcpServer({ webhooks: { signerKey } })` which populates `ctx.emitWebhook` on every handler — it signs per RFC 9421, reuses `idempotency_key` byte-for-byte across retries, and handles the "don't retry on signature failures" terminal behavior automatically. Full pattern in [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks.
+
+```typescript
+// On revocation:
+await ctx.emitWebhook({
+  url: storedGrant.revocation_webhook.url,
+  payload: {
+    rights_id: storedGrant.rights_id,
+    reason: 'credential_rotation',
+    effective_at: new Date().toISOString(),
+  },
+  operation_id: `revoke_rights.${storedGrant.rights_id}`,   // stable across retries — NOT a fresh UUID per attempt
+});
+```
+
+The `revocation-notification` payload shape is not yet published in a JSON schema (tracked at adcontextprotocol/adcp#2253). Include at minimum the `rights_id`, a reason, and an `effective_at` timestamp. 3.0 GA renamed this payload's `notification_id` field to `idempotency_key` — the emitter populates it for you when `operation_id` is set.
 
 ### Context and Ext Passthrough
 

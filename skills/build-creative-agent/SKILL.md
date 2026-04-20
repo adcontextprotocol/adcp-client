@@ -41,6 +41,14 @@ Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requireme
 - **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: accept requests with `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 
+## Webhooks (for async review pipelines)
+
+Creative review flows are naturally async — `sync_creatives` may return `pending_review` with a task envelope, and your review pipeline emits completion webhooks when the creative is approved, rejected, or transitions to a new state. `build_creative` for the ad-server archetype emits `report_usage` completion webhooks. Use `ctx.emitWebhook` — don't hand-roll `fetch` with HMAC signing.
+
+Wire `createAdcpServer({ webhooks: { signerKey } })` and call `ctx.emitWebhook({ url, payload, operation_id })` from any handler. The framework handles RFC 9421 signing, stable `idempotency_key` across retries, backoff + terminal error handling. Full pattern in [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks.
+
+**`operation_id` rules** (the top at-least-once-delivery bug): stable across retries. `creative_review.${creative_id}` or `report_usage.${report_batch_id}` — NOT a fresh UUID per retry.
+
 ## Before Writing Code
 
 Determine these things. Ask the user — don't guess.

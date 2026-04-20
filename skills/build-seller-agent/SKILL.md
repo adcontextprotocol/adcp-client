@@ -198,6 +198,55 @@ This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` 
 | `IDEMPOTENCY_CONFLICT` | Same key, different payload hash | Don't retry — buyer has a client bug generating the same key for different requests |
 | `IDEMPOTENCY_EXPIRED` | Key replayed after the TTL (default 24h, configurable 1h–7d) | Mint a new key and retry |
 
+## Webhooks (async completion, signed outbound)
+
+Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Wire `createAdcpServer({ webhooks: { signerKey } })` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
+
+```typescript
+import { createAdcpServer, serve } from '@adcp/client';
+
+serve(() => createAdcpServer({
+  name: 'My Seller',
+  version: '1.0.0',
+  webhooks: {
+    signerKey: {
+      keyid: 'seller-webhook-kid-2026',
+      alg: 'ed25519',
+      privateKey: { /* JWK with `d` — load from env/secret store, never bundle */ },
+    },
+    // Optional: retries, idempotencyKeyStore (swap memory → pg for multi-replica)
+  },
+  mediaBuy: {
+    createMediaBuy: async (params, ctx) => {
+      // sales-guaranteed: IO signing completes async. Emit the final result on completion.
+      const taskId = `task_${randomUUID()}`;
+      queueIoReview(params, async (outcome) => {
+        await ctx.emitWebhook({
+          url: params.push_notification_config.url,
+          payload: {
+            task: {
+              task_id: taskId,
+              status: outcome.approved ? 'completed' : 'rejected',
+              result: outcome.approved ? { media_buy_id: outcome.media_buy_id, packages: outcome.packages } : undefined,
+            },
+          },
+          operation_id: `create_media_buy.${taskId}`,   // stable across retries — framework reuses same idempotency_key
+        });
+      });
+      return { status: 'submitted', task_id: taskId };   // synchronous response is the task envelope
+    },
+  },
+}));
+```
+
+**`operation_id` must be stable across retries.** The emitter hashes `operation_id` into the outbound `idempotency_key` so receivers can dedupe retried deliveries. Regenerating `operation_id` on retry is the top at-least-once-delivery bug the webhook conformance runner catches — use an ID derived from the logical event (the task_id, media_buy_id, or report batch), not a timestamp or fresh UUID.
+
+**Terminal errors.** The emitter stops retrying on 4xx and on 401 responses carrying `WWW-Authenticate: Signature error="webhook_signature_*"` — signature failures are deterministic and retrying produces identical rejection. 5xx and 429 retry with exponential backoff.
+
+**Legacy buyers.** If a buyer registered `push_notification_config.authentication` with HMAC-SHA256 or Bearer credentials, the emitter honors that mode automatically (deprecated in 4.0 but supported for backward compatibility). Omit `authentication` to opt into the RFC 9421 webhook profile by default.
+
+**Revocation webhooks (brand-rights).** When your agent revokes a rights grant, `ctx.emitWebhook` against the buyer's `revocation_webhook` URL — see `skills/build-brand-rights-agent/SKILL.md` for the payload shape.
+
 ## Before Writing Code
 
 Determine these five things. Ask the user — don't guess.

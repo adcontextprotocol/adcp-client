@@ -230,7 +230,18 @@ createMediaBuy: async (params, ctx) => {
 },
 ```
 
-When the IO is signed, emit the final `create_media_buy` result (carrying `media_buy_id` and `packages`) to the buyer's `push_notification_config.url` or to the next `tasks/get` poll.
+When the IO is signed, emit the final `create_media_buy` result (carrying `media_buy_id` and `packages`) to the buyer's `push_notification_config.url` via `ctx.emitWebhook` (see 3i) or the next `tasks/get` poll.
+
+**Buyer-side TypeScript update**: the generated `CreateMediaBuyResponse` union now includes a `CreateMediaBuySubmitted` branch. Exhaustive discriminations need to handle it:
+
+```typescript
+switch (response.status) {
+  case 'completed': /* media_buy_id + packages on this branch */ break;
+  case 'submitted': /* task_id only — media_buy_id lands on completion webhook */ break;  // NEW
+  case 'input-required': /* ... */ break;
+  // strict-TS: add 'submitted' or the exhaustiveness check fails
+}
+```
 
 ### 3g. Server auth middleware (additive; required for compliance)
 
@@ -256,7 +267,123 @@ serve(createAgent, {
 
 `verifyApiKey` / `verifyBearer` / `anyOf` are exported from `@adcp/client/server`, **not** the root barrel. The root barrel exports only `serve`.
 
-### 3h. RFC 9421 request signing (additive; opt-in)
+### 3h. **BREAKING** — Webhook payloads now carry `idempotency_key`
+
+Upstream collapsed webhook dedup to a single canonical field. Every webhook payload now includes a required `idempotency_key` string (pattern `^[A-Za-z0-9_.:-]{16,255}$`). Affected types: `MCPWebhookPayload`, `ArtifactWebhookPayload`, `CollectionListChangedWebhook`, `PropertyListChangedWebhook`. One payload was renamed:
+
+```diff
+-  RevocationNotification.notification_id: string
++  RevocationNotification.idempotency_key: string
+```
+
+Publishers populating `notification_id` must rename the field. Receivers must dedupe by `idempotency_key` scoped to the authenticated sender identity. The SDK does this for you if you wire the new `webhookDedup` config (see 3j).
+
+### 3i. Webhook emitter + `ctx.emitWebhook` (new, strongly recommended)
+
+Publisher-side outbound webhook emission lands as a first-class SDK helper in 5.2 — the symmetric counterpart to the receiver-side dedup below. Wire `webhooks` on `createAdcpServer` and `ctx.emitWebhook` is populated on every handler's context.
+
+```typescript
+import { createAdcpServer, serve } from '@adcp/client';
+
+serve(() => createAdcpServer({
+  name,
+  version,
+  webhooks: {
+    signerKey: { keyid: 'publisher-kid-2026', alg: 'ed25519', privateKey: /* JWK with d */ },
+    // Optional: retries, idempotencyKeyStore, fetch
+  },
+  mediaBuy: {
+    createMediaBuy: async (params, ctx) => {
+      const media_buy_id = await persist(params);
+      await ctx.emitWebhook({
+        url: params.push_notification_config.url,
+        payload: { task: { task_id, status: 'completed', result: { media_buy_id } } },
+        operation_id: `create_media_buy.${media_buy_id}`,   // stable across retries
+      });
+      return { media_buy_id, packages: [] };
+    },
+  },
+}));
+```
+
+What the emitter handles automatically:
+
+- RFC 9421 signing with a fresh `nonce` per attempt (tag `adcp/webhook-signing/v1`; mandatory covered components are `@method`, `@target-uri`, `@authority`, `content-type`, `content-digest`).
+- Stable `idempotency_key` per `operation_id` reused byte-for-byte across retries (regenerating on retry is the top at-least-once-delivery bug the conformance suite catches).
+- JSON serialized once with compact separators (`,` / `:`, no spaces) so signature base and wire body come from the same bytes.
+- Retry with exponential backoff + jitter on 5xx/429. Terminal on 4xx and on 401 responses carrying `WWW-Authenticate: Signature error="webhook_signature_*"` (retrying a signature failure is pointless).
+- Pluggable `WebhookIdempotencyKeyStore` — default in-memory; swap in a durable backend for multi-replica publishers.
+- HMAC-SHA256 / Bearer fallback for legacy buyers that registered `push_notification_config.authentication.credentials` — those still work but are deprecated (see 3k).
+
+Raw `createWebhookEmitter` is also exported from `@adcp/client/server` if you're outside the `createAdcpServer` path.
+
+### 3j. Receiver-side webhook dedup (new)
+
+Opt in on the client side with one config option.
+
+```typescript
+import { AdCPClient } from '@adcp/client';
+import { memoryBackend } from '@adcp/client/server';
+
+const client = new AdCPClient(agents, {
+  webhookUrlTemplate: 'https://your-app.com/adcp/webhook/{task_type}/{agent_id}/{operation_id}',
+  webhookSecret: process.env.WEBHOOK_SECRET,
+  handlers: {
+    webhookDedup: { backend: memoryBackend(), ttlSeconds: 86400 },  // 24h default
+    onCreateMediaBuyStatusChange: async (result, metadata) => {
+      // First delivery runs here; retries with the same idempotency_key are dropped
+      // as Activity type 'webhook_duplicate'.
+    },
+  },
+});
+```
+
+Dedup is per-agent + per-key. Reuses the same `IdempotencyBackend` interface as request-side idempotency (so `memoryBackend()` / `pgBackend(pool)` work here too). MCP payloads missing or malformed `idempotency_key` dispatch without dedup and log a warning; A2A payloads (which don't carry the field) dispatch silently.
+
+**Breaking for strict TS callers**: the `Activity.type` union gains `'webhook_duplicate'`. Exhaustive switches on `Activity.type` with a `never` check need a new case (treat it the same as `webhook_received` in logging, or branch to suppress side effects).
+
+### 3k. **DEPRECATED** — `PushNotificationConfig.authentication`
+
+`PushNotificationConfig.authentication` is now optional and deprecated. Omitting it opts into the RFC 9421 webhook profile (the 4.0 default). Bearer and HMAC-SHA256 remain for backward compatibility with legacy buyers, but new integrations should rely on the signed-webhook profile the emitter defaults to.
+
+### 3l. Webhook signing: receiver-side verifier (new, opt-in)
+
+If you host a webhook receiver, verify signatures with `verifyWebhookSignature` from `@adcp/client/signing/server`:
+
+```typescript
+import {
+  verifyWebhookSignature,
+  BrandJsonJwksResolver,
+  InMemoryReplayStore,
+  InMemoryRevocationStore,
+} from '@adcp/client/signing/server';
+
+// Ergonomic: discover the publisher's webhook-signing JWKS from their brand.json
+// instead of pre-configuring per-counterparty jwks_uri.
+const jwks = new BrandJsonJwksResolver('https://publisher.example/.well-known/brand.json', {
+  agentType: 'sales',
+});
+
+await verifyWebhookSignature(request, {
+  jwks,
+  replayStore: new InMemoryReplayStore(),
+  revocationStore: new InMemoryRevocationStore({ /* revoked_kids, revoked_jtis */ }),
+});
+```
+
+The verifier throws `WebhookSignatureError` with a typed `webhook_signature_*` code on rejection (`window_invalid`, `key_unknown`, `content_digest_mismatch`, `rate_abuse`, `revocation_stale`, `alg_not_allowed`, `components_incomplete`, `header_malformed`, `params_incomplete`). Match these codes byte-identically in your 401 `WWW-Authenticate: Signature error=…` response — the conformance runner grades on the exact code.
+
+### 3m. Storyboard runner webhook conformance (new)
+
+If you're running storyboards against your agent, three new `expect_webhook*` pseudo-tasks grade outbound webhook behavior:
+
+- `expect_webhook` — asserts delivery with well-formed `idempotency_key`
+- `expect_webhook_retry_keys_stable` — rejects first N deliveries with 5xx then checks all retries carry the same `idempotency_key` byte-for-byte
+- `expect_webhook_signature_valid` — delegates to `verifyWebhookSignature`
+
+Configure `runStoryboard({ webhook_receiver, webhook_signing })` and use `{{runner.webhook_url:<step_id>}}` to inject ephemeral URLs into `push_notification_config.url` in your storyboard yaml.
+
+### 3n. RFC 9421 request signing (additive; opt-in)
 
 Client-side: `AgentConfig.request_signing` auto-signs outbound MCP/A2A calls per the seller's advertised `required_for` / `supported_for` policy. `ProtocolClient` / `AdCPClient` prime from `get_adcp_capabilities` on first use and cache for 300s.
 
@@ -283,6 +410,10 @@ Server-side: see `skills/build-seller-agent/SKILL.md` § signed-requests for `ve
 
 Work this list in order — earlier items are prerequisites for later ones.
 
+### Schema enum additions (additive)
+
+- `RightUse` enum adds `ai_generated_image`. Existing `brand-rights` agents can now declare and accept this use directly (previously needed workarounds).
+
 ### Framework shape (5.0.0)
 - [ ] Replace `createTaskCapableServer` + `server.tool(...)` with `createAdcpServer({ ...domain groups... })`.
 - [ ] Switch `TaskResult` branches from `status === 'completed' && adcp_error` to `status === 'failed'` and use accessors.
@@ -302,6 +433,11 @@ Work this list in order — earlier items are prerequisites for later ones.
 - [ ] Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`. Remove manual `ctx.store.get('idempotency', …)` code.
 - [ ] Wire `serve({ authenticate, publicUrl, protectedResource })`.
 - [ ] For guaranteed buys requiring IO signing: return `taskToolResponse({ status: 'submitted', task_id, message })` — not a populated MediaBuy.
+- [ ] Handle the new `'submitted'` branch of the `CreateMediaBuyResponse` union in exhaustive client-side discrimination.
+- [ ] Rename `RevocationNotification.notification_id` → `idempotency_key` on any publisher that emits revocation webhooks.
+- [ ] Wire `createAdcpServer({ webhooks: { signerKey } })` for any handler that emits async completion webhooks; replace hand-rolled `fetch` + HMAC signing with `ctx.emitWebhook`.
+- [ ] On the client side, add `handlers: { webhookDedup: { backend: memoryBackend() } }` to `AdCPClient`. Handle the new `Activity.type === 'webhook_duplicate'` branch in any exhaustive switches.
 - [ ] (Optional) Claim `signed-requests` and wire `verifyRequestSignature` via `serve({ preTransport })`.
+- [ ] (Optional, recommended) Verify inbound webhooks with `verifyWebhookSignature` and `BrandJsonJwksResolver` instead of per-counterparty `jwks_uri` pre-configuration.
 
 See `skills/build-seller-agent/SKILL.md` § Protocol-Wide Requirements and § Composing OAuth, signing, and idempotency for the fully wired reference agent.
