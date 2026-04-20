@@ -262,6 +262,268 @@ describe('runStoryboard: multi-instance round-robin', () => {
 });
 
 // ────────────────────────────────────────────────────────────
+// multi-pass strategy (#607)
+//
+// `multi-pass` runs the storyboard once per replica, each pass starting the
+// round-robin dispatcher at a different replica (offset K for pass K). The
+// win is that every step gets exercised against a different replica across
+// passes — a bug that's isolated to one replica's deployment (config drift,
+// stale state, different version) surfaces on a pass where that replica
+// serves the relevant step.
+//
+// Known limitation (follow-up #607 option 2): for N=2, pure offset-shift
+// preserves pair parity — a write→read pair separated by an odd number of
+// steps lands same-replica in every pass. Closing that gap requires
+// dependency-aware dispatch (`context_inputs` → pick a replica different
+// from the most recent writer). This suite verifies the offset-shift
+// mechanics and the per-pass aggregation; it does NOT claim to catch every
+// 2-replica cross-state bug.
+// ────────────────────────────────────────────────────────────
+
+describe('runStoryboard: multi-instance multi-pass', () => {
+  let agentA;
+  let agentB;
+
+  afterEach(async () => {
+    if (agentA) await stopAgent(agentA);
+    if (agentB) await stopAgent(agentB);
+    agentA = undefined;
+    agentB = undefined;
+  });
+
+  test('runs N passes with swapped starting replica and reports per-pass detail', async () => {
+    const shared = new Map();
+    agentA = await startFakeAgent({ state: shared, label: 'A' });
+    agentB = await startFakeAgent({ state: shared, label: 'B' });
+
+    const storyboard = storyboardWith([
+      { id: 's1', title: 's1', task: '__test_probe', auth: 'none', sample_request: {} },
+      { id: 's2', title: 's2', task: '__test_probe', auth: 'none', sample_request: {} },
+    ]);
+
+    const result = await runStoryboard([agentA.url, agentB.url], storyboard, {
+      ...RUN_OPTIONS_BASE,
+      multi_instance_strategy: 'multi-pass',
+    });
+
+    assert.strictEqual(result.multi_instance_strategy, 'multi-pass');
+    assert.ok(result.passes, 'expected passes[] on result');
+    assert.strictEqual(result.passes.length, 2);
+
+    const [pass1, pass2] = result.passes;
+    assert.strictEqual(pass1.pass_index, 1);
+    assert.strictEqual(pass1.dispatch_offset, 0);
+    assert.strictEqual(pass2.pass_index, 2);
+    assert.strictEqual(pass2.dispatch_offset, 1);
+
+    // Pass 1 starts at [#1]: step 0 → #1, step 1 → #2
+    assert.strictEqual(pass1.phases[0].steps[0].agent_index, 1);
+    assert.strictEqual(pass1.phases[0].steps[1].agent_index, 2);
+    // Pass 2 starts at [#2]: step 0 → #2, step 1 → #1 (swapped)
+    assert.strictEqual(pass2.phases[0].steps[0].agent_index, 2);
+    assert.strictEqual(pass2.phases[0].steps[1].agent_index, 1);
+
+    // Aggregated counts sum across all passes
+    assert.strictEqual(result.passed_count, pass1.passed_count + pass2.passed_count);
+    assert.ok(result.overall_passed);
+
+    // Top-level `phases` exposes the first pass's phases for single-pass consumers.
+    assert.strictEqual(result.phases[0].steps[0].agent_index, 1);
+    assert.strictEqual(result.phases[0].steps[1].agent_index, 2);
+  });
+
+  test('aggregates failures from a per-replica bug across both passes', async () => {
+    // One replica is missing a key (B) — the bug is per-replica, not
+    // cross-replica. Every step that lands on B fails. The test pins the
+    // aggregation contract: failed_count sums across passes, overall_passed
+    // is false when any pass fails. Explicitly NOT a cross-replica state
+    // test — round-robin catches this bug too (the single pass that hits B
+    // fails). The value of multi-pass here is redundant coverage, not
+    // uncovering a bug that round-robin misses.
+    const stateA = new Map([['k1', { key: 'k1', value: 'v1', written_on: 'A' }]]);
+    const stateB = new Map();
+    agentA = await startFakeAgent({ state: stateA, label: 'A' });
+    agentB = await startFakeAgent({ state: stateB, label: 'B' });
+
+    const storyboard = storyboardWith([
+      { id: 'r1', title: 'r1', task: '__test_read', auth: 'none', sample_request: { key: 'k1' } },
+      { id: 'r2', title: 'r2', task: '__test_read', auth: 'none', sample_request: { key: 'k1' } },
+    ]);
+
+    const result = await runStoryboard([agentA.url, agentB.url], storyboard, {
+      ...RUN_OPTIONS_BASE,
+      multi_instance_strategy: 'multi-pass',
+    });
+
+    assert.strictEqual(result.overall_passed, false);
+    assert.ok(result.failed_count >= 2, `expected ≥2 failed steps, got ${result.failed_count}`);
+    assert.ok(result.passes.every(p => !p.overall_passed));
+  });
+
+  test('ANDs overall_passed across mixed-outcome passes (pass 1 green, pass 2 red)', async () => {
+    // Pins the core AND-combining contract: even when a single pass reports
+    // overall_passed=true, the run fails when any later pass fails.
+    //
+    // Construction: storyboard has two steps. On pass 1 (offset 0), step 0 →
+    // agent A (serves __test_probe), step 1 → agent B (serves __test_probe).
+    // On pass 2 (offset 1), step 0 → agent B, step 1 → agent A. We make
+    // agent B fail on its SECOND inbound request (not the first) — so pass 1
+    // still passes (B is hit once) but pass 2 fails (B is hit twice across
+    // the run, second time trips the gate).
+    const shared = new Map();
+    let bRequestCount = 0;
+    agentA = await startFakeAgent({ state: shared, label: 'A' });
+    // Custom B: first probe OK, second returns error. Can't easily do with
+    // startFakeAgent's uniform handler, so hand-roll a tiny server.
+    const http = require('http');
+    let server;
+    await new Promise(resolve => {
+      server = http.createServer(async (req, res) => {
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const tool = rpc.params?.name;
+        if (tool === 'get_adcp_capabilities') {
+          res.writeHead(200, { 'content-type': 'application/json' }).end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: rpc.id,
+              result: { structuredContent: { version: '1.0', protocols: [], specialisms: [] } },
+            })
+          );
+          return;
+        }
+        bRequestCount++;
+        if (bRequestCount > 1) {
+          res.writeHead(200, { 'content-type': 'application/json' }).end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: rpc.id,
+              result: { isError: true, structuredContent: { error: 'second-hit failure', code: 'BROKEN' } },
+            })
+          );
+          return;
+        }
+        res
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { structuredContent: { instance: 'B' } } }));
+      });
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const bUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+
+    try {
+      const storyboard = storyboardWith([
+        { id: 's1', title: 's1', task: '__test_probe', auth: 'none', sample_request: {} },
+        { id: 's2', title: 's2', task: '__test_probe', auth: 'none', sample_request: {} },
+      ]);
+
+      const result = await runStoryboard([agentA.url, bUrl], storyboard, {
+        ...RUN_OPTIONS_BASE,
+        multi_instance_strategy: 'multi-pass',
+      });
+
+      // Pass 1: step 0 → A (ok), step 1 → B's first hit (ok)         → passes
+      // Pass 2: step 0 → B's second hit (FAIL), step 1 → A (ok)      → fails
+      assert.strictEqual(result.passes.length, 2);
+      assert.strictEqual(result.passes[0].overall_passed, true, 'pass 1 should pass (B hit once)');
+      assert.strictEqual(result.passes[1].overall_passed, false, 'pass 2 should fail (B hit second time)');
+      assert.strictEqual(result.overall_passed, false, 'overall must AND across passes');
+      assert.strictEqual(result.failed_count, 1);
+    } finally {
+      await new Promise(r => server.close(r));
+    }
+  });
+
+  test('rejects webhook_receiver + multi-pass', async () => {
+    await assert.rejects(
+      runStoryboard(['http://a', 'http://b'], storyboardWith([]), {
+        ...RUN_OPTIONS_BASE,
+        multi_instance_strategy: 'multi-pass',
+        webhook_receiver: { mode: 'loopback_mock' },
+      }),
+      /webhook_receiver is incompatible with multi_instance_strategy: "multi-pass"/
+    );
+  });
+
+  test('rotates dispatch across 3 replicas with 3 passes', async () => {
+    const shared = new Map();
+    const agents = await Promise.all([
+      startFakeAgent({ state: shared, label: 'A' }),
+      startFakeAgent({ state: shared, label: 'B' }),
+      startFakeAgent({ state: shared, label: 'C' }),
+    ]);
+    try {
+      const storyboard = storyboardWith([
+        { id: 's1', title: 's1', task: '__test_probe', auth: 'none', sample_request: {} },
+        { id: 's2', title: 's2', task: '__test_probe', auth: 'none', sample_request: {} },
+        { id: 's3', title: 's3', task: '__test_probe', auth: 'none', sample_request: {} },
+      ]);
+
+      const result = await runStoryboard(
+        agents.map(a => a.url),
+        storyboard,
+        { ...RUN_OPTIONS_BASE, multi_instance_strategy: 'multi-pass' }
+      );
+
+      assert.strictEqual(result.passes.length, 3);
+      // Pass offsets rotate through 0, 1, 2 — step 0 hits replicas [#1, #2, #3]
+      // respectively.
+      assert.strictEqual(result.passes[0].phases[0].steps[0].agent_index, 1);
+      assert.strictEqual(result.passes[1].phases[0].steps[0].agent_index, 2);
+      assert.strictEqual(result.passes[2].phases[0].steps[0].agent_index, 3);
+      // Every replica serves each step position at some pass.
+      assert.ok(result.overall_passed);
+    } finally {
+      for (const a of agents) await stopAgent(a);
+    }
+  });
+
+  test('ANDs overall_passed across passes and sums counts', async () => {
+    const shared = new Map();
+    agentA = await startFakeAgent({ state: shared, label: 'A' });
+    agentB = await startFakeAgent({ state: shared, label: 'B' });
+
+    const storyboard = storyboardWith([
+      { id: 's1', title: 's1', task: '__test_probe', auth: 'none', sample_request: {} },
+      { id: 's2', title: 's2', task: '__test_probe', auth: 'none', sample_request: {} },
+    ]);
+
+    const result = await runStoryboard([agentA.url, agentB.url], storyboard, {
+      ...RUN_OPTIONS_BASE,
+      multi_instance_strategy: 'multi-pass',
+    });
+
+    assert.ok(result.overall_passed);
+    assert.strictEqual(result.passed_count, 4); // 2 steps × 2 passes
+    assert.strictEqual(result.failed_count, 0);
+    // 2 steps × 2 passes = 4 probes; with swapped starts each replica serves
+    // exactly 2 probes total (one per pass).
+    assert.strictEqual(agentA.requests.length, 2);
+    assert.strictEqual(agentB.requests.length, 2);
+  });
+
+  test('falls back to single-pass when only one URL is provided', async () => {
+    const shared = new Map();
+    agentA = await startFakeAgent({ state: shared, label: 'A' });
+
+    const storyboard = storyboardWith([
+      { id: 's1', title: 's1', task: '__test_probe', auth: 'none', sample_request: {} },
+    ]);
+
+    const result = await runStoryboard([agentA.url], storyboard, {
+      ...RUN_OPTIONS_BASE,
+      multi_instance_strategy: 'multi-pass',
+    });
+
+    // Single-URL mode — multi-pass is a no-op. The result reports
+    // single-instance (agent_urls undefined, no passes[]).
+    assert.strictEqual(result.agent_urls, undefined);
+    assert.strictEqual(result.passes, undefined);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
 // MCP SDK dispatch path (no auth: 'none' override — full MCP handshake)
 // ────────────────────────────────────────────────────────────
 

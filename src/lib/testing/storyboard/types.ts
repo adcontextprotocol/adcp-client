@@ -398,11 +398,24 @@ export interface StoryboardRunOptions extends TestOptions {
     transport?: 'raw' | 'mcp';
   };
   /**
-   * Distribution strategy across agent URLs in multi-instance mode (#608).
+   * Distribution strategy across agent URLs in multi-instance mode.
    * Only consulted when the runner is given 2+ URLs. Defaults to 'round-robin'.
-   * Reserved enum; additional strategies may land without a signature change.
+   *
+   *  - `round-robin` (default): step N hits `urls[N % urls.length]`. One pass.
+   *  - `multi-pass` (narrow use case): runs the storyboard `urls.length`
+   *    times, each pass starting the dispatcher at a different replica.
+   *    Surfaces single-replica bugs (stale config, divergent version,
+   *    local-cache miss) that single-pass round-robin may not catch when
+   *    the buggy replica happens to serve only passive steps. N-multiplies
+   *    run time. NOT a full cross-replica state-persistence test at N=2:
+   *    offset-shift preserves pair parity, so write→read pairs with even
+   *    dispatch-index distance (e.g., the property_lists case: write at 0,
+   *    read at 2) land same-replica in every pass. Use single-pass
+   *    round-robin (adjacent pairs) + follow-up dependency-aware dispatch
+   *    (non-adjacent pairs, #607 option 2) for the spec's horizontal-
+   *    scaling requirement. See docs/guides/MULTI-INSTANCE-TESTING.md.
    */
-  multi_instance_strategy?: 'round-robin';
+  multi_instance_strategy?: 'round-robin' | 'multi-pass';
   /**
    * Host an ephemeral webhook receiver during the run so `expect_webhook*`
    * pseudo-steps can observe outbound webhooks from the agent under test.
@@ -686,9 +699,22 @@ export interface StoryboardResult {
   /** All agent URLs used in multi-instance mode. Absent (or single-entry) in single-URL mode. */
   agent_urls?: string[];
   /** Distribution strategy used across agent_urls. Absent in single-URL mode. */
-  multi_instance_strategy?: 'round-robin';
+  multi_instance_strategy?: 'round-robin' | 'multi-pass';
   overall_passed: boolean;
+  /**
+   * Phases from the first pass. In `multi-pass` mode see `passes` for the full
+   * per-pass detail; `passed_count`/`failed_count`/`skipped_count` and
+   * `overall_passed` aggregate across all passes.
+   */
   phases: StoryboardPhaseResult[];
+  /**
+   * Per-pass detail in `multi-pass` mode — one entry per starting replica so
+   * each step is served by each replica at least once across passes. Absent
+   * in single-pass modes. Per-pair cross-replica coverage depends on
+   * dispatch-index distance modulo `agent_urls.length` (see
+   * `multi_instance_strategy` on `StoryboardRunOptions`).
+   */
+  passes?: StoryboardPassResult[];
   /** Final accumulated context */
   context: StoryboardContext;
   total_duration_ms: number;
@@ -702,4 +728,24 @@ export interface StoryboardResult {
    * locally against the same artifacts.
    */
   schemas_used?: Array<{ schema_id: string; schema_url: string }>;
+}
+
+/**
+ * Single pass in `multi-pass` multi-instance mode. Each pass re-runs the
+ * whole storyboard with a different round-robin starting offset so each
+ * step is served by each replica at least once across passes. See
+ * `multi_instance_strategy` on `StoryboardRunOptions` for the N=2
+ * per-pair coverage caveat.
+ */
+export interface StoryboardPassResult {
+  /** 1-based pass index. */
+  pass_index: number;
+  /** 0-based starting replica for this pass's round-robin dispatch. */
+  dispatch_offset: number;
+  overall_passed: boolean;
+  phases: StoryboardPhaseResult[];
+  passed_count: number;
+  failed_count: number;
+  skipped_count: number;
+  duration_ms: number;
 }

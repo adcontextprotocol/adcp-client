@@ -48,6 +48,7 @@ import type {
   StoryboardContext,
   StoryboardRunOptions,
   StoryboardResult,
+  StoryboardPassResult,
   StoryboardPhaseResult,
   StoryboardStepResult,
   StoryboardStepPreview,
@@ -168,7 +169,6 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   validateTestKit(options.test_kit);
-  const start = Date.now();
   const agentUrls = Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls];
   if (agentUrls.length === 0) {
     throw new Error('runStoryboard: at least one agent URL required');
@@ -180,6 +180,42 @@ export async function runStoryboard(
         'Remove _client (or pass a single agent URL) to use round-robin dispatch.'
     );
   }
+
+  const requestedStrategy = options.multi_instance_strategy ?? 'round-robin';
+  if (requestedStrategy === 'multi-pass' && isMultiInstance) {
+    // Webhook receivers bind a fresh ephemeral port per pass. Each pass would
+    // advertise a different URL via `{{runner.webhook_base}}`; agents caching
+    // the pass-1 URL would deliver into a dead port in pass 2. Reject rather
+    // than silently mis-route. The spec-correct test for webhook retry /
+    // idempotency is one pass.
+    if (options.webhook_receiver) {
+      throw new Error(
+        'runStoryboard: webhook_receiver is incompatible with multi_instance_strategy: "multi-pass". ' +
+          'Each pass would bind a fresh receiver URL, so agents caching the pass-1 URL would deliver ' +
+          'to a dead port in pass 2. Use round-robin when the storyboard needs a webhook receiver, ' +
+          'or run multi-pass on a storyboard without webhook observation.'
+      );
+    }
+    return runMultiPass(agentUrls, storyboard, options);
+  }
+  return executeStoryboardPass(agentUrls, storyboard, options, 0);
+}
+
+/**
+ * Execute a single pass of the storyboard against the supplied replica URLs
+ * using round-robin dispatch starting at `dispatchOffset`. Called directly
+ * by `runStoryboard` (offset 0) and repeatedly by `runMultiPass` (offsets
+ * 0..N-1). Taking the offset as an explicit parameter keeps the dispatcher
+ * primitive out of the public `StoryboardRunOptions` type.
+ */
+async function executeStoryboardPass(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions,
+  dispatchOffset: number
+): Promise<StoryboardResult> {
+  const start = Date.now();
+  const isMultiInstance = agentUrls.length > 1;
 
   // Build one client per URL. In single-URL mode `_client` (from comply()) is
   // honored so the shared MCP transport is reused across storyboards.
@@ -230,7 +266,10 @@ export async function runStoryboard(
 
   // Flatten all steps for next-step preview lookups
   const allSteps = flattenSteps(storyboard);
-  const dispatch = createDispatcher(agentUrls, clients, options.multi_instance_strategy ?? 'round-robin');
+  // Inner passes always dispatch round-robin; only the outer runMultiPass
+  // caller knows about the multi-pass strategy. This keeps createDispatcher's
+  // strategy parameter narrow.
+  const dispatch = createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset);
 
   // Placeholder storyboards with no executable phases get a distinct skip
   // reason per the runner-output contract. Without this, the overall result
@@ -381,7 +420,10 @@ export async function runStoryboard(
     storyboard_title: storyboard.title,
     agent_url: agentUrls[0]!,
     ...(isMultiInstance && { agent_urls: [...agentUrls] }),
-    ...(isMultiInstance && { multi_instance_strategy: options.multi_instance_strategy ?? 'round-robin' }),
+    // Inner multi-pass passes surface as `round-robin` (that's what they are
+    // individually); the aggregating wrapper relabels the top-level result
+    // `multi-pass`.
+    ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
     overall_passed: failedCount === 0 && requiredPhasesPassed,
     phases: phaseResults,
     context,
@@ -403,6 +445,79 @@ export async function runStoryboard(
   if (webhookReceiver) await webhookReceiver.close();
 
   return result;
+}
+
+/**
+ * Run the storyboard N times — once per replica — with the round-robin
+ * dispatcher starting at a different replica each pass. Lets each step hit
+ * a different replica across passes, so a bug isolated to one replica
+ * (stale config, divergent version, local cache miss) surfaces on the pass
+ * that sends the relevant step there.
+ *
+ * Known limitation (follow-up adcontextprotocol/adcp-client#607 option 2):
+ * for N=2, offset-shift preserves pair parity — a write→read pair whose
+ * dispatch indices differ by an even amount lands same-replica in every
+ * pass (the canonical property_lists case: write at step 0, read at step
+ * 2). Cross-replica state-persistence testing at N=2 is primarily the job
+ * of single-pass round-robin (which catches adjacent write→read pairs);
+ * dependency-aware dispatch that reads `context_inputs` and assigns a
+ * replica different from the writer of the specific state key being read
+ * is the spec-aligned fix for non-adjacent pairs and should be preferred
+ * over multi-pass for that purpose.
+ *
+ * The aggregated result AND-combines `overall_passed` across passes, sums
+ * the pass/fail/skip counts, and exposes the per-pass detail via `passes[]`.
+ * The top-level `phases` is the first pass's phases so single-pass consumers
+ * keep working; richer consumers read `passes[]`.
+ */
+async function runMultiPass(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<StoryboardResult> {
+  const start = Date.now();
+  const passes: StoryboardPassResult[] = [];
+  const passResults: StoryboardResult[] = [];
+  for (let passIdx = 0; passIdx < agentUrls.length; passIdx++) {
+    const result = await executeStoryboardPass(agentUrls, storyboard, options, passIdx);
+    passResults.push(result);
+    passes.push({
+      pass_index: passIdx + 1,
+      dispatch_offset: passIdx,
+      overall_passed: result.overall_passed,
+      phases: result.phases,
+      passed_count: result.passed_count,
+      failed_count: result.failed_count,
+      skipped_count: result.skipped_count,
+      duration_ms: result.total_duration_ms,
+    });
+  }
+
+  const first = passResults[0]!;
+  const overallPassed = passes.every(p => p.overall_passed);
+  const passed = passes.reduce((sum, p) => sum + p.passed_count, 0);
+  const failed = passes.reduce((sum, p) => sum + p.failed_count, 0);
+  const skipped = passes.reduce((sum, p) => sum + p.skipped_count, 0);
+  const schemasUsed = passResults.flatMap(r => r.schemas_used ?? []);
+  const schemasDedup = [...new Map(schemasUsed.map(s => [s.schema_id, s])).values()];
+
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    agent_urls: [...agentUrls],
+    multi_instance_strategy: 'multi-pass',
+    overall_passed: overallPassed,
+    phases: first.phases,
+    passes,
+    context: first.context,
+    total_duration_ms: Date.now() - start,
+    passed_count: passed,
+    failed_count: failed,
+    skipped_count: skipped,
+    tested_at: new Date().toISOString(),
+    ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
+  };
 }
 
 /**
@@ -1278,18 +1393,25 @@ interface Dispatcher {
 /**
  * Build a dispatcher that picks an (agent URL, client) pair per step.
  *
- * Single-URL runs always return the same assignment. Multi-URL runs use the
- * configured strategy — currently round-robin only (other strategies reserved
- * in the enum; see tracking issue adcontextprotocol/adcp-client#607 for a
- * dependency-aware variant that closes the 2-replica coverage gap). Each
- * step increments the counter so step N hits `clients[N % N_urls]`,
- * deterministic and reproducible for bug reports.
+ * Single-URL runs always return the same assignment. Multi-URL runs use
+ * round-robin — step N hits `clients[(N + startOffset) % N_urls]`.
+ * Deterministic and reproducible for bug reports.
+ *
+ * `startOffset` lets the `multi-pass` strategy run the same storyboard with
+ * the dispatcher starting at a different replica each pass so write→read
+ * pairs separated by an even number of stateful steps get exercised
+ * cross-replica on at least one pass.
  */
-function createDispatcher(agentUrls: string[], clients: TestClient[], _strategy: 'round-robin'): Dispatcher {
-  let counter = 0;
+function createDispatcher(
+  agentUrls: string[],
+  clients: TestClient[],
+  _strategy: 'round-robin',
+  startOffset = 0
+): Dispatcher {
+  let counter = startOffset;
   return {
     nextFor(_step: StoryboardStep): StepAssignment {
-      const idx = counter % agentUrls.length;
+      const idx = ((counter % agentUrls.length) + agentUrls.length) % agentUrls.length;
       counter++;
       return {
         client: clients[idx]!,
