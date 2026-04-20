@@ -609,6 +609,34 @@ function parseAgentOptions(args) {
     if (eqArg) file = eqArg.slice('--file='.length);
   }
 
+  // --brand DOMAIN|JSON and --brand-manifest JSON|@file.json — threaded into
+  // TestOptions.brand / .brand_manifest so the runner's applyBrandInvariant
+  // fires for CLI-driven runs (otherwise storyboards that omit brand on a
+  // sub-step land in the seller's `open:default` session instead of the
+  // tenant under test). Mutually exclusive.
+  const brandIndex = args.indexOf('--brand');
+  let brandRawValue = null;
+  if (brandIndex !== -1 && brandIndex + 1 < args.length && !args[brandIndex + 1].startsWith('--')) {
+    brandRawValue = args[brandIndex + 1];
+  }
+  const brand = brandRawValue != null ? parseBrandFlag(brandRawValue) : null;
+
+  const brandManifestIndex = args.indexOf('--brand-manifest');
+  let brandManifestRaw = null;
+  if (
+    brandManifestIndex !== -1 &&
+    brandManifestIndex + 1 < args.length &&
+    !args[brandManifestIndex + 1].startsWith('--')
+  ) {
+    brandManifestRaw = args[brandManifestIndex + 1];
+  }
+  const brandManifest = brandManifestRaw != null ? parseJsonFlag('--brand-manifest', brandManifestRaw) : null;
+
+  if (brand && brandManifest) {
+    console.error('ERROR: --brand and --brand-manifest are mutually exclusive. Use one or the other.');
+    process.exit(2);
+  }
+
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
@@ -628,10 +656,42 @@ function parseAgentOptions(args) {
     platformTypeValue,
     timeoutValue,
     fileIndex !== -1 ? file : null,
+    brandRawValue,
+    brandManifestRaw,
   ].filter(Boolean);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
-  return { authToken, protocolFlag, brief, file, jsonOutput, debug, dryRun, allowHttp, positionalArgs };
+  return {
+    authToken,
+    protocolFlag,
+    brief,
+    file,
+    brand,
+    brandManifest,
+    jsonOutput,
+    debug,
+    dryRun,
+    allowHttp,
+    positionalArgs,
+  };
+}
+
+/**
+ * Parse `--brand` — accepts a bare `domain` (most common) or a JSON object
+ * matching `BrandReference` (`{"domain":"...","brand_id":"..."}`), or
+ * `@file.json` for a JSON file. Returns a `BrandReference` shape.
+ */
+function parseBrandFlag(value) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('@')) {
+    const parsed = parseJsonFlag('--brand', trimmed);
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.domain !== 'string') {
+      console.error('ERROR: --brand JSON must be a BrandReference object with a string `domain` field.');
+      process.exit(2);
+    }
+    return parsed;
+  }
+  return { domain: trimmed };
 }
 
 /**
@@ -797,6 +857,15 @@ RUN OPTIONS (full assessment):
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
 
+BRAND OPTIONS (storyboard run):
+  --brand DOMAIN|JSON      Force every step onto this brand for per-tenant session
+                           isolation (matches sellers that scope state by brand.domain;
+                           same behavior as setting options.brand programmatically).
+                           Accepts a bare domain, a BrandReference JSON object, or
+                           @file.json. Mutually exclusive with --brand-manifest.
+  --brand-manifest JSON    Brand manifest object (or @file.json). Mutually exclusive
+                           with --brand.
+
 OPTIONS:
   --context JSON      Pass context from previous step (step only)
   --request JSON      Override sample_request for the step (step only)
@@ -814,6 +883,7 @@ EXAMPLES:
   adcp storyboard run test-mcp --tracks core,products  # filter report by track
   adcp storyboard run test-mcp sales-guaranteed        # run one specialism bundle
   adcp storyboard run test-mcp --file ./my-wip.yaml    # test a local YAML
+  adcp storyboard run test-mcp sales-guaranteed --brand acme.example   # brand-scoped run
   adcp storyboard list
   adcp storyboard show media_buy_seller
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
@@ -1085,6 +1155,9 @@ async function handleStoryboardRun(args) {
   const options = {
     protocol,
     ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
+    ...(opts.allowHttp && { allow_http: true }),
+    ...(opts.brand && { brand: opts.brand }),
+    ...(opts.brandManifest && { brand_manifest: opts.brandManifest }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -1343,6 +1416,8 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     protocol,
     ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
     ...(opts.allowHttp && { allow_http: true }),
+    ...(opts.brand && { brand: opts.brand }),
+    ...(opts.brandManifest && { brand_manifest: opts.brandManifest }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -1493,6 +1568,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     agent_alias: agentArg !== agentUrl ? agentArg : undefined,
     ...(authOption && { auth: authOption }),
     ...(opts.allowHttp && { allow_http: true }),
+    ...(opts.brand && { brand: opts.brand }),
+    ...(opts.brandManifest && { brand_manifest: opts.brandManifest }),
   };
 
   if (!opts.jsonOutput) {
@@ -3107,7 +3184,12 @@ process.on('beforeExit', async () => {
   }
 });
 
-main().catch(error => {
-  console.error('FATAL ERROR:', error.message);
-  process.exit(1);
-});
+// Run as a CLI when invoked directly; expose internals for unit tests when required.
+if (require.main === module) {
+  main().catch(error => {
+    console.error('FATAL ERROR:', error.message);
+    process.exit(1);
+  });
+} else {
+  module.exports = { parseAgentOptions, parseBrandFlag, parseJsonFlag };
+}
