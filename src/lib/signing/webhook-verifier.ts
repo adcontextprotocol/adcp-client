@@ -373,18 +373,10 @@ function validateTargetUri(rawUrl: string): void {
     );
   }
   if (url.username || url.password) {
-    throw new WebhookSignatureError(
-      'webhook_target_uri_malformed',
-      6,
-      '@target-uri must not embed userinfo.'
-    );
+    throw new WebhookSignatureError('webhook_target_uri_malformed', 6, '@target-uri must not embed userinfo.');
   }
   if (url.hash) {
-    throw new WebhookSignatureError(
-      'webhook_target_uri_malformed',
-      6,
-      '@target-uri must not carry a fragment.'
-    );
+    throw new WebhookSignatureError('webhook_target_uri_malformed', 6, '@target-uri must not carry a fragment.');
   }
 }
 

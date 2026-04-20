@@ -107,11 +107,7 @@ export class InMemoryReplayStore implements ReplayStore {
     const state = this.getOrCreate(composite);
     this.prune(state, now);
     if (state.nonces.has(nonce)) return 'replayed';
-    if (
-      this.forcedCapHit.has(keyid) ||
-      this.forcedCapHit.has(composite) ||
-      state.nonces.size >= this.capPerKeyid
-    ) {
+    if (this.forcedCapHit.has(keyid) || this.forcedCapHit.has(composite) || state.nonces.size >= this.capPerKeyid) {
       return 'rate_abuse';
     }
     this.insertEntry(state, nonce, now + ttlSeconds);

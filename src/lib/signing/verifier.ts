@@ -1,5 +1,11 @@
 import { parseDictionary } from 'structured-headers';
-import { buildSignatureBase, canonicalTargetUri, getHeaderValue, rejectNonAsciiHost, type RequestLike } from './canonicalize';
+import {
+  buildSignatureBase,
+  canonicalTargetUri,
+  getHeaderValue,
+  rejectNonAsciiHost,
+  type RequestLike,
+} from './canonicalize';
 import { contentDigestMatches } from './content-digest';
 import { RequestSignatureError } from './errors';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
