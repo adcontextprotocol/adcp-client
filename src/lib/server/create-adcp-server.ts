@@ -548,6 +548,10 @@ export interface AdcpCapabilitiesConfig {
  * Each field accepts the same shape as the corresponding block on
  * {@link GetAdCPCapabilitiesResponse}. A value of `null` explicitly removes
  * the auto-derived block; `undefined` (omission) is a no-op.
+ *
+ * **Values must be JSON-serializable plain objects.** Class instances, `Date`,
+ * `Map`, `Set`, or any value with a non-`Object.prototype` prototype are
+ * treated as opaque leaves and replace their target rather than merging.
  */
 export interface AdcpCapabilitiesOverrides {
   media_buy?: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> | null;
@@ -889,10 +893,7 @@ function clampReplayTtl(seconds: number): number {
  * objects merge recursively; arrays and primitives replace. `null` at the
  * top-level field explicitly drops the block; `undefined` is a no-op.
  */
-function applyCapabilityOverrides(
-  target: GetAdCPCapabilitiesResponse,
-  overrides: AdcpCapabilitiesOverrides
-): void {
+function applyCapabilityOverrides(target: GetAdCPCapabilitiesResponse, overrides: AdcpCapabilitiesOverrides): void {
   const targetAny = target as unknown as Record<string, unknown>;
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined) continue;

@@ -50,10 +50,11 @@ describe('capabilities.overrides — per-domain merge (#654)', () => {
     const caps = await callCapabilities(server);
     assert.strictEqual(caps.media_buy.execution.targeting.geo_countries, true);
     assert.strictEqual(caps.media_buy.execution.targeting.language, true);
-    assert.deepStrictEqual(
-      caps.media_buy.execution.targeting.keyword_targets.supported_match_types,
-      ['broad', 'phrase', 'exact']
-    );
+    assert.deepStrictEqual(caps.media_buy.execution.targeting.keyword_targets.supported_match_types, [
+      'broad',
+      'phrase',
+      'exact',
+    ]);
     assert.deepStrictEqual(caps.media_buy.audience_targeting.supported_identifier_types, ['hashed_email']);
     assert.strictEqual(caps.media_buy.audience_targeting.minimum_audience_size, 500);
     assert.deepStrictEqual(caps.media_buy.content_standards.supported_channels, ['display', 'ctv']);
@@ -171,6 +172,31 @@ describe('capabilities.overrides — per-domain merge (#654)', () => {
     assert.deepStrictEqual(caps.signals, { owned_supported: true });
     assert.deepStrictEqual(caps.governance, { spend_authority_supported: true });
     assert.deepStrictEqual(caps.brand, { rights_supported: true });
+  });
+
+  it('request_signing override wins over capabilities.request_signing direct config', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      capabilities: {
+        request_signing: {
+          supported: true,
+          required_for: ['create_media_buy'],
+          covers_content_digest: 'required',
+        },
+        overrides: {
+          request_signing: {
+            supported: true,
+            required_for: [],
+            covers_content_digest: 'either',
+          },
+        },
+      },
+    });
+    const caps = await callCapabilities(server);
+    assert.deepStrictEqual(caps.request_signing.required_for, []);
+    assert.strictEqual(caps.request_signing.covers_content_digest, 'either');
   });
 
   it('undefined overrides are no-ops', async () => {

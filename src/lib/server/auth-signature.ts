@@ -45,12 +45,7 @@ import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
 import type { VerifiedSigner, VerifierCapability, VerifyResult } from '../signing/types';
 import { verifyRequestSignature } from '../signing/verifier';
-import {
-  AuthError,
-  type AuthPrincipal,
-  type Authenticator,
-  tagAuthenticatorNeedsRawBody,
-} from './auth';
+import { AuthError, type AuthPrincipal, type Authenticator, tagAuthenticatorNeedsRawBody } from './auth';
 
 export interface VerifySignatureAsAuthenticatorOptions {
   /** Verifier capability block. `required_for` is not enforced here — unsigned
@@ -106,9 +101,7 @@ export interface VerifySignatureAsAuthenticatorOptions {
  * Populates `req.verifiedSigner` on success so downstream handlers see the
  * same side-channel state as the Express-shaped middleware.
  */
-export function verifySignatureAsAuthenticator(
-  options: VerifySignatureAsAuthenticatorOptions
-): Authenticator {
+export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthenticatorOptions): Authenticator {
   const authenticator: Authenticator = async req => {
     if (!hasSignatureHeader(req)) return null;
 
@@ -139,30 +132,59 @@ export function verifySignatureAsAuthenticator(
       throw new AuthError('Signature verification failed.', { cause: err });
     }
 
-    if (result.status !== 'verified') return null;
+    if (result.status !== 'verified') {
+      // Unreachable: `hasSignatureHeader` already gated entry, so the verifier
+      // either throws (missing-pair / invalid / replayed / etc.) or returns
+      // `status: 'verified'`. Fail loud if the verifier contract changes —
+      // silently returning `null` would fall through to the next authenticator
+      // as if no signature were present, breaking the auth invariant.
+      throw new AuthError('Signature verification returned unexpected status.', {
+        cause: new Error(`verifier returned status="${result.status}"`),
+      });
+    }
+
+    // keyid is buyer-controlled (JWK spec places no charset restriction on
+    // `kid`). Bound it to a URL-safe shape — explicitly excluding `:` — before
+    // interpolating into the principal string, so downstream tenant-isolation
+    // checks that split `signing:<keyid>` on the first `:` can't be confused
+    // by a colon embedded in the signer's key id.
+    if (!SAFE_KEYID.test(result.keyid)) {
+      throw new AuthError('Signature key id contains unsupported characters.', {
+        cause: new Error(`keyid=${JSON.stringify(result.keyid)} fails /^[A-Za-z0-9._-]{1,256}$/`),
+      });
+    }
 
     const signer: VerifiedSigner = {
       keyid: result.keyid,
       verified_at: result.verified_at,
       ...(result.agent_url !== undefined ? { agent_url: result.agent_url } : {}),
     };
-    (req as IncomingMessage & { verifiedSigner?: VerifiedSigner }).verifiedSigner = signer;
 
-    if (options.makePrincipal) return options.makePrincipal(signer);
-    return {
-      principal: `signing:${signer.keyid}`,
-      claims: {
-        signature: {
-          keyid: signer.keyid,
-          verified_at: signer.verified_at,
-          ...(signer.agent_url !== undefined ? { agent_url: signer.agent_url } : {}),
-        },
-      },
-    };
+    const principal = options.makePrincipal
+      ? options.makePrincipal(signer)
+      : {
+          principal: `signing:${signer.keyid}`,
+          claims: {
+            signature: {
+              keyid: signer.keyid,
+              verified_at: signer.verified_at,
+              ...(signer.agent_url !== undefined ? { agent_url: signer.agent_url } : {}),
+            },
+          },
+        };
+
+    // Write the side-channel state only after the principal is fully built so
+    // a throw from `makePrincipal` leaves `req.verifiedSigner` unset — the
+    // request didn't actually authenticate, downstream handlers must not see
+    // a stale "verified" marker on a rejected request.
+    (req as IncomingMessage & { verifiedSigner?: VerifiedSigner }).verifiedSigner = signer;
+    return principal;
   };
 
   return tagAuthenticatorNeedsRawBody(authenticator);
 }
+
+const SAFE_KEYID = /^[A-Za-z0-9._-]{1,256}$/;
 
 function hasSignatureHeader(req: IncomingMessage): boolean {
   const v = req.headers['signature-input'];

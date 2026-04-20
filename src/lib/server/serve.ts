@@ -252,6 +252,9 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         try {
           await ensureRawBody();
         } catch (err) {
+          // `bufferBody` has already called `req.destroy()` on the
+          // oversize path; additional teardown here would race the
+          // response write. Write the status and return.
           const errName = (err as Error).name || 'Error';
           console.error(`[adcp/serve] request body read failed before auth: ${errName}`);
           if (!res.headersSent) {
