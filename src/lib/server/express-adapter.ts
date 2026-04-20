@@ -55,6 +55,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AdcpServer } from './adcp-server';
 import type { ProtectedResourceMetadata } from './serve';
+import { seedComplianceFixtures, type SeedComplianceFixturesOptions } from '../compliance-fixtures';
 
 export interface ExpressAdapterOptions {
   /**
@@ -110,6 +111,23 @@ export interface ExpressAdapterOptions {
    * environment (a disposable test DB, for example).
    */
   resetForce?: boolean;
+  /**
+   * When truthy, {@link ExpressAdapter.resetHook} re-seeds the AdCP
+   * compliance fixtures (via `seedComplianceFixtures`) after
+   * `compliance.reset()` flushes the state store. Without this, a
+   * runner that resets between storyboards loses fixtures seeded
+   * before storyboard #1, and every subsequent fixture lookup returns
+   * `null` — surfacing as fixture-not-found 404s across the run.
+   *
+   * - `true` seeds the full canonical fixture set with default options.
+   * - An object applies the matching `seedComplianceFixtures`
+   *   configuration (category filter, overrides, collection names).
+   *
+   * Leave undefined when handlers don't read from the compliance
+   * state-store collections, or when you seed through a different
+   * path (e.g., a `comply_test_controller` scenario).
+   */
+  seedFixtures?: boolean | SeedComplianceFixturesOptions;
 }
 
 /** Return shape of {@link createExpressAdapter}. */
@@ -223,10 +241,17 @@ export function createExpressAdapter(options: ExpressAdapterOptions): ExpressAda
   };
 
   const resetHook = async (): Promise<void> => {
-    if (options.server) {
-      await options.server.compliance.reset({
-        ...(options.resetForce ? { force: true } : {}),
-      });
+    if (!options.server) return;
+    await options.server.compliance.reset({
+      ...(options.resetForce ? { force: true } : {}),
+    });
+    // Re-seed AFTER the flush so subsequent storyboards find fixtures
+    // at the same IDs. Without this step the first storyboard consumes
+    // the seed from pre-run setup, then every storyboard after N+1
+    // misses because `reset()` wiped `compliance:*` collections.
+    if (options.seedFixtures) {
+      const seedOptions: SeedComplianceFixturesOptions = options.seedFixtures === true ? {} : options.seedFixtures;
+      await seedComplianceFixtures(options.server, seedOptions);
     }
   };
 

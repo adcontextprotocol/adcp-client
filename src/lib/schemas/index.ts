@@ -54,10 +54,18 @@ function shapeOf(s: unknown): InputShape | undefined {
  * `.shape` of its request schema, ready to pass as `inputSchema` to MCP
  * SDK's `server.registerTool()`.
  *
- * Superset of {@link TOOL_REQUEST_SCHEMAS}: also includes tools like
- * `creative_approval` and `update_rights` that have generated schemas
- * but aren't framework-registered in `AdcpToolMap` (sellers register
- * them via `customTools`).
+ * Superset of {@link TOOL_REQUEST_SCHEMAS}: covers every tool already
+ * registered with the framework (get_products, create_media_buy,
+ * sync_catalogs, check_governance, comply_test_controller, all five
+ * *_collection_list tools, validate_property_delivery, acquire_rights,
+ * et al.) PLUS the two tools the spec models as customTool-only
+ * extensions — `creative_approval` and `update_rights` — so sellers
+ * don't have to hand-author shapes for those either.
+ *
+ * If a future AdCP release adds a new tool with a generated request
+ * schema, add its entry here (or to `TOOL_REQUEST_SCHEMAS` if it's
+ * framework-registrable) — CI's `ci:schema-check` catches missing
+ * map entries by diffing against the generated schemas.
  */
 export const TOOL_INPUT_SHAPES: Readonly<Record<string, Readonly<InputShape>>> = Object.freeze({
   ...Object.fromEntries(

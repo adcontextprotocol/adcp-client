@@ -111,6 +111,44 @@ describe('#665 requireSignatureWhenPresent + requiredFor', () => {
       err => err.cause instanceof RequestSignatureError && err.cause.code === 'request_signature_required'
     );
   });
+
+  it('throws RequestSignatureError cause when fallback throws on required_for op (bad bearer path)', async () => {
+    // Regression: originally the requiredFor pre-check only ran after a
+    // `fallbackResult === null`, so a bad bearer that made `anyOf` throw
+    // skipped the pre-check entirely and surfaced as `Bearer` challenge.
+    // Fix: pre-check runs regardless of fallback throw/return.
+    const gate = requireSignatureWhenPresent(fakeSig, fakeBearer({ sk_live: { principal: 'acct_1' } }), {
+      requiredFor: ['create_media_buy'],
+      resolveOperation: () => 'create_media_buy',
+    });
+    const reqWithBadBearer = {
+      method: 'POST',
+      url: '/mcp',
+      headers: { host: 'x', authorization: 'Bearer wrong-token' },
+      rawBody: '{}',
+    };
+    await assert.rejects(
+      () => gate(reqWithBadBearer),
+      err =>
+        err instanceof AuthError &&
+        err.cause instanceof RequestSignatureError &&
+        err.cause.code === 'request_signature_required'
+    );
+  });
+
+  it('rethrows fallback error on ops NOT in requiredFor (bearer challenge preserved)', async () => {
+    // When op isn't in requiredFor, we want the fallback's original
+    // challenge (Bearer) — pre-check must not swallow that error.
+    class ThrowyAuth extends Error {}
+    const throwingFallback = async () => {
+      throw new ThrowyAuth('bearer rejected');
+    };
+    const gate = requireSignatureWhenPresent(fakeSig, throwingFallback, {
+      requiredFor: ['create_media_buy'],
+      resolveOperation: () => 'get_products',
+    });
+    await assert.rejects(() => gate(unsignedReqWithBody('{}')), ThrowyAuth);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -279,6 +317,22 @@ describe('#666 AdcpServer.compliance.reset()', () => {
 // ---------------------------------------------------------------------------
 
 describe('#663 compliance-fixtures', () => {
+  it('pricing_options use spec-correct pricing_model values (not the hand-typed flat)', () => {
+    // Regression: originally shipped `pricing_model: 'flat'` which doesn't
+    // exist in the spec (the spec's `PricingModel` union uses `'flat_rate'`).
+    // Every pricing option body here must name a member of the spec union.
+    const specValues = ['cpm', 'vcpm', 'cpc', 'cpcv', 'cpv', 'cpp', 'cpa', 'flat_rate', 'time'];
+    for (const opt of Object.values(COMPLIANCE_FIXTURES.pricing_options)) {
+      assert.ok(
+        specValues.includes(opt.pricing_model),
+        `pricing_model "${opt.pricing_model}" not in spec union [${specValues.join(', ')}]`
+      );
+    }
+    // fixed_price (correct field on CPMPricingOption) should be present where applicable
+    assert.strictEqual(COMPLIANCE_FIXTURES.pricing_options['test-pricing'].fixed_price, 5);
+    assert.strictEqual(COMPLIANCE_FIXTURES.pricing_options['cpm_guaranteed'].fixed_price, 25);
+  });
+
   it('exposes canonical fixture IDs required by storyboards', () => {
     assert.ok(COMPLIANCE_FIXTURES.products['test-product']);
     assert.ok(COMPLIANCE_FIXTURES.products['sports_ctv_q2']);
@@ -492,6 +546,42 @@ describe('#664 createExpressAdapter', () => {
     await adapter.resetHook();
     assert.strictEqual(await stateStore.get('c', 'k'), null);
   });
+
+  it('resetHook re-seeds compliance fixtures when seedFixtures is set', async () => {
+    // Regression: without `seedFixtures`, a runner looping storyboards
+    // loses fixtures on the first reset and every subsequent storyboard
+    // fails fixture-lookup. With `seedFixtures: true`, the hook flushes
+    // state AND re-seeds from COMPLIANCE_FIXTURES.
+    const stateStore = new InMemoryStateStore();
+    const server = createAdcpServer({
+      name: 'x',
+      version: '0.0.1',
+      stateStore,
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    const adapter = createExpressAdapter({
+      mountPath: '/api/x',
+      publicUrl: 'https://x.example.com/api/x/mcp',
+      server,
+      seedFixtures: true,
+    });
+    // First pass: seed via the hook itself (clean state).
+    await adapter.resetHook();
+    const testProduct = await stateStore.get(COMPLIANCE_COLLECTIONS.products, 'test-product');
+    assert.ok(testProduct, 'fixtures present after first reset');
+
+    // Add a stray key between storyboards (simulate handler state from sb #1).
+    await stateStore.put('campaigns', 'c1', { name: 'leftover' });
+    assert.ok(await stateStore.get('campaigns', 'c1'));
+
+    // Second pass: reset must flush the stray AND restore fixtures.
+    await adapter.resetHook();
+    assert.strictEqual(await stateStore.get('campaigns', 'c1'), null);
+    assert.ok(
+      await stateStore.get(COMPLIANCE_COLLECTIONS.products, 'test-product'),
+      'fixtures survive the second reset cycle'
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -560,6 +650,25 @@ describe('#668 grader capability-profile mismatch skip', () => {
     assert.strictEqual(result.skipped, true);
     assert.strictEqual(result.skip_reason, 'capability_profile_mismatch');
     assert.match(result.diagnostic, /covers_content_digest/);
+  });
+
+  it('agent-side `either` + strict vector `required` is a mismatch (asymmetry fix)', async () => {
+    // Regression for downstream nit #1: an agent declaring `either`
+    // accepts Content-Digest either way — it doesn't commit to the
+    // strict `required` or `forbidden` policy vectors 007/018 grade.
+    // Those vectors can never pass against an `either` agent, so
+    // auto-skip them.
+    const { negative } = loadRequestSigningVectors();
+    const v007 = negative.find(v => v.id.includes('007'));
+    const result = await gradeOneVector(v007.id, 'negative', 'http://127.0.0.1:1', {
+      agentCapability: {
+        supported: true,
+        covers_content_digest: 'either',
+        required_for: [...(v007.verifier_capability.required_for ?? [])],
+      },
+    });
+    assert.strictEqual(result.skipped, true);
+    assert.strictEqual(result.skip_reason, 'capability_profile_mismatch');
   });
 
   it('runs vectors whose verifier_capability is permissive under the agent profile', async () => {

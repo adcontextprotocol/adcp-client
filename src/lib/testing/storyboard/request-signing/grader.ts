@@ -597,9 +597,17 @@ function capabilityMismatch(
       `Verify the agent's request_signing capability block.`
     );
   }
+  // `covers_content_digest` asymmetry: vector-side `'either'` is
+  // permissive (any agent policy can grade the vector), but agent-side
+  // `'either'` is NOT permissive against a strict vector — an agent
+  // that declares `'either'` accepts requests with OR without
+  // Content-Digest, so vector 007's "MUST reject uncovered request"
+  // and vector 018's "MUST reject covered-when-forbidden" are
+  // structurally incompatible with the agent's stance. The check
+  // fires whenever the VECTOR is strict and the agent's declaration
+  // can't pass the vector's assertion.
   if (
     vectorCap.covers_content_digest !== 'either' &&
-    agentCap.covers_content_digest !== 'either' &&
     vectorCap.covers_content_digest !== agentCap.covers_content_digest
   ) {
     return (

@@ -51,6 +51,12 @@
 
 import { ADCP_STATE_STORE, type AdcpServer } from '../server/adcp-server';
 import type { AdcpStateStore } from '../server/state-store';
+// Pull canonical unions/shapes from the generated spec types so fixture
+// typings can't drift from the schema. Hand-typing `pricing_model` as
+// `'cpm' | 'cpc' | 'cpv' | 'flat'` is how we shipped `'flat'` (which
+// doesn't exist in the spec) — the generated `PricingModel` has the
+// authoritative union.
+import type { PricingModel } from '../types/tools.generated';
 
 export type ComplianceFixtureCategory =
   | 'products'
@@ -95,9 +101,25 @@ export interface ComplianceFormatFixture {
 
 export interface CompliancePricingOptionFixture {
   pricing_option_id: string;
+  /** ISO 4217 currency code, per the spec's `PricingOption.currency`. */
   currency: string;
-  pricing_model: 'cpm' | 'cpc' | 'cpv' | 'flat';
-  cpm?: number;
+  /**
+   * Pricing model — uses the authoritative generated union. The spec
+   * discriminates `PricingOption` on this field across 9 variants
+   * (`cpm`, `vcpm`, `cpc`, `cpcv`, `cpv`, `cpp`, `cpa`, `flat_rate`,
+   * `time`); mismatches here silently fail schema validation in
+   * seller-side `get_products` responses that merge fixture data in.
+   */
+  pricing_model: PricingModel;
+  /**
+   * Fixed price per unit per the matching `*PricingOption.fixed_price`
+   * field (CPM, CPC, etc.). Present when this is a fixed-price option;
+   * omit for auction-based options that advertise `floor_price` /
+   * `price_guidance` instead.
+   */
+  fixed_price?: number;
+  /** Floor price for auction-based options. */
+  floor_price?: number;
 }
 
 export interface ComplianceCreativeFixture {
@@ -182,19 +204,19 @@ export const COMPLIANCE_FIXTURES: ComplianceFixtureSet = Object.freeze({
       pricing_option_id: 'test-pricing',
       currency: 'USD',
       pricing_model: 'cpm',
-      cpm: 5,
+      fixed_price: 5,
     }),
     default: Object.freeze({
       pricing_option_id: 'default',
       currency: 'USD',
       pricing_model: 'cpm',
-      cpm: 10,
+      fixed_price: 10,
     }),
     cpm_guaranteed: Object.freeze({
       pricing_option_id: 'cpm_guaranteed',
       currency: 'USD',
       pricing_model: 'cpm',
-      cpm: 25,
+      fixed_price: 25,
     }),
   }),
 

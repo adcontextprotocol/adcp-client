@@ -48,6 +48,7 @@ import { verifyRequestSignature } from '../signing/verifier';
 import {
   AuthError,
   type AuthPrincipal,
+  type AuthResult,
   type Authenticator,
   authenticatorNeedsRawBody,
   tagAuthenticatorNeedsRawBody,
@@ -328,17 +329,30 @@ export function requireSignatureWhenPresent(
       }
       return result;
     }
-    const fallbackResult = await fallbackAuth(req);
-    if (fallbackResult !== null) return fallbackResult;
-    // No signature and fallback produced no principal. If the operation is
-    // in `requiredFor`, reject with a signature challenge so the buyer SDK
-    // surfaces `request_signature_required` — the error code the
-    // signed_requests grader's negative vectors expect on the
-    // missing-signature edge. Without `requiredFor`/`resolveOperation`
-    // wired, fall through so `serve()` emits the default bearer challenge.
+    // Catch the fallback's throw so the `requiredFor` pre-check can run
+    // regardless of fallback outcome. Without this, a caller presenting
+    // a bad bearer on a required-for op triggers `anyOf` to throw an
+    // `AuthError` with Bearer semantics, propagating past the pre-check
+    // and producing `WWW-Authenticate: Bearer` — the conformance grader
+    // reads the wrong error code on the exact vector this helper
+    // exists to close.
+    let fallbackResult: AuthResult | null = null;
+    let fallbackError: unknown;
+    let fallbackThrew = false;
+    try {
+      fallbackResult = await fallbackAuth(req);
+    } catch (err) {
+      fallbackThrew = true;
+      fallbackError = err;
+    }
+    // `requiredFor` pre-check: when the op requires a signature AND no
+    // signature was presented, surface `request_signature_required`
+    // REGARDLESS of whether the fallback threw (bad bearer) or returned
+    // null (no creds). Valid bearer is the only escape — if the fallback
+    // returned a principal, we already returned above.
     if (requiredFor.size > 0 && resolveOperation) {
       const operation = resolveOperation(req as IncomingMessage & { rawBody?: string });
-      if (operation && requiredFor.has(operation)) {
+      if (operation && requiredFor.has(operation) && fallbackResult === null) {
         throw new AuthError(`Signature required for ${operation}.`, {
           cause: new RequestSignatureError(
             'request_signature_required',
@@ -348,6 +362,11 @@ export function requireSignatureWhenPresent(
         });
       }
     }
+    // Op not in requiredFor (or no resolver): rethrow the fallback's
+    // original error so the 401 carries the fallback's challenge
+    // (Bearer for bad-bearer, invalid_token for no-creds).
+    if (fallbackThrew) throw fallbackError;
+    if (fallbackResult !== null) return fallbackResult;
     return null;
   };
   const anyChildNeedsRawBody = authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth);
