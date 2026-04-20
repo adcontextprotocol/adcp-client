@@ -233,29 +233,33 @@ function requireParams(parsed: ParsedSignatureInput): void {
 }
 
 function validateWindow(created: number, expires: number, now: number): void {
+  // "expired" is strictly a clock-past-expiry concern; anything else is a
+  // malformed window (created-in-future, negative window, over-long window)
+  // and surfaces a distinct code so operators don't chase a clock-drift
+  // red herring.
   if (expires <= created) {
     throw new WebhookSignatureError(
-      'webhook_signature_expired',
+      'webhook_signature_window_invalid',
       6,
       'Signature expires must be strictly greater than created.'
     );
   }
   if (expires - created > MAX_SIGNATURE_WINDOW_SECONDS) {
     throw new WebhookSignatureError(
-      'webhook_signature_expired',
+      'webhook_signature_window_invalid',
       6,
       `Signature window exceeds ${MAX_SIGNATURE_WINDOW_SECONDS}s maximum.`
     );
   }
-  if (now > expires + CLOCK_SKEW_TOLERANCE_SECONDS) {
-    throw new WebhookSignatureError('webhook_signature_expired', 6, 'Signature is expired.');
-  }
   if (now < created - CLOCK_SKEW_TOLERANCE_SECONDS) {
     throw new WebhookSignatureError(
-      'webhook_signature_expired',
+      'webhook_signature_window_invalid',
       6,
       'Signature created is in the future beyond skew tolerance.'
     );
+  }
+  if (now > expires + CLOCK_SKEW_TOLERANCE_SECONDS) {
+    throw new WebhookSignatureError('webhook_signature_expired', 6, 'Signature is expired.');
   }
 }
 

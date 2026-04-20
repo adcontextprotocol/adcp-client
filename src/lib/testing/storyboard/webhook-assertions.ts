@@ -24,6 +24,7 @@
  * Spec: adcontextprotocol/adcp#2431 (storyboard-schema.yaml webhook section).
  */
 
+import { randomUUID } from 'node:crypto';
 import { injectContext, type RunnerVariables } from './context';
 import type {
   HttpProbeResult,
@@ -42,9 +43,44 @@ import { WEBHOOK_IDEMPOTENCY_KEY_PATTERN } from './types';
 import type { CapturedWebhook, RetryReplayPolicy, WebhookFilter, WebhookReceiver } from './webhook-receiver';
 import { verifyWebhookSignature } from '../../signing/webhook-verifier';
 import { WebhookSignatureError } from '../../signing/errors';
-import { InMemoryReplayStore } from '../../signing/replay';
-import { InMemoryRevocationStore } from '../../signing/revocation';
+import { InMemoryReplayStore, type ReplayStore } from '../../signing/replay';
+import { InMemoryRevocationStore, type RevocationStore } from '../../signing/revocation';
 import type { RequestLike } from '../../signing/canonicalize';
+
+const RUN_STATE_REPLAY_KEY = '__webhook_signing_replay_store';
+const RUN_STATE_REVOCATION_KEY = '__webhook_signing_revocation_store';
+
+/**
+ * Return a replay store that's shared for the rest of this run, so a
+ * replayed `(keyid, nonce)` across two deliveries of the same event is
+ * detected. Lazy-constructed on first use so runs without signature
+ * assertions pay zero cost. Explicit caller-supplied stores take
+ * precedence — operators who want durable cross-run detection wire their
+ * own store via `options.webhook_signing.replayStore`.
+ */
+function getSharedReplayStore(
+  runnerVars: RunnerVariables,
+  override: ReplayStore | undefined
+): ReplayStore {
+  if (override) return override;
+  const existing = runnerVars.runState.get(RUN_STATE_REPLAY_KEY);
+  if (existing) return existing as ReplayStore;
+  const store = new InMemoryReplayStore();
+  runnerVars.runState.set(RUN_STATE_REPLAY_KEY, store);
+  return store;
+}
+
+function getSharedRevocationStore(
+  runnerVars: RunnerVariables,
+  override: RevocationStore | undefined
+): RevocationStore {
+  if (override) return override;
+  const existing = runnerVars.runState.get(RUN_STATE_REVOCATION_KEY);
+  if (existing) return existing as RevocationStore;
+  const store = new InMemoryRevocationStore();
+  runnerVars.runState.set(RUN_STATE_REVOCATION_KEY, store);
+  return store;
+}
 
 export const WEBHOOK_ASSERTION_TASKS: Set<string> = new Set([
   'expect_webhook',
@@ -58,6 +94,36 @@ const DEFAULT_RETRY_COUNT = 3;
 const DEFAULT_RETRY_HTTP_STATUS = 503;
 const DEFAULT_MIN_DELIVERIES = 2;
 const DEFAULT_WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
+
+/**
+ * Caps on storyboard-declared knobs. Storyboards are data; treat their
+ * fields as untrusted when they drive network behavior against a real
+ * seller. A typo'd `retry_trigger.count: 1_000_000` would otherwise turn
+ * the runner into a DoS amplifier; a `timeout_seconds: 86400` would wedge
+ * CI for a day. Clamps here fail-safe (use the max, don't reject) so a
+ * compliance run never dies on a storyboard author's fat-fingered YAML.
+ */
+const MAX_RETRY_REPLAY_COUNT = 10;
+const MAX_TIMEOUT_SECONDS = 300;
+/** HTTP statuses the retry-replay policy may return. 429 + 5xx are the
+ * shapes any conformant at-least-once sender treats as retryable. */
+const ALLOWED_RETRY_HTTP_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504]);
+
+function clampTimeoutSeconds(raw: number | undefined, fallback: number): number {
+  const resolved = typeof raw === 'number' && raw > 0 ? raw : fallback;
+  return Math.min(resolved, MAX_TIMEOUT_SECONDS);
+}
+
+function clampRetryPolicy(spec: { count?: number; http_status?: number } | undefined): {
+  count: number;
+  http_status: number;
+} {
+  const requestedCount = spec?.count ?? DEFAULT_RETRY_COUNT;
+  const count = Math.max(1, Math.min(requestedCount, MAX_RETRY_REPLAY_COUNT));
+  const requestedStatus = spec?.http_status ?? DEFAULT_RETRY_HTTP_STATUS;
+  const http_status = ALLOWED_RETRY_HTTP_STATUSES.has(requestedStatus) ? requestedStatus : DEFAULT_RETRY_HTTP_STATUS;
+  return { count, http_status };
+}
 
 interface WebhookAssertionRunState {
   contributions: Set<string>;
@@ -98,23 +164,13 @@ export function armWebhookAssertions(
       // expansion matches the retry-policy key here.
       let opId = runnerVars.stepOperationIds.get(step.triggered_by);
       if (!opId) {
-        opId = cryptoRandomUUID();
+        opId = randomUUID();
         runnerVars.stepOperationIds.set(step.triggered_by, opId);
       }
-      const policy: RetryReplayPolicy = {
-        count: step.retry_trigger?.count ?? DEFAULT_RETRY_COUNT,
-        http_status: step.retry_trigger?.http_status ?? DEFAULT_RETRY_HTTP_STATUS,
-      };
+      const policy: RetryReplayPolicy = clampRetryPolicy(step.retry_trigger);
       receiver.set_retry_replay({ step_id: step.triggered_by, operation_id: opId }, policy);
     }
   }
-}
-
-function cryptoRandomUUID(): string {
-  // Defer to node:crypto; separate helper so the import site stays colocated
-  // with the runner variable mutation and is easy to swap in tests.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('node:crypto').randomUUID();
 }
 
 /**
@@ -268,9 +324,15 @@ function buildFilter(
   if (step.filter) {
     // Resolve any `{{prior_step.<id>.operation_id}}` / `$context.*` tokens
     // before matching — the storyboard may author operation_id this way.
-    const resolved = injectContext({ __f: { ...step.filter } }, context, runnerVars).__f as typeof step.filter;
-    if (resolved?.operation_id !== undefined) filter.operation_id = resolved.operation_id;
-    if (resolved?.body !== undefined) filter.body = resolved.body;
+    const resolved = injectContext({ __f: { ...step.filter } }, context, runnerVars).__f as Record<string, unknown>;
+    if (resolved && typeof resolved === 'object') {
+      if (typeof resolved.operation_id === 'string') {
+        filter.operation_id = resolved.operation_id;
+      }
+      if (resolved.body && typeof resolved.body === 'object' && !Array.isArray(resolved.body)) {
+        filter.body = resolved.body as Record<string, unknown>;
+      }
+    }
   }
   return filter;
 }
@@ -284,7 +346,7 @@ async function runExpectWebhook(
   filter: WebhookFilter,
   receiver: WebhookReceiver
 ): Promise<{ validations: ValidationResult[]; passed: boolean }> {
-  const timeoutMs = (step.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const timeoutMs = clampTimeoutSeconds(step.timeout_seconds, DEFAULT_TIMEOUT_SECONDS) * 1000;
   const checkIdempotency = step.expect_idempotency_key !== false;
   const capCount = step.expect_max_deliveries_per_logical_event;
 
@@ -360,7 +422,7 @@ async function runExpectRetryKeysStable(
   filter: WebhookFilter,
   receiver: WebhookReceiver
 ): Promise<{ validations: ValidationResult[]; passed: boolean }> {
-  const timeoutMs = (step.timeout_seconds ?? DEFAULT_RETRY_REPLAY_TIMEOUT_SECONDS) * 1000;
+  const timeoutMs = clampTimeoutSeconds(step.timeout_seconds, DEFAULT_RETRY_REPLAY_TIMEOUT_SECONDS) * 1000;
   const minDeliveries = step.expect_min_deliveries ?? DEFAULT_MIN_DELIVERIES;
 
   const matches = await receiver.wait_all(filter, timeoutMs);
@@ -448,7 +510,7 @@ async function runExpectSignatureValid(
     };
   }
 
-  const timeoutMs = (step.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const timeoutMs = clampTimeoutSeconds(step.timeout_seconds, DEFAULT_TIMEOUT_SECONDS) * 1000;
   const wait = await receiver.wait(filter, timeoutMs);
   if (wait.timed_out || !wait.webhook) {
     return singleFailure(
@@ -461,14 +523,15 @@ async function runExpectSignatureValid(
   }
 
   const webhook = wait.webhook;
-  const requestLike = toRequestLike(webhook, receiver, runnerVars);
+  void runnerVars;
+  const requestLike = toRequestLike(webhook, receiver);
   const requiredTag = step.require_tag ?? config.required_tag ?? DEFAULT_WEBHOOK_SIGNING_TAG;
 
   try {
     await verifyWebhookSignature(requestLike, {
       jwks: config.jwks,
-      replayStore: config.replayStore ?? new InMemoryReplayStore(),
-      revocationStore: config.revocationStore ?? new InMemoryRevocationStore(),
+      replayStore: getSharedReplayStore(runnerVars, config.replayStore),
+      revocationStore: getSharedRevocationStore(runnerVars, config.revocationStore),
       requiredTag,
     });
   } catch (err) {
@@ -507,7 +570,7 @@ async function runExpectSignatureValid(
  * canonicalizer expects. The receiver's `base_url` plus `step_id` /
  * `operation_id` reconstruct the `@target-uri` the publisher signed.
  */
-function toRequestLike(webhook: CapturedWebhook, receiver: WebhookReceiver, _runnerVars: RunnerVariables): RequestLike {
+function toRequestLike(webhook: CapturedWebhook, receiver: WebhookReceiver): RequestLike {
   const url = `${receiver.base_url}/step/${webhook.step_id}/${webhook.operation_id}`;
   return {
     method: webhook.method,
@@ -518,31 +581,49 @@ function toRequestLike(webhook: CapturedWebhook, receiver: WebhookReceiver, _run
 }
 
 /**
- * Map the verifier's `webhook_signature_*` error codes onto the
- * storyboard-side `signature_*` codes defined by adcontextprotocol/adcp#2431.
- * One verifier code maps to multiple storyboard codes for some failure modes
- * (e.g. expired / invalid window both map to `signature_expired`).
+ * Map the verifier's `webhook_signature_*` error codes to the storyboard-side
+ * `signature_*` codes defined by adcontextprotocol/adcp#2431. Exhaustive so
+ * that adding a new verifier code without a mapping is a TS compile error
+ * rather than a silent collapse onto `signature_invalid` — distinct
+ * remediation paths deserve distinct codes (a revoked key needs rotation,
+ * a malformed window is a signer bug, etc.).
  */
 function mapSignatureErrorCode(
   code: import('../../signing/errors').WebhookSignatureErrorCode
 ): WebhookAssertionErrorCode {
   switch (code) {
+    case 'webhook_signature_header_malformed':
+      return 'signature_header_malformed';
+    case 'webhook_signature_params_incomplete':
+      return 'signature_params_incomplete';
     case 'webhook_signature_tag_invalid':
       return 'signature_tag_invalid';
+    case 'webhook_signature_alg_not_allowed':
+      return 'signature_alg_not_allowed';
     case 'webhook_signature_expired':
       return 'signature_expired';
+    case 'webhook_signature_window_invalid':
+      return 'signature_window_invalid';
+    case 'webhook_signature_components_incomplete':
+      return 'signature_components_incomplete';
     case 'webhook_signature_key_unknown':
       return 'signature_key_unknown';
     case 'webhook_signature_key_purpose_invalid':
       return 'signature_key_purpose_invalid';
+    case 'webhook_signature_key_revoked':
+      return 'signature_key_revoked';
     case 'webhook_signature_digest_mismatch':
       return 'signature_digest_mismatch';
     case 'webhook_signature_replayed':
       return 'signature_replayed';
-    default:
-      // header_malformed, params_incomplete, alg_not_allowed, components_incomplete,
-      // key_revoked, invalid — all collapse onto signature_invalid per spec.
+    case 'webhook_signature_invalid':
       return 'signature_invalid';
+    default: {
+      // Exhaustiveness: any unhandled code is a compile error.
+      const _exhaustive: never = code;
+      void _exhaustive;
+      return 'signature_invalid';
+    }
   }
 }
 

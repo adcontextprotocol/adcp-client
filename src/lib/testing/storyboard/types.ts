@@ -245,7 +245,14 @@ export interface WebhookRetryTriggerSpec {
   http_status?: number;
 }
 
-/** Error codes per spec (webhook-emission universal, storyboard-schema.yaml). */
+/**
+ * Error codes per spec (webhook-emission universal, storyboard-schema.yaml).
+ *
+ * Signature-path codes track the verifier's `webhook_signature_*` taxonomy
+ * 1:1 so compliance reports distinguish remediation paths: a revoked key
+ * needs rotation; an expired window is a clock-skew / window-size bug;
+ * `signature_invalid` is the "crypto failed, check your signing code" case.
+ */
 export type WebhookAssertionErrorCode =
   // expect_webhook
   | 'no_webhook_received'
@@ -260,8 +267,14 @@ export type WebhookAssertionErrorCode =
   // expect_webhook_signature_valid
   | 'signature_invalid'
   | 'signature_expired'
+  | 'signature_window_invalid'
+  | 'signature_alg_not_allowed'
+  | 'signature_components_incomplete'
+  | 'signature_header_malformed'
+  | 'signature_params_incomplete'
   | 'signature_key_unknown'
   | 'signature_key_purpose_invalid'
+  | 'signature_key_revoked'
   | 'signature_digest_mismatch'
   | 'signature_tag_invalid'
   | 'signature_replayed';

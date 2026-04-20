@@ -40,6 +40,7 @@ export type WebhookSignatureErrorCode =
   | 'webhook_signature_tag_invalid'
   | 'webhook_signature_alg_not_allowed'
   | 'webhook_signature_expired'
+  | 'webhook_signature_window_invalid'
   | 'webhook_signature_components_incomplete'
   | 'webhook_signature_key_unknown'
   | 'webhook_signature_key_purpose_invalid'

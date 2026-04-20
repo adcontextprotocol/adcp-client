@@ -26,8 +26,63 @@ import type { AddressInfo } from 'node:net';
  */
 const MAX_BODY_BYTES = 1_048_576; // 1 MiB
 
+/**
+ * Caps on cumulative capture state. `MAX_CAPTURED_TOTAL` bounds the total
+ * number of webhooks retained for the run; `MAX_CAPTURED_PER_KEY` bounds
+ * per-(step_id, operation_id) deliveries — a publisher stuck in a retry
+ * loop can't exhaust memory. Once a cap is hit the receiver returns 503
+ * (signalling back-pressure to the sender) and drops the capture.
+ */
+const MAX_CAPTURED_TOTAL = 1000;
+const MAX_CAPTURED_PER_KEY = 100;
+
+/**
+ * HTTP transport hardening. Defaults in Node 20 are generous (headers
+ * 60s, no body timeout). A hostile / slow publisher shouldn't be able to
+ * hold the runner's event loop with trickled requests or exhaust the
+ * socket table.
+ */
+const HEADERS_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const KEEP_ALIVE_TIMEOUT_MS = 5_000;
+const MAX_CONNECTIONS = 64;
+const MAX_HEADERS_COUNT = 64;
+
 /** Default path shape under the receiver base. */
 const STEP_PATH_RE = /^\/step\/([A-Za-z0-9_]+)\/([A-Za-z0-9_-]+)\/?$/;
+
+/**
+ * Header names whose values are redacted before a captured webhook lands
+ * in a compliance report. Mirrors the `SECRET_KEY_PATTERN` in runner.ts
+ * so both paths honor the contract's "Secrets SHOULD be redacted" rule.
+ */
+const SECRET_HEADER_PATTERN =
+  /^(authorization|credentials?|token|api[_-]?key|x-api[_-]?key|x-auth[_-]?token|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|cookie|set[_-]cookie)$/i;
+
+/**
+ * Strip user-info, scheme-policed, and CRLF/NUL-rejected proxy URLs so a
+ * misconfigured operator (or a compromised storyboard loader) can't
+ * advertise an `http://169.254.169.254`, `file://…`, or header-splitting
+ * URL that would then be embedded in outbound `push_notification_config.url`.
+ */
+function validateProxyUrl(raw: string): string {
+  if (/[\r\n\x00]/.test(raw)) {
+    throw new Error('webhook_receiver.public_url must not contain CR/LF/NUL');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`webhook_receiver.public_url is not a valid URL: ${raw}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`webhook_receiver.public_url must be http(s); got ${parsed.protocol}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('webhook_receiver.public_url must not include userinfo');
+  }
+  return raw.replace(/\/$/, '');
+}
 
 export interface CapturedWebhook {
   /** Runner-assigned id; stable across filter matches. */
@@ -131,7 +186,17 @@ export async function createWebhookReceiver(
   }
 
   const host = options.host ?? '127.0.0.1';
+  // A loopback_mock receiver bound on 0.0.0.0 is publicly reachable from any
+  // interface — which would turn a CI runner into an open POST endpoint.
+  // Operators who genuinely want public exposure use mode=proxy_url.
+  if (mode === 'loopback_mock' && (host === '0.0.0.0' || host === '::')) {
+    throw new Error(
+      `webhook_receiver host ${host} is not permitted in loopback_mock mode. ` +
+        'Use mode=proxy_url with an explicit public_url for publicly-reachable runs.'
+    );
+  }
   const port = options.port ?? 0;
+  const proxyBase = mode === 'proxy_url' ? validateProxyUrl(options.public_url!) : undefined;
 
   const captured: CapturedWebhook[] = [];
   const waiters: Array<{
@@ -145,6 +210,13 @@ export async function createWebhookReceiver(
   const server = createServer((req, res) =>
     handleRequest(req, res, { captured, waiters, retryPolicies, deliveryCounts })
   );
+  // Transport-level hardening — trim Node's generous defaults so a slow /
+  // hostile publisher can't wedge the runner.
+  server.headersTimeout = HEADERS_TIMEOUT_MS;
+  server.requestTimeout = REQUEST_TIMEOUT_MS;
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+  server.maxConnections = MAX_CONNECTIONS;
+  server.maxHeadersCount = MAX_HEADERS_COUNT;
 
   await new Promise<void>((resolve, reject) => {
     const onError = (err: Error) => reject(err);
@@ -156,8 +228,7 @@ export async function createWebhookReceiver(
   });
 
   const bound = server.address() as AddressInfo;
-  const base_url =
-    mode === 'proxy_url' ? options.public_url!.replace(/\/$/, '') : `http://${formatHost(bound.address)}:${bound.port}`;
+  const base_url = proxyBase ?? `http://${formatHost(bound.address)}:${bound.port}`;
 
   return {
     base_url,
@@ -230,6 +301,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, state: Handler
 
     const key = retryKeyString({ step_id, operation_id });
     const deliveryIndex = (state.deliveryCounts.get(key) ?? 0) + 1;
+
+    // Back-pressure on capture exhaustion — signal 503 so a conformant
+    // sender retries later, drop the capture so the runner's memory
+    // footprint stays bounded. Drops a delivery quietly is worse than
+    // surfacing a clearly observable refusal.
+    const perKey = countPerKey(state.captured, step_id, operation_id);
+    if (state.captured.length >= MAX_CAPTURED_TOTAL || perKey >= MAX_CAPTURED_PER_KEY) {
+      res.statusCode = 503;
+      res.setHeader('retry-after', '1');
+      res.end();
+      return;
+    }
+
     state.deliveryCounts.set(key, deliveryIndex);
     const status = nextResponseStatus(state.retryPolicies, key);
 
@@ -241,7 +325,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, state: Handler
       received_at: Date.now(),
       method: req.method ?? 'POST',
       path: req.url ?? '/',
-      headers,
+      headers: redactHeaders(headers),
       raw_body: raw,
       ...parseBody(raw, headers['content-type']),
       response_status: status,
@@ -288,6 +372,20 @@ function normalizeHeaders(raw: IncomingMessage['headers']): Record<string, strin
   return out;
 }
 
+function redactHeaders(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k] = SECRET_HEADER_PATTERN.test(k) ? '[redacted]' : v;
+  }
+  return out;
+}
+
+function countPerKey(captured: ReadonlyArray<CapturedWebhook>, step_id: string, operation_id: string): number {
+  let n = 0;
+  for (const w of captured) if (w.step_id === step_id && w.operation_id === operation_id) n++;
+  return n;
+}
+
 function parseBody(raw: string, contentType: string | undefined): Pick<CapturedWebhook, 'body' | 'parse_error'> {
   if (raw.length === 0) return {};
   const looksJson = !contentType || /json/i.test(contentType);
@@ -328,12 +426,33 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
   return cursor;
 }
 
+/**
+ * Structural deep-equal. Stringify-based comparison is key-order-sensitive
+ * (`{a:1,b:2}` !== `{b:2,a:1}`); for filter bodies that's a false negative
+ * when a publisher's JSON serializer emits fields in a different order
+ * than the storyboard author. Recurse explicitly instead.
+ */
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== typeof b) return false;
   if (a === null || b === null) return a === b;
   if (typeof a !== 'object') return false;
-  return JSON.stringify(a) === JSON.stringify(b);
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const keysA = Object.keys(a as Record<string, unknown>);
+  const keysB = Object.keys(b as Record<string, unknown>);
+  if (keysA.length !== keysB.length) return false;
+  for (const k of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+  }
+  return true;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -408,6 +527,9 @@ function closeServer(
     clearTimeout(w.timer);
     w.resolve({ timed_out: true });
   }
+  // Force-close keep-alive sockets so shutdown doesn't hang up to
+  // keepAliveTimeout waiting for idle connections to drain.
+  server.closeAllConnections?.();
   return new Promise<void>((resolve, reject) => {
     server.close(err => {
       if (err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(err);

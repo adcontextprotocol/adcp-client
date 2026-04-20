@@ -71,6 +71,12 @@ export interface SignWebhookOptions {
   windowSeconds?: number;
   now?: () => number;
   nonce?: string;
+  /**
+   * Override the signature tag. Defaults to `adcp/webhook-signing/v1`.
+   * Exposed so test suites can pin a wrong tag to exercise receiver
+   * rejection paths without mutating the signed headers post-hoc.
+   */
+  tag?: string;
 }
 
 /**
@@ -96,7 +102,7 @@ export function signWebhook(request: RequestLike, key: SignerKey, options: SignW
     nonce,
     keyid: key.keyid,
     alg: key.alg,
-    tag: WEBHOOK_SIGNING_TAG,
+    tag: options.tag ?? WEBHOOK_SIGNING_TAG,
   };
 
   const normalizedRequest: RequestLike = { ...request, headers };

@@ -337,12 +337,22 @@ export interface RunnerVariables {
   webhookBase?: string;
   /** step_id → operation_id, filled lazily on expansion. */
   stepOperationIds: Map<string, string>;
+  /**
+   * Free-form slot for cross-step run state that isn't user-facing. Used
+   * today to share a single `InMemoryReplayStore` / `InMemoryRevocationStore`
+   * across every `expect_webhook_signature_valid` call in a run so a
+   * replayed (keyid, nonce) across two deliveries of the same event is
+   * actually detected. Untyped here to keep the context module free of
+   * signing-module imports.
+   */
+  runState: Map<string, unknown>;
 }
 
 export function createRunnerVariables(opts: { webhookBase?: string } = {}): RunnerVariables {
   return {
     ...(opts.webhookBase !== undefined && { webhookBase: opts.webhookBase }),
     stepOperationIds: new Map(),
+    runState: new Map(),
   };
 }
 

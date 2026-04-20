@@ -17,7 +17,6 @@ const { generateKeyPairSync } = require('node:crypto');
 
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 const { signWebhook } = require('../../dist/lib/signing/signer.js');
-const { WEBHOOK_SIGNING_TAG } = require('../../dist/lib/signing/webhook-verifier.js');
 const { StaticJwksResolver } = require('../../dist/lib/signing/jwks.js');
 
 // ────────────────────────────────────────────────────────────
@@ -49,7 +48,7 @@ function generateEd25519Keypair(kid) {
 // Signed fake publisher
 // ────────────────────────────────────────────────────────────
 
-async function startSignedPublisher({ signerKey, tag = WEBHOOK_SIGNING_TAG } = {}) {
+async function startSignedPublisher({ signerKey, tag } = {}) {
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
@@ -63,30 +62,15 @@ async function startSignedPublisher({ signerKey, tag = WEBHOOK_SIGNING_TAG } = {
         idempotency_key: 'evt_signed_' + '0123456789abcdef'.slice(0, 16),
         task: { task_id: args.task_id ?? 'mb-1', status: 'completed' },
       });
+      // Pass `tag` through when the test wants a deliberately wrong tag —
+      // exercises the receiver's tag-mismatch rejection without
+      // post-signing header mutation.
+      const signOpts = tag !== undefined ? { tag } : {};
       const signed = signWebhook(
-        {
-          method: 'POST',
-          url,
-          headers: { 'content-type': 'application/json' },
-          body,
-        },
+        { method: 'POST', url, headers: { 'content-type': 'application/json' }, body },
         signerKey,
-        // Route through the verifier's required tag — default is
-        // `adcp/webhook-signing/v1`; override lets the negative test
-        // emit a wrong tag.
-        tag === WEBHOOK_SIGNING_TAG ? {} : { now: () => Math.floor(Date.now() / 1000) }
+        signOpts
       );
-      // For the negative-tag test we rebuild headers with a different tag
-      // by re-signing via a patched params — simplest is a fake publisher
-      // that just swaps the tag in Signature-Input. Since the verifier
-      // checks the tag before the crypto, the underlying signature can be
-      // untouched; the tag mismatch is what the receiver surfaces.
-      if (tag !== WEBHOOK_SIGNING_TAG) {
-        signed.headers['Signature-Input'] = signed.headers['Signature-Input'].replace(
-          `tag="${WEBHOOK_SIGNING_TAG}"`,
-          `tag="${tag}"`
-        );
-      }
       try {
         await fetch(url, { method: 'POST', headers: signed.headers, body });
       } catch {

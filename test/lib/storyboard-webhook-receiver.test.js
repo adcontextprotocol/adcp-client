@@ -141,6 +141,38 @@ describe('createWebhookReceiver', () => {
       await rec.close();
     }
   });
+
+  test('rejects proxy_url with bad scheme, userinfo, or CRLF', async () => {
+    await assert.rejects(() => createWebhookReceiver({ mode: 'proxy_url', public_url: 'file:///etc/passwd' }), /http/);
+    await assert.rejects(
+      () => createWebhookReceiver({ mode: 'proxy_url', public_url: 'https://user:pw@example.com' }),
+      /userinfo/
+    );
+    await assert.rejects(
+      () => createWebhookReceiver({ mode: 'proxy_url', public_url: 'https://example.com\r\nX-Evil: 1' }),
+      /CR\/LF/
+    );
+  });
+
+  test('rejects 0.0.0.0 in loopback_mock mode', async () => {
+    await assert.rejects(() => createWebhookReceiver({ host: '0.0.0.0' }), /not permitted/);
+  });
+
+  test('redacts sensitive headers in captured webhooks', async () => {
+    const receiver = await createWebhookReceiver();
+    try {
+      await post(`${receiver.base_url}/step/s/op`, { idempotency_key: 'evt_x1234567890abcdef' }, {
+        authorization: 'Bearer super-secret',
+        'x-api-key': 'also-secret',
+      });
+      const [w] = receiver.all();
+      assert.strictEqual(w.headers.authorization, '[redacted]');
+      assert.strictEqual(w.headers['x-api-key'], '[redacted]');
+      assert.strictEqual(w.headers['content-type'], 'application/json'); // unaffected
+    } finally {
+      await receiver.close();
+    }
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -192,7 +224,6 @@ describe('injectContext with RunnerVariables', () => {
  * error code without standing up a real seller.
  */
 async function startFakePublisher(config = {}) {
-  const state = { retryCount: 0 };
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
@@ -308,7 +339,6 @@ async function startFakePublisher(config = {}) {
   return {
     server,
     url: `http://127.0.0.1:${server.address().port}/mcp`,
-    state,
   };
 }
 
