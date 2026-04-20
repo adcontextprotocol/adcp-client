@@ -15,8 +15,11 @@ const {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  supportsExperimentalFeature,
   requiresOperatorAuth,
   requiresAccountForProducts,
+  resolveFeature,
+  listDeclaredFeatures,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
   CREATIVE_TOOLS,
@@ -263,6 +266,79 @@ describe('parseCapabilitiesResponse', () => {
 
     assert.ok(capabilities.account);
     assert.deepStrictEqual(capabilities.account.supportedBilling, []);
+  });
+
+  test('should parse experimental_features from the AdCP 3.0 GA response envelope', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy', 'brand'],
+      extensions_supported: [],
+      experimental_features: ['brand.rights_lifecycle', 'governance.campaign'],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.deepStrictEqual(capabilities.experimentalFeatures, ['brand.rights_lifecycle', 'governance.campaign']);
+  });
+
+  test('experimentalFeatures is undefined when the seller does not declare any', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.strictEqual(capabilities.experimentalFeatures, undefined);
+  });
+
+  test('experimentalFeatures drops non-string entries rather than throwing on malformed payloads', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      extensions_supported: [],
+      experimental_features: ['brand.rights_lifecycle', 123, null, 'governance.campaign'],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.deepStrictEqual(capabilities.experimentalFeatures, ['brand.rights_lifecycle', 'governance.campaign']);
+  });
+});
+
+describe('supportsExperimentalFeature', () => {
+  const caps = parseCapabilitiesResponse({
+    adcp: { major_versions: [3] },
+    supported_protocols: ['brand'],
+    extensions_supported: [],
+    experimental_features: ['brand.rights_lifecycle'],
+  });
+
+  test('returns true when the seller declared the feature id', () => {
+    assert.strictEqual(supportsExperimentalFeature(caps, 'brand.rights_lifecycle'), true);
+  });
+
+  test('returns false when the seller did not declare the feature id', () => {
+    assert.strictEqual(supportsExperimentalFeature(caps, 'governance.campaign'), false);
+  });
+
+  test('returns false when the seller declared no experimental features at all', () => {
+    const noneCaps = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      extensions_supported: [],
+    });
+    assert.strictEqual(supportsExperimentalFeature(noneCaps, 'brand.rights_lifecycle'), false);
+  });
+
+  test('resolveFeature honors the experimental:<id> namespace', () => {
+    assert.strictEqual(resolveFeature(caps, 'experimental:brand.rights_lifecycle'), true);
+    assert.strictEqual(resolveFeature(caps, 'experimental:governance.campaign'), false);
+  });
+
+  test('listDeclaredFeatures surfaces experimental ids so error messages can cite them', () => {
+    assert.ok(listDeclaredFeatures(caps).includes('experimental:brand.rights_lifecycle'));
   });
 });
 
@@ -1108,8 +1184,51 @@ describe('V3 Feature Guard Logic', () => {
 // ============================================
 
 const { normalizeRequestParams, normalizePackageParams } = require('../../dist/lib/utils/request-normalizer.js');
+const { MUTATING_TASKS } = require('../../dist/lib/utils/idempotency.js');
 
 const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
+
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+describe('normalizeRequestParams: idempotency_key auto-inject (MUTATING_TASKS coverage)', () => {
+  test('every MUTATING_TASKS member gets a UUID v4 when the caller omits idempotency_key', () => {
+    assert.ok(MUTATING_TASKS.size >= 20, `MUTATING_TASKS set looks empty (${MUTATING_TASKS.size})`);
+    for (const task of MUTATING_TASKS) {
+      const result = normalizeRequestParams(task, {});
+      assert.match(
+        String(result?.idempotency_key),
+        UUID_V4_PATTERN,
+        `${task}: expected auto-injected UUID v4 idempotency_key, got ${JSON.stringify(result?.idempotency_key)}`
+      );
+    }
+  });
+
+  test('read-only tasks do not receive an auto-injected idempotency_key', () => {
+    for (const task of ['get_products', 'get_signals', 'get_media_buys', 'list_accounts', 'list_creatives']) {
+      const result = normalizeRequestParams(task, {});
+      assert.strictEqual(
+        result?.idempotency_key,
+        undefined,
+        `${task}: read-only task should not auto-inject idempotency_key`
+      );
+    }
+  });
+
+  test('preserves a caller-supplied idempotency_key (BYOK)', () => {
+    const result = normalizeRequestParams('create_media_buy', { idempotency_key: 'byok-1234567890abcdef' });
+    assert.strictEqual(result?.idempotency_key, 'byok-1234567890abcdef');
+  });
+
+  test('treats empty-string idempotency_key as unset and injects a fresh UUID', () => {
+    const result = normalizeRequestParams('create_media_buy', { idempotency_key: '' });
+    assert.match(String(result?.idempotency_key), UUID_V4_PATTERN);
+  });
+
+  test('skipIdempotencyAutoInject=true leaves the field absent so compliance scenarios can exercise missing-key rejection', () => {
+    const result = normalizeRequestParams('create_media_buy', {}, { skipIdempotencyAutoInject: true });
+    assert.strictEqual(result?.idempotency_key, undefined);
+  });
+});
 
 describe('Request Parameter Normalization', () => {
   // Reset deprecation warnings before each test so warnOnce fires

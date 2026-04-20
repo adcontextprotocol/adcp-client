@@ -132,6 +132,18 @@ export interface StoryboardStep {
   stateful?: boolean;
   /** When true, the step passes if the task returns an error */
   expect_error?: boolean;
+  /**
+   * When true, suppress the runner's `idempotency_key` auto-injection on a
+   * mutating step so the storyboard can exercise the server's missing-key
+   * rejection path. The runner also disables the SDK's client-side
+   * auto-inject for this step so the request reaches the wire without a key.
+   *
+   * Default (false) matches buyer-agent behavior: every mutating request
+   * carries a fresh UUID v4 so handlers under test run against the actual
+   * error path the storyboard names (GOVERNANCE_DENIED, UNAUTHORIZED, etc.)
+   * rather than short-circuiting on `INVALID_REQUEST: idempotency_key`.
+   */
+  omit_idempotency_key?: boolean;
   /** Tool name required for this step to run. Skipped if agent lacks it. */
   requires_tool?: string;
   /** Explicit context extraction rules (supplements convention-based extractors) */
