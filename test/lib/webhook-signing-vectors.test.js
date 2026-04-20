@@ -120,19 +120,6 @@ function buildStores(vector) {
 
 const keys = loadJson('keys.json');
 
-// Upstream vector generator didn't apply canonicalization steps 4 (strip
-// default ports) and 6 (uppercase percent-hex / decode unreserved) to the
-// signature base — the baked signatures only verify against a URL used
-// verbatim, not the canonical form. Those two rules are mandated by the
-// request-signing canonicalization vectors the webhook spec says are
-// authoritative (`test-vectors/request-signing/canonicalization.json`), so
-// these vectors are inconsistent with the merged spec. Skip pending a
-// regeneration upstream. Tracking: adcontextprotocol/adcp (follow-up to #2445).
-const SKIP_POSITIVE = new Set([
-  '004-default-port-stripped.json',
-  '005-percent-encoded-path.json',
-]);
-
 // ────────────────────────────────────────────────────────────
 // Positive vectors
 // ────────────────────────────────────────────────────────────
@@ -140,8 +127,7 @@ const SKIP_POSITIVE = new Set([
 describe('webhook-signing conformance: positive vectors', () => {
   for (const name of listVectors('positive')) {
     const vector = loadJson(path.join('positive', name));
-    const skip = SKIP_POSITIVE.has(name);
-    test(`${name} — ${vector.name}`, { skip: skip ? 'upstream canonicalization mismatch' : false }, async () => {
+    test(`${name} — ${vector.name}`, async () => {
       const jwks = buildJwksResolver(keys, vector);
       const { replay, revocation } = buildStores(vector);
       const result = await verifyWebhookSignature(vector.request, {
