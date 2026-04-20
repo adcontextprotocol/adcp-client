@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-20T03:29:20.289Z
+// Generated at: 2026-04-20T04:11:02.709Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -4962,6 +4962,7 @@ export const GetPlanAuditLogsResponseSchema = z.object({
             outcome: OutcomeTypeSchema.optional(),
             committed_budget: z.number().optional(),
             governance_context: z.string().optional(),
+            plan_hash: z.string().optional(),
             purchase_type: PurchaseTypeSchema.optional(),
             outcome_status: z.string().optional()
         }).passthrough()).optional(),
