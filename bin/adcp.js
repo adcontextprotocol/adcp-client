@@ -1327,14 +1327,15 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   );
 
   if (!jsonOutput) {
-    const strategyLabel =
-      strategy === 'multi-pass' ? `multi-pass (${urls.length} passes)` : `round-robin (1 pass)`;
+    const strategyLabel = strategy === 'multi-pass' ? `multi-pass (${urls.length} passes)` : `round-robin (1 pass)`;
     console.error(`Multi-instance storyboard run (${strategyLabel} across ${urls.length} instances):`);
     urls.forEach((u, i) => console.error(`  [#${i + 1}] ${u}`));
     console.error(`  Protocol: ${protocol.toUpperCase()}`);
     console.error(`  Storyboards: ${storyboards.map(s => s.id).join(', ')}`);
     const effectiveSteps = strategy === 'multi-pass' ? totalSteps * urls.length : totalSteps;
-    console.error(`  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}\n`);
+    console.error(
+      `  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}\n`
+    );
     // N=2 is the deployment shape most operators have. Offset-shift preserves
     // pair parity there, so every even-distance write→read pair lands
     // same-replica in every pass — including the canonical property_lists
@@ -1380,7 +1381,13 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           storyboard_id: sb.id,
           storyboard_title: sb.title,
           ...(strategy === 'multi-pass'
-            ? { passes: passOffsets.map(o => ({ pass_index: o + 1, dispatch_offset: o, assignments: assignmentsFor(sb, o) })) }
+            ? {
+                passes: passOffsets.map(o => ({
+                  pass_index: o + 1,
+                  dispatch_offset: o,
+                  assignments: assignmentsFor(sb, o),
+                })),
+              }
             : { assignments: assignmentsFor(sb, 0) }),
         })),
       });
@@ -1482,7 +1489,10 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
       { passed: 0, failed: 0, skipped: 0, duration: 0 }
     );
     const overallIcon = !hadFailure ? '✅' : '❌';
-    const passSuffix = strategy === 'multi-pass' ? ` across ${urls.length} passes × ${urls.length} instances` : ` across ${urls.length} instances`;
+    const passSuffix =
+      strategy === 'multi-pass'
+        ? ` across ${urls.length} passes × ${urls.length} instances`
+        : ` across ${urls.length} instances`;
     console.log(
       `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms)${passSuffix}`
     );

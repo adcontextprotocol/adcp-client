@@ -384,15 +384,13 @@ describe('runStoryboard: multi-instance multi-pass', () => {
         const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         const tool = rpc.params?.name;
         if (tool === 'get_adcp_capabilities') {
-          res
-            .writeHead(200, { 'content-type': 'application/json' })
-            .end(
-              JSON.stringify({
-                jsonrpc: '2.0',
-                id: rpc.id,
-                result: { structuredContent: { version: '1.0', protocols: [], specialisms: [] } },
-              })
-            );
+          res.writeHead(200, { 'content-type': 'application/json' }).end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: rpc.id,
+              result: { structuredContent: { version: '1.0', protocols: [], specialisms: [] } },
+            })
+          );
           return;
         }
         bRequestCount++;
