@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-19T23:44:05.221Z
+// Generated at: 2026-04-20T03:29:20.289Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -988,7 +988,13 @@ export const PreviewRenderSchema = z.union([z.object({
         }).passthrough().optional()
     }).passthrough()]);
 
-export const CreativeActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
+export const SyncCreativesSuccessSchema = z.object({
+    dry_run: z.boolean().optional(),
+    creatives: z.array(z.record(z.string(), z.unknown())),
+    sandbox: z.boolean().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const CatalogActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
 
@@ -1184,28 +1190,17 @@ export const BuildCreativeAsyncInputRequiredSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const SyncCreativesSuccessSchema = z.object({
-    dry_run: z.boolean().optional(),
-    creatives: z.array(z.object({
-        creative_id: z.string(),
-        account: AccountSchema.optional(),
-        action: CreativeActionSchema,
-        platform_id: z.string().optional(),
-        changes: z.array(z.string()).optional(),
-        errors: z.array(ErrorSchema).optional(),
-        warnings: z.array(z.string()).optional(),
-        preview_url: z.string().optional(),
-        expires_at: z.string().optional(),
-        assigned_to: z.array(z.string()).optional(),
-        assignment_errors: z.record(z.string(), z.string()).optional()
-    }).passthrough()),
-    sandbox: z.boolean().optional(),
+export const SyncCreativesErrorSchema = z.object({
+    errors: z.array(ErrorSchema),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const SyncCreativesErrorSchema = z.object({
-    errors: z.array(ErrorSchema),
+export const SyncCreativesSubmittedSchema = z.object({
+    status: z.literal("submitted"),
+    task_id: z.string(),
+    message: z.string().optional(),
+    errors: z.array(ErrorSchema).optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -2560,6 +2555,15 @@ export const TransportModeSchema = z.union([z.literal("walking"), z.literal("cyc
 
 export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("measurement-verification"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-exchange"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-retail-media"), z.literal("sales-social"), z.literal("sales-streaming-tv"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests")]);
 
+export const IdempotencySupportedSchema = z.object({
+    supported: z.literal(true),
+    replay_ttl_seconds: z.number()
+}).passthrough();
+
+export const IdempotencyUnsupportedSchema = z.object({
+    supported: z.literal(false)
+}).passthrough();
+
 export const SICapabilitiesSchema = z.object({
     modalities: z.object({
         conversational: z.boolean().optional(),
@@ -3501,11 +3505,13 @@ export const VehicleItemSchema = z.object({
 
 export const BrandAgentTypeSchema = z.union([z.literal("brand"), z.literal("rights"), z.literal("measurement"), z.literal("governance"), z.literal("creative"), z.literal("sales"), z.literal("buying"), z.literal("signals")]);
 
+export const CreativeActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
+
 export const CreativeAgentCapabilitySchema = z.union([z.literal("validation"), z.literal("assembly"), z.literal("generation"), z.literal("preview"), z.literal("delivery")]);
 
 export const DelegationAuthoritySchema = z.union([z.literal("full"), z.literal("execute_only"), z.literal("propose_only")]);
 
-export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("SESSION_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("VERSION_UNSUPPORTED")]);
+export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("CREATIVE_NOT_FOUND"), z.literal("SIGNAL_NOT_FOUND"), z.literal("SESSION_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("REQUOTE_REQUIRED"), z.literal("VERSION_UNSUPPORTED")]);
 
 export const EscalationSeveritySchema = z.union([z.literal("info"), z.literal("warning"), z.literal("critical")]);
 
@@ -4393,7 +4399,7 @@ export const SyncCreativesRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const SyncCreativesResponseSchema = z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema]);
+export const SyncCreativesResponseSchema = z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema, SyncCreativesSubmittedSchema]);
 
 export const GetSignalsRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
@@ -5052,9 +5058,7 @@ export const SIInitiateSessionRequestSchema = z.object({
 export const GetAdCPCapabilitiesResponseSchema = z.object({
     adcp: z.object({
         major_versions: z.array(z.number()),
-        idempotency: z.object({
-            replay_ttl_seconds: z.number()
-        }).passthrough()
+        idempotency: z.union([IdempotencySupportedSchema, IdempotencyUnsupportedSchema])
     }).passthrough(),
     supported_protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative"), z.literal("brand")])),
     account: z.object({

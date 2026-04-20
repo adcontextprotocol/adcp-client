@@ -5293,7 +5293,7 @@ export interface CreateMediaBuySubmitted {
    */
   task_id: string;
   /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Suitable for display to buyer-side humans or agent reasoning.
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
    */
   message?: string;
   /**
@@ -6876,11 +6876,11 @@ export type UserMatch = {
     value: string;
   }[];
   /**
-   * SHA-256 hash of lowercase, trimmed email address. Buyer must normalize before hashing: lowercase, trim whitespace.
+   * SHA-256 hash of lowercase, trimmed email address. Buyer must normalize before hashing: lowercase, trim whitespace. Pseudonymous PII, not anonymous — the email namespace is small enough that an unsalted SHA-256 is recoverable via precomputed dictionaries. Treat as PII for retention, consent, and access-control purposes. See docs/reference/privacy-considerations#unsalted-hashed-identifiers-are-pseudonymous-not-anonymous.
    */
   hashed_email?: string;
   /**
-   * SHA-256 hash of E.164-formatted phone number (e.g. +12065551234). Buyer must normalize to E.164 before hashing.
+   * SHA-256 hash of E.164-formatted phone number (e.g. +12065551234). Buyer must normalize to E.164 before hashing. Pseudonymous PII, not anonymous — the E.164 namespace is small enough that an unsalted SHA-256 is recoverable via precomputed dictionaries. Treat as PII for retention, consent, and access-control purposes. See docs/reference/privacy-considerations#unsalted-hashed-identifiers-are-pseudonymous-not-anonymous.
    */
   hashed_phone?: string;
   /**
@@ -7092,11 +7092,11 @@ export type AudienceMember = {
    */
   external_id: string;
   /**
-   * SHA-256 hash of lowercase, trimmed email address.
+   * SHA-256 hash of lowercase, trimmed email address. Pseudonymous PII, not anonymous — the email namespace is small enough that an unsalted SHA-256 is recoverable via precomputed dictionaries. Treat as PII for retention, consent, and access-control purposes. See docs/reference/privacy-considerations#unsalted-hashed-identifiers-are-pseudonymous-not-anonymous.
    */
   hashed_email?: string;
   /**
-   * SHA-256 hash of E.164-formatted phone number (e.g. +12065551234).
+   * SHA-256 hash of E.164-formatted phone number (e.g. +12065551234). Pseudonymous PII, not anonymous — the E.164 namespace is small enough that an unsalted SHA-256 is recoverable via precomputed dictionaries. Treat as PII for retention, consent, and access-control purposes. See docs/reference/privacy-considerations#unsalted-hashed-identifiers-are-pseudonymous-not-anonymous.
    */
   hashed_phone?: string;
   /**
@@ -8856,13 +8856,9 @@ export interface SyncCreativesRequest {
 
 // sync_creatives response
 /**
- * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
+ * Response from creative sync operation. Exactly one of three shapes: (1) synchronous success — per-creative results in the creatives array (best-effort processing with per-item status/failures); (2) terminal failure — errors array with no creatives processed; (3) submitted task envelope — status 'submitted' with task_id when the whole operation is queued (batch ingestion, async review that must settle before per-item results can be issued). The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. Final per-item results land on the task completion artifact, not this envelope. These three shapes are mutually exclusive — a response has exactly one.
  */
-export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
-/**
- * Action taken for this creative
- */
-export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted;
 
 /**
  * Success response - sync operation processed creatives (may include per-item failures)
@@ -8876,52 +8872,7 @@ export interface SyncCreativesSuccess {
    * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
    */
   creatives: {
-    /**
-     * Creative ID from the request
-     */
-    creative_id: string;
-    account?: Account;
-    action: CreativeAction;
-    /**
-     * Platform-specific ID assigned to the creative
-     */
-    platform_id?: string;
-    /**
-     * Field names that were modified (only present when action='updated')
-     */
-    changes?: string[];
-    /**
-     * Validation or processing errors (only present when action='failed')
-     */
-    errors?: Error[];
-    /**
-     * Non-fatal warnings about this creative
-     */
-    warnings?: string[];
-    /**
-     * Preview URL for generative creatives (only present for generative formats)
-     */
-    preview_url?: string;
-    /**
-     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
-     */
-    expires_at?: string;
-    /**
-     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
-     */
-    assigned_to?: string[];
-    /**
-     * Assignment errors by package ID (only present when assignment failures occurred)
-     */
-    assignment_errors?: {
-      /**
-       * Error message for this package assignment
-       *
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
-       */
-      [k: string]: string | undefined;
-    };
+    [k: string]: unknown | undefined;
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -8938,6 +8889,29 @@ export interface SyncCreativesError {
    * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
    */
   errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Async task envelope returned when the whole sync operation cannot be confirmed before the response is emitted — for example, when the seller batches ingestion, when async review must settle before per-item results can be issued, or when governance review gates the sync. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the creatives array with per-item action/status lands on the completion artifact, not this envelope. Per-item async review (an item in pending_review while the rest of the sync resolves synchronously) belongs on the SyncCreativesSuccess branch with status: pending_review, not here.
+ */
+export interface SyncCreativesSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose creatives array carries per-item approval state via CreativeStatus. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. The creatives array is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -12730,14 +12704,9 @@ export interface GetAdCPCapabilitiesResponse {
      */
     major_versions: number[];
     /**
-     * Idempotency semantics for mutating requests. Sellers MUST declare their replay window so buyers can reason about safe retry behavior. Clients MUST NOT assume a default — a seller without this declaration is non-compliant and should be treated as unsafe for retry-sensitive operations.
+     * Idempotency semantics for mutating requests. Sellers MUST declare whether they honor idempotency_key replay protection so buyers can reason about safe retry behavior. Modeled as a discriminated union on the supported boolean so that code generators produce two named types (IdempotencySupported, IdempotencyUnsupported) with the replay_ttl_seconds invariant enforced at the type level — draft-07 if/then would be dropped by most generators (openapi-typescript, zod-to-json-schema, datamodel-code-generator pre-0.25, quicktype). Clients MUST NOT assume a default — a seller without this declaration is non-compliant and should be treated as unsafe for retry-sensitive operations.
      */
-    idempotency: {
-      /**
-       * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
-       */
-      replay_ttl_seconds: number;
-    };
+    idempotency: IdempotencySupported | IdempotencyUnsupported;
   };
   /**
    * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
@@ -13283,6 +13252,28 @@ export interface GetAdCPCapabilitiesResponse {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Seller honors idempotency_key replay protection on mutating requests. Replays within replay_ttl_seconds return the cached response (or IDEMPOTENCY_CONFLICT on payload divergence); replays past the window return IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'.
+ */
+export interface IdempotencySupported {
+  /**
+   * Discriminator. True means the seller deduplicates replays — a repeat of the same idempotency_key within replay_ttl_seconds returns the cached response without re-executing side effects.
+   */
+  supported: true;
+  /**
+   * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
+   */
+  replay_ttl_seconds: number;
+}
+/**
+ * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys by buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds MUST be absent — it has no meaning without replay support.
+ */
+export interface IdempotencyUnsupported {
+  /**
+   * Discriminator. False means the seller does not deduplicate retries.
+   */
+  supported: false;
 }
 
 // list_accounts parameters
