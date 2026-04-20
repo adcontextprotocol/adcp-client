@@ -106,7 +106,7 @@ export {
   type CreativeAgentClientConfig,
 } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
-export { match } from './core/match';
+export { match, attachMatch } from './core/match';
 export type { MatchHandlers, PartialMatchHandlers } from './core/match';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
 export {

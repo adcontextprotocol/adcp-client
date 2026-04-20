@@ -32,7 +32,7 @@ describe('match()', () => {
   test('dispatches to the arm matching the result status', () => {
     const result = stubResult('completed', { success: true, data: { media_buy_id: 'mb-42' } });
     const rendered = match(result, {
-      completed: (r) => `OK:${r.data.media_buy_id}`,
+      completed: r => `OK:${r.data.media_buy_id}`,
       working: () => 'working',
       submitted: () => 'submitted',
       'input-required': () => 'input',
@@ -55,11 +55,11 @@ describe('match()', () => {
     const fHandlers = {
       completed: () => 'never',
       working: () => 'never',
-      submitted: (r) => `sub:${r.submitted.taskId}`,
+      submitted: r => `sub:${r.submitted.taskId}`,
       'input-required': () => 'never',
       deferred: () => 'never',
-      failed: (r) => `err:${r.adcpError.code}`,
-      'governance-denied': (r) => `den:${r.error}`,
+      failed: r => `err:${r.adcpError.code}`,
+      'governance-denied': r => `den:${r.error}`,
     };
 
     assert.strictEqual(match(failed, fHandlers), 'err:RATE_LIMITED');
@@ -70,8 +70,8 @@ describe('match()', () => {
   test('`_` catchall handles any status when explicit arm is missing', () => {
     const result = stubResult('working', { success: true });
     const label = match(result, {
-      completed: (r) => `done:${r.status}`,
-      _: (r) => `other:${r.status}`,
+      completed: r => `done:${r.status}`,
+      _: r => `other:${r.status}`,
     });
     assert.strictEqual(label, 'other:working');
   });
@@ -87,16 +87,13 @@ describe('match()', () => {
 
   test('throws when status has no matching arm and no `_` catchall', () => {
     const bogus = stubResult('unknown-status', { success: true });
-    assert.throws(
-      () => match(bogus, { completed: () => 'x', _: undefined }),
-      /no handler for status "unknown-status"/
-    );
+    assert.throws(() => match(bogus, { completed: () => 'x', _: undefined }), /no handler for status "unknown-status"/);
   });
 
   test('return type is the union of handler return types (runtime check)', () => {
     const result = stubResult('completed', { success: true, data: 42 });
     const out = match(result, {
-      completed: (r) => r.data,
+      completed: r => r.data,
       working: () => 'w',
       submitted: () => 'sub',
       'input-required': () => null,

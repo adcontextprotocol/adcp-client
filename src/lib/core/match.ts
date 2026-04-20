@@ -15,9 +15,8 @@ type StatusOf<T> = TaskResult<T>['status'];
  * `K`. The distributive conditional below keeps a variant `U` when `K` is a
  * member of `U['status']`.
  */
-type Narrow<T, K extends StatusOf<T>> = TaskResult<T> extends infer U
-  ? U extends { status: infer S } ? (K extends S ? U : never) : never
-  : never;
+type Narrow<T, K extends StatusOf<T>> =
+  TaskResult<T> extends infer U ? (U extends { status: infer S } ? (K extends S ? U : never) : never) : never;
 
 /**
  * Exhaustive handler map: one arm per possible `status`. Omitting any arm is
@@ -67,11 +66,39 @@ export type PartialMatchHandlers<T, R> = Partial<{
 export function match<T, R>(result: TaskResult<T>, handlers: MatchHandlers<T, R>): R;
 export function match<T, R>(result: TaskResult<T>, handlers: PartialMatchHandlers<T, R>): R;
 export function match<T, R>(result: TaskResult<T>, handlers: Record<string, unknown>): R {
-  const handler = (handlers[result.status] ?? handlers._) as
-    | ((r: TaskResult<T>) => R)
-    | undefined;
+  const handler = (handlers[result.status] ?? handlers._) as ((r: TaskResult<T>) => R) | undefined;
   if (!handler) {
     throw new Error(`match: no handler for status "${result.status}" and no "_" catchall provided`);
   }
   return handler(result);
+}
+
+/**
+ * Attach a non-enumerable `.match` method to a `TaskResult` so callers can
+ * use the fluent form `result.match({ completed: ..., failed: ... })`.
+ *
+ * Non-enumerable so `JSON.stringify(result)`, `{...result}`, and
+ * `Object.keys(result)` are unaffected — the method only surfaces through
+ * direct property access and autocomplete.
+ *
+ * Idempotent: if `.match` is already present, the result is returned
+ * unchanged. Safe to call on results that have already been decorated
+ * (e.g., a result forwarded through multiple client layers).
+ */
+export function attachMatch<T>(result: TaskResult<T>): TaskResult<T> {
+  if (result && typeof (result as { match?: unknown }).match === 'function') {
+    return result;
+  }
+  Object.defineProperty(result, 'match', {
+    value: function matchMethod<R>(
+      this: TaskResult<T>,
+      handlers: MatchHandlers<T, R> | PartialMatchHandlers<T, R>
+    ): R {
+      return match(this, handlers as MatchHandlers<T, R>);
+    },
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  return result;
 }

@@ -1,5 +1,6 @@
 /**
- * HMAC-SHA256 webhook deprecation warning — removal target: @adcp/client 6.0.0.
+ * HMAC-SHA256 webhook deprecation warning — spec-deprecated path; SDK flags
+ * it and keeps supporting it (no hard SDK removal target).
  *
  * The emitter's HMAC branch is a compatibility shim for buyers that
  * registered `push_notification_config.authentication.credentials` before
@@ -102,7 +103,7 @@ describe('webhook HMAC-SHA256 deprecation warning', () => {
 
       assert.equal(warn.calls.length, 1, 'expected exactly one HMAC deprecation warning');
       assert.match(warn.calls[0], /HMAC-SHA256 authentication is deprecated/);
-      assert.match(warn.calls[0], /removed in @adcp\/client 6\.0\.0/);
+      assert.match(warn.calls[0], /RFC 9421 is the spec-current path/);
       assert.match(warn.calls[0], /docs\/migration-4\.30-to-5\.2\.md#webhook-hmac-legacy-deprecation/);
       assert.match(warn.calls[0], /ADCP_SUPPRESS_HMAC_WARNING=1/);
     } finally {

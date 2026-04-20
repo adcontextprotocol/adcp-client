@@ -418,9 +418,9 @@ AdCP v2 went unsupported on 2026-04-20 as part of the 3.0 GA cutover ([adcp#2220
 
 **Why deprecated.** The spec-current webhook authentication is an RFC 9421 signature with `adcp_use: "webhook-signing"` JWKs (adcp#2423). HMAC predates the 9421 webhook mode and is kept only for buyers who registered `push_notification_config.authentication.credentials` before the 9421 rollout.
 
-**Status in 5.x.** Supported, no behavioral change. The emitter logs a one-time `console.warn` the first time it emits an HMAC-signed webhook per process, so integrations surface the removal notice in logs without spamming every retry. The `WebhookAuthentication` type carries an `@deprecated` JSDoc tag flagging the `hmac_sha256` variant. Suppress the warning with `ADCP_SUPPRESS_HMAC_WARNING=1` if you're knowingly staying on HMAC until your buyers migrate.
+**Status in 5.x.** Supported, no behavioral change. The emitter logs a one-time `console.warn` the first time it emits an HMAC-signed webhook per process, so integrations surface the deprecation notice in logs without spamming every retry. The `WebhookAuthentication` type carries an `@deprecated` JSDoc tag flagging the `hmac_sha256` variant. Suppress the warning with `ADCP_SUPPRESS_HMAC_WARNING=1` if you're knowingly staying on HMAC until your buyers migrate.
 
-**Removal target.** `@adcp/client` 6.0.0. After that release the `hmac_sha256` variant of `WebhookAuthentication` will no longer be accepted and the emitter will throw at call time.
+**SDK vs spec status.** The AdCP spec still supports HMAC as a legacy fallback for buyers that registered `push_notification_config.authentication.credentials` — it is not spec-deprecated. The SDK flags it as deprecated to steer new integrations at the spec-current RFC 9421 path, but the implementation will remain until the spec itself retires the mode. No hard SDK removal date.
 
 **Migration.** Switch emitters to the default 9421 path (omit `authentication` entirely, or pass `null`). Buyers verify with `verifyWebhookSignature` using a `BrandJsonJwksResolver` or a pre-configured JWKS URL — see the seller skill's webhook signing section and the `signed-requests` specialism doc for end-to-end wiring.
 

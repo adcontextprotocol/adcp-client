@@ -66,6 +66,24 @@ When `result.success` is `false`, use `result.adcpError` for programmatic handli
 
 Use `isRetryable(result)` and `getRetryDelay(result)` for retry logic. `TaskResult` is a discriminated union — `if (result.success)` narrows `data` to `T`; `if (!result.success)` guarantees `error: string` and `status: 'failed'`.
 
+For exhaustive handling across all seven statuses, prefer the `match()` dispatcher (fluent method on every result or free function import):
+
+```typescript
+const label = result.match({
+  completed: r => `OK: ${JSON.stringify(r.data)}`,
+  failed: r => `Error: ${r.adcpError?.code ?? r.error}`,
+  submitted: r => `Pending: poll ${r.task_id}`,
+  'governance-denied': r => `Denied: ${r.governance?.explanation}`,
+  working: r => `Running: ${r.task_id}`,
+  'input-required': r => `Needs input: ${r.task_id}`,
+  deferred: r => `Deferred: ${r.task_id}`,
+});
+// Optional `_` catchall makes every arm optional:
+// const label = result.match({ completed: r => r.data.id, _: r => r.status });
+```
+
+TypeScript enforces exhaustiveness at compile time when the `_` catchall is omitted — missing an arm is a type error, not a runtime surprise.
+
 ```typescript
 if (!result.success) {
   if (isRetryable(result)) {
@@ -715,6 +733,8 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
 
 **Signed requests — RFC 9421 transport-layer verification** — Agent verifies RFC 9421 HTTP Signatures on incoming AdCP requests per the transport-layer profile. Graded against conformance vectors covering every checklist step and canonicalization-edge rule.
 Flow: `get_adcp_capabilities`
+
+Server-side, `createAdcpServer({ signedRequests: { jwks, replayStore, revocationStore } })` auto-wires the verifier middleware when the seller declares the `signed-requests` specialism AND `capabilities.request_signing.supported === true`. Startup fails fast on mismatched claim/config pairs — claiming the specialism without wiring the verifier is a spec violation the framework catches at boot. Default `required_for` derives from `capabilities.request_signing.required_for` (falls back to the SDK's `MUTATING_TASKS` constant) so buyers reading the advertised contract see the same enforcement policy the server applies.
 
 ### Error Handling
 

@@ -785,22 +785,24 @@ The buyer signals this by setting `plan.human_review_required: true` on the gove
 import {
   createAdcpServer,
   serve,
-  checkGovernance,
-  governanceDeniedError,
   adcpError,
   buildHumanOverride,
-  REGULATED_HUMAN_REVIEW_CATEGORIES,
-  ANNEX_III_POLICY_IDS,
+  checkGovernance,
+  governanceDeniedError,
 } from '@adcp/client';
+import { taskToolResponse, type AdcpStateStore } from '@adcp/client/server';
 import { randomUUID } from 'node:crypto';
 
 serve(() => createAdcpServer({
   name: 'Regulated Publisher',
   version: '1.0.0',
-  resolveAccount: async (ref) => db.findAccount(ref),
+  resolveAccount: async ref => db.findAccount(ref),
   mediaBuy: {
     createMediaBuy: async (params, ctx) => {
-      const plan = await ctx.store.get('governance_plans', params.plan_id);
+      if (!ctx.account) {
+        return adcpError('ACCOUNT_NOT_FOUND', { field: 'account' });
+      }
+      const plan = await ctx.store.get('governance_plans', params.plan_id ?? '');
       if (!plan) return adcpError('PLAN_NOT_FOUND', { field: 'plan_id' });
 
       // Human-review gate — GDPR Art 22 / EU AI Act Annex III.
@@ -811,46 +813,75 @@ serve(() => createAdcpServer({
           params,
           enqueued_at: new Date().toISOString(),
           account_id: ctx.account.id,
+          // Buyer's webhook target for async completion, if they supplied one.
+          webhook_url: params.push_notification_config?.url,
         });
-        // Route this task_id to your human-review queue (e.g., a Slack
-        // approval workflow, a ticket in your ops tool, an internal UI).
+        // Route this task_id to your human-review queue (Slack approval,
+        // ops ticket, internal UI — whatever your reviewers use).
         await humanReviewQueue.enqueue(taskId);
-        return { status: 'submitted', task_id: taskId };
+        // Submitted envelope per CreateMediaBuySubmitted. Do NOT return a
+        // populated MediaBuy here — media_buy_id and packages land on the
+        // completion artifact once a human approves. taskToolResponse bypasses
+        // the default mediaBuyResponse wrap, which would stamp revision /
+        // confirmed_at / valid_actions — fields that don't belong on a task
+        // envelope.
+        return taskToolResponse({ status: 'submitted', task_id: taskId });
       }
 
-      // Non-regulated path — proceed with normal governance check.
-      if (ctx.account?.governanceUrl) {
+      // Non-regulated path — normal governance check, commit synchronously.
+      if (ctx.account.governanceUrl) {
         const gov = await checkGovernance({
           agentUrl: ctx.account.governanceUrl,
-          planId: params.plan_id,
+          planId: params.plan_id ?? 'default',
           caller: 'https://my-publisher.com/mcp',
           tool: 'create_media_buy',
           payload: params,
         });
         if (!gov.approved) return governanceDeniedError(gov);
       }
-      return executeBuy(params);
+      return executeBuy(params, ctx.store);
     },
   },
 }));
 
-// Approval handler — called by your human-review UI when the reviewer signs off.
-async function onHumanApproval(taskId: string, approver: string, reason: string) {
+// Called by the human-review UI when a reviewer signs off. Lives outside any
+// request handler, so it takes its own AdcpStateStore — the same instance you
+// passed to createAdcpServer via `stateStore`. No ctx in scope here.
+async function onHumanApproval(
+  store: AdcpStateStore,
+  taskId: string,
+  approver: string,
+  reason: string
+): Promise<void> {
   const pending = await store.get('pending_reviews', taskId);
   if (!pending) throw new Error(`No pending review with id ${taskId}`);
 
-  // Constructs the compliance artifact — validates reason ≥ 20 chars,
-  // approver is an email, no control chars, ISO 8601 approved_at.
-  const override = buildHumanOverride({ reason, approver, approvedAt: new Date() });
+  // Validates reason ≥ 20 chars, approver as email, no control chars,
+  // ISO 8601 approved_at.
+  const override = buildHumanOverride({
+    reason,
+    approver,
+    approvedAt: new Date(),
+  });
 
-  const buy = await executeBuy(pending.params);
+  const buy = await executeBuy(pending.params, store);
   await store.put('media_buys', buy.media_buy_id, {
     ...buy,
     human_override: override,
     plan_id: pending.plan_id,
+    account_id: pending.account_id,
   });
-  // Resolve the submitted task so the buyer's poll sees status: 'completed'.
-  await ctx.tasks.complete(taskId, buy);
+  await store.delete('pending_reviews', taskId);
+
+  // Notify the buyer. Two options, pick based on what your server wires up:
+  //   1. If you configured `webhooks` on createAdcpServer and the buyer sent
+  //      push_notification_config.url, POST the completion event from the
+  //      emitter built at boot (hoisted outside createAdcpServer so it's
+  //      reachable here). See § Guaranteed delivery / IO signing for the
+  //      emitter construction.
+  //   2. Otherwise the buyer polls — they already have the task_id and will
+  //      discover the committed buy via get_media_buys once it lands in
+  //      'media_buys'.
 }
 ```
 

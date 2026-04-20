@@ -90,18 +90,18 @@ export async function sendCreateMediaBuy(order: BuyerOrder) {
   // deciding. Throws ConfigurationError on v3 sellers that omit the declaration
   // (the SDK refuses to default to 24h). Returns undefined on v2 sellers — in
   // that case skip the TTL check and trust the error paths below.
+  let currentKey = key;
   const ttl = await seller.getIdempotencyReplayTtlSeconds();
   if (ttl !== undefined && ageSeconds > ttl) {
     const existing = await lookupByNaturalKey(seller, order.order_id);
     if (existing) return existing; // prior call already landed; nothing to do
     // Prior call did not land. Rotate to a fresh key before sending.
-    await rotateKey(order.order_id);
+    currentKey = await rotateKey(order.order_id);
   }
 
   // Step 3. Send with the persisted (or freshly-rotated) key. useIdempotencyKey
   // validates against ^[A-Za-z0-9_.:-]{16,255}$ before the round-trip so a
   // corrupted row fails locally instead of as a remote INVALID_REQUEST.
-  const { key: currentKey } = await getOrCreateKey(order.order_id);
   const result = await seller.createMediaBuy({
     ...order.request,
     ...useIdempotencyKey(currentKey),

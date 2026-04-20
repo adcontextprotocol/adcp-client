@@ -1122,12 +1122,22 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
  * non-`tools/call` bodies, which makes the verifier treat them as not-in-
  * `required_for` rather than rejecting (discovery probes, health checks).
  */
-function buildSignedRequestsPreTransport(signedRequests: SignedRequestsConfig): AdcpPreTransport {
+function buildSignedRequestsPreTransport(
+  signedRequests: SignedRequestsConfig,
+  capabilityRequiredFor?: string[]
+): AdcpPreTransport {
+  // Precedence: explicit signedRequests.required_for > capabilities.request_signing.required_for
+  // > fallback to every mutating task. Buyers read required_for from
+  // get_adcp_capabilities to decide which calls to sign — defaulting to
+  // MUTATING_TASKS when the seller advertised a narrower list would cause
+  // buyers to get request_signature_required on tools they had no contractual
+  // duty to sign.
+  const requiredFor = signedRequests.required_for ?? capabilityRequiredFor ?? [...MUTATING_TASKS];
   const verifier = createExpressVerifier({
     capability: {
       supported: true,
       covers_content_digest: signedRequests.covers_content_digest ?? 'either',
-      required_for: signedRequests.required_for ?? [...MUTATING_TASKS],
+      required_for: requiredFor,
     },
     jwks: signedRequests.jwks,
     replayStore: signedRequests.replayStore,
@@ -1179,12 +1189,34 @@ function buildSignedRequestsPreTransport(signedRequests: SignedRequestsConfig): 
     };
 
     let handled = false;
-    await new Promise<void>(resolve =>
+    // The verifier calls `next(err?)` in the success / error path, but the
+    // 401 RequestSignatureError path writes the response and returns WITHOUT
+    // calling next. Race the next-callback against the response's 'finish'
+    // event so a terminal 401 resolves the promise; otherwise the wrapper
+    // hangs forever and the agent server leaks (one McpServer per unsigned
+    // request under attack).
+    await new Promise<void>(resolve => {
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+      res.once('finish', () => {
+        if (res.writableEnded) handled = true;
+        done();
+      });
+      res.once('close', done);
       verifier(reqShim, resShim, err => {
         if (err) {
-          // Log internally; a leaked stack trace to the caller would enumerate
-          // the verifier pipeline (js/stack-trace-exposure).
-          console.error('[adcp/signed-requests] verifier middleware error:', err);
+          // Log internally; a leaked stack trace to the caller would
+          // enumerate the verifier pipeline (js/stack-trace-exposure).
+          // Narrow to name+code only — full error stringification can embed
+          // JWKS URLs from transport failures, which leaks counterparty
+          // key-discovery topology on shared log aggregators.
+          const errName = (err && (err as Error).name) || 'Error';
+          const errCode = (err as { code?: string }).code ?? 'unknown';
+          console.error(`[adcp/signed-requests] verifier middleware error: ${errName} (${errCode})`);
           if (!res.writableEnded) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
@@ -1192,11 +1224,10 @@ function buildSignedRequestsPreTransport(signedRequests: SignedRequestsConfig): 
           }
           handled = true;
         }
-        // createExpressVerifier's 401 path ends the response directly.
         if (res.writableEnded) handled = true;
-        resolve();
-      })
-    );
+        done();
+      });
+    });
     return handled;
   };
 }
@@ -1255,7 +1286,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     throw new Error(
       'createAdcpServer: `signedRequests` is configured but `capabilities.specialisms` does not include "signed-requests". ' +
         'Add "signed-requests" to the specialisms list — buyers discover the signing requirement from get_adcp_capabilities, ' +
-        'and omitting the claim means they won\'t sign their requests.'
+        "and omitting the claim means they won't sign their requests."
     );
   }
   if (claimsSignedRequests && !signedRequests) {
@@ -1263,6 +1294,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       'createAdcpServer: `capabilities.specialisms` claims "signed-requests" but no `signedRequests` config was provided. ' +
         'Either pass `signedRequests: { jwks, replayStore, revocationStore }` to auto-wire the verifier, or ensure you wire ' +
         'one manually via `serve({ preTransport })`. Claiming the specialism without verifying signatures is a spec violation.'
+    );
+  }
+  // The specialism is only meaningful when `capabilities.request_signing.supported`
+  // is true — the compliance storyboard treats a missing or false `supported`
+  // flag as "not opted in" and silently skips the whole conformance run. Claim
+  // + supported:false is the worst failure mode: the claim advertises
+  // signature enforcement while the capability block tells buyers the agent
+  // doesn't verify. Fail fast so the mismatch is caught at construction.
+  if (claimsSignedRequests && capConfig?.request_signing?.supported !== true) {
+    throw new Error(
+      'createAdcpServer: `capabilities.specialisms` claims "signed-requests" but `capabilities.request_signing.supported` is not true. ' +
+        'Set `capabilities.request_signing = { supported: true, ... }` — the compliance storyboard skips conformance entirely when ' +
+        '`supported` is falsy, and buyers cannot discover the signing requirement without the capability block.'
     );
   }
 
@@ -1724,7 +1768,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // the normal McpServer surface — it's a private contract between this
   // function and `serve()` for wiring, not part of the McpServer public API.
   if (signedRequests) {
-    const preTransport = buildSignedRequestsPreTransport(signedRequests);
+    const preTransport = buildSignedRequestsPreTransport(
+      signedRequests,
+      capConfig?.request_signing?.required_for
+    );
     Object.defineProperty(server, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,

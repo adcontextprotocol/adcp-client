@@ -273,7 +273,10 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
             return;
           }
         } catch (err) {
-          console.error('preTransport middleware error:', err);
+          // Narrow to name+code — transport errors can embed remote URLs.
+          const errName = (err && (err as Error).name) || 'Error';
+          const errCode = (err as { code?: string }).code ?? 'unknown';
+          console.error(`preTransport middleware error: ${errName} (${errCode})`);
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Internal server error' }));
