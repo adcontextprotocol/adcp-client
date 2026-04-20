@@ -22,8 +22,8 @@ const ASSIGNMENT_ERROR_KEY = /^[a-zA-Z0-9_-]+$/;
 const HttpUrlSchema = z
   .string()
   .url()
-  .refine((v) => /^https?:\/\//i.test(v), {
-    message: "URL must use http(s) scheme",
+  .refine(v => /^https?:\/\//i.test(v), {
+    message: 'URL must use http(s) scheme',
   });
 
 export const SyncCreativesItemSchema = z
@@ -40,10 +40,7 @@ export const SyncCreativesItemSchema = z
     expires_at: z.string().datetime({ offset: true }).optional(),
     assigned_to: z.array(z.string()).optional(),
     assignment_errors: z
-      .record(
-        z.string().regex(ASSIGNMENT_ERROR_KEY, 'assignment_errors key must match ^[a-zA-Z0-9_-]+$'),
-        z.string(),
-      )
+      .record(z.string().regex(ASSIGNMENT_ERROR_KEY, 'assignment_errors key must match ^[a-zA-Z0-9_-]+$'), z.string())
       .optional(),
   })
   .passthrough()

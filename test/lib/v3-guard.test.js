@@ -49,7 +49,7 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     });
     await assert.rejects(
       () => client.requireV3('sync_creatives'),
-      (err) => err instanceof VersionUnsupportedError && err.reason === 'idempotency'
+      err => err instanceof VersionUnsupportedError && err.reason === 'idempotency'
     );
   });
 
@@ -62,7 +62,7 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     });
     await assert.rejects(
       () => client.requireV3('sync_creatives'),
-      (err) => err instanceof VersionUnsupportedError && err.reason === 'synthetic'
+      err => err instanceof VersionUnsupportedError && err.reason === 'synthetic'
     );
   });
 
@@ -74,15 +74,12 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     });
     await assert.rejects(
       () => client.requireV3('sync_creatives'),
-      (err) => err instanceof VersionUnsupportedError && err.reason === 'version'
+      err => err instanceof VersionUnsupportedError && err.reason === 'version'
     );
   });
 
   test('allowV2: true bypasses the guard without touching env', async () => {
-    const client = clientWithCapabilities(
-      { version: 'v2', majorVersions: [2], _synthetic: false },
-      { allowV2: true }
-    );
+    const client = clientWithCapabilities({ version: 'v2', majorVersions: [2], _synthetic: false }, { allowV2: true });
     await client.requireV3('sync_creatives');
   });
 
@@ -118,12 +115,7 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
   });
 
   test('VersionUnsupportedError omits agent_uri from message', () => {
-    const err = new VersionUnsupportedError(
-      'sync_creatives',
-      'version',
-      'v2',
-      'https://secret-seller.internal/mcp'
-    );
+    const err = new VersionUnsupportedError('sync_creatives', 'version', 'v2', 'https://secret-seller.internal/mcp');
     assert.ok(!err.message.includes('secret-seller.internal'));
     assert.equal(err.agentUrl, 'https://secret-seller.internal/mcp');
   });

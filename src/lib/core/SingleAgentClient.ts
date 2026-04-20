@@ -2769,28 +2769,13 @@ export class SingleAgentClient {
     const capabilities = await this.getCapabilities();
 
     if (capabilities._synthetic) {
-      throw new VersionUnsupportedError(
-        taskType,
-        'synthetic',
-        capabilities.version,
-        this.agent.agent_uri
-      );
+      throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
     }
     if (!capabilities.majorVersions.includes(3)) {
-      throw new VersionUnsupportedError(
-        taskType,
-        'version',
-        capabilities.version,
-        this.agent.agent_uri
-      );
+      throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
     }
     if (!capabilities.idempotency?.replayTtlSeconds) {
-      throw new VersionUnsupportedError(
-        taskType,
-        'idempotency',
-        capabilities.version,
-        this.agent.agent_uri
-      );
+      throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);
     }
   }
 

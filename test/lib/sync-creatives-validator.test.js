@@ -28,7 +28,7 @@ describe('SyncCreativesItemSchema', () => {
   test('forbids status when action=failed', () => {
     const r = SyncCreativesItemSchema.safeParse({ ...base, action: 'failed', status: 'approved' });
     assert.equal(r.success, false);
-    assert.ok(r.error.issues.some((i) => i.path.includes('status')));
+    assert.ok(r.error.issues.some(i => i.path.includes('status')));
   });
 
   test('forbids status when action=deleted', () => {
