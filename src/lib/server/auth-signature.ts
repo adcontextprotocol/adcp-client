@@ -45,7 +45,14 @@ import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
 import type { VerifiedSigner, VerifierCapability, VerifyResult } from '../signing/types';
 import { verifyRequestSignature } from '../signing/verifier';
-import { AuthError, type AuthPrincipal, type Authenticator, tagAuthenticatorNeedsRawBody } from './auth';
+import {
+  AuthError,
+  type AuthPrincipal,
+  type Authenticator,
+  authenticatorNeedsRawBody,
+  tagAuthenticatorNeedsRawBody,
+  tagAuthenticatorPresenceGated,
+} from './auth';
 
 export interface VerifySignatureAsAuthenticatorOptions {
   /** Verifier capability block. `required_for` is not enforced here — unsigned
@@ -184,10 +191,96 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
   return tagAuthenticatorNeedsRawBody(authenticator);
 }
 
+/**
+ * Compose a signature authenticator with a fallback under presence-gated
+ * semantics: if the incoming request declares a `Signature-Input` header,
+ * the signature authenticator is the ONLY path — its result (principal,
+ * `null`, or thrown {@link AuthError}) is the final outcome and the fallback
+ * never runs. Without `Signature-Input`, the fallback handles the request.
+ *
+ * This is the correct composition for the `signed-requests` specialism.
+ * {@link anyOf}'s either-or contract incorrectly accepts a bearer-authed
+ * request whose signature is present-but-invalid — fine for "either
+ * credential is sufficient" but wrong for spec conformance, where a
+ * declared-but-invalid signature MUST be rejected even when a valid bearer
+ * accompanies it (revocation, window expiry, malformed covered-components,
+ * etc.).
+ *
+ * ```ts
+ * import {
+ *   serve,
+ *   anyOf,
+ *   verifyApiKey,
+ *   verifySignatureAsAuthenticator,
+ *   requireSignatureWhenPresent,
+ * } from '@adcp/client/server';
+ *
+ * serve(createAgent, {
+ *   authenticate: requireSignatureWhenPresent(
+ *     verifySignatureAsAuthenticator({ jwks, replayStore, revocationStore, capability, resolveOperation }),
+ *     anyOf(verifyApiKey({ keys }), verifyBearer({ jwksUri, issuer, audience })),
+ *   ),
+ * });
+ * ```
+ *
+ * Presence is detected from RFC 9421 signature headers: either
+ * `Signature-Input` or the paired `Signature`. A request carrying only one of
+ * the two is malformed but still treated as "signed intent" — the signature
+ * authenticator runs and throws, which is what AdCP's negative conformance
+ * vectors expect.
+ *
+ * Behavior matrix:
+ *
+ * | RFC 9421 signature header present? | Signature result          | Outcome                      |
+ * |------------------------------------|---------------------------|------------------------------|
+ * | yes                                | verified                  | signature principal          |
+ * | yes                                | throws {@link AuthError}  | 401 (does NOT fall through)  |
+ * | yes                                | returns `null`            | 401 via re-thrown `AuthError` (does NOT fall through) |
+ * | no                                 | —                         | fallback runs verbatim       |
+ *
+ * The returned authenticator is tagged with {@link AUTH_NEEDS_RAW_BODY} when
+ * either branch needs the raw body, so `serve()` buffers `req.rawBody` ahead
+ * of authentication.
+ *
+ * **Do not nest this helper inside {@link anyOf}.** `anyOf` catches thrown
+ * `AuthError`s and tries the next authenticator, which re-introduces the
+ * bypass this helper exists to prevent. `anyOf` refuses such composition at
+ * wire-up time (throws synchronously) — invert the order instead:
+ * `requireSignatureWhenPresent(sig, anyOf(bearer, apiKey))`.
+ */
+export function requireSignatureWhenPresent(signatureAuth: Authenticator, fallbackAuth: Authenticator): Authenticator {
+  const combined: Authenticator = async req => {
+    if (hasSignatureHeader(req)) {
+      const result = await signatureAuth(req);
+      if (result === null) {
+        // A signature was declared but the sig authenticator didn't recognize
+        // it. Falling through to the fallback would re-open the bypass the
+        // presence gate exists to prevent — fail closed.
+        throw new AuthError('Signature declared but not recognized.');
+      }
+      return result;
+    }
+    return await fallbackAuth(req);
+  };
+  if (authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth)) {
+    tagAuthenticatorNeedsRawBody(combined);
+  }
+  tagAuthenticatorPresenceGated(combined);
+  return combined;
+}
+
 const SAFE_KEYID = /^[A-Za-z0-9._-]{1,256}$/;
 
 function hasSignatureHeader(req: IncomingMessage): boolean {
-  const v = req.headers['signature-input'];
+  // RFC 9421 pairs `Signature-Input` with `Signature`. Either is sufficient
+  // "signed intent" — a request carrying only one is malformed, but routing
+  // it to the fallback would mean a half-formed signing attempt (e.g., client
+  // bug that dropped the Signature-Input header) silently auths via bearer.
+  // Fail closed: send it to the signature authenticator, which will throw.
+  return nonEmptyHeader(req.headers['signature-input']) || nonEmptyHeader(req.headers['signature']);
+}
+
+function nonEmptyHeader(v: string | string[] | undefined): boolean {
   if (typeof v === 'string') return v.length > 0;
   if (Array.isArray(v)) return v.length > 0;
   return false;

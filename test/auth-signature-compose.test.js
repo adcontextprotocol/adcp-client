@@ -6,10 +6,13 @@ const path = require('node:path');
 const {
   AuthError,
   AUTH_NEEDS_RAW_BODY,
+  AUTH_PRESENCE_GATED,
   anyOf,
   authenticatorNeedsRawBody,
+  isAuthenticatorPresenceGated,
   verifyApiKey,
   verifySignatureAsAuthenticator,
+  requireSignatureWhenPresent,
   tagAuthenticatorNeedsRawBody,
 } = require('../dist/lib/server/index.js');
 const {
@@ -451,5 +454,303 @@ describe('anyOf(verifyApiKey, verifySignatureAsAuthenticator)', () => {
       () => composed(req),
       err => err instanceof AuthError
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requireSignatureWhenPresent — presence-gated composition (unit)
+// ---------------------------------------------------------------------------
+
+describe('requireSignatureWhenPresent(signatureAuth, fallbackAuth)', () => {
+  it('runs the fallback when no Signature-Input header is present', async () => {
+    const now = 1_776_520_800;
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions({ now: () => now })),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    const req = makeReq({
+      headers: {
+        host: 'seller.example.com',
+        authorization: 'Bearer sk_test',
+      },
+    });
+    const result = await composed(req);
+    assert.strictEqual(result.principal, 'acct_42');
+  });
+
+  it('returns null from the fallback when no Signature-Input and no fallback credential', async () => {
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions()),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    const result = await composed(makeReq());
+    assert.strictEqual(result, null);
+  });
+
+  it('runs the signature authenticator and returns its principal when Signature-Input is present', async () => {
+    const now = 1_776_520_800;
+    const body = '{}';
+    const url = 'https://seller.example.com/mcp';
+    const req = signedReq({ now, url, body, nonce: 'require-sig-valid-01' });
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions({ now: () => now })),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    const result = await composed(req);
+    assert.strictEqual(result.principal, 'signing:test-ed25519-2026');
+    assert.ok(req.verifiedSigner, 'req.verifiedSigner populated on sig path');
+  });
+
+  it('throws AuthError when signature is present-but-invalid, even if a valid bearer is also supplied', async () => {
+    const now = 1_776_520_800;
+    const body = '{}';
+    const url = 'https://seller.example.com/mcp';
+    const req = signedReq({ now, url, body, nonce: 'require-sig-invalid-01' });
+    req.headers.signature = req.headers.signature.replace(/[A-Za-z0-9+/]/, c => (c === 'A' ? 'B' : 'A'));
+    req.headers.authorization = 'Bearer sk_test';
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions({ now: () => now })),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    await assert.rejects(
+      () => composed(req),
+      err => err instanceof AuthError && /^Signature rejected/.test(err.publicMessage)
+    );
+    assert.strictEqual(req.verifiedSigner, undefined, 'bad sig leaves verifiedSigner unset');
+  });
+
+  it('propagates AUTH_NEEDS_RAW_BODY when the signature authenticator needs it', () => {
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions()),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    assert.strictEqual(authenticatorNeedsRawBody(composed), true);
+    assert.strictEqual(composed[AUTH_NEEDS_RAW_BODY], true);
+  });
+
+  it('does NOT propagate AUTH_NEEDS_RAW_BODY when neither branch needs it', () => {
+    const composed = requireSignatureWhenPresent(
+      verifyApiKey({ keys: { sk_sig: { principal: 'sig' } } }),
+      verifyApiKey({ keys: { sk_fb: { principal: 'fb' } } })
+    );
+    assert.strictEqual(authenticatorNeedsRawBody(composed), false);
+  });
+
+  it('propagates a fallback AuthError verbatim (no double-wrapping)', async () => {
+    const composed = requireSignatureWhenPresent(verifySignatureAsAuthenticator(baseOptions()), async () => {
+      throw new AuthError('Insufficient scope.');
+    });
+    await assert.rejects(
+      () => composed(makeReq()),
+      err => err instanceof AuthError && err.publicMessage === 'Insufficient scope.'
+    );
+  });
+
+  it('throws AuthError when the sig authenticator returns null despite Signature-Input being present', async () => {
+    // A custom sig authenticator that returns null on a signed request would
+    // otherwise silently surface as "no credentials" — the presence gate must
+    // convert that into a hard 401 to preserve the contract.
+    const composed = requireSignatureWhenPresent(
+      async () => null,
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    const now = 1_776_520_800;
+    const body = '{}';
+    const url = 'https://seller.example.com/mcp';
+    const req = signedReq({ now, url, body, nonce: 'null-sig-path-01' });
+    req.headers.authorization = 'Bearer sk_test'; // valid bearer MUST NOT rescue
+    await assert.rejects(
+      () => composed(req),
+      err => err instanceof AuthError && /declared but not recognized/.test(err.publicMessage)
+    );
+  });
+
+  it('routes a `Signature`-only request (missing Signature-Input) to the sig authenticator', async () => {
+    // RFC 9421 pairs both headers. A request with only `Signature` is
+    // malformed, but is signed intent — must not fall through to bearer.
+    const now = 1_776_520_800;
+    const body = '{}';
+    const url = 'https://seller.example.com/mcp';
+    const req = signedReq({ now, url, body, nonce: 'sig-only-header-01' });
+    delete req.headers['signature-input'];
+    req.headers.authorization = 'Bearer sk_test'; // valid bearer MUST NOT rescue
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions({ now: () => now })),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    await assert.rejects(
+      () => composed(req),
+      err => err instanceof AuthError
+    );
+  });
+
+  it('is tagged AUTH_PRESENCE_GATED', () => {
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions()),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    assert.strictEqual(isAuthenticatorPresenceGated(composed), true);
+    assert.strictEqual(composed[AUTH_PRESENCE_GATED], true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// anyOf + presence-gated composition guard
+// ---------------------------------------------------------------------------
+
+describe('anyOf refuses to wrap a presence-gated authenticator', () => {
+  it('throws synchronously when the first child is presence-gated', () => {
+    const gated = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions()),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    assert.throws(
+      () => anyOf(gated, verifyApiKey({ keys: { other: { principal: 'x' } } })),
+      /refusing to wrap a presence-gated authenticator/
+    );
+  });
+
+  it('throws synchronously when a later child is presence-gated', () => {
+    const gated = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions()),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    assert.throws(
+      () => anyOf(verifyApiKey({ keys: { other: { principal: 'x' } } }), gated),
+      /refusing to wrap a presence-gated authenticator/
+    );
+  });
+
+  it('permits the recommended inversion: requireSignatureWhenPresent(sig, anyOf(...))', () => {
+    assert.doesNotThrow(() =>
+      requireSignatureWhenPresent(
+        verifySignatureAsAuthenticator(baseOptions()),
+        anyOf(
+          verifyApiKey({ keys: { sk_a: { principal: 'a' } } }),
+          verifyApiKey({ keys: { sk_b: { principal: 'b' } } })
+        )
+      )
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requireSignatureWhenPresent — end-to-end through serve()
+// ---------------------------------------------------------------------------
+
+describe('serve() + requireSignatureWhenPresent', () => {
+  function makeAgent() {
+    return createAdcpServer({
+      name: 'Test Agent',
+      version: '1.0.0',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+  }
+
+  function startServer(authenticate) {
+    return new Promise(resolve => {
+      const srv = serve(() => makeAgent(), {
+        port: 0,
+        authenticate,
+        onListening: url => resolve({ server: srv, url, port: new URL(url).port }),
+      });
+    });
+  }
+
+  it('accepts a bearer-authed request with no signature', async () => {
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions()),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    const { server, port } = await startServer(composed);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer sk_test',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      });
+      assert.strictEqual(res.status, 200);
+    } finally {
+      await new Promise(r => server.close(r));
+    }
+  });
+
+  it('rejects a signed-but-invalid request with 401 even when a valid bearer is supplied', async () => {
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions({ getUrl: req => `http://${req.headers.host}${req.url}` })),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    const { server, port } = await startServer(composed);
+    try {
+      const body = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      });
+      const now = Math.floor(Date.now() / 1000);
+      const signed = signRequest(
+        {
+          method: 'POST',
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+          body,
+        },
+        { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
+        { now: () => now, windowSeconds: 300, nonce: 'e2e-require-badsig-01' }
+      );
+      signed.headers.Signature = signed.headers.Signature.replace(/[A-Za-z0-9+/]/, c => (c === 'A' ? 'B' : 'A'));
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: {
+          ...signed.headers,
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer sk_test',
+        },
+        body,
+      });
+      assert.strictEqual(res.status, 401, 'present-but-invalid signature must reject despite valid bearer');
+    } finally {
+      await new Promise(r => server.close(r));
+    }
+  });
+
+  it('accepts a signed request with no bearer (body buffered before auth)', async () => {
+    const composed = requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator(baseOptions({ getUrl: req => `http://${req.headers.host}${req.url}` })),
+      verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
+    );
+    const { server, port } = await startServer(composed);
+    try {
+      const body = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {},
+      });
+      const now = Math.floor(Date.now() / 1000);
+      const signed = signRequest(
+        {
+          method: 'POST',
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+          body,
+        },
+        { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
+        { now: () => now, windowSeconds: 300, nonce: 'e2e-require-good-01' }
+      );
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { ...signed.headers, Accept: 'application/json, text/event-stream' },
+        body,
+      });
+      assert.strictEqual(res.status, 200);
+    } finally {
+      await new Promise(r => server.close(r));
+    }
   });
 });
