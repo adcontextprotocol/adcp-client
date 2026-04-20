@@ -89,6 +89,7 @@ import {
   ConfigurationError,
   FeatureUnsupportedError,
   TaskTimeoutError,
+  VersionUnsupportedError,
   is401Error,
 } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
@@ -226,6 +227,28 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * @default true
    */
   validateFeatures?: boolean;
+  /**
+   * Refuse to dispatch mutating tasks unless the seller's capabilities
+   * corroborate AdCP v3. The guard requires all of:
+   *   1. `major_versions` includes 3
+   *   2. `adcp.idempotency.replay_ttl_seconds` is declared (spec-required)
+   *   3. capabilities came from a real `get_adcp_capabilities` response
+   *      (not synthesized from a tool list)
+   *
+   * Throws `VersionUnsupportedError` before the request is sent. Bypass
+   * with `allowV2` or — process-wide as a fallback — `ADCP_ALLOW_V2=1`.
+   *
+   * @default false
+   */
+  requireV3ForMutations?: boolean;
+  /**
+   * Per-client bypass for the v3 guard. When `true`, the guard is off
+   * regardless of the `ADCP_ALLOW_V2` env var. When `undefined`, the env
+   * var is consulted as a fallback. Set explicitly in multi-tenant
+   * deployments so one tenant's override can't silently disable safety
+   * for another.
+   */
+  allowV2?: boolean;
   /**
    * Runtime schema validation options
    */
@@ -1047,6 +1070,11 @@ export class SingleAgentClient {
 
     // Validate required features before sending request
     await this.validateTaskFeatures(taskType);
+
+    // Guard mutating calls against pre-v3 sellers when opted in.
+    if (this.config.requireV3ForMutations && isMutatingTask(taskType)) {
+      await this.requireV3(taskType);
+    }
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
@@ -2001,6 +2029,9 @@ export class SingleAgentClient {
       skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
     });
     await this.validateTaskFeatures(taskName);
+    if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
+      await this.requireV3(taskName);
+    }
     const agent = await this.ensureEndpointDiscovered();
 
     // Adapt request for the server's protocol version (e.g. strip v3-only
@@ -2714,6 +2745,58 @@ export class SingleAgentClient {
     if (!requiredFeatures || requiredFeatures.length === 0) return;
 
     await this.require(...requiredFeatures);
+  }
+
+  /**
+   * Assert that the seller's capabilities corroborate AdCP v3.
+   *
+   * A self-reported `version: 'v3'` is not enough — a hostile or
+   * misconfigured seller can just string-claim the version. The guard
+   * requires:
+   *
+   *   1. `capabilities.majorVersions.includes(3)` (multi-version aware)
+   *   2. `capabilities.idempotency.replayTtlSeconds` present (spec-required
+   *      for real v3 sellers; synthetic capabilities don't get this free)
+   *   3. capabilities were not synthesized from a tool list
+   *
+   * Per-client `allowV2: true` or, when that's undefined,
+   * `ADCP_ALLOW_V2=1` in the environment bypasses the check.
+   *
+   * Throws `VersionUnsupportedError` with the specific reason on failure.
+   */
+  async requireV3(taskType: string = 'request'): Promise<void> {
+    if (this.isV2Allowed()) return;
+    const capabilities = await this.getCapabilities();
+
+    if (capabilities._synthetic) {
+      throw new VersionUnsupportedError(
+        taskType,
+        'synthetic',
+        capabilities.version,
+        this.agent.agent_uri
+      );
+    }
+    if (!capabilities.majorVersions.includes(3)) {
+      throw new VersionUnsupportedError(
+        taskType,
+        'version',
+        capabilities.version,
+        this.agent.agent_uri
+      );
+    }
+    if (!capabilities.idempotency?.replayTtlSeconds) {
+      throw new VersionUnsupportedError(
+        taskType,
+        'idempotency',
+        capabilities.version,
+        this.agent.agent_uri
+      );
+    }
+  }
+
+  private isV2Allowed(): boolean {
+    if (this.config.allowV2 !== undefined) return this.config.allowV2 === true;
+    return process.env.ADCP_ALLOW_V2 === '1';
   }
 
   // ====== STATIC HELPER METHODS ======

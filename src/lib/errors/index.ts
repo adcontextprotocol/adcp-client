@@ -340,6 +340,53 @@ export class FeatureUnsupportedError extends ADCPError {
 }
 
 /**
+ * Reason the v3 guard refused a mutating dispatch.
+ * - `version`: seller's `major_versions` does not include 3
+ * - `idempotency`: seller reports v3 but omits the required
+ *   `adcp.idempotency.replay_ttl_seconds` declaration
+ * - `synthetic`: capabilities were synthesized from a tool list (no
+ *   `get_adcp_capabilities` response) so the v3 claim is unverifiable
+ */
+export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
+
+/**
+ * Error thrown when a mutating call would dispatch to a seller whose
+ * capabilities cannot be corroborated as v3. Provides an explicit
+ * pre-flight signal so callers don't silently mutate state on agents
+ * that have not negotiated the expected major version.
+ *
+ * Agent URL is exposed on the instance (`agentUrl`) but omitted from the
+ * default message to avoid leaking seller identity into shared log sinks.
+ */
+export class VersionUnsupportedError extends ADCPError {
+  readonly code = 'VERSION_UNSUPPORTED';
+
+  constructor(
+    public readonly taskType: string,
+    public readonly reason: VersionUnsupportedReason,
+    public readonly actualVersion: 'v2' | 'v3',
+    public readonly agentUrl?: string
+  ) {
+    super(
+      `Refusing to dispatch mutating task '${taskType}': ` +
+        VersionUnsupportedError.explain(reason, actualVersion) +
+        ` Pass allowV2: true or requireV3ForMutations: false to override.`
+    );
+  }
+
+  private static explain(reason: VersionUnsupportedReason, actualVersion: 'v2' | 'v3'): string {
+    switch (reason) {
+      case 'version':
+        return `seller advertises major version '${actualVersion}' but v3 is required.`;
+      case 'idempotency':
+        return `seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec).`;
+      case 'synthetic':
+        return `capabilities were synthesized from a tool list — v3 claim is unverifiable.`;
+    }
+  }
+}
+
+/**
  * Check if an error indicates a 401 Unauthorized response
  *
  * This helper centralizes the fragile logic of detecting 401 errors from

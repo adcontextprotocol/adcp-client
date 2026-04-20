@@ -233,6 +233,7 @@ export {
   ConfigurationError,
   AuthenticationRequiredError,
   FeatureUnsupportedError,
+  VersionUnsupportedError,
   IdempotencyConflictError,
   IdempotencyExpiredError,
   adcpErrorToTypedError,
@@ -682,6 +683,13 @@ export { TOOL_RESPONSE_SCHEMAS } from './utils/response-schemas';
 // ====== VALIDATION ======
 // Schema validation for requests/responses
 export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPResponse } from './validation';
+export {
+  SyncCreativesItemSchema,
+  SyncCreativesSuccessStrictSchema,
+  SyncCreativesResponseStrictSchema,
+  SyncCreativesActionSchema,
+} from './validation/sync-creatives';
+export type { SyncCreativesItem, SyncCreativesSuccessStrict } from './validation/sync-creatives';
 
 // ====== PROTOCOL CLIENTS ======
 // Low-level protocol clients for MCP and A2A (primarily for testing)
@@ -723,7 +731,12 @@ export {
 } from './utils/format-assets';
 
 // ====== V3.0 COMPATIBILITY UTILITIES ======
-// Capabilities detection and synthetic capabilities for v2 servers
+// Capabilities detection, version negotiation, and v3 enforcement.
+// See also:
+//   - `VersionUnsupportedError` in errors — thrown by requireV3()/requireV3ForMutations
+//   - `SyncCreativesItemSchema` in validation — per-item sync_creatives validator
+//   - `ADCP_MAJOR_VERSION` / `COMPATIBLE_ADCP_VERSIONS` in version information
+//   - `SingleAgentClient#requireV3()` / `AgentClient#requireV3()` — runtime gate
 export {
   buildSyntheticCapabilities,
   parseCapabilitiesResponse,

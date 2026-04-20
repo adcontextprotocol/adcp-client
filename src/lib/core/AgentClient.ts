@@ -442,6 +442,14 @@ export class AgentClient {
   }
 
   /**
+   * Assert that the seller's capabilities report AdCP v3. Throws
+   * `VersionUnsupportedError` otherwise. Set `ADCP_ALLOW_V2=1` to bypass.
+   */
+  async requireV3(taskType: string = 'request'): Promise<void> {
+    return this.client.requireV3(taskType);
+  }
+
+  /**
    * Preview a creative
    */
   async previewCreative(
