@@ -248,10 +248,7 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
  * wire-up time (throws synchronously) — invert the order instead:
  * `requireSignatureWhenPresent(sig, anyOf(bearer, apiKey))`.
  */
-export function requireSignatureWhenPresent(
-  signatureAuth: Authenticator,
-  fallbackAuth: Authenticator
-): Authenticator {
+export function requireSignatureWhenPresent(signatureAuth: Authenticator, fallbackAuth: Authenticator): Authenticator {
   const combined: Authenticator = async req => {
     if (hasSignatureHeader(req)) {
       const result = await signatureAuth(req);

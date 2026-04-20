@@ -537,12 +537,9 @@ describe('requireSignatureWhenPresent(signatureAuth, fallbackAuth)', () => {
   });
 
   it('propagates a fallback AuthError verbatim (no double-wrapping)', async () => {
-    const composed = requireSignatureWhenPresent(
-      verifySignatureAsAuthenticator(baseOptions()),
-      async () => {
-        throw new AuthError('Insufficient scope.');
-      }
-    );
+    const composed = requireSignatureWhenPresent(verifySignatureAsAuthenticator(baseOptions()), async () => {
+      throw new AuthError('Insufficient scope.');
+    });
     await assert.rejects(
       () => composed(makeReq()),
       err => err instanceof AuthError && err.publicMessage === 'Insufficient scope.'
@@ -684,9 +681,7 @@ describe('serve() + requireSignatureWhenPresent', () => {
 
   it('rejects a signed-but-invalid request with 401 even when a valid bearer is supplied', async () => {
     const composed = requireSignatureWhenPresent(
-      verifySignatureAsAuthenticator(
-        baseOptions({ getUrl: req => `http://${req.headers.host}${req.url}` })
-      ),
+      verifySignatureAsAuthenticator(baseOptions({ getUrl: req => `http://${req.headers.host}${req.url}` })),
       verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
     );
     const { server, port } = await startServer(composed);
@@ -708,10 +703,7 @@ describe('serve() + requireSignatureWhenPresent', () => {
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
         { now: () => now, windowSeconds: 300, nonce: 'e2e-require-badsig-01' }
       );
-      signed.headers.Signature = signed.headers.Signature.replace(
-        /[A-Za-z0-9+/]/,
-        c => (c === 'A' ? 'B' : 'A')
-      );
+      signed.headers.Signature = signed.headers.Signature.replace(/[A-Za-z0-9+/]/, c => (c === 'A' ? 'B' : 'A'));
       const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: 'POST',
         headers: {
@@ -729,9 +721,7 @@ describe('serve() + requireSignatureWhenPresent', () => {
 
   it('accepts a signed request with no bearer (body buffered before auth)', async () => {
     const composed = requireSignatureWhenPresent(
-      verifySignatureAsAuthenticator(
-        baseOptions({ getUrl: req => `http://${req.headers.host}${req.url}` })
-      ),
+      verifySignatureAsAuthenticator(baseOptions({ getUrl: req => `http://${req.headers.host}${req.url}` })),
       verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
     );
     const { server, port } = await startServer(composed);
