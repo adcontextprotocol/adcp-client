@@ -182,7 +182,6 @@ describe('verifySignatureAsAuthenticator', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'keyid-unsafe-01' });
     // Swap the StaticJwksResolver to return a JWK whose `kid` contains a colon —
     // the verifier accepts any kid, but the adapter must reject before
     // interpolating the principal so downstream tenant splits on ':' stay safe.
