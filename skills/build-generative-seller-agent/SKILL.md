@@ -23,6 +23,24 @@ A generative seller that sells programmatic inventory MUST also accept standard 
 - Standalone creative agent (renders but doesn't sell) → creative agent
 - Signals/audience data → `skills/build-signals-agent/`
 
+## Specialisms This Skill Covers
+
+A generative seller inherits every sales specialism it supports (usually `sales-non-guaranteed`, optionally `sales-catalog-driven`) **plus** `creative-generative`. Declare all three in your `get_adcp_capabilities` response so buyers can filter correctly.
+
+| Specialism | Status | Delta |
+|---|---|---|
+| `creative-generative` | stable | Generate creatives from `message` + `brand.domain`; honor `quality: draft\|production`; support refinement. See the `build-creative-agent` skill's `§ creative-generative` section for the full `build_creative` contract. |
+| `sales-non-guaranteed` | stable | Standard seller baseline with `bid_price` and `update_media_buy`. See `build-seller-agent` `§ sales-non-guaranteed`. |
+| `sales-catalog-driven` | stable (optional) | If you ingest catalogs for dynamic creative generation, see `build-retail-media-agent`. |
+
+## Protocol-Wide Requirements
+
+Every production seller — generative or otherwise — must wire these regardless of specialism. See `skills/build-seller-agent/SKILL.md` for the full treatment; minimum viable pointers:
+
+- **`idempotency_key`** on every mutating request (`create_media_buy`, `sync_creatives`, `build_creative`, `sync_catalogs`). Wire `createIdempotencyStore({ backend, ttlSeconds })` into `createAdcpServer({ idempotency })` — framework handles replay.
+- **Authentication** (`serve({ authenticate: verifyApiKey(...)/verifyBearer(...) })`). A non-authenticated agent fails the `security_baseline` universal storyboard.
+- **Signature-header transparency**: even if you don't claim `signed-requests`, don't reject requests that carry `Signature-Input`/`Signature` headers.
+
 ## Before Writing Code
 
 Determine these things. Ask the user — don't guess.

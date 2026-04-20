@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-20T05:08:17.213Z
+// Generated at: 2026-04-20T05:54:10.361Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2171,6 +2171,7 @@ export const PackageStatusSchema = z.object({
     currency: z.string().optional(),
     bid_price: z.number().optional(),
     impressions: z.number().optional(),
+    targeting_overlay: TargetingOverlaySchema.optional(),
     start_time: z.string().optional(),
     end_time: z.string().optional(),
     paused: z.boolean().optional(),
@@ -2557,7 +2558,8 @@ export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.liter
 
 export const IdempotencySupportedSchema = z.object({
     supported: z.literal(true),
-    replay_ttl_seconds: z.number()
+    replay_ttl_seconds: z.number(),
+    account_id_is_opaque: z.boolean().optional()
 }).passthrough();
 
 export const IdempotencyUnsupportedSchema = z.object({
@@ -3511,7 +3513,7 @@ export const CreativeAgentCapabilitySchema = z.union([z.literal("validation"), z
 
 export const DelegationAuthoritySchema = z.union([z.literal("full"), z.literal("execute_only"), z.literal("propose_only")]);
 
-export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("CREATIVE_NOT_FOUND"), z.literal("SIGNAL_NOT_FOUND"), z.literal("SESSION_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("REQUOTE_REQUIRED"), z.literal("VERSION_UNSUPPORTED")]);
+export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("UNSUPPORTED_FEATURE"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("CREATIVE_NOT_FOUND"), z.literal("SIGNAL_NOT_FOUND"), z.literal("SESSION_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("REQUOTE_REQUIRED"), z.literal("VERSION_UNSUPPORTED"), z.literal("CAMPAIGN_SUSPENDED"), z.literal("GOVERNANCE_UNAVAILABLE"), z.literal("PERMISSION_DENIED")]);
 
 export const EscalationSeveritySchema = z.union([z.literal("info"), z.literal("warning"), z.literal("critical")]);
 
@@ -5169,6 +5171,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         }).passthrough()).optional()
     }).passthrough().optional(),
     governance: z.object({
+        aggregation_window_days: z.number().optional(),
         property_features: z.array(z.object({
             feature_id: z.string(),
             type: z.union([z.literal("binary"), z.literal("quantitative"), z.literal("categorical")]),
@@ -5222,6 +5225,25 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         required_for: z.array(z.string()).optional(),
         warn_for: z.array(z.string()).optional(),
         supported_for: z.array(z.string()).optional()
+    }).passthrough().optional(),
+    webhook_signing: z.object({
+        supported: z.boolean(),
+        profile: z.literal("adcp/webhook-signing/v1").optional(),
+        algorithms: z.array(z.union([z.literal("ed25519"), z.literal("ecdsa-p256-sha256")])).optional(),
+        legacy_hmac_fallback: z.boolean().optional()
+    }).passthrough().optional(),
+    identity: z.object({
+        per_principal_key_isolation: z.boolean().optional(),
+        key_origins: z.object({
+            governance_signing: z.string().optional(),
+            request_signing: z.string().optional(),
+            webhook_signing: z.string().optional(),
+            tmp_signing: z.string().optional()
+        }).passthrough().optional(),
+        compromise_notification: z.object({
+            emits: z.boolean().optional(),
+            accepts: z.boolean().optional()
+        }).passthrough().optional()
     }).passthrough().optional(),
     compliance_testing: z.object({
         scenarios: z.array(z.union([z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend")]))

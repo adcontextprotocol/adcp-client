@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-20T04:34:16.675Z
+// Generated at: 2026-04-20T05:54:06.278Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -9563,6 +9563,7 @@ export interface PackageStatus {
    * Goal impression count for impression-based packages
    */
   impressions?: number;
+  targeting_overlay?: TargetingOverlay;
   /**
    * ISO 8601 flight start time for this package. Use to determine whether the package is within its scheduled flight before interpreting delivery status.
    */
@@ -11940,6 +11941,10 @@ export interface GetAdCPCapabilitiesResponse {
    */
   governance?: {
     /**
+     * Trailing window (in days) over which this governance agent aggregates committed spend when evaluating dollar-valued thresholds (reallocation_threshold, human_review triggers, registry-policy floors). Required for fragmentation defense: without aggregation, a buyer can split a single large spend into many sub-threshold commits across plans / task surfaces / time and bypass every dollar-gated escalation. Aggregation is keyed on (buyer_agent, seller_agent, account_id) and spans all spend-commit task types. Upper bound 365 represents a one-year trailing window (fiscal-year alignment with grace); governance agents needing longer scopes negotiate via operator sign-off, not this capability. No schema default: absence of this field indicates the governance agent has not committed to any aggregation window and buyers MUST assume per-commit evaluation only (the fragmentation attack surface is open). A declared value of 30 is a common starting point but is not implied by omission. Buyers depending on a specific window for compliance MUST check this capability before relying on aggregation semantics — an agent declaring 7 days does not defend against fragmentation spread across a 30-day quarter-end push.
+     */
+    aggregation_window_days?: number;
+    /**
      * Property features this governance agent can evaluate. Each feature describes a score, rating, or certification the agent can provide for properties.
      */
     property_features?: {
@@ -12120,6 +12125,70 @@ export interface GetAdCPCapabilitiesResponse {
     supported_for?: string[];
   };
   /**
+   * RFC 9421 webhook-signature support for outbound webhook callbacks (top-level peer of request_signing). Declares which AdCP webhook-signing profile version and algorithms this agent produces on delivery, and whether it supports the legacy HMAC-SHA256 fallback for receivers that have not yet adopted RFC 9421. See docs/building/implementation/webhooks.mdx.
+   */
+  webhook_signing?: {
+    /**
+     * Whether this agent signs outbound webhooks with the AdCP RFC 9421 webhook profile. When false or absent, webhooks are delivered with legacy Bearer or HMAC-SHA256 auth only and receivers MUST NOT expect a Signature header.
+     */
+    supported: boolean;
+    /**
+     * Identifier of the webhook-signing profile version the agent emits. Value MUST match the `tag=` parameter emitted in the RFC 9421 `Signature-Input` header (see docs/building/implementation/webhooks.mdx) so receivers can statically validate the declared profile against the on-wire tag. Closed enum; future profile revisions will extend this enum in a follow-up schema bump.
+     */
+    profile?: 'adcp/webhook-signing/v1';
+    /**
+     * Signature algorithms this agent uses on outbound webhooks. 3.0 profile permits 'ed25519' and 'ecdsa-p256-sha256' only; other values are reserved for future profile versions and MUST NOT be emitted under adcp/webhook-signing/v1.
+     */
+    algorithms?: ('ed25519' | 'ecdsa-p256-sha256')[];
+    /**
+     * Whether this agent will fall back to HMAC-SHA256 on the legacy push_notification_config.authentication path for receivers that have not adopted RFC 9421. Deprecated; removed in AdCP 4.0.
+     */
+    legacy_hmac_fallback?: boolean;
+  };
+  /**
+   * Operator identity posture — key-scoping and compromise-response controls the agent operates. Fields are independent, all advisory in 3.x; receivers use them to reason about blast radius and revocation latency at onboarding rather than discovering the posture after an incident. Semantics of an empty object: `identity: {}` means "posture block present but no posture claimed" — schema-valid but advisory-neutral; receivers MUST treat it as equivalent to omitting the block (no capability claim inferred). Operators SHOULD populate at least one field to make a declaration meaningful.
+   */
+  identity?: {
+    /**
+     * When true, this multi-principal operator scopes signing keys per-principal so a single principal's key compromise does not silently re-scope across principals served by the same operator. `kid` values remain opaque to verifiers per RFC 7517; any operator-side naming convention (e.g., `{operator}:{principal}:{key_version}`) is internal bookkeeping and MUST NOT be parsed by verifiers. See docs/building/understanding/security-model.mdx.
+     */
+    per_principal_key_isolation?: boolean;
+    /**
+     * Map of signing-key purpose → publishing origin, so counterparties can verify origin separation (e.g., governance keys served from a separate origin than transport/webhook keys) at onboarding. Absent means the operator has not declared a separation scheme; receivers SHOULD assume shared-origin. See docs/building/implementation/security.mdx §Origin separation.
+     */
+    key_origins?: {
+      /**
+       * Origin (scheme + host) serving the governance-signing JWKS.
+       */
+      governance_signing?: string;
+      /**
+       * Origin (scheme + host) serving the request-signing JWKS.
+       */
+      request_signing?: string;
+      /**
+       * Origin (scheme + host) serving the webhook-signing JWKS.
+       */
+      webhook_signing?: string;
+      /**
+       * Origin (scheme + host) serving the TMP-signing JWKS, when this operator participates in TMP.
+       */
+      tmp_signing?: string;
+    };
+    /**
+     * Whether this agent emits the `identity.compromise_notification` webhook event on key revocation due to known or suspected compromise (as opposed to scheduled rotation). Subscribers use this to bound the window between compromise detected and verifiers converging on revocation. See docs/building/implementation/webhooks.mdx §identity.compromise_notification.
+     */
+    compromise_notification?: {
+      /**
+       * Whether this agent emits `identity.compromise_notification` events.
+       */
+      emits?: boolean;
+      /**
+       * Whether this agent subscribes to `identity.compromise_notification` events from counterparties it verifies signatures from.
+       */
+      accepts?: boolean;
+    };
+  };
+  /**
    * Compliance testing capabilities. The presence of this block declares that the agent supports deterministic testing via comply_test_controller for lifecycle state machine validation. Omit the block entirely if the agent does not support compliance testing.
    */
   compliance_testing?: {
@@ -12170,6 +12239,10 @@ export interface IdempotencySupported {
    * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
    */
   replay_ttl_seconds: number;
+  /**
+   * When true, the seller derives `account_id` via an HKDF-based one-way transform of the buyer's natural account key rather than echoing the natural key on the wire. Buyers MUST NOT attempt to invert the opaque id and MUST treat it as a blind handle scoped to this seller. Absent or false, callers should assume `account_id` is the natural key (or a server-assigned but non-opaque id). This flag does not change the wire shape, but it DOES change buyer behavior — buyers MUST NOT cache, log, or treat `account_id` as a natural-key analog when this flag is true. Migration note for sellers already returning an opaque id without this flag: set it to true at the next capabilities refresh so buyers stop inferring natural-key semantics; until set, new-buyer replay/retry logic will misclassify these ids as natural keys.
+   */
+  account_id_is_opaque?: boolean;
 }
 /**
  * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys by buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds MUST be absent — it has no meaning without replay support.
@@ -16068,7 +16141,10 @@ export type ErrorCode =
   | 'IO_REQUIRED'
   | 'TERMS_REJECTED'
   | 'REQUOTE_REQUIRED'
-  | 'VERSION_UNSUPPORTED';
+  | 'VERSION_UNSUPPORTED'
+  | 'CAMPAIGN_SUSPENDED'
+  | 'GOVERNANCE_UNAVAILABLE'
+  | 'PERMISSION_DENIED';
 
 
 // enums/escalation-severity.json

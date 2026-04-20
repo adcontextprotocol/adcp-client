@@ -21,6 +21,22 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 - Managing creative formats/library → `skills/build-creative-agent/`
 - Evaluating media buys → `skills/build-governance-agent/`
 
+## Specialisms This Skill Covers
+
+| Specialism | Status | Delta |
+|---|---|---|
+| `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`. `update_rights` and `creative_approval` are spec-tracked but not schema-backed (see Protocol Status below). | [§ brand-rights](#specialism-brand-rights) |
+
+Storyboard: `brand_rights`. The specialism tests identity discovery → rights search → acquisition → enforcement (including expired-campaign denial).
+
+## Protocol-Wide Requirements
+
+Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers:
+
+- **`idempotency_key`** on every mutating request (`acquire_rights` — and `update_rights` / `creative_approval` once their schemas land). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Signature-header transparency**: accept `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
+
 ## Before Writing Code
 
 ### 1. What Brand?
@@ -61,6 +77,7 @@ Three tools are first-class in the `brandRights` domain group. Two additional op
 
 Upstream tracking for the two schema gaps: https://github.com/adcontextprotocol/adcp/issues/2253. The SDK will register handlers for both once schemas land.
 
+<a name="specialism-brand-rights"></a>
 ## Tools and Required Response Shapes
 
 **`get_brand_identity`** — returns brand identity matching `brand/get-brand-identity-response.json`
@@ -81,14 +98,16 @@ Required: `brand_id`, `house`, `names` (array of locale-keyed objects).
   logos: [
     {
       url: 'https://cdn.acme.example/logo-primary.svg',
-      orientation: 'horizontal',  // horizontal | vertical | square
-      background: 'light',        // light | dark | transparent
+      orientation: 'horizontal',          // horizontal | vertical | square
+      background: 'transparent-bg',       // dark-bg | light-bg | transparent-bg
       variant: 'primary',
       width: 512,
       height: 128,
     },
   ],
-  voice: 'Confident, outdoorsy, direct.',
+  tone: {                                 // brand voice lives under `tone`, not at the top level
+    voice: 'Confident, outdoorsy, direct.',
+  },
   // context echoed back by the framework when present
 }
 ```
@@ -97,21 +116,23 @@ Required: `brand_id`, `house`, `names` (array of locale-keyed objects).
 
 Each right requires `rights_id`, `brand_id`, `name`, `available_uses`, `pricing_options`.
 
+The `right-use` enum at `/schemas/latest/enums/right-use.json` is: `likeness | voice | name | endorsement | motion_capture | signature | catchphrase | sync | background_music | editorial | commercial`. Note that the storyboard yaml sometimes sends `ai_generated_image` — that token is not in the current enum and any request carrying it will fail SDK validation. Use spec-valid values in your `available_uses` until upstream reconciles (adcontextprotocol/adcp#2418).
+
 ```typescript
 {
   rights: [
     {
-      rights_id: 'img_gen_standard',
+      rights_id: 'likeness_commercial_standard',
       brand_id: 'acme_outdoor',
-      name: 'AI image generation — standard',
-      available_uses: ['ai_generated_image', 'commercial'],  // from right-use enum
+      name: 'Likeness for commercial use — standard',
+      available_uses: ['likeness', 'commercial'],
       pricing_options: [
         {
           pricing_option_id: 'monthly_standard',
-          model: 'flat_rate',                  // from pricing-model enum
+          model: 'flat_rate',                 // from pricing-model enum
           price: 2500,
           currency: 'USD',
-          uses: ['ai_generated_image', 'commercial'],
+          uses: ['likeness', 'commercial'],
           period: 'monthly',
         },
       ],
@@ -122,16 +143,39 @@ Each right requires `rights_id`, `brand_id`, `name`, `available_uses`, `pricing_
 
 **`acquire_rights`** — returns a discriminated union on `status`
 
-Three success variants plus an error variant. The most common is `acquired`:
+Three success variants plus an error variant. The most common is `acquired`. Three shapes need exact field names to satisfy the spec schemas — `terms` must match `rights-terms.json` (required: `pricing_option_id`, `amount`, `currency`, `uses`), `rights_constraint` must match `/schemas/latest/core/rights-constraint.json` (required: `rights_id`, `rights_agent`, `uses`), and `approval_webhook.authentication.credentials` requires `minLength: 32`.
 
 ```typescript
 {
-  rights_id: 'img_gen_standard',     // echoed from request
+  rights_id: 'likeness_commercial_standard',   // echoed from request
   status: 'acquired',
   brand_id: 'acme_outdoor',
-  terms: { /* rights-terms.json shape */ },
+  terms: {
+    pricing_option_id: 'monthly_standard',     // required
+    amount: 2500,                              // required
+    currency: 'USD',                           // required
+    uses: ['likeness', 'commercial'],          // required
+    period: 'monthly',
+    start_date: '2026-04-01T00:00:00Z',
+    end_date:   '2026-05-01T00:00:00Z',
+    exclusivity: { scope: 'non_exclusive', countries: ['US', 'CA'] },    // object per rights-terms.json: { scope, countries }
+  },
   generation_credentials: [ /* generation-credential refs */ ],
-  rights_constraint: { /* pre-built rights-constraint for creative manifests */ },
+  rights_constraint: {
+    rights_id: 'likeness_commercial_standard', // required — NOT brand_id
+    rights_agent: {                            // required — {url, id} pointing at this agent
+      url: 'https://brand.example/mcp',
+      id: 'acme_outdoor',
+    },
+    uses: ['likeness', 'commercial'],          // required
+  },
+  approval_webhook: {
+    url: 'https://brand.example/webhooks/creative-approval',
+    authentication: {
+      schemes: ['Bearer'],
+      credentials: 'brand-approval-webhook-secret-32chars+',  // minLength: 32
+    },
+  },
 }
 // or
 { rights_id, status: 'pending_approval', brand_id, detail?, estimated_response_time? }
@@ -157,7 +201,24 @@ Three success variants plus an error variant. The most common is `acquired`:
 
 **Payload shapes (spec-tracked, not yet published):** the spec names these `creative-approval-request` and `creative-approval-response` but has not published the JSON schemas (tracked in https://github.com/adcontextprotocol/adcp/issues/2253). Design your endpoint to accept the creative reference (at minimum `rights_grant_id` and the creative being reviewed) and return a decision. Don't ship a concrete shape against this skill until schemas land — your handler contract may need to change.
 
-**Revocation webhook (buyer side).** The `acquire_rights` *request* includes a required `revocation_webhook`. Store it against the rights grant. If you ever need to revoke the grant (credential rotation, terms violation, brand takedown), POST a `revocation-notification` to that URL using its `authentication` block. The `revocation-notification` payload shape is also not yet published — same tracking issue.
+**Revocation webhook (buyer side).** The `acquire_rights` *request* includes a required `revocation_webhook`. Store it against the rights grant. If you ever need to revoke the grant (credential rotation, terms violation, brand takedown), emit a `revocation-notification` to that URL.
+
+**Use `ctx.emitWebhook`, not raw `fetch`.** The SDK ships `createAdcpServer({ webhooks: { signerKey } })` which populates `ctx.emitWebhook` on every handler — it signs per RFC 9421, reuses `idempotency_key` byte-for-byte across retries, and handles the "don't retry on signature failures" terminal behavior automatically. Full pattern in [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks.
+
+```typescript
+// On revocation:
+await ctx.emitWebhook({
+  url: storedGrant.revocation_webhook.url,
+  payload: {
+    rights_id: storedGrant.rights_id,
+    reason: 'credential_rotation',
+    effective_at: new Date().toISOString(),
+  },
+  operation_id: `revoke_rights.${storedGrant.rights_id}`,   // stable across retries — NOT a fresh UUID per attempt
+});
+```
+
+The `revocation-notification` payload shape is not yet published in a JSON schema (tracked at adcontextprotocol/adcp#2253). Include at minimum the `rights_id`, a reason, and an `effective_at` timestamp. 3.0 GA renamed this payload's `notification_id` field to `idempotency_key` — the emitter populates it for you when `operation_id` is set.
 
 ### Context and Ext Passthrough
 
@@ -291,13 +352,18 @@ serve(() =>
           status: 'acquired',
           brand_id: 'acme_outdoor',
           terms: {
+            pricing_option_id: 'monthly_standard',   // required per rights-terms.json
+            amount: 2500,                            // required
+            currency: 'USD',                         // required
+            uses: params.campaign?.uses ?? [],        // required
             countries: ['US', 'CA'],
-            exclusivity: 'non_exclusive',
+            exclusivity: { scope: 'non_exclusive', countries: ['US', 'CA'] },   // object, not string
           },
           generation_credentials: [],
           rights_constraint: {
-            brand_id: 'acme_outdoor',
-            uses: params.campaign?.uses ?? [],
+            rights_id: params.rights_id,             // required — NOT brand_id
+            rights_agent: { url: AGENT_URL, id: 'acme_outdoor' },   // required — {url, id}
+            uses: params.campaign?.uses ?? [],        // required
           },
           // URL you host — buyer POSTs creative-approval-request here for review.
           approval_webhook: {

@@ -21,6 +21,21 @@ A signals agent serves audience segments to buyers for campaign targeting. Two t
 - Rendering creatives from briefs → that's a creative agent
 - Building a client that _calls_ a signals agent → see `docs/getting-started.md`
 
+## Specialisms This Skill Covers
+
+| Specialism | Status | Delta | See |
+|---|---|---|---|
+| `signal-marketplace` | stable | `signal_id.source: 'catalog'` + resolvable `data_provider_domain`; span ≥2 providers in demos; platform activations are **async** (`is_live: false` → poll to live) | [§ signal-marketplace](#specialism-signal-marketplace) |
+| `signal-owned` | stable | `signal_id.source: 'agent'` + your `agent_url`; `value_type` constraints (`allowed_values` for categorical, `min`/`max` for numeric); `deployed_at` on deployments | [§ signal-owned](#specialism-signal-owned) |
+
+## Protocol-Wide Requirements
+
+Full treatment lives in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers for a signals agent:
+
+- **`idempotency_key`** on every mutating request (`activate_signal`, and any future mutating signals tools). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Signature-header transparency**: accept requests with `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
+
 ## Before Writing Code
 
 Determine these four things. Ask the user — don't guess.
@@ -153,9 +168,12 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `getSignalsResponse(data)`                            | Auto-applied response builder (don't call manually)                    |
 | `activateSignalResponse(data)`                        | Auto-applied response builder (don't call manually)                    |
 | `adcpError(code, { message })`                        | Structured error (`SIGNAL_NOT_FOUND`, `INVALID_DESTINATION`)           |
+| `createIdempotencyStore({ backend, ttlSeconds })`     | Required on every mutating tool — pass via `createAdcpServer({ idempotency })` |
+| `memoryBackend()` / `pgBackend(pool)`                 | Idempotency backends (from `@adcp/client/server`)                      |
 | `type Signal = GetSignalsResponse['signals'][number]` | Type for a single signal object                                        |
 
 Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
+Server-only: `import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';`
 Types: `import type { GetSignalsResponse } from '@adcp/client';`
 
 ## Setup
@@ -379,6 +397,94 @@ npx tsc --noEmit
 | `is_live: true` in get_signals deployments   | Signals aren't live until `activate_signal` — use empty `deployments: []`                                   |
 | Activation doesn't match destination type    | If request has `type: "platform"`, deployment must be `type: "platform"`                                    |
 | `sandbox: false` on mock data                | Buyers may treat mock data as real                                                                          |
+
+## Specialism Details
+
+### <a name="specialism-signal-marketplace"></a>signal-marketplace
+
+**Async platform activation.** Unlike agent activations (`type: 'agent'`), platform activations (`type: 'platform'`) are not instant — the segment takes minutes-to-hours to propagate to the DSP. Return `is_live: false` with an estimate, then the buyer polls `activate_signal` again until `is_live: true`.
+
+```typescript
+activateSignal: async (params, ctx) => {
+  const signal = signals.find((s) => s.signal_agent_segment_id === params.signal_agent_segment_id);
+  if (!signal) return adcpError('SIGNAL_NOT_FOUND', { message: `Unknown segment` });
+
+  const deployments = await Promise.all(params.destinations.map(async (dest) => {
+    if (dest.type === 'platform') {
+      // Async — check whether this destination has already been propagated
+      const existing = await ctx.store.get('deployments', `${params.signal_agent_segment_id}:${dest.platform}`);
+      if (existing?.is_live) return existing;
+      if (!existing) {
+        const pending = {
+          type: 'platform' as const,
+          platform: dest.platform,
+          account: dest.account ?? null,
+          is_live: false,
+          estimated_activation_duration_minutes: 45,
+          // Commit the activation_key up front so the buyer can trust it across the poll window:
+          activation_key: {
+            type: 'segment_id' as const,
+            segment_id: `${dest.platform}_${signal.signal_id.id}`,
+          },
+        };
+        await ctx.store.put('deployments', `${params.signal_agent_segment_id}:${dest.platform}`, pending);
+        return pending;
+      }
+      return existing;   // still propagating
+    }
+    // Agent activations are instant
+    return {
+      type: 'agent' as const,
+      agent_url: dest.agent_url,
+      is_live: true,
+      deployed_at: new Date().toISOString(),
+      activation_key: { type: 'key_value' as const, key: 'audience', value: signal.signal_id.id },
+    };
+  }));
+  return { deployments, sandbox: true };
+},
+```
+
+Use `forceDeploymentStatus` in your `TestControllerStore` (if you implement compliance_testing) to flip pending deployments to live for deterministic tests.
+
+**Provenance.** `data_provider_domain` must be resolvable — buyers fetch `https://{domain}/adagents.json` out-of-band to verify the provider. Use real domains even in demos, not `example.com`. For a marketplace demo, seed ≥2 different `data_provider_domain` values so the multi-provider nature is visible.
+
+### <a name="specialism-signal-owned"></a>signal-owned
+
+**Value types** drive targeting semantics. The storyboard validates these fields:
+
+```typescript
+// Binary — in/out of the segment
+{ value_type: 'binary' as const }
+
+// Categorical — enumerated tier/level
+{
+  value_type: 'categorical' as const,
+  allowed_values: ['bronze', 'silver', 'gold', 'platinum'],    // required for categorical
+}
+
+// Numeric — continuous score or count
+{
+  value_type: 'numeric' as const,
+  min: 0,
+  max: 100,
+  units: 'purchase_frequency_last_90d',    // optional but recommended
+}
+```
+
+`signal_type: 'custom'` is for first-party signals that don't fit the `owned` conceptual model (e.g. contextual signals derived from page content rather than user identity). Use `owned` by default; pick `custom` only when the user data model differs materially.
+
+Platform activations are async (same pattern as marketplace). Agent activations include `deployed_at`:
+
+```typescript
+{
+  type: 'agent' as const,
+  agent_url: dest.agent_url,
+  is_live: true,
+  deployed_at: new Date().toISOString(),
+  activation_key: { type: 'key_value' as const, key: 'audience', value: signal.signal_id.id },
+}
+```
 
 ## Reference
 

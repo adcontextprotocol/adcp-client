@@ -30,6 +30,48 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a brand rights agent?** Read and follow `skills/build-brand-rights-agent/SKILL.md` — covers brand identity, rights licensing, creative approval.
 
+### Specialism → Skill Index
+
+Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to a compliance storyboard at `compliance/cache/latest/specialisms/<id>/`. The skill below has a dedicated section for each specialism's deltas.
+
+| Specialism | Protocol | Status | Skill |
+|---|---|---|---|
+| `sales-guaranteed` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-non-guaranteed` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-broadcast-tv` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-streaming-tv` | media-buy | preview | `skills/build-seller-agent/` |
+| `sales-social` | media-buy | stable | `skills/build-seller-agent/` |
+| `sales-exchange` | media-buy | preview | `skills/build-seller-agent/` |
+| `sales-catalog-driven` | media-buy | stable | `skills/build-retail-media-agent/` |
+| `sales-retail-media` | media-buy | preview | `skills/build-retail-media-agent/` |
+| `sales-proposal-mode` | media-buy | stable | `skills/build-seller-agent/` |
+| `audience-sync` | media-buy | stable | `skills/build-seller-agent/` (track: `audiences`; uses `sync_audiences`, `list_accounts`) |
+| `signed-requests` | media-buy | preview | **Cross-cutting** — applies to any agent that receives mutating requests, regardless of primary specialism. The yaml classifies it under `media-buy` because that's where financial stakes are highest, but the verifier behavior is identical across all protocols. See `skills/build-seller-agent/` (§ signed-requests). |
+| `creative-ad-server` | creative | stable | `skills/build-creative-agent/` |
+| `creative-template` | creative | stable | `skills/build-creative-agent/` |
+| `creative-generative` | creative | stable | `skills/build-creative-agent/` or `skills/build-generative-seller-agent/` (if you also sell inventory) |
+| `signal-marketplace` | signals | stable | `skills/build-signals-agent/` |
+| `signal-owned` | signals | stable | `skills/build-signals-agent/` |
+| `governance-spend-authority` | governance | stable | `skills/build-governance-agent/` |
+| `governance-delivery-monitor` | governance | stable | `skills/build-governance-agent/` |
+| `property-lists` | governance | stable | `skills/build-governance-agent/` |
+| `collection-lists` | governance | stable | `skills/build-governance-agent/` (program-level brand safety via IMDb/Gracenote/EIDR IDs) |
+| `content-standards` | governance | stable | `skills/build-governance-agent/` |
+| `measurement-verification` | governance | preview | `skills/build-governance-agent/` |
+| `brand-rights` | brand | stable | `skills/build-brand-rights-agent/` |
+
+**Naming conventions:** specialism IDs are kebab-case (`sales-broadcast-tv`). Storyboard category IDs in `index.yaml` are snake_case (`media_buy_broadcast_seller`). Yaml titles are prose ("Broadcast linear TV seller agent"). Same concept, three names — don't confuse them.
+
+**`protocol:` vs `domain:`.** The specialism yaml uses `protocol:` (renamed from `domain:` in AdCP 3.0 GA). If you see older docs or issues reference `domain:`, they mean the same thing.
+
+**Preview specialisms** have `phases: []` in their `index.yaml` — the storyboard is a placeholder and the agent passes the protocol baseline only. Claim a preview specialism to advertise intent; expect `phases` to populate in a subsequent AdCP release.
+
+**Migrating from 4.x?** See [`docs/migration-4.30-to-5.2.md`](./docs/migration-4.30-to-5.2.md) for the full 4.30.1 → 5.2.0 path: framework changes (5.0's `TaskResult` discriminated union + `createAdcpServer`), exports cleanup (5.1's `platform_type` removal + storyboard-tarball move), and 3.0 GA alignment (5.2's `authority_level` → `human_review_required`, `inventory-lists` → `property-lists`, `idempotency_key` requirement, `serve({ authenticate })` surface).
+
+**Protocol-Wide Requirements.** Two requirements apply to every mutating AdCP operation regardless of specialism:
+- **`idempotency_key`** — required on every mutating request. Applies to every tool marked as mutating in the spec (the SDK's `MUTATING_TASKS` constant is authoritative): `create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `sync_plans`, `sync_governance`, `provide_performance_feedback`, `acquire_rights`, `activate_signal`, `log_event`, `report_usage`, `report_plan_outcome`, `create_property_list` / `update_property_list` / `delete_property_list`, `create_collection_list` / `update_collection_list` / `delete_collection_list`, `create_content_standards` / `update_content_standards` / `calibrate_content`, `si_initiate_session` / `si_send_message`. Handlers must return the same response when the same key is replayed. Landed in AdCP 3.0 GA.
+- **RFC 9421 HTTP Signatures** — optional but recommended. If you claim `signed-requests`, you verify incoming signatures; regardless, you must not break when signature headers are present.
+
 **Critical rules**:
 - ALWAYS create a changeset (`npm run changeset`) for ANY library/CLI code change before pushing a PR. This is mandatory — do not wait to be asked.
 - ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing
