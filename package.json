@@ -122,6 +122,7 @@
     "generate-zod-schemas": "tsx scripts/generate-zod-from-ts.ts",
     "generate-wellknown-schemas": "tsx scripts/generate-wellknown-schemas.ts",
     "generate-agent-docs": "tsx scripts/generate-agent-docs.ts",
+    "compliance:agent-skill": "tsx scripts/manual-testing/agent-skill-storyboard.ts",
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
     "lint": "eslint 'src/lib/testing/**/*.ts'",
