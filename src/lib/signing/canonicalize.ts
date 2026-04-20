@@ -46,6 +46,13 @@ export function canonicalTargetUri(rawUrl: string): string {
 export function canonicalAuthority(rawUrl: string): string {
   rejectNonAsciiHost(rawUrl);
   const u = new URL(rawUrl);
+  if (u.username || u.password) {
+    throw new RequestSignatureError(
+      'request_signature_header_malformed',
+      1,
+      '@authority must not include userinfo; strip credentials before signing'
+    );
+  }
   return u.host.toLowerCase();
 }
 
@@ -160,10 +167,11 @@ function decodeUnreservedPercentEncoding(input: string): string {
  * anomaly — AdCP @target-uri canonicalization expects A-labels (Punycode).
  * Reject rather than implicitly normalize: UTS-46 transitional vs.
  * non-transitional produce different A-labels for the same input, which
- * would open a signer/verifier canonicalization differential.
+ * would open a signer/verifier canonicalization differential. Accepts
+ * both absolute (`scheme://…`) and scheme-relative (`//…`) URL shapes.
  */
-function rejectNonAsciiHost(rawUrl: string): void {
-  const authorityMatch = rawUrl.match(/^[a-z][a-z0-9+.\-]*:\/\/([^/?#]*)/i);
+export function rejectNonAsciiHost(rawUrl: string): void {
+  const authorityMatch = rawUrl.match(/^(?:[a-z][a-z0-9+.\-]*:)?\/\/([^/?#]*)/i);
   if (!authorityMatch) return;
   const authority = authorityMatch[1]!;
   for (let i = 0; i < authority.length; i++) {

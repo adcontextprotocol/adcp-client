@@ -1,5 +1,5 @@
 import { parseDictionary } from 'structured-headers';
-import { buildSignatureBase, getHeaderValue, type RequestLike } from './canonicalize';
+import { buildSignatureBase, getHeaderValue, rejectNonAsciiHost, type RequestLike } from './canonicalize';
 import { contentDigestMatches } from './content-digest';
 import { RequestSignatureError } from './errors';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
@@ -65,7 +65,7 @@ export async function verifyRequestSignature(
   // Step 1: parse.
   const parsedInput = parseSignatureInput(sigInputHeader);
   const parsedSig = parseSignature(sigHeader, parsedInput.label);
-  validateRequestUrl(request.url);
+  rejectNonAsciiHost(request.url);
   validateSingleValuedCoveredHeaders(parsedInput.components, request);
 
   // Step 2: required params present.
@@ -120,7 +120,7 @@ export async function verifyRequestSignature(
       `JWK "${jwk.kid}" is not scoped for request-signing verification`
     );
   }
-  validateJwkParameterConsistency(jwk);
+  validateJwkParameterConsistency(jwk, parsedInput.params.alg);
 
   // Step 9: revocation (runs BEFORE crypto to prevent amplification attacks).
   if (await options.revocationStore.isRevoked(jwk.kid)) {
@@ -242,14 +242,38 @@ function validateWindow(created: number, expires: number, now: number): void {
 }
 
 /**
- * Reject JWKs whose kty/crv/alg are mutually inconsistent. RFC 8037 binds
- * alg=EdDSA to kty=OKP with Ed25519/Ed448; RFC 7518 binds alg=ES256 to
- * kty=EC with crv=P-256. A lenient verifier that reads alg off the
- * sig-params and ignores the JWK's declared parameters opens a
- * key-substitution differential — reject when the JWK contradicts itself.
+ * Reject JWKs whose alg/kty/crv are mutually inconsistent OR don't match
+ * the sig-params alg. Three checks in one place:
+ *
+ * 1. JWK MUST declare `alg`. A missing alg lets a signer substitute one
+ *    algorithm family for another (e.g. EdDSA sig-params against a P-256
+ *    JWK) and defer failure to step 10's crypto verify — the wrong step
+ *    and the wrong error code.
+ * 2. JWK `alg` MUST match the sig-params `alg` after AdCP→JOSE mapping
+ *    (`ed25519`↔`EdDSA`, `ecdsa-p256-sha256`↔`ES256`). Prevents sig-params
+ *    alg-downgrade against a JWK that was published for a stronger alg.
+ * 3. JWK kty/crv MUST be consistent with the declared alg per RFC 8037
+ *    (EdDSA→OKP/Ed25519|Ed448) and RFC 7518 (ES256→EC/P-256).
  */
-function validateJwkParameterConsistency(jwk: { kid: string; kty?: string; crv?: string; alg?: string }): void {
-  if (!jwk.alg) return;
+function validateJwkParameterConsistency(
+  jwk: { kid: string; kty?: string; crv?: string; alg?: string },
+  sigParamsAlg: string
+): void {
+  if (!jwk.alg) {
+    throw new RequestSignatureError(
+      'request_signature_key_purpose_invalid',
+      8,
+      `JWK "${jwk.kid}" does not declare an alg; cannot bind to sig-params alg="${sigParamsAlg}"`
+    );
+  }
+  const expectedJoseAlg = SIG_PARAMS_ALG_TO_JOSE[sigParamsAlg];
+  if (expectedJoseAlg && jwk.alg !== expectedJoseAlg) {
+    throw new RequestSignatureError(
+      'request_signature_key_purpose_invalid',
+      8,
+      `JWK "${jwk.kid}" declares alg=${jwk.alg} but the request is signed with alg="${sigParamsAlg}" (JOSE ${expectedJoseAlg})`
+    );
+  }
   if (jwk.alg === 'EdDSA') {
     if (jwk.kty !== 'OKP' || (jwk.crv !== 'Ed25519' && jwk.crv !== 'Ed448')) {
       throw new RequestSignatureError(
@@ -271,26 +295,10 @@ function validateJwkParameterConsistency(jwk: { kid: string; kty?: string; crv?:
   }
 }
 
-/**
- * Reject requests whose URL contains non-ASCII bytes in the authority. AdCP
- * @target-uri canonicalization expects A-labels (Punycode); accepting raw
- * U-labels opens a UTS-46 canonicalization differential between signer and
- * verifier.
- */
-function validateRequestUrl(rawUrl: string): void {
-  const authorityMatch = rawUrl.match(/^[a-z][a-z0-9+.\-]*:\/\/([^/?#]*)/i);
-  if (!authorityMatch) return;
-  const authority = authorityMatch[1]!;
-  for (let i = 0; i < authority.length; i++) {
-    if (authority.charCodeAt(i) > 0x7f) {
-      throw new RequestSignatureError(
-        'request_signature_header_malformed',
-        1,
-        'URL authority contains non-ASCII bytes; use the A-label (Punycode) form'
-      );
-    }
-  }
-}
+const SIG_PARAMS_ALG_TO_JOSE: Record<string, string> = {
+  ed25519: 'EdDSA',
+  'ecdsa-p256-sha256': 'ES256',
+};
 
 /**
  * Covered components referencing single-valued HTTP header fields
