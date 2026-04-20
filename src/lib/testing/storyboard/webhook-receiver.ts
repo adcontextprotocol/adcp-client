@@ -177,9 +177,7 @@ function retryKeyString(k: RetryKey): string {
   return `${k.step_id}::${k.operation_id}`;
 }
 
-export async function createWebhookReceiver(
-  options: CreateWebhookReceiverOptions = {}
-): Promise<WebhookReceiver> {
+export async function createWebhookReceiver(options: CreateWebhookReceiverOptions = {}): Promise<WebhookReceiver> {
   const mode = options.mode ?? 'loopback_mock';
   if (mode === 'proxy_url' && !options.public_url) {
     throw new Error('webhook_receiver.mode=proxy_url requires `public_url`');
@@ -485,11 +483,14 @@ function wait(
   const already = captured.find(w => matchesFilter(w, filter));
   if (already) return Promise.resolve({ webhook: already });
   return new Promise<WebhookWaitResult>(resolve => {
-    const timer = setTimeout(() => {
-      const idx = waiters.findIndex(w => w.timer === timer);
-      if (idx >= 0) waiters.splice(idx, 1);
-      resolve({ timed_out: true });
-    }, Math.max(0, timeout_ms));
+    const timer = setTimeout(
+      () => {
+        const idx = waiters.findIndex(w => w.timer === timer);
+        if (idx >= 0) waiters.splice(idx, 1);
+        resolve({ timed_out: true });
+      },
+      Math.max(0, timeout_ms)
+    );
     timer.unref?.();
     waiters.push({ filter, resolve, timer });
   });
@@ -501,15 +502,14 @@ function wait(
  * Waits a minimum of `timeout_ms` even if matches arrive earlier — callers
  * that need "resolve on first match" should use `wait` instead.
  */
-function waitAll(
-  filter: WebhookFilter,
-  timeout_ms: number,
-  captured: CapturedWebhook[]
-): Promise<CapturedWebhook[]> {
+function waitAll(filter: WebhookFilter, timeout_ms: number, captured: CapturedWebhook[]): Promise<CapturedWebhook[]> {
   return new Promise<CapturedWebhook[]>(resolve => {
-    const timer = setTimeout(() => {
-      resolve(captured.filter(w => matchesFilter(w, filter)));
-    }, Math.max(0, timeout_ms));
+    const timer = setTimeout(
+      () => {
+        resolve(captured.filter(w => matchesFilter(w, filter)));
+      },
+      Math.max(0, timeout_ms)
+    );
     timer.unref?.();
   });
 }

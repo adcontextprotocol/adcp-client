@@ -53,10 +53,7 @@ describe('createWebhookReceiver', () => {
   test('retry-replay policy returns 5xx for first N deliveries then 2xx', async () => {
     const receiver = await createWebhookReceiver();
     try {
-      receiver.set_retry_replay(
-        { step_id: 'trigger', operation_id: 'op-A' },
-        { count: 2, http_status: 503 }
-      );
+      receiver.set_retry_replay({ step_id: 'trigger', operation_id: 'op-A' }, { count: 2, http_status: 503 });
       const url = `${receiver.base_url}/step/trigger/op-A`;
       const statuses = [];
       for (let i = 0; i < 3; i++) {
@@ -107,8 +104,14 @@ describe('createWebhookReceiver', () => {
   test('filter scopes by step_id, operation_id, and body path', async () => {
     const receiver = await createWebhookReceiver();
     try {
-      await post(`${receiver.base_url}/step/foo/op-1`, { idempotency_key: 'evt_x1234567890abcdef', task: { id: 'noise' } });
-      await post(`${receiver.base_url}/step/foo/op-2`, { idempotency_key: 'evt_x1234567890abcdef', task: { id: 'target' } });
+      await post(`${receiver.base_url}/step/foo/op-1`, {
+        idempotency_key: 'evt_x1234567890abcdef',
+        task: { id: 'noise' },
+      });
+      await post(`${receiver.base_url}/step/foo/op-2`, {
+        idempotency_key: 'evt_x1234567890abcdef',
+        task: { id: 'target' },
+      });
       const filtered = receiver.matching({ operation_id: 'op-2', body: { 'task.id': 'target' } });
       assert.strictEqual(filtered.length, 1);
       assert.strictEqual(filtered[0].operation_id, 'op-2');
@@ -129,10 +132,7 @@ describe('createWebhookReceiver', () => {
   });
 
   test('proxy_url mode requires public_url; loopback mode does not', async () => {
-    await assert.rejects(
-      () => createWebhookReceiver({ mode: 'proxy_url' }),
-      /public_url/
-    );
+    await assert.rejects(() => createWebhookReceiver({ mode: 'proxy_url' }), /public_url/);
     const rec = await createWebhookReceiver({ mode: 'proxy_url', public_url: 'https://tunnel.example' });
     try {
       assert.strictEqual(rec.mode, 'proxy_url');
@@ -161,10 +161,14 @@ describe('createWebhookReceiver', () => {
   test('redacts sensitive headers in captured webhooks', async () => {
     const receiver = await createWebhookReceiver();
     try {
-      await post(`${receiver.base_url}/step/s/op`, { idempotency_key: 'evt_x1234567890abcdef' }, {
-        authorization: 'Bearer super-secret',
-        'x-api-key': 'also-secret',
-      });
+      await post(
+        `${receiver.base_url}/step/s/op`,
+        { idempotency_key: 'evt_x1234567890abcdef' },
+        {
+          authorization: 'Bearer super-secret',
+          'x-api-key': 'also-secret',
+        }
+      );
       const [w] = receiver.all();
       assert.strictEqual(w.headers.authorization, '[redacted]');
       assert.strictEqual(w.headers['x-api-key'], '[redacted]');

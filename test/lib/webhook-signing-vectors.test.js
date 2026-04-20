@@ -23,9 +23,7 @@ const path = require('node:path');
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  verifyWebhookSignature,
-} = require('../../dist/lib/signing/webhook-verifier.js');
+const { verifyWebhookSignature } = require('../../dist/lib/signing/webhook-verifier.js');
 const { StaticJwksResolver } = require('../../dist/lib/signing/jwks.js');
 const { InMemoryReplayStore } = require('../../dist/lib/signing/replay.js');
 const { InMemoryRevocationStore } = require('../../dist/lib/signing/revocation.js');

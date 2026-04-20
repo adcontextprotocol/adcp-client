@@ -1394,6 +1394,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // explicit capConfig, else to the 24h spec-recommended default.
       // clampReplayTtl guards against out-of-spec values in capConfig.
       idempotency: {
+        supported: true,
         replay_ttl_seconds: clampReplayTtl(
           capConfig?.idempotency?.replay_ttl_seconds ?? idempotency?.ttlSeconds ?? 86400
         ),

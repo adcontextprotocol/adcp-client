@@ -1,3 +1,9 @@
 **/*.generated.ts
 schemas/cache/
+compliance/cache/
 docs/
+
+# Vendored AdCP conformance vectors — byte-identical to upstream. Prettier
+# would reformat and diverge from the source of truth. Remove once vectors
+# load from compliance/cache/ (already ignored) instead of test/fixtures/.
+test/fixtures/webhook-signing-vectors/

@@ -30,11 +30,7 @@ import { jwkToPublicKey, verifySignature } from './crypto';
 import type { JwksResolver } from './jwks';
 import type { ReplayStore } from './replay';
 import type { RevocationStore } from './revocation';
-import {
-  ALLOWED_ALGS,
-  CLOCK_SKEW_TOLERANCE_SECONDS,
-  MAX_SIGNATURE_WINDOW_SECONDS,
-} from './types';
+import { ALLOWED_ALGS, CLOCK_SKEW_TOLERANCE_SECONDS, MAX_SIGNATURE_WINDOW_SECONDS } from './types';
 
 export const WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
 

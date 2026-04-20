@@ -58,10 +58,7 @@ const RUN_STATE_REVOCATION_KEY = '__webhook_signing_revocation_store';
  * precedence — operators who want durable cross-run detection wire their
  * own store via `options.webhook_signing.replayStore`.
  */
-function getSharedReplayStore(
-  runnerVars: RunnerVariables,
-  override: ReplayStore | undefined
-): ReplayStore {
+function getSharedReplayStore(runnerVars: RunnerVariables, override: ReplayStore | undefined): ReplayStore {
   if (override) return override;
   const existing = runnerVars.runState.get(RUN_STATE_REPLAY_KEY);
   if (existing) return existing as ReplayStore;
@@ -70,10 +67,7 @@ function getSharedReplayStore(
   return store;
 }
 
-function getSharedRevocationStore(
-  runnerVars: RunnerVariables,
-  override: RevocationStore | undefined
-): RevocationStore {
+function getSharedRevocationStore(runnerVars: RunnerVariables, override: RevocationStore | undefined): RevocationStore {
   if (override) return override;
   const existing = runnerVars.runState.get(RUN_STATE_REVOCATION_KEY);
   if (existing) return existing as RevocationStore;
@@ -306,11 +300,7 @@ export async function executeWebhookAssertionStep(
 // Filter construction
 // ────────────────────────────────────────────────────────────
 
-function buildFilter(
-  step: StoryboardStep,
-  context: StoryboardContext,
-  runnerVars: RunnerVariables
-): WebhookFilter {
+function buildFilter(step: StoryboardStep, context: StoryboardContext, runnerVars: RunnerVariables): WebhookFilter {
   const filter: WebhookFilter = {};
 
   // Default: scope to the triggering step's URL. Authors can override via
@@ -468,7 +458,7 @@ async function runExpectRetryKeysStable(
     return singleFailure(
       step,
       'idempotency_key_rotated',
-      'idempotency_key rotated across retries. Senders MUST reuse the first delivery\'s key for every retry of the same logical event.',
+      "idempotency_key rotated across retries. Senders MUST reuse the first delivery's key for every retry of the same logical event.",
       'byte-identical idempotency_key on every delivery',
       keys
     );
