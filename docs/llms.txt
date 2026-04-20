@@ -66,6 +66,18 @@ When `result.success` is `false`, use `result.adcpError` for programmatic handli
 
 Use `isRetryable(result)` and `getRetryDelay(result)` for retry logic. `TaskResult` is a discriminated union — `if (result.success)` narrows `data` to `T`; `if (!result.success)` guarantees `error: string` and `status: 'failed'`.
 
+```typescript
+if (!result.success) {
+  if (isRetryable(result)) {
+    await sleep(getRetryDelay(result)); // ms, defaults to 5000
+  } else if (result.adcpError?.recovery === 'correctable') {
+    console.log('Fix:', result.adcpError.suggestion, 'Field:', result.adcpError.field);
+  } else {
+    console.error(result.error, 'Correlation:', result.correlationId);
+  }
+}
+```
+
 For exhaustive handling across all seven statuses, prefer the `match()` dispatcher (fluent method on every result returned from the SDK, or free function import):
 
 ```typescript
@@ -83,18 +95,6 @@ const label = result.match!({
 ```
 
 TypeScript enforces exhaustiveness at compile time when the `_` catchall is omitted — missing an arm is a type error, not a runtime surprise. The `!` is because `TaskResultBase.match` is declared optional so hand-constructed result literals (tests, middleware) stay valid; every result returned from the SDK has `.match` attached. For hand-constructed literals, use the free function `match(result, handlers)` or call `attachMatch(result)` first.
-
-```typescript
-if (!result.success) {
-  if (isRetryable(result)) {
-    await sleep(getRetryDelay(result)); // ms, defaults to 5000
-  } else if (result.adcpError?.recovery === 'correctable') {
-    console.log('Fix:', result.adcpError.suggestion, 'Field:', result.adcpError.field);
-  } else {
-    console.error(result.error, 'Correlation:', result.correlationId);
-  }
-}
-```
 
 ## Idempotency (mutating requests)
 
@@ -634,8 +634,10 @@ Flow: `get_adcp_capabilities → get_products → create_media_buy → update_me
 **Generative seller agent** — Seller agent that generates creatives from briefs at buy time — no pre-built assets required.
 Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
 
+**Governance-aware seller** — Seller agent that composes with a campaign-governance agent on the buyer side — accepts sync_governance, calls check_governance before confirming spend, and propagates governance approvals, conditions, and denials unchanged. Optional claim; pure sellers without governance composition do not claim this specialism and skip the governance scenarios as not_applicable.
+
 **Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
-Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
 Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
@@ -733,8 +735,6 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
 
 **Signed requests — RFC 9421 transport-layer verification** — Agent verifies RFC 9421 HTTP Signatures on incoming AdCP requests per the transport-layer profile. Graded against conformance vectors covering every checklist step and canonicalization-edge rule.
 Flow: `get_adcp_capabilities`
-
-Server-side, `createAdcpServer({ signedRequests: { jwks, replayStore, revocationStore } })` auto-wires the verifier middleware when the seller declares the `signed-requests` specialism AND `capabilities.request_signing.supported === true`. Startup fails fast on mismatched claim/config pairs — claiming the specialism without wiring the verifier is a spec violation the framework catches at boot. Default `required_for` derives from `capabilities.request_signing.required_for` (falls back to the SDK's `MUTATING_TASKS` constant) so buyers reading the advertised contract see the same enforcement policy the server applies.
 
 ### Error Handling
 
