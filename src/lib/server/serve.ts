@@ -274,7 +274,7 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
           }
         } catch (err) {
           // Narrow to name+code — transport errors can embed remote URLs.
-          const errName = (err && (err as Error).name) || 'Error';
+          const errName = (err as Error).name || 'Error';
           const errCode = (err as { code?: string }).code ?? 'unknown';
           console.error(`preTransport middleware error: ${errName} (${errCode})`);
           if (!res.headersSent) {

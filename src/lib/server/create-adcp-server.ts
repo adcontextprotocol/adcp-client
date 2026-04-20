@@ -1225,7 +1225,7 @@ function buildSignedRequestsPreTransport(
           // Narrow to name+code only — full error stringification can embed
           // JWKS URLs from transport failures, which leaks counterparty
           // key-discovery topology on shared log aggregators.
-          const errName = (err && (err as Error).name) || 'Error';
+          const errName = (err as Error).name || 'Error';
           const errCode = (err as { code?: string }).code ?? 'unknown';
           console.error(`[adcp/signed-requests] verifier middleware error: ${errName} (${errCode})`);
           if (!res.writableEnded) {
