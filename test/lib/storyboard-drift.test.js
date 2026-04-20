@@ -166,12 +166,7 @@ describe('storyboard schema drift', () => {
   // published tarball yet. `npm run sync-schemas` pulls the most recent
   // release, so a fix merged to adcp `main` post-release stays in this
   // allowlist until the next tarball cut.
-  const KNOWN_FORWARD_DRIFT = new Set([
-    // Fixed upstream by adcontextprotocol/adcp#2468 (merged 2026-04-20):
-    // `field_present: "operations"` → `field_present: "supported_protocols"`.
-    // Remove this entry once the tarball containing that change ships.
-    'webhook_emission/get_capabilities:operations',
-  ]);
+  const KNOWN_FORWARD_DRIFT = new Set([]);
 
   // Paths that are structurally valid in the spec schema but that
   // `isPathReachable` can't resolve after the Zod codegen — the codegen
@@ -179,12 +174,7 @@ describe('storyboard schema drift', () => {
   // `oneOf` where the discriminated union gets wrapped in a way we don't
   // unwrap). These are verifier-side limitations, not spec drift; removing
   // an entry requires extending `isPathReachable` to handle the shape.
-  const VERIFIER_UNREACHABLE = new Set([
-    // `adcp.idempotency` is `oneOf: [IdempotencySupported, IdempotencyUnsupported]`
-    // and both branches carry `supported`. Valid field; our oneOf traversal
-    // after codegen misses it. Tracked for a follow-up `isPathReachable` fix.
-    'idempotency/get_capabilities:adcp.idempotency.supported',
-  ]);
+  const VERIFIER_UNREACHABLE = new Set([]);
 
   // Paths that reference spec schema fields the upstream schema doesn't
   // actually define. Each entry MUST cite an open upstream issue — if the

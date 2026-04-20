@@ -139,10 +139,8 @@ describe('request-signing: synthesize step expansion', () => {
     const positivePhase = sb.phases.find(p => p.id === 'positive_vectors');
     const negativePhase = sb.phases.find(p => p.id === 'negative_vectors');
     assert.ok(positivePhase && negativePhase, 'vector phases present');
-    // Counts float as the compliance cache ships new vectors; assert floors
-    // that match what the original vector suite (#631) locked in.
-    assert.ok(positivePhase.steps.length >= 8, `positive steps synthesized (got ${positivePhase.steps.length})`);
-    assert.ok(negativePhase.steps.length >= 20, `negative steps synthesized (got ${negativePhase.steps.length})`);
+    assert.strictEqual(positivePhase.steps.length, 12, 'all 12 positive steps synthesized');
+    assert.strictEqual(negativePhase.steps.length, 26, 'all 26 negative steps synthesized');
 
     for (const step of positivePhase.steps) {
       assert.ok(step.id.startsWith('positive-'), `positive step id: ${step.id}`);
@@ -179,10 +177,8 @@ describe('request-signing: synthesize step expansion', () => {
     const negIds = skipped.phases.find(p => p.id === 'negative_vectors').steps.map(s => s.id);
     assert.ok(!posIds.includes('positive-001-basic-post'), 'positive 001 skipped');
     assert.ok(!negIds.includes('negative-015-signature-invalid'), 'negative 015 skipped');
-    // Assert the skip delta rather than the absolute remainders — cache may
-    // ship additional vectors beyond the #631 baseline.
-    assert.ok(posIds.length >= 7, `remaining positives (got ${posIds.length})`);
-    assert.ok(negIds.length >= 19, `remaining negatives (got ${negIds.length})`);
+    assert.strictEqual(posIds.length, 11, 'remaining positives = 11');
+    assert.strictEqual(negIds.length, 25, 'remaining negatives = 25');
   });
 });
 
