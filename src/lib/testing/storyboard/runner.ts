@@ -696,15 +696,12 @@ async function executeStep(
   // + `WWW-Authenticate` header for http_* validations.
   //
   // Tests for envelope validation on mutating tasks (e.g., "missing
-  // idempotency_key returns INVALID_REQUEST") need to suppress the AdCP
-  // client's auto-inject — otherwise the client helpfully generates a
-  // UUID and the server never sees a missing-key request. Narrow trigger:
-  // the step expects an error, the task is mutating, and the request
-  // doesn't provide idempotency_key.
-  const testsMissingIdempotencyKey =
-    step.expect_error === true &&
-    isMutatingTask(effectiveStep.task) &&
-    (request as Record<string, unknown>).idempotency_key === undefined;
+  // idempotency_key returns INVALID_REQUEST") set `step.omit_idempotency_key`
+  // to suppress both the runner's `applyIdempotencyInvariant` (above) and the
+  // AdCP client's auto-inject — otherwise the SDK helpfully generates a UUID
+  // and the server never sees a missing-key request. Paired flags so the two
+  // layers agree; see `applyIdempotencyInvariant` for the runner-level skip.
+  const testsMissingIdempotencyKey = step.omit_idempotency_key === true && isMutatingTask(effectiveStep.task);
 
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
@@ -1165,23 +1162,23 @@ export function applyBrandInvariant(
  * Mint an `idempotency_key` for mutating storyboard requests when one wasn't
  * supplied. Storyboard `sample_request` blocks generally omit it; the runner
  * fills it in so the server's required-field check doesn't short-circuit the
- * handler under test.
+ * handler under test, including on `expect_error` steps that name specific
+ * failure modes (GOVERNANCE_DENIED, UNAUTHORIZED, brand_mismatch, etc.).
  *
  * Skipped when:
- *   - `step.expect_error === true` — the scenario may be exercising the
- *     server's missing-key rejection; leaving the key absent lets that case
- *     through.
+ *   - `step.omit_idempotency_key === true` — the scenario is explicitly
+ *     exercising the server's missing-key rejection path.
  *   - the task isn't mutating per {@link MUTATING_TASKS}.
- *   - the request already carries a key (typically a `$generate:uuid_v4#alias`
- *     that the context injector has resolved to a concrete UUID for replay
- *     scenarios).
+ *   - the request already carries a key — typically a
+ *     `$generate:uuid_v4#alias` the context injector has resolved to a
+ *     concrete UUID for replay scenarios, or a BYOK key supplied inline.
  */
 export function applyIdempotencyInvariant(
   request: Record<string, unknown>,
   taskName: string,
   step: StoryboardStep
 ): Record<string, unknown> {
-  if (step.expect_error === true) return request;
+  if (step.omit_idempotency_key === true) return request;
   if (!isMutatingTask(taskName)) return request;
   if (typeof request.idempotency_key === 'string' && request.idempotency_key.length > 0) return request;
   return { ...request, idempotency_key: generateIdempotencyKey() };

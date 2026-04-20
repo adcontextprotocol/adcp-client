@@ -1184,8 +1184,51 @@ describe('V3 Feature Guard Logic', () => {
 // ============================================
 
 const { normalizeRequestParams, normalizePackageParams } = require('../../dist/lib/utils/request-normalizer.js');
+const { MUTATING_TASKS } = require('../../dist/lib/utils/idempotency.js');
 
 const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
+
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+describe('normalizeRequestParams: idempotency_key auto-inject (MUTATING_TASKS coverage)', () => {
+  test('every MUTATING_TASKS member gets a UUID v4 when the caller omits idempotency_key', () => {
+    assert.ok(MUTATING_TASKS.size >= 20, `MUTATING_TASKS set looks empty (${MUTATING_TASKS.size})`);
+    for (const task of MUTATING_TASKS) {
+      const result = normalizeRequestParams(task, {});
+      assert.match(
+        String(result?.idempotency_key),
+        UUID_V4_PATTERN,
+        `${task}: expected auto-injected UUID v4 idempotency_key, got ${JSON.stringify(result?.idempotency_key)}`
+      );
+    }
+  });
+
+  test('read-only tasks do not receive an auto-injected idempotency_key', () => {
+    for (const task of ['get_products', 'get_signals', 'get_media_buys', 'list_accounts', 'list_creatives']) {
+      const result = normalizeRequestParams(task, {});
+      assert.strictEqual(
+        result?.idempotency_key,
+        undefined,
+        `${task}: read-only task should not auto-inject idempotency_key`
+      );
+    }
+  });
+
+  test('preserves a caller-supplied idempotency_key (BYOK)', () => {
+    const result = normalizeRequestParams('create_media_buy', { idempotency_key: 'byok-1234567890abcdef' });
+    assert.strictEqual(result?.idempotency_key, 'byok-1234567890abcdef');
+  });
+
+  test('treats empty-string idempotency_key as unset and injects a fresh UUID', () => {
+    const result = normalizeRequestParams('create_media_buy', { idempotency_key: '' });
+    assert.match(String(result?.idempotency_key), UUID_V4_PATTERN);
+  });
+
+  test('skipIdempotencyAutoInject=true leaves the field absent so compliance scenarios can exercise missing-key rejection', () => {
+    const result = normalizeRequestParams('create_media_buy', {}, { skipIdempotencyAutoInject: true });
+    assert.strictEqual(result?.idempotency_key, undefined);
+  });
+});
 
 describe('Request Parameter Normalization', () => {
   // Reset deprecation warnings before each test so warnOnce fires
