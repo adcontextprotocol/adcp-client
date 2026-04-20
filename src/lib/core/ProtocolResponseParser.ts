@@ -87,9 +87,53 @@ export class ProtocolResponseParser {
       return response.status as ADCPStatus;
     }
 
-    // Check MCP structuredContent.status
-    if (response?.structuredContent?.status && Object.values(ADCP_STATUS).includes(response.structuredContent.status)) {
-      return response.structuredContent.status as ADCPStatus;
+    // Check MCP structuredContent.status.
+    //
+    // Several ADCP_STATUS literals (completed, canceled, failed, rejected) also
+    // appear as values in domain status enums (e.g. MediaBuyStatus). When a
+    // seller returns a spec-compliant domain envelope like
+    //   { status: "canceled", media_buy: {...}, adcp_version: "3.0.0" }
+    // we must NOT classify that as an MCP task status, or TaskExecutor's
+    // terminal-state branches short-circuit the response with data:undefined
+    // and skip Zod validation. See issue #646.
+    //
+    // Heuristic: only treat structuredContent.status as an ADCP task status
+    // when the envelope looks like a plain task wrapper — i.e. contains only
+    // task-envelope keys. Any domain payload key present alongside `status`
+    // means this is a domain response; fall through so it's classified as
+    // COMPLETED and validators run on the payload.
+    const sc = response?.structuredContent;
+    if (sc?.status && Object.values(ADCP_STATUS).includes(sc.status)) {
+      const TASK_ENVELOPE_KEYS = new Set([
+        'status',
+        'message',
+        'messages',
+        'errors',
+        'warnings',
+        'adcp_version',
+        'context_id',
+        'task_id',
+        'task_status',
+        'replayed',
+      ]);
+      const hasDomainPayload = Object.keys(sc).some((k) => !TASK_ENVELOPE_KEYS.has(k));
+      if (!hasDomainPayload) {
+        return sc.status as ADCPStatus;
+      }
+      // Exception: preserve the task-lifecycle states that are never domain
+      // enum values, even when a domain payload is attached (e.g. a server
+      // returning partial data while still working).
+      const TASK_ONLY_STATES: string[] = [
+        ADCP_STATUS.SUBMITTED,
+        ADCP_STATUS.WORKING,
+        ADCP_STATUS.INPUT_REQUIRED,
+        ADCP_STATUS.AUTH_REQUIRED,
+      ];
+      if (TASK_ONLY_STATES.includes(sc.status)) {
+        return sc.status as ADCPStatus;
+      }
+      // Shared literal (completed/canceled/failed/rejected) + domain payload
+      // → fall through to the "has structuredContent → COMPLETED" branch.
     }
 
     // Check for MCP error responses
