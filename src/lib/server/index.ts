@@ -75,12 +75,16 @@ export type {
 export { serve } from './serve';
 export type { ServeContext, ServeOptions, ProtectedResourceMetadata } from './serve';
 
+export { createExpressAdapter } from './express-adapter';
+export type { ExpressAdapter, ExpressAdapterOptions } from './express-adapter';
+
 export {
   verifyApiKey,
   verifyBearer,
   anyOf,
   extractBearerToken,
   respondUnauthorized,
+  signatureErrorCodeFromCause,
   AuthError,
   AUTH_NEEDS_RAW_BODY,
   tagAuthenticatorNeedsRawBody,
@@ -100,8 +104,16 @@ export type {
   RespondUnauthorizedOptions,
 } from './auth';
 
-export { verifySignatureAsAuthenticator, requireSignatureWhenPresent } from './auth-signature';
-export type { VerifySignatureAsAuthenticatorOptions } from './auth-signature';
+export {
+  verifySignatureAsAuthenticator,
+  requireSignatureWhenPresent,
+  requireAuthenticatedOrSigned,
+} from './auth-signature';
+export type {
+  VerifySignatureAsAuthenticatorOptions,
+  RequireSignatureWhenPresentOptions,
+  RequireAuthenticatedOrSignedOptions,
+} from './auth-signature';
 
 export {
   InMemoryStateStore,
@@ -142,6 +154,7 @@ export {
 } from './create-adcp-server';
 export type {
   AdcpServer,
+  AdcpServerComplianceApi,
   AdcpServerTransport,
   AdcpTestRequest,
   AdcpTestToolsCallRequest,

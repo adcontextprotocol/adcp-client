@@ -70,6 +70,7 @@ export const TOOL_REQUEST_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   update_content_standards: schemas.UpdateContentStandardsRequestSchema,
   calibrate_content: schemas.CalibrateContentRequestSchema,
   validate_content_delivery: schemas.ValidateContentDeliveryRequestSchema,
+  validate_property_delivery: schemas.ValidatePropertyDeliveryRequestSchema,
 
   // Campaign governance
   sync_plans: schemas.SyncPlansRequestSchema,

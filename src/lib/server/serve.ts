@@ -25,7 +25,7 @@ import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/int
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { AuthPrincipal, Authenticator } from './auth';
-import { AuthError, authenticatorNeedsRawBody, respondUnauthorized } from './auth';
+import { AuthError, authenticatorNeedsRawBody, respondUnauthorized, signatureErrorCodeFromCause } from './auth';
 import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
 import type { AdcpServer } from './adcp-server';
 
@@ -274,6 +274,21 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
           // Surface only sanitized messages to the client; log internal cause server-side.
           const publicMessage = err instanceof AuthError ? err.publicMessage : 'Credentials rejected.';
           console.error('[adcp/auth] rejected:', err);
+          // Switch challenge scheme to `Signature` when the rejection
+          // originates in the RFC 9421 verifier — the signed_requests
+          // negative-vector grader reads the error code from the
+          // `WWW-Authenticate` header, so collapsing it into the generic
+          // `Bearer error="invalid_token"` challenge would surface the
+          // wrong code and fail every negative vector.
+          const signatureCode = signatureErrorCodeFromCause(err);
+          if (signatureCode) {
+            respondUnauthorized(req, res, {
+              signatureError: signatureCode,
+              errorDescription: publicMessage,
+              resourceMetadata: resourceMetadataUrl,
+            });
+            return;
+          }
           respondUnauthorized(req, res, {
             error: 'invalid_token',
             errorDescription: publicMessage,

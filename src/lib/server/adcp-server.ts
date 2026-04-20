@@ -89,6 +89,38 @@ export interface AdcpTestToolsCallRequest {
 export type AdcpTestResponse = unknown;
 
 /**
+ * Test-harness hooks attached to every `AdcpServer`. Namespaced under
+ * `compliance` so production code paths don't accidentally reach for
+ * them — `reset()` drops cached state and is intended for storyboard
+ * runners that exercise many scenarios in one process.
+ */
+export interface AdcpServerComplianceApi {
+  /**
+   * Drop session state and the idempotency cache so subsequent
+   * storyboards don't inherit plans, media buys, or cached replies from
+   * earlier runs. Conformance storyboards share brand domains across
+   * test kits — without this hook, a $10K governance plan seeded by
+   * `media_buy_seller/governance_denied` would intercept a $50K buy in
+   * `sales_guaranteed`.
+   *
+   * Refuses to run by default unless BOTH guardrails hold:
+   *   - `NODE_ENV !== 'production'` (opt out with `allowProduction: true`)
+   *   - The configured stores are the in-memory SDK defaults
+   *     (`InMemoryStateStore` + memory idempotency backend). Opt out
+   *     with `force: true` when you've wired a disposable test
+   *     Postgres cluster and know the flush is safe.
+   *
+   * The two flags are independent on purpose: `force` lets you flush
+   * a non-memory store you've verified is a test DB, WITHOUT also
+   * opening the door to running against a production `NODE_ENV`.
+   * Same the other way: `allowProduction` lets you run in a prod-
+   * labeled CI environment against memory stores, without bypassing
+   * the store-shape safety check.
+   */
+  reset(options?: { force?: boolean; allowProduction?: boolean }): Promise<void>;
+}
+
+/**
  * Opaque handle returned by `createAdcpServer()`.
  *
  * Pass to `serve()` to mount on an HTTP transport, or use
@@ -107,6 +139,13 @@ export interface AdcpServer {
 
   /** Close the server and release resources. */
   close(): Promise<void>;
+
+  /**
+   * Test-harness hooks — see {@link AdcpServerComplianceApi}. Not
+   * intended for production call sites; production code paths should
+   * use `close()` to release resources.
+   */
+  readonly compliance: AdcpServerComplianceApi;
 
   /**
    * Invoke a registered handler in-process and return its response.
@@ -147,6 +186,18 @@ export interface AdcpServer {
  * @internal
  */
 export const ADCP_SDK_SERVER: unique symbol = Symbol.for('@adcp/client.sdkServer');
+
+/**
+ * Symbol-keyed accessor for the state store backing an `AdcpServer`.
+ * Test harnesses and helpers like
+ * `@adcp/client/compliance-fixtures`'s `seedComplianceFixtures` need
+ * to reach the store without widening the public `AdcpServer`
+ * interface (handlers already get `ctx.store`; production code paths
+ * don't need a second accessor).
+ *
+ * @internal
+ */
+export const ADCP_STATE_STORE: unique symbol = Symbol.for('@adcp/client.stateStore');
 
 /** @internal */
 export interface AdcpServerInternal extends AdcpServer {
@@ -229,9 +280,20 @@ function getRequestHandler(
  *
  * @internal
  */
-export function wrapMcpServer(inner: McpServer | AdcpServerInternal): AdcpServerInternal {
+export function wrapMcpServer(
+  inner: McpServer | AdcpServerInternal,
+  compliance?: AdcpServerComplianceApi
+): AdcpServerInternal {
   if (isAdcpServer(inner)) return inner;
   const mcp = inner as McpServer;
+  const resolvedCompliance: AdcpServerComplianceApi = compliance ?? {
+    async reset() {
+      throw new Error(
+        'AdcpServer.compliance.reset: no-op handle returned by `wrapMcpServer` without a compliance implementation. ' +
+          'Use `createAdcpServer()` to get a server whose `compliance.reset()` flushes the state and idempotency stores.'
+      );
+    },
+  };
   const dispatch = async (request: AdcpTestRequest): Promise<AdcpTestResponse> => {
     const extra = { signal: new AbortController().signal };
 
@@ -263,6 +325,7 @@ export function wrapMcpServer(inner: McpServer | AdcpServerInternal): AdcpServer
     close() {
       return mcp.close();
     },
+    compliance: resolvedCompliance,
     // Satisfies both overloads (typed tools/call + generic fallback) — the
     // runtime dispatcher is a single function that narrows by method.
     dispatchTestRequest: dispatch as AdcpServerInternal['dispatchTestRequest'],

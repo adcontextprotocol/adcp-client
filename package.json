@@ -50,6 +50,16 @@
       "import": "./dist/lib/signing/server.js",
       "require": "./dist/lib/signing/server.js",
       "types": "./dist/lib/signing/server.d.ts"
+    },
+    "./schemas": {
+      "import": "./dist/lib/schemas/index.js",
+      "require": "./dist/lib/schemas/index.js",
+      "types": "./dist/lib/schemas/index.d.ts"
+    },
+    "./compliance-fixtures": {
+      "import": "./dist/lib/compliance-fixtures/index.js",
+      "require": "./dist/lib/compliance-fixtures/index.js",
+      "types": "./dist/lib/compliance-fixtures/index.d.ts"
     }
   },
   "typesVersions": {
@@ -77,6 +87,12 @@
       ],
       "signing/server": [
         "dist/lib/signing/server.d.ts"
+      ],
+      "schemas": [
+        "dist/lib/schemas/index.d.ts"
+      ],
+      "compliance-fixtures": [
+        "dist/lib/compliance-fixtures/index.d.ts"
       ]
     }
   },
