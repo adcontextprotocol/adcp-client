@@ -164,7 +164,6 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
   const generateKey = options.generateIdempotencyKey ?? defaultGenerateIdempotencyKey;
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const sleep = options.sleep ?? defaultSleep;
-  const defaultRetries = resolveRetries(options.retries);
 
   return {
     async emit(params: WebhookEmitParams): Promise<WebhookEmitResult> {
