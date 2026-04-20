@@ -873,9 +873,7 @@ function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationCo
       ? dedupRefs(outOfScope, matchKeys).map(ref => ({ kind: 'out_of_scope_ref', ref: projectRef(ref, matchKeys) }))
       : [];
   const observations =
-    warnObservations.length + scalarObservations.length > 0
-      ? [...warnObservations, ...scalarObservations]
-      : undefined;
+    warnObservations.length + scalarObservations.length > 0 ? [...warnObservations, ...scalarObservations] : undefined;
 
   if (allMissing.length === 0) {
     return {

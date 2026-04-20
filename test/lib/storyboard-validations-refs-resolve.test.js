@@ -77,9 +77,7 @@ describe('validateRefsResolve', () => {
     };
     const [result] = runOne(refsResolveCheck(), taskResult, context);
     assert.strictEqual(result.passed, false);
-    assert.deepStrictEqual(result.actual.missing, [
-      { agent_url: AGENT_URL, id: 'stale_format_that_was_removed' },
-    ]);
+    assert.deepStrictEqual(result.actual.missing, [{ agent_url: AGENT_URL, id: 'stale_format_that_was_removed' }]);
     assert.match(result.error, /stale_format_that_was_removed/);
   });
 
@@ -121,9 +119,7 @@ describe('validateRefsResolve', () => {
 
   it('ignores out-of-scope refs silently when on_out_of_scope is ignore', () => {
     const context = {
-      products: [
-        { format_ids: [{ agent_url: THIRD_PARTY_URL, id: 'third' }] },
-      ],
+      products: [{ format_ids: [{ agent_url: THIRD_PARTY_URL, id: 'third' }] }],
     };
     const taskResult = { success: true, data: { formats: [] } };
     const [result] = runOne(
@@ -162,18 +158,14 @@ describe('validateRefsResolve', () => {
       context
     );
     assert.strictEqual(result.passed, false);
-    assert.deepStrictEqual(result.actual.out_of_scope_failed, [
-      { agent_url: THIRD_PARTY_URL, id: 'third' },
-    ]);
+    assert.deepStrictEqual(result.actual.out_of_scope_failed, [{ agent_url: THIRD_PARTY_URL, id: 'third' }]);
   });
 
   it('normalizes trailing slashes when comparing agent_url in scope', () => {
     const context = {
       products: [
         {
-          format_ids: [
-            { agent_url: AGENT_URL + '/', id: 'display_300x250' },
-          ],
+          format_ids: [{ agent_url: AGENT_URL + '/', id: 'display_300x250' }],
         },
       ],
     };
@@ -194,7 +186,12 @@ describe('validateRefsResolve', () => {
   it('resolves nested [*] wildcards across multiple products', () => {
     const context = {
       products: [
-        { format_ids: [{ agent_url: AGENT_URL, id: 'a' }, { agent_url: AGENT_URL, id: 'b' }] },
+        {
+          format_ids: [
+            { agent_url: AGENT_URL, id: 'a' },
+            { agent_url: AGENT_URL, id: 'b' },
+          ],
+        },
         { format_ids: [{ agent_url: AGENT_URL, id: 'c' }] },
       ],
     };
@@ -230,11 +227,7 @@ describe('validateRefsResolve', () => {
   });
 
   it('returns a config error when source/target/match_keys are missing', () => {
-    const [result] = runOne(
-      { check: 'refs_resolve', description: 'misconfigured' },
-      { success: true, data: {} },
-      {}
-    );
+    const [result] = runOne({ check: 'refs_resolve', description: 'misconfigured' }, { success: true, data: {} }, {});
     assert.strictEqual(result.passed, false);
     assert.match(result.error, /source.*target.*match_keys/);
   });
@@ -281,11 +274,7 @@ describe('validateRefsResolve', () => {
   it('deduplicates actual.missing on projected match_key tuple', () => {
     const sameBadRef = { agent_url: AGENT_URL, id: 'stale' };
     const context = {
-      products: [
-        { format_ids: [sameBadRef] },
-        { format_ids: [sameBadRef] },
-        { format_ids: [sameBadRef] },
-      ],
+      products: [{ format_ids: [sameBadRef] }, { format_ids: [sameBadRef] }, { format_ids: [sameBadRef] }],
     };
     const taskResult = { success: true, data: { formats: [] } };
     const [result] = runOne(refsResolveCheck(), taskResult, context);
