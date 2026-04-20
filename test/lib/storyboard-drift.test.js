@@ -179,12 +179,7 @@ describe('storyboard schema drift', () => {
   // `oneOf` where the discriminated union gets wrapped in a way we don't
   // unwrap). These are verifier-side limitations, not spec drift; removing
   // an entry requires extending `isPathReachable` to handle the shape.
-  const VERIFIER_UNREACHABLE = new Set([
-    // `adcp.idempotency` is `oneOf: [IdempotencySupported, IdempotencyUnsupported]`
-    // and both branches carry `supported`. Valid field; our oneOf traversal
-    // after codegen misses it. Tracked for a follow-up `isPathReachable` fix.
-    'idempotency/get_capabilities:adcp.idempotency.supported',
-  ]);
+  const VERIFIER_UNREACHABLE = new Set([]);
 
   // Paths that reference spec schema fields the upstream schema doesn't
   // actually define. Each entry MUST cite an open upstream issue — if the
