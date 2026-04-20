@@ -6,35 +6,9 @@
  * deprecation warning via warnOnce().
  */
 
-import { randomUUID } from 'crypto';
-
 import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
 import { warnOnce } from './deprecation';
-
-/**
- * Task types whose request schema requires `idempotency_key` per AdCP spec.
- * When the caller omits one, the normalizer mints a fresh UUID — the spec
- * requires a per-(seller, request) unique value and auto-generation gives
- * that by construction for buyers that don't track their own keys.
- */
-const TASKS_REQUIRING_IDEMPOTENCY_KEY: ReadonlySet<string> = new Set([
-  'activate_signal',
-  'calibrate_content',
-  'create_media_buy',
-  'delete_collection_list',
-  'delete_property_list',
-  'log_event',
-  'provide_performance_feedback',
-  'report_plan_outcome',
-  'report_usage',
-  'sync_accounts',
-  'sync_audiences',
-  'sync_catalogs',
-  'sync_creatives',
-  'sync_event_sources',
-  'sync_governance',
-  'sync_plans',
-]);
+import { MUTATING_TASKS, generateIdempotencyKey } from './idempotency';
 
 /**
  * Normalize a single package's params for backward compatibility.
@@ -95,16 +69,18 @@ export function normalizeRequestParams(
 
   // ── idempotency_key auto-generation ──
   // Tasks that mutate state require a caller-supplied idempotency_key per
-  // AdCP spec. When the caller omits it, mint a fresh UUID v4. Most buyer
+  // AdCP spec. When the caller omits one, mint a fresh UUID v4. Most buyer
   // code never needs to track keys of its own — retries via a kept-around
   // key are the less-common path, and those callers supply their own.
   // `opts.skipIdempotencyAutoInject` disables this for compliance testing.
+  // MUTATING_TASKS is derived from the Zod request schemas at module load
+  // so this stays in sync with the upstream spec — no hand-maintained list.
   if (
     !opts.skipIdempotencyAutoInject &&
-    TASKS_REQUIRING_IDEMPOTENCY_KEY.has(taskType) &&
+    MUTATING_TASKS.has(taskType) &&
     (typeof normalized.idempotency_key !== 'string' || normalized.idempotency_key.length === 0)
   ) {
-    normalized.idempotency_key = randomUUID();
+    normalized.idempotency_key = generateIdempotencyKey();
   }
 
   // ── Universal shims (all tools) ──

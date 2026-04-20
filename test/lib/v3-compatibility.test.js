@@ -15,8 +15,11 @@ const {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  supportsExperimentalFeature,
   requiresOperatorAuth,
   requiresAccountForProducts,
+  resolveFeature,
+  listDeclaredFeatures,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
   CREATIVE_TOOLS,
@@ -263,6 +266,79 @@ describe('parseCapabilitiesResponse', () => {
 
     assert.ok(capabilities.account);
     assert.deepStrictEqual(capabilities.account.supportedBilling, []);
+  });
+
+  test('should parse experimental_features from the AdCP 3.0 GA response envelope', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy', 'brand'],
+      extensions_supported: [],
+      experimental_features: ['brand.rights_lifecycle', 'governance.campaign'],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.deepStrictEqual(capabilities.experimentalFeatures, ['brand.rights_lifecycle', 'governance.campaign']);
+  });
+
+  test('experimentalFeatures is undefined when the seller does not declare any', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.strictEqual(capabilities.experimentalFeatures, undefined);
+  });
+
+  test('experimentalFeatures drops non-string entries rather than throwing on malformed payloads', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      extensions_supported: [],
+      experimental_features: ['brand.rights_lifecycle', 123, null, 'governance.campaign'],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.deepStrictEqual(capabilities.experimentalFeatures, ['brand.rights_lifecycle', 'governance.campaign']);
+  });
+});
+
+describe('supportsExperimentalFeature', () => {
+  const caps = parseCapabilitiesResponse({
+    adcp: { major_versions: [3] },
+    supported_protocols: ['brand'],
+    extensions_supported: [],
+    experimental_features: ['brand.rights_lifecycle'],
+  });
+
+  test('returns true when the seller declared the feature id', () => {
+    assert.strictEqual(supportsExperimentalFeature(caps, 'brand.rights_lifecycle'), true);
+  });
+
+  test('returns false when the seller did not declare the feature id', () => {
+    assert.strictEqual(supportsExperimentalFeature(caps, 'governance.campaign'), false);
+  });
+
+  test('returns false when the seller declared no experimental features at all', () => {
+    const noneCaps = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      extensions_supported: [],
+    });
+    assert.strictEqual(supportsExperimentalFeature(noneCaps, 'brand.rights_lifecycle'), false);
+  });
+
+  test('resolveFeature honors the experimental:<id> namespace', () => {
+    assert.strictEqual(resolveFeature(caps, 'experimental:brand.rights_lifecycle'), true);
+    assert.strictEqual(resolveFeature(caps, 'experimental:governance.campaign'), false);
+  });
+
+  test('listDeclaredFeatures surfaces experimental ids so error messages can cite them', () => {
+    assert.ok(listDeclaredFeatures(caps).includes('experimental:brand.rights_lifecycle'));
   });
 });
 

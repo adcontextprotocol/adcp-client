@@ -21,7 +21,7 @@ import {
 import { runValidations, type ValidationContext } from './validations';
 import { buildRequest, hasRequestBuilder } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
-import { isMutatingTask } from '../../utils/idempotency';
+import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -658,6 +658,14 @@ async function executeStep(
   // when individual builders or sample_request YAML omit brand.
   request = applyBrandInvariant(request, options);
 
+  // Mutating AdCP requests require idempotency_key per spec. Storyboard
+  // yamls generally omit it so authors don't have to remember it on every
+  // mutating step — mint one here on the runner's behalf, matching how a
+  // real buyer would operate. Suppressed when the step expects a missing-key
+  // error (see `testsMissingIdempotencyKey` below) so that compliance
+  // surfaces can still exercise the server's required-field check.
+  request = applyIdempotencyInvariant(request, effectiveStep.task, step);
+
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
   const unresolvedVars = findUnresolvedContextVars(request);
@@ -1151,6 +1159,32 @@ export function applyBrandInvariant(
     result.account = resolveAccount(options);
   }
   return result;
+}
+
+/**
+ * Mint an `idempotency_key` for mutating storyboard requests when one wasn't
+ * supplied. Storyboard `sample_request` blocks generally omit it; the runner
+ * fills it in so the server's required-field check doesn't short-circuit the
+ * handler under test.
+ *
+ * Skipped when:
+ *   - `step.expect_error === true` — the scenario may be exercising the
+ *     server's missing-key rejection; leaving the key absent lets that case
+ *     through.
+ *   - the task isn't mutating per {@link MUTATING_TASKS}.
+ *   - the request already carries a key (typically a `$generate:uuid_v4#alias`
+ *     that the context injector has resolved to a concrete UUID for replay
+ *     scenarios).
+ */
+export function applyIdempotencyInvariant(
+  request: Record<string, unknown>,
+  taskName: string,
+  step: StoryboardStep
+): Record<string, unknown> {
+  if (step.expect_error === true) return request;
+  if (!isMutatingTask(taskName)) return request;
+  if (typeof request.idempotency_key === 'string' && request.idempotency_key.length > 0) return request;
+  return { ...request, idempotency_key: generateIdempotencyKey() };
 }
 
 // ────────────────────────────────────────────────────────────

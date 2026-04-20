@@ -728,6 +728,7 @@ export {
   requiresOperatorAuth,
   requiresAccountForProducts,
   supportsSandbox,
+  supportsExperimentalFeature,
   resolveFeature,
   listDeclaredFeatures,
   MEDIA_BUY_TOOLS,

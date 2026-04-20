@@ -142,6 +142,17 @@ export interface AdcpCapabilities {
   /** Supported extension namespaces (e.g., 'scope3', 'garm') */
   extensions: string[];
 
+  /**
+   * Experimental AdCP surfaces this agent implements. Dot-namespaced feature
+   * ids (e.g. `brand.rights_lifecycle`, `governance.campaign`, `trusted_match.core`)
+   * sellers declare when they opt into surfaces whose schemas carry
+   * `x-status: experimental`. Consumers should gate any reliance on
+   * experimental fields on presence of the matching id here.
+   *
+   * See https://adcontextprotocol.org/docs/reference/experimental-status
+   */
+  experimentalFeatures?: string[];
+
   /** Publisher domains covered by this agent */
   publisherDomains?: string[];
 
@@ -393,6 +404,9 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     creative,
     idempotency,
     extensions: response.extensions_supported ?? [],
+    experimentalFeatures: Array.isArray(response.experimental_features)
+      ? response.experimental_features.filter((f: unknown): f is string => typeof f === 'string')
+      : undefined,
     publisherDomains: response.media_buy?.portfolio?.publisher_domains,
     channels: response.media_buy?.portfolio?.channels,
     lastUpdated: response.last_updated,
@@ -448,6 +462,27 @@ export function requiresAccountForProducts(capabilities: AdcpCapabilities): bool
  */
 export function supportsSandbox(capabilities: AdcpCapabilities): boolean {
   return capabilities.account?.sandbox ?? false;
+}
+
+/**
+ * Check if the agent has opted into a specific experimental AdCP surface.
+ *
+ * Experimental surfaces carry `x-status: experimental` in the spec and their
+ * fields may change between minor releases. Consumers should gate any
+ * reliance on experimental fields on a positive check here.
+ *
+ * @param capabilities — normalized capabilities from `parseCapabilitiesResponse`
+ * @param featureId — dot-namespaced id (e.g. `brand.rights_lifecycle`)
+ *
+ * @example
+ * ```ts
+ * if (supportsExperimentalFeature(caps, 'brand.rights_lifecycle')) {
+ *   // safe to call acquire_rights / release_rights and read their responses
+ * }
+ * ```
+ */
+export function supportsExperimentalFeature(capabilities: AdcpCapabilities, featureId: string): boolean {
+  return capabilities.experimentalFeatures?.includes(featureId) ?? false;
 }
 
 /**
@@ -567,6 +602,12 @@ export function resolveFeature(capabilities: AdcpCapabilities, feature: FeatureN
     return capabilities.extensions.includes(extName);
   }
 
+  // Experimental-surface check (e.g., 'experimental:brand.rights_lifecycle')
+  if (feature.startsWith('experimental:')) {
+    const featureId = feature.slice('experimental:'.length);
+    return supportsExperimentalFeature(capabilities, featureId);
+  }
+
   // Targeting check (e.g., 'targeting.geo_countries')
   if (feature.startsWith('targeting.')) {
     const targetingKey = feature.slice(10);
@@ -612,6 +653,11 @@ export function listDeclaredFeatures(capabilities: AdcpCapabilities): string[] {
   // Extensions
   for (const ext of capabilities.extensions) {
     features.push(`ext:${ext}`);
+  }
+
+  // Experimental surfaces
+  for (const id of capabilities.experimentalFeatures ?? []) {
+    features.push(`experimental:${id}`);
   }
 
   // Targeting (from raw response)
