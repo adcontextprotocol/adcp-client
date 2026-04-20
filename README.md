@@ -355,6 +355,8 @@ const ttlSeconds = await client.getIdempotencyReplayTtlSeconds();
 
 Idempotency keys are retry-pattern oracles within their TTL, so the SDK truncates them to the first 8 characters in debug logs by default. Set `ADCP_LOG_IDEMPOTENCY_KEYS=1` to opt into full logging for local debugging.
 
+**Crash recovery**: if your process dies mid-retry and you need to decide whether to re-send — look up the persisted key by natural key, check `result.metadata.replayed`, and handle `IdempotencyConflictError` / `IdempotencyExpiredError`. Worked recipe in [`docs/guides/idempotency-crash-recovery.md`](./docs/guides/idempotency-crash-recovery.md).
+
 ## Security
 
 ### Webhook Signature Verification

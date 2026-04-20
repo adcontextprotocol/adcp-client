@@ -106,6 +106,8 @@ export {
   type CreativeAgentClientConfig,
 } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
+export { match } from './core/match';
+export type { MatchHandlers, PartialMatchHandlers } from './core/match';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
 export {
   ResponseValidator,
@@ -510,6 +512,7 @@ export {
   getMcpTasksMigration,
   MCP_TASKS_MIGRATION,
   createAdcpServer,
+  ADCP_PRE_TRANSPORT,
   checkGovernance,
   governanceDeniedError,
   DEFAULT_REPORTING_CAPABILITIES,
@@ -565,6 +568,8 @@ export type {
   AccountHandlers,
   EventTrackingHandlers,
   SponsoredIntelligenceHandlers,
+  SignedRequestsConfig,
+  AdcpPreTransport,
   CheckGovernanceOptions,
   GovernanceCallResult,
   GovernanceApproved,

@@ -65,8 +65,26 @@ export function memoryWebhookKeyStore(): WebhookIdempotencyKeyStore {
  * Authentication mode for a single delivery. Omit / pass `null` to use the
  * 9421 baseline. `bearer` / `hmac_sha256` drop back to legacy flows for
  * buyers who populated `push_notification_config.authentication.credentials`.
+ *
+ * @deprecated The `hmac_sha256` variant is deprecated and scheduled for
+ * removal in `@adcp/client` 6.0.0. Migrate to RFC 9421 webhook signatures.
+ * See docs/migration-4.30-to-5.2.md#webhook-hmac-legacy-deprecation.
  */
 export type WebhookAuthentication = { type: 'bearer'; token: string } | { type: 'hmac_sha256'; secret: string } | null;
+
+let hmacWarningFired = false;
+
+function maybeWarnHmacDeprecation(): void {
+  if (hmacWarningFired) return;
+  if (process.env.ADCP_SUPPRESS_HMAC_WARNING === '1') return;
+  hmacWarningFired = true;
+  console.warn(
+    '[adcp] Warning: webhook HMAC-SHA256 authentication is deprecated and ' +
+      'will be removed in @adcp/client 6.0.0. Migrate to RFC 9421 webhook ' +
+      'signatures. See docs/migration-4.30-to-5.2.md#webhook-hmac-legacy-deprecation. ' +
+      'Suppress with ADCP_SUPPRESS_HMAC_WARNING=1.'
+  );
+}
 
 export interface WebhookRetryOptions {
   /** Max delivery attempts (≥1). Default 5. */
@@ -302,6 +320,7 @@ function buildHeaders(args: {
   // §3.0 legacy section: X-ADCP-Signature + X-ADCP-Timestamp over
   // `${ts}.${raw_body_bytes}`.
   if (args.authentication?.type === 'hmac_sha256') {
+    maybeWarnHmacDeprecation();
     const ts = Math.floor(Date.now() / 1000).toString();
     const hmac = createHmac('sha256', args.authentication.secret);
     hmac.update(`${ts}.${args.bodyBytes}`, 'utf8');

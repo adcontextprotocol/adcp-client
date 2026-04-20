@@ -125,13 +125,15 @@ export type { PostgresStateStoreOptions } from './postgres-state-store';
 
 export { structuredSerialize, structuredDeserialize } from './structured-serialize';
 
-export { createAdcpServer, requireSessionKey } from './create-adcp-server';
+export { createAdcpServer, requireSessionKey, ADCP_PRE_TRANSPORT } from './create-adcp-server';
 export type {
   AdcpServerConfig,
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
   AdcpLogger,
+  SignedRequestsConfig,
+  AdcpPreTransport,
   HandlerContext,
   SessionKeyContext,
   MediaBuyHandlers,

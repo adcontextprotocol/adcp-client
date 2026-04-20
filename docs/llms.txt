@@ -135,6 +135,8 @@ const key = await db.getOrCreateIdempotencyKey(campaign.id);
 await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
 ```
 
+**Crash-recovery cookbook.** For an end-to-end recipe (natural-key lookup after restart, `IdempotencyConflictError` / `IdempotencyExpiredError` handling, `metadata.replayed` as side-effect gate, Postgres schema), see [`docs/guides/idempotency-crash-recovery.md`](./guides/idempotency-crash-recovery.md).
+
 ## Tools
 
 Every tool is an MCP tool called via `agent.<methodName>(params)`. Returns `TaskResult<T>` with `status`, `data`, `error`, `adcpError`, `correlationId`, `deferred`, or `submitted`.

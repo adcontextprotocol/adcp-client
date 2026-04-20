@@ -762,6 +762,115 @@ Key points:
 6. Use `adcpError()` for business validation failures
 7. Use `as const` on string literal arrays and union-typed fields in product definitions — TypeScript infers `string[]` from `['display', 'olv']` but the SDK requires specific union types like `MediaChannel[]`. Apply `as const` to `channels`, `delivery_type`, `selection_type`, and `pricing_model` values.
 
+## Governance
+
+The Implementation example above already shows the baseline `checkGovernance()` call on `create_media_buy`. This section covers the regulated-category flow: when a buyer's governance plan marks a media buy as requiring human review, you MUST route it to a human approver before committing spend.
+
+### GDPR Art 22 / EU AI Act — when to require human review
+
+**Why.** GDPR Article 22 bars fully automated decisions with legal or similarly significant effect on the data subject in certain contexts. The EU AI Act classifies some advertising use cases as Annex III high-risk — employment ads, credit offers, housing, insurance, education. For regulated verticals, fully automated media buys are non-compliant; the seller must put a human in the loop and preserve the decision record.
+
+The buyer signals this by setting `plan.human_review_required: true` on the governance plan. AdCP 3.0 GA made this the canonical field — replacing `budget.authority_level: 'human_required'` from earlier drafts.
+
+**Seller obligation.** On `create_media_buy`:
+
+1. Read `plan.human_review_required` from the buyer's governance plan (which you already fetched / synced via `sync_plans` or the inbound governance check).
+2. If `true` — enqueue the buy for human approval and return `status: 'submitted'` with a `task_id` the buyer can poll. Do NOT execute the buy until an approver signs off.
+3. On approval, construct the override artifact with `buildHumanOverride({ reason, approver, approvedAt })` and persist it alongside the completed buy. The override is the compliance evidence that a human authorized the automated path.
+4. If `false` — proceed with the normal `checkGovernance()` flow and commit.
+
+### Worked example
+
+```typescript
+import {
+  createAdcpServer,
+  serve,
+  checkGovernance,
+  governanceDeniedError,
+  adcpError,
+  buildHumanOverride,
+  REGULATED_HUMAN_REVIEW_CATEGORIES,
+  ANNEX_III_POLICY_IDS,
+} from '@adcp/client';
+import { randomUUID } from 'node:crypto';
+
+serve(() => createAdcpServer({
+  name: 'Regulated Publisher',
+  version: '1.0.0',
+  resolveAccount: async (ref) => db.findAccount(ref),
+  mediaBuy: {
+    createMediaBuy: async (params, ctx) => {
+      const plan = await ctx.store.get('governance_plans', params.plan_id);
+      if (!plan) return adcpError('PLAN_NOT_FOUND', { field: 'plan_id' });
+
+      // Human-review gate — GDPR Art 22 / EU AI Act Annex III.
+      if (plan.human_review_required === true) {
+        const taskId = `task_${randomUUID()}`;
+        await ctx.store.put('pending_reviews', taskId, {
+          plan_id: params.plan_id,
+          params,
+          enqueued_at: new Date().toISOString(),
+          account_id: ctx.account.id,
+        });
+        // Route this task_id to your human-review queue (e.g., a Slack
+        // approval workflow, a ticket in your ops tool, an internal UI).
+        await humanReviewQueue.enqueue(taskId);
+        return { status: 'submitted', task_id: taskId };
+      }
+
+      // Non-regulated path — proceed with normal governance check.
+      if (ctx.account?.governanceUrl) {
+        const gov = await checkGovernance({
+          agentUrl: ctx.account.governanceUrl,
+          planId: params.plan_id,
+          caller: 'https://my-publisher.com/mcp',
+          tool: 'create_media_buy',
+          payload: params,
+        });
+        if (!gov.approved) return governanceDeniedError(gov);
+      }
+      return executeBuy(params);
+    },
+  },
+}));
+
+// Approval handler — called by your human-review UI when the reviewer signs off.
+async function onHumanApproval(taskId: string, approver: string, reason: string) {
+  const pending = await store.get('pending_reviews', taskId);
+  if (!pending) throw new Error(`No pending review with id ${taskId}`);
+
+  // Constructs the compliance artifact — validates reason ≥ 20 chars,
+  // approver is an email, no control chars, ISO 8601 approved_at.
+  const override = buildHumanOverride({ reason, approver, approvedAt: new Date() });
+
+  const buy = await executeBuy(pending.params);
+  await store.put('media_buys', buy.media_buy_id, {
+    ...buy,
+    human_override: override,
+    plan_id: pending.plan_id,
+  });
+  // Resolve the submitted task so the buyer's poll sees status: 'completed'.
+  await ctx.tasks.complete(taskId, buy);
+}
+```
+
+### Decision table
+
+| Plan shape                                                                  | `human_review_required` | Who approves         | Artifact required                           |
+| --------------------------------------------------------------------------- | ----------------------- | -------------------- | ------------------------------------------- |
+| General consumer CPG, travel, retail                                        | `false` (or absent)     | Automated governance | `governance_context` echoed through lifecycle |
+| Employment, credit, housing, insurance, education (Annex III high-risk)     | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
+| Fair-housing, fair-lending, fair-employment, pharmaceutical (US regulated)  | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
+| Explicit `policy_ids: ['eu_ai_act_annex_iii']`                              | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
+
+`REGULATED_HUMAN_REVIEW_CATEGORIES` (exported from `@adcp/client`) is the client-side minimum: `['fair_housing', 'fair_lending', 'fair_employment', 'pharmaceutical_advertising']`. `ANNEX_III_POLICY_IDS` is `['eu_ai_act_annex_iii']`. Governance agents resolve synonyms and per-publisher extensions server-side; these constants exist so pre-submit validation doesn't round-trip. Extend with your own vertical list if needed.
+
+### Pitfalls
+
+- Don't silently flip `human_review_required: true → false` on re-sync without `buildHumanOverride`. That's a compliance violation — the whole point of the field is that downgrades require documented human authorization.
+- `buildHumanOverride` throws if `reason` trims to fewer than 20 characters, if `approver` fails the email regex, if either has control characters, or if `approvedAt` isn't a `Date` / parseable ISO 8601 string. Validate your UI's approval form against the same rules.
+- Thread `governance_context` through `create_media_buy` → `update_media_buy` → delivery / lifecycle events. Dropping it breaks the audit chain — downstream governance checks need the opaque token to reconcile decisions.
+
 <a name="idempotency"></a>
 ## Idempotency
 
@@ -782,6 +891,8 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 
 1. `ttlSeconds` must be `3600` (1h) to `604800` (7d) — out of range throws at `createIdempotencyStore` construction. Don't pass minutes thinking they're seconds.
 2. If you register mutating handlers without passing `idempotency`, the framework logs an error at server-creation time (v3 non-compliance). Silence it by either wiring idempotency or setting `capabilities.idempotency.replay_ttl_seconds` in your config (declares non-compliance to buyers).
+
+**Buyer-side crash recovery.** When your buyers' processes die mid-retry they need to know whether to re-send. Point them at [`docs/guides/idempotency-crash-recovery.md`](../../docs/guides/idempotency-crash-recovery.md) — worked recipe for natural-key lookup, `IdempotencyConflictError` / `IdempotencyExpiredError`, and `metadata.replayed` as the side-effect gate.
 
 ## Going to Production
 
@@ -1239,6 +1350,27 @@ The `WWW-Authenticate` header is the grading surface — return the right error 
 3. For negative vectors `016` (replayed nonce), `017` (revoked key), `020` (per-keyid cap), your verifier is pre-configured per `signed-requests-runner.yaml` — the runner cannot set that state from outside. Missing prerequisites grade as **FAIL**, not SKIP.
 
 **Use the SDK's server verifier.** Don't write signature parsing or canonicalization yourself — `@adcp/client/signing/server` ships the full pipeline. The canonical wiring lives in [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) which feeds `verifyRequestSignature` through `serve({ preTransport })`; don't hand-roll an Express middleware chain alongside it. What you need that's specific to this specialism is the capability advertisement and the revocation-store pre-state:
+
+**Auto-wiring via `createAdcpServer`.** When you're already using `createAdcpServer`, pass `signedRequests: { jwks, replayStore, revocationStore }` and add `'signed-requests'` to `capabilities.specialisms` — the framework builds the verifier preTransport for you and `serve()` auto-mounts it. `createAdcpServer` throws at startup when `signedRequests` is set without the specialism claim (buyers wouldn't sign), and logs a loud error in the other direction (leaving the legacy manual `serve({ preTransport })` path working). Keep `request_signing` in capabilities separately — it's still how buyers discover your `required_for` policy.
+
+```typescript
+createAdcpServer({
+  // ...handlers...
+  capabilities: {
+    request_signing: capability,
+    specialisms: ['signed-requests'],
+  },
+  signedRequests: {
+    jwks,
+    replayStore,
+    revocationStore,
+    // required_for defaults to every mutating AdCP tool (MUTATING_TASKS).
+    // Narrow it to match the capability.required_for policy:
+    required_for: capability.required_for,
+    covers_content_digest: capability.covers_content_digest,
+  },
+});
+```
 
 ```typescript
 import {
