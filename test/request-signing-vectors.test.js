@@ -19,17 +19,6 @@ const ROOT = path.join(__dirname, '..', 'compliance', 'cache', 'latest', 'test-v
 const keysData = JSON.parse(readFileSync(path.join(ROOT, 'keys.json'), 'utf8'));
 const keysByKid = new Map(keysData.keys.map(k => [k.kid, k]));
 
-// adcp#2335 fixed the stale Content-Digest in positive/002 at spec head. The
-// fixed vector ships once latest.tgz is rebuilt — until then, `npm run sync-schemas`
-// still pulls the pre-fix digest and this test auto-skips. Remove the skip once
-// the synced vector reports the correct `SNIVma8d...` digest.
-const awaitingUpstreamTarball = (() => {
-  const p = path.join(ROOT, 'positive', '002-post-with-content-digest.json');
-  const vector = JSON.parse(readFileSync(p, 'utf8'));
-  return vector.request.headers['Content-Digest'].includes('X48E9qOokqqr');
-})();
-const KNOWN_UPSTREAM_BUG = awaitingUpstreamTarball ? new Set(['002-post-with-content-digest.json']) : new Set();
-
 function parseSigInput(headerValue) {
   const parsed = parseSignatureInput(headerValue);
   return { components: parsed.components, params: parsed.params };
@@ -95,8 +84,7 @@ describe('RFC 9421 verifier: positive conformance vectors (adcp#2323)', () => {
   const dir = path.join(ROOT, 'positive');
   for (const file of readdirSync(dir).sort()) {
     const vector = JSON.parse(readFileSync(path.join(dir, file), 'utf8'));
-    const isKnownBug = KNOWN_UPSTREAM_BUG.has(file);
-    test(`${file}${isKnownBug ? ' [skipped: upstream adcp#2335]' : ''}`, { skip: isKnownBug }, async () => {
+    test(file, async () => {
       const actual = await runVector(vector);
       assert.strictEqual(actual.success, true, JSON.stringify(actual));
     });

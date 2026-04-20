@@ -112,9 +112,12 @@ const HARNESS_STORYBOARDS = new Set(['deterministic_testing']);
 // it's set by the seller's idempotency layer, not the inner response type.
 const ENVELOPE_PATHS = new Set(['context', 'context.correlation_id', 'ext', 'replayed']);
 
-// Upstream scenarios whose validations reference fields not yet in the SDK's
-// generated Zod schemas. Track upstream issues before adding to this list.
-const KNOWN_SCHEMA_DRIFT_STORYBOARDS = new Set(['media_buy_seller/inventory_list_targeting']);
+// Entire storyboards whose validations reference schema shapes that diverge
+// from the generated Zod schemas AND that blanket-skipping is defensible
+// for. Prefer field-path entries in UPSTREAM_SCHEMA_DRIFT / VERIFIER_UNREACHABLE
+// over adding here — this set hides ALL checks in the storyboard, not just
+// the drifting ones.
+const KNOWN_SCHEMA_DRIFT_STORYBOARDS = new Set();
 
 function collectFieldValidations(storyboards) {
   const entries = [];
@@ -183,8 +186,24 @@ describe('storyboard schema drift', () => {
     'idempotency/get_capabilities:adcp.idempotency.supported',
   ]);
 
+  // Paths that reference spec schema fields the upstream schema doesn't
+  // actually define. Each entry MUST cite an open upstream issue — if the
+  // citation closes without the field landing, the entry is stale and
+  // should be removed or re-evaluated.
+  const UPSTREAM_SCHEMA_DRIFT = new Set([
+    // adcontextprotocol/adcp#2488 — PackageStatus lacks `targeting_overlay`,
+    // so get_media_buys can't echo the property_list / collection_list the
+    // seller persisted. Storyboard media_buy_seller/inventory_list_targeting
+    // asserts both read paths post-create and post-update (4 entries total).
+    'media_buy_seller/inventory_list_targeting/get_after_create:media_buys[0].packages[0].targeting_overlay.property_list.list_id',
+    'media_buy_seller/inventory_list_targeting/get_after_create:media_buys[0].packages[0].targeting_overlay.collection_list.list_id',
+    'media_buy_seller/inventory_list_targeting/get_after_update:media_buys[0].packages[0].targeting_overlay.property_list.list_id',
+    'media_buy_seller/inventory_list_targeting/get_after_update:media_buys[0].packages[0].targeting_overlay.collection_list.list_id',
+  ]);
+
   function skipReason(key) {
     if (KNOWN_FORWARD_DRIFT.has(key)) return 'known forward-drift pending schema regen';
+    if (UPSTREAM_SCHEMA_DRIFT.has(key)) return 'upstream schema drift — see adcp#2488';
     if (VERIFIER_UNREACHABLE.has(key)) return 'verifier-side path-reachability limitation';
     return false;
   }
