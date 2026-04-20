@@ -106,9 +106,9 @@ The current working directory already has a \`package.json\` with \`@adcp/client
    \`\`\`
    and make it executable (\`chmod +x start.sh\`).
 
-3. Do NOT start the server yourself. The harness runs \`bash start.sh\` after you exit. Any server process you leave running will be killed.
+3. **Do NOT run server.ts, start.sh, or npm start yourself — not even to verify.** The harness will run start.sh after you exit and binds port ${port}; if you leave a process running on that port, the harness fails with EADDRINUSE. Trust the SDK — if it compiles, the harness will exercise it. Your only job is to write the files and exit.
 
-4. Exit cleanly when done.
+4. Typecheck with \`npx tsc --noEmit server.ts\` (optional) to catch compile errors. Do NOT run the server. Exit cleanly when the files are written.
 
 ## Constraints
 
@@ -174,14 +174,27 @@ async function runClaude(prompt: string, cwd: string, timeoutMs: number): Promis
   });
 }
 
-async function startAgent(cwd: string): Promise<ChildProcess> {
+async function startAgent(cwd: string, port: number): Promise<ChildProcess> {
   const startSh = join(cwd, 'start.sh');
   const s = await stat(startSh).catch(() => null);
   if (!s) throw new Error(`claude did not produce start.sh in ${cwd}`);
   await chmod(startSh, 0o755);
+  // Defense-in-depth: Claude sometimes starts a verification server despite
+  // the prompt. Kill anything listening on the target port before we start
+  // ours — otherwise bash start.sh crashes EADDRINUSE.
+  await killPort(port);
   const child = spawn('bash', [startSh], { cwd, stdio: ['ignore', 'inherit', 'inherit'] });
   child.on('error', err => log(`[agent] spawn error: ${err.message}`));
   return child;
+}
+
+async function killPort(port: number): Promise<void> {
+  // `lsof -ti` + kill -9 is the portable-enough approach on macOS + Linux.
+  // On Windows this would be different; the harness is macOS/Linux-only.
+  const res = spawnSync('bash', ['-c', `lsof -ti tcp:${port} | xargs -r kill -9`], { stdio: 'ignore' });
+  void res;
+  // Brief wait so the kernel reaps the socket before we try to bind.
+  await new Promise(r => setTimeout(r, 300));
 }
 
 async function waitForPort(host: string, port: number, timeoutMs: number): Promise<void> {
@@ -202,13 +215,15 @@ async function waitForPort(host: string, port: number, timeoutMs: number): Promi
 
 function runGrader(url: string, storyboardId: string): { passed: boolean; raw: string } {
   const cliPath = join(REPO_ROOT, 'bin', 'adcp.js');
-  const res = spawnSync('node', [cliPath, 'storyboard', 'run', url, storyboardId, '--json'], {
-    encoding: 'utf8',
-    timeout: 120_000,
-  });
+  // `--allow-http` is mandatory — the grader hard-refuses plain-http URLs
+  // otherwise (production agents MUST terminate TLS). Harness-tested agents
+  // bind on loopback, so we opt in explicitly.
+  const res = spawnSync(
+    'node',
+    [cliPath, 'storyboard', 'run', url, storyboardId, '--json', '--allow-http'],
+    { encoding: 'utf8', timeout: 120_000 }
+  );
   const raw = (res.stdout ?? '') + (res.stderr ?? '');
-  // `storyboard run --json` emits either a single result or a { results: [...] } shape
-  // depending on whether the arg is a bundle. Try both.
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);
@@ -218,8 +233,9 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
       passed = parsed.results.every((r: { overall_passed?: boolean }) => r.overall_passed);
     }
   } catch {
-    // stdout wasn't clean JSON — fall back to exit code.
-    passed = res.status === 0;
+    // stdout wasn't clean JSON — the CLI printed an error to stderr and
+    // exited non-zero. Treat as fail.
+    passed = false;
   }
   return { passed, raw };
 }
@@ -246,7 +262,7 @@ async function main(): Promise<void> {
     await runClaude(buildPrompt(skillContent, args.storyboard, args.port), workDir, args.timeoutMs);
 
     log(`starting agent`);
-    agent = await startAgent(workDir);
+    agent = await startAgent(workDir, args.port);
     await waitForPort('127.0.0.1', args.port, 30_000);
     log(`agent up on http://127.0.0.1:${args.port}/mcp`);
 
