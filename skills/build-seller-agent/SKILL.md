@@ -198,6 +198,7 @@ This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` 
 | `IDEMPOTENCY_CONFLICT` | Same key, different payload hash | Don't retry — buyer has a client bug generating the same key for different requests |
 | `IDEMPOTENCY_EXPIRED` | Key replayed after the TTL (default 24h, configurable 1h–7d) | Mint a new key and retry |
 
+<a name="webhooks-async-completion-signed-outbound"></a>
 ## Webhooks (async completion, signed outbound)
 
 Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Wire `createAdcpServer({ webhooks: { signerKey } })` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
@@ -205,24 +206,31 @@ Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO comp
 ```typescript
 import { createAdcpServer, serve } from '@adcp/client';
 
+// Dev: generate a signer JWK once at boot. Production: load from KMS/env with a stable `kid`,
+// and publish the public half at your `jwks_uri` so buyers can verify without OOB exchange.
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
+const { privateKey } = generateKeyPairSync('ed25519');
+const signerJwk = { ...privateKey.export({ format: 'jwk' }), kid: 'seller-webhook-kid-2026', alg: 'EdDSA', adcp_use: 'webhook-signing', key_ops: ['sign'] };
+
 serve(() => createAdcpServer({
   name: 'My Seller',
   version: '1.0.0',
   webhooks: {
-    signerKey: {
-      keyid: 'seller-webhook-kid-2026',
-      alg: 'ed25519',
-      privateKey: { /* JWK with `d` — load from env/secret store, never bundle */ },
-    },
+    signerKey: { keyid: signerJwk.kid, alg: 'ed25519', privateKey: signerJwk },
     // Optional: retries, idempotencyKeyStore (swap memory → pg for multi-replica)
   },
   mediaBuy: {
     createMediaBuy: async (params, ctx) => {
       // sales-guaranteed: IO signing completes async. Emit the final result on completion.
       const taskId = `task_${randomUUID()}`;
+
+      // Capture ctx.emitWebhook into a local BEFORE scheduling — the handler returns
+      // immediately, but the closure outlives the request; ctx may be recycled.
+      const emit = ctx.emitWebhook!;   // non-null: guaranteed populated when webhooks config is set
+
       queueIoReview(params, async (outcome) => {
-        await ctx.emitWebhook({
-          url: params.push_notification_config.url,
+        await emit({
+          url: (params as { push_notification_config?: { url: string } }).push_notification_config!.url,
           payload: {
             task: {
               task_id: taskId,
@@ -238,6 +246,10 @@ serve(() => createAdcpServer({
   },
 }));
 ```
+
+**`ctx.emitWebhook` is typed optional** (`emitWebhook?:`) even when you configure `webhooks` on the server. The framework populates it on every handler once `webhooks.signerKey` is set; use `ctx.emitWebhook!` or a local guard. Strict-mode assert-once-at-boot works too.
+
+**Return envelope — use `taskToolResponse`, not the default `mediaBuyResponse` wrap.** The framework auto-wraps `createMediaBuy` returns with `mediaBuyResponse`, which stamps `revision`/`confirmed_at`/`valid_actions` onto the response — semantically wrong on a `submitted` envelope. For submitted returns, import `taskToolResponse` from `@adcp/client/server` and wrap explicitly (see [§ sales-guaranteed](#specialism-sales-guaranteed) for the full pattern).
 
 **`operation_id` must be stable across retries.** The emitter hashes `operation_id` into the outbound `idempotency_key` so receivers can dedupe retried deliveries. Regenerating `operation_id` on retry is the top at-least-once-delivery bug the webhook conformance runner catches — use an ID derived from the logical event (the task_id, media_buy_id, or report batch), not a timestamp or fresh UUID.
 
@@ -1034,7 +1046,24 @@ syncCreatives: async (params) => ({
 }),
 ```
 
+**Measurement windows on products** — `reporting_capabilities.measurement_windows` is an **array of objects**, not string enum values. Each window object must match `MeasurementWindowSchema`:
+
+```typescript
+reporting_capabilities: {
+  // ...standard reporting fields...
+  measurement_windows: [
+    { window_id: 'live', duration_days: 0, expected_availability_days: 1,  is_guarantee_basis: false },
+    { window_id: 'c3',   duration_days: 3, expected_availability_days: 4,  is_guarantee_basis: false },
+    { window_id: 'c7',   duration_days: 7, expected_availability_days: 8,  is_guarantee_basis: true },
+  ],
+}
+```
+
+Don't declare `measurement_windows: ['live', 'c3', 'c7']` — the Zod schema rejects bare strings and your product won't validate.
+
 **Measurement windows on delivery** — each delivery row tags `measurement_window: 'live' | 'c3' | 'c7'`, `is_final: boolean`, and `supersedes_window` (for window upgrades). Live ratings mature in 24h, C3 in ~4d, C7 in ~8d. Final reconciliation lands ~15d after last air date.
+
+**Emit window_update webhooks** via `ctx.emitWebhook` (see [§ Webhooks](#webhooks-async-completion-signed-outbound) above). Use `operation_id: \`window_update.${media_buy_id}.${stage}\`` so C3 → C7 supersession retries share a stable idempotency_key.
 
 ### <a name="specialism-sales-social"></a>sales-social
 

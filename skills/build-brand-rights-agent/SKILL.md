@@ -158,7 +158,7 @@ Three success variants plus an error variant. The most common is `acquired`. Thr
     period: 'monthly',
     start_date: '2026-04-01T00:00:00Z',
     end_date:   '2026-05-01T00:00:00Z',
-    exclusivity: { type: 'non_exclusive' },    // object, not a string
+    exclusivity: { scope: 'non_exclusive', countries: ['US', 'CA'] },    // object per rights-terms.json: { scope, countries }
   },
   generation_credentials: [ /* generation-credential refs */ ],
   rights_constraint: {
@@ -352,13 +352,18 @@ serve(() =>
           status: 'acquired',
           brand_id: 'acme_outdoor',
           terms: {
+            pricing_option_id: 'monthly_standard',   // required per rights-terms.json
+            amount: 2500,                            // required
+            currency: 'USD',                         // required
+            uses: params.campaign?.uses ?? [],        // required
             countries: ['US', 'CA'],
-            exclusivity: 'non_exclusive',
+            exclusivity: { scope: 'non_exclusive', countries: ['US', 'CA'] },   // object, not string
           },
           generation_credentials: [],
           rights_constraint: {
-            brand_id: 'acme_outdoor',
-            uses: params.campaign?.uses ?? [],
+            rights_id: params.rights_id,             // required — NOT brand_id
+            rights_agent: { url: AGENT_URL, id: 'acme_outdoor' },   // required — {url, id}
+            uses: params.campaign?.uses ?? [],        // required
           },
           // URL you host — buyer POSTs creative-approval-request here for review.
           approval_webhook: {
