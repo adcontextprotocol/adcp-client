@@ -600,8 +600,6 @@ function mapSignatureErrorCode(
       return 'signature_tag_invalid';
     case 'webhook_signature_alg_not_allowed':
       return 'signature_alg_not_allowed';
-    case 'webhook_signature_expired':
-      return 'signature_expired';
     case 'webhook_signature_window_invalid':
       return 'signature_window_invalid';
     case 'webhook_signature_components_incomplete':
@@ -612,6 +610,10 @@ function mapSignatureErrorCode(
       return 'signature_key_purpose_invalid';
     case 'webhook_signature_key_revoked':
       return 'signature_key_revoked';
+    case 'webhook_signature_revocation_stale':
+      return 'signature_revocation_stale';
+    case 'webhook_signature_rate_abuse':
+      return 'signature_rate_abuse';
     case 'webhook_signature_digest_mismatch':
       return 'signature_digest_mismatch';
     case 'webhook_signature_replayed':

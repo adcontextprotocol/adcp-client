@@ -250,8 +250,10 @@ export interface WebhookRetryTriggerSpec {
  *
  * Signature-path codes track the verifier's `webhook_signature_*` taxonomy
  * 1:1 so compliance reports distinguish remediation paths: a revoked key
- * needs rotation; an expired window is a clock-skew / window-size bug;
- * `signature_invalid` is the "crypto failed, check your signing code" case.
+ * needs rotation; a rate-abuse hit signals a compromised key; a
+ * window-invalid is a signer clock/config bug. Spec folds every window
+ * failure into a single `signature_window_invalid` — there is no
+ * `signature_expired`.
  */
 export type WebhookAssertionErrorCode =
   // expect_webhook
@@ -266,7 +268,6 @@ export type WebhookAssertionErrorCode =
   | 'idempotency_key_format_changed'
   // expect_webhook_signature_valid
   | 'signature_invalid'
-  | 'signature_expired'
   | 'signature_window_invalid'
   | 'signature_alg_not_allowed'
   | 'signature_components_incomplete'
@@ -275,6 +276,8 @@ export type WebhookAssertionErrorCode =
   | 'signature_key_unknown'
   | 'signature_key_purpose_invalid'
   | 'signature_key_revoked'
+  | 'signature_revocation_stale'
+  | 'signature_rate_abuse'
   | 'signature_digest_mismatch'
   | 'signature_tag_invalid'
   | 'signature_replayed';

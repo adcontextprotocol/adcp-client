@@ -34,17 +34,25 @@ export class RequestSignatureError extends ADCPError {
  * the `webhook_signature_*` codes enumerated by the webhook-emission
  * storyboard (adcontextprotocol/adcp#2431) with matching semantics.
  */
+/**
+ * Error taxonomy per the merged spec in `security.mdx#webhook-callbacks`
+ * and the conformance vectors at `test-vectors/webhook-signing/`. The spec
+ * folds every window failure (expired, negative window, over-long window,
+ * created-in-future) into a single `webhook_signature_window_invalid` code —
+ * no distinct `_expired`.
+ */
 export type WebhookSignatureErrorCode =
   | 'webhook_signature_header_malformed'
   | 'webhook_signature_params_incomplete'
   | 'webhook_signature_tag_invalid'
   | 'webhook_signature_alg_not_allowed'
-  | 'webhook_signature_expired'
   | 'webhook_signature_window_invalid'
   | 'webhook_signature_components_incomplete'
   | 'webhook_signature_key_unknown'
   | 'webhook_signature_key_purpose_invalid'
   | 'webhook_signature_key_revoked'
+  | 'webhook_signature_revocation_stale'
+  | 'webhook_signature_rate_abuse'
   | 'webhook_signature_invalid'
   | 'webhook_signature_digest_mismatch'
   | 'webhook_signature_replayed';
