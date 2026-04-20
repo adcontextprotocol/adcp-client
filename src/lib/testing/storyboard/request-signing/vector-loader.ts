@@ -125,6 +125,15 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
     }
     contract = c as ContractId;
   }
+  const jwksOverride = parseJwksOverride(id, r.jwks_override);
+  // Vectors with `jwks_override` don't reference the canonical keys.json and
+  // omit `jwks_ref`; vectors without an override MUST declare a `jwks_ref`.
+  const jwksRef =
+    r.jwks_ref !== undefined
+      ? strArray(r.jwks_ref, `${id}.jwks_ref`)
+      : jwksOverride
+        ? []
+        : strArray(r.jwks_ref, `${id}.jwks_ref`);
   return {
     kind: 'negative',
     id,
@@ -132,12 +141,30 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
     reference_now: num(r.reference_now, `${id}.reference_now`),
     request: parseRequest(id, r.request),
     verifier_capability: parseCapability(id, r.verifier_capability),
-    jwks_ref: strArray(r.jwks_ref, `${id}.jwks_ref`),
+    jwks_ref: jwksRef,
+    ...(jwksOverride && { jwks_override: jwksOverride }),
     expected_error_code: errorCode as RequestSignatureErrorCode,
     expected_failed_step: failedStep,
     requires_contract: contract,
     spec_reference: typeof r.spec_reference === 'string' ? r.spec_reference : undefined,
   };
+}
+
+function parseJwksOverride(id: string, v: unknown): { keys: Array<Record<string, unknown>> } | undefined {
+  if (v === undefined) return undefined;
+  if (!v || typeof v !== 'object') {
+    throw new Error(`${id}.jwks_override must be an object with a keys[] array`);
+  }
+  const keys = (v as Record<string, unknown>).keys;
+  if (!Array.isArray(keys)) {
+    throw new Error(`${id}.jwks_override.keys must be an array`);
+  }
+  for (const k of keys) {
+    if (!k || typeof k !== 'object') {
+      throw new Error(`${id}.jwks_override.keys[] entries must be objects`);
+    }
+  }
+  return { keys: keys as Array<Record<string, unknown>> };
 }
 
 function assertSuccess(id: string, vector: Record<string, unknown>, expected: boolean): void {

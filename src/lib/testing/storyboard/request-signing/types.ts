@@ -31,6 +31,17 @@ export interface PositiveVector {
   spec_reference?: string;
 }
 
+/**
+ * Inline JWK set shipped with a negative vector that wants to publish a
+ * deliberately-malformed JWK (e.g., vector 025 declares alg=EdDSA but
+ * crv=P-256 to exercise step-8 parameter consistency). Using `jwks_override`
+ * instead of adding a malformed key to `keys.json` keeps the canonical
+ * keyset clean so other vectors can't inherit the broken shape.
+ */
+export interface JwksOverride {
+  keys: Array<Record<string, unknown>>;
+}
+
 export interface NegativeVector {
   kind: 'negative';
   id: string;
@@ -38,7 +49,10 @@ export interface NegativeVector {
   reference_now: number;
   request: VectorRequest;
   verifier_capability: VerifierCapabilityFixture;
+  /** Kids to resolve from the canonical keys.json. Empty when jwks_override is present. */
   jwks_ref: string[];
+  /** Inline override for vectors that publish a deliberately malformed JWK. */
+  jwks_override?: JwksOverride;
   expected_error_code: RequestSignatureErrorCode;
   expected_failed_step: number | string;
   requires_contract?: ContractId;
