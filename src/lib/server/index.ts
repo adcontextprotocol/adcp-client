@@ -85,6 +85,9 @@ export {
   AUTH_NEEDS_RAW_BODY,
   tagAuthenticatorNeedsRawBody,
   authenticatorNeedsRawBody,
+  AUTH_PRESENCE_GATED,
+  tagAuthenticatorPresenceGated,
+  isAuthenticatorPresenceGated,
   DEFAULT_JWT_ALGORITHMS,
   DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
 } from './auth';
@@ -97,7 +100,7 @@ export type {
   RespondUnauthorizedOptions,
 } from './auth';
 
-export { verifySignatureAsAuthenticator } from './auth-signature';
+export { verifySignatureAsAuthenticator, requireSignatureWhenPresent } from './auth-signature';
 export type { VerifySignatureAsAuthenticatorOptions } from './auth-signature';
 
 export {

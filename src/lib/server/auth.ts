@@ -106,8 +106,23 @@ export class AuthError extends Error {
  */
 export const AUTH_NEEDS_RAW_BODY: unique symbol = Symbol.for('@adcp/client.auth.needsRawBody');
 
+/**
+ * Marker tag on an {@link Authenticator} whose contract depends on being the
+ * sole path for some class of requests — wrapping it in {@link anyOf} would
+ * reintroduce an either-or fall-through that the gate was built to prevent.
+ *
+ * Currently carried by the authenticator returned from
+ * `requireSignatureWhenPresent`, which guarantees "if `Signature-Input` is
+ * present, the signature path is the ONLY outcome." Composing it under
+ * `anyOf` would let a valid bearer silently accept an invalid signature —
+ * the exact bug the helper closes. `anyOf` throws at composition time when
+ * any child is tagged.
+ */
+export const AUTH_PRESENCE_GATED: unique symbol = Symbol.for('@adcp/client.auth.presenceGated');
+
 interface AuthenticatorFlags {
   [AUTH_NEEDS_RAW_BODY]?: boolean;
+  [AUTH_PRESENCE_GATED]?: boolean;
 }
 
 /**
@@ -124,6 +139,22 @@ export function tagAuthenticatorNeedsRawBody(auth: Authenticator): Authenticator
  */
 export function authenticatorNeedsRawBody(auth: Authenticator | undefined): boolean {
   return !!auth && (auth as unknown as AuthenticatorFlags)[AUTH_NEEDS_RAW_BODY] === true;
+}
+
+/**
+ * Mark an authenticator as presence-gated. {@link anyOf} refuses to wrap a
+ * tagged authenticator — wrapping would defeat the gate.
+ */
+export function tagAuthenticatorPresenceGated(auth: Authenticator): Authenticator {
+  (auth as unknown as AuthenticatorFlags)[AUTH_PRESENCE_GATED] = true;
+  return auth;
+}
+
+/**
+ * Check whether an authenticator is presence-gated (see {@link AUTH_PRESENCE_GATED}).
+ */
+export function isAuthenticatorPresenceGated(auth: Authenticator | undefined): boolean {
+  return !!auth && (auth as unknown as AuthenticatorFlags)[AUTH_PRESENCE_GATED] === true;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +349,15 @@ function extractScopes(payload: JWTPayload): string[] {
  * which mechanism rejected them.
  */
 export function anyOf(...authenticators: Authenticator[]): Authenticator {
+  for (const auth of authenticators) {
+    if (isAuthenticatorPresenceGated(auth)) {
+      throw new Error(
+        'anyOf: refusing to wrap a presence-gated authenticator. Wrapping would ' +
+          'reintroduce the bearer-bypass bug the gate was built to prevent. ' +
+          'Invert the composition: requireSignatureWhenPresent(sig, anyOf(...others)).'
+      );
+    }
+  }
   const combined: Authenticator = async req => {
     let rejected = false;
     const causes: unknown[] = [];
