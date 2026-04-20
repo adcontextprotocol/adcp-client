@@ -33,6 +33,7 @@
 
 import type { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
@@ -1288,7 +1289,7 @@ function buildSignedRequestsPreTransport(
  *
  * `get_adcp_capabilities` is auto-generated from registered tools.
  */
-export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TAccount>): McpServer {
+export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TAccount>): AdcpServer {
   const {
     name,
     version,
@@ -1803,13 +1804,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     return capabilitiesResponse(data);
   });
 
+  const wrapped: AdcpServerInternal = wrapMcpServer(server);
+
   // Attach the auto-wired preTransport so `serve()` mounts the verifier
-  // on the HTTP transport. A non-enumerable symbol property keeps this off
-  // the normal McpServer surface — it's a private contract between this
-  // function and `serve()` for wiring, not part of the McpServer public API.
+  // on the HTTP transport. Stashed under a non-enumerable symbol property
+  // on the wrapper — it's a private contract between this function and
+  // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
     const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing?.required_for);
-    Object.defineProperty(server, ADCP_PRE_TRANSPORT, {
+    Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,
       writable: false,
@@ -1823,7 +1826,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     capabilitySupported: capConfig?.request_signing?.supported === true,
     mismatch: claimsSignedRequests && !signedRequests ? 'claim_without_config' : 'ok',
   };
-  Object.defineProperty(server, ADCP_SIGNED_REQUESTS_STATE, {
+  Object.defineProperty(wrapped, ADCP_SIGNED_REQUESTS_STATE, {
     value: signedRequestsState,
     enumerable: false,
     configurable: true,
@@ -1836,5 +1839,5 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     signedRequests: signedRequestsState,
   });
 
-  return server;
+  return wrapped;
 }

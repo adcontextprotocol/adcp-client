@@ -378,6 +378,24 @@ export interface StoryboardRunOptions extends TestOptions {
      * `endpoint_scope: sandbox`.
      */
     allowLiveSideEffects?: boolean;
+    /**
+     * How the grader dispatches each vector to the agent.
+     *
+     *   - `raw` (default) — POSTs each vector body directly to a per-
+     *     operation AdCP endpoint (e.g. `<baseUrl>/create_media_buy`).
+     *     Works for agents that expose AdCP tools as discrete HTTP
+     *     operations.
+     *   - `mcp` — wraps each vector body in a JSON-RPC `tools/call`
+     *     envelope and POSTs to the agent's single `/mcp` mount. Required
+     *     for MCP-only agents that don't expose per-operation endpoints.
+     *     The operation name is derived from the last path segment of the
+     *     vector's target URL.
+     *
+     * Matches the `adcp grade request-signing --transport <mode>` CLI flag.
+     * Agents that only speak MCP JSON-RPC can't grade under `raw`; use
+     * `mcp` to let the runner round-trip every vector through `tools/call`.
+     */
+    transport?: 'raw' | 'mcp';
   };
   /**
    * Distribution strategy across agent URLs in multi-instance mode (#608).

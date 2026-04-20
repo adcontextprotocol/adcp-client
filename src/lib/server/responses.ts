@@ -52,13 +52,19 @@ import type {
 
 /**
  * MCP-compatible tool response shape.
+ *
+ * `structuredContent` is optional because error responses legitimately carry
+ * only `content` (the human-readable error text) — forcing every wrapper to
+ * fabricate an empty structuredContent obscures the success/error split.
+ * All success builders in this file still populate it.
+ *
  * Uses Record<string, unknown> for structuredContent to satisfy
  * MCP SDK's CallToolResult index signature requirement.
  */
 export interface McpToolResponse {
   [key: string]: unknown;
   content: Array<{ type: 'text'; text: string }>;
-  structuredContent: Record<string, unknown>;
+  structuredContent?: Record<string, unknown>;
 }
 
 // MCP SDK requires structuredContent to have an index signature ({ [x: string]: unknown }).
