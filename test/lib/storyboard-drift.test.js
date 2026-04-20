@@ -166,12 +166,7 @@ describe('storyboard schema drift', () => {
   // published tarball yet. `npm run sync-schemas` pulls the most recent
   // release, so a fix merged to adcp `main` post-release stays in this
   // allowlist until the next tarball cut.
-  const KNOWN_FORWARD_DRIFT = new Set([
-    // Fixed upstream by adcontextprotocol/adcp#2468 (merged 2026-04-20):
-    // `field_present: "operations"` → `field_present: "supported_protocols"`.
-    // Remove this entry once the tarball containing that change ships.
-    'webhook_emission/get_capabilities:operations',
-  ]);
+  const KNOWN_FORWARD_DRIFT = new Set([]);
 
   // Paths that are structurally valid in the spec schema but that
   // `isPathReachable` can't resolve after the Zod codegen — the codegen
