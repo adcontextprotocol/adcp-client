@@ -16,6 +16,34 @@ function runOne(validations, taskName, taskResult) {
 }
 
 describe('validateErrorCode', () => {
+  it('reads spec-canonical code from data.errors[0].code', () => {
+    const taskResult = {
+      success: false,
+      data: {
+        errors: [{ code: 'BUDGET_TOO_LOW', message: 'Minimum spend is $100' }],
+        context: { request_id: 'abc' },
+      },
+      error: 'BUDGET_TOO_LOW: Minimum spend is $100',
+    };
+    const [result] = runOne([errorCodeValidation('BUDGET_TOO_LOW')], 'create_media_buy', taskResult);
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.json_pointer, '/errors/0/code');
+  });
+
+  it('prefers data.errors[0].code over legacy adcp_error.code', () => {
+    const taskResult = {
+      success: false,
+      data: {
+        errors: [{ code: 'INVALID_REQUEST', message: 'bad input' }],
+        adcp_error: { code: 'LEGACY_CODE' },
+      },
+      error: 'INVALID_REQUEST: bad input',
+    };
+    const [result] = runOne([errorCodeValidation('INVALID_REQUEST')], 'create_media_buy', taskResult);
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.json_pointer, '/errors/0/code');
+  });
+
   it('reads L3 structured code from data.adcp_error.code', () => {
     const taskResult = {
       success: false,
