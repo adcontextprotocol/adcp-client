@@ -402,22 +402,20 @@ export interface StoryboardRunOptions extends TestOptions {
    * Only consulted when the runner is given 2+ URLs. Defaults to 'round-robin'.
    *
    *  - `round-robin` (default): step N hits `urls[N % urls.length]`. One pass.
-   *  - `multi-pass`: runs the storyboard `urls.length` times, each pass starting
-   *    the dispatcher at a different replica. Ensures each step is served by a
-   *    different replica across passes — surfacing bugs isolated to one
-   *    replica (stale config, divergent version, local cache miss) that
-   *    single-pass round-robin can't distinguish from a pass (#607).
-   *    N-multiplies run time. Follow-up: dependency-aware dispatch reading
-   *    `context_inputs` closes the 2-replica pair-parity gap for write→read
-   *    pairs whose dispatch indices differ by an odd amount.
+   *  - `multi-pass` (narrow use case): runs the storyboard `urls.length`
+   *    times, each pass starting the dispatcher at a different replica.
+   *    Surfaces single-replica bugs (stale config, divergent version,
+   *    local-cache miss) that single-pass round-robin may not catch when
+   *    the buggy replica happens to serve only passive steps. N-multiplies
+   *    run time. NOT a full cross-replica state-persistence test at N=2:
+   *    offset-shift preserves pair parity, so write→read pairs with even
+   *    dispatch-index distance (e.g., the property_lists case: write at 0,
+   *    read at 2) land same-replica in every pass. Use single-pass
+   *    round-robin (adjacent pairs) + follow-up dependency-aware dispatch
+   *    (non-adjacent pairs, #607 option 2) for the spec's horizontal-
+   *    scaling requirement. See docs/guides/MULTI-INSTANCE-TESTING.md.
    */
   multi_instance_strategy?: 'round-robin' | 'multi-pass';
-  /**
-   * @internal Dispatcher starting offset for `round-robin`. Used by the
-   * `multi-pass` strategy to run the same storyboard with different starting
-   * replicas. Not a public API — callers should use `multi_instance_strategy`.
-   */
-  _dispatch_offset?: number;
   /**
    * Host an ephemeral webhook receiver during the run so `expect_webhook*`
    * pseudo-steps can observe outbound webhooks from the agent under test.
@@ -711,8 +709,10 @@ export interface StoryboardResult {
   phases: StoryboardPhaseResult[];
   /**
    * Per-pass detail in `multi-pass` mode — one entry per starting replica so
-   * every write→read pair is exercised same-replica and cross-replica. Absent
-   * in single-pass modes.
+   * each step is served by each replica at least once across passes. Absent
+   * in single-pass modes. Per-pair cross-replica coverage depends on
+   * dispatch-index distance modulo `agent_urls.length` (see
+   * `multi_instance_strategy` on `StoryboardRunOptions`).
    */
   passes?: StoryboardPassResult[];
   /** Final accumulated context */
@@ -732,8 +732,10 @@ export interface StoryboardResult {
 
 /**
  * Single pass in `multi-pass` multi-instance mode. Each pass re-runs the
- * whole storyboard with a different round-robin starting offset so every
- * write→read pair is tested both same-replica and cross-replica.
+ * whole storyboard with a different round-robin starting offset so each
+ * step is served by each replica at least once across passes. See
+ * `multi_instance_strategy` on `StoryboardRunOptions` for the N=2
+ * per-pair coverage caveat.
  */
 export interface StoryboardPassResult {
   /** 1-based pass index. */

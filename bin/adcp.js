@@ -599,15 +599,18 @@ function parseAgentOptions(args) {
     timeoutValue = args[timeoutIndex + 1];
   }
 
+  // --multi-instance-strategy's value is captured here solely so it's excluded
+  // from `positionalArgs`. The authoritative parse lives in
+  // `extractMultiInstanceStrategy(args)` which validates the value and emits
+  // error messages; keeping both in sync requires adding the string here when
+  // the enum grows.
   const multiInstanceStrategyIndex = args.indexOf('--multi-instance-strategy');
-  let multiInstanceStrategyValue = null;
-  if (
+  const multiInstanceStrategyValue =
     multiInstanceStrategyIndex !== -1 &&
     multiInstanceStrategyIndex + 1 < args.length &&
     !args[multiInstanceStrategyIndex + 1].startsWith('--')
-  ) {
-    multiInstanceStrategyValue = args[multiInstanceStrategyIndex + 1];
-  }
+      ? args[multiInstanceStrategyIndex + 1]
+      : null;
 
   // --file PATH | --file=PATH: ad-hoc storyboard YAML (spec evolution workflow)
   const fileIndex = args.indexOf('--file');
@@ -1332,6 +1335,20 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     console.error(`  Storyboards: ${storyboards.map(s => s.id).join(', ')}`);
     const effectiveSteps = strategy === 'multi-pass' ? totalSteps * urls.length : totalSteps;
     console.error(`  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}\n`);
+    // N=2 is the deployment shape most operators have. Offset-shift preserves
+    // pair parity there, so every even-distance write→read pair lands
+    // same-replica in every pass — including the canonical property_lists
+    // case. Print a visible caveat so operators don't read "multi-pass" as
+    // "full cross-replica state coverage."
+    if (strategy === 'multi-pass' && urls.length === 2) {
+      console.error(
+        'Note: multi-pass at N=2 does NOT cover cross-replica write→read pairs at\n' +
+          'even dispatch-index distance (e.g., write at step 0, read at step 2).\n' +
+          'Use round-robin for adjacent pairs; see docs/guides/MULTI-INSTANCE-TESTING.md\n' +
+          'for the full coverage story. Multi-pass is useful for catching single-replica\n' +
+          'config/version/cache bugs that pure round-robin may miss.\n'
+      );
+    }
   }
 
   // --dry-run: print the assignment plan and exit

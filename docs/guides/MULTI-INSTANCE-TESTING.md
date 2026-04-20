@@ -88,9 +88,11 @@ Two strategies are available via `--multi-instance-strategy`. The assignment is 
 
 Step N is dispatched to `urls[N % urls.length]`. One pass. This is the default.
 
-### `multi-pass`
+### `multi-pass` (narrow use case — read this before opting in)
 
-Runs the storyboard `urls.length` times, each pass starting the dispatcher at a different replica. The first pass is standard round-robin (step N → `urls[N % N_urls]`); subsequent passes shift the starting replica so every step is exercised against a different replica across passes.
+**Multi-pass is not the recommended way to test cross-replica state persistence at N=2.** Single-pass round-robin covers adjacent write→read pairs, and the follow-up [dependency-aware dispatch (#607 option 2)](https://github.com/adcontextprotocol/adcp-client/issues/607) covers non-adjacent pairs without doubling wall-clock time. Multi-pass addresses a different, narrower concern.
+
+Runs the storyboard `urls.length` times, each pass starting the dispatcher at a different replica. The first pass is standard round-robin (step N → `urls[N % N_urls]`); subsequent passes shift the starting replica so each step is served by each replica at least once across passes.
 
 ```bash
 adcp storyboard run \
@@ -100,13 +102,31 @@ adcp storyboard run \
   property_lists
 ```
 
-**When to use it.** Bugs isolated to one replica — stale config, divergent version, local-cache miss — can pass single-pass round-robin because the buggy replica happens to serve only passive steps. Multi-pass ensures every step hits every replica at least once.
+**When to use it.** Bugs isolated to one replica — stale config, divergent version, local-cache miss — where the buggy replica happens to serve only passive steps in a single round-robin pass. Multi-pass makes sure the buggy replica serves every step at some point.
 
-**Known limitation (`#607` follow-up).** For N=2, offset-shift preserves pair parity. A write→read pair whose dispatch indices differ by an odd amount lands same-replica in every pass. Closing that gap requires dependency-aware dispatch reading `context_inputs` to pick a replica different from the most recent writer — tracked as option 2 on [adcontextprotocol/adcp-client#607](https://github.com/adcontextprotocol/adcp-client/issues/607). Multi-pass does help for N≥3 where offsets do flip parity.
+**When NOT to use it.** If what you want to test is cross-replica state persistence (the spec requirement for horizontal scaling), single-pass round-robin and dependency-aware dispatch are the right tools. Multi-pass does not close the N=2 write→read coverage gap — see the limitation below.
 
-**Cost.** Run time scales linearly with `urls.length`. For a 2-replica 6-phase bundle, budget ~2× the single-pass wall clock.
+**Known limitation (N=2 pair parity).** For N=2, offset-shift preserves pair parity. A write→read pair whose dispatch indices differ by an **even** amount lands same-replica in every pass — including the canonical `property_lists` case (write at step 0, intervening step at 1, read at step 2, distance 2). Pairs with odd-distance are already cross-replica in both passes under round-robin alone, so multi-pass adds no cross-replica coverage to them either. Multi-pass does flip parity for some pairs at N≥3, but that's rarely a real deployment shape.
+
+**Cost.** Run time scales linearly with `urls.length`, plus per-pass MCP connection re-initialization. For a 2-replica 6-phase bundle, budget ~2× the single-pass wall clock.
 
 **Output shape.** `runStoryboard` returns the aggregated `StoryboardResult`: `passed_count` / `failed_count` / `skipped_count` sum across passes, `overall_passed` ANDs across passes, top-level `phases` is the first pass (for backward compatibility), and the full per-pass detail lives in `passes[]` with each entry carrying `pass_index`, `dispatch_offset`, and that pass's `phases`.
+
+```json
+{
+  "overall_passed": false,
+  "multi_instance_strategy": "multi-pass",
+  "passed_count": 7,
+  "failed_count": 1,
+  "phases": [/* first pass's phases */],
+  "passes": [
+    { "pass_index": 1, "dispatch_offset": 0, "overall_passed": true,  "phases": [/*...*/] },
+    { "pass_index": 2, "dispatch_offset": 1, "overall_passed": false, "phases": [/*...*/] }
+  ]
+}
+```
+
+To localize a failure across passes, inspect `passes[].overall_passed` to find which pass surfaced the failure; each pass's `phases[]` carries the per-step replica assignment via `agent_index`.
 
 ## Limitations
 
