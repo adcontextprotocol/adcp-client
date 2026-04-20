@@ -33,6 +33,9 @@
 
 import type { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
@@ -618,6 +621,48 @@ export type AdcpPreTransport = (
 ) => Promise<boolean>;
 
 // ---------------------------------------------------------------------------
+// Custom tool config
+// ---------------------------------------------------------------------------
+
+/**
+ * Declarative registration for a tool outside {@link AdcpToolMap} — seller
+ * extensions (e.g. collection-list helpers), test-harness endpoints
+ * (`comply_test_controller`), or AdCP surfaces whose JSON Schemas haven't
+ * landed in the framework yet (`creative_approval`, `update_rights`).
+ *
+ * These tools **bypass the framework's spec-tool pipeline**:
+ * idempotency middleware, governance pre-checks, account resolution,
+ * and response wrapping are all skipped. The handler receives the
+ * SDK-validated arguments and must return a `CallToolResult` directly.
+ * If you need any of those behaviors, call the framework helpers from
+ * inside the handler (e.g., `checkGovernance(...)`, `adcpError(...)`).
+ *
+ * Type parameters match the SDK's `McpServer.registerTool` signature so
+ * argument and response types infer from the declared schemas.
+ */
+export interface AdcpCustomToolConfig<
+  InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined,
+  OutputArgs extends ZodRawShapeCompat | AnySchema | undefined = undefined,
+> {
+  /** Human-readable description — surfaced in `tools/list`. */
+  description?: string;
+  /** Optional title hint for the MCP inspector. */
+  title?: string;
+  /** Zod raw shape or schema for argument validation. */
+  inputSchema?: InputArgs;
+  /** Zod raw shape or schema for the declared response payload. */
+  outputSchema?: OutputArgs;
+  /** Tool annotations (readOnlyHint / destructiveHint / idempotentHint / openWorldHint). */
+  annotations?: ToolAnnotations;
+  /**
+   * Tool handler. Gets SDK-validated `args` based on `inputSchema` and
+   * must return a `CallToolResult`. Use `capabilitiesResponse`,
+   * `mediaBuyResponse`, `adcpError`, or a hand-built `{ content, structuredContent? }`.
+   */
+  handler: ToolCallback<InputArgs>;
+}
+
+// ---------------------------------------------------------------------------
 // Server config
 // ---------------------------------------------------------------------------
 
@@ -744,6 +789,34 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * unaffected — auto-wiring only kicks in through this field.
    */
   signedRequests?: SignedRequestsConfig;
+
+  /**
+   * Register tools outside {@link AdcpToolMap}. Keys are the public tool
+   * names; values follow {@link AdcpCustomToolConfig}.
+   *
+   * Gives sellers a declarative extension point without reaching for the
+   * `getSdkServer()` escape hatch. Typical callers:
+   *
+   *   - AdCP surfaces whose JSON Schemas haven't landed yet
+   *     (`creative_approval`, `update_rights`).
+   *   - Governance specialism helpers (`*_collection_list` family).
+   *   - Test-harness tools (`comply_test_controller` — prefer
+   *     {@link registerTestController} which wraps this).
+   *   - Seller-specific extensions outside the AdCP spec.
+   *
+   * **Custom tools bypass the framework's spec-tool pipeline.** No
+   * idempotency middleware, no governance pre-check, no account
+   * resolution, no response wrapping. The handler receives SDK-validated
+   * args and must return a `CallToolResult`. Call framework helpers
+   * (`checkGovernance`, `adcpError`, `capabilitiesResponse`, …) from
+   * inside the handler if you need those behaviors.
+   *
+   * Name collisions with registered AdcpToolMap tools (from `mediaBuy`,
+   * `signals`, `creative`, `governance`, `accounts`, `eventTracking`,
+   * `sponsoredIntelligence`) or with `get_adcp_capabilities` throw at
+   * construction time — the spec handler wins by convention.
+   */
+  customTools?: Record<string, AdcpCustomToolConfig<any, any>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1684,6 +1757,44 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
 
       registeredToolNames.add(toolName);
+    }
+  }
+
+  // ─── Custom tools ──────────────────────────────────────────
+  // Seller extensions outside AdcpToolMap. No idempotency / governance /
+  // response-wrapping — handlers own those concerns directly. Registered
+  // after spec tools so the collision check can authoritatively block
+  // overlap with framework-owned names.
+  if (config.customTools) {
+    const customNames = Object.keys(config.customTools);
+    for (const customName of customNames) {
+      if (registeredToolNames.has(customName)) {
+        throw new Error(
+          `createAdcpServer: customTools["${customName}"] collides with a framework-registered tool. ` +
+            `Rename the custom tool or remove the handler from the conflicting domain group.`
+        );
+      }
+      if (customName === 'get_adcp_capabilities') {
+        throw new Error(
+          `createAdcpServer: customTools["get_adcp_capabilities"] is not allowed. ` +
+            `The framework auto-generates this tool from registered handlers and capability config.`
+        );
+      }
+      const custom = config.customTools[customName];
+      if (!custom) continue;
+      const { description, title, inputSchema, outputSchema, annotations, handler } = custom;
+      server.registerTool(
+        customName,
+        {
+          ...(description != null && { description }),
+          ...(title != null && { title }),
+          ...(inputSchema != null && { inputSchema }),
+          ...(outputSchema != null && { outputSchema }),
+          ...(annotations != null && { annotations }),
+        } as Parameters<typeof server.registerTool>[1],
+        handler as Parameters<typeof server.registerTool>[2]
+      );
+      registeredToolNames.add(customName);
     }
   }
 

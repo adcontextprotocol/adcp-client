@@ -143,6 +143,7 @@ export type {
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
+  AdcpCustomToolConfig,
   AdcpLogger,
   SignedRequestsConfig,
   AdcpPreTransport,

@@ -183,6 +183,73 @@ describe('createAdcpServer', () => {
     });
   });
 
+  describe('customTools', () => {
+    const { z } = require('zod');
+
+    it('registers a custom tool the handler dispatches through dispatchTestRequest', async () => {
+      let seenArgs;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        customTools: {
+          creative_approval: {
+            description: 'Approve or reject a creative out-of-band.',
+            inputSchema: { creative_id: z.string(), approved: z.boolean() },
+            handler: async ({ creative_id, approved }) => {
+              seenArgs = { creative_id, approved };
+              return {
+                content: [{ type: 'text', text: `creative ${creative_id} ${approved ? 'approved' : 'rejected'}` }],
+                structuredContent: { creative_id, approved },
+              };
+            },
+          },
+        },
+      });
+      assert.ok(registeredTools(server).includes('creative_approval'));
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'creative_approval', arguments: { creative_id: 'cr_1', approved: true } },
+      });
+      assert.deepStrictEqual(seenArgs, { creative_id: 'cr_1', approved: true });
+      assert.deepStrictEqual(result.structuredContent, { creative_id: 'cr_1', approved: true });
+    });
+
+    it('refuses customTools that collide with a framework-registered tool', () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            mediaBuy: { getProducts: async () => ({ products: [] }) },
+            customTools: {
+              get_products: {
+                description: 'Shadows the spec handler — should throw.',
+                handler: async () => ({ content: [{ type: 'text', text: 'shadow' }] }),
+              },
+            },
+          }),
+        /customTools\["get_products"\] collides with a framework-registered tool/
+      );
+    });
+
+    it('refuses customTools["get_adcp_capabilities"]', () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            customTools: {
+              get_adcp_capabilities: {
+                description: 'Framework owns this one.',
+                handler: async () => ({ content: [{ type: 'text', text: 'override' }] }),
+              },
+            },
+          }),
+        /customTools\["get_adcp_capabilities"\] is not allowed/
+      );
+    });
+  });
+
   describe('auto-generated capabilities', () => {
     it('detects media_buy protocol from mediaBuy handlers', async () => {
       const server = createAdcpServer({

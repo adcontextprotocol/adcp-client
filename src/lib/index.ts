@@ -559,6 +559,7 @@ export type {
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
+  AdcpCustomToolConfig,
   AdcpLogger,
   HandlerContext,
   MediaBuyHandlers,

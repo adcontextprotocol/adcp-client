@@ -38,8 +38,36 @@ The `AdcpServer` interface exposes `connect`, `close`, and the new
 `dispatchTestRequest()`. Tool registration now flows through
 `createAdcpServer()`'s domain-grouped handler config — the framework owns
 the registration conventions (idempotency auto-inject, governance,
-validation, response shape). For non-AdCP tools, keep using
-`createTaskCapableServer()` directly; `serve()` accepts either.
+validation, response shape). For tools outside `AdcpToolMap` (seller
+extensions, governance specialisms like the `*_collection_list` family,
+AdCP surfaces whose JSON Schemas haven't landed yet like
+`creative_approval` / `update_rights`), pass a `customTools` map in the
+same config — they bypass the framework pipeline but don't require the
+`getSdkServer()` escape hatch:
+
+```ts
+createAdcpServer({
+  name: 'Publisher',
+  version: '1.0.0',
+  mediaBuy: { getProducts: async () => ({ products }) },
+  customTools: {
+    creative_approval: {
+      description: 'Out-of-band creative approval.',
+      inputSchema: { creative_id: z.string(), approved: z.boolean() },
+      handler: async ({ creative_id, approved }) => ({
+        content: [{ type: 'text', text: `creative ${creative_id} ${approved ? 'approved' : 'rejected'}` }],
+        structuredContent: { creative_id, approved },
+      }),
+    },
+    // ... other extensions
+  },
+});
+```
+
+Custom tool names that collide with an AdcpToolMap tool or with
+`get_adcp_capabilities` throw at construction time. For a server built
+on the low-level SDK API (no framework conventions at all), keep using
+`createTaskCapableServer()` directly — `serve()` accepts either.
 
 ## 2. Test harnesses — `dispatchTestRequest` instead of `_requestHandlers`
 
