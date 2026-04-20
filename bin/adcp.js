@@ -599,6 +599,16 @@ function parseAgentOptions(args) {
     timeoutValue = args[timeoutIndex + 1];
   }
 
+  const multiInstanceStrategyIndex = args.indexOf('--multi-instance-strategy');
+  let multiInstanceStrategyValue = null;
+  if (
+    multiInstanceStrategyIndex !== -1 &&
+    multiInstanceStrategyIndex + 1 < args.length &&
+    !args[multiInstanceStrategyIndex + 1].startsWith('--')
+  ) {
+    multiInstanceStrategyValue = args[multiInstanceStrategyIndex + 1];
+  }
+
   // --file PATH | --file=PATH: ad-hoc storyboard YAML (spec evolution workflow)
   const fileIndex = args.indexOf('--file');
   let file = null;
@@ -627,6 +637,7 @@ function parseAgentOptions(args) {
     storyboardsValue,
     platformTypeValue,
     timeoutValue,
+    multiInstanceStrategyValue,
     fileIndex !== -1 ? file : null,
   ].filter(Boolean);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
@@ -1158,6 +1169,27 @@ async function handleStoryboardRun(args) {
  * `--url https://attacker@victim/mcp` would flow straight into the MCP
  * transport and land in attribution output.
  */
+/**
+ * Parse `--multi-instance-strategy <round-robin|multi-pass>`. Defaults to
+ * `round-robin` to keep CI time predictable; operators opt into `multi-pass`
+ * when they want cross-replica coverage for write→read pairs separated by an
+ * even number of stateful steps (see adcontextprotocol/adcp-client#607).
+ */
+function extractMultiInstanceStrategy(args) {
+  const idx = args.indexOf('--multi-instance-strategy');
+  if (idx === -1) return 'round-robin';
+  const raw = args[idx + 1];
+  if (raw === undefined || raw.startsWith('--')) {
+    console.error('ERROR: --multi-instance-strategy requires a value (round-robin|multi-pass)');
+    process.exit(2);
+  }
+  if (raw !== 'round-robin' && raw !== 'multi-pass') {
+    console.error(`ERROR: --multi-instance-strategy must be "round-robin" or "multi-pass", got "${raw}"`);
+    process.exit(2);
+  }
+  return raw;
+}
+
 function extractRepeatedUrlFlags(args) {
   const allowHttp = args.includes('--allow-http');
   const values = [];
@@ -1209,6 +1241,8 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     console.error('ERROR: Multi-instance mode requires 2+ --url flags. Drop --url for single-instance.');
     process.exit(2);
   }
+
+  const strategy = extractMultiInstanceStrategy(args);
 
   // Strip --url values that may have slipped past parseAgentOptions' positional filter.
   const cleanPositional = positionalArgs.filter(p => !urls.includes(p));
@@ -1290,51 +1324,71 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   );
 
   if (!jsonOutput) {
-    console.error(`Multi-instance storyboard run (round-robin across ${urls.length} instances):`);
+    const strategyLabel =
+      strategy === 'multi-pass' ? `multi-pass (${urls.length} passes)` : `round-robin (1 pass)`;
+    console.error(`Multi-instance storyboard run (${strategyLabel} across ${urls.length} instances):`);
     urls.forEach((u, i) => console.error(`  [#${i + 1}] ${u}`));
     console.error(`  Protocol: ${protocol.toUpperCase()}`);
     console.error(`  Storyboards: ${storyboards.map(s => s.id).join(', ')}`);
-    console.error(`  Total steps: ${totalSteps}\n`);
+    const effectiveSteps = strategy === 'multi-pass' ? totalSteps * urls.length : totalSteps;
+    console.error(`  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}\n`);
   }
 
   // --dry-run: print the assignment plan and exit
   if (dryRun) {
+    // Multi-pass runs the same storyboard once per pass, with the dispatcher
+    // starting at a different replica each time; round-robin is the special
+    // case of one pass.
+    const passCount = strategy === 'multi-pass' ? urls.length : 1;
+    const passOffsets = Array.from({ length: passCount }, (_, i) => i);
+    const assignmentsFor = (sb, offset) => {
+      const flat = sb.phases.flatMap(p => p.steps);
+      return flat.map((s, idx) => {
+        const pos = (idx + offset) % urls.length;
+        return {
+          step_id: s.id,
+          task: s.task,
+          instance_index: pos + 1,
+          agent_url: urls[pos],
+        };
+      });
+    };
     if (jsonOutput) {
       await writeJsonOutput({
         agent_urls: urls,
-        multi_instance_strategy: 'round-robin',
+        multi_instance_strategy: strategy,
         protocol,
         preview: true,
-        storyboards: storyboards.map(sb => {
-          const flat = sb.phases.flatMap(p => p.steps);
-          return {
-            storyboard_id: sb.id,
-            storyboard_title: sb.title,
-            assignments: flat.map((s, idx) => ({
-              step_id: s.id,
-              task: s.task,
-              instance_index: (idx % urls.length) + 1,
-              agent_url: urls[idx % urls.length],
-            })),
-          };
-        }),
+        storyboards: storyboards.map(sb => ({
+          storyboard_id: sb.id,
+          storyboard_title: sb.title,
+          ...(strategy === 'multi-pass'
+            ? { passes: passOffsets.map(o => ({ pass_index: o + 1, dispatch_offset: o, assignments: assignmentsFor(sb, o) })) }
+            : { assignments: assignmentsFor(sb, 0) }),
+        })),
       });
     } else {
       for (const sb of storyboards) {
         console.log(`\n${sb.title} (${sb.id})`);
         console.log('═'.repeat(50));
-        let stepIdx = 0;
-        for (const phase of sb.phases) {
-          console.log(`\n── Phase: ${phase.title} ──`);
-          for (const step of phase.steps) {
-            const inst = (stepIdx % urls.length) + 1;
-            console.log(`  [#${inst}] ${step.id}: ${step.title} → ${step.task}`);
-            stepIdx++;
+        for (const offset of passOffsets) {
+          if (strategy === 'multi-pass') {
+            console.log(`\n── Pass ${offset + 1} of ${passCount} (starts at [#${offset + 1}]) ──`);
+          }
+          let stepIdx = 0;
+          for (const phase of sb.phases) {
+            console.log(`\n── Phase: ${phase.title} ──`);
+            for (const step of phase.steps) {
+              const inst = ((stepIdx + offset) % urls.length) + 1;
+              console.log(`  [#${inst}] ${step.id}: ${step.title} → ${step.task}`);
+              stepIdx++;
+            }
           }
         }
       }
+      const effective = totalSteps * passCount;
       console.log(
-        `\n${totalSteps} step(s) would be executed across ${urls.length} instances. Use without --dry-run to run.`
+        `\n${effective} step(s) would be executed across ${urls.length} instances${strategy === 'multi-pass' ? ` over ${passCount} passes` : ''}. Use without --dry-run to run.`
       );
     }
     return;
@@ -1344,6 +1398,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     protocol,
     ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
     ...(opts.allowHttp && { allow_http: true }),
+    multi_instance_strategy: strategy,
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -1365,7 +1420,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
         ? results[0]
         : {
             agent_urls: urls,
-            multi_instance_strategy: 'round-robin',
+            multi_instance_strategy: strategy,
             storyboards: results,
             overall_passed: !hadFailure,
           }
@@ -1410,8 +1465,9 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
       { passed: 0, failed: 0, skipped: 0, duration: 0 }
     );
     const overallIcon = !hadFailure ? '✅' : '❌';
+    const passSuffix = strategy === 'multi-pass' ? ` across ${urls.length} passes × ${urls.length} instances` : ` across ${urls.length} instances`;
     console.log(
-      `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms) across ${urls.length} instances`
+      `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms)${passSuffix}`
     );
   }
 

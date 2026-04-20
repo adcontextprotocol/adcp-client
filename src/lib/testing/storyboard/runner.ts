@@ -48,6 +48,7 @@ import type {
   StoryboardContext,
   StoryboardRunOptions,
   StoryboardResult,
+  StoryboardPassResult,
   StoryboardPhaseResult,
   StoryboardStepResult,
   StoryboardStepPreview,
@@ -181,6 +182,16 @@ export async function runStoryboard(
     );
   }
 
+  const requestedStrategy = options.multi_instance_strategy ?? 'round-robin';
+  // multi-pass only makes sense when we have 2+ replicas to rotate across.
+  // `_dispatch_offset` is the internal marker that we're already inside a
+  // multi-pass iteration — without it, strategy=multi-pass would recurse
+  // forever.
+  if (requestedStrategy === 'multi-pass' && isMultiInstance && options._dispatch_offset === undefined) {
+    return runMultiPass(agentUrls, storyboard, options);
+  }
+  const dispatchOffset = options._dispatch_offset ?? 0;
+
   // Build one client per URL. In single-URL mode `_client` (from comply()) is
   // honored so the shared MCP transport is reused across storyboards.
   const clients = agentUrls.map(url => getOrCreateClient(url, options));
@@ -230,7 +241,10 @@ export async function runStoryboard(
 
   // Flatten all steps for next-step preview lookups
   const allSteps = flattenSteps(storyboard);
-  const dispatch = createDispatcher(agentUrls, clients, options.multi_instance_strategy ?? 'round-robin');
+  // Inner passes always dispatch round-robin; only the outer runMultiPass
+  // caller knows about the multi-pass strategy. This keeps createDispatcher's
+  // strategy parameter narrow.
+  const dispatch = createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset);
 
   // Placeholder storyboards with no executable phases get a distinct skip
   // reason per the runner-output contract. Without this, the overall result
@@ -381,7 +395,10 @@ export async function runStoryboard(
     storyboard_title: storyboard.title,
     agent_url: agentUrls[0]!,
     ...(isMultiInstance && { agent_urls: [...agentUrls] }),
-    ...(isMultiInstance && { multi_instance_strategy: options.multi_instance_strategy ?? 'round-robin' }),
+    // Inner multi-pass passes surface as `round-robin` (that's what they are
+    // individually); the aggregating wrapper relabels the top-level result
+    // `multi-pass`.
+    ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
     overall_passed: failedCount === 0 && requiredPhasesPassed,
     phases: phaseResults,
     context,
@@ -403,6 +420,82 @@ export async function runStoryboard(
   if (webhookReceiver) await webhookReceiver.close();
 
   return result;
+}
+
+/**
+ * Run the storyboard N times — once per replica — with the round-robin
+ * dispatcher starting at a different replica each pass. Lets each step hit
+ * a different replica across passes, so a bug isolated to one replica
+ * (stale config, divergent version, local cache miss) surfaces on the pass
+ * that sends the relevant step there.
+ *
+ * Known limitation (follow-up adcontextprotocol/adcp-client#607 option 2):
+ * for N=2, offset-shift preserves pair parity — a write→read pair whose
+ * dispatch indices differ by an odd amount lands same-replica in every
+ * pass. Closing that gap requires dependency-aware dispatch that reads
+ * `context_inputs` and assigns a different replica than the most recent
+ * writer.
+ *
+ * The aggregated result AND-combines `overall_passed` across passes, sums
+ * the pass/fail/skip counts, and exposes the per-pass detail via `passes[]`.
+ * The top-level `phases` is the first pass's phases so single-pass consumers
+ * keep working; richer consumers read `passes[]`.
+ */
+async function runMultiPass(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<StoryboardResult> {
+  const start = Date.now();
+  const passes: StoryboardPassResult[] = [];
+  const passResults: StoryboardResult[] = [];
+  for (let passIdx = 0; passIdx < agentUrls.length; passIdx++) {
+    // Override the strategy to round-robin for the inner pass and inject the
+    // dispatcher offset so each pass starts at a different replica.
+    const passOptions: StoryboardRunOptions = {
+      ...options,
+      multi_instance_strategy: 'round-robin',
+      _dispatch_offset: passIdx,
+    };
+    const result = await runStoryboard(agentUrls, storyboard, passOptions);
+    passResults.push(result);
+    passes.push({
+      pass_index: passIdx + 1,
+      dispatch_offset: passIdx,
+      overall_passed: result.overall_passed,
+      phases: result.phases,
+      passed_count: result.passed_count,
+      failed_count: result.failed_count,
+      skipped_count: result.skipped_count,
+      duration_ms: result.total_duration_ms,
+    });
+  }
+
+  const first = passResults[0]!;
+  const overallPassed = passes.every(p => p.overall_passed);
+  const passed = passes.reduce((sum, p) => sum + p.passed_count, 0);
+  const failed = passes.reduce((sum, p) => sum + p.failed_count, 0);
+  const skipped = passes.reduce((sum, p) => sum + p.skipped_count, 0);
+  const schemasUsed = passResults.flatMap(r => r.schemas_used ?? []);
+  const schemasDedup = [...new Map(schemasUsed.map(s => [s.schema_id, s])).values()];
+
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    agent_urls: [...agentUrls],
+    multi_instance_strategy: 'multi-pass',
+    overall_passed: overallPassed,
+    phases: first.phases,
+    passes,
+    context: first.context,
+    total_duration_ms: Date.now() - start,
+    passed_count: passed,
+    failed_count: failed,
+    skipped_count: skipped,
+    tested_at: new Date().toISOString(),
+    ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
+  };
 }
 
 /**
@@ -1278,18 +1371,25 @@ interface Dispatcher {
 /**
  * Build a dispatcher that picks an (agent URL, client) pair per step.
  *
- * Single-URL runs always return the same assignment. Multi-URL runs use the
- * configured strategy — currently round-robin only (other strategies reserved
- * in the enum; see tracking issue adcontextprotocol/adcp-client#607 for a
- * dependency-aware variant that closes the 2-replica coverage gap). Each
- * step increments the counter so step N hits `clients[N % N_urls]`,
- * deterministic and reproducible for bug reports.
+ * Single-URL runs always return the same assignment. Multi-URL runs use
+ * round-robin — step N hits `clients[(N + startOffset) % N_urls]`.
+ * Deterministic and reproducible for bug reports.
+ *
+ * `startOffset` lets the `multi-pass` strategy run the same storyboard with
+ * the dispatcher starting at a different replica each pass so write→read
+ * pairs separated by an even number of stateful steps get exercised
+ * cross-replica on at least one pass.
  */
-function createDispatcher(agentUrls: string[], clients: TestClient[], _strategy: 'round-robin'): Dispatcher {
-  let counter = 0;
+function createDispatcher(
+  agentUrls: string[],
+  clients: TestClient[],
+  _strategy: 'round-robin',
+  startOffset = 0
+): Dispatcher {
+  let counter = startOffset;
   return {
     nextFor(_step: StoryboardStep): StepAssignment {
-      const idx = counter % agentUrls.length;
+      const idx = ((counter % agentUrls.length) + agentUrls.length) % agentUrls.length;
       counter++;
       return {
         client: clients[idx]!,

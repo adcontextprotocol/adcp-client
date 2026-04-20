@@ -82,9 +82,31 @@ This command alternates which replica each step hits via round-robin. The runner
 
 ## Distribution strategy
 
-Currently only `round-robin` is implemented. Step N is dispatched to `urls[N % urls.length]`. The assignment is deterministic and reproducible — the same storyboard always hits the same URLs in the same order, so bug reports are stable.
+Two strategies are available via `--multi-instance-strategy`. The assignment is deterministic and reproducible — the same storyboard always hits the same URLs in the same order, so bug reports are stable.
 
-The `multi_instance_strategy` enum is reserved for future additions (random, reverse, sticky-by-step-index) without breaking the signature.
+### `round-robin` (default)
+
+Step N is dispatched to `urls[N % urls.length]`. One pass. This is the default.
+
+### `multi-pass`
+
+Runs the storyboard `urls.length` times, each pass starting the dispatcher at a different replica. The first pass is standard round-robin (step N → `urls[N % N_urls]`); subsequent passes shift the starting replica so every step is exercised against a different replica across passes.
+
+```bash
+adcp storyboard run \
+  --url https://api.example.com/mcp?replica=a \
+  --url https://api.example.com/mcp?replica=b \
+  --multi-instance-strategy multi-pass \
+  property_lists
+```
+
+**When to use it.** Bugs isolated to one replica — stale config, divergent version, local-cache miss — can pass single-pass round-robin because the buggy replica happens to serve only passive steps. Multi-pass ensures every step hits every replica at least once.
+
+**Known limitation (`#607` follow-up).** For N=2, offset-shift preserves pair parity. A write→read pair whose dispatch indices differ by an odd amount lands same-replica in every pass. Closing that gap requires dependency-aware dispatch reading `context_inputs` to pick a replica different from the most recent writer — tracked as option 2 on [adcontextprotocol/adcp-client#607](https://github.com/adcontextprotocol/adcp-client/issues/607). Multi-pass does help for N≥3 where offsets do flip parity.
+
+**Cost.** Run time scales linearly with `urls.length`. For a 2-replica 6-phase bundle, budget ~2× the single-pass wall clock.
+
+**Output shape.** `runStoryboard` returns the aggregated `StoryboardResult`: `passed_count` / `failed_count` / `skipped_count` sum across passes, `overall_passed` ANDs across passes, top-level `phases` is the first pass (for backward compatibility), and the full per-pass detail lives in `passes[]` with each entry carrying `pass_index`, `dispatch_offset`, and that pass's `phases`.
 
 ## Limitations
 
