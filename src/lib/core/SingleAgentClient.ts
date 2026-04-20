@@ -82,6 +82,7 @@ import type {
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
+import { attachMatch } from './match';
 import { createMCPAuthHeaders } from '../auth';
 import {
   AuthenticationRequiredError,
@@ -1050,7 +1051,7 @@ export class SingleAgentClient {
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
     if (earlyResult) {
-      return earlyResult;
+      return attachMatch(earlyResult);
     }
 
     const agent = await this.ensureEndpointDiscovered();

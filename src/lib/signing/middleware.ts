@@ -88,7 +88,11 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
       if (err instanceof RequestSignatureError) {
         // `failed_step` is informational per spec; keep it in server-side logs
         // rather than the 401 body so anonymous callers can't enumerate the
-        // verifier pipeline.
+        // verifier pipeline. Do NOT call next() here — Express convention is
+        // that a terminal response ends the middleware chain without
+        // invoking downstream handlers. Promise-based wrappers that need to
+        // await completion should race against the response's 'close' event
+        // rather than the next-callback.
         res.status(401).set('WWW-Authenticate', `Signature error="${err.code}"`).json({
           error: err.code,
           message: err.message,

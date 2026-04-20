@@ -26,6 +26,7 @@ import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { AuthPrincipal, Authenticator } from './auth';
 import { AuthError, respondUnauthorized } from './auth';
+import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
 
 /**
  * Context passed to the agent factory on each request.
@@ -90,6 +91,18 @@ export interface ServeOptions {
    * the server would advertise whatever host a caller happened to send.
    *
    * Must be an absolute https:// URL whose path matches the mount path.
+   *
+   * **Multi-host caveat.** `publicUrl` is static per `serve()` call. If a
+   * single Node process fronts multiple hostnames (e.g., a reverse-proxy
+   * splitting `seller-a.example.com` and `seller-b.example.com` into one
+   * backend), every host sees the same advertised `resource` — buyers
+   * hitting `seller-b` will get a token audience-bound to `seller-a`'s
+   * URL and fail JWT audience validation. For multi-host deployments,
+   * run one `serve()` per host (separate ports + reverse proxy by Host
+   * header) or route hosts to isolated Node processes upstream. A
+   * host-aware helper is on the roadmap but not in 5.2.x — until it
+   * ships, the single-`publicUrl`-per-process model is the only
+   * supported configuration.
    */
   publicUrl?: string;
 
@@ -188,6 +201,8 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
     );
   }
 
+  const explicitPreTransport = options?.preTransport as AdcpPreTransport | undefined;
+
   const protectedResourcePath = `/.well-known/oauth-protected-resource${mountPath}`;
   const resourceMetadataUrl =
     options?.protectedResource && publicOrigin ? `${publicOrigin}${protectedResourcePath}` : undefined;
@@ -237,11 +252,21 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
         attachAuthInfo(req, principal);
       }
 
+      // Create the agent first so we can inspect it for an auto-wired
+      // preTransport attached by `createAdcpServer({ signedRequests })`. An
+      // explicit `options.preTransport` wins — it lets callers override the
+      // default wiring (e.g., to add request logging or swap verifier
+      // implementations).
+      const agentServer = createAgent(ctx);
+      const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
+      const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
+      const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;
+
       // Buffer the request body once when preTransport middleware is wired —
       // RFC 9421 verifiers need the raw bytes for Content-Digest recompute,
       // and the MCP transport's own body read would race the verifier otherwise.
       let parsedBody: unknown;
-      if (options?.preTransport) {
+      if (activePreTransport) {
         try {
           const raw = await bufferBody(req);
           (req as { rawBody?: string }).rawBody = raw;
@@ -252,19 +277,27 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
               // Non-JSON body — let transport reject as malformed JSON-RPC.
             }
           }
-          const handled = await options.preTransport(req as import('http').IncomingMessage & { rawBody?: string }, res);
-          if (handled) return;
+          const handled = await activePreTransport(req as import('http').IncomingMessage & { rawBody?: string }, res);
+          if (handled) {
+            // PreTransport already responded (401, etc.). Close the agent
+            // before returning so the McpServer doesn't leak.
+            await agentServer.close();
+            return;
+          }
         } catch (err) {
-          console.error('preTransport middleware error:', err);
+          // Narrow to name+code — transport errors can embed remote URLs.
+          const errName = (err as Error).name || 'Error';
+          const errCode = (err as { code?: string }).code ?? 'unknown';
+          console.error(`preTransport middleware error: ${errName} (${errCode})`);
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Internal server error' }));
           }
+          await agentServer.close();
           return;
         }
       }
 
-      const agentServer = createAgent(ctx);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       });

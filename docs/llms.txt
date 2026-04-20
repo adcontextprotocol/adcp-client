@@ -78,6 +78,24 @@ if (!result.success) {
 }
 ```
 
+For exhaustive handling across all seven statuses, prefer the `match()` dispatcher (fluent method on every result returned from the SDK, or free function import):
+
+```typescript
+const label = result.match!({
+  completed: r => `OK: ${JSON.stringify(r.data)}`,
+  failed: r => `Error: ${r.adcpError?.code ?? r.error}`,
+  submitted: r => `Pending: poll ${r.metadata.taskId}`,
+  'governance-denied': r => `Denied: ${r.adcpError?.code ?? r.error}`,
+  working: r => `Running: ${r.metadata.taskId}`,
+  'input-required': r => `Needs input: ${r.metadata.inputRequest?.question}`,
+  deferred: r => `Deferred: ${r.deferred?.token}`,
+});
+// Optional `_` catchall makes every arm optional:
+// const label = result.match!({ completed: r => JSON.stringify(r.data), _: r => r.status });
+```
+
+TypeScript enforces exhaustiveness at compile time when the `_` catchall is omitted — missing an arm is a type error, not a runtime surprise. The `!` is because `TaskResultBase.match` is declared optional so hand-constructed result literals (tests, middleware) stay valid; every result returned from the SDK has `.match` attached. For hand-constructed literals, use the free function `match(result, handlers)` or call `attachMatch(result)` first.
+
 ## Idempotency (mutating requests)
 
 AdCP v3 requires `idempotency_key` on every mutating request (`create_media_buy`, `update_media_buy`, `activate_signal`, all `sync_*`, `si_send_message`, etc.). The SDK auto-generates a UUID v4 when callers don't supply one, reuses it across internal retries, and surfaces it on the result:
@@ -134,6 +152,8 @@ import { useIdempotencyKey } from '@adcp/client';
 const key = await db.getOrCreateIdempotencyKey(campaign.id);
 await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
 ```
+
+**Crash-recovery cookbook.** For an end-to-end recipe (natural-key lookup after restart, `IdempotencyConflictError` / `IdempotencyExpiredError` handling, `metadata.replayed` as side-effect gate, Postgres schema), see [`docs/guides/idempotency-crash-recovery.md`](./guides/idempotency-crash-recovery.md).
 
 ## Tools
 

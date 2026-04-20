@@ -530,6 +530,28 @@ function generateLlmsTxt(
   ln('}');
   ln('```');
   ln();
+  ln(
+    `For exhaustive handling across all seven statuses, prefer the \`match()\` dispatcher (fluent method on every result returned from the SDK, or free function import):`
+  );
+  ln();
+  ln('```typescript');
+  ln('const label = result.match!({');
+  ln('  completed: r => `OK: ${JSON.stringify(r.data)}`,');
+  ln('  failed: r => `Error: ${r.adcpError?.code ?? r.error}`,');
+  ln('  submitted: r => `Pending: poll ${r.metadata.taskId}`,');
+  ln("  'governance-denied': r => `Denied: ${r.adcpError?.code ?? r.error}`,");
+  ln('  working: r => `Running: ${r.metadata.taskId}`,');
+  ln("  'input-required': r => `Needs input: ${r.metadata.inputRequest?.question}`,");
+  ln('  deferred: r => `Deferred: ${r.deferred?.token}`,');
+  ln('});');
+  ln('// Optional `_` catchall makes every arm optional:');
+  ln('// const label = result.match!({ completed: r => JSON.stringify(r.data), _: r => r.status });');
+  ln('```');
+  ln();
+  ln(
+    `TypeScript enforces exhaustiveness at compile time when the \`_\` catchall is omitted — missing an arm is a type error, not a runtime surprise. The \`!\` is because \`TaskResultBase.match\` is declared optional so hand-constructed result literals (tests, middleware) stay valid; every result returned from the SDK has \`.match\` attached. For hand-constructed literals, use the free function \`match(result, handlers)\` or call \`attachMatch(result)\` first.`
+  );
+  ln();
 
   // --- Idempotency ---
   ln(`## Idempotency (mutating requests)`);
@@ -600,6 +622,10 @@ function generateLlmsTxt(
   ln('const key = await db.getOrCreateIdempotencyKey(campaign.id);');
   ln('await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });');
   ln('```');
+  ln();
+  ln(
+    `**Crash-recovery cookbook.** For an end-to-end recipe (natural-key lookup after restart, \`IdempotencyConflictError\` / \`IdempotencyExpiredError\` handling, \`metadata.replayed\` as side-effect gate, Postgres schema), see [\`docs/guides/idempotency-crash-recovery.md\`](./guides/idempotency-crash-recovery.md).`
+  );
   ln();
 
   // --- Tools by domain ---

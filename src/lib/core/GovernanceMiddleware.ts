@@ -61,6 +61,13 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
   }
   const parts = path.split('.');
   for (const part of parts) {
+    // Explicit inline block for prototype-pollution vectors. The
+    // FORBIDDEN_PATH_SEGMENTS set covers the same cases but CodeQL's
+    // `js/prototype-pollution-utility` pattern matcher only recognizes
+    // inline string comparisons as a valid guard.
+    if (part === '__proto__' || part === 'constructor' || part === 'prototype') {
+      throw new Error(`Invalid path segment: ${part}`);
+    }
     if (FORBIDDEN_PATH_SEGMENTS.has(part)) {
       throw new Error(`Invalid path segment: ${part}`);
     }
@@ -72,13 +79,21 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i]!;
     const nextKey = parts[i + 1]!;
-    if (current[key] == null || typeof current[key] !== 'object') {
+    // Belt-and-suspenders: even with the segment allowlist, traverse only
+    // own properties so a malicious prototype-chained value can't be
+    // followed.
+    const hasOwn = Object.prototype.hasOwnProperty.call(current, key);
+    if (!hasOwn || current[key] == null || typeof current[key] !== 'object') {
       // Create array if next key is numeric, else object
       current[key] = /^\d+$/.test(nextKey) ? [] : {};
     }
     current = current[key];
   }
-  current[parts[parts.length - 1]!] = value;
+  const finalKey = parts[parts.length - 1]!;
+  if (finalKey === '__proto__' || finalKey === 'constructor' || finalKey === 'prototype') {
+    throw new Error(`Invalid path segment: ${finalKey}`);
+  }
+  current[finalKey] = value;
 }
 
 /**

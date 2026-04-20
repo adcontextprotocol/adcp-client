@@ -68,6 +68,11 @@ import {
   type WebhookEmitResult,
   type WebhookEmitterOptions,
 } from './webhook-emitter';
+import { createExpressVerifier, type ExpressLike } from '../signing/middleware';
+import type { JwksResolver } from '../signing/jwks';
+import type { ReplayStore } from '../signing/replay';
+import type { RevocationStore } from '../signing/revocation';
+import type { ContentDigestPolicy } from '../signing/types';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
@@ -517,6 +522,101 @@ export interface AdcpCapabilitiesConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Signed-requests auto-wiring
+// ---------------------------------------------------------------------------
+
+/**
+ * Inputs for the auto-wired RFC 9421 request-signature verifier. When set on
+ * {@link AdcpServerConfig}, `createAdcpServer` builds an Express-shaped
+ * verifier middleware and attaches it to the returned `McpServer` via
+ * {@link ADCP_PRE_TRANSPORT}. `serve()` discovers the attached middleware and
+ * mounts it as the transport-layer `preTransport` hook, so every inbound MCP
+ * request passes the verifier before reaching the JSON-RPC router.
+ *
+ * A seller that declares the `signed-requests` specialism in
+ * `capabilities.specialisms` MUST provide this config, and vice-versa — both
+ * together or neither. `createAdcpServer` throws at construction time when
+ * only one is set, closing the footgun where claiming the specialism
+ * accepts unsigned mutating traffic.
+ *
+ * `jwks`, `replayStore`, and `revocationStore` should be hoisted outside
+ * the agent factory so a single verifier instance serves every request —
+ * otherwise each request would build a fresh replay store and the rate-
+ * abuse / replay-detection guards would be per-request (i.e. broken).
+ */
+export interface SignedRequestsConfig {
+  /** Resolves verification keys by `keyid`. */
+  jwks: JwksResolver;
+  /** Stores `(keyid, signature-bytes, expires)` tuples for replay detection. */
+  replayStore: ReplayStore;
+  /** Consulted for revoked `kid` / `jti` before accepting a signature. */
+  revocationStore: RevocationStore;
+  /**
+   * Operation names that MUST arrive signed. Defaults to every mutating
+   * AdCP tool (per the framework's {@link MUTATING_TASKS}). Read-only tools
+   * are optional — callers can sign them for authenticity but the verifier
+   * accepts unsigned traffic outside this list.
+   */
+  required_for?: string[];
+  /** Default `'either'` — accept signatures with or without Content-Digest. */
+  covers_content_digest?: ContentDigestPolicy;
+  /**
+   * Resolve the `agent_url` claim the verifier stamps on successful results.
+   * Useful when a single seller hosts multiple brands and the buyer's
+   * signing key is scoped to a brand identifier rather than the root.
+   */
+  agentUrlForKeyid?: (keyid: string) => string | undefined;
+}
+
+/**
+ * Symbol under which `createAdcpServer` attaches the auto-wired `preTransport`
+ * function to the returned `McpServer`. `serve()` reads this symbol to mount
+ * the verifier. Consumers typically don't need to touch it; it's exported for
+ * tests and for downstream frameworks that want the same wiring.
+ */
+export const ADCP_PRE_TRANSPORT: unique symbol = Symbol.for('@adcp/client.preTransport');
+
+/**
+ * Diagnostic snapshot of the signed-requests wiring on a returned server.
+ * Read via `server[ADCP_SIGNED_REQUESTS_STATE]` so integration tests and
+ * operator boot diagnostics can assert on the claim/config pairing without
+ * parsing log output. Populated on every `createAdcpServer` call.
+ */
+export interface AdcpSignedRequestsState {
+  /** True when `signedRequests: {...}` was passed and the verifier is auto-wired. */
+  autoWired: boolean;
+  /** True when `capabilities.specialisms` includes `'signed-requests'`. */
+  specialismClaimed: boolean;
+  /** True when `capabilities.request_signing.supported === true`. */
+  capabilitySupported: boolean;
+  /**
+   * Non-fatal mismatch state. `'ok'` when wiring + claim + supported are
+   * all aligned (or all off); `'claim_without_config'` when the claim is
+   * set but no `signedRequests` config was passed (legacy manual
+   * `serve({ preTransport })` path — logged but not thrown).
+   */
+  mismatch: 'ok' | 'claim_without_config';
+}
+
+/**
+ * Symbol under which `createAdcpServer` attaches the `AdcpSignedRequestsState`
+ * snapshot. Use `server[ADCP_SIGNED_REQUESTS_STATE]` to inspect wiring from
+ * tests or boot diagnostics.
+ */
+export const ADCP_SIGNED_REQUESTS_STATE: unique symbol = Symbol.for('@adcp/client.signedRequestsState');
+
+/**
+ * Shape of the preTransport function attached by `createAdcpServer` when
+ * `signedRequests` is configured. Returns `true` if the middleware has already
+ * sent a response (e.g., 401 on verification failure), `false` to continue
+ * into MCP dispatch.
+ */
+export type AdcpPreTransport = (
+  req: import('http').IncomingMessage & { rawBody?: string },
+  res: import('http').ServerResponse
+) => Promise<boolean>;
+
+// ---------------------------------------------------------------------------
 // Server config
 // ---------------------------------------------------------------------------
 
@@ -630,6 +730,19 @@ export interface AdcpServerConfig<TAccount = unknown> {
     /** Observability: emitter-wide onAttemptResult hook. */
     onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
   };
+  /**
+   * Auto-wire the RFC 9421 request-signature verifier onto the HTTP transport.
+   * When set together with `capabilities.specialisms` containing
+   * `signed-requests`, `serve()` mounts the verifier as `preTransport` so
+   * every inbound MCP request is verified before JSON-RPC dispatch. Setting
+   * one without the other throws at construction time — the spec requires
+   * the specialism claim and a working verifier to stay in lock-step.
+   *
+   * Omit entirely when the seller doesn't verify inbound signatures. Servers
+   * that wire the verifier manually via `serve({ preTransport })` are
+   * unaffected — auto-wiring only kicks in through this field.
+   */
+  signedRequests?: SignedRequestsConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -1022,6 +1135,144 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
 }
 
 // ---------------------------------------------------------------------------
+// Signed-requests preTransport builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a `preTransport` middleware that runs `createExpressVerifier` against
+ * the incoming Node request/response. The returned function matches the shape
+ * `serve({ preTransport })` expects: it resolves to `true` when the verifier
+ * has already written a 401 (headers sent), `false` otherwise.
+ *
+ * `serve()` buffers the request body into `req.rawBody` before invoking the
+ * preTransport hook, so the verifier sees the exact bytes the signer hashed
+ * for Content-Digest. For MCP the operation name comes from the JSON-RPC
+ * `params.name`; the resolver below falls back to `undefined` for non-JSON or
+ * non-`tools/call` bodies, which makes the verifier treat them as not-in-
+ * `required_for` rather than rejecting (discovery probes, health checks).
+ */
+function buildSignedRequestsPreTransport(
+  signedRequests: SignedRequestsConfig,
+  capabilityRequiredFor?: string[]
+): AdcpPreTransport {
+  // Precedence: explicit signedRequests.required_for > capabilities.request_signing.required_for
+  // > fallback to every mutating task. Buyers read required_for from
+  // get_adcp_capabilities to decide which calls to sign — defaulting to
+  // MUTATING_TASKS when the seller advertised a narrower list would cause
+  // buyers to get request_signature_required on tools they had no contractual
+  // duty to sign.
+  const requiredFor = signedRequests.required_for ?? capabilityRequiredFor ?? [...MUTATING_TASKS];
+  const verifier = createExpressVerifier({
+    capability: {
+      supported: true,
+      covers_content_digest: signedRequests.covers_content_digest ?? 'either',
+      required_for: requiredFor,
+    },
+    jwks: signedRequests.jwks,
+    replayStore: signedRequests.replayStore,
+    revocationStore: signedRequests.revocationStore,
+    ...(signedRequests.agentUrlForKeyid ? { agentUrlForKeyid: signedRequests.agentUrlForKeyid } : {}),
+    resolveOperation: req => {
+      const raw = (req as { rawBody?: string }).rawBody;
+      if (!raw) return undefined;
+      try {
+        const parsed = JSON.parse(raw) as { method?: string; params?: { name?: string } };
+        if (parsed.method === 'tools/call' && typeof parsed.params?.name === 'string') {
+          return parsed.params.name;
+        }
+      } catch {
+        // Non-JSON or malformed body — let transport handle rejection.
+      }
+      return undefined;
+    },
+  });
+
+  return async function adcpPreTransport(req, res) {
+    const reqShim: ExpressLike = {
+      method: req.method ?? 'POST',
+      url: req.url ?? '/mcp',
+      originalUrl: req.url ?? '/mcp',
+      headers: req.headers,
+      rawBody: req.rawBody ?? '',
+      protocol: 'http',
+      get(name: string) {
+        const v = req.headers[name.toLowerCase()];
+        return Array.isArray(v) ? v.join(', ') : v;
+      },
+    };
+    const resShim = {
+      status(code: number) {
+        res.statusCode = code;
+        return {
+          set(k: string, v: string) {
+            res.setHeader(k, v);
+            return {
+              json(body: unknown) {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify(body));
+              },
+            };
+          },
+        };
+      },
+    };
+
+    let handled = false;
+    let verifierCompleted = false;
+    // The verifier calls `next(err?)` in the success / error path, but the
+    // 401 RequestSignatureError path writes the response and returns WITHOUT
+    // calling next. Race the next-callback against the response's 'finish' /
+    // 'close' events so a terminal 401 resolves the promise; otherwise the
+    // wrapper hangs forever and the agent server leaks (one McpServer per
+    // unsigned request under attack).
+    //
+    // Security: if 'close' fires before the verifier completes (client
+    // aborted the TCP connection mid-JWKS-fetch), we MUST NOT fall through
+    // to the MCP transport — doing so would execute the tool handler
+    // without a verified signature on an attacker-dropped connection. Mark
+    // handled=true so serve.ts skips dispatch.
+    await new Promise<void>(resolve => {
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+      res.once('finish', () => {
+        if (res.writableEnded) handled = true;
+        done();
+      });
+      res.once('close', () => {
+        if (!verifierCompleted) handled = true;
+        done();
+      });
+      verifier(reqShim, resShim, err => {
+        verifierCompleted = true;
+        if (err) {
+          // Log internally; a leaked stack trace to the caller would
+          // enumerate the verifier pipeline (js/stack-trace-exposure).
+          // Narrow to name+code only — full error stringification can embed
+          // JWKS URLs from transport failures, which leaks counterparty
+          // key-discovery topology on shared log aggregators.
+          const errName = (err as Error).name || 'Error';
+          const errCode = (err as { code?: string }).code ?? 'unknown';
+          console.error(`[adcp/signed-requests] verifier middleware error: ${errName} (${errCode})`);
+          if (!res.writableEnded) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'verifier_error' }));
+          }
+          handled = true;
+        }
+        if (res.writableEnded) handled = true;
+        done();
+      });
+    });
+    return handled;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // createAdcpServer
 // ---------------------------------------------------------------------------
 
@@ -1053,7 +1304,51 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     taskStore,
     taskMessageQueue,
     webhooks,
+    signedRequests,
   } = config;
+
+  // Enforce lock-step between the `signed-requests` specialism claim and the
+  // verifier config for the auto-wiring path. When `signedRequests` is set
+  // but the specialism isn't declared, buyers can't discover the signing
+  // requirement from `get_adcp_capabilities` — they won't sign, the
+  // verifier rejects every mutating call, and the agent is dead on arrival.
+  // That's unambiguously wrong, so we throw.
+  //
+  // The opposite direction — claiming the specialism without a
+  // `signedRequests` config — is only wrong when the agent also doesn't
+  // wire a verifier via `serve({ preTransport })`. Legacy servers that
+  // hand-build the middleware fall into this case and are still conformant.
+  // We log a loud error so operators notice (matching the idempotency
+  // guardrail precedent) but don't throw, leaving the manual path working.
+  const specialismsClaimed = capConfig?.specialisms ?? [];
+  const claimsSignedRequests = specialismsClaimed.includes('signed-requests');
+  if (signedRequests && !claimsSignedRequests) {
+    throw new Error(
+      'createAdcpServer: `signedRequests` is configured but `capabilities.specialisms` does not include "signed-requests". ' +
+        'Add "signed-requests" to the specialisms list — buyers discover the signing requirement from get_adcp_capabilities, ' +
+        "and omitting the claim means they won't sign their requests."
+    );
+  }
+  if (claimsSignedRequests && !signedRequests) {
+    logger.error(
+      'createAdcpServer: `capabilities.specialisms` claims "signed-requests" but no `signedRequests` config was provided. ' +
+        'Either pass `signedRequests: { jwks, replayStore, revocationStore }` to auto-wire the verifier, or ensure you wire ' +
+        'one manually via `serve({ preTransport })`. Claiming the specialism without verifying signatures is a spec violation.'
+    );
+  }
+  // The specialism is only meaningful when `capabilities.request_signing.supported`
+  // is true — the compliance storyboard treats a missing or false `supported`
+  // flag as "not opted in" and silently skips the whole conformance run. Claim
+  // + supported:false is the worst failure mode: the claim advertises
+  // signature enforcement while the capability block tells buyers the agent
+  // doesn't verify. Fail fast so the mismatch is caught at construction.
+  if (claimsSignedRequests && capConfig?.request_signing?.supported !== true) {
+    throw new Error(
+      'createAdcpServer: `capabilities.specialisms` claims "signed-requests" but `capabilities.request_signing.supported` is not true. ' +
+        'Set `capabilities.request_signing = { supported: true, ... }` — the compliance storyboard skips conformance entirely when ' +
+        '`supported` is falsy, and buyers cannot discover the signing requirement without the capability block.'
+    );
+  }
 
   // Instantiate the emitter once — handler contexts expose its `emit`
   // bound method so per-request code calls `ctx.emitWebhook(...)` without
@@ -1508,9 +1803,37 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     return capabilitiesResponse(data);
   });
 
+  // Attach the auto-wired preTransport so `serve()` mounts the verifier
+  // on the HTTP transport. A non-enumerable symbol property keeps this off
+  // the normal McpServer surface — it's a private contract between this
+  // function and `serve()` for wiring, not part of the McpServer public API.
+  if (signedRequests) {
+    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing?.required_for);
+    Object.defineProperty(server, ADCP_PRE_TRANSPORT, {
+      value: preTransport,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+  }
+
+  const signedRequestsState: AdcpSignedRequestsState = {
+    autoWired: Boolean(signedRequests),
+    specialismClaimed: claimsSignedRequests,
+    capabilitySupported: capConfig?.request_signing?.supported === true,
+    mismatch: claimsSignedRequests && !signedRequests ? 'claim_without_config' : 'ok',
+  };
+  Object.defineProperty(server, ADCP_SIGNED_REQUESTS_STATE, {
+    value: signedRequestsState,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+
   logger.info('AdCP server created', {
     tools: [...registeredToolNames],
     protocols,
+    signedRequests: signedRequestsState,
   });
 
   return server;

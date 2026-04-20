@@ -375,8 +375,13 @@ if (require.main === module) {
       process.exit(0);
     })
     .catch(error => {
-      console.error('❌ Fatal error:', error);
-      console.error(error.stack);
+      // Narrow to name + message — the error object can reach into OAuth
+      // metadata on auth-related failures (CodeQL js/clear-text-logging).
+      // Full stack stays out of logs; re-run with DEBUG=1 to restore.
+      const name = error?.name ?? 'Error';
+      const msg = error?.message ?? String(error);
+      console.error(`❌ Fatal error: ${name}: ${msg}`);
+      if (process.env.DEBUG === '1') console.error(error?.stack);
       process.exit(1);
     });
 }
