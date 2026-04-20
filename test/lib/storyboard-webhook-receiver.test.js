@@ -215,6 +215,24 @@ describe('injectContext with RunnerVariables', () => {
     assert.strictEqual(out.a, '{{runner.webhook_base}}');
     assert.strictEqual(out.b, '{{prior_step.ghost.operation_id}}');
   });
+
+  test('returns quickly on nested/partial mustache inputs (ReDoS regression for CodeQL #49)', () => {
+    const rv = createRunnerVariables({ webhookBase: 'https://r.example' });
+    // Pathological input that the prior `[^}]+` alternation would backtrack
+    // over at O(n²) — many repetitions of a `{{runner.` prefix without a
+    // matching close. The new `[^{}]+` character class forbids a token from
+    // straddling a nested `{{`, so no match fires and the input passes
+    // through unchanged in linear time.
+    const pathological = '{{runner.'.repeat(5000);
+    const start = process.hrtime.bigint();
+    const out = injectContext({ x: pathological }, {}, rv);
+    const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+    assert.strictEqual(out.x, pathological);
+    // Bound generously — was observed ~300 ns per input char pre-fix at this
+    // scale. If a future regex change re-introduces polynomial backtracking,
+    // this will time out well under the assertion.
+    assert.ok(elapsedMs < 100, `expected sub-100ms, got ${elapsedMs.toFixed(1)}ms`);
+  });
 });
 
 // ────────────────────────────────────────────────────────────

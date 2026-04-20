@@ -422,8 +422,18 @@ function deepReplace(value: unknown, context: StoryboardContext, runnerVars?: Ru
  * "unresolved substitution" error rather than silently shipping the
  * literal mustache tokens to an agent.
  */
+/**
+ * Token shape for the outer expander. Single `[^{}]+` (excludes braces on
+ * both sides) so nested or partial `{{…` can't straddle a token boundary
+ * and force the engine to backtrack character-by-character. Unified prefix
+ * alternation (`runner|prior_step`) keeps the two recognized names in one
+ * place — the inner expander still narrows each. Closes CodeQL alert #49
+ * (js/polynomial-redos).
+ */
+const MUSTACHE_TOKEN_RE = /\{\{((?:runner|prior_step)\.[^{}]+)\}\}/g;
+
 function expandMustache(input: string, runnerVars: RunnerVariables): string {
-  return input.replace(/\{\{(runner\.[^}]+|prior_step\.[^}]+)\}\}/g, (match, inner) => {
+  return input.replace(MUSTACHE_TOKEN_RE, (match, inner) => {
     if (inner === 'runner.webhook_base') {
       return runnerVars.webhookBase ?? match;
     }
