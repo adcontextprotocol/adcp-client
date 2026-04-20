@@ -15,6 +15,16 @@
  * On failure, the {@link respondUnauthorized} helper produces an RFC 6750
  * compliant 401 (or 403) with a `WWW-Authenticate` header — required for
  * compliance and what the storyboard runner probes for.
+ *
+ * **Audience binding is not optional.** `verifyBearer` requires an `audience`
+ * and rejects tokens whose `aud` claim doesn't match — this is what stops
+ * same-tenant tokens from being replayed against any agent that shares the
+ * tenant. If you write a CUSTOM `authenticate` callback (instead of using
+ * `verifyBearer`), you MUST validate `aud` yourself against your canonical
+ * public URL. IdPs that don't include `aud` in user tokens (some WorkOS /
+ * Clerk defaults) break the model: either add `aud` at mint time via a
+ * custom claim, or pick a different IdP configuration. Signature + expiry
+ * + scope alone is not per-resource isolation.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyOptions } from 'jose';

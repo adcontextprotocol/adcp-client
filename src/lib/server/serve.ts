@@ -91,6 +91,18 @@ export interface ServeOptions {
    * the server would advertise whatever host a caller happened to send.
    *
    * Must be an absolute https:// URL whose path matches the mount path.
+   *
+   * **Multi-host caveat.** `publicUrl` is static per `serve()` call. If a
+   * single Node process fronts multiple hostnames (e.g., a reverse-proxy
+   * splitting `seller-a.example.com` and `seller-b.example.com` into one
+   * backend), every host sees the same advertised `resource` — buyers
+   * hitting `seller-b` will get a token audience-bound to `seller-a`'s
+   * URL and fail JWT audience validation. For multi-host deployments,
+   * run one `serve()` per host (separate ports + reverse proxy by Host
+   * header) or route hosts to isolated Node processes upstream. A
+   * host-aware helper is on the roadmap but not in 5.2.x — until it
+   * ships, the single-`publicUrl`-per-process model is the only
+   * supported configuration.
    */
   publicUrl?: string;
 

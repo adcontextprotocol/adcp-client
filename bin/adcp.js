@@ -713,6 +713,7 @@ COMMANDS:
   signing <subcommand>        RFC 9421 signing key tools (generate, verify)
   check-network               Validate managed publisher network deployment
   diagnose-auth <alias|url>   Diagnose OAuth handshake with ranked hypotheses
+                              (alias: "adcp diagnose oauth <alias|url>")
   comply <agent> [options]    DEPRECATED — use "storyboard run" instead
   test <agent> [scenario]     Run individual test scenarios (legacy)
   registry <command>          Brand/property registry lookups
@@ -2028,6 +2029,15 @@ async function main() {
 
   if (args[0] === 'diagnose-auth') {
     await handleDiagnoseAuthCommand(args.slice(1));
+    return;
+  }
+
+  // `adcp diagnose oauth <alias>` — subcommand alias for `adcp diagnose-auth`.
+  // The hyphenated form remains canonical (historical + shorter to type); the
+  // subcommand form matches the `<noun> <verb>` convention some docs and
+  // tooling expect.
+  if (args[0] === 'diagnose' && args[1] === 'oauth') {
+    await handleDiagnoseAuthCommand(args.slice(2));
     return;
   }
 
