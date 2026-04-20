@@ -480,8 +480,25 @@ function createAgent({ taskStore }: ServeContext) {
     // via `createAdcpServer<MyAccount>({...})`.
     resolveSessionKey: () => 'default-principal',
 
+    // resolveAccount runs BEFORE idempotency / handler dispatch. If it
+    // returns null for a valid-shape reference, every mutating request
+    // short-circuits as ACCOUNT_NOT_FOUND — which masks idempotency
+    // conformance (missing-key / replay tests fail with the wrong code).
+    // Handle BOTH branches of AccountReference:
+    //   { account_id } — your own persisted accounts.
+    //   { brand: { domain }, operator } — the canonical spec shape.
+    //     Conformance storyboards use this by default (e.g. brand.domain
+    //     "acmeoutdoor.example", operator "pinnacle-agency.example").
     resolveAccount: async ref => {
       if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
+      if ('brand' in ref && ref.brand?.domain && ref.operator) {
+        // In dev/compliance mode, auto-materialize an account for any
+        // valid brand+operator so conformance tests reach the handler.
+        // In production, replace with a real lookup against your tenant
+        // registry — returning null here for unknown tenants is correct
+        // and will (correctly) surface ACCOUNT_NOT_FOUND to the buyer.
+        return { brand: ref.brand.domain, operator: ref.operator };
+      }
       return null;
     },
 
@@ -591,7 +608,7 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 
 **What the framework handles when you pass `idempotency` to `createAdcpServer`:**
 
-- Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic.
+- Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic. **Ordering gotcha**: idempotency runs AFTER `resolveAccount`. If your `resolveAccount` returns null for a valid-shape reference, the buyer gets `ACCOUNT_NOT_FOUND` — NOT the missing-key error they expected — and conformance tests fail with the wrong code. Either handle both AccountReference branches (see Implementation above) or accept dev-mode brand+operator wildcards so compliance graders reach the idempotency layer.
 - Hashes the request payload with RFC 8785 JCS; returns `IDEMPOTENCY_CONFLICT` on same-key-different-payload. The error body carries only `code` + `message` — no payload hash, no field pointer, no leaked cached content.
 - Returns `IDEMPOTENCY_EXPIRED` when a key is past the TTL (with ±60s clock-skew tolerance).
 - Injects `replayed: true` on `result.structuredContent.replayed` when returning a cached response; fresh executions omit the field.
@@ -689,9 +706,9 @@ import { serve, verifyApiKey } from '@adcp/client';
 
 serve(createAgent, {
   authenticate: verifyApiKey({
-    verify: async (token) => {
+    verify: async token => {
       const row = await db.api_keys.findUnique({ where: { token } });
-      if (!row) return null;  // framework replies 401 with WWW-Authenticate
+      if (!row) return null; // framework replies 401 with WWW-Authenticate
       return { principal: row.account_id };
     },
   }),
@@ -730,10 +747,7 @@ import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
 
 serve(createAgent, {
   publicUrl: AGENT_URL,
-  authenticate: anyOf(
-    verifyApiKey({ verify: lookupApiKey }),
-    verifyBearer({ jwksUri, issuer, audience: AGENT_URL }),
-  ),
+  authenticate: anyOf(verifyApiKey({ verify: lookupApiKey }), verifyBearer({ jwksUri, issuer, audience: AGENT_URL })),
   protectedResource: { authorization_servers: [issuer] },
 });
 ```

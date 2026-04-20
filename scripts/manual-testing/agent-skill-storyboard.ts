@@ -157,11 +157,10 @@ async function runClaude(prompt: string, cwd: string, timeoutMs: number): Promis
   await new Promise<void>((resolveFn, reject) => {
     // `--dangerously-skip-permissions` is required for unattended runs —
     // the alternative is the harness pausing on every tool call.
-    const p = spawn(
-      'claude',
-      ['-p', `Follow the instructions in ${promptPath}.`, '--dangerously-skip-permissions'],
-      { cwd, stdio: ['ignore', 'inherit', 'inherit'] }
-    );
+    const p = spawn('claude', ['-p', `Follow the instructions in ${promptPath}.`, '--dangerously-skip-permissions'], {
+      cwd,
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
     const t = setTimeout(() => {
       p.kill('SIGTERM');
       reject(new Error(`claude timed out after ${timeoutMs}ms`));
@@ -218,11 +217,10 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
   // `--allow-http` is mandatory — the grader hard-refuses plain-http URLs
   // otherwise (production agents MUST terminate TLS). Harness-tested agents
   // bind on loopback, so we opt in explicitly.
-  const res = spawnSync(
-    'node',
-    [cliPath, 'storyboard', 'run', url, storyboardId, '--json', '--allow-http'],
-    { encoding: 'utf8', timeout: 120_000 }
-  );
+  const res = spawnSync('node', [cliPath, 'storyboard', 'run', url, storyboardId, '--json', '--allow-http'], {
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
   const raw = (res.stdout ?? '') + (res.stderr ?? '');
   let passed = false;
   try {
@@ -247,9 +245,7 @@ function log(msg: string): void {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const skillContent = await readFile(resolve(args.skill), 'utf8');
-  const workDir = args.workDir
-    ? resolve(args.workDir)
-    : await mkdtemp(join(tmpdir(), 'adcp-agent-'));
+  const workDir = args.workDir ? resolve(args.workDir) : await mkdtemp(join(tmpdir(), 'adcp-agent-'));
 
   log(`workspace: ${workDir}`);
   log(`skill: ${args.skill}`);
