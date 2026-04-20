@@ -164,6 +164,19 @@ export type {
   PgBackendOptions,
 } from './idempotency';
 
+export { createWebhookEmitter, memoryWebhookKeyStore } from './webhook-emitter';
+export type {
+  WebhookEmitter,
+  WebhookEmitterOptions,
+  WebhookEmitParams,
+  WebhookEmitResult,
+  WebhookEmitAttempt,
+  WebhookEmitAttemptResult,
+  WebhookIdempotencyKeyStore,
+  WebhookRetryOptions,
+  WebhookAuthentication,
+} from './webhook-emitter';
+
 export { checkGovernance, governanceDeniedError } from './governance';
 export type {
   CheckGovernanceOptions,

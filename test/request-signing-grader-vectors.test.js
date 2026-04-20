@@ -21,18 +21,22 @@ const {
 const loaded = loadRequestSigningVectors();
 
 describe('request-signing vector loader', () => {
-  test('loads 8 positive and 20 negative vectors from the compliance cache', () => {
-    assert.strictEqual(loaded.positive.length, 8, 'positive count');
-    assert.strictEqual(loaded.negative.length, 20, 'negative count');
+  test('loads positive and negative vectors from the compliance cache', () => {
+    assert.ok(loaded.positive.length >= 8, `positive count (got ${loaded.positive.length})`);
+    assert.ok(loaded.negative.length >= 20, `negative count (got ${loaded.negative.length})`);
   });
 
-  test('every vector carries request, verifier_capability, and jwks_ref', () => {
+  test('every vector carries request, verifier_capability, and a key source', () => {
     for (const v of [...loaded.positive, ...loaded.negative]) {
       assert.ok(v.id, `${v.id || '?'}: missing id`);
       assert.ok(v.request?.method, `${v.id}: missing request.method`);
       assert.ok(v.request?.url, `${v.id}: missing request.url`);
       assert.ok(v.verifier_capability, `${v.id}: missing verifier_capability`);
-      assert.ok(Array.isArray(v.jwks_ref) && v.jwks_ref.length > 0, `${v.id}: empty jwks_ref`);
+      // Negative vectors may publish a malformed JWK inline via
+      // `jwks_override` (e.g., 025-jwk-alg-crv-mismatch); everything else
+      // resolves from the canonical keys.json via `jwks_ref`.
+      const hasKeys = (Array.isArray(v.jwks_ref) && v.jwks_ref.length > 0) || v.jwks_override !== undefined;
+      assert.ok(hasKeys, `${v.id}: vector must declare jwks_ref[] or jwks_override`);
     }
   });
 

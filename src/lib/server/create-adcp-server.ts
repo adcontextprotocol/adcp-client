@@ -62,6 +62,12 @@ import {
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import type { IdempotencyStore } from './idempotency';
+import {
+  createWebhookEmitter,
+  type WebhookEmitParams,
+  type WebhookEmitResult,
+  type WebhookEmitterOptions,
+} from './webhook-emitter';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
@@ -227,6 +233,21 @@ export interface HandlerContext<TAccount = unknown> {
     expiresAt?: number;
     extra?: Record<string, unknown>;
   };
+  /**
+   * Emit a signed webhook to a buyer's `push_notification_config.url`.
+   * Populated when `AdcpServerConfig.webhooks` is configured. Handles
+   * RFC 9421 signing, stable `idempotency_key` across retries, and
+   * retry/backoff per adcp#2417 + adcp#2423 + adcp#2478.
+   *
+   * Typical call from inside a completion handler:
+   *
+   *     await ctx.emitWebhook({
+   *       url: push_notification_config.url,
+   *       payload: { task: { task_id, status: 'completed', result } },
+   *       operation_id: `create_media_buy.${media_buy_id}`,
+   *     });
+   */
+  emitWebhook?: (params: WebhookEmitParams) => Promise<WebhookEmitResult>;
 }
 
 /** Request metadata passed to `resolveSessionKey` so the hook can derive a key from any field. */
@@ -588,6 +609,27 @@ export interface AdcpServerConfig<TAccount = unknown> {
   instructions?: string;
   taskStore?: TaskStore;
   taskMessageQueue?: TaskMessageQueue;
+  /**
+   * Webhook-emission config. When set, `ctx.emitWebhook` is populated on
+   * every handler's context — handlers post signed, retried,
+   * idempotency-stable webhooks without hand-rolling the pipeline. Omit
+   * if your server never emits webhooks.
+   *
+   * The `signerKey` MUST have `adcp_use: "webhook-signing"` — a
+   * request-signing key is a conformance violation per adcp#2423 (key
+   * purpose discriminator). Publishers publishing their JWKS at the
+   * `jwks_uri` on brand.json's `agents[]` entry reuse the same key across
+   * every buyer they deliver to.
+   */
+  webhooks?: Pick<
+    WebhookEmitterOptions,
+    'signerKey' | 'retries' | 'idempotencyKeyStore' | 'generateIdempotencyKey' | 'fetch' | 'userAgent' | 'tag'
+  > & {
+    /** Observability: emitter-wide onAttempt hook. */
+    onAttempt?: WebhookEmitterOptions['onAttempt'];
+    /** Observability: emitter-wide onAttemptResult hook. */
+    onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,7 +1052,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     instructions,
     taskStore,
     taskMessageQueue,
+    webhooks,
   } = config;
+
+  // Instantiate the emitter once — handler contexts expose its `emit`
+  // bound method so per-request code calls `ctx.emitWebhook(...)` without
+  // knowing about the emitter's construction or options.
+  const webhookEmitter = webhooks ? createWebhookEmitter(webhooks) : undefined;
 
   const server = createTaskCapableServer(name, version, {
     taskStore,
@@ -1066,6 +1114,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const toolHandler = async (params: any, extra: any) => {
         const ctx: HandlerContext<TAccount> = { store: stateStore };
         if (extra?.authInfo) ctx.authInfo = extra.authInfo;
+        if (webhookEmitter) ctx.emitWebhook = webhookEmitter.emit.bind(webhookEmitter);
 
         // Echo params.context into any response (success or error) so buyers
         // can trace correlation_id end-to-end. Framework-generated errors
@@ -1394,6 +1443,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // explicit capConfig, else to the 24h spec-recommended default.
       // clampReplayTtl guards against out-of-spec values in capConfig.
       idempotency: {
+        supported: true,
         replay_ttl_seconds: clampReplayTtl(
           capConfig?.idempotency?.replay_ttl_seconds ?? idempotency?.ttlSeconds ?? 86400
         ),

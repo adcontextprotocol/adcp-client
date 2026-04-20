@@ -34,6 +34,12 @@ const HARNESS_TASKS = new Set([
   // Synthesized request-signing steps — the runner builds each request from
   // a test-vector fixture; no `sample_request` shape applies.
   'request_signing_probe',
+  // Webhook-assertion pseudo-tasks (adcontextprotocol/adcp#2431). The runner
+  // observes the shared receiver rather than driving the agent, so these
+  // steps have no request shape.
+  'expect_webhook',
+  'expect_webhook_retry_keys_stable',
+  'expect_webhook_signature_valid',
 ]);
 
 // Tasks that reference test-kit data (e.g. "$test_kit.auth.probe_task"). The

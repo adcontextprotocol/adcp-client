@@ -34,10 +34,10 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | `sales-social` | stable | Walled-garden: no `get_products`/`create_media_buy`; implement `sync_audiences`, `log_event`, `get_account_financials` instead | [§ sales-social](#specialism-sales-social) |
 | `sales-exchange` | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending | Baseline only |
 | `sales-proposal-mode` | stable | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages` | [§ sales-proposal-mode](#specialism-sales-proposal-mode) |
-
-**Not in this skill:** `sales-catalog-driven` and `sales-retail-media` (both in `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too, not only retail).
 | `audience-sync` | stable | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response. | [§ audience-sync](#specialism-audience-sync) |
 | `signed-requests` | preview | RFC 9421 HTTP Signature verification on mutating requests. Advertise `request_signing.supported: true` in capabilities; graded against conformance vectors — positive vectors must produce non-4xx; negative vectors must return `401` with `WWW-Authenticate: Signature error="<code>"` matching the vector's `expected_outcome.error_code` byte-for-byte. | [§ signed-requests](#specialism-signed-requests) |
+
+**Not in this skill:** `sales-catalog-driven` and `sales-retail-media` (both in `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too, not only retail).
 
 Specialism ID (kebab-case) = storyboard directory. The storyboard's `id:` field (snake_case, e.g. `media_buy_broadcast_seller`) is the category name, not the specialism name. One specialism can apply to multiple product lines — a seller with both CTV inventory and broadcast TV inventory can claim `sales-streaming-tv` and `sales-broadcast-tv` simultaneously.
 
@@ -579,8 +579,25 @@ function createAgent({ taskStore }: ServeContext) {
     // via `createAdcpServer<MyAccount>({...})`.
     resolveSessionKey: () => 'default-principal',
 
+    // resolveAccount runs BEFORE idempotency / handler dispatch. If it
+    // returns null for a valid-shape reference, every mutating request
+    // short-circuits as ACCOUNT_NOT_FOUND — which masks idempotency
+    // conformance (missing-key / replay tests fail with the wrong code).
+    // Handle BOTH branches of AccountReference:
+    //   { account_id } — your own persisted accounts.
+    //   { brand: { domain }, operator } — the canonical spec shape.
+    //     Conformance storyboards use this by default (e.g. brand.domain
+    //     "acmeoutdoor.example", operator "pinnacle-agency.example").
     resolveAccount: async ref => {
       if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
+      if ('brand' in ref && ref.brand?.domain && ref.operator) {
+        // In dev/compliance mode, auto-materialize an account for any
+        // valid brand+operator so conformance tests reach the handler.
+        // In production, replace with a real lookup against your tenant
+        // registry — returning null here for unknown tenants is correct
+        // and will (correctly) surface ACCOUNT_NOT_FOUND to the buyer.
+        return { brand: ref.brand.domain, operator: ref.operator };
+      }
       return null;
     },
 
@@ -691,7 +708,7 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 
 **What the framework handles when you pass `idempotency` to `createAdcpServer`:**
 
-- Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic.
+- Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic. **Ordering gotcha**: idempotency runs AFTER `resolveAccount`. If your `resolveAccount` returns null for a valid-shape reference, the buyer gets `ACCOUNT_NOT_FOUND` — NOT the missing-key error they expected — and conformance tests fail with the wrong code. Either handle both AccountReference branches (see Implementation above) or accept dev-mode brand+operator wildcards so compliance graders reach the idempotency layer.
 - Hashes the request payload with RFC 8785 JCS. The emitted error codes and their semantics are in the table at [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency).
 - Injects `replayed: true` on `result.structuredContent.replayed` when returning a cached response; fresh executions omit the field.
 - Auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`.
@@ -730,9 +747,9 @@ import { verifyApiKey } from '@adcp/client/server';
 
 serve(createAgent, {
   authenticate: verifyApiKey({
-    verify: async (token) => {
+    verify: async token => {
       const row = await db.api_keys.findUnique({ where: { token } });
-      if (!row) return null;  // framework replies 401 with WWW-Authenticate
+      if (!row) return null; // framework replies 401 with WWW-Authenticate
       return { principal: row.account_id };
     },
   }),
@@ -773,10 +790,7 @@ import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
 
 serve(createAgent, {
   publicUrl: AGENT_URL,
-  authenticate: anyOf(
-    verifyApiKey({ verify: lookupApiKey }),
-    verifyBearer({ jwksUri, issuer, audience: AGENT_URL }),
-  ),
+  authenticate: anyOf(verifyApiKey({ verify: lookupApiKey }), verifyBearer({ jwksUri, issuer, audience: AGENT_URL })),
   protectedResource: { authorization_servers: [issuer] },
 });
 ```

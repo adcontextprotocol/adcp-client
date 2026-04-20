@@ -105,10 +105,20 @@ function isInnerList(entry: unknown): entry is InnerList {
   return Array.isArray(entry) && Array.isArray((entry as unknown[])[0]);
 }
 
+/**
+ * Translate base64url (`-`/`_`) inside byte-sequence delimiters to standard
+ * base64 (`+`/`/`) so the strict RFC 8941 parser accepts the value. Enforces
+ * the spec's single-alphabet rule: a byte-sequence token that mixes
+ * base64url (`[-_]`) with standard base64 (`[+/=]`) is ambiguous and MUST
+ * be rejected (`webhook_signature_header_malformed` / `request_signature_header_malformed`
+ * per profile).
+ */
 function normalizeByteSequenceBase64(input: string): string {
   let out = '';
   let inString = false;
   let inBytes = false;
+  let sawStandardAlphabet = false;
+  let sawUrlSafeAlphabet = false;
   for (let i = 0; i < input.length; i++) {
     const ch = input[i]!;
     if (inString) {
@@ -124,9 +134,21 @@ function normalizeByteSequenceBase64(input: string): string {
       if (ch === ':') {
         inBytes = false;
         out += ch;
-      } else if (ch === '-') out += '+';
-      else if (ch === '_') out += '/';
-      else out += ch;
+        if (sawStandardAlphabet && sawUrlSafeAlphabet) {
+          malformed('Signature value mixes base64url and standard-base64 alphabets');
+        }
+        sawStandardAlphabet = false;
+        sawUrlSafeAlphabet = false;
+      } else if (ch === '-') {
+        sawUrlSafeAlphabet = true;
+        out += '+';
+      } else if (ch === '_') {
+        sawUrlSafeAlphabet = true;
+        out += '/';
+      } else {
+        if (ch === '+' || ch === '/' || ch === '=') sawStandardAlphabet = true;
+        out += ch;
+      }
       continue;
     }
     if (ch === '"') inString = true;

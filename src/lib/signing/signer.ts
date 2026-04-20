@@ -2,6 +2,7 @@ import { createPrivateKey, randomBytes, sign as nodeSign, type JsonWebKey } from
 import { buildSignatureBase, formatSignatureParams, type RequestLike, type SignatureParams } from './canonicalize';
 import { computeContentDigest } from './content-digest';
 import { MANDATORY_COMPONENTS, MAX_SIGNATURE_WINDOW_SECONDS, REQUEST_SIGNING_TAG, type AdcpJsonWebKey } from './types';
+import { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-verifier';
 
 export interface SignerKey {
   keyid: string;
@@ -62,6 +63,55 @@ export function signRequest(request: RequestLike, key: SignerKey, options: SignR
   headers['Signature-Input'] = `${label}=${formatSignatureParams(components, params)}`;
   headers['Signature'] = `${label}=:${sigB64}:`;
 
+  return { headers, signatureBase: base, params };
+}
+
+export interface SignWebhookOptions {
+  label?: string;
+  windowSeconds?: number;
+  now?: () => number;
+  nonce?: string;
+  /**
+   * Override the signature tag. Defaults to `adcp/webhook-signing/v1`.
+   * Exposed so test suites can pin a wrong tag to exercise receiver
+   * rejection paths without mutating the signed headers post-hoc.
+   */
+  tag?: string;
+}
+
+/**
+ * Sign an outbound webhook request under the RFC 9421 webhook profile
+ * (`tag=adcp/webhook-signing/v1`). Covers the five mandatory components —
+ * `@method`, `@target-uri`, `@authority`, `content-type`, `content-digest` —
+ * and sets `Content-Digest` on the outgoing headers. Publishers emitting
+ * conformant webhooks should use this instead of hand-rolling signatures.
+ */
+export function signWebhook(request: RequestLike, key: SignerKey, options: SignWebhookOptions = {}): SignedRequest {
+  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
+  const nonce = options.nonce ?? base64UrlRandom(16);
+  const label = options.label ?? 'sig1';
+
+  const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
+  headers['Content-Digest'] = computeContentDigest(request.body ?? '');
+
+  const components = [...WEBHOOK_MANDATORY_COMPONENTS];
+  const params: SignatureParams = {
+    created: now,
+    expires: now + windowSeconds,
+    nonce,
+    keyid: key.keyid,
+    alg: key.alg,
+    tag: options.tag ?? WEBHOOK_SIGNING_TAG,
+  };
+
+  const normalizedRequest: RequestLike = { ...request, headers };
+  const base = buildSignatureBase(components, normalizedRequest, params);
+  const signature = produceSignature(key, Buffer.from(base, 'utf8'));
+  const sigB64 = Buffer.from(signature).toString('base64url');
+
+  headers['Signature-Input'] = `${label}=${formatSignatureParams(components, params)}`;
+  headers['Signature'] = `${label}=:${sigB64}:`;
   return { headers, signatureBase: base, params };
 }
 
