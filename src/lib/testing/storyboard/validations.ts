@@ -452,9 +452,18 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
   // Prefer the spec-canonical `errors[0].code` envelope (core/error.json), then
   // fall back to legacy/structured locations so we get a bare code instead of
   // the "CODE: message" string materialized on taskResult.error.
+  //
+  // Guarded by `success === false` because AdCP async envelopes (`submitted`,
+  // `input-required`) explicitly permit an advisory `errors[]` on non-failed
+  // tasks for non-blocking warnings — reading it unconditionally would
+  // false-positive `error_code` validations on successful responses.
   const data = taskResult.data as Record<string, unknown> | undefined;
-  const errorsArray = Array.isArray(data?.errors) ? (data!.errors as Array<Record<string, unknown>>) : undefined;
-  const firstErrorCode = errorsArray?.[0]?.code;
+  const errors = data?.errors;
+  const firstError = !taskResult.success && Array.isArray(errors) ? errors[0] : undefined;
+  const firstErrorCode =
+    firstError && typeof firstError === 'object' && typeof (firstError as Record<string, unknown>).code === 'string'
+      ? ((firstError as Record<string, unknown>).code as string)
+      : undefined;
   const adcpError = data?.adcp_error as Record<string, unknown> | undefined;
   const errorCode =
     firstErrorCode ??
