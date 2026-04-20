@@ -47,11 +47,7 @@ describe('applyIdempotencyInvariant', () => {
 
   test('preserves a concrete UUID pre-resolved by the context injector from $generate:uuid_v4#alias (replay scenarios)', () => {
     const preResolved = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-    const result = applyIdempotencyInvariant(
-      { idempotency_key: preResolved, name: 'p1' },
-      'create_property_list',
-      {}
-    );
+    const result = applyIdempotencyInvariant({ idempotency_key: preResolved, name: 'p1' }, 'create_property_list', {});
     assert.strictEqual(result.idempotency_key, preResolved);
   });
 
