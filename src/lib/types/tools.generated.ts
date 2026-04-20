@@ -12679,6 +12679,7 @@ export type AdCPSpecialism =
   | 'creative-ad-server'
   | 'creative-generative'
   | 'creative-template'
+  | 'governance-aware-seller'
   | 'governance-delivery-monitor'
   | 'governance-spend-authority'
   | 'measurement-verification'
