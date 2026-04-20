@@ -178,6 +178,23 @@ const MCP_FLATTENED_VECTORS = new Set([
   '008-percent-encoded-path',
 ]);
 
+// Vectors whose failure mode can't reach a live agent through HTTP. Document
+// why each entry can't be graded via probe so adding a new entry isn't a
+// silent coverage loss.
+const TRANSPORT_UNGRADABLE: Record<string, string> = {
+  // The agent has its own JWKS resolver — the inline override JWK in this
+  // vector never reaches the agent. Covered by direct library-level
+  // verifier tests instead.
+  '025-jwk-alg-crv-mismatch':
+    'jwks_override: inline JWK shape never reaches a live agent; verified at the library level.',
+  // fetch() and the Node URL parser normalize U-labels to A-labels before
+  // the request leaves the client. A raw non-ASCII Host header reaches the
+  // agent as Punycode, defeating the parse-time check. Direct verifier
+  // tests exercise this edge.
+  '026-non-ascii-host':
+    'HTTP transport punycodes U-labels before the request leaves the client; verified at the library level.',
+};
+
 /**
  * Centralized skip decisions. Checks (in order): onlyVectors filter, operator
  * skipVectors, MCP-mode URL-edge flattening, rate-abuse opt-out,
@@ -204,6 +221,10 @@ function preflightSkip(
   }
   if (options.skipVectors?.includes(vector.id)) {
     return { ...base, skipped: true, skip_reason: 'operator_skip' };
+  }
+  const transportReason = TRANSPORT_UNGRADABLE[vector.id];
+  if (transportReason) {
+    return { ...base, skipped: true, skip_reason: 'transport_ungradable', diagnostic: transportReason };
   }
   // Canonicalization-edge positive vectors (005–008) bake their edge case
   // into the vector URL path, query, or port. MCP mode flattens every vector
@@ -443,6 +464,7 @@ function buildPositiveRequestFromNegative(
     request: vector.request,
     verifier_capability: vector.verifier_capability,
     jwks_ref: vector.jwks_ref,
+    jwks_override: vector.jwks_override,
   };
   return buildPositiveRequest(pseudoPositive, loaded.keys, options);
 }

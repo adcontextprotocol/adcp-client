@@ -235,7 +235,7 @@ const MUTATIONS: Record<string, Mutator> = {
     // Use the dedicated revoked key (`test-revoked-2026`) declared by the
     // signed-requests-runner test-kit. For current pre-#2353 caches, vector 017
     // still references test-ed25519-2026; fall back to whatever the vector says.
-    const kid = vector.jwks_ref[0];
+    const kid = vector.jwks_ref?.[0];
     if (!kid) throw new Error(`${vector.id}: jwks_ref missing`);
     const key = keyFor(keys, kid);
     return sign(key, vector, options);
@@ -260,7 +260,28 @@ const MUTATIONS: Record<string, Mutator> = {
     const key = signerKeyFor(vector, keys);
     return sign(key, vector, options);
   },
+
+  // Vectors 021-026 ship fully prebaked requests with deliberately malformed
+  // headers (duplicate labels, multi-valued fields, unquoted params,
+  // non-ASCII host) or a malformed inline JWK. Re-signing would repair the
+  // anomaly and erase the test case — forward the vector's bytes verbatim.
+  '021-duplicate-signature-input-label': (vector, _keys, options) => passthroughVector(vector, options),
+  '022-multi-valued-content-type': (vector, _keys, options) => passthroughVector(vector, options),
+  '023-multi-valued-content-digest': (vector, _keys, options) => passthroughVector(vector, options),
+  '024-unquoted-string-param': (vector, _keys, options) => passthroughVector(vector, options),
+  '025-jwk-alg-crv-mismatch': (vector, _keys, options) => passthroughVector(vector, options),
+  '026-non-ascii-host': (vector, _keys, options) => passthroughVector(vector, options),
 };
+
+function passthroughVector(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
+  const shaped = applyTransport(vector, options);
+  return {
+    method: shaped.method,
+    url: shaped.url,
+    headers: shaped.headers,
+    body: shaped.body,
+  };
+}
 
 // ── Primitives ────────────────────────────────────────────────
 
@@ -523,8 +544,13 @@ function produceSignature(key: SignerKey, data: Buffer): Uint8Array {
 // ── Helpers ───────────────────────────────────────────────────
 
 function signerKeyFor(vector: PositiveVector | NegativeVector, keys: TestKeyset): SignerKey {
-  const kid = vector.jwks_ref[0];
-  if (!kid) throw new Error(`${vector.id}: jwks_ref is empty`);
+  const kid = vector.jwks_ref?.[0];
+  if (!kid) {
+    throw new Error(
+      `${vector.id}: jwks_ref missing — vectors signed dynamically by the builder must declare a keys.json kid. ` +
+        `Vectors shipping an inline jwks_override must use a passthrough mutator (no re-signing).`
+    );
+  }
   return keyFor(keys, kid);
 }
 

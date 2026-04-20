@@ -1,3 +1,4 @@
+import { parseDictionary } from 'structured-headers';
 import { buildSignatureBase, getHeaderValue, type RequestLike } from './canonicalize';
 import { contentDigestMatches } from './content-digest';
 import { RequestSignatureError } from './errors';
@@ -64,6 +65,8 @@ export async function verifyRequestSignature(
   // Step 1: parse.
   const parsedInput = parseSignatureInput(sigInputHeader);
   const parsedSig = parseSignature(sigHeader, parsedInput.label);
+  validateRequestUrl(request.url);
+  validateSingleValuedCoveredHeaders(parsedInput.components, request);
 
   // Step 2: required params present.
   requireParams(parsedInput);
@@ -117,6 +120,7 @@ export async function verifyRequestSignature(
       `JWK "${jwk.kid}" is not scoped for request-signing verification`
     );
   }
+  validateJwkParameterConsistency(jwk);
 
   // Step 9: revocation (runs BEFORE crypto to prevent amplification attacks).
   if (await options.revocationStore.isRevoked(jwk.kid)) {
@@ -235,6 +239,178 @@ function validateWindow(created: number, expires: number, now: number): void {
       'Signature created is in the future beyond skew tolerance'
     );
   }
+}
+
+/**
+ * Reject JWKs whose kty/crv/alg are mutually inconsistent. RFC 8037 binds
+ * alg=EdDSA to kty=OKP with Ed25519/Ed448; RFC 7518 binds alg=ES256 to
+ * kty=EC with crv=P-256. A lenient verifier that reads alg off the
+ * sig-params and ignores the JWK's declared parameters opens a
+ * key-substitution differential — reject when the JWK contradicts itself.
+ */
+function validateJwkParameterConsistency(jwk: { kid: string; kty?: string; crv?: string; alg?: string }): void {
+  if (!jwk.alg) return;
+  if (jwk.alg === 'EdDSA') {
+    if (jwk.kty !== 'OKP' || (jwk.crv !== 'Ed25519' && jwk.crv !== 'Ed448')) {
+      throw new RequestSignatureError(
+        'request_signature_key_purpose_invalid',
+        8,
+        `JWK "${jwk.kid}" declares alg=EdDSA but kty/crv (${jwk.kty}/${jwk.crv}) is not a valid Edwards-curve pair`
+      );
+    }
+    return;
+  }
+  if (jwk.alg === 'ES256') {
+    if (jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
+      throw new RequestSignatureError(
+        'request_signature_key_purpose_invalid',
+        8,
+        `JWK "${jwk.kid}" declares alg=ES256 but kty/crv (${jwk.kty}/${jwk.crv}) is not EC/P-256`
+      );
+    }
+  }
+}
+
+/**
+ * Reject requests whose URL contains non-ASCII bytes in the authority. AdCP
+ * @target-uri canonicalization expects A-labels (Punycode); accepting raw
+ * U-labels opens a UTS-46 canonicalization differential between signer and
+ * verifier.
+ */
+function validateRequestUrl(rawUrl: string): void {
+  const authorityMatch = rawUrl.match(/^[a-z][a-z0-9+.\-]*:\/\/([^/?#]*)/i);
+  if (!authorityMatch) return;
+  const authority = authorityMatch[1]!;
+  for (let i = 0; i < authority.length; i++) {
+    if (authority.charCodeAt(i) > 0x7f) {
+      throw new RequestSignatureError(
+        'request_signature_header_malformed',
+        1,
+        'URL authority contains non-ASCII bytes; use the A-label (Punycode) form'
+      );
+    }
+  }
+}
+
+/**
+ * Covered components referencing single-valued HTTP header fields
+ * (Content-Type per RFC 9110, Content-Digest per RFC 9530) MUST NOT arrive
+ * as a comma-joined multi-value. A proxy or buggy client emitting the field
+ * twice produces a concatenated value whose meaning relative to the
+ * signature base is undefined — reject at parse rather than pick one.
+ */
+function validateSingleValuedCoveredHeaders(components: string[], request: RequestLike): void {
+  if (components.includes('content-type')) {
+    const value = getHeaderValue(request.headers, 'Content-Type');
+    if (value !== undefined && containsTopLevelComma(value)) {
+      throw new RequestSignatureError(
+        'request_signature_header_malformed',
+        1,
+        'Content-Type header covered by signature must be single-valued; multiple field values are ambiguous'
+      );
+    }
+  }
+  if (components.includes('content-digest')) {
+    const value = getHeaderValue(request.headers, 'Content-Digest');
+    if (value !== undefined) {
+      try {
+        const dict = parseDictionary(value);
+        const seen = new Map<string, number>();
+        for (const key of dict.keys()) {
+          seen.set(key, (seen.get(key) ?? 0) + 1);
+        }
+        for (const [key, count] of seen) {
+          if (count > 1) {
+            throw new RequestSignatureError(
+              'request_signature_header_malformed',
+              1,
+              `Content-Digest declares the "${key}" algorithm more than once; duplicate members are ambiguous`
+            );
+          }
+        }
+      } catch (e) {
+        if (e instanceof RequestSignatureError) throw e;
+      }
+      // The structured-headers library deduplicates dictionary keys silently.
+      // Detect the multi-value case at the raw-string level too so the
+      // specific "two sha-256 members" shape is caught.
+      if (containsDuplicateDictKey(value)) {
+        throw new RequestSignatureError(
+          'request_signature_header_malformed',
+          1,
+          'Content-Digest declares the same algorithm more than once; duplicate members are ambiguous'
+        );
+      }
+    }
+  }
+}
+
+function containsTopLevelComma(value: string): boolean {
+  let inQuoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i]!;
+    if (ch === '\\' && i + 1 < value.length && inQuoted) {
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inQuoted = !inQuoted;
+      continue;
+    }
+    if (ch === ',' && !inQuoted) return true;
+  }
+  return false;
+}
+
+function containsDuplicateDictKey(value: string): boolean {
+  const keys: string[] = [];
+  let i = 0;
+  const len = value.length;
+  let atEntryStart = true;
+  while (i < len) {
+    if (atEntryStart) {
+      while (i < len && (value[i] === ' ' || value[i] === '\t')) i++;
+      const start = i;
+      while (i < len && /[A-Za-z0-9_*-]/.test(value[i]!)) i++;
+      if (i > start) keys.push(value.slice(start, i).toLowerCase());
+      atEntryStart = false;
+      continue;
+    }
+    const ch = value[i]!;
+    if (ch === '"') {
+      i++;
+      while (i < len) {
+        if (value[i] === '\\' && i + 1 < len) {
+          i += 2;
+          continue;
+        }
+        if (value[i] === '"') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === ':') {
+      i++;
+      while (i < len && value[i] !== ':') i++;
+      if (i < len) i++;
+      continue;
+    }
+    if (ch === ',') {
+      atEntryStart = true;
+      i++;
+      continue;
+    }
+    i++;
+  }
+  const seen = new Set<string>();
+  for (const key of keys) {
+    if (seen.has(key)) return true;
+    seen.add(key);
+  }
+  return false;
 }
 
 function validateCoveredComponents(components: string[], capability: VerifierCapability, request: RequestLike): void {

@@ -166,8 +166,8 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     }
     assert.deepStrictEqual(failures, [], 'every non-capability-profile vector grades as expected');
 
-    assert.strictEqual(report.positive.length, 8);
-    assert.strictEqual(report.negative.length, 20);
+    assert.strictEqual(report.positive.length, 12);
+    assert.strictEqual(report.negative.length, 26);
   });
 
   test('capability profile "required": vector 007 grades correctly', async () => {

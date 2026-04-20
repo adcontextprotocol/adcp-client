@@ -92,6 +92,7 @@ function vectorIdFromFilename(file: string): string {
 function parsePositive(id: string, raw: unknown): PositiveVector {
   const r = raw as Record<string, unknown>;
   assertSuccess(id, r, true);
+  const { jwks_ref, jwks_override } = parseJwksSelector(id, r);
   return {
     kind: 'positive',
     id,
@@ -99,7 +100,8 @@ function parsePositive(id: string, raw: unknown): PositiveVector {
     reference_now: num(r.reference_now, `${id}.reference_now`),
     request: parseRequest(id, r.request),
     verifier_capability: parseCapability(id, r.verifier_capability),
-    jwks_ref: strArray(r.jwks_ref, `${id}.jwks_ref`),
+    jwks_ref,
+    jwks_override,
     expected_signature_base: typeof r.expected_signature_base === 'string' ? r.expected_signature_base : undefined,
     spec_reference: typeof r.spec_reference === 'string' ? r.spec_reference : undefined,
   };
@@ -125,6 +127,7 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
     }
     contract = c as ContractId;
   }
+  const { jwks_ref, jwks_override } = parseJwksSelector(id, r);
   return {
     kind: 'negative',
     id,
@@ -132,12 +135,36 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
     reference_now: num(r.reference_now, `${id}.reference_now`),
     request: parseRequest(id, r.request),
     verifier_capability: parseCapability(id, r.verifier_capability),
-    jwks_ref: strArray(r.jwks_ref, `${id}.jwks_ref`),
+    jwks_ref,
+    jwks_override,
     expected_error_code: errorCode as RequestSignatureErrorCode,
     expected_failed_step: failedStep,
     requires_contract: contract,
     spec_reference: typeof r.spec_reference === 'string' ? r.spec_reference : undefined,
   };
+}
+
+function parseJwksSelector(
+  id: string,
+  r: Record<string, unknown>
+): { jwks_ref?: string[]; jwks_override?: { keys: Array<Record<string, unknown>> } } {
+  const hasRef = r.jwks_ref !== undefined;
+  const hasOverride = r.jwks_override !== undefined;
+  if (hasRef && hasOverride) {
+    throw new Error(`${id}: jwks_ref and jwks_override are mutually exclusive`);
+  }
+  if (!hasRef && !hasOverride) {
+    throw new Error(`${id}: must declare either jwks_ref or jwks_override`);
+  }
+  if (hasOverride) {
+    const override = r.jwks_override as Record<string, unknown>;
+    const keys = override.keys;
+    if (!Array.isArray(keys) || keys.length === 0) {
+      throw new Error(`${id}.jwks_override.keys must be a non-empty array`);
+    }
+    return { jwks_override: { keys: keys as Array<Record<string, unknown>> } };
+  }
+  return { jwks_ref: strArray(r.jwks_ref, `${id}.jwks_ref`) };
 }
 
 function assertSuccess(id: string, vector: Record<string, unknown>, expected: boolean): void {

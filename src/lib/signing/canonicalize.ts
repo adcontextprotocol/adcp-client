@@ -30,6 +30,7 @@ const STRING_PARAMS = new Set<keyof SignatureParams>(['nonce', 'keyid', 'alg', '
 const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority']);
 
 export function canonicalTargetUri(rawUrl: string): string {
+  rejectNonAsciiHost(rawUrl);
   const u = new URL(rawUrl);
   if (u.username || u.password) {
     throw new RequestSignatureError(
@@ -39,10 +40,11 @@ export function canonicalTargetUri(rawUrl: string): string {
     );
   }
   const assembled = `${u.protocol}//${u.host}${u.pathname}${u.search}`;
-  return uppercasePercentEncoding(assembled);
+  return decodeUnreservedPercentEncoding(uppercasePercentEncoding(assembled));
 }
 
 export function canonicalAuthority(rawUrl: string): string {
+  rejectNonAsciiHost(rawUrl);
   const u = new URL(rawUrl);
   return u.host.toLowerCase();
 }
@@ -134,4 +136,43 @@ function resolveComponentValue(component: string, request: RequestLike): string 
 
 function uppercasePercentEncoding(input: string): string {
   return input.replace(/%([0-9a-fA-F]{2})/g, (_m, hex: string) => `%${hex.toUpperCase()}`);
+}
+
+/**
+ * RFC 3986 §6.2.2.2: percent-encoded unreserved characters (ALPHA / DIGIT /
+ * "-" / "." / "_" / "~") MUST be decoded in the canonical URI. A verifier
+ * that skips this step reads `%7E` and `~` as different bytes, breaking
+ * signature comparison when a signer emits either form.
+ */
+function decodeUnreservedPercentEncoding(input: string): string {
+  return input.replace(/%([0-9A-F]{2})/g, (match, hex: string) => {
+    const code = parseInt(hex, 16);
+    const isAlpha = (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+    const isDigit = code >= 0x30 && code <= 0x39;
+    const isUnreservedPunct = code === 0x2d || code === 0x2e || code === 0x5f || code === 0x7e;
+    if (isAlpha || isDigit || isUnreservedPunct) return String.fromCharCode(code);
+    return match;
+  });
+}
+
+/**
+ * Raw non-ASCII bytes in the URL authority (IDN U-label) are a parse-time
+ * anomaly — AdCP @target-uri canonicalization expects A-labels (Punycode).
+ * Reject rather than implicitly normalize: UTS-46 transitional vs.
+ * non-transitional produce different A-labels for the same input, which
+ * would open a signer/verifier canonicalization differential.
+ */
+function rejectNonAsciiHost(rawUrl: string): void {
+  const authorityMatch = rawUrl.match(/^[a-z][a-z0-9+.\-]*:\/\/([^/?#]*)/i);
+  if (!authorityMatch) return;
+  const authority = authorityMatch[1]!;
+  for (let i = 0; i < authority.length; i++) {
+    if (authority.charCodeAt(i) > 0x7f) {
+      throw new RequestSignatureError(
+        'request_signature_header_malformed',
+        1,
+        'URL authority contains non-ASCII bytes; use the A-label (Punycode) form'
+      );
+    }
+  }
 }

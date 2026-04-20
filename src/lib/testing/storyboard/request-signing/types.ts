@@ -19,6 +19,16 @@ export interface VerifierCapabilityFixture {
   supported_for?: string[];
 }
 
+/**
+ * Inline JWKS shipped with a vector whose key material diverges from
+ * `keys.json` — typically a deliberately malformed JWK (alg/crv mismatch,
+ * missing private material, etc.) used to exercise verifier key-purpose
+ * checks. Mutually exclusive with `jwks_ref`.
+ */
+export interface JwksOverride {
+  keys: Array<Record<string, unknown>>;
+}
+
 export interface PositiveVector {
   kind: 'positive';
   id: string;
@@ -26,7 +36,8 @@ export interface PositiveVector {
   reference_now: number;
   request: VectorRequest;
   verifier_capability: VerifierCapabilityFixture;
-  jwks_ref: string[];
+  jwks_ref?: string[];
+  jwks_override?: JwksOverride;
   expected_signature_base?: string;
   spec_reference?: string;
 }
@@ -38,7 +49,8 @@ export interface NegativeVector {
   reference_now: number;
   request: VectorRequest;
   verifier_capability: VerifierCapabilityFixture;
-  jwks_ref: string[];
+  jwks_ref?: string[];
+  jwks_override?: JwksOverride;
   expected_error_code: RequestSignatureErrorCode;
   expected_failed_step: number | string;
   requires_contract?: ContractId;

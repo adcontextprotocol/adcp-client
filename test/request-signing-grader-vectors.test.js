@@ -21,18 +21,20 @@ const {
 const loaded = loadRequestSigningVectors();
 
 describe('request-signing vector loader', () => {
-  test('loads 8 positive and 20 negative vectors from the compliance cache', () => {
-    assert.strictEqual(loaded.positive.length, 8, 'positive count');
-    assert.strictEqual(loaded.negative.length, 20, 'negative count');
+  test('loads 12 positive and 26 negative vectors from the compliance cache', () => {
+    assert.strictEqual(loaded.positive.length, 12, 'positive count');
+    assert.strictEqual(loaded.negative.length, 26, 'negative count');
   });
 
-  test('every vector carries request, verifier_capability, and jwks_ref', () => {
+  test('every vector carries request, verifier_capability, and a jwks selector', () => {
     for (const v of [...loaded.positive, ...loaded.negative]) {
       assert.ok(v.id, `${v.id || '?'}: missing id`);
       assert.ok(v.request?.method, `${v.id}: missing request.method`);
       assert.ok(v.request?.url, `${v.id}: missing request.url`);
       assert.ok(v.verifier_capability, `${v.id}: missing verifier_capability`);
-      assert.ok(Array.isArray(v.jwks_ref) && v.jwks_ref.length > 0, `${v.id}: empty jwks_ref`);
+      const hasRef = Array.isArray(v.jwks_ref) && v.jwks_ref.length > 0;
+      const hasOverride = v.jwks_override && Array.isArray(v.jwks_override.keys) && v.jwks_override.keys.length > 0;
+      assert.ok(hasRef || hasOverride, `${v.id}: must declare jwks_ref or jwks_override`);
     }
   });
 

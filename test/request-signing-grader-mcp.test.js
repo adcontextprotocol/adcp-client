@@ -141,7 +141,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     await stopMcpAgent(agent);
   });
 
-  test('MCP mode grades 25/25 non-profile vectors against the MCP signed agent', async () => {
+  test('MCP mode grades every non-profile vector against the MCP signed agent', async () => {
     const report = await gradeRequestSigning(AGENT_URL, {
       allowPrivateIp: true,
       transport: 'mcp',
@@ -158,8 +158,8 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     }
     assert.deepStrictEqual(failures, [], 'every non-profile vector grades as expected under MCP transport');
     assert.ok(report.passed, 'overall grade is PASS');
-    assert.strictEqual(report.positive.length, 8);
-    assert.strictEqual(report.negative.length, 20);
+    assert.strictEqual(report.positive.length, 12);
+    assert.strictEqual(report.negative.length, 26);
   });
 
   test('MCP mode vector bodies are wrapped in JSON-RPC tools/call envelopes', async () => {
