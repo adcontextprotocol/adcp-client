@@ -963,6 +963,35 @@ Declare `requires_io_approval` in your `capabilities.features` so buyers can fil
 
 For deterministic compliance testing, implement `forceTaskStatus` (not `forceMediaBuyStatus`) in your `TestControllerStore` to drive the task from `submitted → completed` without waiting for a human.
 
+**Don't confuse `submitted` (task envelope) with `pending_creatives` (MediaBuy status).** These are different async paths:
+
+| Scenario | Return shape | Why |
+|---|---|---|
+| IO signing required before buy exists | Task envelope: `{ status: 'submitted', task_id, message? }` — NO `media_buy_id` | The MediaBuy doesn't exist yet; humans must sign first. |
+| Buy created synchronously, waiting on buyer-supplied creatives | MediaBuy: `{ status: 'pending_creatives', media_buy_id, packages, valid_actions: ['sync_creatives'] }` | The MediaBuy exists and is reserved; it just can't serve until creatives arrive. Respond synchronously. |
+
+The `media_buy_seller/pending_creatives_to_start/create_without_creatives` baseline scenario fires `create_media_buy` WITHOUT creative references and expects the second row's shape (synchronous, `status: 'pending_creatives'`, `media_buy_id` present). Route on `params.packages[].creative_assignments` presence: if empty or missing, return `pending_creatives` synchronously; if IO signing is separately required regardless of creatives, return `submitted` as a task.
+
+**Persist inventory-list references.** When `params.packages[]` carries `property_list` and/or `collection_list` fields, store them on the MediaBuy and echo them on every `get_media_buys` response. The `inventory_list_targeting` baseline scenarios call `create_media_buy` with list references, then call `get_media_buys` expecting those same `list_id` values to appear on `media_buys[].packages[].property_list.list_id` and `packages[].collection_list.list_id`. If you drop them in transit, verification fails.
+
+```typescript
+// In create_media_buy:
+const packages = (params.packages ?? []).map((pkg, i) => ({
+  package_id: `pkg_${i}`,
+  product_id: pkg.product_id,
+  pricing_option_id: pkg.pricing_option_id,
+  budget: pkg.budget,
+  property_list: pkg.property_list,     // persist verbatim
+  collection_list: pkg.collection_list, // persist verbatim
+}));
+await ctx.store.put('media_buys', mediaBuyId, { media_buy_id: mediaBuyId, status: 'pending_creatives', packages });
+
+// In update_media_buy: merge incoming list references, don't drop prior ones.
+// In get_media_buys: echo packages[] with their property_list / collection_list intact.
+```
+
+**Governance denial (`GOVERNANCE_DENIED`).** Baseline `media_buy_seller/governance_denied*` scenarios exercise governance refusal. For sellers that compose with a governance agent, call `checkGovernance(...)` from `@adcp/client/server` at the top of `create_media_buy`. If the governance agent returns denial, surface it with `governanceDeniedError(result)` (same module) so the error code is `GOVERNANCE_DENIED` and the context field echoes correctly. Sellers that don't compose with governance will see these scenarios fail with `INVALID_REQUEST` — that's expected if you don't advertise governance composition in your capabilities. File the scenario results as "not applicable for this agent" in your compliance run report rather than treating them as regressions.
+
 ### <a name="specialism-sales-non-guaranteed"></a>sales-non-guaranteed
 
 Storyboard: `media_buy_non_guaranteed`. The specialism hinges on `bid_price` and `update_media_buy`, neither of which the baseline example shows.
