@@ -28,6 +28,13 @@ export {
 } from './errors';
 export { StaticJwksResolver, type JwksResolver } from './jwks';
 export { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
+export {
+  BrandJsonJwksResolver,
+  BrandJsonResolverError,
+  type BrandAgentType,
+  type BrandJsonJwksResolverOptions,
+  type BrandJsonResolverErrorCode,
+} from './brand-jwks';
 export { parseSignature, parseSignatureInput, type ParsedSignature, type ParsedSignatureInput } from './parser';
 export {
   InMemoryReplayStore,
