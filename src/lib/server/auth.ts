@@ -95,6 +95,37 @@ export class AuthError extends Error {
   }
 }
 
+/**
+ * Marker tag on an {@link Authenticator} that needs `req.rawBody` to be
+ * populated before it runs. `serve()` buffers the request body ahead of
+ * authentication when any wired authenticator carries this tag — RFC 9421
+ * signature verifiers need the raw bytes to recompute `Content-Digest`.
+ *
+ * Attach via {@link tagAuthenticatorNeedsRawBody}; {@link anyOf} propagates
+ * the tag when any wrapped authenticator carries it.
+ */
+export const AUTH_NEEDS_RAW_BODY: unique symbol = Symbol.for('@adcp/client.auth.needsRawBody');
+
+interface AuthenticatorFlags {
+  [AUTH_NEEDS_RAW_BODY]?: boolean;
+}
+
+/**
+ * Mark an authenticator as needing `req.rawBody`. Safe to call more than once.
+ */
+export function tagAuthenticatorNeedsRawBody(auth: Authenticator): Authenticator {
+  (auth as unknown as AuthenticatorFlags)[AUTH_NEEDS_RAW_BODY] = true;
+  return auth;
+}
+
+/**
+ * Check whether an authenticator (possibly composed via {@link anyOf}) requires
+ * the raw request body to be buffered before invocation.
+ */
+export function authenticatorNeedsRawBody(auth: Authenticator | undefined): boolean {
+  return !!auth && (auth as unknown as AuthenticatorFlags)[AUTH_NEEDS_RAW_BODY] === true;
+}
+
 // ---------------------------------------------------------------------------
 // Token extraction
 // ---------------------------------------------------------------------------
@@ -287,7 +318,7 @@ function extractScopes(payload: JWTPayload): string[] {
  * which mechanism rejected them.
  */
 export function anyOf(...authenticators: Authenticator[]): Authenticator {
-  return async req => {
+  const combined: Authenticator = async req => {
     let rejected = false;
     const causes: unknown[] = [];
     for (const auth of authenticators) {
@@ -304,6 +335,10 @@ export function anyOf(...authenticators: Authenticator[]): Authenticator {
     }
     return null;
   };
+  if (authenticators.some(a => authenticatorNeedsRawBody(a))) {
+    tagAuthenticatorNeedsRawBody(combined);
+  }
+  return combined;
 }
 
 // ---------------------------------------------------------------------------
