@@ -70,9 +70,15 @@ describe('applyBrandInvariant', () => {
     assert.strictEqual(result.account, account);
   });
 
-  test('does not add account when the request has no account', () => {
+  test('constructs account when the request omits it, so tools whose schema declares account but not top-level brand still carry the run-scoped brand on the wire (get_media_buys, list_creatives, etc.)', () => {
     const result = applyBrandInvariant({ list_id: 'pl-1' }, { brand: BRAND });
-    assert.strictEqual(result.account, undefined);
+    assert.deepStrictEqual(result.account, { brand: BRAND, operator: BRAND.domain, sandbox: undefined });
+    assert.deepStrictEqual(result.brand, BRAND);
+  });
+
+  test('passes sandbox through into the constructed account when options.sandbox is set', () => {
+    const result = applyBrandInvariant({ list_id: 'pl-1' }, { brand: BRAND, sandbox: true });
+    assert.deepStrictEqual(result.account, { brand: BRAND, operator: BRAND.domain, sandbox: true });
   });
 
   test('does not mutate the input request', () => {
