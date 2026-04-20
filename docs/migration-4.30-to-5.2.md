@@ -406,6 +406,10 @@ Server-side: see `skills/build-seller-agent/SKILL.md` § signed-requests for `ve
 - `InMemoryRevocationStore({ issuer, updated, next_update, revoked_kids, revoked_jtis })` — constructor-only; no `.insert()` method.
 - `VerifierCapability` — `{ supported, covers_content_digest, required_for, warn_for?, supported_for? }`; no `agent_url` or `per_keyid_request_rate_limit` field.
 
+## v2 sunset
+
+AdCP v2 went unsupported on 2026-04-20 as part of the 3.0 GA cutover ([adcp#2220](https://github.com/adcontextprotocol/adcp/issues/2220)). The client still executes v2 code paths — no functional break — but emits a one-time `console.warn` the first time a client instance sees v2 capabilities from an agent, so integrations don't accumulate subtle bugs against an unsupported surface. Suppress the warning with `ADCP_ALLOW_V2=1` (or `adcp --allow-v2` on the CLI) if you're knowingly running against a legacy holdout; upgrade the agent otherwise. Synthetic capabilities (agents that don't implement `get_adcp_capabilities`) don't fire the warning because their version is unknown.
+
 ## Migration checklist
 
 Work this list in order — earlier items are prerequisites for later ones.

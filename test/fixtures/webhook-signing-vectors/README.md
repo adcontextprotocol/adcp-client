@@ -42,7 +42,7 @@ test-vectors/webhook-signing/
 │   ├── 005-missing-authority-component.json → webhook_signature_components_incomplete (step 6; @authority missing)
 │   ├── 006-missing-content-digest.json   → webhook_signature_components_incomplete (step 6; REQUIRED on webhooks)
 │   ├── 007-unknown-keyid.json            → webhook_signature_key_unknown (step 7)
-│   ├── 008-wrong-adcp-use.json           → webhook_signature_key_purpose_invalid (step 8; adcp_use=request-signing)
+│   ├── 008-wrong-adcp-use.json           → webhook_mode_mismatch (step 8; adcp_use=request-signing, split from key_purpose_invalid per adcp#2467)
 │   ├── 009-content-digest-mismatch.json  → webhook_signature_digest_mismatch (step 11)
 │   ├── 010-malformed-signature-input.json → webhook_signature_header_malformed (step 1)
 │   ├── 011-signature-without-input.json  → webhook_signature_header_malformed (step 1; bound pair broken, one header without the other)

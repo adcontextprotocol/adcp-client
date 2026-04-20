@@ -275,6 +275,8 @@ export type WebhookAssertionErrorCode =
   | 'signature_params_incomplete'
   | 'signature_key_unknown'
   | 'signature_key_purpose_invalid'
+  | 'signature_mode_mismatch'
+  | 'signature_target_uri_malformed'
   | 'signature_key_revoked'
   | 'signature_revocation_stale'
   | 'signature_rate_abuse'
