@@ -207,6 +207,16 @@ function peelWrappers(body: unknown): unknown {
       }
     }
   }
+  // A2A Task / Message — reduce to just the data parts' payloads so
+  // per-request ids (task.id, contextId, artifactId, messageId,
+  // status.timestamp) don't fail structural compare when the domain
+  // data is actually identical.
+  if (obj.kind === 'task' && Array.isArray(obj.artifacts)) {
+    return collectA2ADataParts(obj.artifacts);
+  }
+  if (obj.kind === 'message' && Array.isArray(obj.parts)) {
+    return collectA2ADataParts([obj]);
+  }
   // Strip `_meta` — MCP's per-request metadata channel — before
   // handing the object back for structural comparison.
   if ('_meta' in obj) {
@@ -215,6 +225,20 @@ function peelWrappers(body: unknown): unknown {
     return rest;
   }
   return obj;
+}
+
+function collectA2ADataParts(source: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  for (const entry of source) {
+    const parts = (entry as { parts?: unknown })?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const p = part as { kind?: string; data?: unknown; text?: unknown };
+      if (p?.kind === 'data' && p.data !== undefined) out.push(p.data);
+      else if (p?.kind === 'text' && typeof p.text === 'string') out.push({ text: p.text });
+    }
+  }
+  return out;
 }
 
 function tryParseJson(text: string): unknown {
@@ -348,6 +372,38 @@ function extractEnvelope(body: unknown): ErrorEnvelope | undefined {
           const inner = extractEnvelope(parsed);
           if (inner) return inner;
         }
+      }
+    }
+  }
+
+  // A2A Task: { kind:'task', status, artifacts:[{ parts:[{ kind:'data', data }] }] }.
+  // AdCP sellers over A2A return errors as `adcp_error` nested in an
+  // artifact's data part. Walk every data part — agents may split parts
+  // or use the last-artifact convention from the response unwrapper.
+  if (Array.isArray(obj.artifacts)) {
+    for (const artifact of obj.artifacts) {
+      const parts = (artifact as { parts?: unknown })?.parts;
+      if (Array.isArray(parts)) {
+        for (const part of parts) {
+          const data = (part as { kind?: string; data?: unknown })?.data;
+          if (data && typeof data === 'object') {
+            const inner = extractEnvelope(data);
+            if (inner) return inner;
+          }
+        }
+      }
+    }
+  }
+
+  // A2A Message: { kind:'message', parts:[{ kind:'data', data }] }.
+  // Sellers that skip the Task wrapper and reply with a Message
+  // directly still carry the AdCP payload in a data part.
+  if (obj.kind === 'message' && Array.isArray(obj.parts)) {
+    for (const part of obj.parts) {
+      const data = (part as { kind?: string; data?: unknown })?.data;
+      if (data && typeof data === 'object') {
+        const inner = extractEnvelope(data);
+        if (inner) return inner;
       }
     }
   }
