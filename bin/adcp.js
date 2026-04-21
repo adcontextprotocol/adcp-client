@@ -862,7 +862,10 @@ WEBHOOK OPTIONS:
                                   Custom override: $ADCP_WEBHOOK_TUNNEL="<cmd>
                                   {port}"; the command must emit a line
                                   containing \`ADCP_TUNNEL_URL=<https-url>\`
-                                  on stdout or stderr (first match wins).
+                                  on stdout or stderr (first match wins) and
+                                  should exec the tunnel directly (no
+                                  \`sh -c\` wrapper — cleanup signals the
+                                  direct child only).
                                   HTTP-on-the-wire — spec-compliant.
 
 OPTIONS:
@@ -1467,11 +1470,21 @@ async function spawnAutoTunnel({ port, timeoutMs, jsonOutput }) {
 
   let settled = false;
   let publicUrl;
+  // Rolling buffer across chunks: ngrok's `msg="started tunnel" … url=…` line
+  // can straddle two `data` events (stdio pipes don't guarantee line-aligned
+  // chunks), and matching each chunk in isolation would miss the anchor/URL
+  // when they land on opposite sides of the boundary. Scan the concatenation
+  // and cap retention so a runaway child can't balloon memory.
+  let scanBuffer = '';
+  const MAX_SCAN_BUFFER = 16_384;
 
   const scan = chunk => {
     if (settled) return;
-    const text = chunk.toString('utf8');
-    const m = text.match(urlRegex);
+    scanBuffer += chunk.toString('utf8');
+    if (scanBuffer.length > MAX_SCAN_BUFFER) {
+      scanBuffer = scanBuffer.slice(-MAX_SCAN_BUFFER);
+    }
+    const m = scanBuffer.match(urlRegex);
     if (m) {
       publicUrl = m[1];
       settled = true;
@@ -1580,15 +1593,17 @@ function installTunnelSignalHandlersOnce() {
   process.on('exit', termAllTunnels);
   const escalateAndExit = exitCode => () => {
     if (tunnelEscalating) {
-      // Second signal while we're already escalating: force-kill now and bail.
+      // Second signal during the grace window: force-kill now and bail.
       killAllTunnels();
       process.exit(exitCode);
+      return;
     }
     tunnelEscalating = true;
     termAllTunnels();
-    // Don't unref — we want Node to wait the full grace before exiting so
-    // stubborn tunnels actually see SIGKILL. setTimeout scheduled here fires
-    // because we deliberately don't call process.exit synchronously.
+    // Two properties worth keeping separate:
+    //   1) We don't call process.exit synchronously — the timer must run.
+    //   2) We don't `.unref()` the timer — Node must keep the event loop
+    //      alive for the full 250 ms so stubborn tunnels actually see KILL.
     setTimeout(() => {
       killAllTunnels();
       process.exit(exitCode);
