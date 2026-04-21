@@ -121,7 +121,6 @@ describe('branch_set any_of: peer_branch_taken grading', () => {
 
       const acceptStep = result.phases[0].steps[0];
       const rejectStep = result.phases[1].steps[0];
-      const gateStep = result.phases[2].steps[0];
 
       assert.strictEqual(acceptStep.passed, true, 'accept branch contributes');
       assert.notStrictEqual(acceptStep.skipped, true);
