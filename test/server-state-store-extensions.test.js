@@ -331,10 +331,15 @@ describe('resolveSessionKey', () => {
     assert.strictEqual(seenSessionKey, 'tnt_42');
   });
 
-  it('returns SERVICE_UNAVAILABLE without leaking internals by default if resolver throws', async () => {
+  it('returns SERVICE_UNAVAILABLE without leaking internals when exposeErrorDetails: false', async () => {
+    // Explicit opt-out. The default flipped to true outside NODE_ENV=production
+    // so dev-mode matrix runs stop wasting hours on opaque internal errors;
+    // production deployments that want the redaction still get it by default
+    // (NODE_ENV=production) or by setting `exposeErrorDetails: false` explicitly.
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
+      exposeErrorDetails: false,
       resolveSessionKey: () => {
         throw new Error('db://user:pass@10.0.0.1 timed out');
       },
