@@ -138,13 +138,11 @@ function summarizeResponseFields(schema: any): { required: string[]; optional: s
 
   // oneOf / anyOf — pick the success branch (doesn't require `errors`)
   if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
-    const successBranch =
-      schema.oneOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.oneOf[0];
+    const successBranch = schema.oneOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.oneOf[0];
     return summarizeFields(successBranch);
   }
   if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
-    const successBranch =
-      schema.anyOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.anyOf[0];
+    const successBranch = schema.anyOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.anyOf[0];
     return summarizeFields(successBranch);
   }
   return summarizeFields(schema);
