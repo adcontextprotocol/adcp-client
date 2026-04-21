@@ -99,11 +99,11 @@ export interface IPropertyListAdapter {
  * Error codes for property list operations
  */
 export const PropertyListErrorCodes = {
-  NOT_SUPPORTED: 'property_lists_not_supported',
-  LIST_NOT_FOUND: 'list_not_found',
-  INVALID_LIST: 'invalid_list',
-  PERMISSION_DENIED: 'permission_denied',
-  QUOTA_EXCEEDED: 'quota_exceeded',
+  NOT_SUPPORTED: 'UNSUPPORTED_FEATURE',
+  LIST_NOT_FOUND: 'REFERENCE_NOT_FOUND',
+  INVALID_LIST: 'INVALID_REQUEST',
+  PERMISSION_DENIED: 'PERMISSION_DENIED',
+  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
 } as const;
 
 /**

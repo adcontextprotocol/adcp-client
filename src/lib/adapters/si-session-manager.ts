@@ -89,14 +89,14 @@ export interface ISISessionManager {
  * Error codes for SI operations
  */
 export const SIErrorCodes = {
-  NOT_SUPPORTED: 'si_not_supported',
-  SESSION_NOT_FOUND: 'session_not_found',
-  SESSION_EXPIRED: 'session_expired',
-  SESSION_TERMINATED: 'session_already_terminated',
-  OFFERING_NOT_FOUND: 'offering_not_found',
-  OFFERING_UNAVAILABLE: 'offering_unavailable',
-  INVALID_MESSAGE: 'invalid_message',
-  CAPABILITY_NOT_SUPPORTED: 'capability_not_supported',
+  NOT_SUPPORTED: 'UNSUPPORTED_FEATURE',
+  SESSION_NOT_FOUND: 'REFERENCE_NOT_FOUND',
+  SESSION_EXPIRED: 'INVALID_STATE',
+  SESSION_TERMINATED: 'INVALID_STATE',
+  OFFERING_NOT_FOUND: 'REFERENCE_NOT_FOUND',
+  OFFERING_UNAVAILABLE: 'PRODUCT_UNAVAILABLE',
+  INVALID_MESSAGE: 'INVALID_REQUEST',
+  CAPABILITY_NOT_SUPPORTED: 'UNSUPPORTED_FEATURE',
 } as const;
 
 /**
@@ -227,7 +227,7 @@ export class SISessionManager implements ISISessionManager {
         errors: [
           {
             code: SIErrorCodes.SESSION_TERMINATED,
-            message: 'Session has already been terminated',
+            message: 'Session is not active',
           },
         ],
       };

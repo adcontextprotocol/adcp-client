@@ -209,21 +209,11 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  provide_performance_feedback(_step, context, _options) {
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    return {
-      media_buy_id: context.media_buy_id ?? 'unknown',
-      measurement_period: {
-        start: weekAgo.toISOString(),
-        end: now.toISOString(),
-      },
-      feedback: {
-        satisfaction: 'positive',
-        notes: 'E2E test feedback',
-      },
-    };
-  },
+  // provide_performance_feedback intentionally has no builder — storyboard
+  // sample_request is authoritative because the spec's oneOf requires a
+  // performance_index variant that only the storyboard author knows the
+  // shape of. A synthesized payload here would emit non-spec fields
+  // (feedback/satisfaction/notes) and get rejected with INVALID_REQUEST.
 
   // ── Catalogs & Events ─────────────────────────────────
 

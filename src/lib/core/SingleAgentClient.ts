@@ -103,6 +103,7 @@ import {
   isWellKnownAgentCardUrl as isWellKnownCardUrl,
   buildCardUrls,
   stripAgentCardPath,
+  stripTransportSuffix,
 } from '../utils/a2a-discovery';
 import * as crypto from 'crypto';
 
@@ -521,20 +522,13 @@ export class SingleAgentClient {
    * Compute base URL by stripping protocol-specific suffixes
    *
    * - Strips /.well-known/agent.json or /.well-known/agent-card.json for A2A discovery URLs
-   * - Strips /mcp or /mcp/ suffix for MCP endpoints
+   * - Strips the protocol transport suffix (/mcp, /a2a, /sse)
    * - Strips trailing slash for consistency
    */
   private computeBaseUrl(url: string): string {
     let baseUrl = stripAgentCardPath(url);
-
-    // Strip /mcp or /mcp/
-    if (baseUrl.match(/\/mcp\/?$/i)) {
-      baseUrl = baseUrl.replace(/\/mcp\/?$/i, '');
-    }
-
-    // Strip trailing slash for consistency
+    baseUrl = stripTransportSuffix(baseUrl);
     baseUrl = baseUrl.replace(/\/$/, '');
-
     return baseUrl;
   }
 
