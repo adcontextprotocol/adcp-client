@@ -40,6 +40,10 @@ const HARNESS_TASKS = new Set([
   'expect_webhook',
   'expect_webhook_retry_keys_stable',
   'expect_webhook_signature_valid',
+  // Substitution-safety pseudo-task (sales-catalog-driven specialism): the
+  // runner inspects a prior step's preview via the SubstitutionObserver
+  // primitive rather than driving the agent, so no request shape applies.
+  'expect_substitution_safe',
 ]);
 
 // Tasks that reference test-kit data (e.g. "$test_kit.auth.probe_task"). The
