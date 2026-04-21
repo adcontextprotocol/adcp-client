@@ -1,5 +1,480 @@
 # Changelog
 
+## 5.8.0
+
+### Minor Changes
+
+- 809d02e: `adcp storyboard run` gains `--invariants <module[,module...]>`. The flag
+  dynamic-imports each specifier before the runner resolves
+  `storyboard.invariants`, giving operators a way to populate the assertion
+  registry (adcp#2639) without editing the CLI. Relative paths resolve against
+  the current directory; bare specifiers resolve as npm packages.
+
+  Modules are expected to call `registerAssertion(...)` at import time. The
+  flag runs before the `--dry-run` gate so bad specifiers surface immediately
+  during preview, not after agent resolution and auth.
+
+  Applies to `adcp storyboard run`, `adcp comply` (deprecated alias), and
+  `adcp storyboard run --url` multi-instance dispatch.
+
+- 46de887: Add `createComplyController` to `@adcp/client/testing` — a domain-grouped
+  seller-side scaffold for the `comply_test_controller` tool. Takes typed
+  `seed` / `force` / `simulate` adapters and returns `{ toolDefinition,
+handle, handleRaw, register }` so a seller can wire the tool with a single
+  `controller.register(server)` call.
+
+  ```ts
+  import { createComplyController } from '@adcp/client/testing';
+
+  const controller = createComplyController({
+    // Gate on something the SERVER controls — env var, resolved tenant flag,
+    // TLS SNI match. Never trust caller-supplied fields like input.ext.
+    sandboxGate: () => process.env.ADCP_SANDBOX === '1',
+    seed: {
+      product: ({ product_id, fixture }) => productRepo.upsert(product_id, fixture),
+      creative: ({ creative_id, fixture }) => creativeRepo.upsert(creative_id, fixture),
+    },
+    force: {
+      creative_status: ({ creative_id, status }) => creativeRepo.transition(creative_id, status),
+    },
+  });
+  controller.register(server);
+  ```
+
+  The helper owns scenario dispatch, param validation, typed error
+  envelopes (`UNKNOWN_SCENARIO`, `INVALID_PARAMS`, `FORBIDDEN`), MCP
+  response shaping, and seed re-seed idempotency (same id + equivalent
+  fixture returns `previous_state: "existing"`; divergent fixture returns
+  `INVALID_PARAMS` without touching the adapter). Transition enforcement
+  stays adapter-side so the controller and the production path share a
+  single state machine.
+
+  Hardened against common misuse: sandbox gate requires strict `=== true`
+  (a gate that returns a truthy non-boolean denies, not allows); fixture
+  keys `__proto__` / `constructor` / `prototype` are rejected with
+  `INVALID_PARAMS`; the default seed-fixture cache is capped at 1000
+  net-new keys to bound memory under adversarial seeding; and the
+  `toolDefinition.inputSchema` is shallow-copied so multiple controllers
+  on one process don't share a mutable shape.
+
+  `list_scenarios` bypasses the sandbox gate so capability probes always
+  succeed — buyer tooling can distinguish "controller exists but locked"
+  from "controller missing", while state-mutating scenarios remain gated.
+  `register()` emits a `console.warn` when no `sandboxGate` is configured
+  and no `ADCP_SANDBOX=1` / `ADCP_COMPLY_CONTROLLER_UNGATED=1` env flag is
+  set, so silent fail-open misuse becomes loud without breaking the
+  optional-gate API shape.
+
+  Also extends `TestControllerStore` with the five seed methods
+  (`seedProduct`, `seedPricingOption`, `seedCreative`, `seedPlan`,
+  `seedMediaBuy`) and exports `SEED_SCENARIOS`, `SeedScenario`,
+  `SeedFixtureCache`, and `createSeedFixtureCache`. Existing
+  `registerTestController` callers now pick up the seed surface and an
+  internal idempotency cache for free. Closes #701.
+
+- d8fd93f: Add `runConformance(agentUrl, opts)` — property-based fuzzing against an
+  agent's published JSON schemas, exposed as a new `@adcp/client/conformance`
+  subpath export so `fast-check` and the schema bundle stay off the runtime
+  client path. Closes #691.
+
+  Under the hood: `fast-check` arbitraries derived from the bundled draft-07
+  schemas at `schemas/cache/latest/bundled/`, paired with a two-path oracle
+  that classifies every response as **accepted** (validates the response
+  schema), **rejected** (well-formed AdCP error envelope with a spec-enum
+  reason code — the accepted rejection shape), or **invalid** (schema
+  mismatch, stack-trace leak, credential echo, lowercase reason code,
+  mutated context, or missing reason code). Responses that cleanly reject
+  unknown references count as passes, not failures.
+
+  Stateless tier covers 11 discovery tools across every protocol:
+  `get_products`, `list_creative_formats`, `list_creatives`,
+  `get_media_buys`, `get_signals`, `si_get_offering`,
+  `get_adcp_capabilities`, `tasks_list`, `list_property_lists`,
+  `list_content_standards`, `get_creative_features`. Self-contained-state
+  and referential-ID tiers are tracked for follow-up releases.
+
+  ```ts
+  import { runConformance } from '@adcp/client/conformance';
+
+  const report = await runConformance('https://agent.example.com/mcp', {
+    seed: 42,
+    turnBudget: 50,
+    authToken: process.env.AGENT_TOKEN,
+  });
+  if (report.totalFailures > 0) process.exit(1);
+  ```
+
+  See `docs/guides/CONFORMANCE.md` for the full options reference.
+
+- 7c0b146: Conformance fuzzer Phase 2 (#698) — referential tools, fixture injection,
+  and `adcp fuzz` CLI.
+  - **Referential stateless tools**: 6 new tools in the default run —
+    `get_media_buy_delivery`, `get_property_list`, `get_content_standards`,
+    `get_creative_delivery`, `tasks_get`, `preview_creative`. Random IDs
+    exercise the rejection surface (agents must return
+    `REFERENCE_NOT_FOUND`, not 500).
+  - **Fixtures**: new `RunConformanceOptions.fixtures` option. When a
+    request property name matches a pool (`creative_id`/`creative_ids`,
+    `media_buy_id`/`media_buy_ids`, `list_id`, `task_id`, `plan_id`,
+    `account_id`, `package_id`/`package_ids`), the arbitrary draws from
+    `fc.constantFrom(pool)` instead of random strings — testing the
+    accepted path on referential tools.
+  - **`adcp fuzz <url>` CLI**: new subcommand with `--seed`, `--tools`,
+    `--turn-budget`, `--protocol`, `--auth-token`, `--fixture name=a,b`,
+    `--format human|json`, `--max-failures`, `--max-payload-bytes`, and
+    `--list-tools`. Exits non-zero on failure. Reproduction hint on every
+    failure: `--seed <seed> --tools <tool>`.
+
+  ```bash
+  adcp fuzz https://agent.example.com/mcp --seed 42
+  adcp fuzz https://agent.example.com/mcp --fixture creative_ids=cre_a,cre_b --format json | jq
+  ```
+
+  New public exports: `REFERENTIAL_STATELESS_TOOLS`, `DEFAULT_TOOLS`,
+  `ConformanceFixtures`, `SkipReason`.
+
+- 73db0ac: Conformance fuzzer Stage 4 — creative seeding, configurable brand,
+  broader stack-trace detection, additionalProperties probing, and stricter
+  context-echo enforcement.
+
+  **Coverage (A)**
+  - **`sync_creatives` auto-seeder**: preflights `list_creative_formats`,
+    picks the first format whose required assets are all of a simple type
+    (image, video, audio, text, url, html, javascript, css, markdown),
+    synthesizes placeholder values, and captures `creative_id`s from the
+    response. Now runs as part of `seedFixtures` / `autoSeed`.
+  - **`seedBrand` option** + **`--seed-brand <domain>`** CLI flag: overrides
+    the mutating-seeder brand reference. Defaults to
+    `{ domain: 'conformance.example' }`, which sellers with brand
+    allowlists reject. Configurable per run.
+
+  **Oracle (D)**
+  - **JVM + .NET stack-trace signatures**: `at com.foo.Bar.method(Bar.java:42)`
+    and `at Foo.Bar() in X.cs:line 42` shapes detected alongside the
+    existing V8/Python/Go/PHP patterns.
+  - **additionalProperties injection**: when a schema permits extra keys
+    (`additionalProperties: true`), the generator sometimes injects one
+    (~15% frequency, single extra key from a fixed vocabulary). Exercises
+    the unknown-field tolerance surface — a common crash source where
+    agents deserialize into strict structs and reject unexpected keys.
+  - **Stricter context-echo**: when a response schema declares a
+    top-level `context` property, dropping it entirely is now an invariant
+    violation. Silent tolerance preserved for tools whose response schema
+    omits the field.
+
+  New public exports: extended `SeederName` with `'sync_creatives'`,
+  `SeedOptions.brand`, `RunConformanceOptions.seedBrand`.
+
+- 6b2a3b9: Conformance fuzzer Tier 3 — auto-seeding + update-tool fuzzing.
+  - **`seedFixtures(agentUrl, opts)`** helper — creates a property list,
+    a content-standards config, and (after a `get_products` preflight) a
+    media buy on the agent, captures the returned IDs, and returns a
+    `ConformanceFixtures` bag ready to pass to `runConformance`. Each
+    seeder is best-effort: failures degrade to a recorded warning and an
+    empty pool, never a thrown exception.
+  - **`runConformance({ autoSeed: true })`** — runs the seeder first,
+    merges results into `options.fixtures` (explicit fixtures win on
+    conflict), and includes Tier-3 update tools (`update_media_buy`,
+    `update_property_list`, `update_content_standards`) in the default
+    tool list. The report carries `autoSeeded: boolean` and a
+    `seedWarnings` array.
+  - **`adcp fuzz --auto-seed`** CLI flag. `--list-tools` now marks
+    Tier-3 tools with `(update — needs --auto-seed or --fixture)`. The
+    human-readable report surfaces seeded IDs and any seed warnings.
+  - New `standards_ids` fixture pool — `content_standards` uses
+    `standards_id`, not `list_id`, so it gets its own key.
+
+  ⚠️ Auto-seed mutates agent state. Point at a sandbox tenant — the
+  fuzzer creates artifacts that the agent owns. There is no teardown.
+
+  New public exports: `seedFixtures`, `UPDATE_TIER_TOOLS`,
+  `DEFAULT_TOOLS_WITH_UPDATES`, and the `SeedOptions` / `SeedResult` /
+  `SeederName` / `SeedWarning` types.
+
+- 3de1e82: Storyboard runner now implements first-class branch-set grading, the
+  `contributes: true` boolean shorthand, and the implicit-detection fallback
+  the AdCP spec requires (adcp-client#693, adcp#2633, adcp#2646).
+
+  **Authoring (parser):** phases can declare `branch_set: { id, semantics }`
+  and contributing steps can use `contributes: true` as shorthand for
+  `contributes_to: <enclosing phase's branch_set.id>`. Enforced at parse time:
+  - `contributes: true` is only legal inside a phase that declares `branch_set:`.
+  - A step MUST NOT set both `contributes` and `contributes_to` (ambiguous).
+  - `contributes_to:` inside a branch-set phase MUST equal `branch_set.id`.
+  - Phases declaring `branch_set:` MUST set `optional: true`.
+  - `branch_set.semantics` must be a supported value (`any_of` today; future
+    `all_of` / `at_least_n` are reserved). Unknown values are rejected at
+    parse rather than silently skipping grading.
+
+  **Grading (runner):** after all phases run, branch-set peers are re-graded
+  per the schema rule (storyboard-schema.yaml "Per-step grading in any_of
+  branch patterns"). Branch-set membership is resolved two ways:
+  1. Explicit `branch_set: { id, semantics: 'any_of' }` declaration.
+  2. Implicit fallback: an optional phase with a step declaring
+     `contributes_to: <flag>` that matches a later `assert_contribution
+check: any_of` target. Keeps pre-adcp#2633 storyboards working
+     unchanged.
+
+  When a peer contributes the flag, non-contributing peers' failing steps are
+  re-labeled as `skipped: true` with a new canonical skip reason
+  `peer_branch_taken` and the mandated detail format:
+
+  ```
+  <flag> contributed by <peer_phase_id>.<peer_step_id> — <this_phase_id> is moot
+  ```
+
+  Hard failures (non-optional phases and `presenceDetected` PRM 2xx paths,
+  adcp-client#677) are exempt from re-grading — the invariants they enforce
+  must stand even when a peer branch contributed.
+
+  `peer_branch_taken` is distinct from `not_applicable` (coverage gap) and
+  raw `failed` — dashboards can tell "agent took the other branch" apart
+  from "agent misbehaved." When no peer contributes, failures stay raw and
+  `assert_contribution` is the single signal that fails the storyboard.
+
+  `comply.ts` observation generators (`check_governance` + slow-response)
+  now guard on `!step.warnings?.length` so re-graded moot peers don't emit
+  stale observations.
+
+  No storyboard migration is required.
+
+- 7fbbe96: Add `refs_resolve` cross-step storyboard validation (adcp#2597, adcp-client#670). A new check that asserts every ref in a source set (e.g., `products[*].format_ids[*]` from a prior `get_products`) resolves to a member of a target set (e.g., `formats[*].format_id` from the current `list_creative_formats`), using configurable `match_keys`. Supports `[*]` wildcard path segments via a new `resolvePathAll` helper, scope filtering by key (with `$agent_url` substitution for the agent under test), and three out-of-scope grading modes (`warn`, `ignore`, `fail`). Failed checks name the exact unresolved ref tuples in `actual.missing` and dedupe on the projected tuple so one bad ref across 50 products shows up once. `runValidations()` now accepts `storyboardContext` on its `ValidationContext` argument so cross-step checks can read prior-step outputs; existing call sites pass it through from the runner.
+
+  Hardening for untrusted inputs:
+  - `resolvePathAll` caps output at 10,000 terminal values to prevent wildcard fan-out OOM from a malicious agent response shaped for exponential expansion.
+  - Path segments `__proto__`, `constructor`, and `prototype` are skipped, and `hasOwnProperty` gates each object lookup so a storyboard path cannot surface prototype-chain state into compliance reports.
+  - Path strings over 1 KiB return an empty segment list rather than burning CPU on pathological input.
+  - `scope.equals` normalizes trailing slashes on both sides when the scope key ends in `url`, so a storyboard author can pass a literal URL or `$agent_url` interchangeably.
+  - `refsMatch` rejects a match when either side is missing a declared `match_key`, preventing two refs that both omit a key from fuzzy-matching on the others.
+
+- 4116ea5: Reference verifier now grades negative RFC 9421 conformance vectors 021–027 (adcp-client#683, follow-up to #631). Vectors 021–026 were already implemented at the library level but skipped in the conformance suite via a three-location skip-list; 027 required a new verifier rule and a builder mutator.
+  - **Vector 027 — unsigned webhook authentication**: `verifyRequestSignature` now rejects unsigned requests whose JSON body carries a non-empty `push_notification_config.authentication` object anywhere in the tree, returning `request_signature_required`. Applies regardless of whether the operation sits in `capability.required_for`, closing the downgrade path where an attacker who captured a bearer token could register webhook credentials and redirect callbacks. Scan is recursive (handles auth material nested inside arrays of pending updates), Content-Type independent (so an attacker can't evade by labeling the body `text/plain`), and bounded: body length is capped at 1 MB (oversized unsigned bodies fail closed with `request_signature_required` since we can't prove absence of webhook auth within our DoS budget) and recursion is capped at depth 64 to prevent stack-blowing on pathologically nested JSON. `storyboard/request-signing/builder` registers 027 as a passthrough mutator since the adversarial shape lives in the fixture body, not a programmatic mutation.
+  - **Test harness — vector 026**: `test/request-signing-vectors.test.js` deferred its `canonicalTargetUri` precompute until a `replay_cache_entries` preload actually needs it. The eager call threw on non-ASCII-authority vectors inside harness setup before the verifier's own parse-time check could run.
+  - **Skip-list cleanup**: `NEGATIVE_VECTORS_UNIMPLEMENTED` removed from `test/request-signing-vectors.test.js`; grader negative-count assertions in `test/request-signing-grader-e2e.test.js`, `test/request-signing-grader-mcp.test.js`, `test/request-signing-grader-vectors.test.js`, and `test/request-signing-runner-integration.test.js` updated from 26 to 27.
+
+- 77ea1b9: Add schema-driven validation against the bundled AdCP JSON schemas on both
+  the client and the server (closes adcp-client#688).
+
+  **Client hooks** (on the `AdcpClient` / `SingleAgentClient` `validation`
+  config, applied automatically via `TaskExecutor`):
+  - `validation.requests: 'strict' | 'warn' | 'off'` — validate outgoing
+    payloads before dispatch. `strict` throws `ValidationError`
+    (`code: 'VALIDATION_ERROR'`) with a JSON Pointer to the offending field;
+    `warn` logs to debug logs and continues. Default: `warn`.
+  - `validation.responses: 'strict' | 'warn' | 'off'` — validate incoming
+    payloads on receive. `strict` fails the task; `warn` logs and continues.
+    Default: strict in dev/test, warn in production. Overrides the legacy
+    `strictSchemaValidation` flag when set.
+
+  **Server middleware** (opt-in on `createAdcpServer`'s `validation` config):
+  - `validation.requests: 'strict'` — dispatcher returns
+    `adcpError('VALIDATION_ERROR', …)` before the handler runs.
+  - `validation.responses: 'strict'` — handler-returned drift surfaces as a
+    `VALIDATION_ERROR` envelope; `warn` logs to the configured logger and
+    returns the response unchanged.
+
+  Validation uses the bundled JSON schemas shipped at
+  `dist/lib/schemas-data/<adcp_version>/` — async response variants
+  (`-submitted`, `-working`, `-input-required`) are selected by payload shape
+  (`status` field), matching issue #688's spec. `additionalProperties` is
+  left permissive so vendor extensions don't trip the validator. The
+  `VALIDATION_ERROR` envelope carries the full issue list (pointer, message,
+  keyword, schema path) under `details.issues` for programmatic indexing.
+
+- eb675dc: Add a cross-step assertion registry to the storyboard runner
+  (adcontextprotocol/adcp#2639). Storyboards now accept a top-level
+  `invariants: [id, ...]` array that references assertions registered via
+  `registerAssertion(spec)` from `@adcp/client/testing`. The runner resolves
+  the ids at start (fails fast on unknowns), fires `onStart` → `onStep`
+  (per step) → `onEnd` (once at the end), routes step-scoped failures into
+  the step's `validations[]` as `check: "assertion"`, and records every
+  result on a new `StoryboardResult.assertions[]` field. A failed assertion
+  flips `overall_passed` — assertions are gating conformance signal, not
+  advisory output.
+
+  New public exports from `@adcp/client/testing`: `registerAssertion`,
+  `getAssertion`, `listAssertions`, `clearAssertionRegistry`,
+  `resolveAssertions`, and types `AssertionSpec`, `AssertionContext`,
+  `AssertionResult`.
+
+  Assertions encode cross-step properties that per-step checks can't
+  express cleanly: governance denial never mutates, idempotency dedup
+  across replays, context never echoes secrets on error, status
+  transitions monotonic, and so on. The registry ships the framework;
+  concrete assertion modules live alongside the specialisms that own them.
+
+  No behavior change for storyboards that don't set `invariants`.
+
+- 4981b6b: Add `SubstitutionObserver` + `SubstitutionEncoder` — paired runner-side
+  and seller-side primitives for the catalog-item macro substitution rule
+  (adcontextprotocol/adcp#2620) and its runtime conformance contract
+  (adcontextprotocol/adcp#2638, test-kit
+  `substitution-observer-runner`). Closes #696.
+
+  The library is available both at the root import and at the dedicated
+  `@adcp/client/substitution` subpath.
+
+  **Seller side** — produce RFC 3986-conformant encoded values from
+  raw catalog data:
+
+  ```ts
+  import { SubstitutionEncoder } from '@adcp/client/substitution';
+
+  const encoder = new SubstitutionEncoder();
+  const safe = encoder.encode_for_url_context(rawCatalogValue);
+  const url = template.replace('{SKU}', safe);
+  // Optional defense-in-depth guard at catalog ingest:
+  encoder.reject_if_contains_macro(rawCatalogValue);
+  ```
+
+  **Runner side** — observe a creative preview and grade substitution
+  per the test-kit contract:
+
+  ```ts
+  import { SubstitutionObserver } from '@adcp/client/substitution';
+
+  const observer = new SubstitutionObserver();
+  const records = observer.parse_html(preview_html);
+  // (or)  const records = await observer.fetch_and_parse(url); // SSRF-policy-enforced
+  const matches = observer.match_bindings(records, template, [
+    { macro: '{SKU}', vector_name: 'reserved-character-breakout' },
+  ]);
+  for (const m of matches) {
+    const r = observer.assert_rfc3986_safe(m);
+    if (!r.ok) report(r); // { error_code, byte_offset, expected, observed }
+  }
+  ```
+
+  Both surfaces share a single RFC 3986 implementation
+  (`encodeUnreserved`, `equalUnderHexCasePolicy`, `isUnreservedOnly`) so
+  one bug-fix path covers producer and verifier. The seven canonical
+  fixture vectors from
+  `static/test-vectors/catalog-macro-substitution.json` ship as
+  `CATALOG_MACRO_VECTORS` for reuse by storyboards and tests.
+
+  `enforceSsrfPolicy` / `enforceSsrfPolicyResolved` implement the
+  contract's normative deny list (IPv4 + IPv6 CIDRs, cloud metadata
+  hostnames, scheme allow-list, bare-IP-literal rejection in Verified
+  mode, DNS revalidation of every resolved address). `fetch_and_parse`
+  pins the request to the already-policy-checked address via undici's
+  `connect.lookup`, closing the DNS rebinding window between
+  resolve and connect.
+
+  The observer additionally ships `assert_unreserved_only`,
+  `assert_no_nested_expansion`, and `assert_scheme_preserved` covering
+  the contract's stricter validations
+  (`rfc3986_unreserved_only_at_macro_position`,
+  `nested_expansion_not_re_scanned`, `url_scheme_preserved`).
+
+  Custom-vector payloads (inline `raw_value` + `expected_encoded`) are
+  SHA-256 redacted by default in error reports per the contract's
+  `error_report_payload_policy`; canonical fixture values echo
+  verbatim. Pass `{ include_raw_payloads: true }` to any assertion
+  helper to override — NOT for Verified grading.
+
+- c9977e5: Add `--webhook-receiver-auto-tunnel` for webhook-grading a remote agent from
+  a local machine. Autodetects `ngrok` or `cloudflared` on `PATH`, spawns the
+  tunnel pointed at the receiver, extracts the public URL, plumbs it into
+  proxy mode, and tears the tunnel down on exit (including on SIGINT/SIGTERM).
+
+  Use `ADCP_WEBHOOK_TUNNEL="<cmd> {port}"` to override detection with a
+  custom tunnel command — the CLI passes the auto-assigned port via `{port}`
+  substitution and captures the URL behind an explicit
+  `ADCP_TUNNEL_URL=https://…` marker the custom command must emit on
+  stdout/stderr. The marker convention avoids misrouting webhooks to docs or
+  diagnostic URLs that tunnel binaries often log at startup; ngrok and
+  cloudflared detections use vendor-pinned regexes for the same reason.
+
+  The flag is mutually exclusive with `--webhook-receiver-public-url` and
+  any `--webhook-receiver` mode (auto-tunnel already implies proxy), and
+  (like `--webhook-receiver`) incompatible with `--multi-instance-strategy
+multi-pass`. Skipped during `--dry-run` (the conflict validation still
+  runs, but no tunnel is spawned).
+
+  No spec change: the tunnel forwards ordinary HTTPS to the local receiver,
+  so the `webhook_receiver_runner` parity invariant (`loopback_mock` ≡
+  `proxy_url` for the same agent emitter path) holds. Spec-compliant with the
+  test-kit's "MUST NOT require a specific tunnel vendor" rule — detection is
+  PATH-based and vendor-agnostic. A hosted rendezvous service for graders
+  that can't install a tunnel binary is tracked separately at
+  adcontextprotocol/adcp#2618 (milestone 3.1.0).
+
+- a4b8eb8: Expose the storyboard-runner webhook receiver on the CLI (closes adcp-client#675).
+  Before this change, `adcp storyboard run` could not enable the `webhook_receiver`
+  runtime plumbing that already existed on `runStoryboard`, so storyboards whose
+  grading depends on observing outbound webhooks — `webhook-emission`,
+  `idempotency`, and any sales specialism that grades `window_update` /
+  IO-completion flows — skipped their webhook-assertion steps with
+  `"Test-kit contract 'webhook_receiver_runner' is not configured on this runner."`
+  even when the agent emitted fully spec-compliant signed RFC 9421 webhooks.
+
+  Three new flags on `adcp storyboard run` / `adcp comply`:
+  - `--webhook-receiver [MODE]` — host an ephemeral receiver. `MODE` is
+    `loopback` (default; binds on 127.0.0.1) or `proxy` (operator-supplied
+    public URL).
+  - `--webhook-receiver-port PORT` — force a specific bind port; defaults to
+    auto-assign.
+  - `--webhook-receiver-public-url URL` — public HTTPS base URL for `proxy`
+    mode (implies `--webhook-receiver proxy` when used alone).
+
+  Setting any of these activates the receiver and adds `webhook_receiver_runner`
+  to the run's `contracts` set so `requires_contract` gates resolve. The flags
+  are also plumbed through `ComplyOptions` (`webhook_receiver`, `contracts`) so
+  programmatic callers of `comply()` get the same behavior without dropping to
+  `runStoryboard` directly.
+
+### Patch Changes
+
+- 745415f: Adds `docs/guides/VALIDATE-YOUR-AGENT.md` — the operator-facing checklist covering `adcp storyboard run`, `adcp fuzz` (Tier 1/2/3), `adcp grade request-signing`, multi-instance testing, `--webhook-receiver`, schema-driven validation hooks, custom `--invariants`, and `SubstitutionEncoder`/`Observer`. Cross-linked from `BUILD-AN-AGENT.md` and the repo `CLAUDE.md`.
+
+  Ships `npm run compliance:skill-matrix` (new `scripts/manual-testing/run-skill-matrix.ts` driver + `skill-matrix.json`) which fans the existing `agent-skill-storyboard.ts` harness across skill × storyboard pairs with `--filter`, `--parallel`, and `--stop-on-first-fail`.
+
+  Every `skills/build-*-agent/SKILL.md` replaces its ad-hoc `## Validation` section with a uniform `## Validate Locally` block: canonical storyboard IDs, cross-cutting bundles (`security_baseline,idempotency,schema_validation,error_compliance`), `adcp fuzz` with per-specialism `--tools`, per-specialism failure decoder, and a pointer back to the operator checklist. `build-retail-media-agent/SKILL.md` gains `SubstitutionEncoder.encode_for_url_context` wiring guidance for catalog-driven macro URLs.
+
+- f233402: `security_baseline` runner now enforces RFC 9728 protected-resource metadata
+  (PRM) validations whenever the agent serves PRM at all, closing a spoofing
+  path (adcp-client#677) where an agent with a broken OAuth metadata document
+  could pass the storyboard by also declaring an API key. Previously,
+  `oauth_discovery`'s `optional: true` semantics swallowed failures of the
+  `resource_equals_agent_url` and `http_status: 200` checks so long as the
+  API-key path carried `auth_mechanism_verified`. Now:
+  - A PRM response of **HTTP 404** skips the `oauth_discovery` phase cleanly
+    (step reports `skip_reason: 'oauth_not_advertised'`, remaining phase steps
+    cascade-skip). API-key-only agents that don't serve PRM see no change.
+  - Any **HTTP 2xx** PRM response flips the phase into hard-fail mode: a
+    wrong `resource` URL, missing `authorization_servers`, or unreachable
+    authorization-server metadata fails the storyboard regardless of whether
+    the API-key path also passes.
+  - Other PRM statuses (401, 500, redirects, fetch errors) keep their
+    existing swallow-on-optional behavior — the rule only tightens when the
+    agent is honestly advertising OAuth.
+
+  The semantic shift encoded here: the test-kit's `auth.api_key` declaration
+  is an opt-IN to the API-key path, not an opt-OUT of the OAuth path. An
+  agent that serves PRM must serve it correctly.
+
+- bce4c9d: Route storyboard steps with `omit_idempotency_key: true` on mutating tasks through the raw-HTTP MCP probe so no SDK-layer normalization can inject a key onto the wire (adcp-client#678, adcp#2607). The `skipIdempotencyAutoInject` plumbing in `normalizeRequestParams`, `SingleAgentClient.executeAndHandle`, and `TaskExecutor.executeTask` already honors the flag, but a single regression in any of those sites would silently make every SDK-speaking agent pass the missing-key conformance vector vacuously. Dispatching via `rawMcpProbe` (the same path already used for `step.auth` overrides and `probeSignedRequest`) removes the escape hatch entirely.
+
+  Scope: applies when `options.protocol` is `'mcp'` and `options.auth` is absent, `'bearer'`, or `'basic'`. OAuth and A2A stay on the SDK path — their dispatch requires refresh-capable tokens / a different envelope that the raw probe can't replicate — and continue to rely on the existing `skipIdempotencyAutoInject` plumbing. No YAML surface change: the existing `omit_idempotency_key: true` field on a mutating step is the trigger, matching how the runner already gates the runner-level `applyIdempotencyInvariant` skip.
+
+  Hardening for outbound headers: bearer tokens and basic credentials are validated for CR/LF/non-printable ASCII before being placed in headers (errors name the offending field without echoing the value), empty bearer tokens fail loudly instead of silent SDK fallback, and basic-auth usernames containing `:` are rejected per RFC 7617. `X-Test-Session-ID` is added to `SECRET_KEY_PATTERN` so any future code path that persists outbound headers into compliance reports redacts it automatically.
+
+- 0b4115f: Skill docs follow-ups from the agent-skill-storyboard harness runs:
+  - `build-seller-agent/SKILL.md` § sales-guaranteed restructured to lead with a 3-row routing table (IO signing → `submitted` task envelope / `creative_assignments` empty → synchronous `pending_creatives` / otherwise → `active` with `confirmed_at`). The old section led with "IO approval = task envelope" and fresh Claude defaulted to `submitted` for every scenario, missing the `pending_creatives` path. The routing logic is now the first code block in the section.
+  - `build-brand-rights-agent/SKILL.md` shrunk from 472 → 415 lines (~12%) by collapsing the duplicated idempotency and `Protecting your agent` content into pointers at the seller skill. The long skill was causing the `agent-skill-storyboard.ts` harness to time out before Claude wrote `server.ts`.
+  - Dropped the stale "ai_generated_image not in enum" warning — upstream adcontextprotocol/adcp#2418 merged, enum now lists `ai_generated_image` + `image_generation`.
+
+  No public-surface changes; docs-only patch.
+
+- d51c8a5: Add test-runner guardrails so a single hung test can't consume hours of CPU (fixes #680):
+  - `npm test` / `npm run test:lib` / `prepublishOnly` now pass `--test-timeout=60000`. A stuck test fails after 60s with a stack trace instead of spinning indefinitely at high CPU (previously `--test-force-exit` only fired after the runner finished, which a spinning test never reaches).
+  - CI jobs in `.github/workflows/ci.yml` now declare `timeout-minutes` so a runaway job is capped at its wall-clock budget instead of eating up to the GitHub Actions default six-hour ceiling.
+  - `CONTRIBUTING.md` and `AGENTS.md` document the `kill -QUIT <pid>` tip for dumping the V8 stack when a test appears hung.
+
+- d2f1021: Register vector 027 (`webhook-registration-authentication-unsigned`) as a passthrough mutation in the request-signing builder. The fixture carries its adversarial shape in the vector itself (unsigned bearer-auth request with `push_notification_config.authentication` in the body) — no programmatic mutation needed, just preserve fixture bytes through `applyTransport`.
+
+  This unblocks CI after the upstream compliance cache added vector 027. The verifier rule it exercises (`#webhook-security` — MUST require 9421 when authentication is present in a webhook registration body) is not yet implemented; vector 027 is added to the unimplemented-verifier skip lists alongside 021–026 until the rule lands.
+
 ## 5.7.0
 
 ### Minor Changes
