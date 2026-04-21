@@ -12,8 +12,43 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
+import { ADCPError } from '../../errors';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
 import type { Storyboard } from './types';
+
+/**
+ * Discriminator for configuration faults `resolveStoryboardsForCapabilities`
+ * surfaces. `unknown_protocol` is reserved for future use — today it emits a
+ * `console.warn` rather than throwing.
+ */
+export type CapabilityResolutionCode = 'specialism_parent_protocol_missing' | 'unknown_specialism' | 'unknown_protocol';
+
+/**
+ * Thrown when the agent's declared capabilities cannot be mapped onto the
+ * compliance cache. These are agent-configuration faults, not network or
+ * cache-integrity problems — callers should branch on `code` to distinguish
+ * them from runtime failures rather than regexing `message`.
+ */
+export class CapabilityResolutionError extends ADCPError {
+  readonly code: CapabilityResolutionCode;
+  readonly specialism?: string;
+  readonly parentProtocol?: string;
+  readonly protocol?: string;
+
+  constructor(params: {
+    code: CapabilityResolutionCode;
+    message: string;
+    specialism?: string;
+    parentProtocol?: string;
+    protocol?: string;
+  }) {
+    super(params.message);
+    this.code = params.code;
+    if (params.specialism !== undefined) this.specialism = params.specialism;
+    if (params.parentProtocol !== undefined) this.parentProtocol = params.parentProtocol;
+    if (params.protocol !== undefined) this.protocol = params.protocol;
+  }
+}
 
 /**
  * Maps `supported_protocols` enum values (snake_case) to compliance-cache
@@ -342,9 +377,16 @@ export function resolveBundleOrStoryboard(id: string, options: ResolveOptions = 
  *   protocols   — baseline for each declared `supported_protocols` entry
  *   specialisms — every declared specialism
  *
- * Throws (fail-closed) if the agent declares a specialism whose bundle is
- * missing from the local cache — this usually means the cache is stale and
- * needs `npm run sync-schemas`.
+ * Throws `CapabilityResolutionError` (fail-closed) when the declared
+ * capabilities cannot be mapped onto the cache:
+ *
+ *   - `unknown_specialism` — declared specialism has no bundle (usually stale
+ *     cache — run `npm run sync-schemas`).
+ *   - `specialism_parent_protocol_missing` — declared specialism rolls up to
+ *     a protocol the agent didn't include in `supported_protocols`.
+ *
+ * Unknown `supported_protocols` entries are logged as warnings and skipped
+ * rather than thrown (fail-open), so a single bad entry doesn't block the run.
  */
 export function resolveStoryboardsForCapabilities(
   caps: AgentCapabilities,
@@ -418,23 +460,30 @@ export function resolveStoryboardsForCapabilities(
   for (const specialism of declaredSpecialisms) {
     const entry = index.specialisms.find(s => s.id === specialism);
     if (!entry) {
-      throw new Error(
-        `Agent declared specialism "${specialism}" but no bundle exists at ` +
+      throw new CapabilityResolutionError({
+        code: 'unknown_specialism',
+        specialism,
+        message:
+          `Agent declared specialism "${specialism}" but no bundle exists at ` +
           `${join(cacheDir, 'specialisms', specialism)}. ` +
           `Known specialisms: ${index.specialisms.map(s => s.id).join(', ')}. ` +
           `Compliance cache version: ${index.adcp_version}. ` +
-          `This usually means the cache is stale — run \`npm run sync-schemas\`.`
-      );
+          `This usually means the cache is stale — run \`npm run sync-schemas\`.`,
+      });
     }
     // Each specialism rolls up to one parent protocol; the spec requires the parent
     // to also be declared in supported_protocols. AAO enforces this server-side,
     // but catching it client-side stops us from running orphan scenarios.
     if (entry.protocol && !declaredProtocolIds.has(entry.protocol)) {
-      throw new Error(
-        `Agent declared specialism "${specialism}" (parent protocol: ${entry.protocol}) ` +
+      throw new CapabilityResolutionError({
+        code: 'specialism_parent_protocol_missing',
+        specialism,
+        parentProtocol: entry.protocol,
+        message:
+          `Agent declared specialism "${specialism}" (parent protocol: ${entry.protocol}) ` +
           `but did not include "${entry.protocol}" in supported_protocols. ` +
-          `Every specialism must roll up to a declared protocol per the AdCP spec.`
-      );
+          `Every specialism must roll up to a declared protocol per the AdCP spec.`,
+      });
     }
     push({
       kind: 'specialism',
