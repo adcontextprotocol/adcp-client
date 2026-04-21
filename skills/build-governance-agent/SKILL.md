@@ -629,20 +629,37 @@ serve(createAgent, {
 The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
-## Validation
+## Validate Locally
 
-**After writing the agent, validate it. Fix failures. Repeat.**
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). Governance-specific commands:
 
 ```bash
+# Boot
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp campaign_governance_conditions --json
-npx @adcp/client storyboard run http://localhost:3001/mcp campaign_governance_denied --json
-npx @adcp/client storyboard run http://localhost:3001/mcp property_lists --json
-npx @adcp/client storyboard run http://localhost:3001/mcp collection_lists --json
-npx @adcp/client storyboard run http://localhost:3001/mcp content_standards --json
+
+# Happy paths — run the storyboards matching your claimed specialisms
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards governance_spend_authority,governance_spend_authority/denied,governance_delivery_monitor \
+  --auth $TOKEN
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards property_lists,collection_lists,content_standards \
+  --auth $TOKEN
+
+# Cross-cutting obligations
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
+
+# Rejection-surface fuzz — includes update_property_list / update_content_standards (Tier 3)
+npx @adcp/client fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 ```
 
-**Keep iterating until all steps pass.**
+Common failure decoder:
+- `authority_level` field present → 3.0 GA removed it; use `human_review_required: boolean` instead
+- `status: 'escalated'` on `check_governance` → enum is `approved` / `denied` / `conditions`
+- Missing `check_id` on `check_governance` response → required; generate a unique ID per check
+- `finding.code` / `finding.message` → schema requires `category_id`, `severity`, `explanation`
+
+**Keep iterating until all steps pass.** Can't bind ports? `npm run compliance:skill-matrix -- --filter governance` runs an isolated end-to-end test.
 
 ## Common Mistakes
 

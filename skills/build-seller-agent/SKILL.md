@@ -473,9 +473,53 @@ Do not modify, inspect, or omit the context — treat it as opaque. If the reque
 
 Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_governance`, `provide_performance_feedback`, `sync_event_sources`.
 
-## Compliance Testing (Optional)
+## Compliance Testing (Required for deterministic_testing storyboard)
 
-Add `registerTestController` so the comply framework can deterministically test your state machines. Without it, compliance testing relies on observational storyboards that can't force state transitions.
+To pass the `deterministic_testing` storyboard — and the rejection-branch steps in most other storyboards (`governance_denied`, `invalid_transitions`, `measurement_terms_rejected`, etc.) — your agent must expose the `comply_test_controller` tool. Without it, the grader can only observe the happy path; forced state transitions, error-condition seeding, and simulation all silently degrade to skips or fail with `controller_detected: false`.
+
+**Preferred: `createComplyController`** (adapter-based, handles dispatch + validation + re-seed idempotency + sandbox gating for you):
+
+```ts
+import { createComplyController } from '@adcp/client/testing';
+
+const controller = createComplyController({
+  sandboxGate: input => input.auth?.sandbox === true,
+  seed: {
+    product:  (params) => productRepo.upsert(params.product_id, params.fixture),
+    creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
+    plan:     (params) => planRepo.upsert(params.plan_id, params.fixture),
+    media_buy: (params) => mediaBuyRepo.upsert(params.media_buy_id, params.fixture),
+  },
+  force: {
+    creative_status:  (params) => creativeRepo.transition(params.creative_id, params.status),
+    media_buy_status: (params) => mediaBuyRepo.transition(params.media_buy_id, params.status),
+    account_status:   (params) => accountRepo.setStatus(params.account_id, params.status),
+  },
+  simulate: {
+    delivery:     (params) => deliveryRepo.simulate(params),
+    budget_spend: (params) => budgetRepo.spendPercentage(params),
+  },
+});
+
+controller.register(server);
+```
+
+Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO` (not schema errors). Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` from an adapter when the state machine disallows the transition; the helper emits the typed error envelope.
+
+When registered, declare `compliance_testing` in `supported_protocols`:
+
+```ts
+capabilitiesResponse({
+  adcp: { major_versions: [3] },
+  supported_protocols: ['media_buy', 'compliance_testing'],
+});
+```
+
+Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`.
+
+### Low-level alternative: `registerTestController`
+
+If you need direct store access — e.g., shared enforcement with production code, or a session-keyed store factory — use the flat `registerTestController(server, store)` API. `createComplyController` calls into the same primitives, so picking one or the other is mostly ergonomic preference.
 
 ```
 import { registerTestController } from '@adcp/client';
@@ -1006,30 +1050,55 @@ The `security_baseline` storyboard verifies:
 2. At least one of API-key or OAuth discovery must succeed.
 3. If OAuth is advertised, the `resource` field in `/.well-known/oauth-protected-resource` MUST match the URL being called. Set `publicUrl` once — the framework enforces this automatically.
 
-## Validation
+## Validate Locally
 
-**After writing the agent, validate it. Fix failures. Repeat.**
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). The commands below cover what a seller agent specifically needs.
 
-**Full validation** (if you can bind ports):
+**Boot the agent:**
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
-**Sandbox validation** (if ports are blocked):
+**Happy-path conformance (storyboard runner):**
 
 ```bash
-npx tsc --noEmit
+# Full seller lifecycle
+npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
+
+# Your specialism bundle (one of: sales_guaranteed, sales_non_guaranteed,
+# sales_broadcast_tv, sales_streaming_tv, sales_social, sales_proposal_mode)
+npx @adcp/client storyboard run http://localhost:3001/mcp sales_guaranteed --auth $TOKEN
+
+# Cross-cutting obligations — every seller must pass these
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards idempotency,security_baseline,schema_validation,error_compliance --auth $TOKEN
+
+# Webhook conformance (if you claim async task lifecycles)
+npx @adcp/client storyboard run http://localhost:3001/mcp webhook_emission \
+  --webhook-receiver --auth $TOKEN
 ```
 
-When storyboard output shows failures, fix each one:
+**Rejection-surface conformance (property-based fuzzer — catches crashes on edge inputs):**
+
+```bash
+npx @adcp/client fuzz http://localhost:3001/mcp \
+  --tools get_products,get_media_buys,list_creative_formats \
+  --auth-token $TOKEN
+```
+
+**Request signing (if you claim `signed-requests`):** point `adcp grade request-signing` at your sandbox — see [VALIDATE-YOUR-AGENT.md § Request signing](../../docs/guides/VALIDATE-YOUR-AGENT.md#request-signing--adcp-grade-request-signing).
+
+**Multi-instance (before production):** run with two `--url` flags to catch `(brand, account)`-scoped state that lives per-process. See [VALIDATE-YOUR-AGENT.md § Multi-instance](../../docs/guides/VALIDATE-YOUR-AGENT.md#multi-instance-testing).
+
+Common failure decoder:
 
 - `response_schema` → response doesn't match Zod schema
 - `field_present` → required field missing
-- MCP error → check tool registration (schema, name)
+- `mcp_error` → check tool registration (schema, name)
+- `authority_level` / `human_review_required` mismatch → check governance plan shape — schema moved in AdCP 3.0 GA
 
-**Keep iterating until all steps pass.**
+**Keep iterating until all steps pass.** If you can't bind ports locally, skip `tsx agent.ts` and run `npm run compliance:skill-matrix -- --filter seller` — it builds an isolated sandbox and grades end-to-end.
 
 ## Storyboards
 

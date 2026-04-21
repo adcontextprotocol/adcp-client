@@ -378,14 +378,35 @@ serve(createAgent, {
 
 For OAuth, `anyOf(verifyApiKey, verifyBearer)` composition, or `publicUrl` + `protectedResource` see [seller skill § Protecting your agent](../build-seller-agent/SKILL.md#protecting-your-agent).
 
-## Validation
+## Validate Locally
+
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). Brand-rights-specific commands:
 
 ```bash
+# Boot
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp brand_rights --json
+
+# Happy path — brand_rights bundle (includes governance_denied sub-scenario)
+npx @adcp/client storyboard run http://localhost:3001/mcp brand_rights --auth $TOKEN
+
+# Cross-cutting obligations
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards security_baseline,idempotency,schema_validation --auth $TOKEN
+
+# Revocation webhook conformance (if you emit revocations)
+npx @adcp/client storyboard run http://localhost:3001/mcp webhook_emission \
+  --webhook-receiver --auth $TOKEN
+
+# Rejection-surface fuzz
+npx @adcp/client fuzz http://localhost:3001/mcp --auth-token $TOKEN
 ```
 
-**Keep iterating until all steps pass.**
+Common failure decoder:
+- `exclusivity: 'non_exclusive'` (string) → must be object `{ scope, countries }` — see § Concept model
+- `available_uses` enum mismatch → `right-use.json` enum is the source of truth; includes `ai_generated_image` in AdCP 3.0+
+- `acquire_rights` rejected with `Invalid input` → buyer omitted required `revocation_webhook: { url }`
+
+**Keep iterating until all steps pass.** Can't bind ports? `npm run compliance:skill-matrix -- --filter brand-rights` runs an isolated end-to-end test.
 
 ## Common Mistakes
 

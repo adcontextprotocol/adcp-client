@@ -362,25 +362,36 @@ serve(createAgent, {
 The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
-## Validation
+## Validate Locally
 
-**After writing the agent, validate it. Fix failures. Repeat.**
-
-**Full validation** (if you can bind ports):
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). Signals-specific commands:
 
 ```bash
+# Boot
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_owned --json       # for owned data
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace --json  # for marketplace
+
+# Happy path — the specialism you're claiming
+npx @adcp/client storyboard run http://localhost:3001/mcp signal_owned --auth $TOKEN        # owned data
+npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace --auth $TOKEN  # marketplace
+
+# Marketplace governance sub-scenario (if you claim signal_marketplace)
+npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace/governance_denied --auth $TOKEN
+
+# Cross-cutting obligations
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
+
+# Rejection-surface fuzz
+npx @adcp/client fuzz http://localhost:3001/mcp --tools get_signals --auth-token $TOKEN
 ```
 
-**Sandbox validation** (if ports are blocked):
+Common failure decoder:
+- `value_type` mismatch → `binary` vs. `continuous` — pick one; continuous signals return `value`, binary signals return membership
+- Missing `deployments` on signal → required even if empty `[]`
+- `activate_signal` returns sync success on a marketplace signal → marketplace activations are async; commit to an `activation_key` up-front and return `submitted`
+- Missing `coverage_percentage` or `pricing_options` → required on every signal
 
-```bash
-npx tsc --noEmit
-```
-
-**Keep iterating until all steps pass.**
+**Keep iterating until all steps pass.** Can't bind ports? `npm run compliance:skill-matrix -- --filter signals` runs an isolated end-to-end test.
 
 ## Common Mistakes
 

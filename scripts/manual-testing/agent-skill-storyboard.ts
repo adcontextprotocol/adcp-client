@@ -30,7 +30,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, rm, stat, chmod } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connect } from 'node:net';
@@ -42,6 +42,11 @@ interface Args {
   workDir?: string;
   timeoutMs: number;
   keep: boolean;
+  /** When set, skip `npm install` and symlink `node_modules` from this path
+   * instead. Matrix driver uses this to amortize the ~15-30s per-workspace
+   * install across many pairs — the template's node_modules is valid for
+   * every harness run since the deps are fixed (@adcp/client + tsx). */
+  sharedNodeModules?: string;
 }
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -56,6 +61,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--work-dir') out.workDir = argv[++i];
     else if (a === '--timeout-ms') out.timeoutMs = Number(argv[++i]);
     else if (a === '--keep') out.keep = true;
+    else if (a === '--shared-node-modules') out.sharedNodeModules = argv[++i];
     else if (a === '--help' || a === '-h') {
       printUsage();
       process.exit(0);
@@ -76,7 +82,8 @@ function printUsage(): void {
   [--port 4200] \\
   [--work-dir <path>] \\
   [--timeout-ms 600000] \\
-  [--keep]`
+  [--keep] \\
+  [--shared-node-modules <path>]`
   );
 }
 
@@ -137,7 +144,7 @@ The harness grader sends \`Authorization: Bearer sk_harness_do_not_use_in_prod\`
 `;
 }
 
-async function bootstrapWorkspace(dir: string, port: number): Promise<void> {
+async function bootstrapWorkspace(dir: string, port: number, sharedNodeModules?: string): Promise<void> {
   const pkgPath = join(dir, 'package.json');
   const pkg = {
     name: 'adcp-agent-skill-harness-workspace',
@@ -159,6 +166,15 @@ async function bootstrapWorkspace(dir: string, port: number): Promise<void> {
     `Port: ${port}\nAgent URL after start.sh: http://127.0.0.1:${port}/mcp\n`,
     'utf8'
   );
+
+  if (sharedNodeModules) {
+    // Matrix mode: symlink to a prepared node_modules so we skip the 15-30s
+    // `npm install` per pair. The shared dir was built from the same
+    // package.json shape above, so resolution is valid.
+    log(`linking node_modules from ${sharedNodeModules}`);
+    await symlink(sharedNodeModules, join(dir, 'node_modules'), 'dir');
+    return;
+  }
 
   log(`bootstrapping deps via npm install (this takes a minute)`);
   const npm = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], {
@@ -290,7 +306,7 @@ async function main(): Promise<void> {
 
   let agent: ChildProcess | undefined;
   try {
-    await bootstrapWorkspace(workDir, args.port);
+    await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
     await runClaude(buildPrompt(skillContent, args.storyboard, args.port), workDir, args.timeoutMs);
 
     log(`starting agent`);

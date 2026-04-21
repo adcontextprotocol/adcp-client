@@ -291,14 +291,34 @@ serve(createAgent, {
 The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
-## Validation
+## Validate Locally
+
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). SI-specific commands:
 
 ```bash
+# Boot
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp si_session --json
+
+# Happy path — session lifecycle
+npx @adcp/client storyboard run http://localhost:3001/mcp si_baseline --auth $TOKEN
+
+# Cross-cutting obligations
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
+
+# Rejection-surface fuzz
+npx @adcp/client fuzz http://localhost:3001/mcp \
+  --tools si_get_offering --auth-token $TOKEN
 ```
 
-**Keep iterating until all steps pass.**
+Common failure decoder:
+- `status` field on session response → rename to `session_status` (the canonical field name)
+- `status: 'terminated'` → use boolean `terminated: true`
+- Missing `session_id` on `si_send_message` response → echo from request — required
+- Missing `available` boolean on `si_get_offering` → required even for mock data
+- Missing `reason` on `si_terminate_session` request → enum: `user_exit` / `session_timeout` / `host_terminated` / `handoff_transaction` / `handoff_complete`
+
+**Keep iterating until all steps pass.** Can't bind ports? `npm run compliance:skill-matrix -- --filter si` runs an isolated end-to-end test.
 
 ## Common Mistakes
 
