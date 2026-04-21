@@ -131,15 +131,15 @@ export function matchBindings(
 /**
  * Tokenize a template from its raw string. Preserves literal `{MACRO}`
  * sequences in path and query. Throws if the template is not an
- * absolute URL.
+ * absolute URL. Avoids regex parsing of untrusted input to sidestep
+ * any polynomial-backtracking risk on adversarial templates.
  */
 function parseTemplate(template: URL | string): TemplateLayout {
   const raw = typeof template === 'string' ? template : template.href;
-  const m = /^([a-z][a-z0-9+.\-]*:\/\/[^\/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i.exec(raw);
-  if (!m) throw new Error(`Template is not an absolute URL: ${raw}`);
-  const origin = m[1] ?? '';
-  const path = m[2] ?? '';
-  const search = (m[3] ?? '').replace(/^\?/, '');
+  const parts = splitAbsoluteUrl(raw);
+  if (!parts) throw new Error(`Template is not an absolute URL: ${raw}`);
+  const { origin, path } = parts;
+  const search = parts.search;
 
   const path_segments = path === '' || path === '/' ? [] : path.replace(/^\//, '').split('/');
 
@@ -172,6 +172,62 @@ function normalizeOrigin(scheme_and_authority: string): string {
   } catch {
     return scheme_and_authority;
   }
+}
+
+/**
+ * Linear-time absolute-URL splitter. Returns the scheme+authority
+ * prefix, the raw path, and the raw search (without leading `?`), or
+ * `null` if the input isn't shaped `scheme://authority...`. Avoids
+ * regex on untrusted input so adversarial templates can't trigger
+ * polynomial backtracking.
+ */
+function splitAbsoluteUrl(raw: string): { origin: string; path: string; search: string } | null {
+  // Locate the `://` delimiter. Scheme MUST be non-empty and start with
+  // a letter; we enforce that minimum here without scanning the whole
+  // scheme for validity (WHATWG URL would accept most absolute forms).
+  const schemeEnd = raw.indexOf('://');
+  if (schemeEnd <= 0) return null;
+  const firstChar = raw.charCodeAt(0);
+  const isAlpha = (firstChar >= 0x41 && firstChar <= 0x5a) || (firstChar >= 0x61 && firstChar <= 0x7a);
+  if (!isAlpha) return null;
+
+  const afterScheme = schemeEnd + 3;
+  // Authority ends at the first `/`, `?`, or `#` — or end of string.
+  let authorityEnd = raw.length;
+  for (let i = afterScheme; i < raw.length; i++) {
+    const c = raw.charCodeAt(i);
+    if (c === 0x2f /* / */ || c === 0x3f /* ? */ || c === 0x23 /* # */) {
+      authorityEnd = i;
+      break;
+    }
+  }
+  const origin = raw.slice(0, authorityEnd);
+
+  // Path runs from authorityEnd up to `?`, `#`, or end of string.
+  let pathEnd = raw.length;
+  for (let i = authorityEnd; i < raw.length; i++) {
+    const c = raw.charCodeAt(i);
+    if (c === 0x3f /* ? */ || c === 0x23 /* # */) {
+      pathEnd = i;
+      break;
+    }
+  }
+  const path = raw.slice(authorityEnd, pathEnd);
+
+  // Search runs from `?` up to `#` or end. No leading `?` in the returned form.
+  let search = '';
+  if (raw.charCodeAt(pathEnd) === 0x3f) {
+    let searchEnd = raw.length;
+    for (let i = pathEnd + 1; i < raw.length; i++) {
+      if (raw.charCodeAt(i) === 0x23 /* # */) {
+        searchEnd = i;
+        break;
+      }
+    }
+    search = raw.slice(pathEnd + 1, searchEnd);
+  }
+
+  return { origin, path, search };
 }
 
 function parseObserved(url: URL): ObservedLayout {
