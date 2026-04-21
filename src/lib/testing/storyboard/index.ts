@@ -83,12 +83,14 @@ export {
   findBundleById,
   resolveBundleOrStoryboard,
   resolveStoryboardsForCapabilities,
+  CapabilityResolutionError,
   PROTOCOL_TO_PATH,
 } from './compliance';
 export type {
   AgentCapabilities,
   BundleKind,
   BundleRef,
+  CapabilityResolutionCode,
   ComplianceIndex,
   ComplianceIndexProtocol,
   ComplianceIndexSpecialism,

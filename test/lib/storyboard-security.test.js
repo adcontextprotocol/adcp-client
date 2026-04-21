@@ -20,7 +20,11 @@ const {
   TestKitValidationError,
   PROBE_TASK_ALLOWLIST,
 } = require('../../dist/lib/testing/storyboard/test-kit');
-const { resolveStoryboardsForCapabilities } = require('../../dist/lib/testing/storyboard/compliance');
+const {
+  resolveStoryboardsForCapabilities,
+  CapabilityResolutionError,
+} = require('../../dist/lib/testing/storyboard/compliance');
+const { ADCPError, isADCPError } = require('../../dist/lib/errors');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1447,6 +1451,100 @@ describe('resolveStoryboardsForCapabilities: version gate', () => {
       );
       assert.deepStrictEqual(storyboards.map(s => s.id).sort(), ['v2_era', 'v3_era']);
       assert.deepStrictEqual(not_applicable, []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// resolveStoryboardsForCapabilities: typed errors
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Build a fake compliance cache that declares one protocol and one specialism
+ * rolled up under it. Lets us exercise the specialism-resolution error paths
+ * without mocking internals.
+ */
+function makeFakeComplianceCacheWithSpecialism({ specialismId, parentProtocol }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-compliance-'));
+  fs.mkdirSync(path.join(root, 'universal'));
+  fs.mkdirSync(path.join(root, 'protocols', parentProtocol), { recursive: true });
+  fs.mkdirSync(path.join(root, 'specialisms', specialismId), { recursive: true });
+  const index = {
+    adcp_version: '3.1.0',
+    generated_at: new Date().toISOString(),
+    universal: [],
+    protocols: [
+      { id: parentProtocol, title: parentProtocol, has_baseline: true, path: `protocols/${parentProtocol}` },
+    ],
+    specialisms: [
+      {
+        id: specialismId,
+        protocol: parentProtocol,
+        title: specialismId,
+        status: 'stable',
+        path: `specialisms/${specialismId}`,
+      },
+    ],
+  };
+  fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(index));
+  return root;
+}
+
+describe('resolveStoryboardsForCapabilities: typed errors', () => {
+  it('throws CapabilityResolutionError with code=unknown_specialism for a missing bundle', () => {
+    const dir = makeFakeComplianceCacheWithSpecialism({
+      specialismId: 'sales-guaranteed',
+      parentProtocol: 'media-buy',
+    });
+    try {
+      assert.throws(
+        () =>
+          resolveStoryboardsForCapabilities(
+            { supported_protocols: ['media_buy'], specialisms: ['not-a-real-specialism'] },
+            { complianceDir: dir }
+          ),
+        err => {
+          assert.ok(err instanceof CapabilityResolutionError, 'expected CapabilityResolutionError');
+          assert.ok(err instanceof ADCPError, 'expected ADCPError base');
+          assert.ok(isADCPError(err), 'expected isADCPError to return true');
+          assert.strictEqual(err.code, 'unknown_specialism');
+          assert.strictEqual(err.specialism, 'not-a-real-specialism');
+          assert.strictEqual(err.parentProtocol, undefined);
+          // Message text preserved so regex-based callers keep working.
+          assert.match(err.message, /no bundle exists/);
+          assert.match(err.message, /sync-schemas/);
+          return true;
+        }
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws CapabilityResolutionError with code=specialism_parent_protocol_missing when the parent protocol is not declared', () => {
+    const dir = makeFakeComplianceCacheWithSpecialism({
+      specialismId: 'sales-guaranteed',
+      parentProtocol: 'media-buy',
+    });
+    try {
+      assert.throws(
+        () =>
+          resolveStoryboardsForCapabilities(
+            // Declares specialism but omits media_buy from supported_protocols.
+            { supported_protocols: ['creative'], specialisms: ['sales-guaranteed'] },
+            { complianceDir: dir }
+          ),
+        err => {
+          assert.ok(err instanceof CapabilityResolutionError, 'expected CapabilityResolutionError');
+          assert.strictEqual(err.code, 'specialism_parent_protocol_missing');
+          assert.strictEqual(err.specialism, 'sales-guaranteed');
+          assert.strictEqual(err.parentProtocol, 'media-buy');
+          assert.match(err.message, /Every specialism must roll up/);
+          return true;
+        }
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
