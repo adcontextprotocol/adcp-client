@@ -108,6 +108,10 @@ const NEGATIVE_VECTORS_UNIMPLEMENTED = new Set([
   '024-unquoted-string-param.json',
   '025-jwk-alg-crv-mismatch.json',
   '026-non-ascii-host.json',
+  // 027: webhook-authentication-triggers-signing rule (body inspection for
+  // push_notification_config.authentication). Verifier doesn't inspect
+  // request bodies yet; tracked separately.
+  '027-webhook-registration-authentication-unsigned.json',
 ]);
 
 describe('RFC 9421 verifier: negative conformance vectors (adcp#2323)', () => {
