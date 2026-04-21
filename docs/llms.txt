@@ -643,7 +643,7 @@ Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → get
 Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
-Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
