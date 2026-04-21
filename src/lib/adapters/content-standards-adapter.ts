@@ -90,11 +90,11 @@ export interface IContentStandardsAdapter {
  * Error codes for content standards operations
  */
 export const ContentStandardsErrorCodes = {
-  NOT_SUPPORTED: 'content_standards_not_supported',
-  STANDARDS_NOT_FOUND: 'standards_not_found',
-  INVALID_STANDARDS: 'invalid_standards',
-  EVALUATION_FAILED: 'evaluation_failed',
-  QUOTA_EXCEEDED: 'quota_exceeded',
+  NOT_SUPPORTED: 'UNSUPPORTED_FEATURE',
+  STANDARDS_NOT_FOUND: 'REFERENCE_NOT_FOUND',
+  INVALID_STANDARDS: 'INVALID_REQUEST',
+  EVALUATION_FAILED: 'SERVICE_UNAVAILABLE',
+  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
 } as const;
 
 /**

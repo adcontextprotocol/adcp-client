@@ -56,16 +56,8 @@ describe('Request Builder', () => {
   });
 
   describe('provide_performance_feedback', () => {
-    test('includes measurement_period', () => {
-      const result = buildRequest(step('provide_performance_feedback'), { media_buy_id: 'mb-1' }, DEFAULT_OPTIONS);
-      assert.ok(result.measurement_period, 'should have measurement_period');
-      assert.ok(result.measurement_period.start, 'should have start');
-      assert.ok(result.measurement_period.end, 'should have end');
-    });
-
-    test('includes media_buy_id from context', () => {
-      const result = buildRequest(step('provide_performance_feedback'), { media_buy_id: 'mb-1' }, DEFAULT_OPTIONS);
-      assert.strictEqual(result.media_buy_id, 'mb-1');
+    test('has no builder so runner delegates to sample_request', () => {
+      assert.ok(!hasRequestBuilder('provide_performance_feedback'));
     });
   });
 
@@ -269,7 +261,6 @@ describe('Request Builder', () => {
         'get_rights',
         'sync_catalogs',
         'report_usage',
-        'provide_performance_feedback',
         'sync_event_sources',
         'log_event',
         'comply_test_controller',
