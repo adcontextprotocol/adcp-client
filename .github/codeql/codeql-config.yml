@@ -1,0 +1,6 @@
+name: "AdCP Client CodeQL Config"
+
+paths-ignore:
+  - examples/**
+  - scripts/manual-testing/**
+  - test/**
