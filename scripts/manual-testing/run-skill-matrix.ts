@@ -76,9 +76,7 @@ function printUsage(): void {
 
 function selectPairs(all: Pair[], filters: string[]): Pair[] {
   if (filters.length === 0) return all;
-  return all.filter(p =>
-    filters.some(f => p.skill.includes(f) || p.storyboard.includes(f))
-  );
+  return all.filter(p => filters.some(f => p.skill.includes(f) || p.storyboard.includes(f)));
 }
 
 // Ports are assigned from a per-worker base to avoid collisions when pairs run
@@ -140,9 +138,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  console.error(
-    `[matrix] ${pairs.length} pair(s) × parallel=${args.parallel} × timeout=${args.timeoutMs}ms`
-  );
+  console.error(`[matrix] ${pairs.length} pair(s) × parallel=${args.parallel} × timeout=${args.timeoutMs}ms`);
 
   const queue = pairs.map((p, i) => ({ pair: p, index: i }));
   const results: RunResult[] = [];
@@ -172,9 +168,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const workers = Array.from({ length: Math.min(args.parallel, pairs.length) }, (_, i) =>
-    worker(i)
-  );
+  const workers = Array.from({ length: Math.min(args.parallel, pairs.length) }, (_, i) => worker(i));
   await Promise.all(workers);
 
   const passed = results.filter(r => r.passed).length;
@@ -186,7 +180,10 @@ async function main(): Promise<void> {
   for (const r of results) {
     const sym = r.passed ? '✓' : '✗';
     const durSec = (r.durationMs / 1000).toFixed(1).padStart(5);
-    const skill = r.pair.skill.replace(/^skills\//, '').replace(/\/SKILL\.md$/, '').padEnd(32);
+    const skill = r.pair.skill
+      .replace(/^skills\//, '')
+      .replace(/\/SKILL\.md$/, '')
+      .padEnd(32);
     console.error(`${sym} ${durSec}s  ${skill} ${r.pair.storyboard}`);
   }
   console.error('─'.repeat(72));
