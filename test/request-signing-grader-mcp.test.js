@@ -123,6 +123,12 @@ function stopMcpAgent(child) {
 // them the same way the raw-HTTP e2e test does.
 const CAPABILITY_PROFILE_VECTORS = ['007-missing-content-digest', '018-digest-covered-when-forbidden'];
 
+// Vector 027 exercises a webhook-authentication downgrade rule the verifier
+// does not yet implement. Skip until the rule lands; see
+// request-signing-grader-e2e.test.js for the longer note.
+const UNIMPLEMENTED_VERIFIER_RULE_VECTORS = ['027-webhook-registration-authentication-unsigned'];
+const SKIPPED_VECTORS = [...CAPABILITY_PROFILE_VECTORS, ...UNIMPLEMENTED_VERIFIER_RULE_VECTORS];
+
 describe('request-signing grader — MCP transport vs. reference MCP agent', () => {
   // Dynamic port so the test is safe to run in parallel; fallback to 3111.
   // The rate-abuse subtest spins up a second agent on PORT+1, so parallel
@@ -146,7 +152,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
       allowPrivateIp: true,
       transport: 'mcp',
       skipRateAbuse: true,
-      skipVectors: [...CAPABILITY_PROFILE_VECTORS, '027-webhook-registration-authentication-unsigned'],
+      skipVectors: SKIPPED_VECTORS,
     });
 
     // Collect failures so a regression prints all at once.
