@@ -11,6 +11,7 @@ const {
 const { ADCPError, isADCPError } = require('../dist/lib/errors');
 const { structuredSerialize, structuredDeserialize } = require('../dist/lib/server/structured-serialize');
 const { createAdcpServer, requireSessionKey } = require('../dist/lib/server/create-adcp-server');
+const { adcpError } = require('../dist/lib/server/errors');
 
 // ---------------------------------------------------------------------------
 // Validation / StateError
@@ -365,6 +366,53 @@ describe('resolveSessionKey', () => {
 
     const result = await callTool(server, 'get_signals', {});
     assert.strictEqual(result.structuredContent.adcp_error.details?.reason, 'db lookup timed out');
+  });
+
+  it('unwraps a thrown adcpError envelope as the response (no SERVICE_UNAVAILABLE wrap)', async () => {
+    // Agent authors regularly write `throw adcpError(...)` instead of
+    // `return adcpError(...)`. The dispatcher auto-unwraps the envelope so
+    // buyers see the typed code (CREATIVE_NOT_FOUND) rather than the
+    // opaque SERVICE_UNAVAILABLE: [object Object] that thrown objects
+    // otherwise produce.
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      exposeErrorDetails: false,
+      signals: {
+        getSignals: async () => {
+          throw adcpError('SIGNAL_NOT_FOUND', {
+            message: 'no signal matched the query',
+            field: 'signal_spec',
+          });
+        },
+      },
+    });
+
+    const result = await callTool(server, 'get_signals', {});
+    const error = result.structuredContent.adcp_error;
+    assert.strictEqual(error.code, 'SIGNAL_NOT_FOUND');
+    assert.strictEqual(error.message, 'no signal matched the query');
+    assert.strictEqual(error.field, 'signal_spec');
+  });
+
+  it('falls back to SERVICE_UNAVAILABLE for thrown non-envelope errors', async () => {
+    // Guard: the unwrap path must only fire for actual `adcpError(...)`
+    // envelopes. A TypeError or a bare object that happens to carry a
+    // `structuredContent` field should still surface as SERVICE_UNAVAILABLE.
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      exposeErrorDetails: true,
+      signals: {
+        getSignals: async () => {
+          throw new TypeError('items.map is not a function');
+        },
+      },
+    });
+
+    const result = await callTool(server, 'get_signals', {});
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.strictEqual(result.structuredContent.adcp_error.details?.reason, 'items.map is not a function');
   });
 
   it('requireSessionKey narrows ctx.sessionKey or throws', () => {
