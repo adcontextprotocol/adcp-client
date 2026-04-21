@@ -9,7 +9,14 @@ import { getAuthToken } from '../auth';
 import { is401Error, adcpErrorToTypedError } from '../errors';
 import type { ADCPError } from '../errors';
 import type { Storage } from '../storage/interfaces';
-import { responseValidator } from './ResponseValidator';
+import {
+  validateOutgoingRequest,
+  validateIncomingResponse,
+  resolveValidationModes,
+  type ValidationHookConfig,
+  type ValidationMode,
+} from '../validation/client-hooks';
+import { formatIssues } from '../validation/schema-validator';
 import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
@@ -110,6 +117,8 @@ export class TaskExecutor {
   private conversationStorage?: Map<string, Message[]>;
   private governanceMiddleware?: GovernanceMiddleware;
   private lastKnownServerVersion?: 'v2' | 'v3';
+  private requestValidationMode!: ValidationMode;
+  private responseValidationMode!: ValidationMode;
 
   constructor(
     private config: {
@@ -135,6 +144,13 @@ export class TaskExecutor {
       strictSchemaValidation?: boolean;
       /** Log all schema validation violations to debug logs (default: true) */
       logSchemaViolations?: boolean;
+      /**
+       * Schema-driven validation using the bundled AdCP JSON schemas.
+       * Controls outgoing request and incoming response checks independently.
+       * Defaults: strict in dev/test, warn in prod. Set a mode to `off` to
+       * skip the validator entirely on that side (zero overhead).
+       */
+      validation?: ValidationHookConfig;
       /** Filter out invalid products from get_products responses instead of rejecting the entire response (default: false) */
       filterInvalidProducts?: boolean;
       /** Global activity callback for observability */
@@ -149,6 +165,18 @@ export class TaskExecutor {
     }
     if (config.governance) {
       this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity);
+    }
+    const modes = resolveValidationModes(config.validation);
+    this.requestValidationMode = modes.requests;
+    // Legacy `strictSchemaValidation: false` flips response-side enforcement
+    // to warn mode — preserve that behaviour unless `validation.responses`
+    // was set explicitly.
+    if (config.validation?.responses !== undefined) {
+      this.responseValidationMode = config.validation.responses;
+    } else if (config.strictSchemaValidation === false) {
+      this.responseValidationMode = 'warn';
+    } else {
+      this.responseValidationMode = modes.responses;
     }
   }
 
@@ -341,6 +369,9 @@ export class TaskExecutor {
         timestamp: new Date().toISOString(),
         metadata: { toolName: taskName, type: 'request' },
       };
+
+      // Pre-send schema check — throws in strict, logs in warn, skips in off.
+      validateOutgoingRequest(taskName, effectiveParams, this.requestValidationMode, debugLogs);
 
       // Send initial request and get streaming response with webhook URL
       const response = await ProtocolClient.callTool(
@@ -1485,77 +1516,52 @@ export class TaskExecutor {
   }
 
   /**
-   * Validate response against AdCP schema and log any violations
-   *
-   * Respects config.strictSchemaValidation (default: true):
-   * - true: Validation failures cause task to fail
-   * - false: Validation failures are logged only
+   * Validate an incoming response against the bundled AdCP JSON schema for
+   * `taskName`. Strict mode fails the task; warn mode logs and returns
+   * valid so the caller can continue. Off mode short-circuits before
+   * AJV runs.
    */
   private validateResponseSchema(
     response: any,
     taskName: string,
     debugLogs: any[]
   ): { valid: boolean; errors: string[] } {
-    const strictMode = this.config.strictSchemaValidation !== false; // Default: true
-    const logViolations = this.config.logSchemaViolations !== false; // Default: true
+    const mode = this.responseValidationMode;
+    const logViolations = this.config.logSchemaViolations !== false;
 
     try {
-      // Normalize response to v3 format before validation
-      // This ensures v2 server responses pass validation against v3 schemas
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
+      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs);
+      if (outcome.valid) return { valid: true, errors: [] };
 
-      const validationResult = responseValidator.validate(normalizedResponse, taskName, {
-        validateSchema: true,
-        strict: false,
-      });
+      const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);
 
-      if (!validationResult.valid) {
-        // Log to debug logs if enabled
-        if (logViolations) {
-          const errorSummary = validationResult.errors.slice(0, 3).join('; ');
-          const moreErrors =
-            validationResult.errors.length > 3 ? ` (and ${validationResult.errors.length - 3} more)` : '';
-
-          debugLogs.push({
-            timestamp: new Date().toISOString(),
-            type: strictMode ? 'error' : 'warning',
-            message: `Schema validation ${
-              strictMode ? 'failed' : 'warning'
-            } for ${taskName}: ${errorSummary}${moreErrors}`,
-            errors: validationResult.errors,
-            schemaErrors: validationResult.schemaErrors,
-            strictMode,
-          });
-        }
-
-        // Console output based on strict mode
-        if (strictMode) {
-          console.error(`Schema validation failed for ${taskName}:`, validationResult.errors);
-        } else {
-          console.warn(`Schema validation failed for ${taskName} (non-blocking):`, validationResult.errors);
-        }
-
-        // In strict mode, validation failures are treated as invalid
-        if (strictMode) {
-          return {
-            valid: false,
-            errors: validationResult.errors,
-          };
-        }
+      if (logViolations) {
+        debugLogs.push({
+          timestamp: new Date().toISOString(),
+          type: mode === 'strict' ? 'error' : 'warning',
+          message: `Schema validation ${mode === 'strict' ? 'failed' : 'warning'} for ${taskName}: ${formatIssues(
+            outcome.issues
+          )}`,
+          errors: errorStrings,
+          schemaVariant: outcome.variant,
+          mode,
+        });
       }
 
-      // Non-strict mode or validation passed
-      return {
-        valid: true,
-        errors: [],
-      };
+      if (mode === 'warn') {
+        console.warn(`Schema validation failed for ${taskName} (non-blocking):`, errorStrings);
+        return { valid: true, errors: [] };
+      }
+
+      console.error(`Schema validation failed for ${taskName}:`, errorStrings);
+      return { valid: false, errors: errorStrings };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'unknown error';
       console.error('Error during schema validation:', errorMessage);
-      // On validation error, fail safe based on strict mode
       return {
-        valid: !strictMode, // In strict mode, treat validation errors as failures
-        errors: strictMode ? [`Validation error: ${errorMessage}`] : [],
+        valid: mode !== 'strict',
+        errors: mode === 'strict' ? [`Validation error: ${errorMessage}`] : [],
       };
     }
   }
