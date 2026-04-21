@@ -45,8 +45,6 @@ const {
   ClientCredentialsExchangeError,
   MissingEnvSecretError,
   toEnvSecretReference,
-  extractEnvSecretName,
-  isEnvSecretReference,
 } = require('../dist/lib/auth/oauth/index.js');
 
 // Test scenarios available
@@ -3236,15 +3234,13 @@ credential material — never sync or commit.
         console.log(`    Auth: token configured`);
       }
       if (agent.oauth_client_credentials) {
-        const tokenEndpoint = agent.oauth_client_credentials.token_endpoint;
-        // `extractEnvSecretName` returns only the env-var name (safe to
-        // display — it's a well-known identifier chosen by the user),
-        // or null for literal secrets. Keeps `client_secret` out of the
-        // print scope entirely so CodeQL's clear-text-logging rule stays
-        // quiet on what is otherwise a non-sensitive label.
-        const envName = extractEnvSecretName(agent.oauth_client_credentials.client_secret);
-        const secretSrc = envName ? `env ${envName}` : 'literal';
-        console.log(`    OAuth: client credentials (token endpoint ${tokenEndpoint}, secret: ${secretSrc})`);
+        // Intentionally minimal: show only that CC is configured and the
+        // token endpoint. Reading any other field from
+        // oauth_client_credentials here trips CodeQL's clear-text-logging
+        // rule regardless of whether the value is actually sensitive. For
+        // the full secret-source breakdown, consult ~/.adcp/config.json
+        // (via --show-config).
+        console.log('    OAuth: client credentials');
       } else if (agent.oauth_tokens) {
         const hasValid = hasValidOAuthTokens(agent);
         console.log(`    OAuth: ${hasValid ? 'valid tokens' : 'expired (use --oauth to refresh)'}`);
