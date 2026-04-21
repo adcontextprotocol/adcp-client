@@ -1066,6 +1066,25 @@ function isErrorResponse(response: McpToolResponse): boolean {
 }
 
 /**
+ * Detect a thrown `adcpError(...)` envelope. Handlers that `throw` an
+ * envelope (instead of `return`-ing it) would otherwise surface as
+ * `[object Object]` inside a SERVICE_UNAVAILABLE wrapper — the dispatcher
+ * unwraps and returns the envelope directly when the shape matches.
+ */
+function isThrownAdcpError(value: unknown): value is McpToolResponse {
+  if (!value || typeof value !== 'object') return false;
+  const sc = (value as { structuredContent?: unknown }).structuredContent;
+  if (!sc || typeof sc !== 'object') return false;
+  const env = (sc as { adcp_error?: unknown }).adcp_error;
+  if (!env || typeof env !== 'object') return false;
+  if (typeof (env as { code?: unknown }).code !== 'string') return false;
+  // `adcpError()` emits all three transport layers; require them to avoid
+  // accidentally unwrapping non-envelope throws that happen to carry a
+  // `structuredContent.adcp_error.code` field.
+  return Array.isArray((value as { content?: unknown }).content) && (value as { isError?: unknown }).isError === true;
+}
+
+/**
  * Resolve the extra scope segment for tools with per-session semantics.
  *
  * For `si_send_message`, the request `session_id` enters the scope so
@@ -1909,16 +1928,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
           return finalize(formatted);
         } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          // Log the full stack — `logger.error` with just the message turned
-          // every "Handler failed" into a guessing game for agent authors.
-          // Stack tells you which import/typo/access chain blew up.
-          logger.error('Handler failed', {
-            tool: toolName,
-            handler: handlerKey,
-            error: reason,
-            stack: err instanceof Error ? err.stack : undefined,
-          });
+          // Release the idempotency claim on any thrown path — whether
+          // we unwrap a typed envelope or fall through to SERVICE_UNAVAILABLE,
+          // the handler did not produce a cached response and the next retry
+          // should proceed normally.
           if (idempotencyCheck && idempotency) {
             try {
               await idempotency.release({
@@ -1934,6 +1947,32 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               });
             }
           }
+          // Auto-unwrap `throw adcpError(...)`. Handlers that throw an
+          // envelope (instead of returning it) should behave identically —
+          // otherwise the envelope surfaces as `[object Object]` inside
+          // SERVICE_UNAVAILABLE and the buyer loses the typed domain code.
+          // Matrix harnesses and fresh-built agents consistently get this
+          // wrong; unwrapping at the dispatcher closes the class of bugs
+          // instead of relying on every skill to show `return` over `throw`.
+          if (isThrownAdcpError(err)) {
+            const code = (err.structuredContent as { adcp_error: { code: string } }).adcp_error.code;
+            logger.warn('Handler threw an adcpError envelope — prefer `return` over `throw` for typed errors', {
+              tool: toolName,
+              handler: handlerKey,
+              code,
+            });
+            return finalize(err);
+          }
+          const reason = err instanceof Error ? err.message : String(err);
+          // Log the full stack — `logger.error` with just the message turned
+          // every "Handler failed" into a guessing game for agent authors.
+          // Stack tells you which import/typo/access chain blew up.
+          logger.error('Handler failed', {
+            tool: toolName,
+            handler: handlerKey,
+            error: reason,
+            stack: err instanceof Error ? err.stack : undefined,
+          });
           return finalize(
             adcpError('SERVICE_UNAVAILABLE', {
               // Include the cause message directly in the response text when
