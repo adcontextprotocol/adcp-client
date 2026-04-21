@@ -1040,6 +1040,16 @@ async function executeStep(
       if (step.sample_request.ext !== undefined && request.ext === undefined) {
         request.ext = step.sample_request.ext;
       }
+      if (
+        step.sample_request.push_notification_config !== undefined &&
+        request.push_notification_config === undefined
+      ) {
+        request.push_notification_config = injectContext(
+          { push_notification_config: step.sample_request.push_notification_config },
+          context,
+          runState.runnerVars
+        ).push_notification_config;
+      }
       if (step.sample_request.idempotency_key !== undefined && request.idempotency_key === undefined) {
         const resolved = injectContext(
           { idempotency_key: step.sample_request.idempotency_key },
