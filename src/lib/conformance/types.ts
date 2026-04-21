@@ -121,8 +121,6 @@ export interface ConformanceFixtures {
   package_ids?: readonly string[];
   /** Pool for `format_id` / `format.id` properties. */
   format_ids?: readonly string[];
-  /** Arbitrary extension slot for future AdCP ID types. */
-  [extensionKey: string]: readonly string[] | undefined;
 }
 
 export type OracleVerdict = 'accepted' | 'rejected' | 'invalid';
@@ -164,6 +162,16 @@ export interface ConformanceReport {
   seed: number;
   /** Schema version the fuzzer loaded. Pinned so a report is replayable. */
   schemaVersion: string;
+  /** Protocol used for the run. */
+  protocol: 'mcp' | 'a2a';
+  /** Iterations per tool that were requested. */
+  turnBudget: number;
+  /**
+   * Snapshot of the fixture pools the run used. Empty object when
+   * no fixtures were supplied. Recorded so a stored JSON report is
+   * self-reproducible without the original invocation.
+   */
+  fixturesUsed: ConformanceFixtures;
   totalRuns: number;
   totalFailures: number;
   /** Count of failures dropped when `maxFailures` was hit. */

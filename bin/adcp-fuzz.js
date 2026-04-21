@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 
-const { runConformance, DEFAULT_TOOLS } = require('../dist/lib/conformance/index.js');
+const {
+  runConformance,
+  DEFAULT_TOOLS,
+  STATELESS_TIER_TOOLS,
+  REFERENTIAL_STATELESS_TOOLS,
+} = require('../dist/lib/conformance/index.js');
 
 const USAGE = `Usage: adcp fuzz <agent-url> [options]
 
@@ -20,6 +25,8 @@ Options:
   --auth-token <token>        Bearer token. Also reads ADCP_AUTH_TOKEN env var.
   --fixture <name>=<ids>      Pre-seed an ID pool. Repeatable.
                               Example: --fixture creative_ids=cre_1,cre_2
+                              IDs with commas are not expressible on the CLI —
+                              drop to the runConformance() API if you need them.
   --max-failures <int>        Cap failures collected (default: 20)
   --max-payload-bytes <int>   Cap serialized failure input/response size (default: 8192)
   --format <human|json>       Output format (default: human)
@@ -48,19 +55,22 @@ const FIXTURE_KEYS = new Set([
   'format_ids',
 ]);
 
+const TIER_2 = new Set(REFERENTIAL_STATELESS_TOOLS);
+
 async function handleFuzzCommand(argv) {
   if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help') {
     process.stdout.write(USAGE);
     return;
   }
   if (argv[0] === '--list-tools') {
-    for (const t of DEFAULT_TOOLS) process.stdout.write(t + '\n');
+    for (const t of DEFAULT_TOOLS) {
+      const suffix = TIER_2.has(t) ? '  (referential — fixture-eligible)' : '';
+      process.stdout.write(t + suffix + '\n');
+    }
     return;
   }
   if (argv[0].startsWith('-')) {
-    console.error('ERROR: agent URL is required\n');
-    process.stderr.write(USAGE);
-    process.exit(2);
+    argError('agent URL is required');
   }
 
   const agentUrl = argv[0];
@@ -68,66 +78,97 @@ async function handleFuzzCommand(argv) {
   let format = 'human';
   const fixtures = {};
 
+  // requireValue pulls the next argv token, erroring if it's missing or
+  // (most likely user-input footgun) already another flag.
+  const requireValue = (i, flag) => {
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith('--')) {
+      argError(`${flag} requires a value`);
+    }
+    return next;
+  };
+
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
-      case '--seed':
-        options.seed = Number.parseInt(argv[++i], 10);
-        if (!Number.isFinite(options.seed)) argError('--seed requires an integer');
+      case '--seed': {
+        const raw = requireValue(i, '--seed');
+        const v = Number.parseInt(raw, 10);
+        if (!Number.isFinite(v) || v < 0)
+          argError(`--seed requires a non-negative integer (got ${JSON.stringify(raw)})`);
+        options.seed = v;
+        i++;
         break;
+      }
       case '--tools':
-        options.tools = argv[++i]
+        options.tools = requireValue(i, '--tools')
           .split(',')
           .map(s => s.trim())
           .filter(Boolean);
+        if (options.tools.length === 0) argError('--tools requires at least one tool name');
+        i++;
         break;
-      case '--turn-budget':
-        options.turnBudget = Number.parseInt(argv[++i], 10);
-        if (!Number.isFinite(options.turnBudget) || options.turnBudget < 1) {
-          argError('--turn-budget requires a positive integer');
-        }
+      case '--turn-budget': {
+        const raw = requireValue(i, '--turn-budget');
+        const v = Number.parseInt(raw, 10);
+        if (!Number.isFinite(v) || v < 1)
+          argError(`--turn-budget requires a positive integer (got ${JSON.stringify(raw)})`);
+        options.turnBudget = v;
+        i++;
         break;
+      }
       case '--protocol': {
-        const p = argv[++i];
-        if (p !== 'mcp' && p !== 'a2a') argError('--protocol must be "mcp" or "a2a"');
+        const p = requireValue(i, '--protocol');
+        if (p !== 'mcp' && p !== 'a2a') argError(`--protocol must be "mcp" or "a2a" (got ${JSON.stringify(p)})`);
         options.protocol = p;
+        i++;
         break;
       }
       case '--auth-token':
-        options.authToken = argv[++i];
+        options.authToken = requireValue(i, '--auth-token');
+        i++;
         break;
       case '--fixture': {
-        const spec = argv[++i];
+        const spec = requireValue(i, '--fixture');
         const eq = spec.indexOf('=');
-        if (eq < 0) argError('--fixture takes name=id1,id2,...');
+        if (eq < 0) argError(`--fixture takes name=id1,id2,... (got ${JSON.stringify(spec)})`);
         const name = spec.slice(0, eq);
+        if (name.length === 0) argError('--fixture name is empty; expected name=id1,id2,...');
+        if (!FIXTURE_KEYS.has(name)) {
+          argError(`unknown fixture pool: ${name}. Known: ${[...FIXTURE_KEYS].join(', ')}`);
+        }
         const values = spec
           .slice(eq + 1)
           .split(',')
           .map(s => s.trim())
           .filter(Boolean);
-        if (!FIXTURE_KEYS.has(name)) {
-          argError(`unknown fixture pool: ${name}. Known: ${[...FIXTURE_KEYS].join(', ')}`);
-        }
+        if (values.length === 0) argError(`--fixture ${name}= has no IDs`);
         fixtures[name] = values;
+        i++;
         break;
       }
-      case '--max-failures':
-        options.maxFailures = Number.parseInt(argv[++i], 10);
-        if (!Number.isFinite(options.maxFailures) || options.maxFailures < 1) {
-          argError('--max-failures requires a positive integer');
-        }
+      case '--max-failures': {
+        const raw = requireValue(i, '--max-failures');
+        const v = Number.parseInt(raw, 10);
+        if (!Number.isFinite(v) || v < 1)
+          argError(`--max-failures requires a positive integer (got ${JSON.stringify(raw)})`);
+        options.maxFailures = v;
+        i++;
         break;
-      case '--max-payload-bytes':
-        options.maxFailurePayloadBytes = Number.parseInt(argv[++i], 10);
-        if (!Number.isFinite(options.maxFailurePayloadBytes) || options.maxFailurePayloadBytes < 256) {
-          argError('--max-payload-bytes must be >= 256');
-        }
+      }
+      case '--max-payload-bytes': {
+        const raw = requireValue(i, '--max-payload-bytes');
+        const v = Number.parseInt(raw, 10);
+        if (!Number.isFinite(v) || v < 256) argError(`--max-payload-bytes must be >= 256 (got ${JSON.stringify(raw)})`);
+        options.maxFailurePayloadBytes = v;
+        i++;
         break;
+      }
       case '--format': {
-        const f = argv[++i];
-        if (f !== 'human' && f !== 'json') argError('--format must be "human" or "json"');
+        const f = requireValue(i, '--format');
+        if (f !== 'human' && f !== 'json') argError(`--format must be "human" or "json" (got ${JSON.stringify(f)})`);
         format = f;
+        i++;
         break;
       }
       case '-h':
@@ -172,6 +213,7 @@ function printHumanReport(report) {
   out.push('');
   out.push('Per-tool:');
   const maxTool = Math.max(...Object.keys(report.perTool).map(s => s.length));
+  const tier2Without = [];
   for (const [tool, s] of Object.entries(report.perTool)) {
     const name = tool.padEnd(maxTool);
     if (s.skipped) {
@@ -181,6 +223,9 @@ function printHumanReport(report) {
       out.push(
         `  ${name}  ${verdict}  runs=${s.runs}  accepted=${s.accepted}  rejected=${s.rejected}  failed=${s.failed}`
       );
+      if (TIER_2.has(tool) && s.accepted === 0 && s.runs > 0 && !hasFixtureFor(tool, report.fixturesUsed)) {
+        tier2Without.push(tool);
+      }
     }
   }
 
@@ -189,15 +234,53 @@ function printHumanReport(report) {
     out.push(`Failures (${report.failures.length}):`);
     for (const f of report.failures) {
       out.push('');
-      out.push(`  [${f.tool}]  seed=${f.seed}  shrunk=${f.shrunk}  reproduce: --seed ${f.seed} --tools ${f.tool}`);
+      out.push(`  [${f.tool}]  seed=${f.seed}  shrunk=${f.shrunk}`);
+      out.push(`    reproduce: ${reproduceCommand(report, f)}`);
       for (const inv of f.invariantFailures) out.push(`    · ${inv}`);
       const inputStr = JSON.stringify(f.input);
       if (inputStr) out.push(`    input: ${truncate(inputStr, 400)}`);
     }
   }
 
+  if (report.totalFailures === 0) {
+    out.push('');
+    out.push(`✓ Clean. Pin this seed in CI: --seed ${report.seed}`);
+    if (tier2Without.length > 0) {
+      out.push(
+        `  Note: ${tier2Without.length} Tier-2 tool(s) rejected all runs (no fixtures): ${tier2Without.join(', ')}`
+      );
+      out.push(`  To exercise the accepted path, pass --fixture <pool>=<ids> (see \`adcp fuzz --help\`).`);
+    }
+  }
+
   out.push('');
   process.stdout.write(out.join('\n'));
+}
+
+/**
+ * Build a full reproduce invocation. Echoes fixtures, protocol, and
+ * turn-budget when they differ from defaults — running with just
+ * `--seed N --tools T` wouldn't reproduce a fixture-driven failure.
+ */
+function reproduceCommand(report, failure) {
+  const parts = ['adcp fuzz', quote(report.agentUrl), '--seed', String(failure.seed), '--tools', failure.tool];
+  if (report.protocol && report.protocol !== 'mcp') parts.push('--protocol', report.protocol);
+  if (report.turnBudget && report.turnBudget !== 50) parts.push('--turn-budget', String(report.turnBudget));
+  for (const [name, values] of Object.entries(report.fixturesUsed ?? {})) {
+    if (values && values.length > 0) parts.push('--fixture', `${name}=${values.join(',')}`);
+  }
+  return parts.join(' ');
+}
+
+function quote(s) {
+  return /[\s"'$`]/.test(s) ? JSON.stringify(s) : s;
+}
+
+function hasFixtureFor(tool, fixturesUsed) {
+  // Rough heuristic: if the user supplied ANY fixture, assume they've
+  // considered Tier-2 coverage. Fine-grained per-tool mapping isn't
+  // worth the complexity at the CLI layer.
+  return fixturesUsed && Object.values(fixturesUsed).some(v => Array.isArray(v) && v.length > 0);
 }
 
 function truncate(s, n) {

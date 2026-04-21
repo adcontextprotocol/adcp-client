@@ -139,4 +139,78 @@ describe('conformance: schemaToArbitrary', () => {
       assert.equal(typeof v.creative_id, 'string');
     }
   });
+
+  test('fixtures: pool values that violate schema pattern are filtered out', () => {
+    // Intent: a user sets up creative_ids = [cre_a, BAD]. Only cre_a matches
+    // the pattern. The pool is filtered, leaving cre_a as the only option.
+    const arb = schemaToArbitrary(
+      {
+        type: 'object',
+        properties: { creative_id: { type: 'string', pattern: '^cre_[a-z]+$' } },
+        required: ['creative_id'],
+      },
+      { fixtures: { creative_ids: ['cre_a', 'BAD'] } }
+    );
+    const seen = new Set();
+    for (const v of fc.sample(arb, { numRuns: 30, seed: 11 })) {
+      seen.add(v.creative_id);
+      assert.match(v.creative_id, /^cre_[a-z]+$/);
+    }
+    assert.ok(seen.has('cre_a'));
+    assert.ok(!seen.has('BAD'));
+  });
+
+  test('fixtures: falls through when no pool values satisfy the schema', () => {
+    // The collision-resolution case: same property name in a nested
+    // context with a tighter pattern. Foreign IDs drop out, generator
+    // falls back to schema-derived strings.
+    const arb = schemaToArbitrary(
+      {
+        type: 'object',
+        properties: { creative_id: { type: 'string', pattern: '^mb_[a-z]+$' } },
+        required: ['creative_id'],
+      },
+      { fixtures: { creative_ids: ['cre_a', 'cre_b'] } }
+    );
+    for (const v of fc.sample(arb, { numRuns: 30, seed: 12 })) {
+      assert.match(v.creative_id, /^mb_[a-z]+$/, `${v.creative_id} leaked a foreign ID past the filter`);
+    }
+  });
+
+  test('fixtures: minLength/maxLength also gate pool values', () => {
+    const arb = schemaToArbitrary(
+      {
+        type: 'object',
+        properties: { task_id: { type: 'string', minLength: 5, maxLength: 10 } },
+        required: ['task_id'],
+      },
+      { fixtures: { task_ids: ['abc', 'valid_id', 'way_too_long_to_fit'] } }
+    );
+    for (const v of fc.sample(arb, { numRuns: 30, seed: 13 })) {
+      assert.ok(v.task_id.length >= 5 && v.task_id.length <= 10, `${v.task_id} violates length constraint`);
+    }
+  });
+
+  test('fixtures: array items also gated by schema constraints', () => {
+    const arb = schemaToArbitrary(
+      {
+        type: 'object',
+        properties: {
+          creative_ids: {
+            type: 'array',
+            items: { type: 'string', pattern: '^cre_' },
+            minItems: 1,
+            maxItems: 3,
+          },
+        },
+        required: ['creative_ids'],
+      },
+      { fixtures: { creative_ids: ['cre_a', 'cre_b', 'BAD'] } }
+    );
+    for (const v of fc.sample(arb, { numRuns: 30, seed: 14 })) {
+      for (const id of v.creative_ids) {
+        assert.match(id, /^cre_/);
+      }
+    }
+  });
 });

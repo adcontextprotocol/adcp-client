@@ -257,13 +257,26 @@ function resolvePoolForKey(key: string, fixtures: ConformanceFixtures): readonly
 /**
  * If property `key` should be filled from a fixture pool, returns a
  * `fc.constantFrom`-backed arbitrary; otherwise `null` so the caller
- * falls through to schema-derived generation. Handles three shapes:
- *   - scalar: `{ type: 'string' }` → draw one ID
- *   - plain array: `{ type: 'array', items: { type: 'string' } }` → draw N
- *   - discriminated oneOf (e.g. signal_id): each branch has an `id`
- *     property that is a string — we don't rewrite the branch structure,
- *     just leave it alone. Fixtures for nested-structured IDs are a P3
- *     concern.
+ * falls through to schema-derived generation.
+ *
+ * Pool values are filtered against the sub-schema's string constraints
+ * (`pattern`, `minLength`, `maxLength`). This closes two problems:
+ *
+ *   1. Name-collision: a pool can legitimately match a bare property
+ *      name in a nested context where the semantic is different (e.g.,
+ *      `account_id` appears both as a top-level ID and inside a nested
+ *      oneOf branch). The nested occurrence typically has a tighter
+ *      pattern; non-matching pool values drop out and the generator
+ *      falls through to schema-derived strings.
+ *   2. Pattern bypass: a pool of `['abc']` drawn into a field requiring
+ *      `^mb_[a-z0-9]+$` would produce schema-invalid samples that the
+ *      oracle would score as the agent's fault. Filtering keeps the
+ *      generated request schema-valid.
+ *
+ * Handles two shapes — scalar `{ type: 'string' }` and plain array
+ * `{ type: 'array', items: { type: 'string' } }`. Nested-structured IDs
+ * (e.g. `signal_id` as an object with a discriminator) fall through to
+ * schema-derived generation; fixture support for those is a P3 concern.
  */
 function fixtureArbitraryForProperty(
   key: string,
@@ -276,21 +289,43 @@ function fixtureArbitraryForProperty(
 
   const type = normalizeType(subSchema);
   if (type === 'string') {
-    return fc.constantFrom(...pool);
+    const valid = pool.filter(v => satisfiesStringConstraints(v, subSchema));
+    return valid.length > 0 ? fc.constantFrom(...valid) : null;
   }
   if (type === 'array') {
     const items = (subSchema.items as JsonSchema | undefined) ?? {};
     if (normalizeType(items) === 'string') {
+      const valid = pool.filter(v => satisfiesStringConstraints(v, items));
+      if (valid.length === 0) return null;
       const minItems = (subSchema.minItems as number | undefined) ?? 0;
       const declaredMax = subSchema.maxItems as number | undefined;
-      // Capped at pool size — `fc.constantFrom` can repeat, but the schema
-      // usually asks for distinct IDs, so we keep the array length ≤ pool.
-      const maxItems = Math.min(declaredMax ?? pool.length, pool.length);
-      return fc.array(fc.constantFrom(...pool), {
+      // Capped at valid-pool size — `fc.constantFrom` can repeat, but
+      // the schema usually asks for distinct IDs, so we keep the array
+      // length ≤ valid-pool.
+      const maxItems = Math.min(declaredMax ?? valid.length, valid.length);
+      return fc.array(fc.constantFrom(...valid), {
         minLength: minItems,
         maxLength: Math.max(minItems, maxItems),
       });
     }
   }
   return null;
+}
+
+function satisfiesStringConstraints(value: string, schema: JsonSchema): boolean {
+  if (typeof value !== 'string') return false;
+  const minLength = schema.minLength as number | undefined;
+  const maxLength = schema.maxLength as number | undefined;
+  if (minLength !== undefined && value.length < minLength) return false;
+  if (maxLength !== undefined && value.length > maxLength) return false;
+  const pattern = schema.pattern as string | undefined;
+  if (pattern) {
+    try {
+      if (!new RegExp(pattern).test(value)) return false;
+    } catch {
+      // Bad regex in the schema — err on the side of letting the pool
+      // value through rather than silently dropping every fixture.
+    }
+  }
+  return true;
 }

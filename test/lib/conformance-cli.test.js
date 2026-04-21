@@ -143,4 +143,64 @@ describe('adcp fuzz CLI', () => {
     assert.equal(code, 2);
     assert.match(stderr, /unknown fixture pool/);
   });
+
+  test('flag with missing value exits 2, not TypeError crash', async () => {
+    // Regression: `argv[++i]` on the last token used to return `undefined`
+    // and crash inside .indexOf / parseInt with exit code 1 and a Node
+    // stack trace. Now every flag guards with requireValue().
+    const { code, stderr } = await runCli([`http://localhost:${port}/mcp`, '--fixture']);
+    assert.equal(code, 2);
+    assert.match(stderr, /--fixture requires a value/);
+  });
+
+  test('empty fixture name → exit 2 with actionable message', async () => {
+    const { code, stderr } = await runCli([`http://localhost:${port}/mcp`, '--fixture', '=cre_a']);
+    assert.equal(code, 2);
+    assert.match(stderr, /--fixture name is empty/);
+  });
+
+  test('--list-tools annotates Tier-2 tools', async () => {
+    const { code, stdout } = await runCli(['--list-tools']);
+    assert.equal(code, 0);
+    assert.match(stdout, /get_signals\b/);
+    assert.match(stdout, /get_property_list.*referential/);
+  });
+
+  test('clean-run output tells the user to pin the seed', async () => {
+    const { code, stdout } = await runCli([
+      `http://localhost:${port}/mcp`,
+      '--seed',
+      '7',
+      '--tools',
+      'get_signals',
+      '--turn-budget',
+      '2',
+      '--protocol',
+      'mcp',
+    ]);
+    assert.equal(code, 0);
+    assert.match(stdout, /Pin this seed in CI: --seed 7/);
+  });
+
+  test('JSON report includes reproducibility metadata', async () => {
+    const { stdout } = await runCli([
+      `http://localhost:${port}/mcp`,
+      '--seed',
+      '9',
+      '--tools',
+      'get_signals',
+      '--turn-budget',
+      '1',
+      '--protocol',
+      'mcp',
+      '--fixture',
+      'creative_ids=cre_a',
+      '--format',
+      'json',
+    ]);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.protocol, 'mcp');
+    assert.equal(parsed.turnBudget, 1);
+    assert.deepEqual(parsed.fixturesUsed, { creative_ids: ['cre_a'] });
+  });
 });
