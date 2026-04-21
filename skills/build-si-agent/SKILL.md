@@ -107,11 +107,11 @@ taskToolResponse({
 
 ### Context and Ext Passthrough
 
-`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler when the field isn't already present.
+`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself** on responses for tools whose request-side `context` is the protocol echo object (`core/context.json`).
 
-**Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string ("E2E test session", a narrative description, the SI-specific `campaign_context`, etc.), validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out; let the framework echo the request's context object unchanged.
+**SI override.** `si_get_offering` and `si_initiate_session` override `context` on the request as a domain-specific **string** (natural-language intent hint, per spec: *'mens size 14 near Cincinnati'*). The response schema still keeps `context` as the protocol echo object. The framework detects this mismatch and skips the auto-echo for non-object values — your response simply won't carry a `context` field unless you populate it. If you want correlation tracking for SI responses, construct the context object in your handler (e.g., from a buyer-supplied `ext.correlation_id` or your own generator) and return it on the response.
 
-Some requests also carry domain-specific fields that look like context (e.g., `campaign_context: string` on `si_initiate_session`). Those are tool params, **not** the protocol echo field — keep them in your domain logic and never assign them to `context`.
+`si_send_message` and `si_terminate_session` use the standard protocol echo object on both sides — leave `context` out of the handler return and the framework will echo it.
 
 ## SDK Quick Reference
 
@@ -323,7 +323,7 @@ Common failure decoder:
 | Missing `session_id` in si_send_message response     | Echo `session_id` back from request — required                         |
 | Missing `available` in si_get_offering               | Boolean `available` is required — even for mock data                   |
 | Missing `reason` in si_terminate_session request     | `reason` is required — one of: `user_exit`, `session_timeout`, `host_terminated`, `handoff_transaction`, `handoff_complete` |
-| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
+| Dropping `context` from responses              | Let the framework echo — except for `si_get_offering` / `si_initiate_session`, whose request `context` is a string. For those, build your own response context object if correlation tracking matters. |
 
 ## Storyboards
 

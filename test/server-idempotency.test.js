@@ -451,4 +451,62 @@ describe('createAdcpServer config warnings', () => {
     });
     assert.equal(messages.length, 0);
   });
+
+  it('si_initiate_session: string request.context does not leak through replay', async () => {
+    // si_initiate_session overrides `context` as a required string on the
+    // request (natural-language handoff) while the response schema keeps the
+    // core/context.json object. On replay, `finalize` must not copy the
+    // string into the replayed envelope; and the string must stay in the
+    // payload hash so a different handoff is flagged as IDEMPOTENCY_CONFLICT.
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+      ttlSeconds: 86400,
+    });
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant_si',
+      sponsoredIntelligence: {
+        initiateSession: async () => {
+          calls++;
+          return {
+            session_id: `sess_${calls}`,
+            session_status: 'active',
+            session_ttl_seconds: 300,
+          };
+        },
+      },
+    });
+
+    const identity = { consent_granted: true };
+    const key = 'si_replay_abcdefghij12';
+    const handoff = 'mens size 14 near Cincinnati';
+
+    const first = await callTool(server, 'si_initiate_session', {
+      idempotency_key: key,
+      context: handoff,
+      identity,
+    });
+    assert.equal(first.session_id, 'sess_1');
+    assert.ok(!('context' in first), 'fresh response must not echo the string context');
+
+    const replay = await callTool(server, 'si_initiate_session', {
+      idempotency_key: key,
+      context: handoff,
+      identity,
+    });
+    assert.equal(calls, 1, 'handler must not re-execute on replay');
+    assert.equal(replay.replayed, true);
+    assert.ok(!('context' in replay), 'replay must not echo the string context');
+
+    const conflict = await callTool(server, 'si_initiate_session', {
+      idempotency_key: key,
+      context: 'different intent',
+      identity,
+    });
+    assert.equal(calls, 1);
+    assert.equal(conflict.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+  });
 });

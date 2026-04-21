@@ -701,6 +701,32 @@ describe('createAdcpServer', () => {
       assert.deepStrictEqual(result.structuredContent.context, { correlation_id: 'trace-acct-err' });
     });
 
+    it('does not echo a string request.context into the response (si_get_offering)', async () => {
+      // si_get_offering's request schema overrides `context` as a string
+      // (natural-language intent hint). The response schema still expects a
+      // core/context.json object, so the framework must not copy the string.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        sponsoredIntelligence: {
+          getOffering: async () => ({
+            available: true,
+            offering_token: 'tok_123',
+            ttl_seconds: 300,
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'si_get_offering', {
+        offering_id: 'off_1',
+        context: 'mens size 14 near Cincinnati',
+      });
+      assert.strictEqual(result.isError, undefined);
+      assert.ok(
+        !('context' in result.structuredContent),
+        'string request.context must not leak into response.context'
+      );
+    });
+
     it('echoes context on framework SERVICE_UNAVAILABLE when handler throws', async () => {
       const server = createAdcpServer({
         name: 'Test',
