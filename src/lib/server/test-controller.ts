@@ -155,9 +155,13 @@ export const SEED_SCENARIOS = {
  * this type goes non-`never`, TypeScript will reject the assignment below
  * and the build fails until the const is updated.
  */
+// `seed_*` scenarios are handled by `createComplyController` (adapter-based),
+// not by `registerTestController` (flat-store). Exclude them from the guard so
+// new seed_* scenarios added upstream don't break this file — `createComplyController`
+// has its own typed-adapter surface and enforces coverage there.
 type ExhaustiveScenarioCheck = Exclude<
   ControllerScenario,
-  (typeof CONTROLLER_SCENARIOS)[keyof typeof CONTROLLER_SCENARIOS]
+  (typeof CONTROLLER_SCENARIOS)[keyof typeof CONTROLLER_SCENARIOS] | SeedScenario
 >;
 const _scenarioExhaustivenessGuard: ExhaustiveScenarioCheck extends never ? true : never = true;
 void _scenarioExhaustivenessGuard;

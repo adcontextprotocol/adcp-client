@@ -13937,7 +13937,7 @@ export type ComplyTestControllerResponse =
 export interface ListScenariosSuccess {
   success: true;
   /**
-   * Scenarios this seller has implemented
+   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive minor bumps.
    */
   scenarios: (
     | 'force_creative_status'
@@ -13946,6 +13946,11 @@ export interface ListScenariosSuccess {
     | 'force_session_status'
     | 'simulate_delivery'
     | 'simulate_budget_spend'
+    | 'seed_product'
+    | 'seed_pricing_option'
+    | 'seed_creative'
+    | 'seed_plan'
+    | 'seed_media_buy'
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
