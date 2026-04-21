@@ -67,6 +67,8 @@ interface ToolInfo {
   resDescription: string;
   requiredFields: string[];
   optionalFields: string[];
+  resRequiredFields: string[];
+  resOptionalFields: string[];
 }
 
 function loadIndex(): SchemaIndex {
@@ -125,6 +127,29 @@ function summarizeFields(schema: any): { required: string[]; optional: string[] 
   return { required, optional };
 }
 
+/**
+ * Summarize response fields. Response schemas often have a `oneOf` discriminator
+ * (success / error variants); we prefer the first branch that looks like
+ * "success" (no `errors` required) to document the happy-path shape. Error
+ * shapes are uniform across tools and don't need per-tool documentation.
+ */
+function summarizeResponseFields(schema: any): { required: string[]; optional: string[] } {
+  if (!schema) return { required: [], optional: [] };
+
+  // oneOf / anyOf — pick the success branch (doesn't require `errors`)
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    const successBranch =
+      schema.oneOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.oneOf[0];
+    return summarizeFields(successBranch);
+  }
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const successBranch =
+      schema.anyOf.find((b: any) => !(b.required || []).includes('errors')) ?? schema.anyOf[0];
+    return summarizeFields(successBranch);
+  }
+  return summarizeFields(schema);
+}
+
 function fieldType(prop: any): string {
   if (!prop) return '';
   if (prop.enum) return prop.enum.map((v: string) => `'${v}'`).join(' | ');
@@ -168,6 +193,7 @@ function collectTools(index: SchemaIndex): ToolInfo[] {
       const reqSchema = task.request?.$ref ? loadSchema(task.request.$ref) : null;
       const resSchema = task.response?.$ref ? loadSchema(task.response.$ref) : null;
       const { required, optional } = summarizeFields(reqSchema);
+      const resFields = summarizeResponseFields(resSchema);
 
       tools.push({
         name: kebabToSnake(kebab),
@@ -177,6 +203,8 @@ function collectTools(index: SchemaIndex): ToolInfo[] {
         resDescription: task.response?.description || resSchema?.description || '',
         requiredFields: required,
         optionalFields: optional,
+        resRequiredFields: resFields.required,
+        resOptionalFields: resFields.optional,
       });
     }
   }
@@ -954,15 +982,33 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
       ln(`**\`${tool.name}\`**${tsDesc ? ` — ${tsDesc}.` : ''}`);
       ln();
 
-      const allFields = [
+      const reqFields = [
         ...tool.requiredFields.map(f => `  ${f}  // required`),
         ...tool.optionalFields.map(f => `  ${f}`),
       ];
 
-      if (allFields.length) {
+      if (reqFields.length) {
+        ln(`_Request:_`);
         ln('```');
         ln(`{`);
-        for (const f of allFields) {
+        for (const f of reqFields) {
+          ln(f);
+        }
+        ln(`}`);
+        ln('```');
+        ln();
+      }
+
+      const resFields = [
+        ...tool.resRequiredFields.map(f => `  ${f}  // required`),
+        ...tool.resOptionalFields.map(f => `  ${f}`),
+      ];
+
+      if (resFields.length) {
+        ln(`_Response (success branch):_`);
+        ln('```');
+        ln(`{`);
+        for (const f of resFields) {
           ln(f);
         }
         ln(`}`);

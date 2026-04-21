@@ -65,9 +65,35 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 **`get_adcp_capabilities`** — Request parameters for cross-protocol capability discovery.
 
+_Request:_
 ```
 {
   protocols: string[]
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  adcp: object  // required
+  supported_protocols: string[]  // required
+  account: object
+  media_buy: object
+  signals: object
+  governance: object
+  sponsored_intelligence: object
+  brand: object
+  creative: object
+  request_signing: object
+  webhook_signing: object
+  identity: object
+  compliance_testing: object
+  specialisms: object[]
+  extensions_supported: string[]
+  experimental_features: string[]
+  last_updated: string
+  errors: object[]
   context: Context
 }
 ```
@@ -76,6 +102,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 **`list_accounts`** — Request parameters for listing accounts accessible to the authenticated agent.
 
+_Request:_
 ```
 {
   status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'
@@ -85,8 +112,19 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  accounts: object[]  // required
+  errors: object[]
+  pagination: Pagination Response
+  context: Context
+}
+```
+
 **`sync_accounts`** — Request parameters for syncing advertiser accounts with a seller.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -98,8 +136,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  accounts: object[]  // required
+  dry_run: boolean
+  context: Context
+}
+```
+
 **`sync_governance`** — Request parameters for registering governance agent endpoints on accounts.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -108,8 +156,17 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  accounts: object[]  // required
+  context: Context
+}
+```
+
 **`report_usage`** — Request parameters for reporting vendor service consumption after delivery.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -119,8 +176,19 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  accepted: integer  // required
+  errors: object[]
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`get_account_financials`** — Request parameters for querying financial status of an operator-billed account.
 
+_Request:_
 ```
 {
   account: Account Ref  // required
@@ -129,10 +197,28 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  account: Account Ref  // required
+  currency: string  // required
+  period: Date Range  // required
+  timezone: string  // required
+  spend: object
+  credit: object
+  balance: object
+  payment_status: 'current' | 'past_due' | 'suspended'
+  payment_terms: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay'
+  invoices: object[]
+  context: Context
+}
+```
+
 ### Media Buying
 
 **`get_products`** — Request parameters for discovering available advertising products.
 
+_Request:_
 ```
 {
   buying_mode: 'brief' | 'wholesale' | 'refine'  // required
@@ -152,8 +238,25 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  products: object[]  // required
+  proposals: object[]
+  errors: object[]
+  property_list_applied: boolean
+  catalog_applied: boolean
+  refinement_applied: object[]
+  incomplete: object[]
+  pagination: Pagination Response
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`list_creative_formats`** — Request parameters for discovering format IDs and creative agents supported by this sales agent.
 
+_Request:_
 ```
 {
   format_ids: object[]
@@ -174,8 +277,21 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  formats: object[]  // required
+  creative_agents: object[]
+  errors: object[]
+  pagination: Pagination Response
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`create_media_buy`** — Request parameters for creating a media buy.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -199,8 +315,27 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  media_buy_id: string  // required
+  packages: object[]  // required
+  account: Account
+  invoice_recipient: Business Entity
+  status: Media Buy Status
+  confirmed_at: string
+  creative_deadline: string
+  revision: integer
+  valid_actions: string[]
+  planned_delivery: Planned Delivery
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`update_media_buy`** — Request parameters for updating campaign and package settings.
 
+_Request:_
 ```
 {
   account: Account Ref  // required
@@ -221,8 +356,24 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  media_buy_id: string  // required
+  status: Media Buy Status
+  revision: integer
+  implementation_date: string,null
+  invoice_recipient: Business Entity
+  affected_packages: object[]
+  valid_actions: string[]
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`get_media_buys`** — Request parameters for retrieving media buy status, creative approvals, and delivery snapshots.
 
+_Request:_
 ```
 {
   account: Account Ref
@@ -235,8 +386,20 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  media_buys: object[]  // required
+  errors: object[]
+  pagination: Pagination Response
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`get_media_buy_delivery`** — Request parameters for retrieving comprehensive delivery metrics.
 
+_Request:_
 ```
 {
   account: Account Ref
@@ -251,8 +414,28 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  reporting_period: object  // required
+  currency: string  // required
+  media_buy_deliveries: object[]  // required
+  notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update'
+  partial_data: boolean
+  unavailable_count: integer
+  sequence_number: integer
+  next_expected_at: string
+  attribution_window: Attribution Window
+  aggregated_totals: object
+  errors: object[]
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`provide_performance_feedback`** — Request parameters for sharing performance outcomes with publishers.
 
+_Request:_
 ```
 {
   media_buy_id: string  // required
@@ -267,8 +450,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  success: 'true'  // required
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`sync_event_sources`** — Request parameters for configuring event sources on an account.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -279,8 +472,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  event_sources: object[]  // required
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`log_event`** — Request parameters for logging conversion or marketing events.
 
+_Request:_
 ```
 {
   event_source_id: string  // required
@@ -291,8 +494,22 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  events_received: integer  // required
+  events_processed: integer  // required
+  partial_failures: object[]
+  warnings: string[]
+  match_quality: number
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`sync_audiences`** — Request parameters for managing CRM-based audiences on an account.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -303,8 +520,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  audiences: object[]  // required
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`sync_catalogs`** — Request parameters for syncing catalog feeds (products, inventory, stores, promotions, offerings) with approval workflow.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -319,10 +546,21 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  catalogs: object[]  // required
+  dry_run: boolean
+  sandbox: boolean
+  context: Context
+}
+```
+
 ### Creative
 
 **`build_creative`** — Request parameters for AI-powered creative generation.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -347,8 +585,25 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  creative_manifest: Creative Manifest  // required
+  sandbox: boolean
+  expires_at: string
+  preview: object
+  preview_error: Error
+  pricing_option_id: string
+  vendor_cost: number
+  currency: string
+  consumption: Creative Consumption
+  context: Context
+}
+```
+
 **`preview_creative`** — Request parameters for generating creative previews.
 
+_Request:_
 ```
 {
   request_type: 'single' | 'batch' | 'variant'  // required
@@ -366,8 +621,20 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  response_type: 'single'  // required
+  previews: object[]  // required
+  expires_at: string  // required
+  interactive_url: string
+  context: Context
+}
+```
+
 **`list_creative_formats`** — Request parameters for discovering creative formats from this creative agent.
 
+_Request:_
 ```
 {
   format_ids: object[]
@@ -391,8 +658,20 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  formats: object[]  // required
+  creative_agents: object[]
+  errors: object[]
+  pagination: Pagination Response
+  context: Context
+}
+```
+
 **`get_creative_delivery`** — Request parameters for retrieving creative delivery data with variant-level breakdowns.
 
+_Request:_
 ```
 {
   account: Account Ref
@@ -406,8 +685,23 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  currency: string  // required
+  reporting_period: object  // required
+  creatives: object[]  // required
+  account_id: string
+  media_buy_id: string
+  pagination: object
+  errors: object[]
+  context: Context
+}
+```
+
 **`list_creatives`** — Request parameters for querying creative library with filtering and pagination.
 
+_Request:_
 ```
 {
   filters: Creative Filters
@@ -424,8 +718,23 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  query_summary: object  // required
+  pagination: Pagination Response  // required
+  creatives: object[]  // required
+  format_summary: object
+  status_summary: object
+  errors: object[]
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`sync_creatives`** — Request parameters for syncing creative assets with upsert semantics.
 
+_Request:_
 ```
 {
   account: Account Ref  // required
@@ -441,10 +750,21 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  creatives: object[]  // required
+  dry_run: boolean
+  sandbox: boolean
+  context: Context
+}
+```
+
 ### Signals
 
 **`get_signals`** — Request parameters for discovering signals based on description.
 
+_Request:_
 ```
 {
   account: Account Ref
@@ -459,8 +779,20 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  signals: object[]  // required
+  errors: object[]
+  pagination: Pagination Response
+  sandbox: boolean
+  context: Context
+}
+```
+
 **`activate_signal`** — Request parameters for activating a signal on a specific platform/account.
 
+_Request:_
 ```
 {
   signal_agent_segment_id: string  // required
@@ -473,10 +805,20 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  deployments: object[]  // required
+  sandbox: boolean
+  context: Context
+}
+```
+
 ### Governance
 
 **`create_property_list`** — Request parameters for creating a new property list.
 
+_Request:_
 ```
 {
   name: string  // required
@@ -486,12 +828,22 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   base_properties: object[]
   filters: Property List Filters
   brand: Brand Ref
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  list: Property List  // required
+  auth_token: string  // required
   context: Context
 }
 ```
 
 **`update_property_list`** — Request parameters for updating an existing property list.
 
+_Request:_
 ```
 {
   list_id: string  // required
@@ -507,8 +859,17 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  list: Property List  // required
+  context: Context
+}
+```
+
 **`get_property_list`** — Request parameters for retrieving a property list with resolved properties.
 
+_Request:_
 ```
 {
   list_id: string  // required
@@ -519,8 +880,22 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  list: Property List  // required
+  identifiers: object[]
+  pagination: Pagination Response
+  resolved_at: string
+  cache_valid_until: string
+  coverage_gaps: object
+  context: Context
+}
+```
+
 **`list_property_lists`** — Request parameters for listing property lists.
 
+_Request:_
 ```
 {
   account: Account Ref
@@ -530,8 +905,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  lists: object[]  // required
+  pagination: Pagination Response
+  context: Context
+}
+```
+
 **`delete_property_list`** — Request parameters for deleting a property list.
 
+_Request:_
 ```
 {
   list_id: string  // required
@@ -541,8 +926,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  deleted: boolean  // required
+  list_id: string  // required
+  context: Context
+}
+```
+
 **`create_collection_list`** — Request parameters for creating a new collection list.
 
+_Request:_
 ```
 {
   name: string  // required
@@ -556,8 +951,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  list: Collection List  // required
+  auth_token: string  // required
+  context: Context
+}
+```
+
 **`update_collection_list`** — Request parameters for updating an existing collection list.
 
+_Request:_
 ```
 {
   list_id: string  // required
@@ -573,8 +978,17 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  list: Collection List  // required
+  context: Context
+}
+```
+
 **`get_collection_list`** — Request parameters for retrieving a collection list with resolved collections.
 
+_Request:_
 ```
 {
   list_id: string  // required
@@ -585,8 +999,22 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  list: Collection List  // required
+  collections: object[]
+  pagination: Pagination Response
+  resolved_at: string
+  cache_valid_until: string
+  coverage_gaps: object
+  context: Context
+}
+```
+
 **`list_collection_lists`** — Request parameters for listing collection lists.
 
+_Request:_
 ```
 {
   account: Account Ref
@@ -596,8 +1024,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  lists: object[]  // required
+  pagination: Pagination Response
+  context: Context
+}
+```
+
 **`delete_collection_list`** — Request parameters for deleting a collection list.
 
+_Request:_
 ```
 {
   list_id: string  // required
@@ -607,8 +1045,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  deleted: boolean  // required
+  list_id: string  // required
+  context: Context
+}
+```
+
 **`list_content_standards`** — Request parameters for listing content standards configurations.
 
+_Request:_
 ```
 {
   channels: object[]
@@ -619,8 +1067,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  standards: object[]  // required
+  pagination: Pagination Response
+  context: Context
+}
+```
+
 **`get_content_standards`** — Request parameters for retrieving a specific standards configuration.
 
+_Request:_
 ```
 {
   standards_id: string  // required
@@ -628,8 +1086,16 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  context: Context
+}
+```
+
 **`create_content_standards`** — Request parameters for creating a new content standards configuration.
 
+_Request:_
 ```
 {
   scope: object  // required
@@ -641,8 +1107,17 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  standards_id: string  // required
+  context: Context
+}
+```
+
 **`update_content_standards`** — Request parameters for updating an existing content standards configuration.
 
+_Request:_
 ```
 {
   standards_id: string  // required
@@ -655,8 +1130,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  success: 'true'  // required
+  standards_id: string  // required
+  context: Context
+}
+```
+
 **`calibrate_content`** — Request parameters for collaborative calibration dialogue.
 
+_Request:_
 ```
 {
   standards_id: string  // required
@@ -666,8 +1151,20 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  verdict: 'pass' | 'fail'  // required
+  confidence: number
+  explanation: string
+  features: object[]
+  context: Context
+}
+```
+
 **`validate_content_delivery`** — Request parameters for batch validating delivery records.
 
+_Request:_
 ```
 {
   standards_id: string  // required
@@ -678,8 +1175,18 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  summary: object  // required
+  results: object[]  // required
+  context: Context
+}
+```
+
 **`get_media_buy_artifacts`** — Request parameters for retrieving content artifacts from a media buy.
 
+_Request:_
 ```
 {
   media_buy_id: string  // required
@@ -692,8 +1199,20 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  media_buy_id: string  // required
+  artifacts: object[]  // required
+  collection_info: object
+  pagination: Pagination Response
+  context: Context
+}
+```
+
 **`get_creative_features`** — Request parameters for evaluating creative features from a governance agent.
 
+_Request:_
 ```
 {
   creative_manifest: Creative Manifest  // required
@@ -703,8 +1222,22 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  results: object[]  // required
+  detail_url: string
+  pricing_option_id: string
+  vendor_cost: number
+  currency: string
+  consumption: Creative Consumption
+  context: Context
+}
+```
+
 **`sync_plans`** — Push campaign plans to the governance agent.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -713,8 +1246,17 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  plans: object[]  // required
+  context: Context
+}
+```
+
 **`report_plan_outcome`** — Report the outcome of an action to the governance agent.
 
+_Request:_
 ```
 {
   plan_id: string  // required
@@ -730,8 +1272,21 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  outcome_id: string  // required
+  status: 'accepted' | 'findings'  // required
+  committed_budget: number
+  findings: object[]
+  plan_summary: object
+  context: Context
+}
+```
+
 **`get_plan_audit_logs`** — Retrieve governance state and audit trail for a plan.
 
+_Request:_
 ```
 {
   plan_ids: string[]
@@ -743,8 +1298,17 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  plans: object[]  // required
+  context: Context
+}
+```
+
 **`check_governance`** — Orchestrator or seller calls the governance agent to validate an action against the campaign plan.
 
+_Request:_
 ```
 {
   plan_id: string  // required
@@ -762,10 +1326,29 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  check_id: string  // required
+  status: 'approved' | 'denied' | 'conditions'  // required
+  plan_id: string  // required
+  explanation: string  // required
+  findings: object[]
+  conditions: object[]
+  expires_at: string
+  next_check: string
+  categories_evaluated: string[]
+  policies_evaluated: string[]
+  governance_context: string
+  context: Context
+}
+```
+
 ### Sponsored Intelligence
 
 **`si_get_offering`** — Get offering details, availability, and optionally matching products before session handoff.
 
+_Request:_
 ```
 {
   offering_id: string  // required
@@ -775,8 +1358,26 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  available: boolean  // required
+  offering_token: string
+  ttl_seconds: integer
+  checked_at: string
+  offering: object
+  matching_products: object[]
+  total_matching: integer
+  unavailable_reason: string
+  alternative_offering_ids: string[]
+  errors: object[]
+  context: Context
+}
+```
+
 **`si_initiate_session`** — Host initiates SI session with brand agent - includes context, identity, and capability negotiation.
 
+_Request:_
 ```
 {
   context: string  // required
@@ -790,8 +1391,22 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  session_id: string  // required
+  session_status: Si Session Status  // required
+  response: object
+  negotiated_capabilities: Si Capabilities
+  session_ttl_seconds: integer
+  errors: object[]
+  context: Context
+}
+```
+
 **`si_send_message`** — Send a message within an active SI session.
 
+_Request:_
 ```
 {
   idempotency_key: string  // required
@@ -802,13 +1417,40 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 }
 ```
 
+_Response (success branch):_
+```
+{
+  session_id: string  // required
+  session_status: Si Session Status  // required
+  response: object
+  mcp_resource_uri: string
+  handoff: object
+  errors: object[]
+  context: Context
+}
+```
+
 **`si_terminate_session`** — Terminate an SI session with reason (handoff_transaction, handoff_complete, user_exit, session_timeout, host_terminated).
 
+_Request:_
 ```
 {
   session_id: string  // required
   reason: 'handoff_transaction' | 'handoff_complete' | 'user_exit' | 'session_timeout' | 'host_terminated'  // required
   termination_context: object
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  session_id: string  // required
+  terminated: boolean  // required
+  session_status: Si Session Status
+  acp_handoff: object
+  follow_up: object
+  errors: object[]
   context: Context
 }
 ```
