@@ -1299,8 +1299,13 @@ function isFormattedResponse(value: unknown): value is McpToolResponse {
 }
 
 // Echo the request context into a formatted MCP tool response so buyers can
-// trace correlation_id across both success and error responses.
+// trace correlation_id across both success and error responses. Only plain
+// objects are echoed: `si_get_offering` and `si_initiate_session` override
+// the request schema's `context` to a domain-specific string, while the
+// response schema still requires the protocol echo object — copying a
+// string there would fail response validation.
 function injectContextIntoResponse(response: McpToolResponse, context: unknown): void {
+  if (context === null || typeof context !== 'object' || Array.isArray(context)) return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (sc && typeof sc === 'object' && !('context' in sc)) {
     sc.context = context;
@@ -1606,10 +1611,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // Echo params.context into any response (success or error) so buyers
         // can trace correlation_id end-to-end. Framework-generated errors
         // (ACCOUNT_NOT_FOUND, SERVICE_UNAVAILABLE) go through this too.
+        // `injectContextIntoResponse` skips non-object values so SI tools
+        // that override `context` as a string on the request don't leak the
+        // string into the response envelope.
         const finalize = (response: McpToolResponse): McpToolResponse => {
-          if (params.context !== undefined && params.context !== null) {
-            injectContextIntoResponse(response, params.context);
-          }
+          injectContextIntoResponse(response, params.context);
           return response;
         };
 
@@ -2079,8 +2085,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;
   server.tool('get_adcp_capabilities', capSchema?.shape ?? {}, async (params: any) => {
     const data = { ...capabilitiesData };
-    if (params?.context != null) {
-      (data as any).context = params.context;
+    const ctx = params?.context;
+    if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {
+      (data as any).context = ctx;
     }
     return capabilitiesResponse(data);
   });
