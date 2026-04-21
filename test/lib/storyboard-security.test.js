@@ -1475,9 +1475,7 @@ function makeFakeComplianceCacheWithSpecialism({ specialismId, parentProtocol })
     adcp_version: '3.1.0',
     generated_at: new Date().toISOString(),
     universal: [],
-    protocols: [
-      { id: parentProtocol, title: parentProtocol, has_baseline: true, path: `protocols/${parentProtocol}` },
-    ],
+    protocols: [{ id: parentProtocol, title: parentProtocol, has_baseline: true, path: `protocols/${parentProtocol}` }],
     specialisms: [
       {
         id: specialismId,

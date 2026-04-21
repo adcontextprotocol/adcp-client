@@ -21,10 +21,7 @@ import type { Storyboard } from './types';
  * surfaces. `unknown_protocol` is reserved for future use — today it emits a
  * `console.warn` rather than throwing.
  */
-export type CapabilityResolutionCode =
-  | 'specialism_parent_protocol_missing'
-  | 'unknown_specialism'
-  | 'unknown_protocol';
+export type CapabilityResolutionCode = 'specialism_parent_protocol_missing' | 'unknown_specialism' | 'unknown_protocol';
 
 /**
  * Thrown when the agent's declared capabilities cannot be mapped onto the
