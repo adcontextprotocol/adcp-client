@@ -24,6 +24,7 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 
 const { ProtocolClient } = require('../dist/lib/protocols/index.js');
 const { closeMCPConnections } = require('../dist/lib/protocols/mcp.js');
+const { discoverAuthorizationRequirements } = require('../dist/lib/auth/oauth/index.js');
 
 /**
  * Minimal OAuth 2.0 client credentials token endpoint. Each call returns
@@ -274,6 +275,74 @@ describe('CC integration: concurrent-call coalescing', () => {
     } finally {
       await closeMCPConnections();
       await mcpServer.stop();
+      await tokenServer.stop();
+    }
+  });
+});
+
+/**
+ * MCP stub that serves the two well-known endpoints the discovery walk hits:
+ * - `/.well-known/oauth-protected-resource` (RFC 9728) — points at an AS.
+ * - `/.well-known/oauth-authorization-server` (RFC 8414) — AS metadata.
+ * Any other request 401s with a `WWW-Authenticate: Bearer` challenge so the
+ * discoverer reaches the `resource_metadata=…` hint.
+ */
+async function startAgentWithWellKnowns({ tokenEndpoint, allowPrivateIp = true }) {
+  const server = http.createServer((req, res) => {
+    const base = `http://${req.headers.host}`;
+    if (req.url.endsWith('/.well-known/oauth-protected-resource')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          resource: base,
+          authorization_servers: [base],
+        })
+      );
+      return;
+    }
+    if (req.url.endsWith('/.well-known/oauth-authorization-server')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          issuer: base,
+          authorization_endpoint: `${base}/oauth/authorize`,
+          token_endpoint: tokenEndpoint,
+          grant_types_supported: ['client_credentials', 'authorization_code'],
+        })
+      );
+      return;
+    }
+    // Any other URL: 401 with a protected-resource hint so the discoverer
+    // follows the chain.
+    res.writeHead(401, {
+      'content-type': 'application/json',
+      'www-authenticate': `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+    });
+    res.end(JSON.stringify({ error: 'unauthorized' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const addr = server.address();
+  return {
+    url: `http://127.0.0.1:${addr.port}/mcp`,
+    allowPrivateIp,
+    stop: () => {
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+      return new Promise(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
+describe('CC integration: token endpoint discovery (RFC 9728 + RFC 8414)', () => {
+  test('discoverAuthorizationRequirements resolves token_endpoint from an agent that advertises it', async () => {
+    const tokenServer = await startTokenServer();
+    const agentServer = await startAgentWithWellKnowns({ tokenEndpoint: tokenServer.url });
+    try {
+      const req = await discoverAuthorizationRequirements(agentServer.url, { allowPrivateIp: true });
+      assert.ok(req, 'discovery returned a requirements record');
+      assert.strictEqual(req.tokenEndpoint, tokenServer.url, 'discovered token endpoint matches the AS metadata');
+      assert.ok(req.authorizationServer, 'authorization server was resolved');
+    } finally {
+      await agentServer.stop();
       await tokenServer.stop();
     }
   });

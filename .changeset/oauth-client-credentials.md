@@ -12,10 +12,16 @@ Add OAuth 2.0 client credentials (RFC 6749 §4.4) support to the library and CLI
 
 **CLI flags on `--save-auth`:**
 ```bash
+# Token endpoint is discovered from the agent URL
+# (RFC 9728 protected-resource metadata + RFC 8414 AS metadata)
 adcp --save-auth my-agent https://agent.example.com \
-  --oauth-token-url https://auth.example.com/token \
   --client-id abc123 --client-secret xyz789 \
   --scope adcp
+
+# Override discovery if the agent doesn't advertise OAuth metadata
+adcp --save-auth my-agent https://agent.example.com \
+  --oauth-token-url https://auth.example.com/token \
+  --client-id abc123 --client-secret xyz789
 ```
 
 Full subcommand help: `adcp --save-auth --help`.
@@ -40,10 +46,10 @@ Empty env-var values are rejected loudly (catches the common `.env` typo `CLIENT
 **`is401Error` now recognizes MCP SDK error shape** (`err.code === 401`). The MCP `StreamableHTTPClientTransport` throws errors with HTTP status on `.code`; the retry path for CC and auth-code flows was silently skipping them. Caught by the new integration test.
 
 **CLI flags (all on `--save-auth`):**
-- `--oauth-token-url <url>` — authorization server token endpoint (required)
 - `--client-id <value>` / `--client-id-env <VAR>` — literal or env reference
 - `--client-secret <value>` / `--client-secret-env <VAR>` — literal or env reference
 - `--scope <scope>` — optional OAuth scope
+- `--oauth-token-url <url>` — optional; discovered from the agent URL via RFC 9728 + RFC 8414 when omitted. Supply explicitly only when the agent does not advertise OAuth metadata.
 - `--oauth-auth-method basic|body` — credential placement (default: `basic` per RFC 6749 §2.3.1)
 
 **Programmatic API** under `@adcp/client/auth`:

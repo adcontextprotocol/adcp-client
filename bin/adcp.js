@@ -859,10 +859,10 @@ AGENT MANAGEMENT:
   --save-auth <alias> [url]   Save agent with alias
                                 Static bearer:   --auth <token> | --no-auth
                                 OAuth (browser): --oauth
-                                OAuth (M2M):     --oauth-token-url <token-url>
-                                                 --client-id <id> | --client-id-env <VAR>
+                                OAuth (M2M):     --client-id <id> | --client-id-env <VAR>
                                                  --client-secret <s> | --client-secret-env <VAR>
                                                  [--scope <scope>] [--oauth-auth-method basic|body]
+                                                 [--oauth-token-url <url>]  (else discovered)
   --list-agents               List saved agents
   --remove-agent <alias>      Remove saved agent
   --show-config               Show config location
@@ -2848,13 +2848,15 @@ AUTH METHODS (pick one):
                               so the SDK can refresh via refresh_token.
 
   OAuth client credentials (machine-to-machine, RFC 6749 §4.4):
-    --oauth-token-url <url>   AS token endpoint (HTTPS or http://localhost)
     --client-id <value>       Literal client id
     --client-id-env <VAR>     Env var holding the client id
     --client-secret <value>   Literal client secret (stored in config 0600)
     --client-secret-env <VAR> Env var holding the secret (stored as
                               '$ENV:VAR' — nothing sensitive on disk)
     --scope <scope>           OAuth scope, if required
+    --oauth-token-url <url>   Optional: AS token endpoint. Omit to discover
+                              from the agent's RFC 9728 metadata + RFC 8414
+                              authorization-server metadata.
     --oauth-auth-method basic|body
                               Where to send creds on the token request.
                               Default: basic (RFC 6749 §2.3.1). Some AS
@@ -2867,15 +2869,18 @@ EXAMPLES:
   # Browser OAuth
   adcp --save-auth mine https://agent.example.com/mcp --oauth
 
-  # Client credentials with literal secret
+  # Client credentials — token endpoint discovered from the agent
   adcp --save-auth mine https://agent.example.com/mcp \\
-    --oauth-token-url https://auth.example.com/oauth/token \\
     --client-id abc123 --client-secret xyz789 --scope adcp
 
   # Client credentials with env-var indirection (CI)
   adcp --save-auth mine https://agent.example.com/mcp \\
-    --oauth-token-url https://auth.example.com/oauth/token \\
     --client-id-env ADCP_CLIENT_ID --client-secret-env ADCP_CLIENT_SECRET
+
+  # Override the discovered token endpoint
+  adcp --save-auth mine https://agent.example.com/mcp \\
+    --oauth-token-url https://auth.example.com/oauth/token \\
+    --client-id abc123 --client-secret xyz789
 
 Secret storage: ~/.adcp/config.json is written with mode 0600. Treat it as
 credential material — never sync or commit.
@@ -2943,13 +2948,13 @@ credential material — never sync or commit.
     if (!alias) {
       console.error('ERROR: --save-auth requires an alias\n');
       console.error(
-        'Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth | --oauth-token-url ...]\n'
+        'Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth | --client-id ... --client-secret ...]\n'
       );
       console.error('Example: adcp --save-auth myagent https://agent.example.com --auth your_token\n');
       console.error('         adcp --save-auth myagent https://oauth-server.com/mcp --oauth\n');
       console.error('         adcp --save-auth myagent https://agent.example.com \\\n');
-      console.error('           --oauth-token-url https://auth.example.com/token \\\n');
       console.error('           --client-id myid --client-secret mysecret --scope adcp\n');
+      console.error('           (token endpoint discovered from the agent URL — see --save-auth --help)\n');
       process.exit(2);
     }
 
@@ -2963,19 +2968,29 @@ credential material — never sync or commit.
       process.exit(2);
     }
 
-    // Validate flags - only one auth method allowed
-    const authMethods = [providedAuthToken !== null, noAuthFlag, oauthFlag, clientCredentialsRequested].filter(
-      Boolean
-    ).length;
-    if (authMethods > 1) {
+    // Mutex: --auth and --no-auth are incompatible with each other and with
+    // any OAuth mode. Browser --oauth is incompatible with client-credentials
+    // flags (they're two different OAuth flows). `--oauth` with credentials
+    // is allowed — harmless redundancy since credentials already imply M2M.
+    if (providedAuthToken !== null && (noAuthFlag || oauthFlag || clientCredentialsRequested)) {
+      console.error('ERROR: --auth cannot be combined with --no-auth, --oauth, or client-credentials flags\n');
+      process.exit(2);
+    }
+    if (noAuthFlag && (oauthFlag || clientCredentialsRequested)) {
+      console.error('ERROR: --no-auth cannot be combined with --oauth or client-credentials flags\n');
+      process.exit(2);
+    }
+    if (oauthFlag && clientCredentialsRequested && !clientId && !clientIdEnv && !clientSecret && !clientSecretEnv) {
+      // Only `--oauth-token-url` (no actual credentials) alongside `--oauth`
+      // is ambiguous — a token URL isn't useful for the browser flow.
       console.error(
-        'ERROR: Cannot combine auth methods — choose one of --auth, --no-auth, --oauth, or --oauth-token-url (client credentials)\n'
+        'ERROR: --oauth (browser) cannot be combined with --oauth-token-url; omit --oauth or supply --client-id / --client-secret\n'
       );
       process.exit(2);
     }
 
     if (oauthAuthMethod !== null && !clientCredentialsRequested) {
-      console.error('ERROR: --oauth-auth-method is only valid with --oauth-token-url (client credentials)\n');
+      console.error('ERROR: --oauth-auth-method is only valid with client credentials\n');
       process.exit(2);
     }
     if (oauthAuthMethod !== null && oauthAuthMethod !== 'basic' && oauthAuthMethod !== 'body') {
@@ -2988,14 +3003,41 @@ credential material — never sync or commit.
       if (!url) {
         console.error('ERROR: client credentials require a URL\n');
         console.error(
-          'Usage: adcp --save-auth <alias> <url> --oauth-token-url <token-url> --client-id ID --client-secret SECRET [--scope adcp]\n'
+          'Usage: adcp --save-auth <alias> <url> --client-id ID --client-secret SECRET [--scope adcp]\n' +
+            '       (token endpoint is discovered from the agent URL; pass --oauth-token-url to override)\n'
         );
         process.exit(2);
       }
-      if (!oauthEndpoint) {
-        console.error('ERROR: --oauth-token-url is required for client credentials\n');
-        process.exit(2);
+
+      // Discover the token endpoint from the agent if --oauth-token-url was
+      // omitted. Walks the RFC 9728 protected-resource metadata and RFC 8414
+      // authorization-server metadata chain — the same probe that powers
+      // `adcp diagnose-auth`. `allowPrivateIp: true` matches the CLI's
+      // operator-driven trust model (the operator typed this URL).
+      let resolvedOauthEndpoint = oauthEndpoint;
+      if (!resolvedOauthEndpoint) {
+        console.log(`\n🔍 Discovering OAuth token endpoint from ${url}...`);
+        const { discoverAuthorizationRequirements } = require('../dist/lib/auth/oauth/index.js');
+        try {
+          const req = await discoverAuthorizationRequirements(url, { allowPrivateIp: true });
+          if (req && req.tokenEndpoint) {
+            resolvedOauthEndpoint = req.tokenEndpoint;
+            console.log(`   Found token endpoint: ${resolvedOauthEndpoint}`);
+            if (req.authorizationServer) console.log(`   Authorization server: ${req.authorizationServer}`);
+          } else {
+            console.error('\n❌ Could not discover an OAuth token endpoint from the agent.\n');
+            console.error('   The agent did not advertise RFC 9728 protected-resource metadata,');
+            console.error('   or its authorization server metadata did not include a token_endpoint.\n');
+            console.error('   Pass --oauth-token-url <url> explicitly.\n');
+            process.exit(1);
+          }
+        } catch (err) {
+          console.error(`\n❌ Token-endpoint discovery failed: ${err.message}\n`);
+          console.error('   Pass --oauth-token-url <url> explicitly.\n');
+          process.exit(1);
+        }
       }
+
       // TLS enforcement. Parse as a URL so `http://localhost.attacker.com`
       // (which naively `startsWith`ed `http://localhost`) doesn't sneak
       // through. The library does the same check one call later, but the
@@ -3003,21 +3045,21 @@ credential material — never sync or commit.
       {
         let parsedTokenUrl;
         try {
-          parsedTokenUrl = new URL(oauthEndpoint);
+          parsedTokenUrl = new URL(resolvedOauthEndpoint);
         } catch {
-          console.error(`ERROR: --oauth-token-url is not a valid URL: ${oauthEndpoint}\n`);
+          console.error(`ERROR: token endpoint is not a valid URL: ${resolvedOauthEndpoint}\n`);
           process.exit(2);
         }
         const tokenHost = parsedTokenUrl.hostname;
         const isLoopback =
           tokenHost === 'localhost' || tokenHost === '127.0.0.1' || tokenHost === '[::1]' || tokenHost === '::1';
         if (parsedTokenUrl.protocol !== 'https:' && !(parsedTokenUrl.protocol === 'http:' && isLoopback)) {
-          console.error('ERROR: --oauth-token-url must be an HTTPS URL (or http://localhost for testing)\n');
+          console.error('ERROR: token endpoint must be an HTTPS URL (or http://localhost for testing)\n');
           process.exit(2);
         }
         if (parsedTokenUrl.username || parsedTokenUrl.password) {
           console.error(
-            'ERROR: --oauth-token-url must not contain user:pass@ userinfo — use --client-id / --client-secret instead\n'
+            'ERROR: token endpoint must not contain user:pass@ userinfo — use --client-id / --client-secret instead\n'
           );
           process.exit(2);
         }
@@ -3040,7 +3082,7 @@ credential material — never sync or commit.
       }
 
       const credentials = {
-        token_endpoint: oauthEndpoint,
+        token_endpoint: resolvedOauthEndpoint,
         client_id: clientIdEnv !== null ? toEnvSecretReference(clientIdEnv) : clientId,
         client_secret: clientSecretEnv !== null ? toEnvSecretReference(clientSecretEnv) : clientSecret,
         ...(scope ? { scope } : {}),
@@ -3049,7 +3091,7 @@ credential material — never sync or commit.
 
       console.log(`\n🔐 Setting up OAuth client credentials for '${alias}'...`);
       console.log(`Agent URL:     ${url}`);
-      console.log(`Token URL:     ${oauthEndpoint}`);
+      console.log(`Token URL:     ${resolvedOauthEndpoint}${oauthEndpoint ? '' : ' (discovered)'}`);
       console.log(`Scope:         ${scope || '(none)'}`);
       console.log(
         `Secret source: ${clientSecretEnv !== null ? `env var $${clientSecretEnv}` : 'literal (stored in config)'}\n`
