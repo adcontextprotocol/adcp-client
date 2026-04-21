@@ -30,6 +30,10 @@ const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
   get_creative_delivery: { domain: 'creative', fileBase: 'get-creative-delivery' },
   tasks_get: { domain: 'core', fileBase: 'tasks-get' },
   preview_creative: { domain: 'creative', fileBase: 'preview-creative' },
+  // Tier 3 (mutating updates)
+  update_media_buy: { domain: 'media-buy', fileBase: 'update-media-buy' },
+  update_property_list: { domain: 'property', fileBase: 'update-property-list' },
+  update_content_standards: { domain: 'content-standards', fileBase: 'update-content-standards' },
 };
 
 /**

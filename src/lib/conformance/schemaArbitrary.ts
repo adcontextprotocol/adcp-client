@@ -239,6 +239,8 @@ const PROPERTY_TO_POOL: Record<string, keyof ConformanceFixtures> = {
   media_buy_ids: 'media_buy_ids',
   list_id: 'list_ids',
   list_ids: 'list_ids',
+  standards_id: 'standards_ids',
+  standards_ids: 'standards_ids',
   task_id: 'task_ids',
   taskId: 'task_ids',
   plan_id: 'plan_ids',

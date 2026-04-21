@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 
-const { runConformance, DEFAULT_TOOLS, REFERENTIAL_STATELESS_TOOLS } = require('../dist/lib/conformance/index.js');
+const {
+  runConformance,
+  DEFAULT_TOOLS_WITH_UPDATES,
+  REFERENTIAL_STATELESS_TOOLS,
+  UPDATE_TIER_TOOLS,
+} = require('../dist/lib/conformance/index.js');
 
 const USAGE = `Usage: adcp fuzz <agent-url> [options]
 
@@ -14,7 +19,7 @@ SHOULD return REFERENCE_NOT_FOUND, not 500).
 Options:
   --seed <int>                Reproducibility seed (default: random — printed on exit)
   --tools <a,b,c>             Comma-separated tool list (default: stateless + referential tier)
-  --list-tools                Print the default tool list and exit
+  --list-tools                Print every tool name + its tier and exit
   --turn-budget <int>         Iterations per tool (default: 50)
   --protocol <mcp|a2a>        Transport (default: mcp)
   --auth-token <token>        Bearer token. Also reads ADCP_AUTH_TOKEN env var.
@@ -22,6 +27,11 @@ Options:
                               Example: --fixture creative_ids=cre_1,cre_2
                               IDs with commas are not expressible on the CLI —
                               drop to the runConformance() API if you need them.
+  --auto-seed                 Before fuzzing, create a property list, a
+                              content-standards config, and a media buy on
+                              the agent; feed the returned IDs into fuzzing
+                              so Tier-3 update_* tools exercise real state.
+                              MUTATES the agent — point at a sandbox tenant.
   --max-failures <int>        Cap failures collected (default: 20)
   --max-payload-bytes <int>   Cap serialized failure input/response size (default: 8192)
   --format <human|json>       Output format (default: human)
@@ -51,6 +61,7 @@ const FIXTURE_KEYS = new Set([
 ]);
 
 const TIER_2 = new Set(REFERENTIAL_STATELESS_TOOLS);
+const TIER_3 = new Set(UPDATE_TIER_TOOLS);
 
 async function handleFuzzCommand(argv) {
   if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help') {
@@ -58,8 +69,10 @@ async function handleFuzzCommand(argv) {
     return;
   }
   if (argv[0] === '--list-tools') {
-    for (const t of DEFAULT_TOOLS) {
-      const suffix = TIER_2.has(t) ? '  (referential — fixture-eligible)' : '';
+    for (const t of DEFAULT_TOOLS_WITH_UPDATES) {
+      let suffix = '';
+      if (TIER_3.has(t)) suffix = '  (update — needs --auto-seed or --fixture)';
+      else if (TIER_2.has(t)) suffix = '  (referential — fixture-eligible)';
       process.stdout.write(t + suffix + '\n');
     }
     return;
@@ -142,6 +155,9 @@ async function handleFuzzCommand(argv) {
         i++;
         break;
       }
+      case '--auto-seed':
+        options.autoSeed = true;
+        break;
       case '--max-failures': {
         const raw = requireValue(i, '--max-failures');
         const v = Number.parseInt(raw, 10);
@@ -205,6 +221,17 @@ function printHumanReport(report) {
   out.push(
     `Runs: ${report.totalRuns}   Failures: ${report.totalFailures}${report.droppedFailures ? ` (+${report.droppedFailures} dropped)` : ''}   Duration: ${report.durationMs}ms`
   );
+  if (report.autoSeeded) {
+    const pools = Object.entries(report.fixturesUsed ?? {})
+      .filter(([, v]) => Array.isArray(v) && v.length > 0)
+      .map(([k, v]) => `${k}=${v.length}`)
+      .join(', ');
+    out.push(`Auto-seeded: ${pools || 'no fixtures captured'}`);
+    if (report.seedWarnings && report.seedWarnings.length > 0) {
+      out.push('Seed warnings:');
+      for (const w of report.seedWarnings) out.push(`  · [${w.seeder}] ${w.reason}`);
+    }
+  }
   out.push('');
   out.push('Per-tool:');
   const maxTool = Math.max(...Object.keys(report.perTool).map(s => s.length));
@@ -231,6 +258,14 @@ function printHumanReport(report) {
       out.push('');
       out.push(`  [${f.tool}]  seed=${f.seed}  shrunk=${f.shrunk}`);
       out.push(`    reproduce: ${reproduceCommand(report, f)}`);
+      if (report.autoSeeded) {
+        // Seeded IDs are agent-generated and will differ on re-seed, which
+        // can push fast-check down a different generator path and miss the
+        // original counterexample. Emit the IDs captured at failure time
+        // so the user can pin them explicitly if auto re-seed doesn't repro.
+        const pinFlags = fixturesAsFlags(report.fixturesUsed);
+        if (pinFlags) out.push(`    (if re-seed doesn't repro, pin: ${pinFlags})`);
+      }
       for (const inv of f.invariantFailures) out.push(`    · ${inv}`);
       const inputStr = JSON.stringify(f.input);
       if (inputStr) out.push(`    input: ${truncate(inputStr, 400)}`);
@@ -261,14 +296,31 @@ function reproduceCommand(report, failure) {
   const parts = ['adcp fuzz', quote(report.agentUrl), '--seed', String(failure.seed), '--tools', failure.tool];
   if (report.protocol && report.protocol !== 'mcp') parts.push('--protocol', report.protocol);
   if (report.turnBudget && report.turnBudget !== 50) parts.push('--turn-budget', String(report.turnBudget));
-  for (const [name, values] of Object.entries(report.fixturesUsed ?? {})) {
-    if (values && values.length > 0) parts.push('--fixture', `${name}=${values.join(',')}`);
+  // Prefer --auto-seed over listing seeded IDs when the run used autoSeed:
+  // seeded IDs are agent-generated and may differ between runs, so echoing
+  // them as --fixture would mislead the user. The user should re-seed.
+  if (report.autoSeeded) {
+    parts.push('--auto-seed');
+  } else {
+    for (const [name, values] of Object.entries(report.fixturesUsed ?? {})) {
+      if (values && values.length > 0) parts.push('--fixture', `${name}=${values.join(',')}`);
+    }
   }
   return parts.join(' ');
 }
 
 function quote(s) {
   return /[\s"'$`]/.test(s) ? JSON.stringify(s) : s;
+}
+
+function fixturesAsFlags(fixtures) {
+  const flags = [];
+  for (const [name, values] of Object.entries(fixtures ?? {})) {
+    if (Array.isArray(values) && values.length > 0) {
+      flags.push(`--fixture ${name}=${values.join(',')}`);
+    }
+  }
+  return flags.length > 0 ? flags.join(' ') : null;
 }
 
 function hasFixtureFor(tool, fixturesUsed) {
