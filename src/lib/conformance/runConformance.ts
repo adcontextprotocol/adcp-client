@@ -1,7 +1,7 @@
 import { AgentClient } from '../core/AgentClient';
 import type { AgentConfig } from '../types';
 import type { ConformanceFailure, ConformanceReport, ConformanceToolStats, RunConformanceOptions } from './types';
-import { STATELESS_TIER_TOOLS } from './types';
+import { DEFAULT_TOOLS } from './types';
 import { detectSchemaVersion, hasSchemas } from './schemaLoader';
 import { runToolFuzz } from './runners';
 
@@ -23,7 +23,7 @@ export async function runConformance(
 ): Promise<ConformanceReport> {
   const startedAt = new Date();
   const seed = options.seed ?? Math.floor(Math.random() * 0x7fffffff);
-  const tools = options.tools ?? STATELESS_TIER_TOOLS;
+  const tools = options.tools ?? DEFAULT_TOOLS;
   const turnBudget = options.turnBudget ?? 50;
   const maxFailures = options.maxFailures ?? DEFAULT_MAX_FAILURES;
   const maxFailurePayloadBytes = Math.max(
@@ -58,6 +58,7 @@ export async function runConformance(
       numRuns: turnBudget,
       authToken: options.authToken,
       maxFailurePayloadBytes,
+      fixtures: options.fixtures,
     });
     perTool[tool] = stats;
     totalRuns += stats.runs;
@@ -75,6 +76,9 @@ export async function runConformance(
     agentUrl,
     seed,
     schemaVersion: detectSchemaVersion(),
+    protocol: options.protocol ?? options.agentConfig?.protocol ?? 'mcp',
+    turnBudget,
+    fixturesUsed: options.fixtures ?? {},
     totalRuns,
     totalFailures: failures.length + droppedFailures,
     droppedFailures,

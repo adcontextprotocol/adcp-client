@@ -1,6 +1,16 @@
 import fc from 'fast-check';
+import type { ConformanceFixtures } from './types';
 
 type JsonSchema = Record<string, unknown> & { type?: string | string[] };
+
+export interface ArbitraryOptions {
+  /**
+   * ID pools. When a property name matches (e.g. `creative_id`,
+   * `creative_ids`), the generator draws from the pool instead of
+   * producing random strings. See {@link resolvePoolForKey}.
+   */
+  fixtures?: ConformanceFixtures;
+}
 
 /**
  * Converts a draft-07 JSON Schema into a fast-check arbitrary that
@@ -9,7 +19,7 @@ type JsonSchema = Record<string, unknown> & { type?: string | string[] };
  * to a permissive arbitrary rather than throwing, so the fuzzer keeps
  * running on the remainder of the schema.
  */
-export function schemaToArbitrary(schema: JsonSchema): fc.Arbitrary<unknown> {
+export function schemaToArbitrary(schema: JsonSchema, opts: ArbitraryOptions = {}): fc.Arbitrary<unknown> {
   if (!schema || typeof schema !== 'object') return fc.anything();
 
   if ('const' in schema) return fc.constant(schema.const);
@@ -19,10 +29,10 @@ export function schemaToArbitrary(schema: JsonSchema): fc.Arbitrary<unknown> {
   // Only replaces the dispatch when the outer schema has no standalone
   // `properties` — otherwise oneOf is a side-constraint we generate past.
   if (Array.isArray(schema.oneOf) && !hasOwnProperties(schema)) {
-    return fc.oneof(...schema.oneOf.map(s => schemaToArbitrary(s as JsonSchema)));
+    return fc.oneof(...schema.oneOf.map(s => schemaToArbitrary(s as JsonSchema, opts)));
   }
   if (Array.isArray(schema.anyOf) && !hasOwnProperties(schema)) {
-    return fc.oneof(...schema.anyOf.map(s => schemaToArbitrary(s as JsonSchema)));
+    return fc.oneof(...schema.anyOf.map(s => schemaToArbitrary(s as JsonSchema, opts)));
   }
   // `allOf` is usually conditional (if/then/else) in AdCP schemas; the base
   // shape on the outer schema is the right generator. Ignoring the `if`
@@ -42,9 +52,9 @@ export function schemaToArbitrary(schema: JsonSchema): fc.Arbitrary<unknown> {
     case 'null':
       return fc.constant(null);
     case 'array':
-      return arrayArb(schema);
+      return arrayArb(schema, opts);
     case 'object':
-      return objectArb(schema);
+      return objectArb(schema, opts);
     default:
       return fc.anything();
   }
@@ -112,19 +122,19 @@ function numberArb(schema: JsonSchema): fc.Arbitrary<number> {
   return fc.double({ min, max, noNaN: true, noDefaultInfinity: true });
 }
 
-function arrayArb(schema: JsonSchema): fc.Arbitrary<unknown[]> {
+function arrayArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<unknown[]> {
   const items = (schema.items as JsonSchema | undefined) ?? {};
   const minItems = (schema.minItems as number | undefined) ?? 0;
   const maxItems = (schema.maxItems as number | undefined) ?? Math.max(minItems, 3);
   const unique = schema.uniqueItems === true;
   if (unique) {
-    return fc.uniqueArray(schemaToArbitrary(items), {
+    return fc.uniqueArray(schemaToArbitrary(items, opts), {
       minLength: minItems,
       maxLength: maxItems,
       selector: x => JSON.stringify(x),
     });
   }
-  return fc.array(schemaToArbitrary(items), { minLength: minItems, maxLength: maxItems });
+  return fc.array(schemaToArbitrary(items, opts), { minLength: minItems, maxLength: maxItems });
 }
 
 interface ObjectShape {
@@ -133,10 +143,10 @@ interface ObjectShape {
   additionalProperties: boolean | JsonSchema;
 }
 
-function objectArb(schema: JsonSchema): fc.Arbitrary<Record<string, unknown>> {
+function objectArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<Record<string, unknown>> {
   const shape = readObjectShape(schema);
   const anyOfRequired = collectAnyOfRequired(schema);
-  const propertySpec = buildPropertyRecordSpec(shape);
+  const propertySpec = buildPropertyRecordSpec(shape, opts);
   const declared = new Set(Object.keys(propertySpec));
   const baseRequired = Array.from(shape.required).filter(k => declared.has(k));
   const dependencies = readDependencies(schema, declared);
@@ -205,14 +215,117 @@ function collectAnyOfRequired(schema: JsonSchema): string[][] {
   return out;
 }
 
-function buildPropertyRecordSpec(shape: ObjectShape): Record<string, fc.Arbitrary<unknown>> {
+function buildPropertyRecordSpec(shape: ObjectShape, opts: ArbitraryOptions): Record<string, fc.Arbitrary<unknown>> {
   const spec: Record<string, fc.Arbitrary<unknown>> = {};
   for (const [key, subSchema] of Object.entries(shape.properties)) {
-    spec[key] = schemaToArbitrary(subSchema);
+    const fixtureArb = fixtureArbitraryForProperty(key, subSchema, opts.fixtures);
+    spec[key] = fixtureArb ?? schemaToArbitrary(subSchema, opts);
   }
   // Honor additionalProperties: false by not emitting keys outside the declared set.
   // Additional-property generation (when the schema allows) is deferred — the
   // stateless tier schemas don't rely on that branch being exercised.
   void shape.additionalProperties;
   return spec;
+}
+
+/**
+ * Map an AdCP request-property name to the fixture pool it should draw
+ * from. Covers singular and plural forms of the well-known ID shapes.
+ */
+const PROPERTY_TO_POOL: Record<string, keyof ConformanceFixtures> = {
+  creative_id: 'creative_ids',
+  creative_ids: 'creative_ids',
+  media_buy_id: 'media_buy_ids',
+  media_buy_ids: 'media_buy_ids',
+  list_id: 'list_ids',
+  list_ids: 'list_ids',
+  task_id: 'task_ids',
+  taskId: 'task_ids',
+  plan_id: 'plan_ids',
+  account_id: 'account_ids',
+  package_id: 'package_ids',
+  package_ids: 'package_ids',
+};
+
+function resolvePoolForKey(key: string, fixtures: ConformanceFixtures): readonly string[] | null {
+  const poolName = PROPERTY_TO_POOL[key];
+  if (!poolName) return null;
+  const pool = fixtures[poolName];
+  return pool && pool.length > 0 ? pool : null;
+}
+
+/**
+ * If property `key` should be filled from a fixture pool, returns a
+ * `fc.constantFrom`-backed arbitrary; otherwise `null` so the caller
+ * falls through to schema-derived generation.
+ *
+ * Pool values are filtered against the sub-schema's string constraints
+ * (`pattern`, `minLength`, `maxLength`). This closes two problems:
+ *
+ *   1. Name-collision: a pool can legitimately match a bare property
+ *      name in a nested context where the semantic is different (e.g.,
+ *      `account_id` appears both as a top-level ID and inside a nested
+ *      oneOf branch). The nested occurrence typically has a tighter
+ *      pattern; non-matching pool values drop out and the generator
+ *      falls through to schema-derived strings.
+ *   2. Pattern bypass: a pool of `['abc']` drawn into a field requiring
+ *      `^mb_[a-z0-9]+$` would produce schema-invalid samples that the
+ *      oracle would score as the agent's fault. Filtering keeps the
+ *      generated request schema-valid.
+ *
+ * Handles two shapes — scalar `{ type: 'string' }` and plain array
+ * `{ type: 'array', items: { type: 'string' } }`. Nested-structured IDs
+ * (e.g. `signal_id` as an object with a discriminator) fall through to
+ * schema-derived generation; fixture support for those is a P3 concern.
+ */
+function fixtureArbitraryForProperty(
+  key: string,
+  subSchema: JsonSchema,
+  fixtures: ConformanceFixtures | undefined
+): fc.Arbitrary<unknown> | null {
+  if (!fixtures) return null;
+  const pool = resolvePoolForKey(key, fixtures);
+  if (!pool) return null;
+
+  const type = normalizeType(subSchema);
+  if (type === 'string') {
+    const valid = pool.filter(v => satisfiesStringConstraints(v, subSchema));
+    return valid.length > 0 ? fc.constantFrom(...valid) : null;
+  }
+  if (type === 'array') {
+    const items = (subSchema.items as JsonSchema | undefined) ?? {};
+    if (normalizeType(items) === 'string') {
+      const valid = pool.filter(v => satisfiesStringConstraints(v, items));
+      if (valid.length === 0) return null;
+      const minItems = (subSchema.minItems as number | undefined) ?? 0;
+      const declaredMax = subSchema.maxItems as number | undefined;
+      // Capped at valid-pool size — `fc.constantFrom` can repeat, but
+      // the schema usually asks for distinct IDs, so we keep the array
+      // length ≤ valid-pool.
+      const maxItems = Math.min(declaredMax ?? valid.length, valid.length);
+      return fc.array(fc.constantFrom(...valid), {
+        minLength: minItems,
+        maxLength: Math.max(minItems, maxItems),
+      });
+    }
+  }
+  return null;
+}
+
+function satisfiesStringConstraints(value: string, schema: JsonSchema): boolean {
+  if (typeof value !== 'string') return false;
+  const minLength = schema.minLength as number | undefined;
+  const maxLength = schema.maxLength as number | undefined;
+  if (minLength !== undefined && value.length < minLength) return false;
+  if (maxLength !== undefined && value.length > maxLength) return false;
+  const pattern = schema.pattern as string | undefined;
+  if (pattern) {
+    try {
+      if (!new RegExp(pattern).test(value)) return false;
+    } catch {
+      // Bad regex in the schema — err on the side of letting the pool
+      // value through rather than silently dropping every fixture.
+    }
+  }
+  return true;
 }

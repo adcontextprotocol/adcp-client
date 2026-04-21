@@ -113,7 +113,6 @@
     "skills/**/*",
     ".claude-plugin/**/*",
     "compliance/cache/**/*",
-    "schemas/cache/latest/bundled/**/*.json",
     "ADCP_VERSION",
     "docs/llms.txt",
     "docs/guides/BUILD-AN-AGENT.md",

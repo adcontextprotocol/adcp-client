@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ConformanceToolName } from './types';
+import { ADCP_VERSION } from '../version';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -10,6 +11,7 @@ interface ToolSchemaLocation {
 }
 
 const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
+  // Tier 1
   get_products: { domain: 'media-buy', fileBase: 'get-products' },
   list_creative_formats: { domain: 'media-buy', fileBase: 'list-creative-formats' },
   list_creatives: { domain: 'creative', fileBase: 'list-creatives' },
@@ -21,26 +23,35 @@ const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
   list_property_lists: { domain: 'property', fileBase: 'list-property-lists' },
   list_content_standards: { domain: 'content-standards', fileBase: 'list-content-standards' },
   get_creative_features: { domain: 'creative', fileBase: 'get-creative-features' },
+  // Tier 2 (referential)
+  get_media_buy_delivery: { domain: 'media-buy', fileBase: 'get-media-buy-delivery' },
+  get_property_list: { domain: 'property', fileBase: 'get-property-list' },
+  get_content_standards: { domain: 'content-standards', fileBase: 'get-content-standards' },
+  get_creative_delivery: { domain: 'creative', fileBase: 'get-creative-delivery' },
+  tasks_get: { domain: 'core', fileBase: 'tasks-get' },
+  preview_creative: { domain: 'creative', fileBase: 'preview-creative' },
 };
 
 /**
- * Find the bundled-schemas directory. Works from source and from the
- * published package layout.
+ * Resolve the bundled-schemas directory. Mirrors the validator's loader
+ * in `src/lib/validation/schema-loader.ts`: prefer the built tree where
+ * `scripts/copy-schemas-to-dist.ts` stages schemas at build time, and
+ * fall back to the source cache for local development.
  *
- * - Source tree: <pkg>/src/lib/conformance/schemaLoader.ts → <pkg>/schemas/cache/latest/bundled
- * - Published: <pkg>/dist/lib/conformance/schemaLoader.js → <pkg>/schemas/cache/latest/bundled
- *
- * Both resolve three directories up.
+ * - Built:  <pkg>/dist/lib/schemas-data/<ver>/bundled
+ * - Source: <pkg>/schemas/cache/<ver>/bundled
  */
 function findBundledDir(): string {
-  const candidate = path.resolve(__dirname, '..', '..', '..', 'schemas', 'cache', 'latest', 'bundled');
-  if (!fs.existsSync(candidate)) {
-    throw new Error(
-      `Conformance schema bundle not found at ${candidate}. ` +
-        `Run \`npm run sync-schemas\` in the repo, or reinstall @adcp/client.`
-    );
-  }
-  return candidate;
+  const distCandidate = path.resolve(__dirname, '..', 'schemas-data', ADCP_VERSION, 'bundled');
+  if (fs.existsSync(distCandidate)) return distCandidate;
+
+  const srcCandidate = path.resolve(__dirname, '..', '..', '..', 'schemas', 'cache', ADCP_VERSION, 'bundled');
+  if (fs.existsSync(srcCandidate)) return srcCandidate;
+
+  throw new Error(
+    `Conformance schema bundle not found. Looked in ${distCandidate} and ${srcCandidate}. ` +
+      `Run \`npm run sync-schemas && npm run build:lib\`, or reinstall @adcp/client.`
+  );
 }
 
 const schemaCache = new Map<string, JsonSchema>();
@@ -75,15 +86,9 @@ export function hasSchemas(tool: ConformanceToolName): boolean {
 }
 
 /**
- * Best-effort schema-version detection. Reads `ADCP_VERSION` at the
- * package root, falling back to `'unknown'`. Surfaced in the report so a
- * stored seed is replayable only against a matching schema snapshot.
+ * The AdCP schema version the fuzzer loaded. Surfaced on the report so
+ * a stored seed is replayable only against a matching snapshot.
  */
 export function detectSchemaVersion(): string {
-  const adcpVersionFile = path.resolve(__dirname, '..', '..', '..', 'ADCP_VERSION');
-  try {
-    return fs.readFileSync(adcpVersionFile, 'utf8').trim() || 'unknown';
-  } catch {
-    return 'unknown';
-  }
+  return ADCP_VERSION;
 }

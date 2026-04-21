@@ -1,6 +1,12 @@
 import fc from 'fast-check';
 import type { AgentClient } from '../core/AgentClient';
-import type { ConformanceFailure, ConformanceToolName, ConformanceToolStats, SkipReason } from './types';
+import type {
+  ConformanceFailure,
+  ConformanceFixtures,
+  ConformanceToolName,
+  ConformanceToolStats,
+  SkipReason,
+} from './types';
 import { schemaToArbitrary } from './schemaArbitrary';
 import { loadRequestSchema } from './schemaLoader';
 import { evaluate, prepareResponseValidator } from './oracle';
@@ -11,6 +17,8 @@ export interface RunnerOptions {
   authToken?: string;
   /** Cap per-failure serialized payload size (bytes). */
   maxFailurePayloadBytes: number;
+  /** ID pools for Tier-2 fixture injection. See ConformanceFixtures. */
+  fixtures?: ConformanceFixtures;
 }
 
 export interface RunnerResult {
@@ -46,7 +54,7 @@ export async function runToolFuzz(
   }
 
   const schema = loadRequestSchema(tool);
-  const arb = schemaToArbitrary(schema) as fc.Arbitrary<Record<string, unknown>>;
+  const arb = schemaToArbitrary(schema, { fixtures: options.fixtures }) as fc.Arbitrary<Record<string, unknown>>;
 
   // Counts only increment on fresh samples. `fc.check` re-runs the property
   // during shrinking; we don't want those replays in the accepted/rejected

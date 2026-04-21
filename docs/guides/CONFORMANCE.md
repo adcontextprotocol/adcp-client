@@ -38,9 +38,21 @@ if (report.totalFailures > 0) {
 }
 ```
 
+## CLI
+
+```
+adcp fuzz https://agent.example.com/mcp --seed 42 --turn-budget 50
+adcp fuzz <url> --tools get_signals,get_products --format json | jq
+adcp fuzz <url> --fixture creative_ids=cre_a,cre_b
+adcp fuzz --list-tools
+```
+
+The CLI exits 1 on any failure, 0 on clean. Use `--format json` for CI
+consumers that want the structured report.
+
 ## What's fuzzed
 
-Stateless tier (no required entity IDs, no setup state):
+**Stateless tier** — no required entity IDs, no setup state:
 
 | Tool | Protocol |
 |---|---|
@@ -56,9 +68,50 @@ Stateless tier (no required entity IDs, no setup state):
 | `list_content_standards` | content-standards |
 | `get_creative_features` | creative |
 
-Stateful (sync → read back) and referential (generate_ids_from_fixtures)
-tiers are tracked in adcontextprotocol/adcp-client#691 and will land in
-subsequent releases.
+**Referential tier** — take an ID but no setup. Without fixtures, random
+IDs exercise only the rejection surface (agents MUST return
+`REFERENCE_NOT_FOUND`, not 500). With fixtures, the arbitrary draws IDs
+from the supplied pools to exercise the accepted path.
+
+| Tool | Protocol |
+|---|---|
+| `get_media_buy_delivery` | media-buy |
+| `get_property_list` | property |
+| `get_content_standards` | content-standards |
+| `get_creative_delivery` | creative |
+| `tasks_get` | protocol |
+| `preview_creative` | creative |
+
+## Fixtures (Tier 2)
+
+Pre-seed ID pools to test the accepted path on referential tools:
+
+```ts
+await runConformance(url, {
+  fixtures: {
+    creative_ids: ['cre_abc', 'cre_def'],
+    media_buy_ids: ['mb_123'],
+    list_ids: ['pl_789'],
+  },
+});
+```
+
+The arbitrary generator inspects each property name in a request schema
+and swaps `fc.constantFrom(pool)` for random strings when it finds a
+match. Supported pools (mapped by property name):
+
+| Pool | Property names matched |
+|---|---|
+| `creative_ids` | `creative_id`, `creative_ids` |
+| `media_buy_ids` | `media_buy_id`, `media_buy_ids` |
+| `list_ids` | `list_id`, `list_ids` |
+| `task_ids` | `task_id`, `taskId` |
+| `plan_ids` | `plan_id` |
+| `account_ids` | `account_id` |
+| `package_ids` | `package_id`, `package_ids` |
+
+Stateful Tier 3 (full `sync_creatives` → read-back flow driven by the
+runner itself) is tracked in adcontextprotocol/adcp-client#698.
 
 ## Interpreting failures
 
