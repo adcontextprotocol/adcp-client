@@ -136,6 +136,40 @@ npx @adcp/client storyboard run \
 
 ---
 
+## Deterministic testing (force state transitions the happy path can't reach)
+
+The `deterministic_testing` universal storyboard — plus rejection-branch and delivery-reporting sub-scenarios across several specialisms — requires your agent to expose `comply_test_controller`. Without it, the grader records `controller_detected: false` and skips or fails every step that needs a forced state transition, simulated delivery, or seeded error condition.
+
+**Use `createComplyController`** — adapter-based scaffold that handles dispatch, param validation, typed error envelopes, and re-seed idempotency for you:
+
+```typescript
+import { createComplyController } from '@adcp/client/testing';
+
+const controller = createComplyController({
+  sandboxGate: input => input.auth?.sandbox === true,   // fail closed
+  seed: {
+    product:  (params) => productRepo.upsert(params.product_id, params.fixture),
+    creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
+    media_buy: (params) => mediaBuyRepo.upsert(params.media_buy_id, params.fixture),
+  },
+  force: {
+    creative_status:  (params) => creativeRepo.transition(params.creative_id, params.status),
+    media_buy_status: (params) => mediaBuyRepo.transition(params.media_buy_id, params.status),
+  },
+  simulate: {
+    delivery: (params) => deliveryRepo.simulate(params),   // needed for delivery_reporting
+  },
+});
+
+controller.register(server);
+```
+
+Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO`. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` when the state machine disallows a transition; the helper emits the typed envelope. Declare `compliance_testing` in `supported_protocols` when registered.
+
+For lower-level store-based access (shared enforcement with production code, session-keyed stores), use `registerTestController(server, store)` — same primitives, flatter API.
+
+---
+
 ## Schema-driven validation (catch field drift at dev time)
 
 Wire AJV-based validation into your client or server so payload drift surfaces in tests, not production:

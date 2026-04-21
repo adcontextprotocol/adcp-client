@@ -473,9 +473,53 @@ Do not modify, inspect, or omit the context — treat it as opaque. If the reque
 
 Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_governance`, `provide_performance_feedback`, `sync_event_sources`.
 
-## Compliance Testing (Optional)
+## Compliance Testing (Required for deterministic_testing storyboard)
 
-Add `registerTestController` so the comply framework can deterministically test your state machines. Without it, compliance testing relies on observational storyboards that can't force state transitions.
+To pass the `deterministic_testing` storyboard — and the rejection-branch steps in most other storyboards (`governance_denied`, `invalid_transitions`, `measurement_terms_rejected`, etc.) — your agent must expose the `comply_test_controller` tool. Without it, the grader can only observe the happy path; forced state transitions, error-condition seeding, and simulation all silently degrade to skips or fail with `controller_detected: false`.
+
+**Preferred: `createComplyController`** (adapter-based, handles dispatch + validation + re-seed idempotency + sandbox gating for you):
+
+```ts
+import { createComplyController } from '@adcp/client/testing';
+
+const controller = createComplyController({
+  sandboxGate: input => input.auth?.sandbox === true,
+  seed: {
+    product:  (params) => productRepo.upsert(params.product_id, params.fixture),
+    creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
+    plan:     (params) => planRepo.upsert(params.plan_id, params.fixture),
+    media_buy: (params) => mediaBuyRepo.upsert(params.media_buy_id, params.fixture),
+  },
+  force: {
+    creative_status:  (params) => creativeRepo.transition(params.creative_id, params.status),
+    media_buy_status: (params) => mediaBuyRepo.transition(params.media_buy_id, params.status),
+    account_status:   (params) => accountRepo.setStatus(params.account_id, params.status),
+  },
+  simulate: {
+    delivery:     (params) => deliveryRepo.simulate(params),
+    budget_spend: (params) => budgetRepo.spendPercentage(params),
+  },
+});
+
+controller.register(server);
+```
+
+Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO` (not schema errors). Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` from an adapter when the state machine disallows the transition; the helper emits the typed error envelope.
+
+When registered, declare `compliance_testing` in `supported_protocols`:
+
+```ts
+capabilitiesResponse({
+  adcp: { major_versions: [3] },
+  supported_protocols: ['media_buy', 'compliance_testing'],
+});
+```
+
+Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`.
+
+### Low-level alternative: `registerTestController`
+
+If you need direct store access — e.g., shared enforcement with production code, or a session-keyed store factory — use the flat `registerTestController(server, store)` API. `createComplyController` calls into the same primitives, so picking one or the other is mostly ergonomic preference.
 
 ```
 import { registerTestController } from '@adcp/client';

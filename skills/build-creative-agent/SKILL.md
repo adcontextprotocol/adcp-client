@@ -420,6 +420,35 @@ serve(createAgent, {
 The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
+## Deterministic Testing (for `creative_generative/seller` and `deterministic_testing`)
+
+Creative generative sellers — and any creative agent that wants to pass `deterministic_testing` — must expose `comply_test_controller` so the grader can force creative-status transitions deterministically. `createComplyController` handles the scaffolding:
+
+```ts
+import { createComplyController } from '@adcp/client/testing';
+
+const controller = createComplyController({
+  sandboxGate: input => input.auth?.sandbox === true,
+  seed: {
+    creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
+  },
+  force: {
+    creative_status: (params) => creativeRepo.transition(
+      params.creative_id,
+      params.status,
+      params.rejection_reason,
+    ),
+  },
+});
+
+controller.register(server);
+```
+
+Declare `compliance_testing` in `supported_protocols` when registered. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` from the adapter when the state machine disallows the transition — the helper emits the typed error envelope. Omitted adapters auto-return `UNKNOWN_SCENARIO`.
+
+Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`.
+
+
 ## Validate Locally
 
 **Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). Creative-agent-specific commands:
