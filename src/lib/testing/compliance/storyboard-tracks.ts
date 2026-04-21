@@ -115,6 +115,8 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
     warnings: stepResult.skipped
       ? [stepResult.skip?.detail ?? skipReasonLabel(stepResult.skip_reason) ?? 'Step skipped']
       : undefined,
+    ...(stepResult.skipped && { skipped: true as const }),
+    ...(stepResult.skip_reason && { skip_reason: stepResult.skip_reason }),
   };
 }
 
@@ -131,6 +133,7 @@ function skipReasonLabel(reason: string | undefined): string | undefined {
     missing_tool: 'Skipped: agent did not advertise the required tool',
     missing_test_controller: 'Not testable: requires comply_test_controller',
     unsatisfied_contract: 'Skipped: test-kit contract is out of scope',
+    peer_branch_taken: 'Skipped: a peer branch in the same any_of branch set already contributed the aggregation flag',
   };
   return labels[reason];
 }

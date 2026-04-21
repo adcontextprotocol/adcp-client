@@ -31,11 +31,13 @@ import {
   generateRandomInvalidJwt,
 } from './probes';
 import { validateTestKit } from './test-kit';
+import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import type {
   AssertionResult,
+  BranchSetSpec,
   HttpProbeResult,
   RunnerDetailedSkipReason,
   RunnerExtractionRecord,
@@ -71,6 +73,7 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   missing_test_controller:
     'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
   unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
+  peer_branch_taken: 'Skipped: a peer branch in the same any_of branch set already contributed the aggregation flag.',
 };
 
 const OAUTH_NOT_ADVERTISED_DETAIL =
@@ -87,6 +90,120 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
+}
+
+/**
+ * Resolve each phase's branch-set membership, combining explicit
+ * `branch_set: { id, semantics }` declarations with the implicit detection
+ * fallback the schema + adcp#2646 mandate: an `optional: true` phase with a
+ * step declaring `contributes_to: <flag>` that matches a later
+ * `assert_contribution check: any_of, allowed_values: [<flag>]` target is a
+ * branch-set member even when the author hasn't migrated to the explicit
+ * keyword. Explicit declarations take precedence. Returned map is keyed by
+ * phase id; phases outside any branch set are absent from the map.
+ *
+ * First-match wins: if an optional phase has steps contributing to more
+ * than one any_of flag, the earliest matching step (by storyboard
+ * declaration order) decides the phase's branch-set membership. Authors
+ * wanting a phase in multiple branch sets should declare `branch_set:`
+ * explicitly — the implicit path does not synthesize multi-set membership.
+ */
+function resolveBranchSets(storyboard: Storyboard): Map<string, BranchSetSpec> {
+  const resolved = new Map<string, BranchSetSpec>();
+  for (const phase of storyboard.phases) {
+    if (phase.branch_set) resolved.set(phase.id, phase.branch_set);
+  }
+  const anyOfFlags = new Set<string>();
+  for (const phase of storyboard.phases) {
+    for (const step of phase.steps) {
+      if (step.task !== 'assert_contribution') continue;
+      for (const v of step.validations ?? []) {
+        if (v.check !== 'any_of') continue;
+        for (const flag of v.allowed_values ?? []) {
+          if (typeof flag === 'string') anyOfFlags.add(flag);
+        }
+      }
+    }
+  }
+  for (const phase of storyboard.phases) {
+    if (resolved.has(phase.id)) continue;
+    if (!phase.optional) continue;
+    for (const step of phase.steps) {
+      if (!step.contributes_to) continue;
+      if (!anyOfFlags.has(step.contributes_to)) continue;
+      resolved.set(phase.id, { id: step.contributes_to, semantics: 'any_of' });
+      break;
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Re-grade non-contributing branch-set peers per the `any_of` semantics in
+ * storyboard-schema.yaml ("Per-step grading in any_of branch patterns").
+ *
+ * Runs after the main phase loop because peer contribution status isn't
+ * knowable until all peer phases have executed. For every phase in a
+ * branch set (explicit `branch_set:` declaration or implicit detection via
+ * `resolveBranchSets`) whose flag was contributed by a different phase,
+ * this phase's raw step failures are moot — the agent took the other
+ * branch. Each such failed step is rewritten to a skipped result with
+ * `skip_reason: 'peer_branch_taken'` and the detail string the
+ * runner-output-contract mandates:
+ *
+ *   "<flag> contributed by <peer_phase_id>.<peer_step_id> — <this_phase_id> is moot"
+ *
+ * The `<this_branch_id>` contract placeholder resolves to the non-chosen
+ * peer's phase id — `branch_set.id` is shared across peers and could not
+ * disambiguate. Only `any_of` semantics drives re-grading today; other
+ * (reserved) values are rejected at parse in `validateBranchSet`.
+ *
+ * `countedAsFailed` names step results the main loop added to `failedCount`
+ * as hard failures — either non-optional phases or the `presenceDetected`
+ * PRM 2xx path (adcp-client#677: "an agent that serves PRM MUST serve it
+ * correctly"). These stand: re-grading them would paper over the exact
+ * invariants the hard-failure paths exist to enforce. The post-pass only
+ * relabels swallowed optional-phase failures, which by construction are not
+ * in `countedAsFailed`.
+ */
+function applyBranchSetGrading(
+  phases: StoryboardPhase[],
+  phaseResults: StoryboardPhaseResult[],
+  branchSetByPhaseId: Map<string, BranchSetSpec>,
+  contributions: Set<string>,
+  contributionSources: Map<string, { phaseId: string; stepId: string }>,
+  countedAsFailed: Set<StoryboardStepResult>
+): { skippedDelta: number } {
+  let skippedDelta = 0;
+  for (let i = 0; i < phases.length; i++) {
+    const phaseDef = phases[i];
+    const phaseResult = phaseResults[i];
+    if (!phaseDef || !phaseResult) continue;
+    const branchSet = branchSetByPhaseId.get(phaseDef.id);
+    if (!branchSet) continue;
+    if (branchSet.semantics !== 'any_of') continue;
+    const flag = branchSet.id;
+    if (!contributions.has(flag)) continue;
+    const source = contributionSources.get(flag);
+    if (!source || source.phaseId === phaseDef.id) continue;
+    const detail = `${flag} contributed by ${source.phaseId}.${source.stepId} — ${phaseDef.id} is moot`;
+    let regraded = false;
+    for (const step of phaseResult.steps) {
+      if (step.passed || step.skipped) continue;
+      if (countedAsFailed.has(step)) continue;
+      step.passed = true;
+      step.skipped = true;
+      step.skip_reason = 'peer_branch_taken';
+      step.skip = { reason: 'peer_branch_taken', detail };
+      delete step.error;
+      skippedDelta++;
+      regraded = true;
+    }
+    if (regraded) {
+      phaseResult.passed = phaseResult.steps.every(s => s.passed || s.skipped);
+    }
+  }
+  return { skippedDelta };
 }
 
 function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExtractionRecord {
@@ -189,6 +306,13 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   validateTestKit(options.test_kit);
+  // Enforce authoring-time branch_set invariants regardless of how the
+  // storyboard reached us. YAML callers already ran these rules in
+  // parseStoryboard; programmatic callers (hand-built Storyboard objects or
+  // alternative YAML loaders) reach this point without the loader having
+  // fired, and the runtime's grading depends on the invariants holding.
+  // `validateStoryboardShape` is idempotent so the double-pass is safe.
+  validateStoryboardShape(storyboard);
   const agentUrls = Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls];
   if (agentUrls.length === 0) {
     throw new Error('runStoryboard: at least one agent URL required');
@@ -256,12 +380,23 @@ async function executeStoryboardPass(
   let context: StoryboardContext = { ...options.context };
   if (options.context) forwardAliasCache(options.context, context);
   const contributions = new Set<string>();
+  // First phase/step that contributed each flag. Branch-set post-pass reads
+  // this to emit the contract-mandated peer_branch_taken detail string
+  // ("<flag> contributed by <peer_phase_id>.<peer_step_id> — …"). Only the
+  // first contributor is recorded — downstream peers observing the same flag
+  // are redundant and the contract calls out a single peer.
+  const contributionSources = new Map<string, { phaseId: string; stepId: string }>();
   const priorStepResults = new Map<string, StoryboardStepResult>();
   const priorProbes = new Map<string, HttpProbeResult>();
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  // Step results whose failures the main loop added to failedCount. The
+  // branch-set post-pass decrements only for entries that were actually
+  // counted, so an optional phase that hit `presenceDetected` (a PRM 2xx
+  // inside an otherwise-optional phase) has its leak correctly reversed.
+  const countedAsFailed = new Set<StoryboardStepResult>();
 
   // Start an ephemeral webhook receiver when the run opts in. The base URL
   // is exposed via `{{runner.webhook_base}}` / `{{runner.webhook_url:<id>}}`
@@ -476,7 +611,11 @@ async function executeStoryboardPass(
       // Record contribution on success, honoring optional contributes_if predicate.
       if (!result.skipped && result.passed && step.contributes_to) {
         if (evalContributesIf(step.contributes_if, priorStepResults)) {
-          contributions.add(step.contributes_to);
+          const flag = step.contributes_to;
+          if (!contributions.has(flag)) {
+            contributionSources.set(flag, { phaseId: phase.id, stepId: step.id });
+          }
+          contributions.add(flag);
         }
       }
 
@@ -494,7 +633,10 @@ async function executeStoryboardPass(
         // detected the agent IS advertising OAuth, subsequent validation
         // failures in this phase are hard failures (adcp-client#677). An
         // agent that serves PRM MUST serve it correctly.
-        if (!phase.optional || presenceDetected) failedCount++;
+        if (!phase.optional || presenceDetected) {
+          failedCount++;
+          countedAsFailed.add(result);
+        }
         if (step.stateful) statefulFailed = true;
         // In multi-instance mode, annotate the failure with the cross-instance
         // attribution block so CI readers pattern-match it as a deployment bug.
@@ -512,6 +654,27 @@ async function executeStoryboardPass(
       duration_ms: Date.now() - phaseStart,
     });
   }
+
+  // Branch-set post-pass: phases in a branch set (explicit `branch_set:`
+  // declaration or implicit detection via shared `contributes_to` + a later
+  // any_of `assert_contribution`) whose flag was contributed by a peer have
+  // their failed steps re-graded as skipped with `peer_branch_taken`. See
+  // storyboard-schema.yaml (lines 205-223) and runner-output-contract.yaml
+  // (reasons.peer_branch_taken). Done after all phases run — peer
+  // contribution status isn't knowable inside the per-phase loop. Runs
+  // before storyboard-scoped assertions so `onEnd` hooks see the finalized
+  // per-step grades (a moot peer's "failure" should not trip a cross-step
+  // invariant).
+  const branchSetsByPhaseId = resolveBranchSets(storyboard);
+  const branchSetDelta = applyBranchSetGrading(
+    storyboard.phases,
+    phaseResults,
+    branchSetsByPhaseId,
+    contributions,
+    contributionSources,
+    countedAsFailed
+  );
+  skippedCount += branchSetDelta.skippedDelta;
 
   // Fire storyboard-scoped assertions. These observe the full run and can
   // emit `scope: "storyboard"` findings that flip `overall_passed` without
