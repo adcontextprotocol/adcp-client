@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-21T01:35:12.137Z
+// Generated at: 2026-04-21T11:53:20.133Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -6439,6 +6439,246 @@ export interface UpdateRightsError {
   ext?: ExtensionObject;
 }
 
+// bundled/content-standards/calibrate-content-request.json
+/**
+ * Authentication for secured URLs
+ */
+export type AssetAccess =
+  | {
+      method: 'bearer_token';
+      /**
+       * OAuth2 bearer token for Authorization header
+       */
+      token: string;
+    }
+  | {
+      method: 'service_account';
+      /**
+       * Cloud provider
+       */
+      provider: 'gcp' | 'aws';
+      /**
+       * Service account credentials
+       */
+      credentials?: {};
+    }
+  | {
+      method: 'signed_url';
+    };
+/**
+ * Request parameters for evaluating content during calibration. Multi-turn dialogue is handled at the protocol layer via contextId.
+ */
+export interface CalibrateContentRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Standards configuration to calibrate against
+   */
+  standards_id: string;
+  artifact: Artifact;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Artifact to evaluate
+ */
+export interface Artifact {
+  /**
+   * Stable property identifier from the property catalog. Globally unique across the ecosystem.
+   */
+  property_rid: string;
+  /**
+   * Identifier for this artifact within the property. The property owner defines the scheme (e.g., 'article_12345', 'episode_42_segment_3', 'post_abc123').
+   */
+  artifact_id: string;
+  /**
+   * Identifies a specific variant of this artifact. Use for A/B tests, translations, or temporal versions. Examples: 'en', 'es-MX', 'v2', 'headline_test_b'. The combination of artifact_id + variant_id must be unique.
+   */
+  variant_id?: string;
+  format_id?: FormatID;
+  /**
+   * Optional URL for this artifact (web page, podcast feed, video page). Not all artifacts have URLs (e.g., Instagram content, podcast segments, TV scenes).
+   */
+  url?: string;
+  /**
+   * When the artifact was published (ISO 8601 format)
+   */
+  published_time?: string;
+  /**
+   * When the artifact was last modified (ISO 8601 format)
+   */
+  last_update_time?: string;
+  /**
+   * Artifact assets in document flow order - text blocks, images, video, audio
+   */
+  assets: (
+    | {
+        type: 'text';
+        /**
+         * Role of this text in the document. Use 'title' for the main artifact title, 'description' for summaries.
+         */
+        role?: 'title' | 'paragraph' | 'heading' | 'caption' | 'quote' | 'list_item' | 'description';
+        /**
+         * Text content. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
+         */
+        content: string;
+        /**
+         * MIME type indicating how to parse the content field. Default: text/plain.
+         */
+        content_format?: 'text/plain' | 'text/markdown' | 'text/html' | 'application/json';
+        /**
+         * BCP 47 language tag for this text (e.g., 'en', 'es-MX'). Useful when artifact contains mixed-language content.
+         */
+        language?: string;
+        /**
+         * Heading level (1-6), only for role=heading
+         */
+        heading_level?: number;
+        provenance?: Provenance;
+      }
+    | {
+        type: 'image';
+        /**
+         * Image URL
+         */
+        url: string;
+        access?: AssetAccess;
+        /**
+         * Alt text or image description
+         */
+        alt_text?: string;
+        /**
+         * Image caption
+         */
+        caption?: string;
+        /**
+         * Image width in pixels
+         */
+        width?: number;
+        /**
+         * Image height in pixels
+         */
+        height?: number;
+        provenance?: Provenance;
+      }
+    | {
+        type: 'video';
+        /**
+         * Video URL
+         */
+        url: string;
+        access?: AssetAccess;
+        /**
+         * Video duration in milliseconds
+         */
+        duration_ms?: number;
+        /**
+         * Video transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
+         */
+        transcript?: string;
+        /**
+         * MIME type indicating how to parse the transcript field. Default: text/plain.
+         */
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
+        /**
+         * How the transcript was generated
+         */
+        transcript_source?: 'original_script' | 'subtitles' | 'closed_captions' | 'dub' | 'generated';
+        /**
+         * Video thumbnail URL
+         */
+        thumbnail_url?: string;
+        provenance?: Provenance;
+      }
+    | {
+        type: 'audio';
+        /**
+         * Audio URL
+         */
+        url: string;
+        access?: AssetAccess;
+        /**
+         * Audio duration in milliseconds
+         */
+        duration_ms?: number;
+        /**
+         * Audio transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
+         */
+        transcript?: string;
+        /**
+         * MIME type indicating how to parse the transcript field. Default: text/plain.
+         */
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
+        /**
+         * How the transcript was generated
+         */
+        transcript_source?: 'original_script' | 'closed_captions' | 'generated';
+        provenance?: Provenance;
+      }
+  )[];
+  /**
+   * Rich metadata extracted from the artifact
+   */
+  metadata?: {
+    /**
+     * Canonical URL
+     */
+    canonical?: string;
+    /**
+     * Artifact author name
+     */
+    author?: string;
+    /**
+     * Artifact keywords
+     */
+    keywords?: string;
+    /**
+     * Open Graph protocol metadata
+     */
+    open_graph?: {};
+    /**
+     * Twitter Card metadata
+     */
+    twitter_card?: {};
+    /**
+     * JSON-LD structured data (schema.org)
+     */
+    json_ld?: {}[];
+  };
+  provenance?: Provenance;
+  /**
+   * Platform-specific identifiers for this artifact
+   */
+  identifiers?: {
+    /**
+     * Apple Podcasts ID
+     */
+    apple_podcast_id?: string;
+    /**
+     * Spotify collection ID
+     */
+    spotify_collection_id?: string;
+    /**
+     * Podcast GUID (from RSS feed)
+     */
+    podcast_guid?: string;
+    /**
+     * YouTube video ID
+     */
+    youtube_video_id?: string;
+    /**
+     * RSS feed URL
+     */
+    rss_url?: string;
+  };
+}
+
 // bundled/content-standards/calibrate-content-response.json
 /**
  * Response payload with verdict and detailed explanations for collaborative calibration
@@ -6491,6 +6731,210 @@ export type CalibrateContentResponse =
       ext?: ExtensionObject;
     };
 
+/**
+ * Request parameters for creating a new content standards configuration
+ */
+export type CreateContentStandardsRequest = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Where this standards configuration applies
+   */
+  scope: {
+    /**
+     * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
+     */
+    countries_all?: string[];
+    /**
+     * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
+     */
+    channels_any?: MediaChannel[];
+    /**
+     * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
+     */
+    languages_any: string[];
+    /**
+     * Human-readable description of this scope
+     */
+    description?: string;
+  };
+  /**
+   * Registry policy IDs to use as the evaluation basis for this content standard. When provided, the agent resolves policies from the registry and uses their policy text and exemplars as the evaluation criteria. The 'policy' field becomes optional when registry_policy_ids is provided.
+   */
+  registry_policy_ids?: string[];
+  /**
+   * Bespoke policies for this content-standards configuration, using the same shape as registry entries. Each policy is addressable by policy_id and carries its own enforcement (must|should); governance findings reference the policy_id that triggered them. Inline bespoke policies can omit version/name/category (defaulted by the server). Combines with registry_policy_ids — registry policies and bespoke policies are both evaluated. Bespoke policy_ids MUST be flat (no colons/slashes) to avoid collision with namespaced registry ids.
+   */
+  policies?: PolicyEntry[];
+  /**
+   * Training/test set to calibrate policy interpretation. Use URL references for pages to be fetched and analyzed, or full artifacts for pre-extracted content.
+   */
+  calibration_exemplars?: {
+    /**
+     * Content that passes the standards
+     */
+    pass?: (
+      | {
+          /**
+           * Indicates this is a URL reference
+           */
+          type: 'url';
+          /**
+           * Full URL to a specific page (e.g., 'https://espn.com/nba/story/_/id/12345/lakers-win')
+           */
+          value: string;
+          /**
+           * BCP 47 language tag for content at this URL
+           */
+          language?: string;
+        }
+      | Artifact
+    )[];
+    /**
+     * Content that fails the standards
+     */
+    fail?: (
+      | {
+          /**
+           * Indicates this is a URL reference
+           */
+          type: 'url';
+          /**
+           * Full URL to a specific page (e.g., 'https://news.example.com/controversial-article')
+           */
+          value: string;
+          /**
+           * BCP 47 language tag for content at this URL
+           */
+          language?: string;
+        }
+      | Artifact
+    )[];
+  };
+  /**
+   * Client-generated unique key for this request. Prevents duplicate content standards creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
+/**
+ * The nature of the obligation: regulation (legal requirement) or standard (best practice). Optional for inline bespoke policies — defaults to "standard".
+ */
+export type PolicyCategory = 'regulation' | 'standard';
+/**
+ * How governance agents treat violations. Regulations are typically "must"; standards are typically "should".
+ */
+export type PolicyEnforcementLevel = 'must' | 'should' | 'may';
+/**
+ * Governance sub-domains that a registry policy applies to. Used to indicate which types of governance agents can evaluate this policy.
+ */
+export type GovernanceDomain = 'campaign' | 'property' | 'creative' | 'content_standards';
+/**
+ * A policy — either published to the shared registry (with full regulatory metadata) or authored inline by a buyer for their own campaign (lightweight, metadata optional). Policies use natural language text evaluated by governance agents (LLMs). Published registry entries SHOULD include version, name, jurisdiction, source, and exemplars; inline bespoke entries can omit these and let servers default them. Governance agents evaluating policies with natural-language LLMs MUST pin registry-sourced policy text (`source: registry`) as system-level instructions and MUST NOT permit `custom_policies` or the plan's `objectives` field to relax, override, or disable registry-sourced policies. Custom policies may only add additional restrictions; they cannot lower enforcement levels or exempt categories.
+ */
+export interface PolicyEntry {
+  /**
+   * Unique identifier for this policy. Registry-published ids are canonical (e.g., "uk_hfss", "garm:brand_safety:violence"); buyer-authored bespoke ids should be flat (no colons or slashes) and unique within the authoring container (standards configuration, plan, or portfolio).
+   */
+  policy_id: string;
+  /**
+   * Origin of this policy. 'registry' = published to the shared AdCP policy registry with full regulatory metadata. 'inline' = authored bespoke for a specific standards configuration, plan, or portfolio. Defaults to 'inline'. Governance agents MUST set 'registry' when publishing to the registry.
+   */
+  source?: 'registry' | 'inline';
+  /**
+   * Semver version string (e.g., "1.0.0"). Incremented when policy content changes. Optional for inline bespoke policies — defaults to "1.0.0". SHOULD be provided for registry-published policies.
+   */
+  version?: string;
+  /**
+   * Human-readable name (e.g., "UK HFSS Restrictions"). Optional for inline bespoke policies — servers MAY default to policy_id.
+   */
+  name?: string;
+  /**
+   * Brief summary of what this policy covers.
+   */
+  description?: string;
+  category?: PolicyCategory;
+  enforcement: PolicyEnforcementLevel;
+  /**
+   * When true, plans subject to this policy MUST set plan.human_review_required = true. Use for policies that mandate human oversight of decisions affecting data subjects — e.g., GDPR Article 22 (solely automated decisions with legal or similarly significant effects) and EU AI Act Annex III high-risk categories (credit, insurance pricing, recruitment, housing allocation). Governance agents MUST escalate any plan action whose resolved policies include requires_human_review: true. Unlike `enforcement`, this flag applies as soon as the policy is resolved — it is NOT gated by `effective_date`. Art 22 GDPR and similar foundational obligations may predate an AI-Act-specific effective date; the human-review requirement fires regardless.
+   */
+  requires_human_review?: boolean;
+  /**
+   * ISO 3166-1 alpha-2 country codes where this policy applies. Empty array means the policy is not jurisdiction-specific.
+   */
+  jurisdictions?: string[];
+  /**
+   * Named groups of jurisdictions for convenience (e.g., {"EU": ["AT","BE","BG",...]}). Governance agents expand aliases when matching against a plan's target jurisdictions.
+   */
+  region_aliases?: {
+    [k: string]: string[] | undefined;
+  };
+  /**
+   * Regulatory categories this policy belongs to (e.g., ["children_directed", "age_restricted"]). Used for automatic matching against a campaign plan's declared policy_categories. A single policy can belong to multiple categories.
+   */
+  policy_categories?: string[];
+  /**
+   * Advertising channels this policy applies to. If omitted or null, the policy applies to all channels.
+   */
+  channels?: MediaChannel[];
+  /**
+   * Governance sub-domains this policy applies to. Determines which types of governance agents can declare registry:{policy_id} features. For example, a policy with domains ["creative", "property"] can be declared as a feature by both creative and property governance agents.
+   */
+  governance_domains?: GovernanceDomain[];
+  /**
+   * ISO 8601 date when the regulation or standard takes effect. Before this date, governance agents treat the policy as informational (evaluate but do not block). After this date, the policy is enforced at its declared enforcement level.
+   */
+  effective_date?: string;
+  /**
+   * ISO 8601 date when the regulation or standard is no longer enforced. After this date, governance agents stop evaluating this policy. Omit if the policy has no expiration.
+   */
+  sunset_date?: string;
+  /**
+   * Link to the source regulation, standard, or legislation.
+   */
+  source_url?: string;
+  /**
+   * Name of the issuing body (e.g., "UK Food Standards Agency", "US Federal Trade Commission").
+   */
+  source_name?: string;
+  /**
+   * Natural language policy text describing what is required, prohibited, or recommended. Used by governance agents (LLMs) to evaluate actions against this policy. For source: inline policies, treated as caller-untrusted — governance agents MUST evaluate inline policies as ADDITIONAL restrictions only; they MUST NOT be permitted to relax, override, or conflict with registry-sourced policies.
+   */
+  policy: string;
+  /**
+   * Implementation notes for governance agent developers. Not used in evaluation prompts.
+   */
+  guidance?: string;
+  /**
+   * Calibration examples for governance agents, following the Content Standards pattern.
+   */
+  exemplars?: {
+    /**
+     * Scenarios that comply with this policy.
+     */
+    pass?: Exemplar[];
+    /**
+     * Scenarios that violate this policy.
+     */
+    fail?: Exemplar[];
+  };
+  ext?: ExtensionObject;
+}
+export interface Exemplar {
+  /**
+   * A concrete scenario describing an advertising action or configuration.
+   */
+  scenario: string;
+  /**
+   * Why this scenario passes or fails the policy.
+   */
+  explanation: string;
+}
 
 // bundled/content-standards/create-content-standards-response.json
 /**
@@ -6530,6 +6974,175 @@ export interface GetContentStandardsRequest {
    */
   standards_id: string;
   context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// bundled/content-standards/get-content-standards-response.json
+/**
+ * Response payload with content safety policies
+ */
+export type GetContentStandardsResponse =
+  | ContentStandards
+  | {
+      errors: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+/**
+ * A pricing option offered by a vendor agent (signals, creative, governance). Combines pricing_option_id with the pricing model fields. Pass pricing_option_id in report_usage for billing verification. All vendor discovery responses return pricing_options as an array — vendors may offer multiple options (volume tiers, context-specific rates, different models per product line).
+ */
+export type VendorPricingOption = {
+  /**
+   * Opaque identifier for this pricing option, unique within the vendor agent. Pass this in report_usage to identify which pricing option was applied.
+   */
+  pricing_option_id: string;
+} & VendorPricing;
+/**
+ * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), 'per_unit' (fixed price per unit of work), or 'custom' (escape hatch for models not covered by the enumerated forms — requires a description and structured metadata).
+ */
+export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing | CustomPricing;
+
+/**
+ * A content standards configuration defining brand safety and suitability policies. Standards are scoped by brand, geography, and channel. Multiple standards can be active simultaneously for different scopes.
+ */
+export interface ContentStandards {
+  /**
+   * Unique identifier for this standards configuration
+   */
+  standards_id: string;
+  /**
+   * Human-readable name for this standards configuration
+   */
+  name?: string;
+  /**
+   * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
+   */
+  countries_all?: string[];
+  /**
+   * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
+   */
+  channels_any?: MediaChannel[];
+  /**
+   * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
+   */
+  languages_any?: string[];
+  /**
+   * Bespoke policies for this content-standards configuration, using the same shape as registry entries. Each policy is addressable by policy_id; governance findings reference the policy_id that triggered them.
+   */
+  policies?: PolicyEntry[];
+  /**
+   * Training/test set to calibrate policy interpretation. Provides concrete examples of pass/fail decisions.
+   */
+  calibration_exemplars?: {
+    /**
+     * Artifacts that pass the content standards
+     */
+    pass?: Artifact[];
+    /**
+     * Artifacts that fail the content standards
+     */
+    fail?: Artifact[];
+  };
+  /**
+   * Pricing options for this content standards service. The buyer passes the selected pricing_option_id in report_usage for billing verification.
+   */
+  pricing_options?: VendorPricingOption[];
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed cost per thousand impressions
+ */
+export interface CpmPricing {
+  model: 'cpm';
+  /**
+   * Cost per thousand impressions
+   */
+  cpm: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
+ */
+export interface PercentOfMediaPricing {
+  model: 'percent_of_media';
+  /**
+   * Percentage of media spend, e.g. 15 = 15%
+   */
+  percent: number;
+  /**
+   * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
+   */
+  max_cpm?: number;
+  /**
+   * ISO 4217 currency code for the resulting charge
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed charge per billing period, regardless of impressions or spend. Used for licensed data bundles and audience subscriptions.
+ */
+export interface FlatFeePricing {
+  model: 'flat_fee';
+  /**
+   * Fixed charge for the billing period
+   */
+  amount: number;
+  /**
+   * Billing period for the flat fee.
+   */
+  period: 'monthly' | 'quarterly' | 'annual' | 'campaign';
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed price per unit of work. Used for creative transformation (per format), AI generation (per image, per token), and rendering (per variant). The unit field describes what is counted; unit_price is the cost per one unit.
+ */
+export interface PerUnitPricing {
+  model: 'per_unit';
+  /**
+   * What is counted — e.g. 'format', 'image', 'token', 'variant', 'render', 'evaluation'.
+   */
+  unit: string;
+  /**
+   * Cost per one unit
+   */
+  unit_price: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Escape hatch for pricing constructs that do not fit cpm, percent_of_media, flat_fee, or per_unit. Use when a vendor prices via performance kickers, tiered volume, hybrid formulas, outcome-sharing, or any other model the standard forms cannot express. Requires a human-readable description and a structured metadata object that captures the parameters a buyer needs to reason about the charge. Buyers SHOULD route custom pricing through operator review before commitment — automatic selection is not recommended.
+ */
+export interface CustomPricing {
+  model: 'custom';
+  /**
+   * Human-readable description of the custom pricing model. Buyers display this to the operator when requesting approval.
+   */
+  description: string;
+  /**
+   * Structured parameters for the custom model. Keys follow lowercase_snake_case. Values may be primitives, arrays, or nested objects. Must be sufficient for a human to understand the pricing basis and for a downstream system to reconstruct the charge. Vendors SHOULD include a `summary_for_operator` string (one or two sentences, suitable for display in a buyer's operator-review UI) so reviewers across vendors see a consistent prompt. Required operator-review fields (approver role, dollar threshold for automatic approval, escalation contact) MAY be surfaced via additional keys the buyer's review surface recognizes.
+   */
+  metadata: {
+    /**
+     * One or two sentences describing the pricing construct in plain language, displayed to the buyer's operator when requesting approval. Should not repeat the top-level `description` verbatim — summarize the charge mechanic instead (e.g., 'Base $12 CPM plus $0.50 per qualifying post-view conversion, capped at $45 CPM').
+     */
+    summary_for_operator?: string;
+  };
+  /**
+   * ISO 4217 currency code. Present when the pricing resolves to a monetary charge in a specific currency.
+   */
+  currency?: string;
   ext?: ExtensionObject;
 }
 
@@ -6606,6 +7219,90 @@ export interface GetMediaBuyArtifactsRequest {
   ext?: ExtensionObject;
 }
 
+// bundled/content-standards/get-media-buy-artifacts-response.json
+/**
+ * Response containing content artifacts from a media buy for validation
+ */
+export type GetMediaBuyArtifactsResponse =
+  | {
+      /**
+       * Media buy these artifacts belong to
+       */
+      media_buy_id: string;
+      /**
+       * Delivery records with full artifact content
+       */
+      artifacts: {
+        /**
+         * Unique identifier for this delivery record
+         */
+        record_id: string;
+        /**
+         * When the delivery occurred
+         */
+        timestamp?: string;
+        /**
+         * Which package this delivery belongs to
+         */
+        package_id?: string;
+        artifact: Artifact;
+        /**
+         * ISO 3166-1 alpha-2 country code where delivery occurred
+         */
+        country?: string;
+        /**
+         * Channel type (e.g., display, video, audio, social)
+         */
+        channel?: string;
+        /**
+         * Brand information for policy evaluation. Schema TBD - placeholder for brand identifiers.
+         */
+        brand_context?: {
+          /**
+           * Brand identifier
+           */
+          brand_id?: string;
+          /**
+           * Product/SKU identifier if applicable
+           */
+          sku_id?: string;
+        };
+        /**
+         * Seller's local model verdict for this artifact
+         */
+        local_verdict?: 'pass' | 'fail' | 'unevaluated';
+      }[];
+      /**
+       * Information about artifact collection for this media buy. Sampling is configured at buy creation time — this reports what was actually collected.
+       */
+      collection_info?: {
+        /**
+         * Total deliveries in the requested time range
+         */
+        total_deliveries?: number;
+        /**
+         * Total artifacts collected (per the buy's sampling configuration)
+         */
+        total_collected?: number;
+        /**
+         * Number of artifacts in this response (may be less than total_collected due to pagination or filters)
+         */
+        returned_count?: number;
+        /**
+         * Actual collection rate achieved (total_collected / total_deliveries)
+         */
+        effective_rate?: number;
+      };
+      pagination?: PaginationResponse;
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      errors: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+
 // bundled/content-standards/list-content-standards-request.json
 /**
  * Request parameters for listing content standards configurations
@@ -6630,6 +7327,121 @@ export interface ListContentStandardsRequest {
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+
+// bundled/content-standards/list-content-standards-response.json
+/**
+ * Response payload with list of content standards configurations
+ */
+export type ListContentStandardsResponse =
+  | {
+      /**
+       * Array of content standards configurations matching the filter criteria
+       */
+      standards: ContentStandards[];
+      pagination?: PaginationResponse;
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      errors: Error[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+
+// bundled/content-standards/update-content-standards-request.json
+/**
+ * Request parameters for updating an existing content standards configuration. Creates a new version.
+ */
+export interface UpdateContentStandardsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * ID of the standards configuration to update
+   */
+  standards_id: string;
+  /**
+   * Updated scope for where this standards configuration applies
+   */
+  scope?: {
+    /**
+     * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
+     */
+    countries_all?: string[];
+    /**
+     * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
+     */
+    channels_any?: MediaChannel[];
+    /**
+     * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
+     */
+    languages_any?: string[];
+    /**
+     * Human-readable description of this scope
+     */
+    description?: string;
+  };
+  /**
+   * Registry policy IDs to use as the evaluation basis. When provided, the agent resolves policies from the registry and uses their policy text and exemplars as the evaluation criteria.
+   */
+  registry_policy_ids?: string[];
+  /**
+   * Updated bespoke policies for this content-standards configuration, using the same shape as registry entries. Replaces the existing policies array; use stable policy_ids to track policies across versions. Combines with registry_policy_ids. Bespoke policy_ids MUST be flat (no colons/slashes).
+   */
+  policies?: PolicyEntry[];
+  /**
+   * Updated training/test set to calibrate policy interpretation. Use URL references for pages to be fetched and analyzed, or full artifacts for pre-extracted content.
+   */
+  calibration_exemplars?: {
+    /**
+     * Content that passes the standards
+     */
+    pass?: (
+      | {
+          /**
+           * Indicates this is a URL reference
+           */
+          type: 'url';
+          /**
+           * Full URL to a specific page (e.g., 'https://espn.com/nba/story/_/id/12345/lakers-win')
+           */
+          value: string;
+          /**
+           * BCP 47 language tag for content at this URL
+           */
+          language?: string;
+        }
+      | Artifact
+    )[];
+    /**
+     * Content that fails the standards
+     */
+    fail?: (
+      | {
+          /**
+           * Indicates this is a URL reference
+           */
+          type: 'url';
+          /**
+           * Full URL to a specific page (e.g., 'https://news.example.com/controversial-article')
+           */
+          value: string;
+          /**
+           * BCP 47 language tag for content at this URL
+           */
+          language?: string;
+        }
+      | Artifact
+    )[];
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key: string;
 }
 
 // bundled/content-standards/update-content-standards-response.json
@@ -6663,6 +7475,70 @@ export interface UpdateContentStandardsError {
    * If scope change conflicts with another configuration, the ID of the conflicting standards
    */
   conflicting_standards_id?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// bundled/content-standards/validate-content-delivery-request.json
+/**
+ * Request parameters for batch validating delivery records against content safety policies
+ */
+export interface ValidateContentDeliveryRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Standards configuration to validate against
+   */
+  standards_id: string;
+  /**
+   * Delivery records to validate (max 10,000)
+   */
+  records: {
+    /**
+     * Unique identifier for this delivery record
+     */
+    record_id: string;
+    /**
+     * Media buy this record belongs to (when batching across multiple buys)
+     */
+    media_buy_id?: string;
+    /**
+     * When the delivery occurred
+     */
+    timestamp?: string;
+    artifact: Artifact;
+    /**
+     * ISO 3166-1 alpha-2 country code where delivery occurred
+     */
+    country?: string;
+    /**
+     * Channel type (e.g., display, video, audio, social)
+     */
+    channel?: string;
+    /**
+     * Brand information for policy evaluation. Schema TBD - placeholder for brand identifiers.
+     */
+    brand_context?: {
+      /**
+       * Brand identifier
+       */
+      brand_id?: string;
+      /**
+       * Product/SKU identifier if applicable
+       */
+      sku_id?: string;
+    };
+  }[];
+  /**
+   * Specific features to evaluate (defaults to all)
+   */
+  feature_ids?: string[];
+  /**
+   * Include passed records in results
+   */
+  include_passed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -7756,20 +8632,6 @@ export type CreativeItem =
       content: string | string[];
     };
 /**
- * A pricing option offered by a vendor agent (signals, creative, governance). Combines pricing_option_id with the pricing model fields. Pass pricing_option_id in report_usage for billing verification. All vendor discovery responses return pricing_options as an array — vendors may offer multiple options (volume tiers, context-specific rates, different models per product line).
- */
-export type VendorPricingOption = {
-  /**
-   * Opaque identifier for this pricing option, unique within the vendor agent. Pass this in report_usage to identify which pricing option was applied.
-   */
-  pricing_option_id: string;
-} & VendorPricing;
-/**
- * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), 'per_unit' (fixed price per unit of work), or 'custom' (escape hatch for models not covered by the enumerated forms — requires a description and structured metadata).
- */
-export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing | CustomPricing;
-
-/**
  * Response from creative library query with filtered results, metadata, and optional enriched data
  */
 export interface ListCreativesResponse {
@@ -7992,102 +8854,6 @@ export interface CreativeVariable {
    * Whether this variable must have a value for the creative to serve
    */
   required?: boolean;
-}
-/**
- * Fixed cost per thousand impressions
- */
-export interface CpmPricing {
-  model: 'cpm';
-  /**
-   * Cost per thousand impressions
-   */
-  cpm: number;
-  /**
-   * ISO 4217 currency code
-   */
-  currency: string;
-  ext?: ExtensionObject;
-}
-/**
- * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
- */
-export interface PercentOfMediaPricing {
-  model: 'percent_of_media';
-  /**
-   * Percentage of media spend, e.g. 15 = 15%
-   */
-  percent: number;
-  /**
-   * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
-   */
-  max_cpm?: number;
-  /**
-   * ISO 4217 currency code for the resulting charge
-   */
-  currency: string;
-  ext?: ExtensionObject;
-}
-/**
- * Fixed charge per billing period, regardless of impressions or spend. Used for licensed data bundles and audience subscriptions.
- */
-export interface FlatFeePricing {
-  model: 'flat_fee';
-  /**
-   * Fixed charge for the billing period
-   */
-  amount: number;
-  /**
-   * Billing period for the flat fee.
-   */
-  period: 'monthly' | 'quarterly' | 'annual' | 'campaign';
-  /**
-   * ISO 4217 currency code
-   */
-  currency: string;
-  ext?: ExtensionObject;
-}
-/**
- * Fixed price per unit of work. Used for creative transformation (per format), AI generation (per image, per token), and rendering (per variant). The unit field describes what is counted; unit_price is the cost per one unit.
- */
-export interface PerUnitPricing {
-  model: 'per_unit';
-  /**
-   * What is counted — e.g. 'format', 'image', 'token', 'variant', 'render', 'evaluation'.
-   */
-  unit: string;
-  /**
-   * Cost per one unit
-   */
-  unit_price: number;
-  /**
-   * ISO 4217 currency code
-   */
-  currency: string;
-  ext?: ExtensionObject;
-}
-/**
- * Escape hatch for pricing constructs that do not fit cpm, percent_of_media, flat_fee, or per_unit. Use when a vendor prices via performance kickers, tiered volume, hybrid formulas, outcome-sharing, or any other model the standard forms cannot express. Requires a human-readable description and a structured metadata object that captures the parameters a buyer needs to reason about the charge. Buyers SHOULD route custom pricing through operator review before commitment — automatic selection is not recommended.
- */
-export interface CustomPricing {
-  model: 'custom';
-  /**
-   * Human-readable description of the custom pricing model. Buyers display this to the operator when requesting approval.
-   */
-  description: string;
-  /**
-   * Structured parameters for the custom model. Keys follow lowercase_snake_case. Values may be primitives, arrays, or nested objects. Must be sufficient for a human to understand the pricing basis and for a downstream system to reconstruct the charge. Vendors SHOULD include a `summary_for_operator` string (one or two sentences, suitable for display in a buyer's operator-review UI) so reviewers across vendors see a consistent prompt. Required operator-review fields (approver role, dollar threshold for automatic approval, escalation contact) MAY be surfaced via additional keys the buyer's review surface recognizes.
-   */
-  metadata: {
-    /**
-     * One or two sentences describing the pricing construct in plain language, displayed to the buyer's operator when requesting approval. Should not repeat the top-level `description` verbatim — summarize the charge mechanic instead (e.g., 'Base $12 CPM plus $0.50 per qualifying post-view conversion, capped at $45 CPM').
-     */
-    summary_for_operator?: string;
-  };
-  /**
-   * ISO 4217 currency code. Present when the pricing resolves to a monetary charge in a specific currency.
-   */
-  currency?: string;
-  ext?: ExtensionObject;
 }
 
 // bundled/creative/preview-creative-request.json
@@ -13366,31 +14132,6 @@ export interface CollectionList {
 
 // content-standards/artifact-webhook-payload.json
 /**
- * Authentication for secured URLs
- */
-export type AssetAccess =
-  | {
-      method: 'bearer_token';
-      /**
-       * OAuth2 bearer token for Authorization header
-       */
-      token: string;
-    }
-  | {
-      method: 'service_account';
-      /**
-       * Cloud provider
-       */
-      provider: 'gcp' | 'aws';
-      /**
-       * Service account credentials
-       */
-      credentials?: {};
-    }
-  | {
-      method: 'signed_url';
-    };
-/**
  * Payload sent by sales agents to orchestrators when pushing content artifacts for governance validation. Complements get_media_buy_artifacts for push-based artifact delivery.
  */
 export interface ArtifactWebhookPayload {
@@ -13446,361 +14187,6 @@ export interface ArtifactWebhookPayload {
     total_batches?: number;
   };
   ext?: ExtensionObject;
-}
-/**
- * The content artifact
- */
-export interface Artifact {
-  /**
-   * Stable property identifier from the property catalog. Globally unique across the ecosystem.
-   */
-  property_rid: string;
-  /**
-   * Identifier for this artifact within the property. The property owner defines the scheme (e.g., 'article_12345', 'episode_42_segment_3', 'post_abc123').
-   */
-  artifact_id: string;
-  /**
-   * Identifies a specific variant of this artifact. Use for A/B tests, translations, or temporal versions. Examples: 'en', 'es-MX', 'v2', 'headline_test_b'. The combination of artifact_id + variant_id must be unique.
-   */
-  variant_id?: string;
-  format_id?: FormatID;
-  /**
-   * Optional URL for this artifact (web page, podcast feed, video page). Not all artifacts have URLs (e.g., Instagram content, podcast segments, TV scenes).
-   */
-  url?: string;
-  /**
-   * When the artifact was published (ISO 8601 format)
-   */
-  published_time?: string;
-  /**
-   * When the artifact was last modified (ISO 8601 format)
-   */
-  last_update_time?: string;
-  /**
-   * Artifact assets in document flow order - text blocks, images, video, audio
-   */
-  assets: (
-    | {
-        type: 'text';
-        /**
-         * Role of this text in the document. Use 'title' for the main artifact title, 'description' for summaries.
-         */
-        role?: 'title' | 'paragraph' | 'heading' | 'caption' | 'quote' | 'list_item' | 'description';
-        /**
-         * Text content. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
-         */
-        content: string;
-        /**
-         * MIME type indicating how to parse the content field. Default: text/plain.
-         */
-        content_format?: 'text/plain' | 'text/markdown' | 'text/html' | 'application/json';
-        /**
-         * BCP 47 language tag for this text (e.g., 'en', 'es-MX'). Useful when artifact contains mixed-language content.
-         */
-        language?: string;
-        /**
-         * Heading level (1-6), only for role=heading
-         */
-        heading_level?: number;
-        provenance?: Provenance;
-      }
-    | {
-        type: 'image';
-        /**
-         * Image URL
-         */
-        url: string;
-        access?: AssetAccess;
-        /**
-         * Alt text or image description
-         */
-        alt_text?: string;
-        /**
-         * Image caption
-         */
-        caption?: string;
-        /**
-         * Image width in pixels
-         */
-        width?: number;
-        /**
-         * Image height in pixels
-         */
-        height?: number;
-        provenance?: Provenance;
-      }
-    | {
-        type: 'video';
-        /**
-         * Video URL
-         */
-        url: string;
-        access?: AssetAccess;
-        /**
-         * Video duration in milliseconds
-         */
-        duration_ms?: number;
-        /**
-         * Video transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
-         */
-        transcript?: string;
-        /**
-         * MIME type indicating how to parse the transcript field. Default: text/plain.
-         */
-        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
-        /**
-         * How the transcript was generated
-         */
-        transcript_source?: 'original_script' | 'subtitles' | 'closed_captions' | 'dub' | 'generated';
-        /**
-         * Video thumbnail URL
-         */
-        thumbnail_url?: string;
-        provenance?: Provenance;
-      }
-    | {
-        type: 'audio';
-        /**
-         * Audio URL
-         */
-        url: string;
-        access?: AssetAccess;
-        /**
-         * Audio duration in milliseconds
-         */
-        duration_ms?: number;
-        /**
-         * Audio transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
-         */
-        transcript?: string;
-        /**
-         * MIME type indicating how to parse the transcript field. Default: text/plain.
-         */
-        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
-        /**
-         * How the transcript was generated
-         */
-        transcript_source?: 'original_script' | 'closed_captions' | 'generated';
-        provenance?: Provenance;
-      }
-  )[];
-  /**
-   * Rich metadata extracted from the artifact
-   */
-  metadata?: {
-    /**
-     * Canonical URL
-     */
-    canonical?: string;
-    /**
-     * Artifact author name
-     */
-    author?: string;
-    /**
-     * Artifact keywords
-     */
-    keywords?: string;
-    /**
-     * Open Graph protocol metadata
-     */
-    open_graph?: {};
-    /**
-     * Twitter Card metadata
-     */
-    twitter_card?: {};
-    /**
-     * JSON-LD structured data (schema.org)
-     */
-    json_ld?: {}[];
-  };
-  provenance?: Provenance;
-  /**
-   * Platform-specific identifiers for this artifact
-   */
-  identifiers?: {
-    /**
-     * Apple Podcasts ID
-     */
-    apple_podcast_id?: string;
-    /**
-     * Spotify collection ID
-     */
-    spotify_collection_id?: string;
-    /**
-     * Podcast GUID (from RSS feed)
-     */
-    podcast_guid?: string;
-    /**
-     * YouTube video ID
-     */
-    youtube_video_id?: string;
-    /**
-     * RSS feed URL
-     */
-    rss_url?: string;
-  };
-}
-
-// content-standards/content-standards.json
-/**
- * The nature of the obligation: regulation (legal requirement) or standard (best practice). Optional for inline bespoke policies — defaults to "standard".
- */
-export type PolicyCategory = 'regulation' | 'standard';
-/**
- * How governance agents treat violations. Regulations are typically "must"; standards are typically "should".
- */
-export type PolicyEnforcementLevel = 'must' | 'should' | 'may';
-/**
- * Governance sub-domains that a registry policy applies to. Used to indicate which types of governance agents can evaluate this policy.
- */
-export type GovernanceDomain = 'campaign' | 'property' | 'creative' | 'content_standards';
-/**
- * A content standards configuration defining brand safety and suitability policies. Standards are scoped by brand, geography, and channel. Multiple standards can be active simultaneously for different scopes.
- */
-export interface ContentStandards {
-  /**
-   * Unique identifier for this standards configuration
-   */
-  standards_id: string;
-  /**
-   * Human-readable name for this standards configuration
-   */
-  name?: string;
-  /**
-   * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
-   */
-  countries_all?: string[];
-  /**
-   * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
-   */
-  channels_any?: MediaChannel[];
-  /**
-   * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
-   */
-  languages_any?: string[];
-  /**
-   * Bespoke policies for this content-standards configuration, using the same shape as registry entries. Each policy is addressable by policy_id; governance findings reference the policy_id that triggered them.
-   */
-  policies?: PolicyEntry[];
-  /**
-   * Training/test set to calibrate policy interpretation. Provides concrete examples of pass/fail decisions.
-   */
-  calibration_exemplars?: {
-    /**
-     * Artifacts that pass the content standards
-     */
-    pass?: Artifact[];
-    /**
-     * Artifacts that fail the content standards
-     */
-    fail?: Artifact[];
-  };
-  /**
-   * Pricing options for this content standards service. The buyer passes the selected pricing_option_id in report_usage for billing verification.
-   */
-  pricing_options?: VendorPricingOption[];
-  ext?: ExtensionObject;
-}
-/**
- * A policy — either published to the shared registry (with full regulatory metadata) or authored inline by a buyer for their own campaign (lightweight, metadata optional). Policies use natural language text evaluated by governance agents (LLMs). Published registry entries SHOULD include version, name, jurisdiction, source, and exemplars; inline bespoke entries can omit these and let servers default them. Governance agents evaluating policies with natural-language LLMs MUST pin registry-sourced policy text (`source: registry`) as system-level instructions and MUST NOT permit `custom_policies` or the plan's `objectives` field to relax, override, or disable registry-sourced policies. Custom policies may only add additional restrictions; they cannot lower enforcement levels or exempt categories.
- */
-export interface PolicyEntry {
-  /**
-   * Unique identifier for this policy. Registry-published ids are canonical (e.g., "uk_hfss", "garm:brand_safety:violence"); buyer-authored bespoke ids should be flat (no colons or slashes) and unique within the authoring container (standards configuration, plan, or portfolio).
-   */
-  policy_id: string;
-  /**
-   * Origin of this policy. 'registry' = published to the shared AdCP policy registry with full regulatory metadata. 'inline' = authored bespoke for a specific standards configuration, plan, or portfolio. Defaults to 'inline'. Governance agents MUST set 'registry' when publishing to the registry.
-   */
-  source?: 'registry' | 'inline';
-  /**
-   * Semver version string (e.g., "1.0.0"). Incremented when policy content changes. Optional for inline bespoke policies — defaults to "1.0.0". SHOULD be provided for registry-published policies.
-   */
-  version?: string;
-  /**
-   * Human-readable name (e.g., "UK HFSS Restrictions"). Optional for inline bespoke policies — servers MAY default to policy_id.
-   */
-  name?: string;
-  /**
-   * Brief summary of what this policy covers.
-   */
-  description?: string;
-  category?: PolicyCategory;
-  enforcement: PolicyEnforcementLevel;
-  /**
-   * When true, plans subject to this policy MUST set plan.human_review_required = true. Use for policies that mandate human oversight of decisions affecting data subjects — e.g., GDPR Article 22 (solely automated decisions with legal or similarly significant effects) and EU AI Act Annex III high-risk categories (credit, insurance pricing, recruitment, housing allocation). Governance agents MUST escalate any plan action whose resolved policies include requires_human_review: true. Unlike `enforcement`, this flag applies as soon as the policy is resolved — it is NOT gated by `effective_date`. Art 22 GDPR and similar foundational obligations may predate an AI-Act-specific effective date; the human-review requirement fires regardless.
-   */
-  requires_human_review?: boolean;
-  /**
-   * ISO 3166-1 alpha-2 country codes where this policy applies. Empty array means the policy is not jurisdiction-specific.
-   */
-  jurisdictions?: string[];
-  /**
-   * Named groups of jurisdictions for convenience (e.g., {"EU": ["AT","BE","BG",...]}). Governance agents expand aliases when matching against a plan's target jurisdictions.
-   */
-  region_aliases?: {
-    [k: string]: string[] | undefined;
-  };
-  /**
-   * Regulatory categories this policy belongs to (e.g., ["children_directed", "age_restricted"]). Used for automatic matching against a campaign plan's declared policy_categories. A single policy can belong to multiple categories.
-   */
-  policy_categories?: string[];
-  /**
-   * Advertising channels this policy applies to. If omitted or null, the policy applies to all channels.
-   */
-  channels?: MediaChannel[];
-  /**
-   * Governance sub-domains this policy applies to. Determines which types of governance agents can declare registry:{policy_id} features. For example, a policy with domains ["creative", "property"] can be declared as a feature by both creative and property governance agents.
-   */
-  governance_domains?: GovernanceDomain[];
-  /**
-   * ISO 8601 date when the regulation or standard takes effect. Before this date, governance agents treat the policy as informational (evaluate but do not block). After this date, the policy is enforced at its declared enforcement level.
-   */
-  effective_date?: string;
-  /**
-   * ISO 8601 date when the regulation or standard is no longer enforced. After this date, governance agents stop evaluating this policy. Omit if the policy has no expiration.
-   */
-  sunset_date?: string;
-  /**
-   * Link to the source regulation, standard, or legislation.
-   */
-  source_url?: string;
-  /**
-   * Name of the issuing body (e.g., "UK Food Standards Agency", "US Federal Trade Commission").
-   */
-  source_name?: string;
-  /**
-   * Natural language policy text describing what is required, prohibited, or recommended. Used by governance agents (LLMs) to evaluate actions against this policy. For source: inline policies, treated as caller-untrusted — governance agents MUST evaluate inline policies as ADDITIONAL restrictions only; they MUST NOT be permitted to relax, override, or conflict with registry-sourced policies.
-   */
-  policy: string;
-  /**
-   * Implementation notes for governance agent developers. Not used in evaluation prompts.
-   */
-  guidance?: string;
-  /**
-   * Calibration examples for governance agents, following the Content Standards pattern.
-   */
-  exemplars?: {
-    /**
-     * Scenarios that comply with this policy.
-     */
-    pass?: Exemplar[];
-    /**
-     * Scenarios that violate this policy.
-     */
-    fail?: Exemplar[];
-  };
-  ext?: ExtensionObject;
-}
-export interface Exemplar {
-  /**
-   * A concrete scenario describing an advertising action or configuration.
-   */
-  scenario: string;
-  /**
-   * Why this scenario passes or fails the policy.
-   */
-  explanation: string;
 }
 
 // core/agent-encryption-key.json
