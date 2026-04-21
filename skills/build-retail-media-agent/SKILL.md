@@ -89,9 +89,27 @@ taskToolResponse({
 
 **`get_products`** — `GetProductsRequestSchema.shape`
 
+```typescript
+import { DEFAULT_REPORTING_CAPABILITIES } from '@adcp/client/server';
+
+productsResponse({
+  products: [{
+    product_id: 'sponsored-home',
+    name: 'Sponsored Products — Home',
+    description: 'On-site sponsored placements.',
+    publisher_properties: [{ publisher_domain: 'retailer.example', selection_type: 'all' }],
+    format_ids: [{ agent_url: 'https://retailer.example/mcp', id: 'display_300x250' }],
+    delivery_type: 'non_guaranteed',
+    pricing_options: [{ pricing_option_id: 'cpc-std', pricing_model: 'cpc', fixed_price: 0.75, currency: 'USD' }],
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // required — never hand-roll
+    supports_catalog: true,
+    supports_conversion_tracking: true,
+  }],
+  sandbox: true,
+})
 ```
-productsResponse({ products: Product[], sandbox: true })
-```
+
+Hand-rolling `reporting_capabilities: { ... }` is the biggest drift tax — the spec adds required fields (most recently `date_range_support`) and literals go stale. Always use `DEFAULT_REPORTING_CAPABILITIES`.
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
 

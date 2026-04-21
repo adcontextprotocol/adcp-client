@@ -368,18 +368,13 @@ productsResponse({
       fixed_price: 12.00,
       currency: 'USD',
     }],
-    reporting_capabilities: {
-      available_reporting_frequencies: ['daily'],
-      expected_delay_minutes: 240,
-      timezone: 'UTC',
-      supports_webhooks: false,
-      available_metrics: ['impressions', 'spend', 'clicks'],
-      date_range_support: 'date_range',
-    },
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // from @adcp/client/server — stays in sync with schema
   }],
   sandbox: true,        // for mock data
 })
 ```
+
+`DEFAULT_REPORTING_CAPABILITIES` is the SDK-provided default. Hand-rolling this object is an ongoing drift tax — the spec adds required fields (most recently `date_range_support`) and every copy of the literal gets stale. Reach for the constant unless you have a concrete reason to override a field.
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
 
@@ -729,9 +724,17 @@ function createAgent({ taskStore }: ServeContext) {
         // Use randomUUID (not Date.now) so ids are unguessable — a guessable
         // media_buy_id lets another buyer probe or cancel. Same applies to
         // any seller-issued id (package_id, creative_id, etc.).
+        // `currency` + `total_budget` are REQUIRED on get_media_buys response rows.
+        // The request carries them under `total_budget: { amount, currency }` (object).
+        // Flatten to top-level fields at create time — storing only `packages[].budget`
+        // and reconstructing later fails schema validation in get_media_buys/update_media_buy.
+        const currency = params.total_budget?.currency ?? 'USD';
+        const totalBudget = params.total_budget?.amount ?? (params.packages ?? []).reduce((a, p) => a + (p.budget ?? 0), 0);
         const buy = {
           media_buy_id: `mb_${randomUUID()}`,
           status: 'pending_creatives' as const,
+          currency,
+          total_budget: totalBudget,
           packages:
             params.packages?.map(pkg => ({
               package_id: `pkg_${randomUUID()}`,
@@ -760,7 +763,13 @@ function createAgent({ taskStore }: ServeContext) {
         return {
           media_buy_id: params.media_buy_id,
           status: updated.status as 'paused' | 'active',
-          affected_packages: [],
+          // `affected_packages` is `Package[]` (per `/schemas/latest/core/package.json`)
+          // — objects with at minimum `package_id`. Don't return bare strings;
+          // the update-media-buy-response oneOf discriminates against them and
+          // the error looks like `/affected_packages/0: must be object`.
+          affected_packages: (existing.packages ?? []).map((p: { package_id: string }) => ({
+            package_id: p.package_id,
+          })),
         };
       },
       getMediaBuys: async (params, ctx) => {

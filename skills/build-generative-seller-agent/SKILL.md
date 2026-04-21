@@ -113,18 +113,13 @@ productsResponse({
       fixed_price: 15.00,
       currency: 'USD',
     }],
-    reporting_capabilities: {
-      available_reporting_frequencies: ['daily'],
-      expected_delay_minutes: 240,
-      timezone: 'UTC',
-      supports_webhooks: false,
-      available_metrics: ['impressions', 'spend', 'clicks'],
-      date_range_support: 'date_range',
-    },
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // from @adcp/client/server — stays in sync with schema
   }],
   sandbox: true,
 })
 ```
+
+Import: `import { DEFAULT_REPORTING_CAPABILITIES } from '@adcp/client/server';`. Hand-rolling `reporting_capabilities: { ... }` on every product is the biggest source of schema-drift failures — the constant stays in sync with the spec.
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
 
