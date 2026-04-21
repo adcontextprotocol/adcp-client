@@ -96,11 +96,12 @@ describe('RFC 9421 verifier: positive conformance vectors (adcp#2323)', () => {
   }
 });
 
-// Vectors 021-026 exercise new verifier behaviors (duplicate Signature-Input
+// Vectors 021-027 exercise new verifier behaviors (duplicate Signature-Input
 // labels, multi-valued content-type / content-digest, unquoted string params,
-// JWK alg/crv consistency, non-ASCII @authority) that the verifier hasn't
-// been extended to cover yet. Tracked as a follow-up to PR #631; skip in the
-// conformance suite until the verifier work lands.
+// JWK alg/crv consistency, non-ASCII @authority, webhook-registration
+// authentication without signing) that the verifier hasn't been extended to
+// cover yet. Tracked as a follow-up to PR #631; skip in the conformance suite
+// until the verifier work lands.
 const NEGATIVE_VECTORS_UNIMPLEMENTED = new Set([
   '021-duplicate-signature-input-label.json',
   '022-multi-valued-content-type.json',

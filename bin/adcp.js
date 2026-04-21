@@ -627,9 +627,33 @@ function parseAgentOptions(args) {
   const dryRun = args.includes('--dry-run');
   const allowHttp = args.includes('--allow-http');
 
+  // Webhook-receiver flags are captured here solely so their values are excluded
+  // from `positionalArgs`. The authoritative parse lives in
+  // `extractWebhookReceiverOptions(args)` which validates and exits on error.
+  const webhookReceiverIdx = args.indexOf('--webhook-receiver');
+  const webhookReceiverModeValue =
+    webhookReceiverIdx !== -1 && webhookReceiverIdx + 1 < args.length && !args[webhookReceiverIdx + 1].startsWith('--')
+      ? args[webhookReceiverIdx + 1]
+      : null;
+  const webhookReceiverPortIdx = args.indexOf('--webhook-receiver-port');
+  const webhookReceiverPortValue =
+    webhookReceiverPortIdx !== -1 &&
+    webhookReceiverPortIdx + 1 < args.length &&
+    !args[webhookReceiverPortIdx + 1].startsWith('--')
+      ? args[webhookReceiverPortIdx + 1]
+      : null;
+  const webhookReceiverPublicUrlIdx = args.indexOf('--webhook-receiver-public-url');
+  const webhookReceiverPublicUrlValue =
+    webhookReceiverPublicUrlIdx !== -1 &&
+    webhookReceiverPublicUrlIdx + 1 < args.length &&
+    !args[webhookReceiverPublicUrlIdx + 1].startsWith('--')
+      ? args[webhookReceiverPublicUrlIdx + 1]
+      : null;
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
-  // space-separated value needs explicit exclusion.
+  // space-separated value needs explicit exclusion. Use explicit nullish check
+  // so falsy-but-valid values (e.g. port "0") aren't dropped from the filter.
   const flagValues = [
     authToken,
     protocolFlag,
@@ -641,8 +665,11 @@ function parseAgentOptions(args) {
     platformTypeValue,
     timeoutValue,
     multiInstanceStrategyValue,
+    webhookReceiverModeValue,
+    webhookReceiverPortValue,
+    webhookReceiverPublicUrlValue,
     fileIndex !== -1 ? file : null,
-  ].filter(Boolean);
+  ].filter(v => v !== null && v !== undefined);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
   return { authToken, protocolFlag, brief, file, jsonOutput, debug, dryRun, allowHttp, positionalArgs };
@@ -812,6 +839,20 @@ RUN OPTIONS (full assessment):
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
 
+WEBHOOK OPTIONS:
+  --webhook-receiver [MODE]       Host an ephemeral receiver so expect_webhook*
+                                  steps can grade outbound webhooks. MODE is
+                                  "loopback" (default, 127.0.0.1) or "proxy"
+                                  (operator-supplied public URL). Required for
+                                  the webhook-emission and idempotency bundles
+                                  to produce grades instead of skips.
+  --webhook-receiver-port PORT    Force a bind port (default: auto-assign).
+  --webhook-receiver-public-url URL
+                                  Public HTTPS base URL for proxy mode. Implies
+                                  --webhook-receiver proxy when used alone.
+                                  Incompatible with --multi-instance-strategy
+                                  multi-pass (receiver URL is per-pass).
+
 OPTIONS:
   --context JSON      Pass context from previous step (step only)
   --request JSON      Override sample_request for the step (step only)
@@ -829,6 +870,11 @@ EXAMPLES:
   adcp storyboard run test-mcp --tracks core,products  # filter report by track
   adcp storyboard run test-mcp sales-guaranteed        # run one specialism bundle
   adcp storyboard run test-mcp --file ./my-wip.yaml    # test a local YAML
+  adcp storyboard run test-mcp webhook-emission --webhook-receiver
+                                                       # grade outbound webhooks via loopback receiver
+  adcp storyboard run my-remote idempotency \\
+    --webhook-receiver proxy --webhook-receiver-public-url https://run.example.com
+                                                       # remote agent via tunnel (ngrok/cloudflared/ingress)
   adcp storyboard list
   adcp storyboard show media_buy_seller
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
@@ -1061,6 +1107,10 @@ async function handleStoryboardRun(args) {
     authToken: resolvedAuth,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
+  // Parse webhook-receiver flags up front so malformed values fail the run
+  // before the dry-run short-circuit, not only on a live execution.
+  const webhookReceiverOpts = extractWebhookReceiverOptions(args);
+
   const stepCount = storyboard.phases.reduce((sum, p) => sum + p.steps.length, 0);
 
   if (!jsonOutput) {
@@ -1100,6 +1150,7 @@ async function handleStoryboardRun(args) {
   const options = {
     protocol,
     ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
+    ...(webhookReceiverOpts ?? {}),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -1172,6 +1223,91 @@ async function handleStoryboardRun(args) {
  * `--url https://attacker@victim/mcp` would flow straight into the MCP
  * transport and land in attribution output.
  */
+/**
+ * Parse `--webhook-receiver [mode]`, `--webhook-receiver-port <port>`, and
+ * `--webhook-receiver-public-url <url>`. Returns a `{ webhook_receiver, contracts }`
+ * pair suitable for spreading into `runStoryboard` / `comply` options, or
+ * `null` if no webhook-receiver flag is set.
+ *
+ * The receiver's presence satisfies the `webhook_receiver_runner` test-kit
+ * contract; storyboards with `requires_contract: webhook_receiver_runner`
+ * (e.g. the `webhook-emission` and `idempotency` universals) otherwise skip.
+ *
+ * Exits with code 2 on invalid flag shape.
+ */
+function extractWebhookReceiverOptions(args) {
+  const idx = args.indexOf('--webhook-receiver');
+  const publicUrlIdx = args.indexOf('--webhook-receiver-public-url');
+  const portIdx = args.indexOf('--webhook-receiver-port');
+
+  if (idx === -1 && publicUrlIdx === -1 && portIdx === -1) return null;
+
+  let mode = 'loopback_mock';
+  if (idx !== -1) {
+    const next = args[idx + 1];
+    if (next !== undefined && !next.startsWith('--')) {
+      if (next === 'loopback') mode = 'loopback_mock';
+      else if (next === 'proxy') mode = 'proxy_url';
+      else {
+        console.error(`ERROR: --webhook-receiver value must be "loopback" or "proxy", got "${next}"`);
+        console.error('       Omit the value to use the default (loopback).');
+        process.exit(2);
+      }
+    }
+  }
+
+  let publicUrl;
+  if (publicUrlIdx !== -1) {
+    const val = args[publicUrlIdx + 1];
+    if (val === undefined || val.startsWith('--')) {
+      console.error('ERROR: --webhook-receiver-public-url requires a URL value');
+      process.exit(2);
+    }
+    publicUrl = val;
+    // --webhook-receiver-public-url without --webhook-receiver implies proxy mode.
+    // With explicit `--webhook-receiver loopback`, the combination is a user
+    // error — loopback mode ignores public_url.
+    if (idx === -1) mode = 'proxy_url';
+  }
+
+  if (mode === 'proxy_url' && !publicUrl) {
+    console.error('ERROR: --webhook-receiver proxy requires --webhook-receiver-public-url <url>');
+    process.exit(2);
+  }
+  if (mode === 'loopback_mock' && publicUrl) {
+    console.error('ERROR: --webhook-receiver-public-url is only valid with --webhook-receiver proxy');
+    process.exit(2);
+  }
+
+  let port;
+  if (portIdx !== -1) {
+    const raw = args[portIdx + 1];
+    if (raw === undefined || raw.startsWith('--')) {
+      console.error('ERROR: --webhook-receiver-port requires a port number');
+      process.exit(2);
+    }
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || String(parsed) !== raw) {
+      console.error(`ERROR: --webhook-receiver-port must be an integer, got "${raw}"`);
+      process.exit(2);
+    }
+    if (parsed < 0 || parsed > 65535) {
+      console.error(`ERROR: --webhook-receiver-port must be between 0 and 65535, got ${parsed}`);
+      process.exit(2);
+    }
+    port = parsed;
+  }
+
+  return {
+    webhook_receiver: {
+      mode,
+      ...(port !== undefined && { port }),
+      ...(publicUrl !== undefined && { public_url: publicUrl }),
+    },
+    contracts: ['webhook_receiver_runner'],
+  };
+}
+
 /**
  * Parse `--multi-instance-strategy <round-robin|multi-pass>`. Defaults to
  * `round-robin` to keep CI time predictable; operators opt into `multi-pass`
@@ -1246,6 +1382,20 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   }
 
   const strategy = extractMultiInstanceStrategy(args);
+
+  // Parse webhook-receiver flags here so the multi-pass incompatibility fails
+  // up front — not after bundle resolution, connection setup, or dispatch.
+  const webhookReceiverOpts = extractWebhookReceiverOptions(args);
+  if (webhookReceiverOpts && strategy === 'multi-pass') {
+    // The runner throws on this combination (each pass binds a fresh receiver
+    // URL; agents caching pass-1 URLs would deliver to a dead port in pass 2).
+    // Surface it as a CLI-level error so operators don't wait for dispatch.
+    console.error(
+      'ERROR: --webhook-receiver is incompatible with --multi-instance-strategy multi-pass. ' +
+        'Use round-robin (the default) when hosting a webhook receiver.'
+    );
+    process.exit(2);
+  }
 
   // Strip --url values that may have slipped past parseAgentOptions' positional filter.
   const cleanPositional = positionalArgs.filter(p => !urls.includes(p));
@@ -1423,6 +1573,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
+    ...(webhookReceiverOpts ?? {}),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -1568,6 +1719,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
       ? { type: 'bearer', token: finalAuthToken }
       : undefined;
 
+  const webhookReceiverOpts = extractWebhookReceiverOptions(rawArgs);
   const testOptions = {
     protocol,
     brief: opts.brief,
@@ -1577,6 +1729,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     agent_alias: agentArg !== agentUrl ? agentArg : undefined,
     ...(authOption && { auth: authOption }),
     ...(opts.allowHttp && { allow_http: true }),
+    ...(webhookReceiverOpts ?? {}),
   };
 
   if (!opts.jsonOutput) {
