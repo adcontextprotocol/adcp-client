@@ -147,10 +147,7 @@ function validateTokenEndpoint(tokenEndpoint: string, options: { allowPrivateIp?
   try {
     url = new URL(tokenEndpoint);
   } catch {
-    throw new ClientCredentialsExchangeError(
-      `Invalid token_endpoint URL: ${tokenEndpoint}`,
-      'malformed'
-    );
+    throw new ClientCredentialsExchangeError(`Invalid token_endpoint URL: ${tokenEndpoint}`, 'malformed');
   }
 
   if (url.username || url.password) {
@@ -230,10 +227,9 @@ export async function exchangeClientCredentials(
     // component encoding — space is `+`, and `!'()*` must be percent-
     // encoded). Most deployed servers accept raw values too, but spec
     // compliance avoids a footgun with secrets containing those chars.
-    const encoded = Buffer.from(
-      `${formUrlEncode(clientId)}:${formUrlEncode(clientSecret)}`,
-      'utf-8'
-    ).toString('base64');
+    const encoded = Buffer.from(`${formUrlEncode(clientId)}:${formUrlEncode(clientSecret)}`, 'utf-8').toString(
+      'base64'
+    );
     headers.authorization = `Basic ${encoded}`;
   } else {
     body.set('client_id', clientId);

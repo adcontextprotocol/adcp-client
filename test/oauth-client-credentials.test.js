@@ -101,16 +101,17 @@ describe('secret resolver', () => {
 
 describe('exchangeClientCredentials — happy path', () => {
   it('sends Basic Auth and parses a successful response', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(
-        JSON.stringify({
-          access_token: 'at_abc',
-          token_type: 'Bearer',
-          expires_in: 3600,
-          scope: 'adcp',
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } }
-      )
+    const fetchStub = makeFetchStub(
+      async () =>
+        new Response(
+          JSON.stringify({
+            access_token: 'at_abc',
+            token_type: 'Bearer',
+            expires_in: 3600,
+            scope: 'adcp',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
     );
 
     const tokens = await exchangeClientCredentials(
@@ -139,8 +140,8 @@ describe('exchangeClientCredentials — happy path', () => {
   });
 
   it('sends credentials in the body when auth_method is "body"', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'at_xyz' }), { status: 200 })
+    const fetchStub = makeFetchStub(
+      async () => new Response(JSON.stringify({ access_token: 'at_xyz' }), { status: 200 })
     );
 
     await exchangeClientCredentials(
@@ -161,9 +162,7 @@ describe('exchangeClientCredentials — happy path', () => {
   });
 
   it('forwards RFC 8707 resource indicator (single URI)', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'at' }), { status: 200 })
-    );
+    const fetchStub = makeFetchStub(async () => new Response(JSON.stringify({ access_token: 'at' }), { status: 200 }));
 
     await exchangeClientCredentials(
       {
@@ -180,9 +179,7 @@ describe('exchangeClientCredentials — happy path', () => {
   });
 
   it('forwards RFC 8707 resource indicator (multiple URIs)', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'at' }), { status: 200 })
-    );
+    const fetchStub = makeFetchStub(async () => new Response(JSON.stringify({ access_token: 'at' }), { status: 200 }));
 
     await exchangeClientCredentials(
       {
@@ -199,9 +196,7 @@ describe('exchangeClientCredentials — happy path', () => {
   });
 
   it('forwards audience parameter', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'at' }), { status: 200 })
-    );
+    const fetchStub = makeFetchStub(async () => new Response(JSON.stringify({ access_token: 'at' }), { status: 200 }));
 
     await exchangeClientCredentials(
       {
@@ -223,9 +218,7 @@ describe('exchangeClientCredentials — RFC 6749 §2.3.1 encoding', () => {
   // diverge. A spec-conformant server encodes its stored secret the RFC 6749
   // way, so the client must too — otherwise Basic auth silently mismatches.
   it("encodes space as '+' (not %20) per form-urlencoded spec", async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'at' }), { status: 200 })
-    );
+    const fetchStub = makeFetchStub(async () => new Response(JSON.stringify({ access_token: 'at' }), { status: 200 }));
 
     await exchangeClientCredentials(
       {
@@ -243,9 +236,7 @@ describe('exchangeClientCredentials — RFC 6749 §2.3.1 encoding', () => {
   });
 
   it("percent-encodes !'()* (which encodeURIComponent leaves alone)", async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'at' }), { status: 200 })
-    );
+    const fetchStub = makeFetchStub(async () => new Response(JSON.stringify({ access_token: 'at' }), { status: 200 }));
 
     await exchangeClientCredentials(
       {
@@ -274,18 +265,13 @@ describe('exchangeClientCredentials — endpoint validation', () => {
           },
           { fetch: fetchStub }
         ),
-      err =>
-        err instanceof ClientCredentialsExchangeError &&
-        err.kind === 'malformed' &&
-        /HTTPS/.test(err.message)
+      err => err instanceof ClientCredentialsExchangeError && err.kind === 'malformed' && /HTTPS/.test(err.message)
     );
     assert.strictEqual(fetchStub.calls.length, 0, 'must not hit the network with a plaintext endpoint');
   });
 
   it('rejects http://localhost by default (SSRF guard) but allows it when allowPrivateIp is set', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'at' }), { status: 200 })
-    );
+    const fetchStub = makeFetchStub(async () => new Response(JSON.stringify({ access_token: 'at' }), { status: 200 }));
     const creds = { token_endpoint: 'http://localhost:8080/token', client_id: 'id', client_secret: 'secret' };
 
     await assert.rejects(
@@ -315,10 +301,7 @@ describe('exchangeClientCredentials — endpoint validation', () => {
           },
           { fetch: fetchStub, allowPrivateIp: true }
         ),
-      err =>
-        err instanceof ClientCredentialsExchangeError &&
-        err.kind === 'malformed' &&
-        /userinfo/i.test(err.message)
+      err => err instanceof ClientCredentialsExchangeError && err.kind === 'malformed' && /userinfo/i.test(err.message)
     );
     assert.strictEqual(fetchStub.calls.length, 0);
   });
@@ -326,11 +309,12 @@ describe('exchangeClientCredentials — endpoint validation', () => {
 
 describe('exchangeClientCredentials — error shapes', () => {
   it('maps invalid_client to kind="oauth" with AS error code surfaced', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(
-        JSON.stringify({ error: 'invalid_client', error_description: 'Bad secret' }),
-        { status: 401, headers: { 'content-type': 'application/json' } }
-      )
+    const fetchStub = makeFetchStub(
+      async () =>
+        new Response(JSON.stringify({ error: 'invalid_client', error_description: 'Bad secret' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        })
     );
 
     await assert.rejects(
@@ -349,8 +333,8 @@ describe('exchangeClientCredentials — error shapes', () => {
   });
 
   it('maps a 200-without-access_token to kind="malformed"', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ token_type: 'Bearer' }), { status: 200 })
+    const fetchStub = makeFetchStub(
+      async () => new Response(JSON.stringify({ token_type: 'Bearer' }), { status: 200 })
     );
 
     await assert.rejects(
@@ -406,11 +390,8 @@ describe('exchangeClientCredentials — error shapes', () => {
   it('strips control characters and ANSI escapes from AS error_description', async () => {
     // Simulated compromised / hostile AS that tries to emit terminal escapes.
     const hostile = '\u001b[31mBAD\u001b[0m\r\nfake log line';
-    const fetchStub = makeFetchStub(async () =>
-      new Response(
-        JSON.stringify({ error: 'invalid_client', error_description: hostile }),
-        { status: 401 }
-      )
+    const fetchStub = makeFetchStub(
+      async () => new Response(JSON.stringify({ error: 'invalid_client', error_description: hostile }), { status: 401 })
     );
 
     let captured;
@@ -459,8 +440,8 @@ describe('ensureClientCredentialsTokens', () => {
   });
 
   it('re-exchanges when the cached token is within the expiration skew', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'fresh_at', expires_in: 3600 }), { status: 200 })
+    const fetchStub = makeFetchStub(
+      async () => new Response(JSON.stringify({ access_token: 'fresh_at', expires_in: 3600 }), { status: 200 })
     );
 
     const agent = {
@@ -487,13 +468,17 @@ describe('ensureClientCredentialsTokens', () => {
   });
 
   it('persists refreshed tokens via the storage backend', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'fresh_at', expires_in: 3600 }), { status: 200 })
+    const fetchStub = makeFetchStub(
+      async () => new Response(JSON.stringify({ access_token: 'fresh_at', expires_in: 3600 }), { status: 200 })
     );
     const saved = [];
     const storage = {
-      async loadAgent() { return undefined; },
-      async saveAgent(agent) { saved.push(JSON.parse(JSON.stringify(agent))); },
+      async loadAgent() {
+        return undefined;
+      },
+      async saveAgent(agent) {
+        saved.push(JSON.parse(JSON.stringify(agent)));
+      },
     };
 
     const agent = {
@@ -514,8 +499,8 @@ describe('ensureClientCredentialsTokens', () => {
   });
 
   it('forces re-exchange when force=true even on a warm cache', async () => {
-    const fetchStub = makeFetchStub(async () =>
-      new Response(JSON.stringify({ access_token: 'forced_at' }), { status: 200 })
+    const fetchStub = makeFetchStub(
+      async () => new Response(JSON.stringify({ access_token: 'forced_at' }), { status: 200 })
     );
 
     const agent = {
@@ -546,10 +531,7 @@ describe('ensureClientCredentialsTokens', () => {
       agent_uri: 'https://agent.example.com/mcp',
       protocol: 'mcp',
     };
-    await assert.rejects(
-      () => ensureClientCredentialsTokens(agent),
-      /no oauth_client_credentials configured/
-    );
+    await assert.rejects(() => ensureClientCredentialsTokens(agent), /no oauth_client_credentials configured/);
   });
 
   it('coalesces concurrent refreshes for the same agent into a single POST', async () => {
@@ -576,9 +558,7 @@ describe('ensureClientCredentialsTokens', () => {
     };
 
     const results = await Promise.all(
-      Array.from({ length: 10 }, () =>
-        ensureClientCredentialsTokens(agent, { fetch: fetchStub })
-      )
+      Array.from({ length: 10 }, () => ensureClientCredentialsTokens(agent, { fetch: fetchStub }))
     );
     assert.strictEqual(hits, 1, 'expected a single upstream POST across all 10 concurrent callers');
     for (const t of results) assert.strictEqual(t.access_token, 'coalesced_at');
@@ -588,10 +568,15 @@ describe('ensureClientCredentialsTokens', () => {
 describe('getAuthToken integration with client credentials', () => {
   it('returns the cached CC access_token as the bearer (not auth_token)', () => {
     const agent = {
-      id: 'a', name: 'a', agent_uri: 'https://agent.example.com/mcp', protocol: 'mcp',
+      id: 'a',
+      name: 'a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
       auth_token: 'legacy_bearer',
       oauth_client_credentials: {
-        token_endpoint: 'https://auth.example.com/token', client_id: 'id', client_secret: 'secret',
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'id',
+        client_secret: 'secret',
       },
       oauth_tokens: { access_token: 'cc_access_token', token_type: 'Bearer' },
     };
@@ -600,10 +585,15 @@ describe('getAuthToken integration with client credentials', () => {
 
   it('falls back to auth_token when no CC cached tokens exist yet', () => {
     const agent = {
-      id: 'a', name: 'a', agent_uri: 'https://agent.example.com/mcp', protocol: 'mcp',
+      id: 'a',
+      name: 'a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
       auth_token: 'legacy_bearer',
       oauth_client_credentials: {
-        token_endpoint: 'https://auth.example.com/token', client_id: 'id', client_secret: 'secret',
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'id',
+        client_secret: 'secret',
       },
     };
     assert.strictEqual(getAuthToken(agent), 'legacy_bearer');
@@ -611,7 +601,10 @@ describe('getAuthToken integration with client credentials', () => {
 
   it('does NOT surface authorization-code oauth_tokens (those go via OAuth provider path)', () => {
     const agent = {
-      id: 'a', name: 'a', agent_uri: 'https://agent.example.com/mcp', protocol: 'mcp',
+      id: 'a',
+      name: 'a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
       auth_token: 'legacy_bearer',
       oauth_tokens: { access_token: 'ac_access_token', token_type: 'Bearer' },
     };
@@ -634,10 +627,7 @@ describe('createTestClient — oauth_client_credentials auth type', () => {
       },
     });
     const agentConfig = client.getAgent();
-    assert.strictEqual(
-      agentConfig.oauth_client_credentials.token_endpoint,
-      'https://auth.example.com/token'
-    );
+    assert.strictEqual(agentConfig.oauth_client_credentials.token_endpoint, 'https://auth.example.com/token');
     assert.strictEqual(agentConfig.oauth_client_credentials.client_id, 'id');
     assert.strictEqual(agentConfig.oauth_tokens.access_token, 'seeded_at');
   });

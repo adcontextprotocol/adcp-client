@@ -40,11 +40,13 @@ async function startTokenServer() {
       state.lastRequest = { body, authorization: req.headers.authorization };
       const token = `tok_${state.issued}`;
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
-        access_token: token,
-        token_type: 'Bearer',
-        expires_in: 3600,
-      }));
+      res.end(
+        JSON.stringify({
+          access_token: token,
+          token_type: 'Bearer',
+          expires_in: 3600,
+        })
+      );
     });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

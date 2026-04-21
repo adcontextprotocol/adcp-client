@@ -56,9 +56,7 @@ export function resolveSecret(value: string): string {
   }
   const envVar = value.slice(ENV_PREFIX.length).trim();
   if (!envVar) {
-    throw new Error(
-      `Invalid OAuth credential reference '${value}': expected '$ENV:VAR_NAME' with a variable name.`
-    );
+    throw new Error(`Invalid OAuth credential reference '${value}': expected '$ENV:VAR_NAME' with a variable name.`);
   }
   const resolved = process.env[envVar];
   if (resolved === undefined) {
@@ -78,4 +76,17 @@ export function isEnvSecretReference(value: string): boolean {
 /** Build a `$ENV:VAR` reference string from an env-var name. */
 export function toEnvSecretReference(envVar: string): string {
   return `${ENV_PREFIX}${envVar}`;
+}
+
+/**
+ * Extract the env-var name from a `$ENV:VAR` reference, or `null` if the
+ * value is a literal secret. Safe to display: the env-var name is not
+ * itself sensitive (it's a well-known identifier the user chose), and this
+ * helper exists so callers printing the source of a credential can avoid
+ * handling the raw `client_secret` field value at all.
+ */
+export function extractEnvSecretName(value: string): string | null {
+  if (!value.startsWith(ENV_PREFIX)) return null;
+  const envVar = value.slice(ENV_PREFIX.length).trim();
+  return envVar || null;
 }

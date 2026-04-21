@@ -699,6 +699,7 @@ export {
   resolveSecret,
   isEnvSecretReference,
   toEnvSecretReference,
+  extractEnvSecretName,
   type ExchangeClientCredentialsOptions,
   type EnsureClientCredentialsOptions,
   type AgentOAuthClientCredentials,

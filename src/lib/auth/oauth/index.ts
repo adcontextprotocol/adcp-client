@@ -300,6 +300,7 @@ export {
   resolveSecret,
   isEnvSecretReference,
   toEnvSecretReference,
+  extractEnvSecretName,
   MissingEnvSecretError,
 } from './secret-resolver';
 

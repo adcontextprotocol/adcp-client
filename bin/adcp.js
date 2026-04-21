@@ -45,6 +45,8 @@ const {
   ClientCredentialsExchangeError,
   MissingEnvSecretError,
   toEnvSecretReference,
+  extractEnvSecretName,
+  isEnvSecretReference,
 } = require('../dist/lib/auth/oauth/index.js');
 
 // Test scenarios available
@@ -1269,12 +1271,12 @@ async function handleStoryboardRun(args) {
 
   const options = {
     protocol,
-    ...(buildResolvedAuthOption({
+    ...buildResolvedAuthOption({
       resolvedAuth,
       resolvedOauthTokens,
       resolvedOauthClient,
       resolvedOauthClientCredentials,
-    })),
+    }),
     ...(webhookReceiverOpts ?? {}),
   };
 
@@ -2337,12 +2339,12 @@ async function handleStoryboardStepCmd(args) {
     protocol,
     context,
     request,
-    ...(buildResolvedAuthOption({
+    ...buildResolvedAuthOption({
       resolvedAuth,
       resolvedOauthTokens,
       resolvedOauthClient,
       resolvedOauthClientCredentials,
-    })),
+    }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2942,7 +2944,9 @@ credential material — never sync or commit.
 
     if (!alias) {
       console.error('ERROR: --save-auth requires an alias\n');
-      console.error('Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth | --oauth-token-url ...]\n');
+      console.error(
+        'Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth | --oauth-token-url ...]\n'
+      );
       console.error('Example: adcp --save-auth myagent https://agent.example.com --auth your_token\n');
       console.error('         adcp --save-auth myagent https://oauth-server.com/mcp --oauth\n');
       console.error('         adcp --save-auth myagent https://agent.example.com \\\n');
@@ -2962,12 +2966,9 @@ credential material — never sync or commit.
     }
 
     // Validate flags - only one auth method allowed
-    const authMethods = [
-      providedAuthToken !== null,
-      noAuthFlag,
-      oauthFlag,
-      clientCredentialsRequested,
-    ].filter(Boolean).length;
+    const authMethods = [providedAuthToken !== null, noAuthFlag, oauthFlag, clientCredentialsRequested].filter(
+      Boolean
+    ).length;
     if (authMethods > 1) {
       console.error(
         'ERROR: Cannot combine auth methods — choose one of --auth, --no-auth, --oauth, or --oauth-token-url (client credentials)\n'
@@ -3011,16 +3012,15 @@ credential material — never sync or commit.
         }
         const tokenHost = parsedTokenUrl.hostname;
         const isLoopback =
-          tokenHost === 'localhost' ||
-          tokenHost === '127.0.0.1' ||
-          tokenHost === '[::1]' ||
-          tokenHost === '::1';
+          tokenHost === 'localhost' || tokenHost === '127.0.0.1' || tokenHost === '[::1]' || tokenHost === '::1';
         if (parsedTokenUrl.protocol !== 'https:' && !(parsedTokenUrl.protocol === 'http:' && isLoopback)) {
           console.error('ERROR: --oauth-token-url must be an HTTPS URL (or http://localhost for testing)\n');
           process.exit(2);
         }
         if (parsedTokenUrl.username || parsedTokenUrl.password) {
-          console.error('ERROR: --oauth-token-url must not contain user:pass@ userinfo — use --client-id / --client-secret instead\n');
+          console.error(
+            'ERROR: --oauth-token-url must not contain user:pass@ userinfo — use --client-id / --client-secret instead\n'
+          );
           process.exit(2);
         }
       }
@@ -3053,7 +3053,9 @@ credential material — never sync or commit.
       console.log(`Agent URL:     ${url}`);
       console.log(`Token URL:     ${oauthEndpoint}`);
       console.log(`Scope:         ${scope || '(none)'}`);
-      console.log(`Secret source: ${clientSecretEnv !== null ? `env var $${clientSecretEnv}` : 'literal (stored in config)'}\n`);
+      console.log(
+        `Secret source: ${clientSecretEnv !== null ? `env var $${clientSecretEnv}` : 'literal (stored in config)'}\n`
+      );
 
       let tokens;
       try {
@@ -3234,11 +3236,15 @@ credential material — never sync or commit.
         console.log(`    Auth: token configured`);
       }
       if (agent.oauth_client_credentials) {
-        const cc = agent.oauth_client_credentials;
-        const secretSrc = cc.client_secret && cc.client_secret.startsWith('$ENV:')
-          ? `env ${cc.client_secret.slice(5)}`
-          : 'literal';
-        console.log(`    OAuth: client credentials (token endpoint ${cc.token_endpoint}, secret: ${secretSrc})`);
+        const tokenEndpoint = agent.oauth_client_credentials.token_endpoint;
+        // `extractEnvSecretName` returns only the env-var name (safe to
+        // display — it's a well-known identifier chosen by the user),
+        // or null for literal secrets. Keeps `client_secret` out of the
+        // print scope entirely so CodeQL's clear-text-logging rule stays
+        // quiet on what is otherwise a non-sensitive label.
+        const envName = extractEnvSecretName(agent.oauth_client_credentials.client_secret);
+        const secretSrc = envName ? `env ${envName}` : 'literal';
+        console.log(`    OAuth: client credentials (token endpoint ${tokenEndpoint}, secret: ${secretSrc})`);
       } else if (agent.oauth_tokens) {
         const hasValid = hasValidOAuthTokens(agent);
         console.log(`    OAuth: ${hasValid ? 'valid tokens' : 'expired (use --oauth to refresh)'}`);
