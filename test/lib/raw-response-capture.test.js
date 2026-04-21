@@ -155,6 +155,45 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[2].url, url + '/three');
   });
 
+  test('redacts credential-bearing response headers', async () => {
+    const { server, url } = await startServer((req, res) => {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        authorization: 'Bearer leaked-token-abc',
+        'x-adcp-auth': 'api-key-xyz',
+        cookie: 'session=secret',
+      });
+      res.end('{}');
+    });
+    servers.push(server);
+
+    const capturingFetch = wrapFetchWithCapture(fetch);
+    const { captures } = await withRawResponseCapture(async () => {
+      await capturingFetch(url);
+    });
+    const [cap] = captures;
+    assert.equal(cap.headers.authorization, '[redacted]');
+    assert.equal(cap.headers['x-adcp-auth'], '[redacted]');
+    assert.equal(cap.headers.cookie, '[redacted]');
+    // Non-sensitive header passes through.
+    assert.equal(cap.headers['content-type'], 'application/json');
+  });
+
+  test('redacts bearer tokens echoed inside response body', async () => {
+    const { server, url } = await startServer((req, res) => {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ debug: 'received Authorization: Bearer abc.def.ghi on request' }));
+    });
+    servers.push(server);
+
+    const capturingFetch = wrapFetchWithCapture(fetch);
+    const { captures } = await withRawResponseCapture(async () => {
+      await capturingFetch(url);
+    });
+    assert.match(captures[0].body, /Bearer \[redacted\]/);
+    assert.doesNotMatch(captures[0].body, /abc\.def\.ghi/);
+  });
+
   test('capture slots do not leak across concurrent withRawResponseCapture calls', async () => {
     const { server, url } = await startServer((req, res) => {
       const id = req.url.slice(1);

@@ -12,6 +12,11 @@ import { DEFAULT_TOOLS, DEFAULT_TOOLS_WITH_UPDATES } from './types';
 import { detectSchemaVersion, hasSchemas } from './schemaLoader';
 import { runToolFuzz } from './runners';
 import { seedFixtures, type SeedWarning } from './seeder';
+import {
+  runUniformErrorInvariant,
+  toolsEligibleForUniformError,
+  type UniformErrorReport,
+} from './invariants/uniformError';
 
 const DEFAULT_MAX_FAILURES = 20;
 const DEFAULT_MAX_FAILURE_PAYLOAD_BYTES = 8192;
@@ -107,6 +112,28 @@ export async function runConformance(
     }
   }
 
+  // Uniform-error-response invariant (issue #731 / adcp spec
+  // § error-handling). Runs AFTER the main fuzz loop so normal stats are
+  // already collected; this is a discrete paired-probe pass per
+  // T2-eligible tool and adds a bounded number of extra requests (two
+  // per eligible tool). Runs regardless of fuzz outcomes — a broken
+  // response envelope elsewhere shouldn't mask a cross-tenant leak.
+  const uniformError: UniformErrorReport[] = [];
+  const proberAgent = options.authTokenCrossTenant
+    ? buildAgentClient(agentUrl, { ...options, authToken: options.authTokenCrossTenant })
+    : agent;
+  for (const tool of toolsEligibleForUniformError()) {
+    if (options.tools && !options.tools.includes(tool)) continue;
+    if (!hasSchemas(tool)) continue;
+    const report = await runUniformErrorInvariant(tool, {
+      prober: proberAgent,
+      fixtures: mergedFixtures,
+      crossTenantConfigured: !!options.authTokenCrossTenant,
+      maxBodyBytes: maxFailurePayloadBytes,
+    });
+    uniformError.push(report);
+  }
+
   const completedAt = new Date();
   return {
     agentUrl,
@@ -122,6 +149,7 @@ export async function runConformance(
     droppedFailures,
     perTool,
     failures,
+    uniformError,
     startedAt: startedAt.toISOString(),
     completedAt: completedAt.toISOString(),
     durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -152,13 +180,19 @@ function hasUsableFixtures(fixtures: ConformanceFixtures): boolean {
 }
 
 function buildAgentClient(agentUrl: string, options: RunConformanceOptions): AgentClient {
+  // Spread agentConfig FIRST so explicit keys below win. An earlier
+  // version spread agentConfig last, which silently overrode
+  // `auth_token` when a caller passed `agentConfig: { auth_token: ... }`
+  // alongside `options.authToken`. For the cross-tenant prober that
+  // meant the prober client could be built with tenant A's token
+  // while the invariant reported mode: 'cross-tenant'.
   const config: AgentConfig = {
+    ...options.agentConfig,
     id: options.agentConfig?.id ?? 'conformance-fuzzer',
     name: options.agentConfig?.name ?? 'AdCP Conformance Fuzzer',
     agent_uri: agentUrl,
     protocol: options.protocol ?? options.agentConfig?.protocol ?? 'mcp',
     auth_token: options.authToken ?? options.agentConfig?.auth_token,
-    ...options.agentConfig,
   };
   return new AgentClient(config);
 }

@@ -188,6 +188,43 @@ describe('adcp fuzz CLI', () => {
     assert.match(stdout, /update_media_buy.*update.*--auto-seed/);
   });
 
+  test('--help documents --auth-token-cross-tenant', async () => {
+    const { code, stdout } = await runCli(['--help']);
+    assert.equal(code, 0);
+    assert.match(stdout, /--auth-token-cross-tenant/);
+    assert.match(stdout, /uniform-error/);
+    assert.match(stdout, /ADCP_AUTH_TOKEN_CROSS_TENANT/);
+  });
+
+  test('--auth-token-cross-tenant missing value exits 2', async () => {
+    const { code, stderr } = await runCli([`http://localhost:${port}/mcp`, '--auth-token-cross-tenant']);
+    assert.equal(code, 2);
+    assert.match(stderr, /--auth-token-cross-tenant requires a value/);
+  });
+
+  test('clean run emits uniform-error invariant section in report', async () => {
+    const { code, stdout } = await runCli([
+      `http://localhost:${port}/mcp`,
+      '--seed',
+      '29',
+      '--tools',
+      'get_property_list',
+      '--turn-budget',
+      '1',
+      '--protocol',
+      'mcp',
+      '--format',
+      'json',
+    ]);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.ok(Array.isArray(parsed.uniformError), 'report has uniformError array');
+    const entry = parsed.uniformError.find(r => r.tool === 'get_property_list');
+    assert.ok(entry, 'entry for get_property_list');
+    // Default run is single-token → baseline mode.
+    assert.equal(entry.mode, 'baseline');
+  });
+
   test('--auto-seed surfaces seed warnings on the report', async () => {
     // The default signals agent from earlier tests has no create_* handlers,
     // so all three seeders will produce warnings. We just check the plumbing:

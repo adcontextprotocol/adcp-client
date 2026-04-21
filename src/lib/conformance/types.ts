@@ -147,6 +147,19 @@ export interface RunConformanceOptions {
    * warn-and-skip on allowlist-enforcing sellers.
    */
   seedBrand?: { domain: string; brand_id?: string };
+  /**
+   * Second auth token for the uniform-error paired probe. When set, the
+   * seeder runs as `authToken` (tenant A) and the invariant probes as
+   * `authTokenCrossTenant` (tenant B) against tenant A's seeded id —
+   * the full "exists but inaccessible vs does not exist" MUST.
+   *
+   * When absent, the invariant runs in baseline mode (two fresh UUIDs
+   * with a single token) — still catches id-echo, header divergence,
+   * and state divergence. Cannot catch cross-tenant leaks.
+   *
+   * @see skills/build-seller-agent/SKILL.md § testing preparation
+   */
+  authTokenCrossTenant?: string;
 }
 
 /**
@@ -237,6 +250,12 @@ export interface ConformanceReport {
   droppedFailures: number;
   perTool: Record<string, ConformanceToolStats>;
   failures: ConformanceFailure[];
+  /**
+   * Uniform-error invariant results per T2 tool. Empty when no eligible
+   * tool was probed (e.g., all T2 tools skipped). Each entry is the
+   * byte-equivalence check for a paired probe against one tool.
+   */
+  uniformError: ReadonlyArray<import('./invariants/uniformError').UniformErrorReport>;
   startedAt: string;
   completedAt: string;
   durationMs: number;

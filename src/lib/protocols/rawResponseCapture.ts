@@ -52,6 +52,24 @@ export async function withRawResponseCapture<T>(
 }
 
 /**
+ * Credential-bearing response header names. A misbehaving proxy that
+ * echoes caller-supplied auth headers back on the response would
+ * otherwise land bearer tokens in the capture — and downstream, in
+ * `UniformErrorReport.probes.*.headers` which is written to disk /
+ * pasted into tickets. Redact verbatim at capture time.
+ */
+const REDACTED_HEADER_NAMES: ReadonlySet<string> = new Set([
+  'authorization',
+  'proxy-authorization',
+  'cookie',
+  'set-cookie',
+  'x-adcp-auth',
+  'x-api-key',
+]);
+
+const REDACTED_PLACEHOLDER = '[redacted]';
+
+/**
  * Wrap a fetch implementation so it records raw responses when a capture
  * slot is active. Safe to install unconditionally — pass-through when no
  * slot is set.
@@ -73,7 +91,8 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
 
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
-      headers[key] = value;
+      const lower = key.toLowerCase();
+      headers[key] = REDACTED_HEADER_NAMES.has(lower) ? REDACTED_PLACEHOLDER : value;
     });
 
     slot.captures.push({
@@ -81,7 +100,7 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
       method,
       status: response.status,
       headers,
-      body,
+      body: redactBearerInBody(body),
       latencyMs,
       timestamp: new Date(startedAt).toISOString(),
       bodyTruncated,
@@ -90,6 +109,21 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
     return response;
   };
   return wrapped;
+}
+
+/**
+ * Response bodies sometimes echo request headers — e.g., a misbehaving
+ * "debug" handler that logs the Authorization header into its error
+ * payload, or a 500 HTML page that templates the request dump. Strip
+ * bearer-shaped tokens so they don't persist into captured output.
+ *
+ * Conservative: only masks the TOKEN portion of a `Bearer <token>` span
+ * (case-insensitive). Doesn't try to detect arbitrary high-entropy
+ * strings — false positives on those would damage the comparator's
+ * byte-equivalence check.
+ */
+function redactBearerInBody(body: string): string {
+  return body.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]');
 }
 
 async function readBodyBounded(

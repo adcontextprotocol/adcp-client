@@ -23,6 +23,16 @@ Options:
   --turn-budget <int>         Iterations per tool (default: 50)
   --protocol <mcp|a2a>        Transport (default: mcp)
   --auth-token <token>        Bearer token. Also reads ADCP_AUTH_TOKEN env var.
+  --auth-token-cross-tenant <token>
+                              Second auth token for the uniform-error paired
+                              probe. Seeder runs under --auth-token (tenant A);
+                              the invariant probes as this token (tenant B)
+                              against tenant A's seeded id plus a fresh UUID,
+                              asserting byte-equivalent error responses per
+                              adcp spec § error-handling.
+                              Without this flag, the invariant still runs in
+                              baseline mode (two fresh UUIDs, single token).
+                              Also reads ADCP_AUTH_TOKEN_CROSS_TENANT env var.
   --fixture <name>=<ids>      Pre-seed an ID pool. Repeatable.
                               Example: --fixture creative_ids=cre_1,cre_2
                               IDs with commas are not expressible on the CLI —
@@ -140,6 +150,10 @@ async function handleFuzzCommand(argv) {
         options.authToken = requireValue(i, '--auth-token');
         i++;
         break;
+      case '--auth-token-cross-tenant':
+        options.authTokenCrossTenant = requireValue(i, '--auth-token-cross-tenant');
+        i++;
+        break;
       case '--fixture': {
         const spec = requireValue(i, '--fixture');
         const eq = spec.indexOf('=');
@@ -208,6 +222,9 @@ async function handleFuzzCommand(argv) {
   if (!options.authToken && process.env.ADCP_AUTH_TOKEN) {
     options.authToken = process.env.ADCP_AUTH_TOKEN;
   }
+  if (!options.authTokenCrossTenant && process.env.ADCP_AUTH_TOKEN_CROSS_TENANT) {
+    options.authTokenCrossTenant = process.env.ADCP_AUTH_TOKEN_CROSS_TENANT;
+  }
 
   const report = await runConformance(agentUrl, options);
 
@@ -217,7 +234,8 @@ async function handleFuzzCommand(argv) {
     printHumanReport(report);
   }
 
-  process.exit(report.totalFailures > 0 ? 1 : 0);
+  const uniformErrorFails = (report.uniformError ?? []).filter(r => r.verdict === 'fail').length;
+  process.exit(report.totalFailures > 0 || uniformErrorFails > 0 ? 1 : 0);
 }
 
 function argError(msg) {
@@ -293,6 +311,29 @@ function printHumanReport(report) {
         `  Note: ${tier2Without.length} Tier-2 tool(s) rejected all runs (no fixtures): ${tier2Without.join(', ')}`
       );
       out.push(`  To exercise the accepted path, pass --fixture <pool>=<ids> (see \`adcp fuzz --help\`).`);
+    }
+  }
+
+  const uniformReports = report.uniformError ?? [];
+  if (uniformReports.length > 0) {
+    out.push('');
+    out.push('Uniform error response invariant (spec § error-handling):');
+    for (const r of uniformReports) {
+      const modeLabel = r.mode === 'cross-tenant' ? 'cross-tenant' : 'baseline';
+      if (r.verdict === 'skipped') {
+        out.push(`  ${r.tool.padEnd(maxTool)}  SKIP   (${modeLabel}) ${r.skipReason ?? ''}`);
+      } else if (r.verdict === 'pass') {
+        out.push(`  ${r.tool.padEnd(maxTool)}  PASS   (${modeLabel})`);
+      } else {
+        out.push(`  ${r.tool.padEnd(maxTool)}  FAIL   (${modeLabel})`);
+        for (const d of r.differences ?? []) out.push(`    · ${d}`);
+      }
+    }
+    const baselineOnly = uniformReports.every(r => r.mode !== 'cross-tenant');
+    if (baselineOnly) {
+      out.push('');
+      out.push('  Baseline mode only. Pass --auth-token-cross-tenant <token> with a second tenant to');
+      out.push('  exercise the full cross-tenant MUST (exists-but-inaccessible vs does-not-exist).');
     }
   }
 
