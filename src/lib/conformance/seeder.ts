@@ -369,6 +369,10 @@ function pickSimpleFormat(formats: FormatDef[]): FormatDef | null {
   for (const f of formats) {
     if (!f?.format_id?.agent_url || !f.format_id.id) continue;
     const required = (f.assets ?? []).filter(a => a?.required === true && a.item_type === 'individual');
+    // Skip formats with zero required assets — sellers typically reject a
+    // creative with an empty assets dict, so picking one would just
+    // trade "no format available" for "creative rejected" downstream.
+    if (required.length === 0) continue;
     if (required.every(a => ASSET_PLACEHOLDER[a.asset_type as keyof typeof ASSET_PLACEHOLDER])) return f;
   }
   return null;

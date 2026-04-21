@@ -39,10 +39,12 @@ const STACK_TRACE_REGEXES: readonly RegExp[] = [
   /\.go:\d+ \+0x[0-9a-f]+/,
   // PHP: `#7 /var/www/foo.php(42): Bar->baz()` — numbered frame with file:line
   /#\d+ [^\s]+\.php\(\d+\):/,
-  // JVM: `at com.foo.Bar.method(Bar.java:42)` — fully-qualified method with
-  // source:line. Package names can include nested dots and $ for inner
-  // classes; file is usually .java/.kt/.scala.
-  /at [\w$.]+\.[\w$]+\([\w$]+\.(?:java|kt|kts|scala|groovy):\d+\)/,
+  // JVM: `\n\tat com.foo.Bar.method(Bar.java:42)` — fully-qualified
+  // method with source:line. Anchored to whitespace/newline so an
+  // echoed Javadoc reference in prose (`"at com.foo.Bar(Bar.java:42)"`)
+  // doesn't trigger the detector — real stack frames sit on their own
+  // indented line.
+  /(?:\\n\s*|^\s+|\n\s+)at [\w$.]+\.[\w$]+\([\w$]+\.(?:java|kt|kts|scala|groovy):\d+\)/,
   // .NET: `at Foo.Bar.Baz() in /path/to/X.cs:line 42` — method invocation
   // followed by ` in ` and a file:line marker. The method-name charset
   // includes parens/brackets for generic and overloaded signatures.

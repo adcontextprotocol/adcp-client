@@ -37,20 +37,25 @@ describe('conformance: schemaToArbitrary', () => {
     'get_creative_features',
   ]);
 
+  // Threshold splits by whether the tool's request schema permits extras.
+  // Tools with `additionalProperties: true` at the root are subject to the
+  // ~15% unknown-field injector; a 0.9 floor is too tight. Tools with
+  // `additionalProperties: false` don't get injected and keep the 0.9
+  // floor — a regression in those would surface without the permissive
+  // tools masking it.
+  const STRICT_SCHEMA = new Set(['list_property_lists']);
+
   for (const tool of STATELESS_TIER_TOOLS) {
     if (!RELIABLE.has(tool)) continue;
-    // Threshold was 0.9 pre-Stage-4. The additionalProperties injector
-    // trades ~10-15pp validity for unknown-field-tolerance coverage on
-    // tools whose schemas allow extras — a deliberate shift. 0.80 is
-    // still a meaningful regression floor.
-    test(`${tool}: ≥80% of generated samples are schema-valid`, () => {
+    const floor = STRICT_SCHEMA.has(tool) ? 0.9 : 0.8;
+    test(`${tool}: ≥${(floor * 100).toFixed(0)}% of generated samples are schema-valid`, () => {
       const schema = loadRequestSchema(tool);
       const validate = makeAjv().compile(schema);
       const arb = schemaToArbitrary(schema);
       const samples = fc.sample(arb, { numRuns: 100, seed: 42 });
       const invalid = samples.filter(s => !validate(s));
       const validity = (samples.length - invalid.length) / samples.length;
-      assert.ok(validity >= 0.8, `${tool}: validity ${validity.toFixed(2)} below 0.8`);
+      assert.ok(validity >= floor, `${tool}: validity ${validity.toFixed(2)} below ${floor}`);
     });
   }
 
