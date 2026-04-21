@@ -635,6 +635,94 @@ describe('validateRefsResolve', () => {
     assert.deepStrictEqual(demoted.ref, { agent_url: AGENT_URL, id: 'on_page_2' });
   });
 
+  // #718: unresolved_hidden_by_pagination meta-observation
+  // When target_paginated AND unresolved_with_pagination co-occur, emit a
+  // neutral structural flag so graders can detect sellers indefinitely
+  // returning `has_more: true` to hide refs they can't service. Pass/fail
+  // semantics are preserved — graders interpret the flag.
+
+  it('emits unresolved_hidden_by_pagination when paginated target has unresolved refs', () => {
+    const context = {
+      products: [
+        {
+          format_ids: [
+            { agent_url: AGENT_URL, id: 'page_1' },
+            { agent_url: AGENT_URL, id: 'never_returned' },
+          ],
+        },
+      ],
+    };
+    const taskResult = {
+      success: true,
+      data: {
+        formats: [{ format_id: { agent_url: AGENT_URL, id: 'page_1' } }],
+        pagination: { has_more: true, cursor: 'next' },
+      },
+    };
+    const [result] = runOne(refsResolveCheck(), taskResult, context);
+    const suspected = (result.observations ?? []).find(o => o.kind === 'unresolved_hidden_by_pagination');
+    assert.ok(suspected, 'expected unresolved_hidden_by_pagination meta-observation');
+    assert.strictEqual(suspected.unresolved_count, 1);
+    assert.strictEqual(result.passed, true, 'check must still pass — grader flag is independent of passed');
+  });
+
+  it('does NOT emit unresolved_hidden_by_pagination when paginated target resolves all refs', () => {
+    // target_paginated still fires, but without unresolved refs there's no
+    // structural smell to flag.
+    const context = {
+      products: [{ format_ids: [{ agent_url: AGENT_URL, id: 'a' }] }],
+    };
+    const taskResult = {
+      success: true,
+      data: {
+        formats: [{ format_id: { agent_url: AGENT_URL, id: 'a' } }],
+        pagination: { has_more: true, cursor: 'next' },
+      },
+    };
+    const [result] = runOne(refsResolveCheck(), taskResult, context);
+    const suspected = (result.observations ?? []).find(o => o.kind === 'unresolved_hidden_by_pagination');
+    assert.strictEqual(suspected, undefined);
+    const paginated = (result.observations ?? []).find(o => o.kind === 'target_paginated');
+    assert.ok(paginated, 'target_paginated still fires when there are pages remaining');
+  });
+
+  it('does NOT emit unresolved_hidden_by_pagination when target is not paginated', () => {
+    // Even with unresolved refs, a non-paginated target fails the check
+    // normally; the flag only fires on the pagination co-occurrence.
+    const context = {
+      products: [{ format_ids: [{ agent_url: AGENT_URL, id: 'missing' }] }],
+    };
+    const taskResult = {
+      success: true,
+      data: { formats: [], pagination: { has_more: false } },
+    };
+    const [result] = runOne(refsResolveCheck(), taskResult, context);
+    const suspected = (result.observations ?? []).find(o => o.kind === 'unresolved_hidden_by_pagination');
+    assert.strictEqual(suspected, undefined);
+  });
+
+  it('unresolved_count reports deduped refs, not raw occurrences', () => {
+    // Same missing ref repeated across source entries dedups to one.
+    // Pins the contract that unresolved_count matches the per-ref
+    // unresolved_with_pagination observation count.
+    const context = {
+      products: [
+        { format_ids: [{ agent_url: AGENT_URL, id: 'missing_x' }] },
+        { format_ids: [{ agent_url: AGENT_URL, id: 'missing_x' }] },
+        { format_ids: [{ agent_url: AGENT_URL, id: 'missing_y' }] },
+      ],
+    };
+    const taskResult = {
+      success: true,
+      data: { formats: [], pagination: { has_more: true, cursor: 'next' } },
+    };
+    const [result] = runOne(refsResolveCheck(), taskResult, context);
+    const suspected = (result.observations ?? []).find(o => o.kind === 'unresolved_hidden_by_pagination');
+    assert.strictEqual(suspected.unresolved_count, 2, 'duplicate refs should count once');
+    const perRef = (result.observations ?? []).filter(o => o.kind === 'unresolved_with_pagination');
+    assert.strictEqual(perRef.length, 2, 'unresolved_count must match per-ref observation count');
+  });
+
   it('does NOT check pagination when target.from is context', () => {
     // Pagination only applies to current_step reads. context targets are
     // aggregated from prior steps and are treated as complete.
