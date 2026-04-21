@@ -949,6 +949,7 @@ async function executeStep(
       ...(effectiveStep.response_schema_ref && { responseSchemaRef: effectiveStep.response_schema_ref }),
       request: requestRecord,
       ...(responseRecord && { response: responseRecord }),
+      storyboardContext: context,
     };
     validations = runValidations(resolvedValidations, vctx);
   }
@@ -1080,6 +1081,7 @@ async function executeProbeStep(
     contributions: runState.contributions,
     request: requestRecord,
     ...(responseRecord && { response: responseRecord }),
+    storyboardContext: context,
   };
   const validations = step.validations?.length ? runValidations(step.validations, vctx) : [];
   const allValidationsPassed = validations.every(v => v.passed);

@@ -218,7 +218,32 @@ export type StoryboardValidationCheck =
   | 'on_401_require_header'
   // Cross-cutting
   | 'resource_equals_agent_url'
-  | 'any_of';
+  | 'any_of'
+  // Cross-step checks
+  | 'refs_resolve';
+
+/**
+ * Set of references for `refs_resolve`. `from` picks the root object —
+ * `current_step` reads the step's task-result `data`; `context` reads the
+ * accumulated `StoryboardContext`. `path` supports `[*]` wildcard segments
+ * that flatten into the aggregated result (so `products[*].format_ids[*]`
+ * walks every product and flattens every `format_ids` array).
+ */
+export interface RefsResolveSet {
+  from: 'current_step' | 'context';
+  path: string;
+}
+
+/**
+ * Scope filter for `refs_resolve`. Only source refs whose `key` equals
+ * (after `$agent_url` substitution + `normalizeAgentUrl` normalization)
+ * are in scope. Out-of-scope refs are graded by `on_out_of_scope`.
+ */
+export interface RefsResolveScope {
+  key: string;
+  /** String to compare against. `$agent_url` expands to the runner target URL. */
+  equals: string;
+}
 
 export interface StoryboardValidation {
   check: StoryboardValidationCheck;
@@ -229,6 +254,22 @@ export interface StoryboardValidation {
   /** Accepted values for list-match checks (passes if actual matches any). */
   allowed_values?: unknown[];
   description: string;
+  // ─── refs_resolve fields ───────────────────────────────────
+  /** Source refs (the refs being checked). */
+  source?: RefsResolveSet;
+  /** Target refs (the set the source refs must resolve into). */
+  target?: RefsResolveSet;
+  /** Keys to compare between each source ref and each target ref. */
+  match_keys?: string[];
+  /** Only enforce integrity for refs matching this scope. */
+  scope?: RefsResolveScope;
+  /**
+   * How to grade source refs that fall outside `scope`.
+   *  - `warn` (default) — attach observations, pass the check
+   *  - `ignore` — silent, pass the check
+   *  - `fail` — treat as missing
+   */
+  on_out_of_scope?: 'warn' | 'ignore' | 'fail';
 }
 
 // ────────────────────────────────────────────────────────────
@@ -627,6 +668,12 @@ export interface ValidationResult {
   response?: RunnerResponseRecord;
   /** Optional remediation hint. */
   remediation?: string;
+  /**
+   * Non-fatal notes emitted by the check — e.g. `refs_resolve` records the
+   * out-of-scope refs it skipped when `on_out_of_scope: warn`. Present only
+   * when the check has something to report; absent otherwise.
+   */
+  observations?: unknown[];
 }
 
 export interface StoryboardStepPreview {
