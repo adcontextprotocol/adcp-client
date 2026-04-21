@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-20
+> Generated at: 2026-04-21
 > Library: @adcp/client v5.7.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -593,7 +593,7 @@ Flow: `get_adcp_capabilities → sync_plans → check_governance → create_medi
 ### Media Buy
 
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → list_creative_formats → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
 **Seller creates buy when governance approves** — Verifies that the seller creates a media buy when governance approves the transaction.
 Flow: `sync_plans → sync_accounts → sync_governance → get_products → create_media_buy`
