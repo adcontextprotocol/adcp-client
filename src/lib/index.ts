@@ -947,6 +947,48 @@ export function createAdCPClientFromEnv(): ADCPMultiAgentClient {
   return ADCPMultiAgentClient.fromEnv();
 }
 
+// ====== SUBSTITUTION OBSERVER / ENCODER ======
+// Primitives backing the `substitution-observer-runner` test-kit contract.
+// Runners (conformance graders) import the observer side; sales/retail-
+// media agents implementing the #2620 catalog-item macro encoding rule
+// import `SubstitutionEncoder`. Re-exported here for discoverability;
+// the full surface is also available via `@adcp/client/substitution`.
+export {
+  SubstitutionObserver,
+  SubstitutionEncoder,
+  PreviewFetchError,
+  MacroInRawValueError,
+  CATALOG_MACRO_VECTORS,
+  getCatalogMacroVector,
+  extractTrackerUrls,
+  matchBindings,
+  assertRfc3986Safe,
+  assertUnreservedOnly,
+  assertNoNestedExpansion,
+  assertSchemePreserved,
+  DEFAULT_MACRO_PROHIBITED_PATTERN,
+  enforceSsrfPolicy,
+  enforceSsrfPolicyResolved,
+  DEFAULT_SSRF_POLICY,
+  encodeUnreserved,
+  equalUnderHexCasePolicy,
+  isUnreservedOnly,
+  divergenceOffset,
+} from './substitution';
+export type {
+  ObserverFetchOptions,
+  ObserverDispatcher,
+  CatalogMacroVectorName,
+  AssertionOptions as SubstitutionAssertionOptions,
+  AssertionResult as SubstitutionAssertionResult,
+  BindingMatch,
+  CatalogBinding,
+  CatalogMacroVector,
+  PolicyResult as SubstitutionPolicyResult,
+  SsrfPolicy,
+  TrackerUrlRecord,
+} from './substitution';
+
 // ====== TEST HELPERS ======
 // Re-export test helpers for convenience (also available via @adcp/client/testing)
 export {
