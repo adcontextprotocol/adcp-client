@@ -62,14 +62,18 @@ export {
   toMcpResponse,
   TOOL_INPUT_SHAPE,
   CONTROLLER_SCENARIOS,
+  SEED_SCENARIOS,
   SESSION_ENTRY_CAP,
   enforceMapCap,
+  createSeedFixtureCache,
 } from './test-controller';
 export type {
   TestControllerStore,
   TestControllerStoreFactory,
   TestControllerStoreOrFactory,
   ControllerScenario,
+  SeedScenario,
+  SeedFixtureCache,
 } from './test-controller';
 
 export { serve } from './serve';

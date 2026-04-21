@@ -1,6 +1,13 @@
 /**
  * Server-side comply_test_controller implementation.
  *
+ * Most new code should use {@link createComplyController} from
+ * `@adcp/client/testing` — it wraps this module with a domain-grouped
+ * (`seed` / `force` / `simulate`) adapter surface, typed params, sandbox
+ * gating, and built-in seed idempotency. The functions below remain
+ * supported for existing integrations and for custom wrappers that need
+ * access to the underlying request handler / MCP envelope helpers.
+ *
  * Sellers typically call `registerTestController(server, store)` to add the
  * `comply_test_controller` tool to their MCP server. The TestControllerStore
  * interface lets sellers wire up their own state management while the SDK
@@ -102,16 +109,19 @@ import { toStructuredContent } from './responses';
 // Scenario names
 // ────────────────────────────────────────────────────────────
 
-/** Scenario names the controller can support (derived from generated schema). */
+/** Scenario names advertised via `list_scenarios` (force_* and simulate_*).
+ * Seed scenarios are NOT advertised — the spec treats them as universal
+ * request-time capabilities, not a discoverable subset. */
 export type ControllerScenario = ListScenariosSuccess['scenarios'][number];
 
+/** Scenario names accepted in `scenario` requests but not advertised via
+ * `list_scenarios`. Sellers opt in by implementing the matching store method. */
+export type SeedScenario = 'seed_product' | 'seed_pricing_option' | 'seed_creative' | 'seed_plan' | 'seed_media_buy';
+
 /**
- * Scenario name constants. Use in place of string literals for type-safe
- * dispatch in custom wrappers, tests, and factory `scenarios` declarations.
- *
- * Adding a scenario to the generated `ListScenariosSuccess` schema requires
- * adding a matching entry here — the `ExhaustiveScenarioCheck` type below
- * breaks the build if this map falls out of sync with the protocol.
+ * Scenario name constants for force_* and simulate_* (the advertised set).
+ * Use in place of string literals for type-safe dispatch in custom wrappers,
+ * tests, and factory `scenarios` declarations.
  *
  * ```ts
  * if (input.scenario === CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS) { ... }
@@ -125,6 +135,19 @@ export const CONTROLLER_SCENARIOS = {
   SIMULATE_DELIVERY: 'simulate_delivery',
   SIMULATE_BUDGET_SPEND: 'simulate_budget_spend',
 } as const satisfies Record<string, ControllerScenario>;
+
+/**
+ * Seed scenario name constants. Used by seed dispatch and the
+ * {@link createComplyController} domain-grouped façade. Seeds are not
+ * advertised via `list_scenarios`.
+ */
+export const SEED_SCENARIOS = {
+  SEED_PRODUCT: 'seed_product',
+  SEED_PRICING_OPTION: 'seed_pricing_option',
+  SEED_CREATIVE: 'seed_creative',
+  SEED_PLAN: 'seed_plan',
+  SEED_MEDIA_BUY: 'seed_media_buy',
+} as const satisfies Record<string, SeedScenario>;
 
 /**
  * Build-time check: every scenario in the generated union must appear in
@@ -191,6 +214,25 @@ export interface TestControllerStore {
     media_buy_id?: string;
     spend_percentage: number;
   }): Promise<SimulationSuccess>;
+
+  /** Seed a product fixture. Returns when the fixture is persisted. */
+  seedProduct?(productId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /** Seed a pricing option fixture (scoped to a product). */
+  seedPricingOption?(
+    productId: string,
+    pricingOptionId: string,
+    fixture: Record<string, unknown> | undefined
+  ): Promise<void>;
+
+  /** Seed a creative fixture. */
+  seedCreative?(creativeId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /** Seed a plan fixture. */
+  seedPlan?(planId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /** Seed a media-buy fixture. */
+  seedMediaBuy?(mediaBuyId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
 }
 
 /**
@@ -341,6 +383,202 @@ function controllerError(
   };
 }
 
+// ────────────────────────────────────────────────────────────
+// Seed fixture idempotency
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Per-controller cache for seed-fixture equivalence checks. The handler uses
+ * it to enforce the spec-level rule that re-seeding with the same ID and an
+ * equivalent fixture yields `previous_state: "existing"`, while a divergent
+ * fixture returns `INVALID_PARAMS`.
+ *
+ * Passed explicitly to {@link handleTestControllerRequest} so custom wrappers
+ * can scope the cache to a session, tenant, or test run. Keys are
+ * scenario-scoped (`seed_creative:cr-1`) to avoid cross-kind collisions.
+ */
+export interface SeedFixtureCache {
+  get(key: string): Record<string, unknown> | undefined;
+  set(key: string, fixture: Record<string, unknown>): void;
+  has(key: string): boolean;
+}
+
+/** Build an in-memory {@link SeedFixtureCache}. Capped at {@link SESSION_ENTRY_CAP}
+ * net-new keys to bound memory from a sandbox-authed caller that keeps seeding
+ * fresh IDs. Existing keys are always writable so re-seeds continue to work at
+ * the cap. Raise the cap explicitly for high-volume test runs. */
+export function createSeedFixtureCache(cap: number = SESSION_ENTRY_CAP): SeedFixtureCache {
+  const map = new Map<string, Record<string, unknown>>();
+  return {
+    get: k => map.get(k),
+    set: (k, v) => {
+      if (!map.has(k) && map.size >= cap) {
+        throw new TestControllerError(
+          'INVALID_STATE',
+          `Seed fixture cache full (limit ${cap}). Clear the session or reuse an existing id.`
+        );
+      }
+      map.set(k, v);
+    },
+    has: k => map.has(k),
+  };
+}
+
+/** Canonical JSON for equivalence checks. Sorts object keys recursively so
+ * `{a:1,b:2}` matches `{b:2,a:1}`. Arrays remain order-sensitive. Uses a
+ * seen-set to short-circuit circular references rather than stack-overflowing. */
+function canonicalJson(value: unknown, seen: WeakSet<object> = new WeakSet()): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (seen.has(value as object)) return '"__cycle__"';
+  seen.add(value as object);
+  if (Array.isArray(value)) return `[${value.map(v => canonicalJson(v, seen)).join(',')}]`;
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map(k => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k], seen)}`);
+  return `{${entries.join(',')}}`;
+}
+
+function fixturesEquivalent(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  try {
+    return canonicalJson(a) === canonicalJson(b);
+  } catch {
+    // BigInt, symbols, or other non-JSON-safe values — treat as divergent so
+    // the caller gets a clear INVALID_PARAMS instead of an INTERNAL_ERROR.
+    return false;
+  }
+}
+
+/** Dispatch a seed scenario through the correct adapter method, honoring the
+ * spec idempotency rules when a {@link SeedFixtureCache} is provided. */
+async function dispatchSeed(
+  store: TestControllerStore,
+  scenario: SeedScenario,
+  params: Record<string, unknown> | undefined,
+  cache: SeedFixtureCache | undefined
+): Promise<ComplyTestControllerResponse> {
+  // Validate fixture is a plain object (not null, array, or primitive) before
+  // casting — the adapter signature promises Record<string, unknown>.
+  const rawFixture = params?.fixture;
+  if (
+    rawFixture !== undefined &&
+    (typeof rawFixture !== 'object' || Array.isArray(rawFixture) || rawFixture === null)
+  ) {
+    return controllerError(
+      'INVALID_PARAMS',
+      `${scenario} requires params.fixture to be an object (got ${Array.isArray(rawFixture) ? 'array' : typeof rawFixture})`
+    );
+  }
+  const fixture = (rawFixture as Record<string, unknown> | undefined) ?? {};
+  // Reject keys that can pollute prototypes when adapters spread the fixture
+  // into plain objects. Checked only at the top level — nested uses
+  // `Object.hasOwn` or similar in the adapter's own data layer.
+  for (const key of Object.keys(fixture)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      return controllerError(
+        'INVALID_PARAMS',
+        `${scenario} fixture key ${JSON.stringify(key)} is reserved and rejected to prevent prototype pollution`
+      );
+    }
+  }
+
+  // Route to adapter + pick a cache key unique per (kind, id).
+  type SeedDispatch = { key: string; invoke: () => Promise<void> };
+  let dispatch: SeedDispatch | null = null;
+  let missingParam: string | null = null;
+
+  switch (scenario) {
+    case SEED_SCENARIOS.SEED_PRODUCT: {
+      if (!params?.product_id) {
+        missingParam = 'seed_product requires params.product_id';
+        break;
+      }
+      if (!store.seedProduct) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const productId = params.product_id as string;
+      dispatch = {
+        key: `seed_product:${productId}`,
+        invoke: () => store.seedProduct!(productId, fixture),
+      };
+      break;
+    }
+    case SEED_SCENARIOS.SEED_PRICING_OPTION: {
+      if (!params?.product_id || !params?.pricing_option_id) {
+        missingParam = 'seed_pricing_option requires params.product_id and params.pricing_option_id';
+        break;
+      }
+      if (!store.seedPricingOption) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const productId = params.product_id as string;
+      const pricingOptionId = params.pricing_option_id as string;
+      dispatch = {
+        key: `seed_pricing_option:${productId}:${pricingOptionId}`,
+        invoke: () => store.seedPricingOption!(productId, pricingOptionId, fixture),
+      };
+      break;
+    }
+    case SEED_SCENARIOS.SEED_CREATIVE: {
+      if (!params?.creative_id) {
+        missingParam = 'seed_creative requires params.creative_id';
+        break;
+      }
+      if (!store.seedCreative) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const creativeId = params.creative_id as string;
+      dispatch = {
+        key: `seed_creative:${creativeId}`,
+        invoke: () => store.seedCreative!(creativeId, fixture),
+      };
+      break;
+    }
+    case SEED_SCENARIOS.SEED_PLAN: {
+      if (!params?.plan_id) {
+        missingParam = 'seed_plan requires params.plan_id';
+        break;
+      }
+      if (!store.seedPlan) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const planId = params.plan_id as string;
+      dispatch = {
+        key: `seed_plan:${planId}`,
+        invoke: () => store.seedPlan!(planId, fixture),
+      };
+      break;
+    }
+    case SEED_SCENARIOS.SEED_MEDIA_BUY: {
+      if (!params?.media_buy_id) {
+        missingParam = 'seed_media_buy requires params.media_buy_id';
+        break;
+      }
+      if (!store.seedMediaBuy) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const mediaBuyId = params.media_buy_id as string;
+      dispatch = {
+        key: `seed_media_buy:${mediaBuyId}`,
+        invoke: () => store.seedMediaBuy!(mediaBuyId, fixture),
+      };
+      break;
+    }
+  }
+
+  if (missingParam) return controllerError('INVALID_PARAMS', missingParam);
+  if (!dispatch) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+
+  // Spec idempotency: same ID + equivalent fixture = existing; divergent = INVALID_PARAMS.
+  // We also handle caches where has() can race with get() (TTL/LRU eviction) —
+  // a missing prior entry is treated as a fresh seed rather than a crash.
+  const prior = cache?.has(dispatch.key) ? cache.get(dispatch.key) : undefined;
+  if (prior !== undefined) {
+    if (!fixturesEquivalent(prior, fixture)) {
+      return controllerError(
+        'INVALID_PARAMS',
+        `Fixture for ${sanitizeLabel(dispatch.key)} diverges from the previously seeded fixture. ` +
+          'Seed replays must carry an equivalent fixture or choose a new id.'
+      );
+    }
+    await dispatch.invoke();
+    return { success: true, previous_state: 'existing', current_state: 'existing' };
+  }
+
+  await dispatch.invoke();
+  cache?.set(dispatch.key, fixture);
+  return { success: true, previous_state: 'none', current_state: 'seeded' };
+}
+
 /**
  * Handle a `comply_test_controller` request. Exported so custom MCP wrappers
  * can compose it with their own middleware (AsyncLocalStorage, sandbox gating,
@@ -353,7 +591,8 @@ function controllerError(
  */
 export async function handleTestControllerRequest(
   storeOrFactory: TestControllerStoreOrFactory,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  options?: { seedCache?: SeedFixtureCache }
 ): Promise<ComplyTestControllerResponse> {
   const scenario = input.scenario as string | undefined;
   if (!scenario) {
@@ -494,6 +733,13 @@ export async function handleTestControllerRequest(
         });
       }
 
+      case SEED_SCENARIOS.SEED_PRODUCT:
+      case SEED_SCENARIOS.SEED_PRICING_OPTION:
+      case SEED_SCENARIOS.SEED_CREATIVE:
+      case SEED_SCENARIOS.SEED_PLAN:
+      case SEED_SCENARIOS.SEED_MEDIA_BUY:
+        return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache);
+
       default:
         return controllerError('UNKNOWN_SCENARIO', 'Unrecognized scenario name');
     }
@@ -512,7 +758,12 @@ export async function handleTestControllerRequest(
 function summarize(data: ComplyTestControllerResponse): string {
   if (data.success === false) return `Controller error: ${data.error}`;
   if ('scenarios' in data) return `Supported scenarios: ${data.scenarios.join(', ')}`;
-  if ('previous_state' in data) return `Transitioned from ${data.previous_state} to ${data.current_state}`;
+  if ('previous_state' in data) {
+    if (data.previous_state === 'none' && data.current_state === 'seeded') return 'Fixture seeded';
+    if (data.previous_state === 'existing' && data.current_state === 'existing')
+      return 'Fixture re-seeded (equivalent)';
+    return `Transitioned from ${data.previous_state} to ${data.current_state}`;
+  }
   return `Simulation complete: ${JSON.stringify(data.simulated)}`;
 }
 
@@ -583,15 +834,22 @@ export const TOOL_INPUT_SHAPE = {
  */
 export function registerTestController(
   server: AdcpServer | McpServer,
-  storeOrFactory: TestControllerStoreOrFactory
+  storeOrFactory: TestControllerStoreOrFactory,
+  options?: { seedCache?: SeedFixtureCache }
 ): void {
   const mcp = getSdkServer(server as AdcpServer) ?? (server as McpServer);
+  // Per-registration cache so seed idempotency holds across all requests on
+  // this server instance. Callers can supply their own cache to scope by
+  // session or tenant.
+  const seedCache = options?.seedCache ?? createSeedFixtureCache();
   mcp.tool(
     'comply_test_controller',
     'Triggers seller-side state transitions for compliance testing. Sandbox only.',
     TOOL_INPUT_SHAPE,
     async input => {
-      const response = await handleTestControllerRequest(storeOrFactory, input as Record<string, unknown>);
+      const response = await handleTestControllerRequest(storeOrFactory, input as Record<string, unknown>, {
+        seedCache,
+      });
       return toMcpResponse(response);
     }
   );
