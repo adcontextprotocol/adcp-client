@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-21T21:43:31.405Z
+// Generated at: 2026-04-21T21:52:50.424Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -6843,7 +6843,7 @@ export interface PolicyEntry {
    */
   policy_id: string;
   /**
-   * Origin of this policy. 'registry' = published to the shared AdCP policy registry with full regulatory metadata. 'inline' = authored bespoke for a specific standards configuration, plan, or portfolio. Defaults to 'inline'. Governance agents MUST set 'registry' when publishing to the registry.
+   * Origin of this policy. 'registry' = published to the shared AdCP policy registry with full regulatory metadata. 'inline' = authored bespoke for a specific standards configuration, plan, or portfolio. Defaults to 'inline'. Governance agents MUST set 'registry' when publishing to the registry. Within AdCP *task* payloads (every `$ref` to this schema in a request or response), the field is always 'inline' — registry entries are served by the policy registry API, not embedded in task traffic. The x-entity annotation on `policy_id` assumes the task-payload invariant; if a future task schema adopts registry-publishing, split the annotation accordingly (see issue #2685).
    */
   source?: 'registry' | 'inline';
   /**
@@ -16417,11 +16417,13 @@ export type XEntityTypes =
   | 'property'
   | 'media_plan'
   | 'governance_plan'
-  | 'governance_policy'
+  | 'governance_registry_policy'
+  | 'governance_inline_policy'
   | 'governance_check'
   | 'content_standards'
   | 'task'
-  | 'si_session';
+  | 'si_session'
+  | 'offering';
 
 
 // enums/brand-agent-type.json
@@ -16511,8 +16513,9 @@ export type ErrorCode =
   | 'CREATIVE_NOT_FOUND'
   | 'SIGNAL_NOT_FOUND'
   | 'SESSION_NOT_FOUND'
-  | 'SESSION_TERMINATED'
+  | 'PLAN_NOT_FOUND'
   | 'REFERENCE_NOT_FOUND'
+  | 'SESSION_TERMINATED'
   | 'VALIDATION_ERROR'
   | 'PRODUCT_EXPIRED'
   | 'PROPOSAL_NOT_COMMITTED'
