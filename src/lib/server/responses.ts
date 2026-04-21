@@ -238,28 +238,11 @@ export function performanceFeedbackResponse(
 }
 
 /**
- * Build a successful build_creative response (single format). Validates that
- * `creative_manifest.format_id` is the `{ agent_url, id }` object shape the
- * schema demands — matrix runs caught Claude-built agents returning
- * `creative_manifest: { format_id: undefined }` which fails the `oneOf`
- * discriminator with a cryptic "expected object, received undefined" error.
+ * Build a successful build_creative response (single format).
  */
 export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: string): McpToolResponse {
-  const manifest = data.creative_manifest;
-  const formatId = manifest?.format_id as unknown;
-  if (
-    !formatId ||
-    typeof formatId !== 'object' ||
-    typeof (formatId as { agent_url?: unknown }).agent_url !== 'string' ||
-    typeof (formatId as { id?: unknown }).id !== 'string'
-  ) {
-    throw new Error(
-      `buildCreativeResponse: creative_manifest.format_id must be { agent_url: string, id: string }. ` +
-        `Got: ${JSON.stringify(formatId)}. Copy the format_id object from the request or from list_creative_formats verbatim.`
-    );
-  }
   return {
-    content: [{ type: 'text', text: summary ?? `Creative built: ${manifest.format_id.id}` }],
+    content: [{ type: 'text', text: summary ?? `Creative built: ${data.creative_manifest.format_id.id}` }],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -424,34 +407,25 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
 }
 
 /**
- * Build an acquire_rights response. Accepts the full
- * `AcquireRightsResponse` union (`acquired | pending_approval | rejected`
- * + an error variant that carries `errors[]` instead of `rights_id`). Error
- * payloads pass through as an `errors` structuredContent so the framework
- * surfaces them the same way `adcpError(...)` does.
+ * Build an `acquire_rights` response. Thin envelope wrapper — enforces the
+ * discriminated union on `status` at the type level, wraps the domain object
+ * in `content` + `structuredContent`, nothing else. Schema-level constraints
+ * (credential length, schemes cardinality, required-field presence) belong
+ * in wire-level Zod validation, not here.
  *
- * Validates `approval_webhook.authentication.credentials` AND
- * `revocation_webhook.authentication.credentials` length at runtime (spec:
- * ≥32 chars). Zod tolerates shorter strings until full validation kicks
- * in; this builder fails loudly at response-construction time with a
- * pointer at the easy fix.
+ * Enable dev-time enforcement via
+ * `createAdcpServer({ validation: { responses: 'strict' } })` until it
+ * becomes the default.
  */
 export function acquireRightsResponse(data: AcquireRightsResponse, summary?: string): McpToolResponse {
-  if ('errors' in data) {
-    return {
-      content: [{ type: 'text', text: summary ?? 'Rights acquisition error' }],
-      structuredContent: toStructuredContent(data),
-    };
-  }
-  if (data.status === 'acquired') {
-    assertWebhookCredentials('approval_webhook', data.approval_webhook);
-  }
   const defaultSummary =
-    data.status === 'acquired'
-      ? `Rights ${data.rights_id} acquired`
-      : data.status === 'rejected'
-        ? `Rights ${data.rights_id} rejected`
-        : `Rights ${data.rights_id} pending approval`;
+    'errors' in data
+      ? 'Rights acquisition error'
+      : data.status === 'acquired'
+        ? `Rights ${data.rights_id} acquired`
+        : data.status === 'rejected'
+          ? `Rights ${data.rights_id} rejected`
+          : `Rights ${data.rights_id} pending approval`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: toStructuredContent(data),
@@ -487,62 +461,17 @@ export function acquireRightsRejected(
   return acquireRightsResponse({ ...data, status: 'rejected' } as AcquireRightsRejected, summary);
 }
 
-function assertWebhookCredentials(
-  fieldName: string,
-  webhook: { authentication?: { credentials?: string; schemes?: unknown[] } } | undefined
-): void {
-  const auth = webhook?.authentication;
-  if (!auth) return;
-  const cred = auth.credentials;
-  if (cred !== undefined && cred.length < 32) {
-    throw new Error(
-      `acquireRightsResponse: ${fieldName}.authentication.credentials must be ≥32 chars (got ${cred.length}). ` +
-        `Use a high-entropy token (e.g., randomUUID().replace(/-/g, "") returns 32 hex chars).`
-    );
-  }
-  // push-notification-config.json requires schemes: exactly one entry.
-  const schemes = auth.schemes;
-  if (schemes !== undefined && (!Array.isArray(schemes) || schemes.length !== 1)) {
-    throw new Error(
-      `acquireRightsResponse: ${fieldName}.authentication.schemes must be a 1-item array (got ${
-        Array.isArray(schemes) ? `length ${schemes.length}` : typeof schemes
-      }). ` + `Spec: authentication.schemes has minItems=1, maxItems=1.`
-    );
-  }
-}
-
 /**
- * Build a sync_accounts response. Accepts the full
- * `SyncAccountsResponse` union — error payloads pass through. On the
- * success branch, validates every account has an `account_id`; matrix runs
- * caught fresh agents echoing request fields without stamping a
- * server-generated id, which fails the "platform-assigned ID"
- * storyboard step.
+ * Build a `sync_accounts` response. Thin envelope wrapper accepting the full
+ * `SyncAccountsResponse` union; error payloads pass through.
  */
 export function syncAccountsResponse(data: SyncAccountsResponse, summary?: string): McpToolResponse {
-  if ('errors' in data) {
-    return {
-      content: [{ type: 'text', text: summary ?? 'Account sync error' }],
-      structuredContent: toStructuredContent(data),
-    };
-  }
-  if (Array.isArray(data.accounts)) {
-    for (let i = 0; i < data.accounts.length; i++) {
-      if (!data.accounts[i]?.account_id) {
-        throw new Error(
-          `syncAccountsResponse: accounts[${i}].account_id is required. ` +
-            `Generate a platform-assigned id when the account is first created — don't leave it empty.`
-        );
-      }
-    }
-  }
+  const defaultSummary =
+    'errors' in data
+      ? 'Account sync error'
+      : `Synced ${data.accounts?.length ?? 0} account${data.accounts?.length === 1 ? '' : 's'}`;
   return {
-    content: [
-      {
-        type: 'text',
-        text: summary ?? `Synced ${data.accounts?.length ?? 0} account${data.accounts?.length === 1 ? '' : 's'}`,
-      },
-    ],
+    content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -559,40 +488,22 @@ export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: s
 }
 
 /**
- * Build a report_usage response. Requires an explicit `accepted` count —
- * defaulting to `0` would silently mis-report a failed ingest as "nothing
- * accepted," which is the opposite of what a forgetful handler needs.
- * Throws at response-construction time with a pointer at the
- * `.acceptAll(request, opts?)` shortcut below.
- *
- * Imported from `'@adcp/client/server'`.
+ * Build a `report_usage` response. Thin envelope wrapper. Schema-level
+ * `accepted` requiredness is enforced at the type level (via
+ * `ReportUsageResponse.accepted: number`) and at wire-level validation;
+ * this builder does not re-assert it.
  *
  * @example
  * ```typescript
- * // Explicit count (when the handler rejected some rows):
+ * // Explicit:
  * reportUsage: async (params) =>
- *   reportUsageResponse({ accepted: 8, errors: [{ usage_index: 2, message: 'invalid currency' }] })
+ *   reportUsageResponse({ accepted: 8, errors: [{ usage_index: 2, message: 'invalid' }] })
  *
- * // Ack every usage[] row as accepted (no validation failures):
+ * // Ack every usage[] row with optional errors (shortcut):
  * reportUsage: async (params) => reportUsageResponse.acceptAll(params)
- *
- * // Per-row validation — pass the errors you computed, the shortcut
- * // computes `accepted = usage.length - errors.length`:
- * reportUsage: async (params) => {
- *   const errors = validateRows(params.usage);
- *   return reportUsageResponse.acceptAll(params, { errors });
- * }
  * ```
  */
 export function reportUsageResponse(data: ReportUsageResponse, summary?: string): McpToolResponse {
-  if (typeof data?.accepted !== 'number') {
-    throw new Error(
-      `reportUsageResponse: data.accepted is required (number). ` +
-        `Use reportUsageResponse.acceptAll(request) for the "ack every usage[] row" case, ` +
-        `or pass { accepted: <count>, errors?: [...] } explicitly. ` +
-        `Imported from '@adcp/client/server'.`
-    );
-  }
   return {
     content: [
       { type: 'text', text: summary ?? `Accepted ${data.accepted} usage record${data.accepted === 1 ? '' : 's'}` },
