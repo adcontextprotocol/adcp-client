@@ -643,7 +643,7 @@ Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → get
 Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
-Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
@@ -684,7 +684,7 @@ Flow: `get_adcp_capabilities → si_get_offering → si_initiate_session → si_
 Flow: `get_adcp_capabilities → list_accounts → sync_audiences`
 
 **Social platform** — Social media platform that accepts audience segments, native creatives, and conversion events from buyer agents.
-Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_audiences → sync_creatives → log_event → get_account_financials`
+Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_audiences → sync_creatives → sync_catalogs → sync_creatives → log_event → get_account_financials`
 
 ### Core
 
@@ -722,7 +722,7 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists �
 ### 
 
 **Generative creative agent** — Agent that takes a brief and generates finished creatives from scratch — no input assets required.
-Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
+Flow: `get_adcp_capabilities → list_creative_formats → build_creative → sync_catalogs → build_creative`
 
 **Runner output contract** — Required failure-detail shape that AdCP storyboard runners MUST emit so implementors can self-diagnose validation failures.
 
@@ -731,6 +731,7 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative`
 **Programmatic exchange sales** — Programmatic exchange or SSP — auction-based inventory access with real-time bidding semantics and multi-seller inventory pooling.
 
 **Retail media sales** — Retail media network seller — onsite, offsite, and in-store inventory tied to commerce signals and SKU-level reporting.
+Flow: `sync_catalogs`
 
 **Streaming TV sales** — Connected TV and streaming sellers — ad-supported video inventory, audience-based buying, and frequency management across CTV apps.
 
