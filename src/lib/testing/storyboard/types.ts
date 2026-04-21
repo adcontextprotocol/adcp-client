@@ -606,7 +606,9 @@ export type RunnerDetailedSkipReason =
   | 'not_in_only_vectors'
   | 'grader_skipped'
   /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
-  | 'mcp_mode_flattens_url_edges';
+  | 'mcp_mode_flattens_url_edges'
+  /** RFC 9728 protected-resource metadata returned 404 → agent is not advertising OAuth, cascade-skip oauth_discovery (#677). */
+  | 'oauth_not_advertised';
 
 /**
  * Map detailed grader skip reasons onto the six canonical spec values so
@@ -618,6 +620,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   not_in_only_vectors: 'not_applicable',
   grader_skipped: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
+  oauth_not_advertised: 'not_applicable',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
   live_side_effect_opt_in_required: 'unsatisfied_contract',
