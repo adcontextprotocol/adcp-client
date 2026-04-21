@@ -449,6 +449,7 @@ syncCreativesResponse({
 ```
 deliveryResponse({
   reporting_period: { start: string, end: string },  // required - ISO timestamps
+  currency: 'USD',                                    // required — top-level currency for all totals
   media_buy_deliveries: [{
     media_buy_id: string,     // required
     status: 'active',         // required
@@ -457,6 +458,8 @@ deliveryResponse({
   }]
 })
 ```
+
+Top-level `currency` is **required** per `get-media-buy-delivery-response.json`. Pull it from the persisted media buy (see `createMediaBuy` above — we flatten request `total_budget.currency` into the buy's top-level `currency` field for this reason). `get_creative_delivery` has the same top-level `currency` requirement.
 
 ### Context and Ext Passthrough
 

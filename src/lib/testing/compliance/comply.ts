@@ -13,6 +13,13 @@ import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
+
+// Side-effect import: registers default assertion stubs for invariant ids that
+// upstream storyboards (e.g., `universal/idempotency.yaml` after adcp#2639)
+// reference without shipping the matching implementation module. Without this,
+// `resolveAssertions` throws and every comply() call against an up-to-date
+// compliance cache fails at startup.
+import '../storyboard/default-invariants';
 import {
   resolveStoryboardsForCapabilities,
   resolveBundleOrStoryboard,

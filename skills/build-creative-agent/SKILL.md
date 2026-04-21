@@ -617,6 +617,7 @@ reportUsage: async (params, ctx) => {
 ```typescript
 getCreativeDelivery: async (params, ctx) => ({
   reporting_period: params.reporting_period,
+  currency: 'USD',                                 // required top-level per get-creative-delivery-response.json
   creatives: (params.creative_ids ?? []).map((id) => ({
     creative_id: id,
     impressions: 12500,

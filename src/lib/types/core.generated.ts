@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-21T12:04:10.156Z
+// Generated at: 2026-04-21T17:40:48.711Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -12040,6 +12040,10 @@ export interface DeliveryRecord {
  */
 export interface ValidatePropertyDeliveryResponse {
   /**
+   * Overall compliance flag for the submitted delivery — true when every record is compliant, false when any record is non_compliant. Derived from summary.non_compliant_records === 0 but surfaced at the root as a convenience signal for buyers. Agents MAY omit this field when the response represents a partial validation (e.g., when include_compliant is false and results only contains non_compliant records); consumers SHOULD fall back to summary counts if compliant is absent.
+   */
+  compliant?: boolean;
+  /**
    * ID of the property list validated against
    */
   list_id: string;
@@ -16385,6 +16389,37 @@ export interface VehicleItem {
   assets?: OfferingAssetGroup[];
   ext?: ExtensionObject;
 }
+
+// core/x-entity-types.json
+/**
+ * Registry of valid `x-entity` annotation values. Each value tags a schema field whose contents carry identity of the named entity type. The context-entity lint reads this registry to reject unknown `x-entity` values and to catch mismatches between storyboard capture and consume sites. See docs/contributing/x-entity-annotation.md for authoring guidance. To add a value, PR this file and extend the authoring doc.
+ */
+export type XEntityTypes =
+  | 'advertiser_brand'
+  | 'rights_holder_brand'
+  | 'rights_grant'
+  | 'account'
+  | 'operator'
+  | 'media_buy'
+  | 'package'
+  | 'product'
+  | 'pricing_option'
+  | 'creative'
+  | 'creative_format'
+  | 'audience'
+  | 'signal'
+  | 'signal_activation_id'
+  | 'event_source'
+  | 'collection_list'
+  | 'property_list'
+  | 'catalog'
+  | 'property'
+  | 'media_plan'
+  | 'governance_plan'
+  | 'content_standards'
+  | 'task'
+  | 'si_session';
+
 
 // enums/brand-agent-type.json
 /**
