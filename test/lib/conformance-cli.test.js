@@ -216,6 +216,12 @@ describe('adcp fuzz CLI', () => {
     assert.ok(parsed.seedWarnings.length >= 1);
   });
 
+  test('--seed-brand rejects invalid domain', async () => {
+    const { code, stderr } = await runCli([`http://localhost:${port}/mcp`, '--seed-brand', 'NOT A DOMAIN']);
+    assert.equal(code, 2);
+    assert.match(stderr, /--seed-brand must be a valid domain/);
+  });
+
   test('JSON report includes reproducibility metadata', async () => {
     const { stdout } = await runCli([
       `http://localhost:${port}/mcp`,

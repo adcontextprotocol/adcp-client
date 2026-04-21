@@ -53,6 +53,7 @@ export async function runConformance(
       protocol: options.protocol,
       authToken: options.authToken,
       agentConfig: options.agentConfig,
+      brand: options.seedBrand,
     });
     seededFixtures = seedResult.fixtures;
     seedWarnings = seedResult.warnings;

@@ -17,8 +17,10 @@ classifies every response under a two-path oracle:
 - **Rejected** — agent returned a well-formed AdCP error envelope with a
   spec-enum reason code. *This is a pass, not a failure* — unknown IDs
   *should* return `REFERENCE_NOT_FOUND`, not 500.
-- **Invalid** — schema mismatch, stack trace in body, credential leak,
-  missing reason code, lowercase reason code, context not echoed.
+- **Invalid** — schema mismatch, stack trace in body (V8 / Node,
+  Python, Go, JVM, PHP, .NET), credential leak, missing reason code,
+  lowercase reason code, context not echoed when the response schema
+  declares a `context` property.
 
 ## Quickstart
 
@@ -60,13 +62,34 @@ Passing `autoSeed: true` (or `--auto-seed` on the CLI) tells
 await runConformance(url, { autoSeed: true, ... });
 ```
 
-The seeder calls `create_property_list`, `create_content_standards`, and
-(via a `get_products` preflight) `create_media_buy` against the agent,
+The seeder calls `create_property_list`, `create_content_standards`,
+(via a `get_products` preflight) `create_media_buy`, and (via a
+`list_creative_formats` preflight) `sync_creatives` against the agent,
 captures the returned IDs, and merges them into `options.fixtures`
 before the fuzz loop starts. Tier-3 update tools (`update_media_buy`,
 `update_property_list`, `update_content_standards`) are added to the
 default tool list automatically — they're no-ops against random IDs, so
 they only run when real IDs are available.
+
+For the creative seeder, the helper picks the first format whose
+required assets are all of a "simple" type (image, video, audio, text,
+url, html, javascript, css, markdown) and synthesizes placeholder
+values. Formats requiring VAST/DAAST/custom assets are skipped with a
+warning; supply `--fixture creative_ids=...` explicitly if you need
+creative coverage on an exotic-format-only agent.
+
+### Brand allowlists
+
+Mutating seeders (`create_media_buy`, `sync_creatives`) need a brand
+reference. Default is `{ domain: 'conformance.example' }`. Sellers that
+enforce brand allowlists will reject this and the pipeline falls through
+to a warning. Override with:
+
+```ts
+runConformance(url, { autoSeed: true, seedBrand: { domain: 'my-sandbox.example' } });
+```
+
+Or on the CLI: `--seed-brand my-sandbox.example`.
 
 The seeder is best-effort: a rejection from any seeder becomes a
 `report.seedWarnings` entry and the pool stays empty for that key. The
@@ -86,12 +109,11 @@ because the pool changed), the report prints a `pin: --fixture ...`
 line with the IDs captured at failure time so you can replay against
 the exact pool.
 
-**Brand-allowlist gotcha**: the `create_media_buy` seeder uses
+**Brand-allowlist gotcha**: mutating seeders use
 `brand.domain: 'conformance.example'` as a placeholder. Sellers that
 enforce brand allowlists will reject this; the pipeline degrades to a
-warning and `media_buy_ids` stays empty. Supply your own media-buy IDs
-via `--fixture media_buy_ids=...` if you need Tier-3 coverage on such
-an agent.
+warning and the affected pool stays empty. Override with `--seed-brand`
+or supply your own IDs via `--fixture media_buy_ids=...` etc.
 
 ## What's fuzzed
 

@@ -63,7 +63,12 @@ describe('conformance: seedFixtures', () => {
     });
     agents.push({ server });
 
-    const result = await seedFixtures(`http://localhost:${port}/mcp`, { protocol: 'mcp' });
+    // Restrict to the three seeders this stub implements so the test
+    // isn't sensitive to future additions to the default seed set.
+    const result = await seedFixtures(`http://localhost:${port}/mcp`, {
+      protocol: 'mcp',
+      seeders: ['create_property_list', 'create_content_standards', 'create_media_buy'],
+    });
 
     assert.ok(Array.isArray(result.fixtures.list_ids) && result.fixtures.list_ids.length === 1, 'list_id captured');
     assert.ok(result.fixtures.list_ids[0].startsWith('pl_'));
@@ -100,6 +105,102 @@ describe('conformance: seedFixtures', () => {
     assert.equal(result.warnings.length, 1);
     assert.equal(result.warnings[0].seeder, 'create_property_list');
     assert.match(result.warnings[0].reason, /INVALID_REQUEST/);
+  });
+
+  test('sync_creatives seeds creative_ids via list_creative_formats preflight', async () => {
+    // Minimal format: one required text asset. Seeder should pick it up,
+    // synthesize { content: 'Conformance seed text' }, and capture the
+    // creative_id from sync_creatives's response.
+    const observed = { formatIds: [], assets: [] };
+    const { server, port } = await startAgent({
+      creative: {
+        listCreativeFormats: async () => ({
+          formats: [
+            {
+              format_id: { id: 'text_line', agent_url: 'https://test/' },
+              name: 'Text Line',
+              description: 'single text asset',
+              assets: [{ asset_id: 'headline', asset_type: 'text', required: true, item_type: 'individual' }],
+            },
+          ],
+        }),
+        syncCreatives: async params => {
+          observed.formatIds.push(params.creatives[0].format_id.id);
+          observed.assets.push(params.creatives[0].assets);
+          return {
+            creatives: [{ creative_id: 'cre_seeded_abc', buyer_ref: params.creatives[0].creative_id }],
+          };
+        },
+      },
+    });
+    agents.push({ server });
+
+    const result = await seedFixtures(`http://localhost:${port}/mcp`, {
+      protocol: 'mcp',
+      seeders: ['sync_creatives'],
+    });
+
+    assert.deepEqual(result.fixtures.creative_ids, ['cre_seeded_abc']);
+    assert.equal(observed.formatIds[0], 'text_line');
+    assert.deepEqual(observed.assets[0], { headline: { content: 'Conformance seed text' } });
+    assert.deepEqual(result.warnings, []);
+  });
+
+  test('sync_creatives warns when no format has a synthesizable required-asset set', async () => {
+    const { server, port } = await startAgent({
+      creative: {
+        listCreativeFormats: async () => ({
+          formats: [
+            {
+              format_id: { id: 'exotic', agent_url: 'https://test/' },
+              name: 'Exotic',
+              description: 'requires something unknown',
+              assets: [{ asset_id: 'mystery', asset_type: 'vast', required: true, item_type: 'individual' }],
+            },
+          ],
+        }),
+      },
+    });
+    agents.push({ server });
+
+    const result = await seedFixtures(`http://localhost:${port}/mcp`, {
+      protocol: 'mcp',
+      seeders: ['sync_creatives'],
+    });
+    assert.equal(result.fixtures.creative_ids, undefined);
+    assert.ok(result.warnings[0].reason.includes('synthesizable'));
+  });
+
+  test('brand option is threaded through create_media_buy seeder', async () => {
+    let receivedBrand;
+    const { server, port } = await startAgent({
+      mediaBuy: {
+        getProducts: async () => ({
+          products: [
+            {
+              product_id: 'prod1',
+              name: 'p',
+              description: 'x',
+              format_ids: [{ id: 'f', agent_url: 'https://t/' }],
+              pricing_options: [{ pricing_option_id: 'po', model: 'cpm', cpm: 1, currency: 'USD' }],
+              delivery_type: 'non_guaranteed',
+            },
+          ],
+        }),
+        createMediaBuy: async params => {
+          receivedBrand = params.brand;
+          return { media_buy_id: 'mb_1', packages: [{ package_id: 'pkg_1' }] };
+        },
+      },
+    });
+    agents.push({ server });
+
+    await seedFixtures(`http://localhost:${port}/mcp`, {
+      protocol: 'mcp',
+      seeders: ['create_media_buy'],
+      brand: { domain: 'custom-brand.example', brand_id: 'custom' },
+    });
+    assert.deepEqual(receivedBrand, { domain: 'custom-brand.example', brand_id: 'custom' });
   });
 
   test('create_media_buy warns when get_products returns no products', async () => {
