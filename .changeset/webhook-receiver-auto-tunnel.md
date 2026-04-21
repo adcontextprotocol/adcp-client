@@ -16,16 +16,15 @@ diagnostic URLs that tunnel binaries often log at startup; ngrok and
 cloudflared detections use vendor-pinned regexes for the same reason.
 
 The flag is mutually exclusive with `--webhook-receiver-public-url` and
-`--webhook-receiver loopback`, and (like `--webhook-receiver`) incompatible
-with `--multi-instance-strategy multi-pass`. Skipped during `--dry-run`
-(the conflict validation still runs, but no tunnel is spawned).
+any `--webhook-receiver` mode (auto-tunnel already implies proxy), and
+(like `--webhook-receiver`) incompatible with `--multi-instance-strategy
+multi-pass`. Skipped during `--dry-run` (the conflict validation still
+runs, but no tunnel is spawned).
 
 No spec change: the tunnel forwards ordinary HTTPS to the local receiver,
 so the `webhook_receiver_runner` parity invariant (`loopback_mock` ≡
 `proxy_url` for the same agent emitter path) holds. Spec-compliant with the
 test-kit's "MUST NOT require a specific tunnel vendor" rule — detection is
-PATH-based and vendor-agnostic. See
-`docs/proposals/webhook-grading-reachability.md` for the design rationale
-(including why Socket Mode and ngrok-bundling were rejected) and
-`docs/rfcs/0001-webhook-grading-rendezvous.md` for the long-term hosted
-rendezvous proposal.
+PATH-based and vendor-agnostic. A hosted rendezvous service for graders
+that can't install a tunnel binary is tracked separately at
+adcontextprotocol/adcp#2618 (milestone 3.1.0).
