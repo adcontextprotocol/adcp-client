@@ -188,6 +188,17 @@ export {
   getSandboxBrand,
   isSandboxDomain,
   clearSandboxCache,
+  // Assertion registry (adcontextprotocol/adcp#2639) — authors of invariant
+  // modules import these from `@adcp/client/testing` to register cross-step
+  // checks the runner will resolve from `storyboard.invariants: [...]`.
+  registerAssertion,
+  getAssertion,
+  listAssertions,
+  clearAssertionRegistry,
+  resolveAssertions,
+  type AssertionSpec,
+  type AssertionContext,
+  type AssertionResult,
   // Types
   type Storyboard,
   type StoryboardPhase,
