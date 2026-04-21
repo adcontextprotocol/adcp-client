@@ -272,6 +272,12 @@ const MUTATIONS: Record<string, Mutator> = {
   '024-unquoted-string-param': (vector, _keys, options) => passthrough(vector, options),
   '025-jwk-alg-crv-mismatch': (vector, _keys, options) => passthrough(vector, options),
   '026-non-ascii-host': (vector, _keys, options) => passthrough(vector, options),
+
+  // Vector 027 tests the "webhook authentication MUST trigger signing" rule:
+  // the fixture is a plain bearer-auth request with zero signature headers,
+  // and the adversarial shape is precisely that absence. Passthrough preserves
+  // the fixture bytes; retargeting still works via applyTransport.
+  '027-webhook-registration-authentication-unsigned': (vector, _keys, options) => passthrough(vector, options),
 };
 
 function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
