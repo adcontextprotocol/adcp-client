@@ -364,8 +364,12 @@ serve(() => {
           : params.creative_id
             ? await ctx.store.get('creatives', params.creative_id)
             : null;
-        // Return structured errors — don't throw. `throw adcpError(...)` bypasses
-        // the adcp_error envelope and the dispatcher surfaces SERVICE_UNAVAILABLE.
+        // Return structured errors — don't throw. The dispatcher now unwraps
+        // thrown envelopes, but throwing still releases the idempotency claim
+        // before the throw is caught. If your handler mutated state before
+        // throwing, a retry with the same key re-executes the write. Returning
+        // an error envelope has the same claim-release semantics, so the rule
+        // holds for both paths: mutate last, or don't mutate at all on error.
         if (!match) return adcpError('CREATIVE_NOT_FOUND', { message: 'No matching creative' });
         return {
           creative_manifest: { format_id: match.format_id, assets: match.assets ?? {} },
