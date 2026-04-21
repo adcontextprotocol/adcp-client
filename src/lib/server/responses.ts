@@ -48,7 +48,16 @@ import type {
   GetSignalsResponse,
   ActivateSignalSuccess,
   ListAccountsResponse,
+  ReportUsageRequest,
+  ReportUsageResponse,
+  SyncAccountsSuccess,
+  SyncGovernanceResponse,
 } from '../types/tools.generated';
+import type {
+  AcquireRightsAcquired,
+  AcquireRightsPendingApproval,
+  AcquireRightsRejected,
+} from '../types/core.generated';
 
 /**
  * MCP-compatible tool response shape.
@@ -228,11 +237,28 @@ export function performanceFeedbackResponse(
 }
 
 /**
- * Build a successful build_creative response (single format).
+ * Build a successful build_creative response (single format). Validates that
+ * `creative_manifest.format_id` is the `{ agent_url, id }` object shape the
+ * schema demands — matrix runs caught Claude-built agents returning
+ * `creative_manifest: { format_id: undefined }` which fails the `oneOf`
+ * discriminator with a cryptic "expected object, received undefined" error.
  */
 export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: string): McpToolResponse {
+  const manifest = data.creative_manifest;
+  const formatId = manifest?.format_id as unknown;
+  if (
+    !formatId ||
+    typeof formatId !== 'object' ||
+    typeof (formatId as { agent_url?: unknown }).agent_url !== 'string' ||
+    typeof (formatId as { id?: unknown }).id !== 'string'
+  ) {
+    throw new Error(
+      `buildCreativeResponse: creative_manifest.format_id must be { agent_url: string, id: string }. ` +
+        `Got: ${JSON.stringify(formatId)}. Copy the format_id object from the request or from list_creative_formats verbatim.`
+    );
+  }
   return {
-    content: [{ type: 'text', text: summary ?? `Creative built: ${data.creative_manifest.format_id.id}` }],
+    content: [{ type: 'text', text: summary ?? `Creative built: ${manifest.format_id.id}` }],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -395,3 +421,104 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
     structuredContent: data,
   };
 }
+
+/**
+ * Build an acquire_rights response. Accepts the `acquired`, `pending_approval`,
+ * or `rejected` success variants; the compiler enforces discrimination on
+ * `status` so a sparse `{ rights_id, status: 'acquired' }` fails to type-check
+ * without the required `terms` / `rights_constraint` / `generation_credentials`
+ * fields. Validates `approval_webhook.authentication.credentials` length at
+ * runtime (spec: ≥32 chars) because the Zod schema tolerates shorter strings
+ * until the full validation layer kicks in.
+ */
+export function acquireRightsResponse(
+  data: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected,
+  summary?: string
+): McpToolResponse {
+  if (data.status === 'acquired') {
+    const acquired = data as AcquireRightsAcquired;
+    const cred = acquired.approval_webhook?.authentication?.credentials;
+    if (cred !== undefined && cred.length < 32) {
+      throw new Error(
+        `acquireRightsResponse: approval_webhook.authentication.credentials must be ≥32 chars (got ${cred.length}). ` +
+          `Use a high-entropy token (e.g., randomUUID().replace(/-/g, "") returns 32 hex chars).`
+      );
+    }
+  }
+  const defaultSummary =
+    data.status === 'acquired'
+      ? `Rights ${data.rights_id} acquired`
+      : data.status === 'rejected'
+        ? `Rights ${data.rights_id} rejected`
+        : `Rights ${data.rights_id} pending approval`;
+  return {
+    content: [{ type: 'text', text: summary ?? defaultSummary }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a sync_accounts response. Validates every account has an `account_id`
+ * before wrapping — matrix runs caught Claude-built agents echoing request
+ * fields without stamping a server-generated id, which fails the
+ * "platform-assigned ID" storyboard step.
+ */
+export function syncAccountsResponse(data: SyncAccountsSuccess, summary?: string): McpToolResponse {
+  if (Array.isArray(data.accounts)) {
+    for (let i = 0; i < data.accounts.length; i++) {
+      if (!data.accounts[i]?.account_id) {
+        throw new Error(
+          `syncAccountsResponse: accounts[${i}].account_id is required. ` +
+            `Generate a platform-assigned id when the account is first created — don't leave it empty.`
+        );
+      }
+    }
+  }
+  return {
+    content: [
+      {
+        type: 'text',
+        text: summary ?? `Synced ${data.accounts?.length ?? 0} account${data.accounts?.length === 1 ? '' : 's'}`,
+      },
+    ],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a sync_governance response. The spec permits two top-level shapes
+ * (success / error); the type union enforces discrimination on `status`.
+ */
+export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: string): McpToolResponse {
+  return {
+    content: [{ type: 'text', text: summary ?? 'Governance registration synced' }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a report_usage response. Auto-fills `accepted` from the request's
+ * `usage.length` when the handler didn't supply one — the common "ack every
+ * item" case. Pass `data.accepted` explicitly to record rejections.
+ *
+ * @example
+ * ```typescript
+ * reportUsage: async (params) => reportUsageResponse.fromRequest(params)
+ * ```
+ */
+export function reportUsageResponse(data: ReportUsageResponse, summary?: string): McpToolResponse {
+  const accepted = data.accepted ?? 0;
+  return {
+    content: [{ type: 'text', text: summary ?? `Accepted ${accepted} usage record${accepted === 1 ? '' : 's'}` }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/** Shortcut: acknowledge every `usage[]` entry from the request as accepted. */
+reportUsageResponse.fromRequest = function fromRequest(
+  request: ReportUsageRequest,
+  summary?: string
+): McpToolResponse {
+  const accepted = request.usage?.length ?? 0;
+  return reportUsageResponse({ accepted }, summary);
+};
