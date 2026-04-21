@@ -197,6 +197,10 @@ export interface TestStepResult {
   created_id?: string;
   // Deprecation or other warnings
   warnings?: string[];
+  /** True when the step was skipped (including re-graded branch-set peers). */
+  skipped?: boolean;
+  /** Canonical skip reason when `skipped` is true; maps to `RunnerSkipReason`. */
+  skip_reason?: string;
 }
 
 export interface AgentProfile {

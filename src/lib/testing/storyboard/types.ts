@@ -63,6 +63,27 @@ export interface StoryboardPhase {
    * Other expressions are rejected (unknown → fail closed: phase runs).
    */
   skip_if?: string;
+  /**
+   * First-class branch-set declaration (see adcp#2633 / adcp#2646). When
+   * present, contributing steps inside this phase MAY use the boolean
+   * shorthand `contributes: true` in lieu of repeating `contributes_to: <id>`.
+   * The loader resolves the shorthand to `branch_set.id` at parse time, so
+   * downstream runner code continues to read `step.contributes_to`.
+   */
+  branch_set?: BranchSetSpec;
+}
+
+export interface BranchSetSpec {
+  /** Aggregation flag shared by every contributing step in this phase. */
+  id: string;
+  /**
+   * Grading semantics for the branch set. `any_of` (the only value defined
+   * today) means: at most one peer branch is expected to contribute; failures
+   * in non-contributing peers grade as `peer_branch_taken` rather than
+   * `failed`. Kept as a string so future semantics (`all_of`, `one_of`) do
+   * not require a type change.
+   */
+  semantics: string;
 }
 
 export interface ContextOutput {
@@ -158,6 +179,16 @@ export interface StoryboardStep {
   auth?: StepAuthDirective;
   /** Contribute a flag to the run-level accumulator on success. Used with `any_of` validations downstream. */
   contributes_to?: string;
+  /**
+   * Boolean shorthand for `contributes_to: <enclosing phase's branch_set.id>`.
+   * Only legal inside a phase that declares `branch_set:`. The loader
+   * resolves `contributes: true` to the phase's `branch_set.id` and clears
+   * this field, so runner code reads `contributes_to` exclusively.
+   * `contributes: false` (or absent) marks a non-contributing step.
+   * Declaring both `contributes` and `contributes_to` on the same step is a
+   * parse-time authoring error.
+   */
+  contributes?: boolean;
   /**
    * Conditional contribution expression. Current grammar:
    *   - `"prior_step.<step_id>.passed"` — contribution fires only if the named step passed.
@@ -587,7 +618,15 @@ export type RunnerSkipReason =
   | 'prerequisite_failed'
   | 'missing_tool'
   | 'missing_test_controller'
-  | 'unsatisfied_contract';
+  | 'unsatisfied_contract'
+  /**
+   * A peer optional phase in the same `branch_set` already contributed the
+   * aggregation flag, so this non-chosen branch's failing steps are moot
+   * (see storyboard-schema.yaml > "Per-step grading in any_of branch
+   * patterns" and runner-output-contract.yaml). Kept distinct from
+   * `not_applicable` (coverage gap) and raw `failed` (agent misbehavior).
+   */
+  | 'peer_branch_taken';
 
 /**
  * Grader-specific skip reasons. These are narrower than the six canonical

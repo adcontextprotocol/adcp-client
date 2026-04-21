@@ -345,7 +345,7 @@ function collectObservations(
     let anyCheckMissingContext = false;
     for (const result of results) {
       for (const step of result.steps ?? []) {
-        if (step.task === 'check_governance' && step.passed && step.observation_data) {
+        if (step.task === 'check_governance' && step.passed && !step.skipped && step.observation_data) {
           if (!step.observation_data.governance_context) {
             anyCheckMissingContext = true;
           }
@@ -367,7 +367,12 @@ function collectObservations(
   // Check for slow responses
   for (const result of results) {
     for (const step of result.steps ?? []) {
-      if (step.passed && step.duration_ms > 10000) {
+      // Skip re-graded peers: a `peer_branch_taken` peer carries `passed:
+      // true` plus the original duration from when the branch ran, which
+      // would produce a spurious slow-response warning for a branch the
+      // agent didn't take. `warnings` alone is not a stable proxy for
+      // skipped — deprecation/governance warnings land there on real steps.
+      if (step.passed && !step.skipped && step.duration_ms > 10000) {
         observations.push({
           category: 'performance',
           severity: 'warning',
