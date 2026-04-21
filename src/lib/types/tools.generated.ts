@@ -7335,14 +7335,6 @@ export interface SyncCatalogsRequest {
  * Response from catalog sync operation. Returns either per-catalog results (best-effort processing) OR operation-level errors (complete failure). Platforms may approve, reject, or flag individual items within each catalog (similar to Google Merchant Center product review).
  */
 export type SyncCatalogsResponse = SyncCatalogsSuccess | SyncCatalogsError;
-/**
- * Action taken for this catalog
- */
-export type CatalogAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
-/**
- * Item review status
- */
-export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
 
 /**
  * Success response - sync operation processed catalogs (may include per-catalog failures)
@@ -7356,65 +7348,7 @@ export interface SyncCatalogsSuccess {
    * Results for each catalog processed. Items with action='failed' indicate per-catalog validation/processing failures, not operation-level failures.
    */
   catalogs: {
-    /**
-     * Catalog ID from the request
-     */
-    catalog_id: string;
-    action: CatalogAction;
-    /**
-     * Platform-specific ID assigned to the catalog
-     */
-    platform_id?: string;
-    /**
-     * Total number of items in the catalog after sync
-     */
-    item_count?: number;
-    /**
-     * Number of items approved by the platform. Populated when the platform performs item-level review.
-     */
-    items_approved?: number;
-    /**
-     * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
-     */
-    items_pending?: number;
-    /**
-     * Number of items rejected by the platform. Check item_issues for rejection reasons.
-     */
-    items_rejected?: number;
-    /**
-     * Per-item issues reported by the platform (rejections, warnings). Only present when the platform performs item-level review.
-     */
-    item_issues?: {
-      /**
-       * ID of the catalog item with an issue
-       */
-      item_id: string;
-      status: CatalogItemStatus;
-      /**
-       * Reasons for rejection or warning
-       */
-      reasons?: string[];
-    }[];
-    /**
-     * ISO 8601 timestamp of when the most recent sync was accepted by the platform
-     */
-    last_synced_at?: string;
-    /**
-     * ISO 8601 timestamp of when the platform will next fetch the feed URL. Only present for URL-based catalogs with update_frequency.
-     */
-    next_fetch_at?: string;
-    /**
-     * Field names that were modified (only present when action='updated')
-     */
-    changes?: string[];
-    /**
-     * Validation or processing errors (only present when action='failed')
-     */
-    errors?: Error[];
-    /**
-     * Non-fatal warnings about this catalog
-     */
-    warnings?: string[];
+    [k: string]: unknown | undefined;
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -7434,7 +7368,6 @@ export interface SyncCatalogsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-
 
 // build_creative parameters
 /**
@@ -8392,17 +8325,11 @@ export interface Identifier {
 
 // list_creatives parameters
 /**
- * Field to sort by
- */
-export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
-/**
- * Sort direction
- */
-export type SortDirection = 'asc' | 'desc';
-/**
  * Request parameters for querying creative assets from a creative library with filtering, sorting, and pagination. Implemented by any agent that hosts a creative library — creative agents (ad servers, creative platforms) and sales agents that manage creatives.
  */
-export interface ListCreativesRequest {
+export type ListCreativesRequest = {
+  [k: string]: unknown | undefined;
+} & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -8457,7 +8384,15 @@ export interface ListCreativesRequest {
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
-}
+};
+/**
+ * Field to sort by
+ */
+export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
+/**
+ * Sort direction
+ */
+export type SortDirection = 'asc' | 'desc';
 /**
  * Filter criteria for querying creatives from a creative library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
  */
@@ -11888,7 +11823,9 @@ export interface CheckGovernanceRequest {
 /**
  * Governance agent's response to a check request. Returns whether the action is approved under the governance plan.
  */
-export interface CheckGovernanceResponse {
+export type CheckGovernanceResponse = {
+  [k: string]: unknown | undefined;
+} & {
   /**
    * Unique identifier for this governance check record. Use in report_plan_outcome to link outcomes to the check that authorized them.
    */
@@ -11982,7 +11919,7 @@ export interface CheckGovernanceResponse {
   governance_context?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-}
+};
 
 // si_get_offering parameters
 /**
