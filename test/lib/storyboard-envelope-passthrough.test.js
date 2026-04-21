@@ -197,7 +197,8 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
             steps: [
               {
                 id: 'acquire',
-                title: 'task without a builder: sample_request is spread wholesale, push_notification_config rides along',
+                title:
+                  'task without a builder: sample_request is spread wholesale, push_notification_config rides along',
                 task: 'acquire_rights',
                 auth: 'none',
                 sample_request: {
