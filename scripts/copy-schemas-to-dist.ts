@@ -24,7 +24,17 @@ function main(): void {
 
   const srcRoot = path.join(repoRoot, 'schemas', 'cache', version);
   if (!existsSync(srcRoot)) {
-    throw new Error(`Schema cache missing at ${srcRoot}. Run \`npm run sync-schemas\` before building.`);
+    // The schema cache is fetched by `sync-schemas`. CI jobs that don't run
+    // the full toolchain (e.g., the code-quality integrity check that does
+    // `npm clean && build:lib` without a prior sync-schemas) would otherwise
+    // break here. Skip quietly — the loader falls back to the same source
+    // path, and any job that actually needs the schemas at runtime will get
+    // a clear error at first use.
+    console.warn(
+      `[copy-schemas-to-dist] schema cache missing at ${srcRoot}; skipping. ` +
+        `Run \`npm run sync-schemas\` to populate it before shipping.`
+    );
+    return;
   }
 
   const destRoot = path.join(repoRoot, 'dist', 'lib', 'schemas-data', version);
