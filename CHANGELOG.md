@@ -1,5 +1,24 @@
 # Changelog
 
+## 5.8.2
+
+### Patch Changes
+
+- 2942e58: Fix `createAdcpServer` context echo for Sponsored Intelligence tools. `si_get_offering` and `si_initiate_session` define `context` as a domain-specific string on the request but require the protocol echo object on the response. The response auto-echo now only copies `request.context` when it is a plain object, so SI responses no longer fail with `/context: must be object`.
+- 56bbc59: Follow-up to the skill schema refresh (PR #716) targeting matrix failures that persisted:
+  - **`DEFAULT_REPORTING_CAPABILITIES` over hand-rolled literals** — seller, generative-seller, and retail-media skill product examples previously hand-rolled `reporting_capabilities: { ... }` which drifts every time the spec adds a required field (most recently `date_range_support` in AdCP latest). Skills now use the SDK-provided constant and flag the drift tax explicitly.
+  - **`create_media_buy` must persist `currency` + `total_budget`** — seller skill's `createMediaBuy` example flattens request `total_budget: { amount, currency }` into top-level `currency` + `total_budget` fields on the persisted buy, so subsequent `get_media_buys` responses pass the new required-field schema check. The old example stored only `packages[].budget` and the required top-level fields weren't reconstructable.
+  - **`update_media_buy.affected_packages` must be `Package[]`, not `string[]`** — seller skill's `updateMediaBuy` example now returns package objects (`{ package_id, ... }`) instead of bare IDs. The `update-media-buy-response` oneOf discriminator rejects string arrays with `/affected_packages/0: must be object`.
+
+- 7e04fa0: Option B (structural) groundwork — stop treating response shapes as hand-written forever:
+  - `generate-agent-docs.ts` now extracts response schemas and emits a `_Response (success branch):_` block under every tool in `docs/TYPE-SUMMARY.md`. For tools whose response is a `oneOf` success/error discriminator (e.g., `update_media_buy`), the generator picks the success arm (no `errors` required field) so builders see the happy-path shape. `_Request:_` and `_Response_` are now visually separated.
+  - `TYPE-SUMMARY.md` is regenerated; every tool now carries both sides of the wire.
+  - Seller + creative skills: added explicit top-level `currency` in `getMediaBuyDelivery` and `getCreativeDelivery` examples. The response schemas require it; the old examples omitted it and fresh-Claude agents built under those skills failed `/currency: must have required property` validation.
+
+  Builders can now cross-reference hand-written skill examples against an auto-updating TYPE-SUMMARY response block. When the spec adds a required field, the generated doc updates immediately while the skill example may lag — that's the drift-detection signal.
+
+  Next logical step (not in this PR): replace the hand-written `**tool** — Response Shape` blocks in skills with direct `See [TYPE-SUMMARY.md § tool](…)` pointers so the skill narrative focuses on logic and the shape stays generated.
+
 ## 5.8.1
 
 ### Patch Changes
