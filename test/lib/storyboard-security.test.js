@@ -662,16 +662,7 @@ describe('storyboard runner: auth-override dispatch', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('security_baseline: unconditional PRM enforcement (#677)', () => {
-  const SECURITY_YAML = path.join(
-    __dirname,
-    '..',
-    '..',
-    'compliance',
-    'cache',
-    'latest',
-    'universal',
-    'security.yaml'
-  );
+  const SECURITY_YAML = path.join(__dirname, '..', '..', 'compliance', 'cache', 'latest', 'universal', 'security.yaml');
 
   function loadSecurityBaseline() {
     return loadStoryboardFile(SECURITY_YAML);
@@ -686,7 +677,7 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
   //   - a `{ status, body }` tuple — explicit status with JSON body
   function createAuthTestAgent({ prm, authServer, validApiKey = 'sk_test' } = {}) {
     let agentUrl = null;
-    const resolveConfig = (conf) => (typeof conf === 'function' ? conf(agentUrl) : conf);
+    const resolveConfig = conf => (typeof conf === 'function' ? conf(agentUrl) : conf);
     const writeMetadata = (res, cfg) => {
       if (cfg === 404 || cfg == null) {
         res.writeHead(404);
@@ -772,12 +763,12 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
 
   // Reusable PRM/auth-server builders that reflect the live agent URL so
   // `resource_equals_agent_url` can match.
-  const correctPrm = (agentUrl) => ({
+  const correctPrm = agentUrl => ({
     resource: agentUrl,
     authorization_servers: [new URL(agentUrl).origin],
     bearer_methods_supported: ['header'],
   });
-  const correctAuthServer = (agentUrl) => ({
+  const correctAuthServer = agentUrl => ({
     issuer: new URL(agentUrl).origin,
     token_endpoint: `${new URL(agentUrl).origin}/oauth/token`,
     grant_types_supported: ['authorization_code'],
@@ -821,7 +812,11 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
     const agentUrl = await agent.listen();
     try {
       const result = await runStoryboard(agentUrl, loadSecurityBaseline(), runOpts(API_KEY_KIT));
-      assert.strictEqual(result.overall_passed, true, `expected overall pass, phases: ${JSON.stringify(result.phases, null, 2)}`);
+      assert.strictEqual(
+        result.overall_passed,
+        true,
+        `expected overall pass, phases: ${JSON.stringify(result.phases, null, 2)}`
+      );
       const oauthPhase = result.phases.find(p => p.phase_id === 'oauth_discovery');
       assert.strictEqual(oauthPhase.passed, true, 'oauth_discovery phase passes');
       const apiKeyPhase = result.phases.find(p => p.phase_id === 'api_key_path');
