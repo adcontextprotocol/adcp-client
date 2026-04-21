@@ -443,20 +443,9 @@ taskToolResponse({
 
 ### Context and Ext Passthrough
 
-Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
 
-```typescript
-// In every tool handler:
-const context = args.context; // may be undefined — that's fine
-
-// In every response:
-return taskToolResponse({
-  // ... your response fields ...
-  context,  // echo it back unchanged
-});
-```
-
-Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+**Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description, validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely; the framework handles it.
 
 Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_governance`.
 

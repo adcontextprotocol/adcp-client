@@ -98,7 +98,12 @@ listCreativeFormatsResponse({
     format_id: { agent_url: string, id: string },  // required
     name: string,                                    // required
     description: string,
-    renders: [{ width: number, height: number }],    // output dimensions
+    renders: [{                                      // required — at least one render
+      role: 'primary',                               // required — semantic role
+      // oneOf: specify `dimensions` (object) OR `parameters_from_format_id: true`
+      dimensions: { width: 300, height: 250 },       // pixels by default
+      // parameters_from_format_id: true,            // for template formats that take dimensions/duration via format_id
+    }],
     assets: [{                                       // what the format accepts
       item_type: 'individual',
       asset_id: string,
@@ -109,6 +114,8 @@ listCreativeFormatsResponse({
   }],
 })
 ```
+
+Each render MUST include `role` and exactly one of `dimensions` (literal measurements) or `parameters_from_format_id: true` (for template formats whose dimensions come from `format_id` params). A `renders: [{ width, height }]` shorthand will fail schema validation — wrap in `dimensions: { width, height }`.
 
 **`sync_creatives`** — handled by `creative.syncCreatives`
 
@@ -197,9 +204,11 @@ Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 
 ### Context and Ext Passthrough
 
-`createAdcpServer` handles context and ext passthrough automatically for domain-grouped handlers. You do not need to echo `context` in your handler return values — the framework does it.
+`createAdcpServer` auto-echoes the request's `context` into every response from domain-grouped handlers — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
 
-For manually registered tools (like `preview_creative`), you must still echo `context` yourself if using `previewCreativeResponse()` directly.
+**Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description, validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely.
+
+For manually registered tools (like `preview_creative`), the framework's auto-echo path does not apply — echo the request's `context` object unchanged in the response, or omit the field if the request didn't send one.
 
 Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `get_creative_delivery`, `get_creative_features`.
 
@@ -266,7 +275,19 @@ import {
 } from '@adcp/client';
 import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 
-const formats = [ /* your format objects */ ];
+const formats = [
+  {
+    format_id: { agent_url: 'https://creative.example.com/mcp', id: 'display_banner_300x250' },
+    name: 'Display Banner 300x250',
+    description: 'Standard MRec display unit',
+    renders: [
+      { role: 'primary', dimensions: { width: 300, height: 250 } }, // role + dimensions (oneOf)
+    ],
+    assets: [
+      { item_type: 'individual' as const, asset_id: 'image', asset_type: 'image', required: true, accepted_media_types: ['image/png', 'image/jpeg'] },
+    ],
+  },
+];
 
 // Idempotency — required for v3 compliance on any agent with mutating
 // handlers. `sync_creatives`, `build_creative`, and `calibrate_content`
@@ -620,7 +641,7 @@ listCreativeFormats: async (params) => ({
     format_id: { agent_url: AGENT_URL, id: 'banner_300x250_template' },
     name: 'Responsive 300x250 Banner Template',
     type: 'display' as const,
-    renders: [{ width: 300, height: 250 }],
+    renders: [{ role: 'primary', dimensions: { width: 300, height: 250 } }],
     variables: [          // template-agent specific
       { variable_id: 'headline', type: 'text', max_length: 40 },
       { variable_id: 'cta', type: 'text', max_length: 20 },

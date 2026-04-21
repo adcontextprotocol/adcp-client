@@ -266,6 +266,43 @@ serve(() =>
     // every mutating request rejects as SERVICE_UNAVAILABLE.
     resolveSessionKey: () => 'default-principal',
 
+    // Accounts domain — required for the governance_denied scenario. Buyers
+    // call sync_accounts to register their operator/billing relationship, then
+    // sync_governance to point the brand agent at their governance agent.
+    accounts: {
+      async syncAccounts(params, ctx) {
+        for (const account of params.accounts) {
+          const key = `${account.brand.domain}|${account.operator}`;
+          await ctx.store.put('accounts', key, {
+            ...account,
+            account_id: `acct_${key}`,
+            status: 'active',
+          });
+        }
+        return {
+          accounts: params.accounts.map(account => ({
+            brand: account.brand,
+            operator: account.operator,
+            account_id: `acct_${account.brand.domain}|${account.operator}`,
+            status: 'active' as const,
+          })),
+        };
+      },
+
+      async syncGovernance(params, ctx) {
+        for (const acc of params.accounts) {
+          const key = `${acc.account.brand.domain}|${acc.account.operator}`;
+          await ctx.store.put('governance', key, {
+            governance_agents: acc.governance_agents,
+          });
+        }
+        return {
+          status: 'synced' as const,
+          governance_agents: params.accounts.flatMap(a => a.governance_agents),
+        };
+      },
+    },
+
     brandRights: {
       async getBrandIdentity(params) {
         if (params.brand_id !== 'acme_outdoor') {
@@ -313,7 +350,7 @@ serve(() =>
         };
       },
 
-      async acquireRights(params) {
+      async acquireRights(params, ctx) {
         const campaignEnd = new Date(params.campaign?.end_date ?? 0);
         if (campaignEnd < new Date()) {
           return adcpError('INVALID_REQUEST', {
@@ -321,6 +358,38 @@ serve(() =>
             field: 'campaign.end_date',
           });
         }
+
+        // Governance check — REQUIRED before issuing a rights license. Acquiring
+        // rights is a spending event; the `brand_rights/governance_denied` scenario
+        // expects GOVERNANCE_DENIED when the buyer's plan denies the spend.
+        // 1. Look up the governance agent the buyer registered via sync_governance
+        //    (accountKey = brand.domain + operator, stored by syncAccounts/syncGovernance).
+        // 2. Call check_governance on it; propagate findings on denial.
+        const accountKey = `${params.account?.brand?.domain}|${params.account?.operator}`;
+        const registration = await ctx.store.get('governance', accountKey);
+        if (registration?.governance_agents?.length) {
+          const { checkGovernance } = await import('@adcp/client');   // buyer-side helper
+          const plan = await checkGovernance({
+            agentUrl: registration.governance_agents[0].url,
+            plan_id: params.plan_id ?? registration.plan_id,
+            caller: { role: 'brand_agent', id: AGENT_URL },
+            tool: 'acquire_rights',
+            payload: {
+              rights_id: params.rights_id,
+              pricing_option_id: params.pricing_option_id,
+              total_cost: { amount: 2500, currency: 'USD' },
+            },
+          });
+          if (plan.status === 'denied') {
+            return adcpError('GOVERNANCE_DENIED', {
+              message: plan.explanation ?? 'Governance agent denied this rights acquisition.',
+              findings: plan.findings ?? [],   // propagate verbatim
+            });
+          }
+          // status === 'conditions' → you may attach conditions, or deny in strict mode
+          // status === 'approved'  → fall through to issue the grant
+        }
+
         const grantId = `grant_${Date.now()}`;
         // Persist params.revocation_webhook against grantId so you can call it
         // if you later need to revoke (credential rotation, terms violation).
