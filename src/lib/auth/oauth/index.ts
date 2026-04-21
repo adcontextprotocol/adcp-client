@@ -283,6 +283,30 @@ export {
 // File-backed `OAuthConfigStorage` implementation (agents.json format).
 export { createFileOAuthStorage, type FileOAuthStorageOptions } from './file-storage';
 
+// OAuth 2.0 client credentials grant (RFC 6749 §4.4) for machine-to-machine
+// token exchange. Used by the CLI for automated compliance runs where there
+// is no user to walk through an authorization-code flow.
+export {
+  exchangeClientCredentials,
+  ensureClientCredentialsTokens,
+  ClientCredentialsExchangeError,
+  type ExchangeClientCredentialsOptions,
+  type EnsureClientCredentialsOptions,
+} from './ClientCredentialsFlow';
+
+// `$ENV:VAR` indirection for client credentials so secrets can live in env
+// vars (CI) rather than on disk in the agent config.
+export {
+  resolveSecret,
+  isEnvSecretReference,
+  toEnvSecretReference,
+  MissingEnvSecretError,
+} from './secret-resolver';
+
+// Type re-export — the credentials struct itself lives in the ADCP core types
+// module alongside `AgentOAuthTokens` / `AgentOAuthClient`.
+export type { AgentOAuthClientCredentials } from '../../types/adcp';
+
 // Per-agent storage binding — the bridge that lets `callTool` pick up the
 // caller's chosen `OAuthConfigStorage` without a signature change.
 export { bindAgentStorage, getAgentStorage, unbindAgentStorage } from './storage-registry';

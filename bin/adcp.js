@@ -40,6 +40,11 @@ const {
   createFileOAuthStorage,
   bindAgentStorage,
   NeedsAuthorizationError,
+  exchangeClientCredentials,
+  ensureClientCredentialsTokens,
+  ClientCredentialsExchangeError,
+  MissingEnvSecretError,
+  toEnvSecretReference,
 } = require('../dist/lib/auth/oauth/index.js');
 
 // Test scenarios available
@@ -361,7 +366,13 @@ async function handleTestCommand(args) {
     agentUrl = savedAgent.url;
     protocol = protocol || savedAgent.protocol;
     finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
-    if (savedAgent.oauth_tokens) {
+    if (savedAgent.oauth_client_credentials) {
+      // Client credentials: tokens are refreshed inside `ProtocolClient.callTool`
+      // via `ensureClientCredentialsTokens`. Surface cached tokens so the call
+      // path has a warm start; the library persists any refresh via the
+      // `bindAgentStorage` wiring below.
+      oauthTokens = savedAgent.oauth_tokens;
+    } else if (savedAgent.oauth_tokens) {
       if (hasValidOAuthTokens(savedAgent)) {
         oauthTokens = savedAgent.oauth_tokens;
       } else {
@@ -687,14 +698,56 @@ function parseAgentOptions(args) {
 }
 
 /**
- * Resolve an agent argument (alias or URL) to { agentUrl, protocol, authToken, oauthTokens, oauthClient, aliasId }
+ * Build the `auth` option for the testing library from a resolved agent.
+ * Single source of truth for CLI → lib auth handoff so every runner
+ * (storyboard, step, fuzz, grade) uses the same precedence:
+ *   client credentials > authorization-code OAuth > static bearer.
+ */
+function buildResolvedAuthOption({
+  resolvedAuth,
+  resolvedOauthTokens,
+  resolvedOauthClient,
+  resolvedOauthClientCredentials,
+}) {
+  if (resolvedOauthClientCredentials) {
+    return {
+      auth: {
+        type: 'oauth_client_credentials',
+        credentials: resolvedOauthClientCredentials,
+        ...(resolvedOauthTokens && { tokens: resolvedOauthTokens }),
+      },
+    };
+  }
+  if (resolvedOauthTokens) {
+    return {
+      auth: {
+        type: 'oauth',
+        tokens: resolvedOauthTokens,
+        ...(resolvedOauthClient && { client: resolvedOauthClient }),
+      },
+    };
+  }
+  if (resolvedAuth) {
+    return { auth: { type: 'bearer', token: resolvedAuth } };
+  }
+  return {};
+}
+
+/**
+ * Resolve an agent argument (alias or URL) to
+ * `{ agentUrl, protocol, authToken, oauthTokens, oauthClient, oauthClientCredentials, aliasId }`.
  *
  * Auth resolution order:
  *   1. Explicit --auth token from CLI (bearer)
  *   2. ADCP_AUTH_TOKEN env var
- *   3. Saved OAuth tokens (if alias has them — returned as-is so the caller can refresh on 401)
- *   4. Static auth_token from alias or built-in
- *   5. None
+ *   3. Saved OAuth client credentials (if alias has them — library refreshes per call)
+ *   4. Saved OAuth tokens (if alias has them — returned as-is; library refreshes on 401)
+ *   5. Static auth_token from alias or built-in
+ *   6. None
+ *
+ * Client-credentials refresh happens inside `ProtocolClient.callTool`, so this
+ * function deliberately does NOT exchange — it just surfaces the saved
+ * credentials so the caller can hand them to the testing/protocol layer.
  */
 async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
   let agentUrl;
@@ -702,6 +755,7 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
   let finalAuthToken = authToken;
   let oauthTokens;
   let oauthClient;
+  let oauthClientCredentials;
   let aliasId;
 
   if (BUILT_IN_AGENTS[agentArg]) {
@@ -714,10 +768,10 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     agentUrl = savedAgent.url;
     protocol = protocol || savedAgent.protocol;
     aliasId = agentArg;
-    // Return saved OAuth tokens even when they look stale — the MCP SDK's
-    // OAuth provider will refresh them on demand. Only fall back to the
-    // static `auth_token` when there's no OAuth material at all.
-    if (savedAgent.oauth_tokens) {
+    if (savedAgent.oauth_client_credentials) {
+      oauthClientCredentials = savedAgent.oauth_client_credentials;
+      oauthTokens = savedAgent.oauth_tokens;
+    } else if (savedAgent.oauth_tokens) {
       oauthTokens = savedAgent.oauth_tokens;
       oauthClient = savedAgent.oauth_client;
     }
@@ -743,7 +797,15 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     }
   }
 
-  return { agentUrl, protocol, authToken: finalAuthToken, oauthTokens, oauthClient, aliasId };
+  return {
+    agentUrl,
+    protocol,
+    authToken: finalAuthToken,
+    oauthTokens,
+    oauthClient,
+    oauthClientCredentials,
+    aliasId,
+  };
 }
 
 async function handleComplyCommand(args) {
@@ -794,7 +856,13 @@ QUICK START:
   adcp test test-mcp full_sales_flow               Run test scenario
 
 AGENT MANAGEMENT:
-  --save-auth <alias> [url]   Save agent with alias (supports --auth, --no-auth, --oauth)
+  --save-auth <alias> [url]   Save agent with alias
+                                Static bearer:   --auth <token> | --no-auth
+                                OAuth (browser): --oauth
+                                OAuth (M2M):     --oauth-token-url <token-url>
+                                                 --client-id <id> | --client-id-env <VAR>
+                                                 --client-secret <s> | --client-secret-env <VAR>
+                                                 [--scope <scope>] [--oauth-auth-method basic|body]
   --list-agents               List saved agents
   --remove-agent <alias>      Remove saved agent
   --show-config               Show config location
@@ -1140,6 +1208,9 @@ async function handleStoryboardRun(args) {
     agentUrl,
     protocol,
     authToken: resolvedAuth,
+    oauthTokens: resolvedOauthTokens,
+    oauthClient: resolvedOauthClient,
+    oauthClientCredentials: resolvedOauthClientCredentials,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
   // Parse webhook-receiver flags up front so malformed values fail the run
@@ -1198,7 +1269,12 @@ async function handleStoryboardRun(args) {
 
   const options = {
     protocol,
-    ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
+    ...(buildResolvedAuthOption({
+      resolvedAuth,
+      resolvedOauthTokens,
+      resolvedOauthClient,
+      resolvedOauthClientCredentials,
+    })),
     ...(webhookReceiverOpts ?? {}),
   };
 
@@ -2098,6 +2174,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     authToken: finalAuthToken,
     oauthTokens,
     oauthClient,
+    oauthClientCredentials,
   } = await resolveAgent(agentArg, opts.authToken, opts.protocolFlag, opts.jsonOutput);
 
   // Parse --tracks
@@ -2147,13 +2224,12 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     timeoutMs = seconds * 1000;
   }
 
-  // OAuth tokens take precedence over a bare bearer — the OAuth provider path
-  // auto-refreshes on 401 while a raw bearer can't recover.
-  const authOption = oauthTokens
-    ? { type: 'oauth', tokens: oauthTokens, ...(oauthClient && { client: oauthClient }) }
-    : finalAuthToken
-      ? { type: 'bearer', token: finalAuthToken }
-      : undefined;
+  const { auth: authOption } = buildResolvedAuthOption({
+    resolvedAuth: finalAuthToken,
+    resolvedOauthTokens: oauthTokens,
+    resolvedOauthClient: oauthClient,
+    resolvedOauthClientCredentials: oauthClientCredentials,
+  });
 
   const webhookReceiverOpts = await resolveWebhookReceiverOptions(rawArgs, { jsonOutput: opts.jsonOutput });
 
@@ -2172,7 +2248,13 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
   };
 
   if (!opts.jsonOutput) {
-    const authLabel = authOption ? (authOption.type === 'oauth' ? 'oauth (auto-refresh)' : 'bearer') : 'none';
+    const authLabel = !authOption
+      ? 'none'
+      : authOption.type === 'oauth'
+        ? 'oauth (auto-refresh)'
+        : authOption.type === 'oauth_client_credentials'
+          ? 'oauth client credentials (auto-refresh)'
+          : 'bearer';
     console.log(`\nRunning storyboard assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
@@ -2234,6 +2316,9 @@ async function handleStoryboardStepCmd(args) {
     agentUrl,
     protocol,
     authToken: resolvedAuth,
+    oauthTokens: resolvedOauthTokens,
+    oauthClient: resolvedOauthClient,
+    oauthClientCredentials: resolvedOauthClientCredentials,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
   // Parse --context and --request flags (supports inline JSON or @file.json)
@@ -2252,7 +2337,12 @@ async function handleStoryboardStepCmd(args) {
     protocol,
     context,
     request,
-    ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
+    ...(buildResolvedAuthOption({
+      resolvedAuth,
+      resolvedOauthTokens,
+      resolvedOauthClient,
+      resolvedOauthClientCredentials,
+    })),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2729,34 +2819,135 @@ async function main() {
     return;
   }
 
-  // Handle help
-  if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+  // Handle help — guarded so `--save-auth --help` falls through to the
+  // subcommand's dedicated help block below (that flow has its own --help
+  // handler at the top).
+  if (args[0] !== '--save-auth' && (args.includes('--help') || args.includes('-h') || args.length === 0)) {
     printUsage();
     process.exit(0);
   }
 
   // Handle agent management commands
   if (args[0] === '--save-auth') {
-    // Parse flags first
-    const authFlagIndex = args.indexOf('--auth');
-    const noAuthFlag = args.includes('--no-auth');
-    const oauthFlag = args.includes('--oauth');
-    const providedAuthToken = authFlagIndex !== -1 ? args[authFlagIndex + 1] : null;
+    // `adcp --save-auth --help` / `-h`: dedicated subcommand help. Kept up
+    // top so it short-circuits before the parser rejects a missing alias.
+    if (args.includes('--help') || args.includes('-h')) {
+      console.log(`
+adcp --save-auth <alias> <url> [protocol] [auth flags]
 
-    // Filter out flags to get positional args
-    const saveAuthPositional = args
-      .slice(1)
-      .filter(arg => arg !== '--auth' && arg !== '--no-auth' && arg !== '--oauth' && arg !== providedAuthToken);
+Save an agent URL under an alias in ~/.adcp/config.json so future commands
+can use the alias in place of the URL.
 
-    let alias = saveAuthPositional[0];
-    let url = saveAuthPositional[1] || null;
-    const protocol = saveAuthPositional[2] || null;
+AUTH METHODS (pick one):
+  Static bearer token:
+    --auth <token>            Pre-issued bearer token
+    --no-auth                 Agent requires no auth
+
+  Browser OAuth (authorization code flow):
+    --oauth                   Opens a browser to authorize; stores tokens
+                              so the SDK can refresh via refresh_token.
+
+  OAuth client credentials (machine-to-machine, RFC 6749 §4.4):
+    --oauth-token-url <url>   AS token endpoint (HTTPS or http://localhost)
+    --client-id <value>       Literal client id
+    --client-id-env <VAR>     Env var holding the client id
+    --client-secret <value>   Literal client secret (stored in config 0600)
+    --client-secret-env <VAR> Env var holding the secret (stored as
+                              '$ENV:VAR' — nothing sensitive on disk)
+    --scope <scope>           OAuth scope, if required
+    --oauth-auth-method basic|body
+                              Where to send creds on the token request.
+                              Default: basic (RFC 6749 §2.3.1). Some AS
+                              deployments only accept body.
+
+EXAMPLES:
+  # Static bearer (local dev)
+  adcp --save-auth mine https://agent.example.com/mcp --auth AB12
+
+  # Browser OAuth
+  adcp --save-auth mine https://agent.example.com/mcp --oauth
+
+  # Client credentials with literal secret
+  adcp --save-auth mine https://agent.example.com/mcp \\
+    --oauth-token-url https://auth.example.com/oauth/token \\
+    --client-id abc123 --client-secret xyz789 --scope adcp
+
+  # Client credentials with env-var indirection (CI)
+  adcp --save-auth mine https://agent.example.com/mcp \\
+    --oauth-token-url https://auth.example.com/oauth/token \\
+    --client-id-env ADCP_CLIENT_ID --client-secret-env ADCP_CLIENT_SECRET
+
+Secret storage: ~/.adcp/config.json is written with mode 0600. Treat it as
+credential material — never sync or commit.
+`);
+      process.exit(0);
+    }
+
+    // Extract value-bearing flags and the positional args in one pass so we
+    // don't have to reason about interleaving. Flags that take a value
+    // consume the next token; boolean flags consume only themselves.
+    const valueFlags = new Set([
+      '--auth',
+      '--oauth-token-url',
+      '--client-id',
+      '--client-id-env',
+      '--client-secret',
+      '--client-secret-env',
+      '--scope',
+      '--oauth-auth-method',
+    ]);
+    const booleanFlags = new Set(['--no-auth', '--oauth']);
+    const parsedFlags = {};
+    const positional = [];
+    {
+      const rest = args.slice(1);
+      for (let i = 0; i < rest.length; i++) {
+        const tok = rest[i];
+        if (valueFlags.has(tok)) {
+          const val = rest[i + 1];
+          if (val === undefined || val.startsWith('--')) {
+            console.error(`ERROR: ${tok} requires a value\n`);
+            process.exit(2);
+          }
+          parsedFlags[tok] = val;
+          i++;
+        } else if (booleanFlags.has(tok)) {
+          parsedFlags[tok] = true;
+        } else {
+          positional.push(tok);
+        }
+      }
+    }
+
+    const providedAuthToken = parsedFlags['--auth'] ?? null;
+    const noAuthFlag = parsedFlags['--no-auth'] === true;
+    const oauthFlag = parsedFlags['--oauth'] === true;
+    const oauthEndpoint = parsedFlags['--oauth-token-url'] ?? null;
+    const clientId = parsedFlags['--client-id'] ?? null;
+    const clientIdEnv = parsedFlags['--client-id-env'] ?? null;
+    const clientSecret = parsedFlags['--client-secret'] ?? null;
+    const clientSecretEnv = parsedFlags['--client-secret-env'] ?? null;
+    const scope = parsedFlags['--scope'] ?? null;
+    const oauthAuthMethod = parsedFlags['--oauth-auth-method'] ?? null;
+    const clientCredentialsRequested =
+      oauthEndpoint !== null ||
+      clientId !== null ||
+      clientIdEnv !== null ||
+      clientSecret !== null ||
+      clientSecretEnv !== null;
+
+    let alias = positional[0];
+    let url = positional[1] || null;
+    const protocol = positional[2] || null;
 
     if (!alias) {
       console.error('ERROR: --save-auth requires an alias\n');
-      console.error('Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth]\n');
+      console.error('Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth | --oauth-token-url ...]\n');
       console.error('Example: adcp --save-auth myagent https://agent.example.com --auth your_token\n');
       console.error('         adcp --save-auth myagent https://oauth-server.com/mcp --oauth\n');
+      console.error('         adcp --save-auth myagent https://agent.example.com \\\n');
+      console.error('           --oauth-token-url https://auth.example.com/token \\\n');
+      console.error('           --client-id myid --client-secret mysecret --scope adcp\n');
       process.exit(2);
     }
 
@@ -2771,10 +2962,159 @@ async function main() {
     }
 
     // Validate flags - only one auth method allowed
-    const authMethods = [providedAuthToken !== null, noAuthFlag, oauthFlag].filter(Boolean).length;
+    const authMethods = [
+      providedAuthToken !== null,
+      noAuthFlag,
+      oauthFlag,
+      clientCredentialsRequested,
+    ].filter(Boolean).length;
     if (authMethods > 1) {
-      console.error('ERROR: Cannot use multiple auth methods (--auth, --no-auth, --oauth)\n');
+      console.error(
+        'ERROR: Cannot combine auth methods — choose one of --auth, --no-auth, --oauth, or --oauth-token-url (client credentials)\n'
+      );
       process.exit(2);
+    }
+
+    if (oauthAuthMethod !== null && !clientCredentialsRequested) {
+      console.error('ERROR: --oauth-auth-method is only valid with --oauth-token-url (client credentials)\n');
+      process.exit(2);
+    }
+    if (oauthAuthMethod !== null && oauthAuthMethod !== 'basic' && oauthAuthMethod !== 'body') {
+      console.error("ERROR: --oauth-auth-method must be 'basic' or 'body'\n");
+      process.exit(2);
+    }
+
+    // Handle client credentials save flow (RFC 6749 §4.4 — M2M OAuth)
+    if (clientCredentialsRequested) {
+      if (!url) {
+        console.error('ERROR: client credentials require a URL\n');
+        console.error(
+          'Usage: adcp --save-auth <alias> <url> --oauth-token-url <token-url> --client-id ID --client-secret SECRET [--scope adcp]\n'
+        );
+        process.exit(2);
+      }
+      if (!oauthEndpoint) {
+        console.error('ERROR: --oauth-token-url is required for client credentials\n');
+        process.exit(2);
+      }
+      // TLS enforcement. Parse as a URL so `http://localhost.attacker.com`
+      // (which naively `startsWith`ed `http://localhost`) doesn't sneak
+      // through. The library does the same check one call later, but the
+      // CLI error message here is more actionable than the library's.
+      {
+        let parsedTokenUrl;
+        try {
+          parsedTokenUrl = new URL(oauthEndpoint);
+        } catch {
+          console.error(`ERROR: --oauth-token-url is not a valid URL: ${oauthEndpoint}\n`);
+          process.exit(2);
+        }
+        const tokenHost = parsedTokenUrl.hostname;
+        const isLoopback =
+          tokenHost === 'localhost' ||
+          tokenHost === '127.0.0.1' ||
+          tokenHost === '[::1]' ||
+          tokenHost === '::1';
+        if (parsedTokenUrl.protocol !== 'https:' && !(parsedTokenUrl.protocol === 'http:' && isLoopback)) {
+          console.error('ERROR: --oauth-token-url must be an HTTPS URL (or http://localhost for testing)\n');
+          process.exit(2);
+        }
+        if (parsedTokenUrl.username || parsedTokenUrl.password) {
+          console.error('ERROR: --oauth-token-url must not contain user:pass@ userinfo — use --client-id / --client-secret instead\n');
+          process.exit(2);
+        }
+      }
+      if (clientId !== null && clientIdEnv !== null) {
+        console.error('ERROR: Cannot combine --client-id and --client-id-env — pick one\n');
+        process.exit(2);
+      }
+      if (clientSecret !== null && clientSecretEnv !== null) {
+        console.error('ERROR: Cannot combine --client-secret and --client-secret-env — pick one\n');
+        process.exit(2);
+      }
+      if (clientId === null && clientIdEnv === null) {
+        console.error('ERROR: --client-id or --client-id-env is required for client credentials\n');
+        process.exit(2);
+      }
+      if (clientSecret === null && clientSecretEnv === null) {
+        console.error('ERROR: --client-secret or --client-secret-env is required for client credentials\n');
+        process.exit(2);
+      }
+
+      const credentials = {
+        token_endpoint: oauthEndpoint,
+        client_id: clientIdEnv !== null ? toEnvSecretReference(clientIdEnv) : clientId,
+        client_secret: clientSecretEnv !== null ? toEnvSecretReference(clientSecretEnv) : clientSecret,
+        ...(scope ? { scope } : {}),
+        ...(oauthAuthMethod ? { auth_method: oauthAuthMethod } : {}),
+      };
+
+      console.log(`\n🔐 Setting up OAuth client credentials for '${alias}'...`);
+      console.log(`Agent URL:     ${url}`);
+      console.log(`Token URL:     ${oauthEndpoint}`);
+      console.log(`Scope:         ${scope || '(none)'}`);
+      console.log(`Secret source: ${clientSecretEnv !== null ? `env var $${clientSecretEnv}` : 'literal (stored in config)'}\n`);
+
+      let tokens;
+      try {
+        console.log('Exchanging credentials for an access token...');
+        // CLI is operator-driven — the user explicitly pointed us at the URL,
+        // so localhost / private-IP endpoints are expected for dev setups.
+        // Library consumers accepting untrusted configs omit this flag and
+        // get the default SSRF guard.
+        tokens = await exchangeClientCredentials(credentials, { allowPrivateIp: true });
+      } catch (err) {
+        if (err instanceof MissingEnvSecretError) {
+          console.error(`\n❌ ${err.message}\n`);
+          process.exit(1);
+        }
+        if (err instanceof ClientCredentialsExchangeError) {
+          console.error(`\n❌ ${err.message}`);
+          if (err.oauthError === 'invalid_client') {
+            console.error('   Check that --client-id and --client-secret are correct.');
+          } else if (err.oauthError === 'invalid_scope') {
+            console.error('   The authorization server rejected the requested --scope.');
+          } else if (err.oauthError === 'unauthorized_client') {
+            console.error('   The client is not authorized to use the client_credentials grant.');
+          } else if (err.oauthError === 'invalid_grant') {
+            console.error("   Confirm the client is enabled for the 'client_credentials' grant type.");
+          } else if (err.oauthError === 'invalid_request') {
+            console.error('   Token endpoint rejected the request shape.');
+            console.error('   Try --oauth-auth-method body (or basic, if you used body).');
+          } else if (err.kind === 'malformed' && !err.oauthError) {
+            // The #1 CC footgun: user pastes the issuer URL (or the
+            // authorization endpoint, or a .well-known metadata doc) as
+            // --oauth-token-url. We land here for any non-OAuth response
+            // shape — HTML 200, redirect, 404/405, no-JSON-body, HTTP 200
+            // without access_token. All the same user mistake.
+            const statusHint = err.httpStatus ? `HTTP ${err.httpStatus} ` : '';
+            console.error(`   The token endpoint returned an unexpected ${statusHint}response.`);
+            console.error('   The most common cause is --oauth-token-url pointing at the issuer,');
+            console.error('   authorization endpoint, or a .well-known metadata URL instead of the');
+            console.error('   token endpoint. Check the AS docs for the exact URL');
+            console.error('   (commonly /oauth/token, /oauth2/token, or /connect/token).');
+          } else if (err.kind === 'network') {
+            console.error('   The token endpoint is unreachable. Check the URL, DNS, and firewall.');
+          }
+          console.error('');
+          process.exit(1);
+        }
+        throw err;
+      }
+
+      console.log(`✅ Token exchange succeeded (expires_in: ${tokens.expires_in ?? 'unspecified'})\n`);
+
+      saveAgent(alias, {
+        url,
+        protocol: protocol || 'mcp',
+        oauth_client_credentials: credentials,
+        oauth_tokens: tokens,
+      });
+
+      console.log(`✅ Agent '${alias}' saved with client credentials.`);
+      console.log(`Use: adcp ${alias} <tool> <payload>`);
+      console.log('Tokens will refresh automatically when they expire.\n');
+      process.exit(0);
     }
 
     // Handle OAuth save flow
@@ -2893,7 +3233,13 @@ async function main() {
       if (agent.auth_token) {
         console.log(`    Auth: token configured`);
       }
-      if (agent.oauth_tokens) {
+      if (agent.oauth_client_credentials) {
+        const cc = agent.oauth_client_credentials;
+        const secretSrc = cc.client_secret && cc.client_secret.startsWith('$ENV:')
+          ? `env ${cc.client_secret.slice(5)}`
+          : 'literal';
+        console.log(`    OAuth: client credentials (token endpoint ${cc.token_endpoint}, secret: ${secretSrc})`);
+      } else if (agent.oauth_tokens) {
         const hasValid = hasValidOAuthTokens(agent);
         console.log(`    OAuth: ${hasValid ? 'valid tokens' : 'expired (use --oauth to refresh)'}`);
       }
@@ -3125,16 +3471,20 @@ async function main() {
   }
 
   // Build agent config
-  // If using OAuth with a saved alias, we need to load existing OAuth tokens
+  // If using OAuth (auth code or client credentials) with a saved alias,
+  // attach the saved OAuth material so the library call path can refresh.
   let agentOAuthTokens = null;
   let agentOAuthClient = null;
+  let agentOAuthClientCredentials = null;
   let agentAlias = null;
 
-  if (useOAuth && savedAgent && isAlias(firstArg)) {
+  if (savedAgent && isAlias(firstArg)) {
     agentAlias = firstArg;
-    // Reload the full saved config to get OAuth tokens
     const fullSavedConfig = getAgent(firstArg);
-    if (fullSavedConfig.oauth_tokens) {
+    if (fullSavedConfig.oauth_client_credentials) {
+      agentOAuthClientCredentials = fullSavedConfig.oauth_client_credentials;
+      agentOAuthTokens = fullSavedConfig.oauth_tokens ?? null;
+    } else if (useOAuth && fullSavedConfig.oauth_tokens) {
       agentOAuthTokens = fullSavedConfig.oauth_tokens;
       agentOAuthClient = fullSavedConfig.oauth_client;
       if (!jsonOutput && hasValidOAuthTokens({ oauth_tokens: agentOAuthTokens })) {
@@ -3149,16 +3499,18 @@ async function main() {
     name: 'CLI Agent',
     agent_uri: agentUrl,
     protocol: protocol,
-    ...(authToken && !useOAuth && { auth_token: authToken, requiresAuth: true }),
+    ...(authToken && !useOAuth && !agentOAuthClientCredentials && { auth_token: authToken, requiresAuth: true }),
     ...(agentOAuthTokens && { oauth_tokens: agentOAuthTokens }),
     ...(agentOAuthClient && { oauth_client: agentOAuthClient }),
+    ...(agentOAuthClientCredentials && { oauth_client_credentials: agentOAuthClientCredentials }),
   };
 
-  // For saved aliases with OAuth, attach a file-backed storage so the MCP
-  // SDK's OAuthProvider can persist refreshed tokens back to the config
-  // file. The storage keys writes under the actual alias regardless of the
-  // synthetic `cli-agent` id we use in memory.
-  if (agentAlias && agentOAuthTokens) {
+  // For saved aliases with any OAuth material, attach a file-backed storage
+  // so token refreshes (SDK auto-refresh for auth-code flow, client-credentials
+  // re-exchange for CC flow) persist back to the config file. The storage
+  // keys writes under the actual alias regardless of the synthetic
+  // `cli-agent` id we use in memory.
+  if (agentAlias && (agentOAuthTokens || agentOAuthClientCredentials)) {
     const storage = createFileOAuthStorage({
       configPath: getConfigPath(),
       agentKey: agentAlias,

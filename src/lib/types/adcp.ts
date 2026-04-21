@@ -221,6 +221,81 @@ export interface AgentOAuthClient {
 }
 
 /**
+ * OAuth 2.0 client credentials grant configuration (RFC 6749 §4.4).
+ *
+ * For machine-to-machine authentication where no user is present — the
+ * library exchanges the client ID + secret directly with the authorization
+ * server. Tokens are cached in `AgentConfig.oauth_tokens` and re-exchanged
+ * by `ensureClientCredentialsTokens` when they near expiry.
+ *
+ * Secret values (`client_id`, `client_secret`) may be either literal strings
+ * or env-var references in the form `$ENV:VAR_NAME`. References are resolved
+ * at token-exchange time by `resolveSecret`, so secrets never need to land
+ * on disk for CI use cases.
+ *
+ * @example Literal secret (local dev)
+ * ```ts
+ * const credentials: AgentOAuthClientCredentials = {
+ *   token_endpoint: 'https://auth.example.com/oauth/token',
+ *   client_id: 'abc123',
+ *   client_secret: 'shh-its-a-secret',
+ *   scope: 'adcp',
+ * };
+ * ```
+ *
+ * @example Env-var reference (CI — no on-disk secret)
+ * ```ts
+ * const credentials: AgentOAuthClientCredentials = {
+ *   token_endpoint: 'https://auth.example.com/oauth/token',
+ *   client_id: 'abc123',
+ *   client_secret: '$ENV:ADCP_CLIENT_SECRET',
+ *   scope: 'adcp',
+ *   audience: 'https://agent.example.com',
+ * };
+ * ```
+ */
+export interface AgentOAuthClientCredentials {
+  /**
+   * Authorization server token endpoint. Must be HTTPS unless it points at
+   * `localhost` / `127.0.0.1` (dev/test carve-out). The exchange helper
+   * rejects non-HTTPS URLs at runtime to keep the client secret off the
+   * wire in plaintext.
+   */
+  token_endpoint: string;
+  /** OAuth client ID. May be a `$ENV:VAR` reference. */
+  client_id: string;
+  /** OAuth client secret. May be a `$ENV:VAR` reference. */
+  client_secret: string;
+  /** Requested OAuth scope (space-delimited for multiple). */
+  scope?: string;
+  /**
+   * RFC 8707 resource indicator(s). Advertises the protected resource the
+   * issued token will be used against, so the AS can mint an
+   * audience-bound token. Required by some AS deployments (Keycloak in
+   * strict mode, AWS Cognito with resource servers) when the agent is
+   * behind a proxy that validates `aud`. Accepts a single URI or an array
+   * — the library sends one `resource` form field per entry.
+   */
+  resource?: string | string[];
+  /**
+   * Audience parameter. Non-standard in RFC 6749 but widely supported by
+   * Auth0, Okta, and Azure AD as the preferred way to request an
+   * audience-bound token. Send this when the AS documentation calls for
+   * `audience=`; otherwise prefer `resource` (RFC 8707).
+   */
+  audience?: string;
+  /**
+   * Where to put client credentials on the token request.
+   * - `basic` (default): HTTP Basic Auth header (RFC 6749 §2.3.1 preferred).
+   * - `body`: `client_id` / `client_secret` form fields in the body.
+   *
+   * RFC 6749 says servers MUST support Basic and MAY support body — a few
+   * popular providers only accept body, so this toggle exists.
+   */
+  auth_method?: 'basic' | 'body';
+}
+
+/**
  * Private JWK carrying the `d` scalar required to sign. Narrower than the
  * generic JWK shape to give hand-authors a compiler error when they paste
  * the public JWK (which lacks `d`) by accident.
@@ -311,6 +386,14 @@ export interface AgentConfig {
    * Stored after dynamic client registration
    */
   oauth_client?: AgentOAuthClient;
+
+  /**
+   * OAuth 2.0 client credentials grant configuration (M2M).
+   * When present, tokens in `oauth_tokens` are refreshed by re-exchanging
+   * these credentials against `token_endpoint` — there is no user-facing
+   * authorization flow.
+   */
+  oauth_client_credentials?: AgentOAuthClientCredentials;
 
   /**
    * PKCE code verifier (temporary, during OAuth flow)

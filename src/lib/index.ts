@@ -684,6 +684,26 @@ export {
   type FileOAuthStorageOptions,
 } from './auth/oauth';
 
+// OAuth 2.0 client credentials (RFC 6749 §4.4) — machine-to-machine token
+// exchange used by programmatic CC consumers and by the CLI's `--save-auth
+// --oauth-token-url ...` flow. The library call path pre-refreshes before
+// every request automatically when `AgentConfig.oauth_client_credentials`
+// is set; these symbols are exposed for consumers that need explicit
+// control (building custom AgentConfigs, testing, or implementing
+// server-side `save_agent` endpoints like Addie's).
+export {
+  exchangeClientCredentials,
+  ensureClientCredentialsTokens,
+  ClientCredentialsExchangeError,
+  MissingEnvSecretError,
+  resolveSecret,
+  isEnvSecretReference,
+  toEnvSecretReference,
+  type ExchangeClientCredentialsOptions,
+  type EnsureClientCredentialsOptions,
+  type AgentOAuthClientCredentials,
+} from './auth/oauth';
+
 // ====== TOOL SCHEMA MAPS ======
 // Zod schemas keyed by tool name — use with server.tool(name, schema.shape, handler)
 export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';

@@ -111,6 +111,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     auth_token?: string;
     oauth_tokens?: import('../types/adcp').AgentOAuthTokens;
     oauth_client?: import('../types/adcp').AgentOAuthClient;
+    oauth_client_credentials?: import('../types/adcp').AgentOAuthClientCredentials;
     headers?: Record<string, string>;
   } = {
     id: 'test',
@@ -130,6 +131,12 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       // oauth_tokens and routes through the refresh-capable MCP OAuth path.
       agentConfig.oauth_tokens = options.auth.tokens;
       if (options.auth.client) agentConfig.oauth_client = options.auth.client;
+    } else if (options.auth.type === 'oauth_client_credentials') {
+      // oauth_client_credentials: attach credentials + optional cached tokens.
+      // ProtocolClient pre-refreshes via secret re-exchange before each call
+      // and sends the resulting access_token as a plain bearer.
+      agentConfig.oauth_client_credentials = options.auth.credentials;
+      if (options.auth.tokens) agentConfig.oauth_tokens = options.auth.tokens;
     } else {
       // bearer: raw token stored; library prepends 'Bearer ' internally via createMCPAuthHeaders
       agentConfig.auth_token = options.auth.token;
