@@ -229,6 +229,8 @@ npm run test:e2e          # End-to-end against live server
 npm run test:all          # Full test suite
 ```
 
+Tests run under `--test-timeout=60000`. If a test hangs indefinitely (high CPU, no output) rather than timing out, send `SIGQUIT` to dump the V8 stack before killing — see [CONTRIBUTING.md § Debugging a hung test](./CONTRIBUTING.md#debugging-a-hung-test).
+
 ## File Organization
 
 - `docs/llms.txt` - **Start here**: protocol overview, all tools, types, flows (generated)
