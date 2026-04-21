@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-20
+> Generated at: 2026-04-21
 > Library: @adcp/client v5.1.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -573,7 +573,7 @@ Flow: `get_adcp_capabilities → sync_plans → check_governance → create_medi
 ### Media Buy
 
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → list_creative_formats → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
 **Seller creates buy when governance approves** — Verifies that the seller creates a media buy when governance approves the transaction.
 Flow: `sync_plans → sync_accounts → sync_governance → get_products → create_media_buy`
@@ -614,8 +614,10 @@ Flow: `get_adcp_capabilities → get_products → create_media_buy → update_me
 **Generative seller agent** — Seller agent that generates creatives from briefs at buy time — no pre-built assets required.
 Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
 
+**Governance-aware seller** — Seller agent that composes with a campaign-governance agent on the buyer side — accepts sync_governance, calls check_governance before confirming spend, and propagates governance approvals, conditions, and denials unchanged. Optional claim; pure sellers without governance composition do not claim this specialism and skip the governance scenarios as not_applicable.
+
 **Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
-Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
 Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
