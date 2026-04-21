@@ -859,8 +859,10 @@ WEBHOOK OPTIONS:
                                   cloudflared; override with $ADCP_WEBHOOK_TUNNEL),
                                   spawn it against the receiver, and plug its
                                   public URL into proxy mode. Cleans up on exit.
-                                  Removes manual-tunnel friction for remote
-                                  agents. HTTP-on-the-wire — spec-compliant.
+                                  Custom override: $ADCP_WEBHOOK_TUNNEL="<cmd>
+                                  {port}"; the command must emit
+                                  \`ADCP_TUNNEL_URL=https://…\` to stdout/stderr.
+                                  HTTP-on-the-wire — spec-compliant.
 
 OPTIONS:
   --context JSON      Pass context from previous step (step only)
@@ -1372,6 +1374,19 @@ function detectTunnelCommand() {
   return null;
 }
 
+function parseTunnelTimeoutMs(raw) {
+  const DEFAULT = 15000;
+  if (raw === undefined || raw === '') return DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.error(
+      `WARNING: ADCP_WEBHOOK_TUNNEL_TIMEOUT_MS=${JSON.stringify(raw)} is not a positive number; using default ${DEFAULT}ms.`
+    );
+    return DEFAULT;
+  }
+  return parsed;
+}
+
 function getFreePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -1412,7 +1427,10 @@ async function spawnAutoTunnel({ port, timeoutMs, jsonOutput }) {
     cmd = 'ngrok';
     // logfmt output is stable across ngrok v2/v3 and keeps us off the TUI.
     cmdArgs = ['http', String(port), '--log=stdout', '--log-format=logfmt'];
-    urlRegex = /url=(https:\/\/[^\s"]+)/;
+    // Pin to ngrok's known tunnel domains so an unrelated `url=` field in a
+    // log line (startup diagnostics, crash report links) can't be mistaken
+    // for the forwarding URL.
+    urlRegex = /url=(https:\/\/[a-z0-9-]+\.(?:ngrok-free\.app|ngrok\.io|ngrok\.dev|ngrok\.app)(?:\/[^\s"]*)?)/;
   } else if (detected.kind === 'cloudflared') {
     cmd = 'cloudflared';
     cmdArgs = ['tunnel', '--url', `http://localhost:${port}`, '--no-autoupdate'];
@@ -1428,7 +1446,11 @@ async function spawnAutoTunnel({ port, timeoutMs, jsonOutput }) {
     }
     cmd = parts[0];
     cmdArgs = parts.slice(1);
-    urlRegex = /(https?:\/\/\S+)/;
+    // Custom templates must print `ADCP_TUNNEL_URL=<https://...>` on a line
+    // somewhere in stdout/stderr. An unscoped "first https:// URL" match would
+    // wire the tunnel destination to any docs/diagnostics URL the binary
+    // happens to log on startup; the explicit marker is the contract.
+    urlRegex = /ADCP_TUNNEL_URL=(https:\/\/[^\s"]+)/;
   }
 
   let child;
@@ -1502,31 +1524,75 @@ async function spawnAutoTunnel({ port, timeoutMs, jsonOutput }) {
   }
   clearTimeout(timer);
 
-  let cleanedUp = false;
-  const cleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      /* already gone */
-    }
-  };
-  process.once('exit', cleanup);
-  process.once('SIGINT', () => {
-    cleanup();
-    process.exit(130);
-  });
-  process.once('SIGTERM', () => {
-    cleanup();
-    process.exit(143);
-  });
+  const cleanup = registerTunnelChildForCleanup(child);
 
   if (!jsonOutput) {
     console.error(`Auto-tunnel (${cmd}): ${publicUrl} → http://localhost:${port}`);
   }
 
   return { publicUrl, cleanup };
+}
+
+/**
+ * Shared cleanup registry for spawned tunnel children. One `exit`/`SIGINT`/
+ * `SIGTERM` listener is installed the first time a child is registered and
+ * stays installed for the process lifetime — `process.once` was a bug
+ * waiting to happen (a second Ctrl-C would bypass teardown and leak
+ * tunnels). Each child gets a SIGTERM, then SIGKILL after a short grace
+ * period, so a tunnel that ignores TERM still gets reaped.
+ */
+const activeTunnelChildren = new Set();
+let tunnelSignalHandlersInstalled = false;
+
+function reapTunnelChildren() {
+  for (const child of activeTunnelChildren) {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      /* already gone */
+    }
+  }
+  // Grace period then SIGKILL. Short because the process is about to exit
+  // anyway; any tunnel that's still alive is ignoring TERM.
+  setTimeout(() => {
+    for (const child of activeTunnelChildren) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }, 250).unref();
+  activeTunnelChildren.clear();
+}
+
+function installTunnelSignalHandlersOnce() {
+  if (tunnelSignalHandlersInstalled) return;
+  tunnelSignalHandlersInstalled = true;
+  // `process.on` (not `once`) so a second Ctrl-C doesn't bypass cleanup.
+  process.on('exit', reapTunnelChildren);
+  process.on('SIGINT', () => {
+    reapTunnelChildren();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    reapTunnelChildren();
+    process.exit(143);
+  });
+}
+
+function registerTunnelChildForCleanup(child) {
+  installTunnelSignalHandlersOnce();
+  activeTunnelChildren.add(child);
+  child.once('exit', () => activeTunnelChildren.delete(child));
+  return () => {
+    if (!activeTunnelChildren.delete(child)) return;
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      /* already gone */
+    }
+  };
 }
 
 /**
@@ -1545,12 +1611,14 @@ function validateAutoTunnelArgs(args, base) {
     console.error('       Pick one — auto-tunnel mints a URL for you, public-url supplies your own.');
     process.exit(2);
   }
-  // If the operator typed `--webhook-receiver loopback` explicitly, auto-tunnel
-  // contradicts it. Detect by checking whether --webhook-receiver has an
-  // explicit value (not just a bare flag defaulting to loopback).
-  const wrIdx = args.indexOf('--webhook-receiver');
-  if (wrIdx !== -1 && args[wrIdx + 1] === 'loopback') {
-    console.error('ERROR: --webhook-receiver-auto-tunnel requires proxy mode; drop `--webhook-receiver loopback`.');
+  // Auto-tunnel implies proxy mode and mints the URL itself. A coexisting
+  // `--webhook-receiver [mode]` flag is always wrong: `loopback` contradicts
+  // the minted URL, `proxy` without public-url is caught earlier in
+  // extractWebhookReceiverOptions, and a bare `--webhook-receiver` (which
+  // resolves to `loopback_mock`) would be silently overwritten. Reject all
+  // three up front with a single clear message.
+  if (args.includes('--webhook-receiver')) {
+    console.error('ERROR: --webhook-receiver-auto-tunnel already implies proxy mode; drop `--webhook-receiver`.');
     process.exit(2);
   }
 }
@@ -1561,7 +1629,7 @@ async function resolveWebhookReceiverOptions(args, { jsonOutput } = {}) {
   if (!args.includes('--webhook-receiver-auto-tunnel')) return base;
 
   const port = base?.webhook_receiver.port ?? (await getFreePort());
-  const timeoutMs = Number(process.env.ADCP_WEBHOOK_TUNNEL_TIMEOUT_MS) || 15000;
+  const timeoutMs = parseTunnelTimeoutMs(process.env.ADCP_WEBHOOK_TUNNEL_TIMEOUT_MS);
   const { publicUrl } = await spawnAutoTunnel({ port, timeoutMs, jsonOutput });
 
   return {

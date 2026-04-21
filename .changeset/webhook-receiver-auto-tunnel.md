@@ -9,7 +9,11 @@ proxy mode, and tears the tunnel down on exit (including on SIGINT/SIGTERM).
 
 Use `ADCP_WEBHOOK_TUNNEL="<cmd> {port}"` to override detection with a
 custom tunnel command — the CLI passes the auto-assigned port via `{port}`
-substitution and captures the first `https://` URL emitted on stdout/stderr.
+substitution and captures the URL behind an explicit
+`ADCP_TUNNEL_URL=https://…` marker the custom command must emit on
+stdout/stderr. The marker convention avoids misrouting webhooks to docs or
+diagnostic URLs that tunnel binaries often log at startup; ngrok and
+cloudflared detections use vendor-pinned regexes for the same reason.
 
 The flag is mutually exclusive with `--webhook-receiver-public-url` and
 `--webhook-receiver loopback`, and (like `--webhook-receiver`) incompatible

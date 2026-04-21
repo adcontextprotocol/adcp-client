@@ -45,9 +45,9 @@ before(() => {
   );
 
   // Stub tunnel for --webhook-receiver-auto-tunnel tests. Emits a URL on
-  // stdout (matching the override regex) and then sleeps until killed, so
-  // the CLI sees the URL and we can assert without needing a real tunnel.
-  // Each test can adjust behavior via env vars the stub reads.
+  // stdout using the `ADCP_TUNNEL_URL=<url>` marker the CLI's custom-template
+  // path scans for, then sleeps until killed. Each test can adjust behavior
+  // via env vars the stub reads.
   stubTunnelPath = path.join(tmpDir, 'fake-tunnel.sh');
   writeFileSync(
     stubTunnelPath,
@@ -59,10 +59,15 @@ before(() => {
       '  exit 1',
       'fi',
       'if [ "$FAKE_TUNNEL_SILENT" = "1" ]; then',
-      '  # Never emit a URL — exercises the startup-timeout path.',
+      '  # Never emit the marker — exercises the startup-timeout path.',
       '  while true; do sleep 60; done',
       'fi',
-      'echo "https://stub-${1:-0}.tunnel.test" ',
+      'if [ -n "$FAKE_TUNNEL_NOISE_URL" ]; then',
+      '  # Print a bystander URL (docs link, diagnostics) before the marker',
+      '  # so we can assert the scanner ignores non-marker URLs.',
+      '  echo "See $FAKE_TUNNEL_NOISE_URL for help"',
+      'fi',
+      'echo "ADCP_TUNNEL_URL=https://stub-${1:-0}.tunnel.test"',
       "# Stay alive until killed so the CLI doesn't see EOF.",
       'while true; do sleep 60; done',
       '',
@@ -84,12 +89,16 @@ after(() => {
   }
 });
 
-function runCli(args, env = {}) {
+function runCli(args, env = {}, { timeout = 10_000 } = {}) {
   // Use process.execPath so tests that zero out $PATH (e.g. the no-tunnel-binary
-  // test) can still locate the node interpreter.
+  // test) can still locate the node interpreter. The timeout guards against a
+  // regression where auto-tunnel captures the URL but then hangs indefinitely
+  // in the run path — without this the test would block CI.
   return spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf8',
     env: { ...process.env, ...env },
+    timeout,
+    killSignal: 'SIGKILL',
   });
 }
 
@@ -278,23 +287,31 @@ describe('storyboard run --webhook-receiver-auto-tunnel', () => {
     assert.match(result.stderr, /--webhook-receiver-auto-tunnel conflicts with --webhook-receiver-public-url/);
   });
 
-  test('conflicts with explicit --webhook-receiver loopback', () => {
-    const result = runCli(
-      [
-        'storyboard',
-        'run',
-        'test-mcp',
-        '--file',
-        scenarioPath,
-        '--webhook-receiver',
-        'loopback',
-        '--webhook-receiver-auto-tunnel',
-        '--dry-run',
-      ],
-      { ADCP_WEBHOOK_TUNNEL: `${stubTunnelPath} {port}` }
-    );
-    assert.strictEqual(result.status, 2);
-    assert.match(result.stderr, /requires proxy mode/);
+  test('conflicts with any --webhook-receiver flag (auto-tunnel implies proxy)', () => {
+    // Bare `--webhook-receiver` (defaults to loopback), explicit `loopback`,
+    // and explicit `proxy` all collide with auto-tunnel — rejected uniformly
+    // so operators don't silently get their --webhook-receiver ignored.
+    for (const extra of [['--webhook-receiver'], ['--webhook-receiver', 'loopback'], ['--webhook-receiver', 'proxy']]) {
+      const result = runCli(
+        [
+          'storyboard',
+          'run',
+          'test-mcp',
+          '--file',
+          scenarioPath,
+          ...extra,
+          '--webhook-receiver-auto-tunnel',
+          '--dry-run',
+        ],
+        { ADCP_WEBHOOK_TUNNEL: `${stubTunnelPath} {port}` }
+      );
+      assert.strictEqual(result.status, 2, `extra=${extra.join(' ')} stderr: ${result.stderr}`);
+      assert.match(
+        result.stderr,
+        /already implies proxy mode|--webhook-receiver proxy requires/,
+        `extra=${extra.join(' ')}`
+      );
+    }
   });
 
   test('incompatible with --multi-instance-strategy multi-pass', () => {
@@ -340,20 +357,33 @@ describe('storyboard run --webhook-receiver-auto-tunnel', () => {
     assert.match(result.stderr, /ADCP_WEBHOOK_TUNNEL/);
   });
 
-  test('ADCP_WEBHOOK_TUNNEL override substitutes {port} and captures URL', () => {
-    // End-to-end of the override path: the stub prints `https://stub-<port>.tunnel.test`
-    // and stays alive. The CLI must capture that URL, proceed to runStoryboard,
-    // fail at network dispatch (test-mcp is not a real URL in this test setup),
-    // and kill the tunnel on exit. We assert on the plumbing side-effects we can
-    // see without a real network: the "Auto-tunnel:" log line proves URL capture
-    // succeeded before the run began.
+  test('ADCP_WEBHOOK_TUNNEL override substitutes {port} and captures marker URL', () => {
+    // End-to-end of the override path: the stub prints the URL behind the
+    // `ADCP_TUNNEL_URL=` marker and stays alive. The CLI must capture that URL,
+    // proceed to runStoryboard, fail at network dispatch (test-mcp isn't real
+    // here), and kill the tunnel on exit. The `runCli` timeout is the
+    // regression guard — if capture succeeds but the run hangs, the test fails
+    // loudly instead of stalling CI.
     const result = runCli(['storyboard', 'run', 'test-mcp', '--file', scenarioPath, '--webhook-receiver-auto-tunnel'], {
       ADCP_WEBHOOK_TUNNEL: `${stubTunnelPath} {port}`,
       ADCP_WEBHOOK_TUNNEL_TIMEOUT_MS: '5000',
     });
-    // Exit code is whatever runStoryboard returns (likely non-zero against test-mcp
-    // alias without network); the capture log is the signal we care about.
+    assert.notStrictEqual(result.signal, 'SIGKILL', 'CLI hung past timeout — regression');
     assert.match(result.stderr, /Auto-tunnel \(.+\): https:\/\/stub-\d+\.tunnel\.test → http:\/\/localhost:\d+/);
+  });
+
+  test('custom template ignores unrelated URLs; only matches ADCP_TUNNEL_URL= marker', () => {
+    // If a tunnel binary logs a docs or crash-reporter URL before its actual
+    // forwarding URL, the scanner must not latch onto that bystander. The stub
+    // prints the noise URL first, then the marker; success proves the scanner
+    // kept reading past the noise instead of wiring the wrong destination.
+    const result = runCli(['storyboard', 'run', 'test-mcp', '--file', scenarioPath, '--webhook-receiver-auto-tunnel'], {
+      ADCP_WEBHOOK_TUNNEL: `${stubTunnelPath} {port}`,
+      FAKE_TUNNEL_NOISE_URL: 'https://docs.example.com/getting-started',
+      ADCP_WEBHOOK_TUNNEL_TIMEOUT_MS: '5000',
+    });
+    assert.match(result.stderr, /Auto-tunnel \(.+\): https:\/\/stub-\d+\.tunnel\.test/);
+    assert.doesNotMatch(result.stderr, /Auto-tunnel \(.+\): https:\/\/docs\.example\.com/);
   });
 
   test('tunnel startup timeout surfaces a clear error', () => {

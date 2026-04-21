@@ -77,11 +77,19 @@ into proxy mode, and tears the tunnel down on exit.
 adcp storyboard run <remote-agent> webhook-emission --webhook-receiver-auto-tunnel
 ```
 
-Detection order (first match wins; override with `ADCP_WEBHOOK_TUNNEL=<cmd> {port}`):
+Detection order (first match wins; override with `ADCP_WEBHOOK_TUNNEL="<cmd> {port}"`):
 
-1. `ngrok http <port> --log=stdout --log-format=logfmt`
-2. `cloudflared tunnel --url http://localhost:<port>`
-3. error: "no supported tunnel binary found on PATH — install ngrok or
+1. `ngrok http <port> --log=stdout --log-format=logfmt` — URL captured from
+   the logfmt `url=<https://…ngrok-free.app>` field, pinned to ngrok's own
+   tunnel domains so a stray `url=` in startup diagnostics can't be mistaken
+   for the forwarding URL.
+2. `cloudflared tunnel --url http://localhost:<port> --no-autoupdate` — URL
+   captured from the printed `https://<slug>.trycloudflare.com` line.
+3. Custom command from `$ADCP_WEBHOOK_TUNNEL` — must emit a line containing
+   `ADCP_TUNNEL_URL=<https://…>` to stdout/stderr. The marker convention
+   avoids the ambiguity of "first `https://` URL in output" (many binaries
+   log docs or diagnostic URLs at startup).
+4. error: "no supported tunnel binary found on PATH — install ngrok or
    cloudflared, or set `ADCP_WEBHOOK_TUNNEL`, or pass
    `--webhook-receiver-public-url` with your own tunnel."
 
