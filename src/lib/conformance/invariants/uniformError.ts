@@ -68,7 +68,14 @@ export interface ProbeSummary {
  */
 interface ToolIdConfig {
   idField: string;
-  fixtureKey: keyof ConformanceFixtures;
+  /**
+   * Fixture pool that holds a seeded "accessible to tenant A" id for
+   * cross-tenant mode. When omitted, cross-tenant mode is unavailable
+   * for this tool — baseline is the only mode. Useful for tools whose
+   * ids don't come from a seeder (catalog-style lookups, provider-
+   * owned signals, etc.).
+   */
+  fixtureKey?: keyof ConformanceFixtures;
   buildRequest: (id: string) => Record<string, unknown>;
 }
 
@@ -112,6 +119,17 @@ const TOOL_ID_CONFIG: Partial<Record<ConformanceToolName, ToolIdConfig>> = {
     fixtureKey: 'task_ids',
     buildRequest: id => ({ task_id: id }),
   },
+  get_signals: {
+    idField: 'signal_ids',
+    // No seeder for signals today (catalog signals are provider-
+    // controlled, not agent-created). Baseline-only: two fresh UUIDs
+    // wrapped in a SignalID shape, probed under the single caller
+    // token. Cross-tenant mode becomes available when the signals
+    // protocol grows a create/sync path and a seeder produces ids.
+    buildRequest: id => ({
+      signal_ids: [{ source: 'catalog', data_provider_domain: 'conformance.example', id }],
+    }),
+  },
 };
 
 /** Tools eligible for the uniform-error probe. Used by the runner wiring. */
@@ -151,9 +169,10 @@ export async function runUniformErrorInvariant(
   //
   // Cross-tenant mode needs a seeded id (tenant A owns the resource;
   // tenant B is probing it — that's the "exists but inaccessible" leg).
-  // Missing seeded id → fall back to baseline rather than skipping; the
+  // Missing seeded id (or a tool with no fixtureKey at all, like
+  // get_signals) → fall back to baseline rather than skipping; the
   // baseline still catches id-echo and header-divergence leaks.
-  const seededPool = options.fixtures[config.fixtureKey] ?? [];
+  const seededPool = config.fixtureKey ? (options.fixtures[config.fixtureKey] ?? []) : [];
   const seededId = seededPool[0];
   const mode: UniformErrorReport['mode'] = options.crossTenantConfigured && seededId ? 'cross-tenant' : 'baseline';
 

@@ -115,13 +115,72 @@ describe('uniformErrorComparator', () => {
     assert.equal(r.equivalent, true);
   });
 
-  test('rate-limit header divergence → fail (closed allowlist)', () => {
+  test('ratelimit counter divergence → OK (uniform decrement is expected)', () => {
+    // A well-behaved limiter decrements every request; the counter
+    // value differs between probes with no signal value. Allowlisted
+    // as per-request metadata.
     const body = envelope('REFERENCE_NOT_FOUND');
     const r = compareProbes(
-      capture({ body, headers: { 'x-ratelimit-remaining': '99' } }),
-      capture({ body, headers: { 'x-ratelimit-remaining': '42' } })
+      capture({ body, headers: { 'ratelimit-remaining': '99', 'x-ratelimit-remaining': '99' } }),
+      capture({ body, headers: { 'ratelimit-remaining': '98', 'x-ratelimit-remaining': '98' } })
+    );
+    assert.equal(r.equivalent, true);
+  });
+
+  test('Retry-After divergence → fail (must match; 429-on-one-path-only is a leak)', () => {
+    const body = envelope('REFERENCE_NOT_FOUND');
+    const r = compareProbes(
+      capture({ body, headers: { 'retry-after': '30' } }),
+      capture({ body, headers: {} })
     );
     assert.equal(r.equivalent, false);
+    assert.ok(r.differences.some(d => d.includes('"retry-after"')));
+  });
+
+  test('MCP success body — same domain payload, different per-request _meta → equivalent', () => {
+    // Real MCP CallToolResult shape: result wraps structuredContent
+    // (domain) + _meta (per-request related-task id). Two probes with
+    // identical domain content but different _meta.taskId must compare
+    // equivalent — _meta is transport-level, not a leak signal.
+    const bodyFor = metaId =>
+      'event: message\n' +
+      'data: ' +
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify({ signals: [] }) }],
+          _meta: { 'io.modelcontextprotocol/related-task': { taskId: metaId } },
+        },
+      }) +
+      '\n\n';
+    const r = compareProbes(capture({ body: bodyFor('task-A') }), capture({ body: bodyFor('task-B') }));
+    assert.equal(r.equivalent, true, `unexpected: ${JSON.stringify(r.differences)}`);
+  });
+
+  test('MCP success body — divergent domain payload → fail', () => {
+    const bodyFor = payload =>
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          structuredContent: payload,
+        },
+      });
+    const r = compareProbes(
+      capture({ body: bodyFor({ signals: [] }) }),
+      capture({ body: bodyFor({ signals: [{ signal_id: 'leak' }] }) })
+    );
+    assert.equal(r.equivalent, false);
+  });
+
+  test('fly-request-id allowlisted (Fly.io edge insertion)', () => {
+    const body = envelope('REFERENCE_NOT_FOUND');
+    const r = compareProbes(
+      capture({ body, headers: { 'fly-request-id': '01KP-aaa' } }),
+      capture({ body, headers: { 'fly-request-id': '01KP-bbb' } })
+    );
+    assert.equal(r.equivalent, true);
   });
 
   test('header presence only on one side → fail', () => {

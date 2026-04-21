@@ -69,6 +69,24 @@ const HEADER_ALLOWLIST: ReadonlySet<string> = new Set([
   'x-amz-cf-id',
   'x-amz-request-id',
   'x-amzn-trace-id',
+  'fly-request-id',
+  // Rate-limit counters (RFC 9331 + legacy). A well-behaved rate
+  // limiter decrements uniformly on every request regardless of
+  // resolution state, so the counter differs between probes with no
+  // signal value. A leaky rate limiter that decrements only on the
+  // "found" branch would still be caught via HTTP-status divergence
+  // (the found branch would race a 429 eventually, the unfound
+  // branch wouldn't) — but at that point the agent is advertising
+  // existence through a separate channel, which the status check
+  // covers. Keep these allowlisted; document the narrow gap.
+  'ratelimit',
+  'ratelimit-limit',
+  'ratelimit-policy',
+  'ratelimit-remaining',
+  'ratelimit-reset',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
 ]);
 
 export function compareProbes(a: RawHttpCapture, b: RawHttpCapture): ProbeComparisonResult {
@@ -145,7 +163,12 @@ function diffBodies(bodyA: string, bodyB: string, differences: string[]): void {
       diffEnvelopeFields(envA, envB, differences);
       return;
     }
-    if (deepEqual(parsedA, parsedB)) return;
+    // Neither side is a recognizable error envelope — both are success
+    // bodies (e.g., `get_signals` returning an empty match list for an
+    // unknown id). Peel the JSON-RPC + MCP CallToolResult wrappers so
+    // per-request metadata (jsonrpc id, MCP request id) doesn't mask
+    // the real structural comparison.
+    if (deepEqual(peelWrappers(parsedA), peelWrappers(parsedB))) return;
     if (differences.length === 0) {
       differences.push('response body diverges (parsed JSON differs)');
     }
@@ -153,6 +176,45 @@ function diffBodies(bodyA: string, bodyB: string, differences: string[]): void {
   }
 
   differences.push(`response body diverges (${bodyA.length} bytes vs ${bodyB.length} bytes)`);
+}
+
+/**
+ * Strip known per-request metadata wrappers so success bodies compare
+ * structurally. Peels JSON-RPC `{ jsonrpc, id, result }` → `result`,
+ * then collapses MCP CallToolResult to its domain payload:
+ *   - `structuredContent` (L3) wins when present
+ *   - else `content[].text` parsed as JSON (L2 fallback)
+ *   - `_meta` (MCP per-request metadata carrying e.g. related-task id)
+ *     is always stripped
+ * No-op on shapes we don't recognize.
+ */
+function peelWrappers(body: unknown): unknown {
+  if (!body || typeof body !== 'object') return body;
+  const obj = body as Record<string, unknown>;
+  if (typeof obj.jsonrpc === 'string' && 'id' in obj) {
+    if (obj.result !== undefined) return peelWrappers(obj.result);
+    if (obj.error !== undefined) return peelWrappers(obj.error);
+  }
+  // MCP CallToolResult: prefer the structured domain payload, falling
+  // through to the text content if structuredContent is absent.
+  if (obj.structuredContent !== undefined) return obj.structuredContent;
+  if (Array.isArray(obj.content)) {
+    for (const part of obj.content) {
+      const text = (part as { type?: string; text?: string })?.text;
+      if (typeof text === 'string') {
+        const parsed = tryParseJson(text);
+        if (parsed !== undefined) return parsed;
+      }
+    }
+  }
+  // Strip `_meta` — MCP's per-request metadata channel — before
+  // handing the object back for structural comparison.
+  if ('_meta' in obj) {
+    const { _meta, ...rest } = obj;
+    void _meta;
+    return rest;
+  }
+  return obj;
 }
 
 function tryParseJson(text: string): unknown {
