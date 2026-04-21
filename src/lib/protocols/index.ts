@@ -72,7 +72,8 @@ export class ProtocolClient {
     webhookUrl?: string,
     webhookSecret?: string,
     webhookToken?: string,
-    serverVersion?: 'v2' | 'v3'
+    serverVersion?: 'v2' | 'v3',
+    session?: { contextId?: string; taskId?: string }
   ): Promise<unknown> {
     return withSpan(
       `adcp.${agent.protocol}.call_tool`,
@@ -191,7 +192,8 @@ export class ProtocolClient {
             debugLogs,
             pushNotificationConfig,
             agent.headers,
-            signingContext
+            signingContext,
+            session
           );
         } else {
           throw new Error(`Unsupported protocol: ${agent.protocol}`);
