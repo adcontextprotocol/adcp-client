@@ -117,7 +117,7 @@
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
     "prepublishOnly": "npm run clean && npm run sync-schemas && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && tsc --project tsconfig.lib.json",
+    "build:lib": "npm run sync-version && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "test": "node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js",
     "test:lib": "node --test-timeout=60000 --test-force-exit --test test/lib/*.test.js",
@@ -189,6 +189,8 @@
     "email": "bugs@adcontextprotocol.org"
   },
   "dependencies": {
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "jose": "^6.2.2",
     "structured-headers": "^2.0.2",
     "undici": "^6.25.0",
