@@ -158,10 +158,12 @@ export { detectProtocol, detectProtocolWithTimeout } from './protocol-detection'
 // Re-export A2A discovery utilities
 export {
   A2A_CARD_PATHS,
+  TRANSPORT_SUFFIX_REGEX,
   isAgentCardPath,
   isWellKnownAgentCardUrl,
   buildCardUrls,
   stripAgentCardPath,
+  stripTransportSuffix,
 } from './a2a-discovery';
 
 // Re-export format asset utilities

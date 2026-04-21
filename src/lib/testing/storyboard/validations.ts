@@ -9,6 +9,7 @@
  */
 
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
+import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
 import type {
@@ -727,7 +728,6 @@ function normalizeAgentUrl(url: string): string {
  * Also: lowercase scheme/host, drop default ports, strip userinfo, query,
  * fragment — normal RFC 3986 §6.2 canonicalization. Closes adcp-client#710.
  */
-const TRANSPORT_SUFFIX_RE = /\/(?:mcp|a2a|sse)\/?$/i;
 const AGENT_CARD_SUFFIX_RE = /\/\.well-known\/agent(?:-card)?\.json$/i;
 function canonicalizeAgentUrlForScope(url: string): string {
   try {
@@ -738,7 +738,7 @@ function canonicalizeAgentUrlForScope(url: string): string {
     u.password = '';
     let path = u.pathname;
     path = path.replace(AGENT_CARD_SUFFIX_RE, '');
-    path = path.replace(TRANSPORT_SUFFIX_RE, '');
+    path = path.replace(TRANSPORT_SUFFIX_REGEX, '');
     // A bare `/` and the empty string denote the same origin-relative root;
     // collapse them so `https://host` and `https://host/` canonicalize equally.
     if (path === '/' || path === '') path = '';

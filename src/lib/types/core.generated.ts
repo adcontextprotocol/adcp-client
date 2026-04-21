@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-21T19:54:54.205Z
+// Generated at: 2026-04-21T20:25:28.683Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -16417,6 +16417,8 @@ export type XEntityTypes =
   | 'property'
   | 'media_plan'
   | 'governance_plan'
+  | 'governance_policy'
+  | 'governance_check'
   | 'content_standards'
   | 'task'
   | 'si_session';
@@ -16510,6 +16512,7 @@ export type ErrorCode =
   | 'SIGNAL_NOT_FOUND'
   | 'SESSION_NOT_FOUND'
   | 'SESSION_TERMINATED'
+  | 'REFERENCE_NOT_FOUND'
   | 'VALIDATION_ERROR'
   | 'PRODUCT_EXPIRED'
   | 'PROPOSAL_NOT_COMMITTED'
