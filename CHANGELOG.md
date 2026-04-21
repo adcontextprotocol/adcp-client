@@ -1,5 +1,87 @@
 # Changelog
 
+## 5.8.1
+
+### Patch Changes
+
+- f61f284: Re-export the storyboard assertion registry (`registerAssertion`,
+  `getAssertion`, `listAssertions`, `clearAssertionRegistry`,
+  `resolveAssertions`, and types `AssertionSpec`, `AssertionContext`,
+  `AssertionResult`) from `@adcp/client/testing` so authors of invariant
+  modules can import them from the documented package entry point. The
+  underlying module (`./storyboard/assertions`) already exported these;
+  only the parent `./testing` index was missing the re-exports. Closes
+  the gap introduced by #692.
+- bdebac9: `refs_resolve` scope: canonicalize `$agent_url` by stripping transport
+  suffixes instead of comparing raw target URL to bare agent origins.
+
+  Before this fix, storyboards using `scope: { key: 'agent_url', equals:
+'$agent_url' }` silently graded every source ref `out_of_scope` on MCP
+  and A2A runners, because `$agent_url` expanded to the runner's target
+  URL (with `/mcp`, `/a2a`, or `/.well-known/agent.json` suffixes) while
+  refs carried the bare agent URL per AdCP convention. Net effect: the
+  check degraded from integrity enforcement to a no-op on every MCP agent.
+
+  The scope comparator now mirrors `SingleAgentClient.computeBaseUrl`:
+  strip `/mcp`, `/a2a`, `/sse`, and `/.well-known/agent[-card].json`
+  suffixes; lowercase scheme and host; drop default ports; strip
+  userinfo, query, and fragment. Path below the transport suffix is
+  preserved, so sibling agents at different subpaths on a shared host
+  (e.g. `https://publisher.com/.well-known/adcp/sales` vs
+  `/.well-known/adcp/creative`) remain distinguishable. Closes #710.
+
+- bdebac9: `refs_resolve`: harden grader-visible observation and `actual.missing`
+  payloads against hostile agent responses.
+
+  Compliance reports may be published or forwarded to third parties, so
+  every ref field emitted by the runner is now:
+  - **Userinfo-scrubbed** on URL-keyed fields via WHATWG URL parsing plus
+    a regex fallback that scrubs `scheme://user:pass@` shapes embedded
+    in non-URL fields. Credentials planted in `agent_url` values can no
+    longer leak through compliance output.
+  - **Scheme-restricted** on URL-keyed fields: non-`http(s)` schemes
+    (e.g. `javascript:`, `data:`, `file:`) are replaced with a
+    `<non-http scheme: …>` placeholder so downstream UIs rendering
+    `agent_url` as a link cannot inherit a stored-XSS vector.
+  - **Length-capped** at 512 code points per string field, with a
+    code-point-boundary truncation that preserves surrogate pairs.
+  - **Count-capped** at 50 observations per check, with an
+    `observations_truncated` marker when the cap fires. Meta
+    observations (`scope_excluded_all_refs`, `target_paginated`)
+    precede per-ref entries so the cap never drops primary signal.
+
+  Match and dedup behavior is unchanged: the internal projection used
+  for ref comparison is kept separate from the sanitized projection used
+  for user-facing output, so truncation never false-collapses dedup
+  keys. `refsMatch` and `projectRef` also now use `hasOwnProperty` to
+  prevent storyboard authors from accidentally drawing match keys from
+  `Object.prototype`. Closes #714.
+
+- bdebac9: `refs_resolve`: emit a `scope_excluded_all_refs` meta-observation when
+  a scope filter partitions every source ref out. The integrity check
+  enforces nothing when no ref falls in-scope; graders previously got a
+  silent pass. The meta-observation surfaces the structural smell without
+  changing pass/fail semantics. Suppressed under `on_out_of_scope: 'ignore'`
+  (which explicitly opts out of scope warnings). Closes #711.
+- bdebac9: `refs_resolve`: detect paginated current-step targets and demote
+  unresolved refs to observations instead of failing the check.
+
+  Previously, when the target response carried `pagination.has_more:
+true`, any ref legitimately defined on a later page graded as
+  `missing` — a false-positive failure against a conformant paginating
+  seller. The runner now emits a `target_paginated` meta-observation and
+  reports each would-be-missing ref as an `unresolved_with_pagination`
+  observation, letting the check pass until the spec-level resolution
+  lands (compliance mode requiring sellers to return everything
+  referenced by products in a single response). Closes #712.
+
+- c4ff3e6: Skill example refresh to match recent upstream schema changes and fix a brand-rights coverage gap surfaced by the `compliance:skill-matrix` dogfood harness:
+  - `list_creative_formats.renders[]`: upstream restructured renders to require `role` plus exactly one of `dimensions` (object) or `parameters_from_format_id: true` under `oneOf`. Updated seller, creative, generative-seller, and retail-media skill examples; flagged `renders: [{ width, height }]` as the canonical wrong shape.
+  - `get_media_buys.media_buys[]`: `currency` and `total_budget` are now required per row. Seller skill example now shows both; added a persistence note (save these fields on `create_media_buy` so subsequent queries can echo them).
+  - `context` response field: schema-typed as `object`. Across all 8 skills, rewrote the "Context and Ext Passthrough" section to stop recommending `context: args.context` echo (which fabricates string values when `args.context` is undefined or confused with domain fields like `campaign_context`). Explicit guidance: leave the field out of your return — `createAdcpServer` auto-injects the request's context object; hand-setting a non-object string fails validation and the framework does not overwrite.
+  - Brand-rights governance flow: the `brand_rights/governance_denied` scenario expects the brand agent to call `check_governance` before issuing a license. Added `accounts: { syncAccounts, syncGovernance }` handlers and a `checkGovernance()` call in the `acquireRights` example, returning `GOVERNANCE_DENIED` with findings propagated from the governance agent.
+  - Seller idempotency section: referenced [adcontextprotocol/adcp-client#678](https://github.com/adcontextprotocol/adcp-client/issues/678) as a known grader-side limitation on the missing-key probe (MCP Accept header negotiation), so builders don't chase a skill fix for what's actually a grader issue.
+
 ## 5.8.0
 
 ### Minor Changes
