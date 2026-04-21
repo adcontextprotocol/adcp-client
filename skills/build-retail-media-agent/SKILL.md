@@ -406,16 +406,37 @@ serve(createAgent, {
 The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
-## Validation
+## Validate Locally
 
-**After writing the agent, validate it. Fix failures. Repeat.**
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). Retail-media-specific commands:
 
 ```bash
+# Boot
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_catalog_creative --json
+
+# Happy path — catalog-driven creative + conversion tracking
+npx @adcp/client storyboard run http://localhost:3001/mcp sales_catalog_driven --auth $TOKEN
+
+# Cross-cutting obligations
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
+
+# Rejection-surface fuzz — includes the catalog surface
+npx @adcp/client fuzz http://localhost:3001/mcp \
+  --tools get_products,list_creative_formats \
+  --auth-token $TOKEN
 ```
 
-**Keep iterating until all steps pass.**
+**Substitution verification** (required for catalog-driven macro URLs):
+
+Wire `SubstitutionEncoder.encode_for_url_context()` into your tracker-URL macro expansion. The storyboard `sales_catalog_driven` asserts that emitted preview URLs pass `SubstitutionObserver.assert_rfc3986_safe()` — unencoded values (especially those containing `javascript:`, reserved chars, or nested macros) fail with `substitution_encoding_violation`. See [VALIDATE-YOUR-AGENT.md § Substitution](../../docs/guides/VALIDATE-YOUR-AGENT.md#substitution-verification-catalog-driven-sellers) for the API.
+
+Common failure decoder:
+- `substitution_encoding_violation` → switch from `encodeURIComponent` to `SubstitutionEncoder.encode_for_url_context`
+- `substitution_binding_missing` → seller stripped the macro entirely; return the rendered URL with the macro expanded, not deleted
+- `log_event` missing `events_received` / `events_processed` → required counters on the response
+
+**Keep iterating until all steps pass.** Can't bind ports? `npm run compliance:skill-matrix -- --filter retail-media` runs an isolated end-to-end test.
 
 ## Common Mistakes
 

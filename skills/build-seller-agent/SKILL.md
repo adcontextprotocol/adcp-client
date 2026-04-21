@@ -1006,30 +1006,55 @@ The `security_baseline` storyboard verifies:
 2. At least one of API-key or OAuth discovery must succeed.
 3. If OAuth is advertised, the `resource` field in `/.well-known/oauth-protected-resource` MUST match the URL being called. Set `publicUrl` once — the framework enforces this automatically.
 
-## Validation
+## Validate Locally
 
-**After writing the agent, validate it. Fix failures. Repeat.**
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). The commands below cover what a seller agent specifically needs.
 
-**Full validation** (if you can bind ports):
+**Boot the agent:**
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
-**Sandbox validation** (if ports are blocked):
+**Happy-path conformance (storyboard runner):**
 
 ```bash
-npx tsc --noEmit
+# Full seller lifecycle
+npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
+
+# Your specialism bundle (one of: sales_guaranteed, sales_non_guaranteed,
+# sales_broadcast_tv, sales_streaming_tv, sales_social, sales_proposal_mode)
+npx @adcp/client storyboard run http://localhost:3001/mcp sales_guaranteed --auth $TOKEN
+
+# Cross-cutting obligations — every seller must pass these
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards idempotency,security_baseline,schema_validation,error_compliance --auth $TOKEN
+
+# Webhook conformance (if you claim async task lifecycles)
+npx @adcp/client storyboard run http://localhost:3001/mcp webhook_emission \
+  --webhook-receiver --auth $TOKEN
 ```
 
-When storyboard output shows failures, fix each one:
+**Rejection-surface conformance (property-based fuzzer — catches crashes on edge inputs):**
+
+```bash
+npx @adcp/client fuzz http://localhost:3001/mcp \
+  --tools get_products,get_media_buys,list_creative_formats \
+  --auth-token $TOKEN
+```
+
+**Request signing (if you claim `signed-requests`):** point `adcp grade request-signing` at your sandbox — see [VALIDATE-YOUR-AGENT.md § Request signing](../../docs/guides/VALIDATE-YOUR-AGENT.md#request-signing--adcp-grade-request-signing).
+
+**Multi-instance (before production):** run with two `--url` flags to catch `(brand, account)`-scoped state that lives per-process. See [VALIDATE-YOUR-AGENT.md § Multi-instance](../../docs/guides/VALIDATE-YOUR-AGENT.md#multi-instance-testing).
+
+Common failure decoder:
 
 - `response_schema` → response doesn't match Zod schema
 - `field_present` → required field missing
-- MCP error → check tool registration (schema, name)
+- `mcp_error` → check tool registration (schema, name)
+- `authority_level` / `human_review_required` mismatch → check governance plan shape — schema moved in AdCP 3.0 GA
 
-**Keep iterating until all steps pass.**
+**Keep iterating until all steps pass.** If you can't bind ports locally, skip `tsx agent.ts` and run `npm run compliance:skill-matrix -- --filter seller` — it builds an isolated sandbox and grades end-to-end.
 
 ## Storyboards
 

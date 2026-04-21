@@ -451,30 +451,34 @@ serve(createAgent, {
 The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
-## Validation
+## Validate Locally
 
-**After writing the agent, validate it. Fix failures. Repeat.**
-
-**Full validation** (if you can bind ports):
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). Generative-seller-specific commands:
 
 ```bash
+# Boot
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_generative_seller --json
+
+# Happy paths — sells inventory AND generates creatives
+npx @adcp/client storyboard run http://localhost:3001/mcp creative_generative/seller --auth $TOKEN
+npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
+
+# Cross-cutting obligations
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
+
+# Rejection-surface fuzz
+npx @adcp/client fuzz http://localhost:3001/mcp \
+  --tools get_products,list_creative_formats,get_creative_features,preview_creative \
+  --auth-token $TOKEN
 ```
 
-**Sandbox validation** (if ports are blocked):
-
-```bash
-npx tsc --noEmit agent.ts
-```
-
-When storyboard output shows failures, fix each one:
-
+Common failure decoder:
 - `response_schema` → response doesn't match Zod schema
-- `field_present` → required field missing
-- MCP error → check tool registration (schema, name)
+- `field_present` → required field missing (often `creative_manifest` on generated output)
+- `mcp_error` → check tool registration; generative formats must be in `list_creative_formats`
 
-**Keep iterating until all steps pass.**
+**Keep iterating until all steps pass.** Can't bind ports? `npm run compliance:skill-matrix -- --filter generative` runs an isolated end-to-end test.
 
 ## Common Mistakes
 

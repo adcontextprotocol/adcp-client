@@ -420,24 +420,36 @@ serve(createAgent, {
 The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
 
 
-## Validation
+## Validate Locally
 
-**After writing the agent, validate it. Fix failures. Repeat.**
-
-**Full validation** (if you can bind ports):
+**Full validation checklist:** [docs/guides/VALIDATE-YOUR-AGENT.md](../../docs/guides/VALIDATE-YOUR-AGENT.md). Creative-agent-specific commands:
 
 ```bash
+# Boot
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp creative_lifecycle --json
+
+# Happy path — the archetype you're claiming
+npx @adcp/client storyboard run http://localhost:3001/mcp creative_ad_server --auth $TOKEN     # stateful
+npx @adcp/client storyboard run http://localhost:3001/mcp creative_template --auth $TOKEN      # stateless
+npx @adcp/client storyboard run http://localhost:3001/mcp creative_generative --auth $TOKEN    # brief-to-creative
+
+# Cross-cutting obligations (all creative agents)
+npx @adcp/client storyboard run http://localhost:3001/mcp \
+  --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
+
+# Rejection-surface fuzz — includes preview_creative (referential, fixture-eligible)
+npx @adcp/client fuzz http://localhost:3001/mcp \
+  --tools list_creative_formats,list_creatives,get_creative_features,preview_creative \
+  --fixture creative_ids=cre_a,cre_b \
+  --auth-token $TOKEN
 ```
 
-**Sandbox validation** (if ports are blocked):
+Common failure decoder:
+- `response_schema` on `preview_creative` → the union schema requires manual registration; see § creative-template
+- `mcp_error` on creative lifecycle → confirm `sync_creatives` status enum is `approved`/`rejected`/`pending_approval`, not a custom value
+- `field_present` on build response → `creative_manifest` must be fully populated, not just `id`
 
-```bash
-npx tsc --noEmit agent.ts
-```
-
-**Keep iterating until all steps pass.**
+**Keep iterating until all steps pass.** Can't bind ports? `npm run compliance:skill-matrix -- --filter creative` runs an isolated end-to-end test.
 
 ## Common Mistakes
 
