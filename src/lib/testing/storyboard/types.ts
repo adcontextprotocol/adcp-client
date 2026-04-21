@@ -47,6 +47,16 @@ export interface Storyboard {
     test_kit?: string;
   };
   phases: StoryboardPhase[];
+  /**
+   * Cross-step assertion ids that apply to this storyboard. Each entry names
+   * an assertion registered via `registerAssertion(...)`; the runner resolves
+   * them at start and fails fast on unknown ids. Per-step checks live inline
+   * on steps — assertions encode specialism- or protocol-wide properties
+   * that must hold across the full run (governance denial never mutates,
+   * idempotency dedup, status monotonicity, context never echoes secrets on
+   * error). See `./assertions.ts` for the registry API.
+   */
+  invariants?: string[];
 }
 
 export interface StoryboardPhase {
@@ -817,6 +827,34 @@ export interface StoryboardResult {
    * locally against the same artifacts.
    */
   schemas_used?: Array<{ schema_id: string; schema_url: string }>;
+  /**
+   * Results from cross-step assertions declared on the storyboard's
+   * `invariants` field. Step-scoped failures also surface inside the owning
+   * step's `validations[]` with `check: "assertion"`; storyboard-scoped
+   * failures live only here. `overall_passed` is false when any assertion
+   * failed.
+   */
+  assertions?: AssertionResult[];
+}
+
+/**
+ * Single assertion outcome recorded by the runner. Mirrors the shape of
+ * `ValidationResult` so existing consumers can render assertions with the
+ * same code path, while adding scope + source fields that identify where
+ * the failure originated.
+ */
+export interface AssertionResult {
+  /** Id of the registered assertion that produced this result. */
+  assertion_id: string;
+  passed: boolean;
+  /** Human-readable description of the property being asserted. */
+  description: string;
+  /** Whether this result was raised at a specific step or storyboard-wide. */
+  scope: 'step' | 'storyboard';
+  /** Step that produced the observation, when `scope === "step"`. */
+  step_id?: string;
+  /** Failure detail. Absent on pass. */
+  error?: string;
 }
 
 /**

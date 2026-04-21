@@ -36,6 +36,7 @@ import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import type {
+  AssertionResult,
   BranchSetSpec,
   HttpProbeResult,
   RunnerDetailedSkipReason,
@@ -58,6 +59,7 @@ import type {
 } from './types';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
 import type { TaskResult } from '../types';
+import { type AssertionContext, type AssertionSpec, resolveAssertions } from './assertions';
 
 // ────────────────────────────────────────────────────────────
 // Runner-output contract helpers
@@ -424,6 +426,25 @@ async function executeStoryboardPass(
   // strategy parameter narrow.
   const dispatch = createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset);
 
+  // Resolve cross-step assertions declared on `storyboard.invariants`.
+  // `resolveAssertions` throws on unknown ids — fail fast here rather than
+  // silently skip, since a missing assertion means unknown conformance gaps.
+  const assertions = resolveAssertions(storyboard.invariants);
+  const assertionContexts = new Map<string, AssertionContext>();
+  for (const spec of assertions) {
+    assertionContexts.set(spec.id, {
+      storyboard,
+      agentUrl: agentUrls[0]!,
+      options,
+      state: {},
+    });
+  }
+  const assertionResults: AssertionResult[] = [];
+  let assertionsFailed = false;
+  for (const spec of assertions) {
+    if (spec.onStart) await spec.onStart(assertionContexts.get(spec.id)!);
+  }
+
   // Placeholder storyboards with no executable phases get a distinct skip
   // reason per the runner-output contract. Without this, the overall result
   // would pass vacuously — `passed_count === 0 && failed_count === 0` — and
@@ -549,6 +570,31 @@ async function executeStoryboardPass(
       stepResults.push(result);
       priorStepResults.set(step.id, result);
 
+      // Fire per-step assertions. Each result is appended to the step's
+      // `validations[]` under `check: "assertion"` so existing UI renders
+      // them alongside inline checks, and mirrored into `assertionResults`
+      // for the storyboard-level `assertions[]` surface. Any failure flips
+      // `result.passed` so the counting below treats it like a validation
+      // failure — that's what makes assertions gating, not advisory.
+      for (const spec of assertions) {
+        if (!spec.onStep) continue;
+        const raw = await spec.onStep(assertionContexts.get(spec.id)!, result);
+        for (const r of raw) {
+          const full: AssertionResult = { ...r, assertion_id: spec.id, scope: 'step', step_id: step.id };
+          assertionResults.push(full);
+          result.validations.push({
+            check: 'assertion',
+            passed: r.passed,
+            description: `${spec.id}: ${r.description}`,
+            ...(r.error !== undefined && { error: r.error }),
+          });
+          if (!r.passed) {
+            result.passed = false;
+            assertionsFailed = true;
+          }
+        }
+      }
+
       // PRM presence accounting — must happen after the step result lands so
       // both the skipped-404 and 2xx paths are visible.
       if (step.task === 'protected_resource_metadata') {
@@ -615,7 +661,10 @@ async function executeStoryboardPass(
   // their failed steps re-graded as skipped with `peer_branch_taken`. See
   // storyboard-schema.yaml (lines 205-223) and runner-output-contract.yaml
   // (reasons.peer_branch_taken). Done after all phases run — peer
-  // contribution status isn't knowable inside the per-phase loop.
+  // contribution status isn't knowable inside the per-phase loop. Runs
+  // before storyboard-scoped assertions so `onEnd` hooks see the finalized
+  // per-step grades (a moot peer's "failure" should not trip a cross-step
+  // invariant).
   const branchSetsByPhaseId = resolveBranchSets(storyboard);
   const branchSetDelta = applyBranchSetGrading(
     storyboard.phases,
@@ -627,12 +676,26 @@ async function executeStoryboardPass(
   );
   skippedCount += branchSetDelta.skippedDelta;
 
+  // Fire storyboard-scoped assertions. These observe the full run and can
+  // emit `scope: "storyboard"` findings that flip `overall_passed` without
+  // being attributable to a single step (e.g. "saw >1 acquire for the same
+  // replayed idempotency_key across the run").
+  for (const spec of assertions) {
+    if (!spec.onEnd) continue;
+    const raw = await spec.onEnd(assertionContexts.get(spec.id)!);
+    for (const r of raw) {
+      assertionResults.push({ ...r, assertion_id: spec.id, scope: 'storyboard' });
+      if (!r.passed) assertionsFailed = true;
+    }
+  }
+
   // Overall pass requires (a) no required-phase failures AND (b) at least one
-  // required phase actually passed with at least one non-skipped step.
-  // Without the second clause, a storyboard where every phase is marked
-  // optional, every required phase's steps are skipped (e.g. required_tools
-  // filtered out everything), would pass vacuously. The storyboard's own gate
-  // (assert_contribution in security_baseline) must live in a required phase.
+  // required phase actually passed with at least one non-skipped step AND
+  // (c) no assertion failures. Without (b) a storyboard where every phase is
+  // marked optional and every required phase's steps are skipped (e.g.
+  // required_tools filtered out everything) would pass vacuously. (c) makes
+  // assertions gating — a run with all validations green but a cross-step
+  // invariant broken is not conformant.
   const requiredPhasesPassed = phaseResults.some((p, idx) => {
     const phaseDef = storyboard.phases[idx];
     if (!phaseDef || phaseDef.optional || !p.passed) return false;
@@ -648,7 +711,7 @@ async function executeStoryboardPass(
     // individually); the aggregating wrapper relabels the top-level result
     // `multi-pass`.
     ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
-    overall_passed: failedCount === 0 && requiredPhasesPassed,
+    overall_passed: failedCount === 0 && requiredPhasesPassed && !assertionsFailed,
     phases: phaseResults,
     context,
     total_duration_ms: Date.now() - start,
@@ -657,6 +720,7 @@ async function executeStoryboardPass(
     skipped_count: skippedCount,
     tested_at: new Date().toISOString(),
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
+    ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
   };
 
   // Close protocol connections when the runner created its own client. The
@@ -724,6 +788,11 @@ async function runMultiPass(
   const skipped = passes.reduce((sum, p) => sum + p.skipped_count, 0);
   const schemasUsed = passResults.flatMap(r => r.schemas_used ?? []);
   const schemasDedup = [...new Map(schemasUsed.map(s => [s.schema_id, s])).values()];
+  // Assertions are scoped per-pass — each pass's runner resolved them
+  // independently and reported `assertion_id` identically. Concatenate so
+  // readers see a per-pass timeline; de-duplicating would hide a real
+  // "passed on pass 1, failed on pass 2" divergence.
+  const assertionsAgg = passResults.flatMap(r => r.assertions ?? []);
 
   return {
     storyboard_id: storyboard.id,
@@ -741,6 +810,7 @@ async function runMultiPass(
     skipped_count: skipped,
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
+    ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
   };
 }
 

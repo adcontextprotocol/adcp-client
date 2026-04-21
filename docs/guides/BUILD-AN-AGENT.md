@@ -201,6 +201,26 @@ Scoping is per-principal — `resolveSessionKey` doubles as the idempotency prin
 
 **Only successful responses are cached.** Handler errors re-execute on retry rather than replaying — so a transient 5xx doesn't lock a failure into the cache.
 
+### Schema-Driven Validation (opt-in)
+
+`createAdcpServer` can validate every inbound request and handler response against the bundled AdCP JSON schemas for the SDK's declared version. Catches field-name drift (e.g. a handler emits `targeting_overlay` where the spec expects `targeting`) before the response leaves your agent.
+
+```typescript
+createAdcpServer({
+  name: 'my-seller',
+  version: '1.0.0',
+  validation: {
+    requests: 'strict',   // reject malformed requests with VALIDATION_ERROR
+    responses: 'warn',    // log handler drift, return response unchanged
+  },
+  mediaBuy: { /* … */ },
+});
+```
+
+Modes per side: `'strict' | 'warn' | 'off'`. Default is `'off'` — enable explicitly. `VALIDATION_ERROR` envelopes carry the full issue list (pointer, message, keyword, schema path) under `details.issues` so buyers can surface each offending field.
+
+The same validator runs on the `AdcpClient` side — storyboards and third-party clients configure it via `validation: { requests, responses }` on the client config. Request default is `warn` (so existing callers that send partial payloads still work); response default is `strict` in dev/test, `warn` in production. Set either side to `'off'` for zero overhead.
+
 ### createTaskCapableServer (Low-Level)
 
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` uses this internally.

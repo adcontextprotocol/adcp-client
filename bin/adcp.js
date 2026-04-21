@@ -17,6 +17,7 @@
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
 const { readFileSync, statSync } = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const net = require('net');
 const { spawn } = require('child_process');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
@@ -653,6 +654,12 @@ function parseAgentOptions(args) {
       ? args[webhookReceiverPublicUrlIdx + 1]
       : null;
 
+  const invariantsIdx = args.indexOf('--invariants');
+  const invariantsValue =
+    invariantsIdx !== -1 && invariantsIdx + 1 < args.length && !args[invariantsIdx + 1].startsWith('--')
+      ? args[invariantsIdx + 1]
+      : null;
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
   // space-separated value needs explicit exclusion. Use explicit nullish check
@@ -671,6 +678,7 @@ function parseAgentOptions(args) {
     webhookReceiverModeValue,
     webhookReceiverPortValue,
     webhookReceiverPublicUrlValue,
+    invariantsValue,
     fileIndex !== -1 ? file : null,
   ].filter(v => v !== null && v !== undefined);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
@@ -876,6 +884,13 @@ OPTIONS:
   --protocol PROTO    Force protocol: mcp or a2a
   --dry-run           Preview steps without executing
   --debug             Debug output
+  --invariants SPECS  Comma-separated module specifiers to dynamic-import
+                      before running. Each module must call registerAssertion(...)
+                      at import time so the storyboard's invariants field can
+                      resolve. Relative paths (./my-invariants.js) resolve
+                      against the current directory; bare specifiers
+                      (@org/invariants) resolve as npm packages. Modules run
+                      with full CLI privileges — only load code you trust.
 
 NOTE: Storyboards are pulled from the compliance cache populated by
       \`npm run sync-schemas\` (fetches /protocol/{version}.tgz).
@@ -892,6 +907,8 @@ EXAMPLES:
                                                        # remote agent via tunnel (ngrok/cloudflared/ingress)
   adcp storyboard run my-remote webhook-emission --webhook-receiver-auto-tunnel
                                                        # remote agent, tunnel autodetected + managed
+  adcp storyboard run test-mcp sales-non-guaranteed \\
+    --invariants ./my-invariants.js,@adcp/invariants  # register cross-step invariants
   adcp storyboard list
   adcp storyboard show media_buy_seller
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
@@ -1133,6 +1150,11 @@ async function handleStoryboardRun(args) {
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
   validateAutoTunnelArgs(args, webhookReceiverBase);
 
+  // Load invariants before the dry-run gate so `--dry-run --invariants` fails
+  // fast on bad module specifiers. Modules are pure registration side-effects
+  // so importing them in preview mode is safe.
+  await loadInvariantModules(args);
+
   const stepCount = storyboard.phases.reduce((sum, p) => sum + p.steps.length, 0);
 
   if (!jsonOutput) {
@@ -1332,6 +1354,48 @@ function extractWebhookReceiverOptions(args) {
     },
     contracts: ['webhook_receiver_runner'],
   };
+}
+
+/**
+ * Dynamic-import modules listed in --invariants so their `registerAssertion(...)`
+ * calls populate the storyboard assertion registry before the runner resolves
+ * `storyboard.invariants`. Accepts a comma-separated list of specifiers:
+ * relative paths (`./my-invariants.js`), absolute paths, or bare package
+ * specifiers (`@org/invariants`). Relative paths are resolved against the CLI's
+ * working directory; package specifiers are passed to dynamic import as-is.
+ *
+ * Exits with code 2 if --invariants is present without a value or if any
+ * module fails to load. Does nothing when --invariants is absent.
+ */
+async function loadInvariantModules(args) {
+  const idx = args.indexOf('--invariants');
+  if (idx === -1) return;
+  const raw = idx + 1 < args.length && !args[idx + 1].startsWith('--') ? args[idx + 1] : null;
+  if (!raw) {
+    console.error('ERROR: --invariants requires a value (comma-separated module specifiers).');
+    process.exit(2);
+  }
+  const specs = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (specs.length === 0) {
+    console.error('ERROR: --invariants requires at least one non-empty module specifier.');
+    process.exit(2);
+  }
+  for (const spec of specs) {
+    // Treat absolute paths and relative paths as filesystem paths; everything
+    // else is a package specifier. `path.isAbsolute` gives Windows parity over
+    // a naive `/`-prefix check.
+    const specifier =
+      spec.startsWith('.') || path.isAbsolute(spec) ? pathToFileURL(path.resolve(process.cwd(), spec)).href : spec;
+    try {
+      await import(specifier);
+    } catch (err) {
+      console.error(`ERROR: failed to load invariants module "${spec}": ${err.message}`);
+      process.exit(2);
+    }
+  }
 }
 
 /**
@@ -1835,6 +1899,9 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     }
   }
 
+  // Load invariants before the dry-run gate so bad module specifiers fail fast.
+  await loadInvariantModules(args);
+
   const totalSteps = storyboards.reduce(
     (sum, sb) => sum + sb.phases.reduce((phaseSum, p) => phaseSum + p.steps.length, 0),
     0
@@ -2088,6 +2155,9 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
       : undefined;
 
   const webhookReceiverOpts = await resolveWebhookReceiverOptions(rawArgs, { jsonOutput: opts.jsonOutput });
+
+  await loadInvariantModules(rawArgs);
+
   const testOptions = {
     protocol,
     brief: opts.brief,
