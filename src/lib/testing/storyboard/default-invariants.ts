@@ -16,6 +16,12 @@
  *   - `context.no_secret_echo` — the echoed `context` object on any step
  *     must not contain any bearer token, API key, or auth header value
  *     supplied in the options. Scan recursively.
+ *   - `governance.denial_blocks_mutation` — once a plan is denied by a
+ *     governance signal (GOVERNANCE_DENIED, CAMPAIGN_SUSPENDED, etc., or
+ *     `check_governance` returning `status: "denied"`), no subsequent step
+ *     in the run may acquire a resource for that plan. Catches sellers that
+ *     surface the denial but mutate anyway. Plan-scoped via `plan_id`; runs
+ *     without a denial signal are a silent pass.
  */
 
 import { registerAssertion } from './assertions';
@@ -96,6 +102,171 @@ registerOnce('context.no_secret_echo', {
     return [{ passed: true, description, step_id: stepResult.step_id }];
   },
 });
+
+// ────────────────────────────────────────────────────────────
+// governance.denial_blocks_mutation
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Error codes that signal a seller-side refusal with plan scope. Grounded
+ * in `ErrorCodeSchema` in `src/lib/types/schemas.generated.ts`. Excludes
+ * transient (`GOVERNANCE_UNAVAILABLE` — no decision rendered) and
+ * account-state (`ACCOUNT_SUSPENDED`) codes — those aren't plan denials.
+ */
+const GOVERNANCE_DENIAL_CODES = new Set([
+  'GOVERNANCE_DENIED',
+  'CAMPAIGN_SUSPENDED',
+  'PERMISSION_DENIED',
+  'POLICY_VIOLATION',
+  'TERMS_REJECTED',
+  'COMPLIANCE_UNSATISFIED',
+]);
+
+/**
+ * Write-class tasks whose successful response carries a server-minted
+ * resource id at the top level. Read tasks (`get_*`, `list_*`,
+ * `check_governance`) can echo ids without having created anything; they
+ * are excluded so the assertion doesn't false-positive on lookups after
+ * a denial. Sync-batch tasks (`sync_*`) are excluded until per-item
+ * acquisition detection lands — see follow-up in the spec repo.
+ */
+const GOVERNANCE_WRITE_TASKS = new Set([
+  'create_media_buy',
+  'update_media_buy',
+  'activate_signal',
+  'create_property_list',
+  'update_property_list',
+  'delete_property_list',
+  'create_collection_list',
+  'update_collection_list',
+  'delete_collection_list',
+  'acquire_rights',
+]);
+
+const GOVERNANCE_ACQUIRED_STATUSES = new Set(['pending_creatives', 'pending_start', 'active', 'paused', 'completed']);
+
+const GOVERNANCE_RESOURCE_ID_FIELDS = [
+  'media_buy_id',
+  'plan_id',
+  'creative_id',
+  'audience_id',
+  'catalog_id',
+  'activation_id',
+  'property_list_id',
+  'collection_list_id',
+  'acquisition_id',
+  'operation_id',
+];
+
+interface GovernanceDenialAnchor {
+  stepId: string;
+  signal: string;
+}
+
+registerOnce('governance.denial_blocks_mutation', {
+  id: 'governance.denial_blocks_mutation',
+  description:
+    'Once a governance signal denies a plan, no subsequent step in the run may acquire a resource for that plan.',
+  onStart: ctx => {
+    ctx.state.deniedPlans = new Map<string, GovernanceDenialAnchor>();
+    ctx.state.runDenial = undefined;
+  },
+  onStep: (ctx, stepResult) => {
+    const state = ctx.state as {
+      deniedPlans: Map<string, GovernanceDenialAnchor>;
+      runDenial?: GovernanceDenialAnchor;
+    };
+    const planId = extractGovernancePlanId(stepResult);
+
+    // Denial observation is never itself a failure — record and return.
+    const denial = detectGovernanceDenial(stepResult);
+    if (denial) {
+      const anchor: GovernanceDenialAnchor = { stepId: stepResult.step_id, signal: denial };
+      if (planId) {
+        if (!state.deniedPlans.has(planId)) state.deniedPlans.set(planId, anchor);
+      } else if (!state.runDenial) {
+        state.runDenial = anchor;
+      }
+      return [];
+    }
+
+    const acquired = detectGovernanceAcquisition(stepResult);
+    if (!acquired) return [];
+
+    const anchor = (planId && state.deniedPlans.get(planId)) ?? state.runDenial;
+    if (!anchor) return [];
+
+    return [
+      {
+        passed: false,
+        description: 'Mutation acquired a resource after a governance denial',
+        step_id: stepResult.step_id,
+        error:
+          `step "${anchor.stepId}" returned ${anchor.signal}` +
+          (planId ? ` for plan_id=${planId}` : ' (run-wide)') +
+          `; subsequent step "${stepResult.step_id}" (task=${stepResult.task}) ` +
+          `acquired ${acquired.field}=${acquired.id}` +
+          (planId ? ' for the same plan' : ''),
+      },
+    ];
+  },
+});
+
+function detectGovernanceDenial(step: import('./types').StoryboardStepResult): string | undefined {
+  const err = extractAdcpError(step);
+  if (err && GOVERNANCE_DENIAL_CODES.has(err.code)) return err.code;
+  // `check_governance` decides-no via a 200 response with `status: "denied"`
+  // (see static/schemas/source/governance/check-governance-response.json in
+  // the spec repo). The body isn't wrapped in `adcp_error`.
+  if (step.task === 'check_governance') {
+    const body = (step as unknown as { response?: unknown }).response;
+    if (body && typeof body === 'object') {
+      const status = (body as Record<string, unknown>).status;
+      if (status === 'denied') return 'CHECK_GOVERNANCE_DENIED';
+    }
+  }
+  return undefined;
+}
+
+function extractGovernancePlanId(step: import('./types').StoryboardStepResult): string | undefined {
+  const body = (step as unknown as { response?: unknown }).response;
+  if (body && typeof body === 'object') {
+    const rec = body as Record<string, unknown>;
+    if (typeof rec.plan_id === 'string' && rec.plan_id) return rec.plan_id;
+  }
+  // The runner records the outgoing payload on `stepResult.request` — read
+  // from there rather than accumulated step context to avoid stale plan_id
+  // bleed from earlier unrelated steps.
+  const req = (step as unknown as { request?: { payload?: unknown } }).request;
+  if (req && typeof req.payload === 'object' && req.payload !== null) {
+    const payload = req.payload as Record<string, unknown>;
+    if (typeof payload.plan_id === 'string' && payload.plan_id) return payload.plan_id;
+  }
+  return undefined;
+}
+
+function detectGovernanceAcquisition(
+  step: import('./types').StoryboardStepResult
+): { field: string; id: string } | undefined {
+  if (step.expect_error) return undefined;
+  if (!step.passed) return undefined;
+  if (!GOVERNANCE_WRITE_TASKS.has(step.task)) return undefined;
+
+  const body = (step as unknown as { response?: unknown }).response;
+  if (!body || typeof body !== 'object') return undefined;
+  const record = body as Record<string, unknown>;
+
+  if (step.task === 'create_media_buy' || step.task === 'update_media_buy') {
+    const status = record.status;
+    if (typeof status === 'string' && !GOVERNANCE_ACQUIRED_STATUSES.has(status)) return undefined;
+  }
+
+  for (const field of GOVERNANCE_RESOURCE_ID_FIELDS) {
+    const val = record[field];
+    if (typeof val === 'string' && val.length > 0) return { field, id: val };
+  }
+  return undefined;
+}
 
 // ────────────────────────────────────────────────────────────
 // Helpers
