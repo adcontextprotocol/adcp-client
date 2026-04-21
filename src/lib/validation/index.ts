@@ -3,6 +3,15 @@
  * Functions for validating URLs, responses, and schemas
  */
 
+export { validateRequest, validateResponse, formatIssues } from './schema-validator';
+export type { ValidationIssue, ValidationOutcome } from './schema-validator';
+export { buildValidationError, buildAdcpValidationErrorPayload } from './schema-errors';
+export type { ValidationErrorDetails, AdcpValidationErrorDetails } from './schema-errors';
+export { getValidator, listValidatorKeys } from './schema-loader';
+export type { Direction, ResponseVariant } from './schema-loader';
+export { validateOutgoingRequest, validateIncomingResponse, resolveValidationModes } from './client-hooks';
+export type { ValidationMode, ValidationHookConfig } from './client-hooks';
+
 /**
  * Get expected response schema type for a given tool
  */
