@@ -53,7 +53,12 @@ import type {
   SyncAccountsResponse,
   SyncGovernanceResponse,
 } from '../types/tools.generated';
-import type { AcquireRightsResponse } from '../types/core.generated';
+import type {
+  AcquireRightsResponse,
+  AcquireRightsAcquired,
+  AcquireRightsPendingApproval,
+  AcquireRightsRejected,
+} from '../types/core.generated';
 
 /**
  * MCP-compatible tool response shape.
@@ -440,10 +445,6 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
   }
   if (data.status === 'acquired') {
     assertWebhookCredentials('approval_webhook', data.approval_webhook);
-    assertWebhookCredentials(
-      'revocation_webhook',
-      (data as unknown as { revocation_webhook?: { authentication?: { credentials?: string } } }).revocation_webhook
-    );
   }
   const defaultSummary =
     data.status === 'acquired'
@@ -455,6 +456,35 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
     content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: toStructuredContent(data),
   };
+}
+
+/**
+ * Per-variant constructor — builds an `AcquireRightsAcquired` success response
+ * and wraps it. Cleaner autocomplete than `acquireRightsResponse({ status: 'acquired', ... })`
+ * because a coding agent typing `acquireRightsAcqu…` gets the required-fields
+ * shape directly without reading a 4-variant union.
+ */
+export function acquireRightsAcquired(
+  data: Omit<AcquireRightsAcquired, 'status'>,
+  summary?: string
+): McpToolResponse {
+  return acquireRightsResponse({ ...data, status: 'acquired' } as AcquireRightsAcquired, summary);
+}
+
+/** Per-variant constructor for the `pending_approval` branch. */
+export function acquireRightsPendingApproval(
+  data: Omit<AcquireRightsPendingApproval, 'status'>,
+  summary?: string
+): McpToolResponse {
+  return acquireRightsResponse({ ...data, status: 'pending_approval' } as AcquireRightsPendingApproval, summary);
+}
+
+/** Per-variant constructor for the `rejected` branch. */
+export function acquireRightsRejected(
+  data: Omit<AcquireRightsRejected, 'status'>,
+  summary?: string
+): McpToolResponse {
+  return acquireRightsResponse({ ...data, status: 'rejected' } as AcquireRightsRejected, summary);
 }
 
 function assertWebhookCredentials(
@@ -533,23 +563,34 @@ export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: s
  * defaulting to `0` would silently mis-report a failed ingest as "nothing
  * accepted," which is the opposite of what a forgetful handler needs.
  * Throws at response-construction time with a pointer at the
- * `.fromRequest(request)` shortcut below.
+ * `.acceptAll(request, opts?)` shortcut below.
+ *
+ * Imported from `'@adcp/client/server'`.
  *
  * @example
  * ```typescript
- * // Ack every usage[] row from the request as accepted:
- * reportUsage: async (params) => reportUsageResponse.fromRequest(params)
+ * // Explicit count (when the handler rejected some rows):
+ * reportUsage: async (params) =>
+ *   reportUsageResponse({ accepted: 8, errors: [{ usage_index: 2, message: 'invalid currency' }] })
  *
- * // Explicit count (e.g., when the handler rejected some rows):
- * reportUsage: async (params) => reportUsageResponse({ accepted: 8, errors: [...] })
+ * // Ack every usage[] row as accepted (no validation failures):
+ * reportUsage: async (params) => reportUsageResponse.acceptAll(params)
+ *
+ * // Per-row validation — pass the errors you computed, the shortcut
+ * // computes `accepted = usage.length - errors.length`:
+ * reportUsage: async (params) => {
+ *   const errors = validateRows(params.usage);
+ *   return reportUsageResponse.acceptAll(params, { errors });
+ * }
  * ```
  */
 export function reportUsageResponse(data: ReportUsageResponse, summary?: string): McpToolResponse {
   if (typeof data?.accepted !== 'number') {
     throw new Error(
       `reportUsageResponse: data.accepted is required (number). ` +
-        `Use reportUsageResponse.fromRequest(request) for the "ack every usage[] row" case, ` +
-        `or pass { accepted: <count>, errors?: [...] } explicitly.`
+        `Use reportUsageResponse.acceptAll(request) for the "ack every usage[] row" case, ` +
+        `or pass { accepted: <count>, errors?: [...] } explicitly. ` +
+        `Imported from '@adcp/client/server'.`
     );
   }
   return {
@@ -561,13 +602,19 @@ export function reportUsageResponse(data: ReportUsageResponse, summary?: string)
 }
 
 /**
- * Shortcut: acknowledge every `usage[]` entry from the request as accepted.
- * Sets `accepted = request.usage?.length ?? 0`.
+ * Shortcut for the common case: accept all rows in the request, optionally
+ * minus any `errors[]` the caller computed. Sets
+ * `accepted = (request.usage?.length ?? 0) - errors.length`.
+ *
+ * Use with honest errors — passing no `errors` when rows failed validation
+ * is lying to buyers and the audit trail.
  */
-reportUsageResponse.fromRequest = function fromRequest(
+reportUsageResponse.acceptAll = function acceptAll(
   request: ReportUsageRequest,
-  summary?: string
+  opts?: { errors?: ReportUsageResponse['errors']; summary?: string }
 ): McpToolResponse {
-  const accepted = request.usage?.length ?? 0;
-  return reportUsageResponse({ accepted }, summary);
+  const total = request.usage?.length ?? 0;
+  const errors = opts?.errors ?? [];
+  const accepted = Math.max(0, total - errors.length);
+  return reportUsageResponse({ accepted, ...(errors.length > 0 ? { errors } : {}) }, opts?.summary);
 };
