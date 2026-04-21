@@ -1,11 +1,6 @@
 #!/usr/bin/env node
 
-const {
-  runConformance,
-  DEFAULT_TOOLS,
-  STATELESS_TIER_TOOLS,
-  REFERENTIAL_STATELESS_TOOLS,
-} = require('../dist/lib/conformance/index.js');
+const { runConformance, DEFAULT_TOOLS, REFERENTIAL_STATELESS_TOOLS } = require('../dist/lib/conformance/index.js');
 
 const USAGE = `Usage: adcp fuzz <agent-url> [options]
 
