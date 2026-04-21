@@ -15,7 +15,10 @@
  */
 
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
-const { readFileSync } = require('fs');
+const { readFileSync, statSync } = require('fs');
+const path = require('path');
+const net = require('net');
+const { spawn } = require('child_process');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
 const {
   getAgent,
@@ -852,6 +855,18 @@ WEBHOOK OPTIONS:
                                   --webhook-receiver proxy when used alone.
                                   Incompatible with --multi-instance-strategy
                                   multi-pass (receiver URL is per-pass).
+  --webhook-receiver-auto-tunnel  Autodetect a tunnel binary on PATH (ngrok or
+                                  cloudflared; override with $ADCP_WEBHOOK_TUNNEL),
+                                  spawn it against the receiver, and plug its
+                                  public URL into proxy mode. Cleans up on exit.
+                                  Custom override: $ADCP_WEBHOOK_TUNNEL="<cmd>
+                                  {port}"; the command must emit a line
+                                  containing \`ADCP_TUNNEL_URL=<https-url>\`
+                                  on stdout or stderr (first match wins) and
+                                  should exec the tunnel directly (no
+                                  \`sh -c\` wrapper — cleanup signals the
+                                  direct child only).
+                                  HTTP-on-the-wire — spec-compliant.
 
 OPTIONS:
   --context JSON      Pass context from previous step (step only)
@@ -875,6 +890,8 @@ EXAMPLES:
   adcp storyboard run my-remote idempotency \\
     --webhook-receiver proxy --webhook-receiver-public-url https://run.example.com
                                                        # remote agent via tunnel (ngrok/cloudflared/ingress)
+  adcp storyboard run my-remote webhook-emission --webhook-receiver-auto-tunnel
+                                                       # remote agent, tunnel autodetected + managed
   adcp storyboard list
   adcp storyboard show media_buy_seller
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
@@ -1108,8 +1125,13 @@ async function handleStoryboardRun(args) {
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
   // Parse webhook-receiver flags up front so malformed values fail the run
-  // before the dry-run short-circuit, not only on a live execution.
-  const webhookReceiverOpts = extractWebhookReceiverOptions(args);
+  // before the dry-run short-circuit, not only on a live execution. Auto-tunnel
+  // is resolved after the dry-run gate — spawning a tunnel for a preview-only
+  // run would be wasteful — but its flag-combination validation runs here so
+  // conflicts surface in dry-run too.
+  const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
+  const webhookReceiverBase = extractWebhookReceiverOptions(args);
+  validateAutoTunnelArgs(args, webhookReceiverBase);
 
   const stepCount = storyboard.phases.reduce((sum, p) => sum + p.steps.length, 0);
 
@@ -1146,6 +1168,10 @@ async function handleStoryboardRun(args) {
     }
     return;
   }
+
+  const webhookReceiverOpts = webhookAutoTunnel
+    ? await resolveWebhookReceiverOptions(args, { jsonOutput })
+    : webhookReceiverBase;
 
   const options = {
     protocol,
@@ -1309,6 +1335,342 @@ function extractWebhookReceiverOptions(args) {
 }
 
 /**
+ * `--webhook-receiver-auto-tunnel` autodetects a tunneling binary on PATH
+ * (ngrok or cloudflared), spawns it pointed at the receiver port, extracts
+ * the public URL, and plumbs it into `webhook_receiver` proxy mode — so a
+ * developer grading a remote agent from a laptop doesn't have to stand up
+ * a tunnel by hand.
+ *
+ * Design notes:
+ *  - HTTP on the wire is unchanged. This satisfies the webhook_receiver_runner
+ *    parity invariant (loopback_mock ≡ proxy_url — same emitter path).
+ *  - No vendor pin: any binary on PATH works, and `$ADCP_WEBHOOK_TUNNEL`
+ *    overrides detection with a custom command template (`{port}` is
+ *    substituted). This keeps the CLI spec-compliant with the test-kit's
+ *    "MUST NOT require a specific tunnel vendor" rule.
+ *
+ * The detection logic is PATH-based (not exec-based) so we can fail fast
+ * with a clear message when no tunnel is installed, instead of surfacing
+ * ENOENT after a runStoryboard attempt is already in flight.
+ */
+function isOnPath(cmd) {
+  const pathEnv = process.env.PATH || '';
+  const pathExt = process.platform === 'win32' ? (process.env.PATHEXT || '.EXE').split(';') : [''];
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of pathExt) {
+      const full = path.join(dir, cmd + ext);
+      try {
+        if (statSync(full).isFile()) return true;
+      } catch {
+        /* not this dir */
+      }
+    }
+  }
+  return false;
+}
+
+function detectTunnelCommand() {
+  const override = process.env.ADCP_WEBHOOK_TUNNEL;
+  if (override) return { kind: 'custom', template: override };
+  if (isOnPath('ngrok')) return { kind: 'ngrok' };
+  if (isOnPath('cloudflared')) return { kind: 'cloudflared' };
+  return null;
+}
+
+function parseTunnelTimeoutMs(raw) {
+  const DEFAULT = 15000;
+  if (raw === undefined || raw === '') return DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.error(
+      `WARNING: ADCP_WEBHOOK_TUNNEL_TIMEOUT_MS=${JSON.stringify(raw)} is not a positive number; using default ${DEFAULT}ms.`
+    );
+    return DEFAULT;
+  }
+  return parsed;
+}
+
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * Spawn a tunnel process pointed at `port`, extract its public URL from
+ * stdout/stderr within `timeoutMs`, and return `{ publicUrl, cleanup }`.
+ * Cleanup is idempotent and registered on process exit/SIGINT/SIGTERM so
+ * we don't leave zombie tunnels behind on a Ctrl-C mid-run.
+ *
+ * Exits with code 2 on failure (no tunnel found, startup timeout, child
+ * exit before URL emission) — matching the rest of the CLI's validation
+ * error contract.
+ */
+async function spawnAutoTunnel({ port, timeoutMs, jsonOutput }) {
+  const detected = detectTunnelCommand();
+  if (!detected) {
+    console.error('ERROR: --webhook-receiver-auto-tunnel: no supported tunnel binary found on PATH.');
+    console.error('       Install ngrok (https://ngrok.com/download) or cloudflared,');
+    console.error('       or set $ADCP_WEBHOOK_TUNNEL="<cmd> {port}" to use a custom tunnel.');
+    console.error('       Alternatively, run the tunnel yourself and pass');
+    console.error('       --webhook-receiver proxy --webhook-receiver-public-url <url>.');
+    process.exit(2);
+  }
+
+  let cmd;
+  let cmdArgs;
+  let urlRegex;
+  if (detected.kind === 'ngrok') {
+    cmd = 'ngrok';
+    // logfmt output is stable across ngrok v2/v3 and keeps us off the TUI.
+    cmdArgs = ['http', String(port), '--log=stdout', '--log-format=logfmt'];
+    // Anchor on ngrok's `msg="started tunnel"` log line. Vendor-domain
+    // allowlisting is fragile — ngrok is migrating free-tier subdomains
+    // from `.ngrok-free.app` to `.ngrok-free.dev`, paid tiers use
+    // `.ngrok.app`, custom domains use anything. Scoping to the started-
+    // tunnel line is the durable invariant: ngrok emits it exactly once
+    // per tunnel creation with the forwarding URL in the `url=` field.
+    urlRegex = /msg="started tunnel"[^\n]*url=(https:\/\/[^\s"]+)/;
+  } else if (detected.kind === 'cloudflared') {
+    cmd = 'cloudflared';
+    cmdArgs = ['tunnel', '--url', `http://localhost:${port}`, '--no-autoupdate'];
+    urlRegex = /(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/;
+  } else {
+    const parts = detected.template
+      .replace(/\{port\}/g, String(port))
+      .split(/\s+/)
+      .filter(Boolean);
+    if (parts.length === 0) {
+      console.error('ERROR: $ADCP_WEBHOOK_TUNNEL is empty.');
+      process.exit(2);
+    }
+    cmd = parts[0];
+    cmdArgs = parts.slice(1);
+    // Custom templates must print `ADCP_TUNNEL_URL=<https://...>` on a line
+    // somewhere in stdout/stderr. An unscoped "first https:// URL" match would
+    // wire the tunnel destination to any docs/diagnostics URL the binary
+    // happens to log on startup; the explicit marker is the contract.
+    urlRegex = /ADCP_TUNNEL_URL=(https:\/\/[^\s"]+)/;
+  }
+
+  let child;
+  try {
+    child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    console.error(`ERROR: failed to spawn ${cmd}: ${err.message}`);
+    process.exit(2);
+  }
+
+  let settled = false;
+  let publicUrl;
+  // Rolling buffer across chunks: ngrok's `msg="started tunnel" … url=…` line
+  // can straddle two `data` events (stdio pipes don't guarantee line-aligned
+  // chunks), and matching each chunk in isolation would miss the anchor/URL
+  // when they land on opposite sides of the boundary. Scan the concatenation
+  // and cap retention so a runaway child can't balloon memory.
+  let scanBuffer = '';
+  const MAX_SCAN_BUFFER = 16_384;
+
+  const scan = chunk => {
+    if (settled) return;
+    scanBuffer += chunk.toString('utf8');
+    if (scanBuffer.length > MAX_SCAN_BUFFER) {
+      scanBuffer = scanBuffer.slice(-MAX_SCAN_BUFFER);
+    }
+    const m = scanBuffer.match(urlRegex);
+    if (m) {
+      publicUrl = m[1];
+      settled = true;
+    }
+  };
+
+  const urlReady = new Promise((resolve, reject) => {
+    const onResolved = () => resolve(publicUrl);
+    const onRejected = err => reject(err);
+
+    child.stdout.on('data', c => {
+      scan(c);
+      if (publicUrl) onResolved();
+    });
+    child.stderr.on('data', c => {
+      scan(c);
+      if (publicUrl) onResolved();
+    });
+    child.once('error', err => {
+      if (settled) return;
+      settled = true;
+      if (err.code === 'ENOENT') {
+        onRejected(new Error(`${cmd} not on PATH at spawn time`));
+      } else {
+        onRejected(err);
+      }
+    });
+    child.once('exit', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      onRejected(new Error(`${cmd} exited (code=${code}, signal=${signal}) before emitting a public URL`));
+    });
+  });
+
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${cmd} did not emit a public URL within ${Math.round(timeoutMs / 1000)}s`)),
+      timeoutMs
+    );
+  });
+
+  try {
+    await Promise.race([urlReady, timeout]);
+  } catch (err) {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      /* ignore */
+    }
+    if (timer) clearTimeout(timer);
+    console.error(`ERROR: --webhook-receiver-auto-tunnel: ${err.message}`);
+    process.exit(2);
+  }
+  clearTimeout(timer);
+
+  const cleanup = registerTunnelChildForCleanup(child);
+
+  if (!jsonOutput) {
+    console.error(`Auto-tunnel (${cmd}): ${publicUrl} → http://localhost:${port}`);
+  }
+
+  return { publicUrl, cleanup };
+}
+
+/**
+ * Shared cleanup registry for spawned tunnel children. One `exit`/`SIGINT`/
+ * `SIGTERM` listener is installed the first time a child is registered and
+ * stays installed for the process lifetime — `process.once` was a bug
+ * waiting to happen (a second Ctrl-C would bypass teardown and leak
+ * tunnels).
+ *
+ * Signal path escalates SIGTERM → SIGKILL with a 250 ms grace so a tunnel
+ * that ignores TERM still gets reaped. The `'exit'` path is best-effort:
+ * Node cannot schedule timers after the `'exit'` event, so we only send
+ * TERM there and rely on the OS to reap strays when the parent dies.
+ */
+const activeTunnelChildren = new Set();
+let tunnelSignalHandlersInstalled = false;
+let tunnelEscalating = false;
+
+function termAllTunnels() {
+  for (const child of activeTunnelChildren) {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+function killAllTunnels() {
+  for (const child of activeTunnelChildren) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+function installTunnelSignalHandlersOnce() {
+  if (tunnelSignalHandlersInstalled) return;
+  tunnelSignalHandlersInstalled = true;
+  // `process.on` (not `once`) so a second Ctrl-C doesn't bypass cleanup.
+  process.on('exit', termAllTunnels);
+  const escalateAndExit = exitCode => () => {
+    if (tunnelEscalating) {
+      // Second signal during the grace window: force-kill now and bail.
+      killAllTunnels();
+      process.exit(exitCode);
+      return;
+    }
+    tunnelEscalating = true;
+    termAllTunnels();
+    // Two properties worth keeping separate:
+    //   1) We don't call process.exit synchronously — the timer must run.
+    //   2) We don't `.unref()` the timer — Node must keep the event loop
+    //      alive for the full 250 ms so stubborn tunnels actually see KILL.
+    setTimeout(() => {
+      killAllTunnels();
+      process.exit(exitCode);
+    }, 250);
+  };
+  process.on('SIGINT', escalateAndExit(130));
+  process.on('SIGTERM', escalateAndExit(143));
+}
+
+function registerTunnelChildForCleanup(child) {
+  installTunnelSignalHandlersOnce();
+  activeTunnelChildren.add(child);
+  child.once('exit', () => activeTunnelChildren.delete(child));
+  return () => {
+    if (!activeTunnelChildren.delete(child)) return;
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      /* already gone */
+    }
+  };
+}
+
+/**
+ * Resolve `webhook_receiver` options with auto-tunnel support layered in.
+ *
+ * When `--webhook-receiver-auto-tunnel` is present, we allocate a port if
+ * the operator didn't force one, spawn the tunnel, and synthesize a
+ * proxy-mode receiver config around the captured public URL. The return
+ * shape matches `extractWebhookReceiverOptions` so callers can spread it
+ * into runner options unchanged.
+ */
+function validateAutoTunnelArgs(args, base) {
+  if (!args.includes('--webhook-receiver-auto-tunnel')) return;
+  if (base?.webhook_receiver.public_url) {
+    console.error('ERROR: --webhook-receiver-auto-tunnel conflicts with --webhook-receiver-public-url.');
+    console.error('       Pick one — auto-tunnel mints a URL for you, public-url supplies your own.');
+    process.exit(2);
+  }
+  // Auto-tunnel implies proxy mode and mints the URL itself. A coexisting
+  // `--webhook-receiver [mode]` flag is always wrong: `loopback` contradicts
+  // the minted URL, `proxy` without public-url is caught earlier in
+  // extractWebhookReceiverOptions, and a bare `--webhook-receiver` (which
+  // resolves to `loopback_mock`) would be silently overwritten. Reject all
+  // three up front with a single clear message.
+  if (args.includes('--webhook-receiver')) {
+    console.error('ERROR: --webhook-receiver-auto-tunnel already implies proxy mode; drop `--webhook-receiver`.');
+    process.exit(2);
+  }
+}
+
+async function resolveWebhookReceiverOptions(args, { jsonOutput } = {}) {
+  const base = extractWebhookReceiverOptions(args);
+  validateAutoTunnelArgs(args, base);
+  if (!args.includes('--webhook-receiver-auto-tunnel')) return base;
+
+  const port = base?.webhook_receiver.port ?? (await getFreePort());
+  const timeoutMs = parseTunnelTimeoutMs(process.env.ADCP_WEBHOOK_TUNNEL_TIMEOUT_MS);
+  const { publicUrl } = await spawnAutoTunnel({ port, timeoutMs, jsonOutput });
+
+  return {
+    webhook_receiver: { mode: 'proxy_url', port, public_url: publicUrl },
+    contracts: ['webhook_receiver_runner'],
+  };
+}
+
+/**
  * Parse `--multi-instance-strategy <round-robin|multi-pass>`. Defaults to
  * `round-robin` to keep CI time predictable; operators opt into `multi-pass`
  * when they want cross-replica coverage for write→read pairs separated by an
@@ -1385,8 +1747,10 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
 
   // Parse webhook-receiver flags here so the multi-pass incompatibility fails
   // up front — not after bundle resolution, connection setup, or dispatch.
-  const webhookReceiverOpts = extractWebhookReceiverOptions(args);
-  if (webhookReceiverOpts && strategy === 'multi-pass') {
+  const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
+  const webhookReceiverBase = extractWebhookReceiverOptions(args);
+  validateAutoTunnelArgs(args, webhookReceiverBase);
+  if ((webhookReceiverBase || webhookAutoTunnel) && strategy === 'multi-pass') {
     // The runner throws on this combination (each pass binds a fresh receiver
     // URL; agents caching pass-1 URLs would deliver to a dead port in pass 2).
     // Surface it as a CLI-level error so operators don't wait for dispatch.
@@ -1568,6 +1932,10 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     return;
   }
 
+  const webhookReceiverOpts = webhookAutoTunnel
+    ? await resolveWebhookReceiverOptions(args, { jsonOutput })
+    : webhookReceiverBase;
+
   const runOptions = {
     protocol,
     ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
@@ -1719,7 +2087,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
       ? { type: 'bearer', token: finalAuthToken }
       : undefined;
 
-  const webhookReceiverOpts = extractWebhookReceiverOptions(rawArgs);
+  const webhookReceiverOpts = await resolveWebhookReceiverOptions(rawArgs, { jsonOutput: opts.jsonOutput });
   const testOptions = {
     protocol,
     brief: opts.brief,
