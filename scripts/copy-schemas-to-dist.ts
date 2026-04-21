@@ -24,9 +24,7 @@ function main(): void {
 
   const srcRoot = path.join(repoRoot, 'schemas', 'cache', version);
   if (!existsSync(srcRoot)) {
-    throw new Error(
-      `Schema cache missing at ${srcRoot}. Run \`npm run sync-schemas\` before building.`
-    );
+    throw new Error(`Schema cache missing at ${srcRoot}. Run \`npm run sync-schemas\` before building.`);
   }
 
   const destRoot = path.join(repoRoot, 'dist', 'lib', 'schemas-data', version);

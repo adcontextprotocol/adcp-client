@@ -36,7 +36,9 @@ const OK: ValidationOutcome = Object.freeze({ valid: true, issues: [], variant: 
 function formatIssue(err: ErrorObject): ValidationIssue {
   const instancePath = err.instancePath || '';
   const missingProperty =
-    err.keyword === 'required' && err.params && typeof (err.params as { missingProperty?: string }).missingProperty === 'string'
+    err.keyword === 'required' &&
+    err.params &&
+    typeof (err.params as { missingProperty?: string }).missingProperty === 'string'
       ? `/${(err.params as { missingProperty: string }).missingProperty}`
       : '';
   return {

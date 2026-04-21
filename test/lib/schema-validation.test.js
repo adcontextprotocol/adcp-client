@@ -13,10 +13,7 @@ const {
   listValidatorKeys,
   resolveValidationModes,
 } = require('../../dist/lib/validation');
-const {
-  validateOutgoingRequest,
-  validateIncomingResponse,
-} = require('../../dist/lib/validation/client-hooks.js');
+const { validateOutgoingRequest, validateIncomingResponse } = require('../../dist/lib/validation/client-hooks.js');
 const { ValidationError } = require('../../dist/lib/errors');
 
 describe('schema-driven validation', () => {
@@ -111,9 +108,7 @@ describe('schema-driven validation', () => {
 
   describe('buildValidationError / buildAdcpValidationErrorPayload', () => {
     test('wraps issues into a ValidationError carrying details', () => {
-      const issues = [
-        { pointer: '/foo/bar', message: 'bad', keyword: 'type', schemaPath: '#/properties/foo/bar' },
-      ];
+      const issues = [{ pointer: '/foo/bar', message: 'bad', keyword: 'type', schemaPath: '#/properties/foo/bar' }];
       const err = buildValidationError('get_products', 'request', issues);
       assert.ok(err instanceof ValidationError);
       assert.strictEqual(err.code, 'VALIDATION_ERROR');

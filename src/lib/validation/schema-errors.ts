@@ -21,7 +21,11 @@ export interface ValidationErrorDetails {
  * the full issue list through `details` so callers can inspect every
  * pointer, not just the first.
  */
-export function buildValidationError(tool: string, side: 'request' | 'response', issues: ValidationIssue[]): ValidationError {
+export function buildValidationError(
+  tool: string,
+  side: 'request' | 'response',
+  issues: ValidationIssue[]
+): ValidationError {
   const first = issues[0];
   const field = first?.pointer ?? '/';
   const constraint = first ? `${first.keyword}: ${first.message}` : 'schema validation failed';
