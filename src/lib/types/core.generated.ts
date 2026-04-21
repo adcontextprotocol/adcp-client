@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-21T21:11:04.729Z
+// Generated at: 2026-04-21T21:27:13.808Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -16512,6 +16512,7 @@ export type ErrorCode =
   | 'CREATIVE_NOT_FOUND'
   | 'SIGNAL_NOT_FOUND'
   | 'SESSION_NOT_FOUND'
+  | 'PLAN_NOT_FOUND'
   | 'REFERENCE_NOT_FOUND'
   | 'SESSION_TERMINATED'
   | 'VALIDATION_ERROR'
