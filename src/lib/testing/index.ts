@@ -122,6 +122,42 @@ export type { StubCallRecord } from './stubs';
 export { expectControllerError, expectControllerSuccess } from './controller-assertions';
 export type { ControllerErrorWithDetail } from './controller-assertions';
 
+// Seller-side comply_test_controller scaffold
+export { createComplyController } from './comply-controller';
+export type {
+  ComplyController,
+  ComplyControllerConfig,
+  ComplyControllerContext,
+  ComplyControllerToolDefinition,
+  ForceAccountStatusParams,
+  ForceAdapter,
+  ForceCreativeStatusParams,
+  ForceMediaBuyStatusParams,
+  ForceSessionStatusParams,
+  SeedAdapter,
+  SeedCreativeParams,
+  SeedMediaBuyParams,
+  SeedPlanParams,
+  SeedPricingOptionParams,
+  SeedProductParams,
+  SimulateAdapter,
+  SimulateBudgetSpendParams,
+  SimulateDeliveryParams,
+} from './comply-controller';
+// Re-export TestControllerError, cache helpers, and scenario constants so
+// everything needed to wire the controller is reachable from /testing.
+export {
+  TestControllerError,
+  CONTROLLER_SCENARIOS,
+  SEED_SCENARIOS,
+  createSeedFixtureCache,
+} from '../server/test-controller';
+export type {
+  ControllerScenario,
+  SeedFixtureCache,
+  SeedScenario,
+} from '../server/test-controller';
+
 // Storyboard-driven testing
 export {
   // Runner
