@@ -632,9 +632,7 @@ function parseAgentOptions(args) {
   // `extractWebhookReceiverOptions(args)` which validates and exits on error.
   const webhookReceiverIdx = args.indexOf('--webhook-receiver');
   const webhookReceiverModeValue =
-    webhookReceiverIdx !== -1 &&
-    webhookReceiverIdx + 1 < args.length &&
-    !args[webhookReceiverIdx + 1].startsWith('--')
+    webhookReceiverIdx !== -1 && webhookReceiverIdx + 1 < args.length && !args[webhookReceiverIdx + 1].startsWith('--')
       ? args[webhookReceiverIdx + 1]
       : null;
   const webhookReceiverPortIdx = args.indexOf('--webhook-receiver-port');

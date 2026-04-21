@@ -191,14 +191,7 @@ describe('storyboard run --webhook-receiver', () => {
     // writing `... --webhook-receiver webhook-emission` (expecting webhook-emission
     // to be the positional storyboard ID) must fail with a mode error, not
     // silently swallow the ID. This test locks in the fail-loudly contract.
-    const result = runCli([
-      'storyboard',
-      'run',
-      'test-mcp',
-      '--webhook-receiver',
-      'webhook-emission',
-      '--dry-run',
-    ]);
+    const result = runCli(['storyboard', 'run', 'test-mcp', '--webhook-receiver', 'webhook-emission', '--dry-run']);
     assert.strictEqual(result.status, 2);
     assert.match(result.stderr, /--webhook-receiver value must be "loopback" or "proxy"/);
     assert.match(result.stderr, /Omit the value to use the default/);
