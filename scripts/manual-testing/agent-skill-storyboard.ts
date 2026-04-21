@@ -267,6 +267,12 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
       '--allow-http',
       '--auth',
       'sk_harness_do_not_use_in_prod',
+      // Host a loopback webhook receiver so storyboards that assert outbound
+      // webhook conformance (webhook_emission, idempotency) can grade instead
+      // of skipping with "Test-kit contract 'webhook_receiver_runner' is not
+      // configured on this runner". Storyboards that don't need it ignore the
+      // receiver.
+      '--webhook-receiver',
     ],
     {
       encoding: 'utf8',

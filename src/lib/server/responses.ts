@@ -438,10 +438,7 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
  * because a coding agent typing `acquireRightsAcqu…` gets the required-fields
  * shape directly without reading a 4-variant union.
  */
-export function acquireRightsAcquired(
-  data: Omit<AcquireRightsAcquired, 'status'>,
-  summary?: string
-): McpToolResponse {
+export function acquireRightsAcquired(data: Omit<AcquireRightsAcquired, 'status'>, summary?: string): McpToolResponse {
   return acquireRightsResponse({ ...data, status: 'acquired' } as AcquireRightsAcquired, summary);
 }
 
@@ -454,10 +451,7 @@ export function acquireRightsPendingApproval(
 }
 
 /** Per-variant constructor for the `rejected` branch. */
-export function acquireRightsRejected(
-  data: Omit<AcquireRightsRejected, 'status'>,
-  summary?: string
-): McpToolResponse {
+export function acquireRightsRejected(data: Omit<AcquireRightsRejected, 'status'>, summary?: string): McpToolResponse {
   return acquireRightsResponse({ ...data, status: 'rejected' } as AcquireRightsRejected, summary);
 }
 
