@@ -139,6 +139,14 @@ export interface RunConformanceOptions {
    * @default false
    */
   autoSeed?: boolean;
+  /**
+   * Brand reference used by mutating seeders (currently `create_media_buy`
+   * and `sync_creatives`). Sellers that enforce brand allowlists should
+   * set this to a domain they're configured to accept. When omitted,
+   * seeders fall back to `{ domain: 'conformance.example' }`, which will
+   * warn-and-skip on allowlist-enforcing sellers.
+   */
+  seedBrand?: { domain: string; brand_id?: string };
 }
 
 /**

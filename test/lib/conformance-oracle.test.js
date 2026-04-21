@@ -73,6 +73,36 @@ describe('conformance: oracle', () => {
     assert.ok(out.invariantFailures.some(f => f.includes('stack trace leak')));
   });
 
+  test('JVM stack trace in response body → invariant failure', () => {
+    const out = accepted('get_signals', {
+      signals: [],
+      errors: [
+        {
+          code: 'INTERNAL',
+          message:
+            'java.lang.NullPointerException\n\tat com.example.Handler.process(Handler.java:42)\n\tat com.example.App.main(App.java:10)',
+        },
+      ],
+    });
+    assert.equal(out.verdict, 'invalid');
+    assert.ok(out.invariantFailures.some(f => f.includes('stack trace leak')));
+  });
+
+  test('.NET stack trace in response body → invariant failure', () => {
+    const out = accepted('get_signals', {
+      signals: [],
+      errors: [
+        {
+          code: 'INTERNAL',
+          message:
+            'System.NullReferenceException: Object reference not set\n   at Foo.Bar.Baz() in /app/src/Foo.cs:line 42\n   at Foo.Main() in /app/Program.cs:line 10',
+        },
+      ],
+    });
+    assert.equal(out.verdict, 'invalid');
+    assert.ok(out.invariantFailures.some(f => f.includes('stack trace leak')));
+  });
+
   test('PHP stack trace in response body → invariant failure', () => {
     const out = accepted('get_signals', {
       signals: [],
@@ -160,6 +190,19 @@ describe('conformance: oracle', () => {
       result: { success: true, status: 'completed', data: { signals: [], context: ctx } },
     });
     assert.equal(out.verdict, 'accepted');
+  });
+
+  test('context missing from response → invariant failure when schema declares context', () => {
+    // get_signals response schema declares a `context` property, so
+    // dropping it entirely is a violation per spec. Earlier versions of
+    // the oracle silent-tolerated this case.
+    const out = evaluate({
+      tool: 'get_signals',
+      request: { signal_spec: 'x', context: { trace_id: 'abc' } },
+      result: { success: true, status: 'completed', data: { signals: [] } },
+    });
+    assert.equal(out.verdict, 'invalid');
+    assert.ok(out.invariantFailures.some(f => f.includes('context') && f.includes('omitted')));
   });
 
   test('context mutated on response → invariant failure', () => {

@@ -28,10 +28,14 @@ Options:
                               IDs with commas are not expressible on the CLI —
                               drop to the runConformance() API if you need them.
   --auto-seed                 Before fuzzing, create a property list, a
-                              content-standards config, and a media buy on
-                              the agent; feed the returned IDs into fuzzing
-                              so Tier-3 update_* tools exercise real state.
+                              content-standards config, a media buy, and a
+                              creative on the agent; feed the returned IDs
+                              into fuzzing so Tier-3 update_* tools and
+                              creative-library tools exercise real state.
                               MUTATES the agent — point at a sandbox tenant.
+  --seed-brand <domain>       Brand domain used by mutating seeders.
+                              Defaults to conformance.example; override when
+                              the agent enforces a brand allowlist.
   --max-failures <int>        Cap failures collected (default: 20)
   --max-payload-bytes <int>   Cap serialized failure input/response size (default: 8192)
   --format <human|json>       Output format (default: human)
@@ -158,6 +162,15 @@ async function handleFuzzCommand(argv) {
       case '--auto-seed':
         options.autoSeed = true;
         break;
+      case '--seed-brand': {
+        const domain = requireValue(i, '--seed-brand');
+        if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(domain)) {
+          argError(`--seed-brand must be a valid domain (got ${JSON.stringify(domain)})`);
+        }
+        options.seedBrand = { domain };
+        i++;
+        break;
+      }
       case '--max-failures': {
         const raw = requireValue(i, '--max-failures');
         const v = Number.parseInt(raw, 10);

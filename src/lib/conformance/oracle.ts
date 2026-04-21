@@ -39,6 +39,16 @@ const STACK_TRACE_REGEXES: readonly RegExp[] = [
   /\.go:\d+ \+0x[0-9a-f]+/,
   // PHP: `#7 /var/www/foo.php(42): Bar->baz()` — numbered frame with file:line
   /#\d+ [^\s]+\.php\(\d+\):/,
+  // JVM: `\n\tat com.foo.Bar.method(Bar.java:42)` — fully-qualified
+  // method with source:line. Anchored to whitespace/newline so an
+  // echoed Javadoc reference in prose (`"at com.foo.Bar(Bar.java:42)"`)
+  // doesn't trigger the detector — real stack frames sit on their own
+  // indented line.
+  /(?:\\n\s*|^\s+|\n\s+)at [\w$.]+\.[\w$]+\([\w$]+\.(?:java|kt|kts|scala|groovy):\d+\)/,
+  // .NET: `at Foo.Bar.Baz() in /path/to/X.cs:line 42` — method invocation
+  // followed by ` in ` and a file:line marker. The method-name charset
+  // includes parens/brackets for generic and overloaded signatures.
+  /at [\w.<>`,()[\]]+ in [^:\s]+\.(?:cs|vb|fs):line \d+/,
 ];
 
 const FS_PATH_SIGNATURES = [/\/Users\/[^ "']+/, /\/home\/[^ "']+/, /[A-Z]:\\\\Users\\\\/];
@@ -60,6 +70,27 @@ function responseValidator(tool: ConformanceToolName): ReturnType<Ajv['compile']
   const validator = getAjv().compile(schema);
   compiledValidators.set(tool, validator);
   return validator;
+}
+
+/**
+ * Does the response schema declare a top-level `context` property —
+ * either directly or on one of its `oneOf` branches? When it does, a
+ * request-context that's not echoed is an invariant violation; when it
+ * doesn't, a missing context field is silent tolerance.
+ */
+const responseSchemaHasContext = new Map<ConformanceToolName, boolean>();
+function responseEchoesContext(tool: ConformanceToolName): boolean {
+  const cached = responseSchemaHasContext.get(tool);
+  if (cached !== undefined) return cached;
+  const schema = loadResponseSchema(tool) as {
+    properties?: Record<string, unknown>;
+    oneOf?: Array<{ properties?: Record<string, unknown> }>;
+  };
+  const direct = !!schema.properties && 'context' in schema.properties;
+  const branched = Array.isArray(schema.oneOf) && schema.oneOf.some(b => !!b.properties && 'context' in b.properties);
+  const answer = direct || branched;
+  responseSchemaHasContext.set(tool, answer);
+  return answer;
 }
 
 /**
@@ -92,7 +123,7 @@ export function evaluate(input: OracleInput): OracleOutput {
   checkNoAuthLeak(result, authToken, invariantFailures);
   checkNoStackLeak(result, invariantFailures);
   checkNoFilesystemLeak(result, invariantFailures);
-  checkContextEchoed(request, result, invariantFailures);
+  checkContextEchoed(tool, request, result, invariantFailures);
 
   if (result.success === false) {
     checkErrorEnvelope(result, invariantFailures);
@@ -173,13 +204,23 @@ function checkNoFilesystemLeak(result: TaskResult<unknown>, failures: string[]):
   }
 }
 
-function checkContextEchoed(request: unknown, result: TaskResult<unknown>, failures: string[]): void {
+function checkContextEchoed(
+  tool: ConformanceToolName,
+  request: unknown,
+  result: TaskResult<unknown>,
+  failures: string[]
+): void {
   const reqContext = (request as { context?: unknown } | undefined)?.context;
   if (reqContext === undefined) return;
   const respContext = (result.data as { context?: unknown } | undefined)?.context;
   if (respContext === undefined) {
-    // Spec says context is echoed unchanged; absent on response is a soft
-    // failure because some tools omit the field from the response schema.
+    // When the response schema declares a `context` property, a missing
+    // echo IS a violation — the spec requires unchanged pass-through.
+    // When the schema omits `context` (some discovery-only responses do),
+    // silent tolerance stands.
+    if (responseEchoesContext(tool)) {
+      failures.push('request.context not echoed on response (schema declares context but response omitted it)');
+    }
     return;
   }
   if (!deepEqual(reqContext, respContext)) {

@@ -13,12 +13,20 @@ export interface SeedOptions {
   /**
    * Subset of seeders to run. Default: all.
    * `'create_media_buy'` implicitly runs `get_products` first to discover
-   * a real product_id.
+   * a real product_id. `'sync_creatives'` implicitly runs
+   * `list_creative_formats` first to pick a usable format.
    */
   seeders?: readonly SeederName[];
+  /**
+   * Brand reference for mutating seeders that require one. Default
+   * `{ domain: 'conformance.example' }`. Sellers that enforce brand
+   * allowlists should override this with a domain they're configured to
+   * accept — otherwise `create_media_buy` seeding warns and falls through.
+   */
+  brand?: { domain: string; brand_id?: string };
 }
 
-export type SeederName = 'create_property_list' | 'create_content_standards' | 'create_media_buy';
+export type SeederName = 'create_property_list' | 'create_content_standards' | 'create_media_buy' | 'sync_creatives';
 
 export interface SeedResult {
   fixtures: ConformanceFixtures;
@@ -52,7 +60,13 @@ const UNIQUE_TAG = (): string => 'cf_seed_' + Math.random().toString(36).slice(2
 export async function seedFixtures(agentUrl: string, options: SeedOptions = {}): Promise<SeedResult> {
   const agent = buildAgent(agentUrl, options);
   const seeders =
-    options.seeders ?? (['create_property_list', 'create_content_standards', 'create_media_buy'] as const);
+    options.seeders ??
+    (['create_property_list', 'create_content_standards', 'create_media_buy', 'sync_creatives'] as const);
+
+  const ctx: SeederContext = {
+    agent,
+    brand: options.brand ?? { domain: 'conformance.example' },
+  };
 
   const fixtures: ConformanceFixtures = {};
   const warnings: SeedWarning[] = [];
@@ -64,7 +78,7 @@ export async function seedFixtures(agentUrl: string, options: SeedOptions = {}):
         warnings.push({ seeder: name, reason: `no seeder registered for ${name}` });
         continue;
       }
-      const out = await runner(agent);
+      const out = await runner(ctx);
       mergePool(fixtures, out.ids);
       warnings.push(...out.warnings);
     } catch (err) {
@@ -73,6 +87,11 @@ export async function seedFixtures(agentUrl: string, options: SeedOptions = {}):
   }
 
   return { fixtures, warnings };
+}
+
+interface SeederContext {
+  agent: AgentClient;
+  brand: { domain: string; brand_id?: string };
 }
 
 function buildAgent(agentUrl: string, options: SeedOptions): AgentClient {
@@ -112,15 +131,16 @@ interface SeederOutput {
   ids: Partial<Record<keyof ConformanceFixtures, string[]>>;
   warnings: SeedWarning[];
 }
-type Seeder = (agent: AgentClient) => Promise<SeederOutput>;
+type Seeder = (ctx: SeederContext) => Promise<SeederOutput>;
 
 const SEEDERS: Record<SeederName, Seeder> = {
   create_property_list: seedPropertyList,
   create_content_standards: seedContentStandards,
   create_media_buy: seedMediaBuy,
+  sync_creatives: seedSyncCreatives,
 };
 
-async function seedPropertyList(agent: AgentClient): Promise<SeederOutput> {
+async function seedPropertyList({ agent }: SeederContext): Promise<SeederOutput> {
   const result = await agent.executeTask('create_property_list', {
     idempotency_key: generateIdempotencyKey(),
     name: `Conformance Seeder List ${UNIQUE_TAG()}`,
@@ -141,7 +161,7 @@ async function seedPropertyList(agent: AgentClient): Promise<SeederOutput> {
   return { ids: { list_ids: [listId] }, warnings: [] };
 }
 
-async function seedContentStandards(agent: AgentClient): Promise<SeederOutput> {
+async function seedContentStandards({ agent }: SeederContext): Promise<SeederOutput> {
   // Minimal payload that still satisfies the "at least one of policy,
   // policies, or registry_policy_ids is required" invariant some sellers
   // enforce beyond the raw schema. A single inline policy is the most
@@ -179,7 +199,7 @@ async function seedContentStandards(agent: AgentClient): Promise<SeederOutput> {
  * then calling `create_media_buy` against that product. Captures the
  * returned `media_buy_id` and any `package_id`s from the response.
  */
-async function seedMediaBuy(agent: AgentClient): Promise<SeederOutput> {
+async function seedMediaBuy({ agent, brand }: SeederContext): Promise<SeederOutput> {
   const warnings: SeedWarning[] = [];
   const products = await agent.executeTask('get_products', {
     brief: 'Conformance fuzzer seed — any product acceptable',
@@ -213,10 +233,12 @@ async function seedMediaBuy(agent: AgentClient): Promise<SeederOutput> {
   const start = new Date(now.getTime() + 24 * 60 * 60 * 1000); // +1 day
   const end = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000); // +8 days
 
+  const brandRef: Record<string, string> = { domain: brand.domain };
+  if (brand.brand_id) brandRef.brand_id = brand.brand_id;
   const result = await agent.executeTask('create_media_buy', {
     idempotency_key: generateIdempotencyKey(),
-    account: { brand: { domain: 'conformance.example' }, operator: 'conformance.example' },
-    brand: { domain: 'conformance.example' },
+    account: { brand: brandRef, operator: brand.domain },
+    brand: brandRef,
     start_time: start.toISOString(),
     end_time: end.toISOString(),
     total_budget: { amount: 100, currency: 'USD' },
@@ -266,4 +288,134 @@ function summarizeResult(result: {
     return `agent rejected with ${code}${result.error ?? 'unknown error'}`;
   }
   return `unexpected status ${result.status ?? 'unknown'}`;
+}
+
+/**
+ * Creates a single creative by first discovering formats via
+ * `list_creative_formats`, picking the first format whose required
+ * assets are all covered by our placeholder synthesis, then calling
+ * `sync_creatives` with a minimal manifest. Captures returned
+ * `creative_id`s into the pool.
+ */
+async function seedSyncCreatives({ agent, brand }: SeederContext): Promise<SeederOutput> {
+  const warnings: SeedWarning[] = [];
+  const formatsResult = await agent.executeTask('list_creative_formats', {});
+  if (!formatsResult.success || formatsResult.status !== 'completed' || !formatsResult.data) {
+    return {
+      ids: {},
+      warnings: [
+        { seeder: 'sync_creatives', reason: 'list_creative_formats preflight: ' + summarizeResult(formatsResult) },
+      ],
+    };
+  }
+  const formats = (formatsResult.data as { formats?: unknown }).formats;
+  if (!Array.isArray(formats) || formats.length === 0) {
+    return { ids: {}, warnings: [{ seeder: 'sync_creatives', reason: 'list_creative_formats returned no formats' }] };
+  }
+
+  const picked = pickSimpleFormat(formats as FormatDef[]);
+  if (!picked) {
+    return {
+      ids: {},
+      warnings: [{ seeder: 'sync_creatives', reason: 'no format with a synthesizable required-asset set' }],
+    };
+  }
+
+  const manifest = synthesizeManifestAssets(picked);
+  const creativeId = `cf_creative_${UNIQUE_TAG()}`;
+  const tag = UNIQUE_TAG();
+
+  const result = await agent.executeTask('sync_creatives', {
+    idempotency_key: generateIdempotencyKey(),
+    account: {
+      brand: { domain: brand.domain, ...(brand.brand_id ? { brand_id: brand.brand_id } : {}) },
+      operator: brand.domain,
+    },
+    creatives: [
+      {
+        creative_id: creativeId,
+        name: `Conformance Seeder Creative ${tag}`,
+        format_id: { agent_url: picked.format_id.agent_url, id: picked.format_id.id },
+        assets: manifest,
+      },
+    ],
+  });
+
+  if (!result.success || result.status !== 'completed' || !result.data) {
+    return { ids: {}, warnings: [...warnings, { seeder: 'sync_creatives', reason: summarizeResult(result) }] };
+  }
+
+  const capturedIds = extractCreativeIds(result.data, creativeId);
+  if (capturedIds.length === 0) {
+    warnings.push({
+      seeder: 'sync_creatives',
+      reason: 'response did not surface a creative_id (may be pending review)',
+    });
+    return { ids: {}, warnings };
+  }
+  return { ids: { creative_ids: capturedIds }, warnings };
+}
+
+/**
+ * Pick the first format whose required assets are all in the set of
+ * types we know how to synthesize placeholder values for. Sorted by the
+ * format's declared order — no clever heuristics.
+ */
+interface FormatDef {
+  format_id: { agent_url: string; id: string };
+  assets?: Array<{ asset_id: string; asset_type?: string; required?: boolean; item_type?: string }>;
+}
+function pickSimpleFormat(formats: FormatDef[]): FormatDef | null {
+  for (const f of formats) {
+    if (!f?.format_id?.agent_url || !f.format_id.id) continue;
+    const required = (f.assets ?? []).filter(a => a?.required === true && a.item_type === 'individual');
+    // Skip formats with zero required assets — sellers typically reject a
+    // creative with an empty assets dict, so picking one would just
+    // trade "no format available" for "creative rejected" downstream.
+    if (required.length === 0) continue;
+    if (required.every(a => ASSET_PLACEHOLDER[a.asset_type as keyof typeof ASSET_PLACEHOLDER])) return f;
+  }
+  return null;
+}
+
+function synthesizeManifestAssets(format: FormatDef): Record<string, unknown> {
+  const manifest: Record<string, unknown> = {};
+  for (const asset of format.assets ?? []) {
+    if (asset?.required !== true || asset.item_type !== 'individual') continue;
+    const placeholder = ASSET_PLACEHOLDER[asset.asset_type as keyof typeof ASSET_PLACEHOLDER];
+    if (placeholder) manifest[asset.asset_id] = placeholder();
+  }
+  return manifest;
+}
+
+// Placeholder value per asset type. Kept intentionally small: the
+// seeder's job is to produce a creative the agent will accept, not to
+// fuzz the asset surface. We only cover types whose `required` fields
+// we can satisfy without format-specific knowledge (dimensions, codecs,
+// etc. use safe defaults).
+const ASSET_PLACEHOLDER = {
+  image: () => ({ url: 'https://conformance.example/placeholder.png', width: 300, height: 250 }),
+  video: () => ({ url: 'https://conformance.example/placeholder.mp4', width: 640, height: 360 }),
+  audio: () => ({ url: 'https://conformance.example/placeholder.mp3' }),
+  text: () => ({ content: 'Conformance seed text' }),
+  url: () => ({ url: 'https://conformance.example/' }),
+  html: () => ({ content: '<div>Conformance seed</div>' }),
+  javascript: () => ({ content: '/* conformance seed */' }),
+  css: () => ({ content: '/* conformance seed */' }),
+  markdown: () => ({ content: 'Conformance seed' }),
+} as const;
+
+function extractCreativeIds(data: unknown, fallbackId: string): string[] {
+  const d = data as { creatives?: unknown; synced_creatives?: unknown };
+  const items: unknown[] = [];
+  if (Array.isArray(d.creatives)) items.push(...d.creatives);
+  if (Array.isArray(d.synced_creatives)) items.push(...d.synced_creatives);
+  const ids: string[] = [];
+  for (const it of items) {
+    const id = (it as { creative_id?: unknown })?.creative_id;
+    if (typeof id === 'string' && id.length > 0) ids.push(id);
+  }
+  // Fall back to the id we supplied — spec allows sellers to echo back
+  // buyer-supplied creative_ids on success.
+  return ids.length > 0 ? ids : [fallbackId];
 }

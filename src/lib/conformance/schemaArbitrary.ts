@@ -160,9 +160,51 @@ function objectArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<Rec
           return fc.record(propertySpec, { requiredKeys });
         });
 
-  if (dependencies.length === 0) return base;
-  return base.map(value => enforceDependencies(value, dependencies));
+  let withDeps = base;
+  if (dependencies.length > 0) withDeps = base.map(value => enforceDependencies(value, dependencies));
+
+  // Unknown-property probe: when the schema allows additional properties,
+  // sometimes inject one. Exercises the "unknown-field tolerance"
+  // surface — a common crash source where agents deserialize into a
+  // strict struct and reject keys they weren't expecting. Kept at ~15%
+  // frequency and capped at one extra key so overall sample validity
+  // stays high; the oracle's two-path design absorbs the rest.
+  if (shape.additionalProperties !== true) return withDeps;
+  return withDeps.chain(value => injectExtraProperty(value, declared));
 }
+
+/**
+ * Probabilistically adds a single unknown key to `value`. The key name
+ * is drawn from a fixed vocabulary that deliberately avoids collisions
+ * with well-known AdCP property names, and the value is a minimal
+ * primitive. Most samples pass through unchanged.
+ */
+function injectExtraProperty(
+  value: Record<string, unknown>,
+  declared: Set<string>
+): fc.Arbitrary<Record<string, unknown>> {
+  const candidates = EXTRA_PROPERTY_NAMES.filter(k => !(k in value) && !declared.has(k));
+  if (candidates.length === 0) return fc.constant(value);
+  // 85% pass-through, 15% injection. `fc.nat({max: 19})` gives a 0-19
+  // roll; values 0-2 (~15%) trigger injection.
+  return fc.nat({ max: 19 }).chain(roll => {
+    if (roll > 2) return fc.constant(value);
+    return fc.tuple(fc.constantFrom(...candidates), EXTRA_VALUE_ARB).map(([key, v]) => ({ ...value, [key]: v }));
+  });
+}
+
+const EXTRA_PROPERTY_NAMES: readonly string[] = [
+  'x_conformance_probe',
+  '_debug_trace',
+  'probe_key',
+  'unknown_field',
+  'test_vendor_ext',
+];
+const EXTRA_VALUE_ARB: fc.Arbitrary<unknown> = fc.oneof(
+  fc.string({ minLength: 1, maxLength: 16 }),
+  fc.integer({ min: 0, max: 999 }),
+  fc.boolean()
+);
 
 function readDependencies(schema: JsonSchema, declared: Set<string>): Array<[string, string[]]> {
   const raw = schema.dependencies;
