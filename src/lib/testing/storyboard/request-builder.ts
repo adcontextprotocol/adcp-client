@@ -217,15 +217,24 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Catalogs & Events ─────────────────────────────────
 
-  sync_catalogs(_step, context, options) {
+  sync_catalogs(step, context, options) {
+    // Prefer the fixture's sample_request — it's the authoritative request
+    // shape for the storyboard step. The fallback's hardcoded feed_format
+    // ('json') is NOT in the spec's 5-literal union and its `type` is
+    // missing entirely, so any agent running the generated Zod schema
+    // rejects the fallback with -32602 on both fields.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
+    }
     return {
       account: context.account ?? resolveAccount(options),
       catalogs: [
         {
           catalog_id: `test-catalog-${Date.now()}`,
           name: 'E2E Test Catalog',
+          type: 'product',
           feed_url: 'https://test-assets.adcontextprotocol.org/feeds/test-catalog.json',
-          feed_format: 'json',
+          feed_format: 'custom',
         },
       ],
     };
@@ -258,7 +267,14 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  report_usage(_step, context, options) {
+  report_usage(step, context, options) {
+    // Prefer the fixture's sample_request — creative-ad-server and other
+    // specialisms carry per-usage-entry fields (vendor_cost, currency,
+    // pricing_option_id) that the hardcoded fallback here omits, causing
+    // agents running the generated Zod schema to reject every step.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
+    }
     const now = new Date();
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     return {
@@ -269,9 +285,11 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       },
       usage: [
         {
+          account: context.account ?? resolveAccount(options),
           creative_id: context.creative_id ?? 'test-creative',
           impressions: 10000,
-          spend: { amount: 500, currency: 'USD' },
+          vendor_cost: 500,
+          currency: 'USD',
         },
       ],
     };

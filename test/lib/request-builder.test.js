@@ -84,6 +84,31 @@ describe('Request Builder', () => {
       assert.ok(Array.isArray(result.catalogs), 'should have catalogs array');
       assert.ok(result.catalogs[0].catalog_id, 'should have catalog_id');
     });
+
+    test('fallback catalog uses spec-valid type + feed_format', () => {
+      // Regression: the hardcoded fallback used `feed_format: 'json'` which
+      // isn't in the 5-literal union, and omitted `type` entirely. Every
+      // agent running the generated Zod schema rejected with -32602.
+      const result = buildRequest(step('sync_catalogs'), {}, DEFAULT_OPTIONS);
+      const cat = result.catalogs[0];
+      assert.strictEqual(cat.type, 'product', 'type must be in CatalogTypeSchema');
+      assert.ok(
+        ['google_merchant_center', 'facebook_catalog', 'shopify', 'linkedin_jobs', 'custom'].includes(cat.feed_format),
+        `feed_format must be in FeedFormatSchema union, got "${cat.feed_format}"`
+      );
+    });
+
+    test('honors step.sample_request when present', () => {
+      const fixture = {
+        account: { account_id: 'acct_x' },
+        catalogs: [
+          { catalog_id: 'menu_spring_2026', type: 'product', name: 'Spring Menu', items: [{ item_id: 'i1' }] },
+        ],
+      };
+      const result = buildRequest(step('sync_catalogs', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.catalogs[0].catalog_id, 'menu_spring_2026');
+      assert.strictEqual(result.catalogs[0].type, 'product');
+    });
   });
 
   describe('report_usage', () => {
@@ -93,6 +118,27 @@ describe('Request Builder', () => {
       assert.ok(result.reporting_period.start, 'should have start');
       assert.ok(result.reporting_period.end, 'should have end');
       assert.ok(Array.isArray(result.usage), 'should have usage array');
+    });
+
+    test('fallback usage entry has account, vendor_cost, currency', () => {
+      // Regression: per-entry fields required by `usage-entry.json` were
+      // missing from the fallback (used `spend: {amount, currency}` instead
+      // of flat `vendor_cost` + `currency`), causing -32602 on every run.
+      const result = buildRequest(step('report_usage'), {}, DEFAULT_OPTIONS);
+      const entry = result.usage[0];
+      assert.ok(entry.account, 'usage[0].account required');
+      assert.strictEqual(typeof entry.vendor_cost, 'number', 'vendor_cost must be number');
+      assert.strictEqual(typeof entry.currency, 'string', 'currency must be string');
+    });
+
+    test('honors step.sample_request when present', () => {
+      const fixture = {
+        account: { account_id: 'acct_x' },
+        reporting_period: { start: '2026-03-01T00:00:00Z', end: '2026-03-31T23:59:59Z' },
+        usage: [{ account: { account_id: 'acct_x' }, creative_id: 'c1', vendor_cost: 42, currency: 'USD' }],
+      };
+      const result = buildRequest(step('report_usage', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.usage[0].vendor_cost, 42);
     });
   });
 
