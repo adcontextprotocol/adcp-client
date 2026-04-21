@@ -10,6 +10,7 @@ interface ToolSchemaLocation {
 }
 
 const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
+  // Tier 1
   get_products: { domain: 'media-buy', fileBase: 'get-products' },
   list_creative_formats: { domain: 'media-buy', fileBase: 'list-creative-formats' },
   list_creatives: { domain: 'creative', fileBase: 'list-creatives' },
@@ -21,6 +22,13 @@ const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
   list_property_lists: { domain: 'property', fileBase: 'list-property-lists' },
   list_content_standards: { domain: 'content-standards', fileBase: 'list-content-standards' },
   get_creative_features: { domain: 'creative', fileBase: 'get-creative-features' },
+  // Tier 2 (referential)
+  get_media_buy_delivery: { domain: 'media-buy', fileBase: 'get-media-buy-delivery' },
+  get_property_list: { domain: 'property', fileBase: 'get-property-list' },
+  get_content_standards: { domain: 'content-standards', fileBase: 'get-content-standards' },
+  get_creative_delivery: { domain: 'creative', fileBase: 'get-creative-delivery' },
+  tasks_get: { domain: 'core', fileBase: 'tasks-get' },
+  preview_creative: { domain: 'creative', fileBase: 'preview-creative' },
 };
 
 /**

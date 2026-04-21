@@ -20,12 +20,14 @@
  */
 
 export { runConformance } from './runConformance';
-export { STATELESS_TIER_TOOLS } from './types';
+export { STATELESS_TIER_TOOLS, REFERENTIAL_STATELESS_TOOLS, DEFAULT_TOOLS } from './types';
 export type {
   ConformanceFailure,
+  ConformanceFixtures,
   ConformanceReport,
   ConformanceToolName,
   ConformanceToolStats,
   OracleVerdict,
   RunConformanceOptions,
+  SkipReason,
 } from './types';

@@ -82,4 +82,61 @@ describe('conformance: schemaToArbitrary', () => {
       assert.ok('a' in v || 'b' in v, `neither a nor b in ${JSON.stringify(v)}`);
     }
   });
+
+  test('fixtures: scalar creative_id draws from the pool', () => {
+    const pool = ['cre_abc', 'cre_def', 'cre_ghi'];
+    const schema = {
+      type: 'object',
+      properties: { creative_id: { type: 'string' } },
+      required: ['creative_id'],
+    };
+    const arb = schemaToArbitrary(schema, { fixtures: { creative_ids: pool } });
+    for (const v of fc.sample(arb, { numRuns: 30, seed: 5 })) {
+      assert.ok(pool.includes(v.creative_id), `${v.creative_id} not in pool`);
+    }
+  });
+
+  test('fixtures: plural creative_ids array draws items from the pool', () => {
+    const pool = ['cre_1', 'cre_2'];
+    const schema = {
+      type: 'object',
+      properties: {
+        creative_ids: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 2 },
+      },
+      required: ['creative_ids'],
+    };
+    const arb = schemaToArbitrary(schema, { fixtures: { creative_ids: pool } });
+    for (const v of fc.sample(arb, { numRuns: 30, seed: 6 })) {
+      assert.ok(Array.isArray(v.creative_ids));
+      for (const id of v.creative_ids) assert.ok(pool.includes(id), `${id} not in pool`);
+    }
+  });
+
+  test('fixtures: unknown property falls through to schema arbitrary', () => {
+    const arb = schemaToArbitrary(
+      {
+        type: 'object',
+        properties: { plain_string: { type: 'string', pattern: '^[A-Z]{2}$' } },
+        required: ['plain_string'],
+      },
+      { fixtures: { creative_ids: ['cre_x'] } }
+    );
+    for (const v of fc.sample(arb, { numRuns: 20, seed: 7 })) {
+      assert.match(v.plain_string, /^[A-Z]{2}$/);
+    }
+  });
+
+  test('fixtures: empty pool falls through (does not throw)', () => {
+    const arb = schemaToArbitrary(
+      {
+        type: 'object',
+        properties: { creative_id: { type: 'string' } },
+        required: ['creative_id'],
+      },
+      { fixtures: { creative_ids: [] } }
+    );
+    for (const v of fc.sample(arb, { numRuns: 10, seed: 8 })) {
+      assert.equal(typeof v.creative_id, 'string');
+    }
+  });
 });

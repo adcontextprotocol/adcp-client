@@ -767,6 +767,7 @@ USAGE:
 COMMANDS:
   storyboard <subcommand>     Test agent flows (run, list, show, step)
   grade <subject> <url>       Conformance graders (e.g. request-signing)
+  fuzz <url>                  Property-based conformance fuzzing against schemas
   signing <subcommand>        RFC 9421 signing key tools (generate, verify)
   check-network               Validate managed publisher network deployment
   diagnose-auth <alias|url>   Diagnose OAuth handshake with ranked hypotheses
@@ -2635,6 +2636,12 @@ async function main() {
   if (args[0] === 'grade') {
     const { handleGradeCommand } = require('./adcp-grade.js');
     await handleGradeCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'fuzz') {
+    const { handleFuzzCommand } = require('./adcp-fuzz.js');
+    await handleFuzzCommand(args.slice(1));
     return;
   }
 

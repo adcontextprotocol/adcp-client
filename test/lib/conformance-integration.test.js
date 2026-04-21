@@ -135,6 +135,43 @@ describe('conformance: integration', () => {
     }
   });
 
+  test('fixtures: fixture-supplied creative_ids drive list_creatives to the happy path', async () => {
+    // Agent that ONLY accepts its one known creative_id — otherwise empty.
+    // With a matching fixture, runConformance should produce all-accepted runs
+    // (vs. all-rejected if fixtures weren't plumbed).
+    let sawFixtureId = 0;
+    const creativeServer = serve(
+      () =>
+        createAdcpServer({
+          name: 'Creative Fixture Agent',
+          version: '1.0.0',
+          creative: {
+            listCreatives: async params => {
+              const ids = params?.filters?.creative_ids ?? [];
+              if (ids.includes('cre_fixture_only')) sawFixtureId++;
+              return { creatives: [] };
+            },
+          },
+        }),
+      { port: 0, onListening: () => {} }
+    );
+    await waitForListening(creativeServer);
+    const creativePort = creativeServer.address().port;
+    try {
+      const report = await runConformance(`http://localhost:${creativePort}/mcp`, {
+        seed: 31,
+        tools: ['list_creatives'],
+        turnBudget: 5,
+        protocol: 'mcp',
+        fixtures: { creative_ids: ['cre_fixture_only'] },
+      });
+      assert.equal(report.totalFailures, 0);
+      assert.ok(sawFixtureId > 0, 'the fixture creative_id should have reached the agent at least once');
+    } finally {
+      creativeServer.close();
+    }
+  });
+
   test('unspecified tool list defaults to stateless tier', async () => {
     const report = await runConformance(`http://localhost:${port}/mcp`, {
       seed: 7,
