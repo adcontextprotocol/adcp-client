@@ -96,7 +96,16 @@ The current working directory already has a \`package.json\` with \`@adcp/client
    - Implements handlers minimally sufficient to pass \`${storyboardId}\`.
    - If the storyboard grades outbound webhooks, generate an Ed25519 keypair at startup and pass \`webhooks: { signerKey }\` to \`createAdcpServer\`. Call \`ctx.emitWebhook\` on completion.
    - Binds MCP over HTTP on port **${port}** exactly (the harness connects to \`http://127.0.0.1:${port}/mcp\`).
-   - Uses \`serve()\` from \`@adcp/client/server\`.
+   - Uses \`serve()\` from \`@adcp/client/server\` and wires authentication via:
+     \`\`\`ts
+     import { verifyApiKey } from '@adcp/client/server';
+     serve(createAgent, {
+       authenticate: verifyApiKey({
+         keys: { 'compliance-runner': { principal: 'compliance-runner' } },
+       }),
+     });
+     \`\`\`
+     The harness grader sends \`Authorization: Bearer compliance-runner\`. This is the compliance-test equivalent of a registered counterparty with a static API key — it satisfies the universal \`security_baseline\` storyboard (authentication is mandatory) while letting the grader get past auth.
 
 2. Write \`start.sh\`:
    \`\`\`bash
@@ -217,10 +226,18 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
   // `--allow-http` is mandatory — the grader hard-refuses plain-http URLs
   // otherwise (production agents MUST terminate TLS). Harness-tested agents
   // bind on loopback, so we opt in explicitly.
-  const res = spawnSync('node', [cliPath, 'storyboard', 'run', url, storyboardId, '--json', '--allow-http'], {
-    encoding: 'utf8',
-    timeout: 120_000,
-  });
+  // The prompt instructs Claude to wire `verifyApiKey` with a static key of
+  // `compliance-runner`, so the grader presents that key here. Keeping the
+  // key/principal symmetrical lets the universal `security_baseline` probe
+  // see auth wired AND lets the specialism storyboards run authenticated.
+  const res = spawnSync(
+    'node',
+    [cliPath, 'storyboard', 'run', url, storyboardId, '--json', '--allow-http', '--auth', 'compliance-runner'],
+    {
+      encoding: 'utf8',
+      timeout: 120_000,
+    }
+  );
   const raw = (res.stdout ?? '') + (res.stderr ?? '');
   let passed = false;
   try {
