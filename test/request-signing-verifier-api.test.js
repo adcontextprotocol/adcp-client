@@ -175,7 +175,9 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
 
   it('unsigned request with authentication as a string (non-object) returns unsigned', async () => {
     const result = await verifyUnsigned(
-      JSON.stringify({ push_notification_config: { url: 'https://buyer.example/webhook', authentication: 'Bearer xyz' } })
+      JSON.stringify({
+        push_notification_config: { url: 'https://buyer.example/webhook', authentication: 'Bearer xyz' },
+      })
     );
     assert.strictEqual(result.status, 'unsigned');
   });
