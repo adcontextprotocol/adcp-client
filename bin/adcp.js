@@ -860,8 +860,9 @@ WEBHOOK OPTIONS:
                                   spawn it against the receiver, and plug its
                                   public URL into proxy mode. Cleans up on exit.
                                   Custom override: $ADCP_WEBHOOK_TUNNEL="<cmd>
-                                  {port}"; the command must emit
-                                  \`ADCP_TUNNEL_URL=https://…\` to stdout/stderr.
+                                  {port}"; the command must emit a line
+                                  containing \`ADCP_TUNNEL_URL=<https-url>\`
+                                  on stdout or stderr (first match wins).
                                   HTTP-on-the-wire — spec-compliant.
 
 OPTIONS:
@@ -1427,10 +1428,13 @@ async function spawnAutoTunnel({ port, timeoutMs, jsonOutput }) {
     cmd = 'ngrok';
     // logfmt output is stable across ngrok v2/v3 and keeps us off the TUI.
     cmdArgs = ['http', String(port), '--log=stdout', '--log-format=logfmt'];
-    // Pin to ngrok's known tunnel domains so an unrelated `url=` field in a
-    // log line (startup diagnostics, crash report links) can't be mistaken
-    // for the forwarding URL.
-    urlRegex = /url=(https:\/\/[a-z0-9-]+\.(?:ngrok-free\.app|ngrok\.io|ngrok\.dev|ngrok\.app)(?:\/[^\s"]*)?)/;
+    // Anchor on ngrok's `msg="started tunnel"` log line. Vendor-domain
+    // allowlisting is fragile — ngrok is migrating free-tier subdomains
+    // from `.ngrok-free.app` to `.ngrok-free.dev`, paid tiers use
+    // `.ngrok.app`, custom domains use anything. Scoping to the started-
+    // tunnel line is the durable invariant: ngrok emits it exactly once
+    // per tunnel creation with the forwarding URL in the `url=` field.
+    urlRegex = /msg="started tunnel"[^\n]*url=(https:\/\/[^\s"]+)/;
   } else if (detected.kind === 'cloudflared') {
     cmd = 'cloudflared';
     cmdArgs = ['tunnel', '--url', `http://localhost:${port}`, '--no-autoupdate'];
@@ -1538,13 +1542,18 @@ async function spawnAutoTunnel({ port, timeoutMs, jsonOutput }) {
  * `SIGTERM` listener is installed the first time a child is registered and
  * stays installed for the process lifetime — `process.once` was a bug
  * waiting to happen (a second Ctrl-C would bypass teardown and leak
- * tunnels). Each child gets a SIGTERM, then SIGKILL after a short grace
- * period, so a tunnel that ignores TERM still gets reaped.
+ * tunnels).
+ *
+ * Signal path escalates SIGTERM → SIGKILL with a 250 ms grace so a tunnel
+ * that ignores TERM still gets reaped. The `'exit'` path is best-effort:
+ * Node cannot schedule timers after the `'exit'` event, so we only send
+ * TERM there and rely on the OS to reap strays when the parent dies.
  */
 const activeTunnelChildren = new Set();
 let tunnelSignalHandlersInstalled = false;
+let tunnelEscalating = false;
 
-function reapTunnelChildren() {
+function termAllTunnels() {
   for (const child of activeTunnelChildren) {
     try {
       child.kill('SIGTERM');
@@ -1552,33 +1561,41 @@ function reapTunnelChildren() {
       /* already gone */
     }
   }
-  // Grace period then SIGKILL. Short because the process is about to exit
-  // anyway; any tunnel that's still alive is ignoring TERM.
-  setTimeout(() => {
-    for (const child of activeTunnelChildren) {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already gone */
-      }
+}
+
+function killAllTunnels() {
+  for (const child of activeTunnelChildren) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
     }
-  }, 250).unref();
-  activeTunnelChildren.clear();
+  }
 }
 
 function installTunnelSignalHandlersOnce() {
   if (tunnelSignalHandlersInstalled) return;
   tunnelSignalHandlersInstalled = true;
   // `process.on` (not `once`) so a second Ctrl-C doesn't bypass cleanup.
-  process.on('exit', reapTunnelChildren);
-  process.on('SIGINT', () => {
-    reapTunnelChildren();
-    process.exit(130);
-  });
-  process.on('SIGTERM', () => {
-    reapTunnelChildren();
-    process.exit(143);
-  });
+  process.on('exit', termAllTunnels);
+  const escalateAndExit = exitCode => () => {
+    if (tunnelEscalating) {
+      // Second signal while we're already escalating: force-kill now and bail.
+      killAllTunnels();
+      process.exit(exitCode);
+    }
+    tunnelEscalating = true;
+    termAllTunnels();
+    // Don't unref — we want Node to wait the full grace before exiting so
+    // stubborn tunnels actually see SIGKILL. setTimeout scheduled here fires
+    // because we deliberately don't call process.exit synchronously.
+    setTimeout(() => {
+      killAllTunnels();
+      process.exit(exitCode);
+    }, 250);
+  };
+  process.on('SIGINT', escalateAndExit(130));
+  process.on('SIGTERM', escalateAndExit(143));
 }
 
 function registerTunnelChildForCleanup(child) {
