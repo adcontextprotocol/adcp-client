@@ -25,14 +25,14 @@ A governance agent sits between buyers and sellers, evaluating proposed media bu
 
 Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each maps to a storyboard at `compliance/cache/latest/specialisms/<id>/`:
 
-| Specialism | Status | Delta from baseline | See |
-|---|---|---|---|
-| `governance-spend-authority` | stable | `check_governance` evaluates `binding` against Plan's `budget.total`, `human_review_required`, and `custom_policies`; return `approved`, `conditions`, or `denied` | [§ governance-spend-authority](#specialism-governance-spend-authority) |
-| `governance-delivery-monitor` | stable | `check_governance` with `phase: 'delivery'` + `delivery_metrics`; compute drift vs Plan's `budget.reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
-| `property-lists` | stable | Tool family `property_list` — implement CRUD plus `validate_property_delivery` with full `violations[]` | [§ property-lists](#specialism-property-lists) |
-| `collection-lists` | stable | Tool family `collection_list` — program-level brand safety (shows, series, podcasts) identified by platform-independent IDs: IMDb, Gracenote, EIDR. Mirrors property-lists CRUD plus collection resolution. | [§ collection-lists](#specialism-collection-lists) |
-| `content-standards` | stable | `policies[]` is an array of `{ policy_id, enforcement, policy, policy_categories?, channels? }`; `validate_content_delivery` uses `records[].artifact` (not `creative_id`); re-read policies per call for `standards_version_change` | [§ content-standards](#specialism-content-standards) |
-| `measurement-verification` | preview | v3.1 placeholder (empty `phases`). Pass universal + governance baseline only. Advertise `measurement_verification` capability for discoverability. | Baseline only |
+| Specialism                    | Status  | Delta from baseline                                                                                                                                                                                                                  | See                                                                      |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `governance-spend-authority`  | stable  | `check_governance` evaluates `binding` against Plan's `budget.total`, `human_review_required`, and `custom_policies`; return `approved`, `conditions`, or `denied`                                                                   | [§ governance-spend-authority](#specialism-governance-spend-authority)   |
+| `governance-delivery-monitor` | stable  | `check_governance` with `phase: 'delivery'` + `delivery_metrics`; compute drift vs Plan's `budget.reallocation_threshold`; return `BUDGET_DRIFT_EXCEEDED` findings                                                                   | [§ governance-delivery-monitor](#specialism-governance-delivery-monitor) |
+| `property-lists`              | stable  | Tool family `property_list` — implement CRUD plus `validate_property_delivery` with full `violations[]`                                                                                                                              | [§ property-lists](#specialism-property-lists)                           |
+| `collection-lists`            | stable  | Tool family `collection_list` — program-level brand safety (shows, series, podcasts) identified by platform-independent IDs: IMDb, Gracenote, EIDR. Mirrors property-lists CRUD plus collection resolution.                          | [§ collection-lists](#specialism-collection-lists)                       |
+| `content-standards`           | stable  | `policies[]` is an array of `{ policy_id, enforcement, policy, policy_categories?, channels? }`; `validate_content_delivery` uses `records[].artifact` (not `creative_id`); re-read policies per call for `standards_version_change` | [§ content-standards](#specialism-content-standards)                     |
+| `measurement-verification`    | preview | v3.1 placeholder (empty `phases`). Pass universal + governance baseline only. Advertise `measurement_verification` capability for discoverability.                                                                                   | Baseline only                                                            |
 
 **Not in this skill:** `audience-sync` lives under `protocol: media-buy`. Build it in `skills/build-seller-agent/` instead — it uses `sync_audiences` (overloaded for discovery, add, and delete) and `list_accounts` under the `accounts` / `eventTracking` domain groups.
 
@@ -451,12 +451,12 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 ## SDK Quick Reference
 
-| SDK piece                                  | Usage                                                                   |
-| ------------------------------------------ | ----------------------------------------------------------------------- |
+| SDK piece                                | Usage                                                                      |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
 | `createAdcpServer({ name, governance })` | Create server with domain-grouped handlers and auto-generated capabilities |
-| `serve(() => createAdcpServer(...))`       | Start HTTP server on `:3001/mcp`                                        |
-| `ctx.store`                                | State persistence — `get/put/patch/delete/list` domain objects          |
-| `adcpError(code, { message })`             | Structured error                                                        |
+| `serve(() => createAdcpServer(...))`     | Start HTTP server on `:3001/mcp`                                           |
+| `ctx.store`                              | State persistence — `get/put/patch/delete/list` domain objects             |
+| `adcpError(code, { message })`           | Structured error                                                           |
 
 Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
@@ -506,45 +506,48 @@ const idempotency = createIdempotencyStore({
   ttlSeconds: 86400,
 });
 
-serve(() => createAdcpServer({
-  name: 'Governance Agent',
-  version: '1.0.0',
-  idempotency,
-  // MUST never return undefined — or every mutating request rejects as
-  // SERVICE_UNAVAILABLE. See the Idempotency section for production guidance.
-  resolveSessionKey: () => 'default-principal',
+serve(() =>
+  createAdcpServer({
+    name: 'Governance Agent',
+    version: '1.0.0',
+    idempotency,
+    // MUST never return undefined — or every mutating request rejects as
+    // SERVICE_UNAVAILABLE. See the Idempotency section for production guidance.
+    resolveSessionKey: () => 'default-principal',
 
-  governance: {
-    syncPlans: async (params, ctx) => {
-      for (const plan of params.plans) {
-        await ctx.store.put('plan', plan.plan_id, plan);
-      }
-      return {
-        plans: params.plans.map(p => ({
-          plan_id: p.plan_id,
-          status: 'active' as const,
-          version: 1,
-        })),
-      };
+    governance: {
+      syncPlans: async (params, ctx) => {
+        for (const plan of params.plans) {
+          await ctx.store.put('plan', plan.plan_id, plan);
+        }
+        return {
+          plans: params.plans.map(p => ({
+            plan_id: p.plan_id,
+            status: 'active' as const,
+            version: 1,
+          })),
+        };
+      },
+      checkGovernance: async (params, ctx) => {
+        const plan = await ctx.store.get('plan', params.plan_id);
+        // ... decision logic ...
+        return {
+          check_id: `chk_${randomUUID()}`,
+          status: 'approved' as const,
+          plan_id: params.plan_id,
+          explanation: 'Within spending authority',
+        };
+      },
+      // ... other governance handlers
     },
-    checkGovernance: async (params, ctx) => {
-      const plan = await ctx.store.get('plan', params.plan_id);
-      // ... decision logic ...
-      return {
-        check_id: `chk_${randomUUID()}`,
-        status: 'approved' as const,
-        plan_id: params.plan_id,
-        explanation: 'Within spending authority',
-      };
-    },
-    // ... other governance handlers
-  },
-}));
+  })
+);
 ```
 
 **Decision logic for check_governance:**
 
 Route decisions based on the plan state and request parameters:
+
 - Compare request budget against plan's `budget.total`; enforce reallocation autonomy using `budget.reallocation_threshold` (denominated in `budget.currency`) or `budget.reallocation_unlimited: true` — exactly one must be set
 - If `reallocation_threshold` is set and a reallocation exceeds it → require human review / deny
 - If `plan.human_review_required: true` → action must escalate regardless of `mode` (advisory/audit cannot downgrade)
@@ -562,8 +565,8 @@ AdCP v3 requires an `idempotency_key` on every mutating request — for governan
 import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 
 const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),         // or pgBackend(pool) for production
-  ttlSeconds: 86400,                // 3600–604800 per spec; throws if out of range
+  backend: memoryBackend(), // or pgBackend(pool) for production
+  ttlSeconds: 86400, // 3600–604800 per spec; throws if out of range
 });
 
 const server = createAdcpServer({
@@ -577,7 +580,6 @@ const server = createAdcpServer({
 });
 ```
 
-
 ## Protecting your agent
 
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
@@ -588,7 +590,7 @@ import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
   authenticate: verifyApiKey({
-    verify: async (token) => {
+    verify: async token => {
       const row = await db.api_keys.findUnique({ where: { token } });
       return row ? { principal: row.account_id } : null;
     },
@@ -615,8 +617,7 @@ serve(createAgent, {
 });
 ```
 
-The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
-
+The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS\*/EdDSA) to prevent algorithm-confusion attacks.
 
 ## Validate Locally
 
@@ -643,6 +644,7 @@ npx @adcp/client fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 ```
 
 Common failure decoder:
+
 - `authority_level` field present → 3.0 GA removed it; use `human_review_required: boolean` instead
 - `status: 'escalated'` on `check_governance` → enum is `approved` / `denied` / `conditions`
 - Missing `check_id` on `check_governance` response → required; generate a unique ID per check
@@ -652,30 +654,30 @@ Common failure decoder:
 
 ## Common Mistakes
 
-| Mistake                                          | Fix                                                                                      |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| Manually registering `get_adcp_capabilities`     | Framework auto-generates it from registered handlers — do not register it yourself        |
-| Using `server.tool()` instead of domain groups   | Use `governance: { syncPlans, checkGovernance, ... }` — framework wires schemas and response builders |
-| Using in-memory Maps for state                   | Use `ctx.store.put/get/patch/delete/list` — built-in state persistence                   |
-| `check_governance` missing `check_id`            | Generate a unique ID per check — required field                                          |
-| `check_governance` returns `decision` not `status` | Field is `status`, not `decision`. Values: `approved`, `denied`, `conditions`          |
-| Conditions use `description` instead of `reason`   | Condition schema requires `field` and `reason`, not `condition_id` and `description`  |
-| Findings use `code`/`message` instead of proper fields | Finding schema requires `category_id`, `severity`, `explanation`                   |
-| `sync_plans` response missing `version`          | Each plan needs `version: 1` (integer) — required field                                  |
-| `delete_property_list` missing `deleted: true`   | Boolean `deleted` field is required in response                                          |
-| `create_property_list` missing `auth_token`      | `auth_token` is required — generate a token string                                       |
-| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
+| Mistake                                                | Fix                                                                                                   |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Manually registering `get_adcp_capabilities`           | Framework auto-generates it from registered handlers — do not register it yourself                    |
+| Using `server.tool()` instead of domain groups         | Use `governance: { syncPlans, checkGovernance, ... }` — framework wires schemas and response builders |
+| Using in-memory Maps for state                         | Use `ctx.store.put/get/patch/delete/list` — built-in state persistence                                |
+| `check_governance` missing `check_id`                  | Generate a unique ID per check — required field                                                       |
+| `check_governance` returns `decision` not `status`     | Field is `status`, not `decision`. Values: `approved`, `denied`, `conditions`                         |
+| Conditions use `description` instead of `reason`       | Condition schema requires `field` and `reason`, not `condition_id` and `description`                  |
+| Findings use `code`/`message` instead of proper fields | Finding schema requires `category_id`, `severity`, `explanation`                                      |
+| `sync_plans` response missing `version`                | Each plan needs `version: 1` (integer) — required field                                               |
+| `delete_property_list` missing `deleted: true`         | Boolean `deleted` field is required in response                                                       |
+| `create_property_list` missing `auth_token`            | `auth_token` is required — generate a token string                                                    |
+| Dropping `context` from responses                      | Echo `args.context` back unchanged in every response — buyers use it for correlation                  |
 
 ## Storyboards
 
-| Storyboard                        | Tests                                                          |
-| --------------------------------- | -------------------------------------------------------------- |
-| `campaign_governance_conditions`  | Approved with conditions flow                                  |
-| `campaign_governance_delivery`    | Delivery monitoring with drift re-evaluation                   |
-| `campaign_governance_denied`      | Denied — buy exceeds spending authority                        |
-| `property_lists`                  | Property list lifecycle: create, query, update, delete, validate |
-| `collection_lists`                | Collection list lifecycle: create, query (resolve), update, delete |
-| `content_standards`               | Content standards lifecycle: create, calibrate, validate       |
+| Storyboard                       | Tests                                                              |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `campaign_governance_conditions` | Approved with conditions flow                                      |
+| `campaign_governance_delivery`   | Delivery monitoring with drift re-evaluation                       |
+| `campaign_governance_denied`     | Denied — buy exceeds spending authority                            |
+| `property_lists`                 | Property list lifecycle: create, query, update, delete, validate   |
+| `collection_lists`               | Collection list lifecycle: create, query (resolve), update, delete |
+| `content_standards`              | Content standards lifecycle: create, calibrate, validate           |
 
 ## Specialism Details
 
@@ -827,6 +829,17 @@ type BaseProperty = {
 };
 ```
 
+**`list_property_lists` / `list_collection_lists`** — destructure `ctx.store.list`. It returns `{ items, nextCursor? }`, never a bare array. Calling `.map` / `.filter` on the raw result throws `TypeError` and the dispatcher wraps it as `SERVICE_UNAVAILABLE`:
+
+```typescript
+listPropertyLists: async (params, ctx) => {
+  const { items } = await ctx.store.list('property_list');
+  return {
+    lists: items.map(list => ({ list_id: list.list_id, name: list.name })),
+  };
+},
+```
+
 `validate_property_delivery` returns `violations[]` with `list_id`, `list_type`, `severity: 'critical'`, and an explanation per non-compliant record — see the response shape in the tool section above.
 
 The three mutating tools (`create_property_list`, `update_property_list`, `delete_property_list`) require `idempotency_key` per AdCP 3.0 GA — cache the response and return the same object on replay.
@@ -895,9 +908,9 @@ Storyboard: `content_standards`. Two load-bearing protocol shapes the baseline a
 type Policy = {
   policy_id: string;
   enforcement: 'must' | 'should';
-  policy: string;                        // prose description of the rule
-  policy_categories?: string[];          // e.g. ['brand_safety', 'imagery_quality']
-  channels?: string[];                   // e.g. ['display'] — scoped enforcement
+  policy: string; // prose description of the rule
+  policy_categories?: string[]; // e.g. ['brand_safety', 'imagery_quality']
+  channels?: string[]; // e.g. ['display'] — scoped enforcement
 };
 
 function applies(p: Policy, artifact: { channel: string }): boolean {

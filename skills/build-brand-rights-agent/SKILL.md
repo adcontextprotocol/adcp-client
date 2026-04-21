@@ -23,8 +23,8 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 
 ## Specialisms This Skill Covers
 
-| Specialism | Status | Delta |
-|---|---|---|
+| Specialism     | Status | Delta                                                                                                                                                                                |
+| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
 | `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`. `update_rights` and `creative_approval` are spec-tracked but not schema-backed (see Protocol Status below). | [§ brand-rights](#specialism-brand-rights) |
 
 Storyboard: `brand_rights`. The specialism tests identity discovery → rights search → acquisition → enforcement (including expired-campaign denial).
@@ -42,6 +42,7 @@ Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requireme
 ### 1. What Brand?
 
 Define the brand this agent represents:
+
 - Brand name (locale-keyed for i18n), domain, logos
 - House identity (parent organization)
 - What languages/markets the brand operates in
@@ -49,6 +50,7 @@ Define the brand this agent represents:
 ### 2. What Rights Are Available?
 
 Define licensable rights:
+
 - **Image usage** — use brand images in digital ads
 - **AI generation** — generate new creatives using brand assets
 - **Logo placement** — use brand logo in ads
@@ -59,6 +61,7 @@ Each right needs pricing (flat_rate, cpm, etc.) and uses (likeness, voice, comme
 ### 3. Approval Criteria
 
 How are generated creatives reviewed?
+
 - **Auto-approve** — passes basic checks, instantly approved
 - **Guidelines check** — validate against brand standards
 - **Human review** — queue for manual review
@@ -67,17 +70,18 @@ How are generated creatives reviewed?
 
 Three tools are first-class in the `brandRights` domain group. Two additional operations are spec-tracked but not yet schema-backed.
 
-| Operation            | Status                                        | How to implement                                        |
-| -------------------- | --------------------------------------------- | ------------------------------------------------------- |
-| `get_brand_identity` | Published schema — `brand/get-brand-identity` | `brandRights.getBrandIdentity` handler                  |
-| `get_rights`         | Published schema — `brand/get-rights`         | `brandRights.getRights` handler                         |
-| `acquire_rights`     | Published schema — `brand/acquire-rights`     | `brandRights.acquireRights` handler                     |
-| `update_rights`      | Spec prose only — no JSON schema              | HTTP endpoint outside MCP surface                       |
+| Operation            | Status                                        | How to implement                                                  |
+| -------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
+| `get_brand_identity` | Published schema — `brand/get-brand-identity` | `brandRights.getBrandIdentity` handler                            |
+| `get_rights`         | Published schema — `brand/get-rights`         | `brandRights.getRights` handler                                   |
+| `acquire_rights`     | Published schema — `brand/acquire-rights`     | `brandRights.acquireRights` handler                               |
+| `update_rights`      | Spec prose only — no JSON schema              | HTTP endpoint outside MCP surface                                 |
 | `creative_approval`  | Webhook contract, no JSON schema              | HTTP endpoint your agent hosts (URL returned in `acquire_rights`) |
 
 Upstream tracking for the two schema gaps: https://github.com/adcontextprotocol/adcp/issues/2253. The SDK will register handlers for both once schemas land.
 
 <a name="specialism-brand-rights"></a>
+
 ## Tools and Required Response Shapes
 
 **`get_brand_identity`** — returns brand identity matching `brand/get-brand-identity-response.json`
@@ -185,13 +189,13 @@ Three success variants plus an error variant. The most common is `acquired`. Thr
 
 **Creative approval.** The `approval_webhook` in your `acquire_rights` response is a URL **your agent hosts** — the buyer POSTs `creative-approval-request` there when a generated creative needs review. Payload shapes (`creative-approval-request`/`creative-approval-response`) are spec-tracked but not yet schema-published (adcontextprotocol/adcp#2253); accept at minimum the creative reference and a `rights_grant_id`, return a decision.
 
-**Revocation webhook.** The `acquire_rights` *request* carries a required `revocation_webhook`. Persist it against the grant. When you need to revoke (credential rotation, terms violation, brand takedown), use `ctx.emitWebhook` — don't hand-roll `fetch`. See [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks for the full wiring; minimal call:
+**Revocation webhook.** The `acquire_rights` _request_ carries a required `revocation_webhook`. Persist it against the grant. When you need to revoke (credential rotation, terms violation, brand takedown), use `ctx.emitWebhook` — don't hand-roll `fetch`. See [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks for the full wiring; minimal call:
 
 ```typescript
 await ctx.emitWebhook!({
   url: storedGrant.revocation_webhook.url,
   payload: { rights_id: storedGrant.rights_id, reason: 'credential_rotation', effective_at: new Date().toISOString() },
-  operation_id: `revoke_rights.${storedGrant.rights_id}`,   // stable across retries, NOT a fresh UUID
+  operation_id: `revoke_rights.${storedGrant.rights_id}`, // stable across retries, NOT a fresh UUID
 });
 ```
 
@@ -203,11 +207,11 @@ Every AdCP request may include a `context` field. The framework echoes it back o
 
 ## SDK Quick Reference
 
-| SDK piece                                               | Usage                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `createAdcpServer({ brandRights: { ... } })`            | Register brand rights handlers as a first-class domain group        |
-| `serve(() => createAdcpServer(...))`                    | Start HTTP server on `:3001/mcp`                                    |
-| `adcpError(code, { message })`                          | Structured error (BRAND_NOT_FOUND, RIGHTS_UNAVAILABLE, etc.)        |
+| SDK piece                                    | Usage                                                        |
+| -------------------------------------------- | ------------------------------------------------------------ |
+| `createAdcpServer({ brandRights: { ... } })` | Register brand rights handlers as a first-class domain group |
+| `serve(() => createAdcpServer(...))`         | Start HTTP server on `:3001/mcp`                             |
+| `adcpError(code, { message })`               | Structured error (BRAND_NOT_FOUND, RIGHTS_UNAVAILABLE, etc.) |
 
 Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
 
@@ -237,6 +241,7 @@ Minimal `tsconfig.json`:
 ## Implementation
 
 Single `.ts` file, one `createAdcpServer` call with a `brandRights` domain group. The framework:
+
 - Auto-registers `get_adcp_capabilities` declaring `brand` as a supported protocol
 - Echoes `context` on success and error responses
 - Validates `get_brand_identity`, `get_rights`, `acquire_rights` against their Zod schemas
@@ -251,8 +256,8 @@ import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 // credentials + may trigger billing); `get_brand_identity` and
 // `get_rights` are read-only and exempt.
 const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),         // pgBackend(pool) for production
-  ttlSeconds: 86400,                // 24 hours (spec bounds: 1h–7d)
+  backend: memoryBackend(), // pgBackend(pool) for production
+  ttlSeconds: 86400, // 24 hours (spec bounds: 1h–7d)
 });
 
 serve(() =>
@@ -272,7 +277,9 @@ serve(() =>
     accounts: {
       async syncAccounts(params, ctx) {
         for (const account of params.accounts) {
-          const key = `${account.brand.domain}|${account.operator}`;
+          // `ctx.store.put` rejects keys outside `[A-Za-z0-9_.\-:]` — use `:`
+          // as the composite-key separator (not `|`, which the store rejects).
+          const key = `${account.brand.domain}:${account.operator}`;
           await ctx.store.put('accounts', key, {
             ...account,
             account_id: `acct_${key}`,
@@ -283,7 +290,7 @@ serve(() =>
           accounts: params.accounts.map(account => ({
             brand: account.brand,
             operator: account.operator,
-            account_id: `acct_${account.brand.domain}|${account.operator}`,
+            account_id: `acct_${account.brand.domain}:${account.operator}`,
             status: 'active' as const,
           })),
         };
@@ -291,7 +298,7 @@ serve(() =>
 
       async syncGovernance(params, ctx) {
         for (const acc of params.accounts) {
-          const key = `${acc.account.brand.domain}|${acc.account.operator}`;
+          const key = `${acc.account.brand.domain}:${acc.account.operator}`;
           await ctx.store.put('governance', key, {
             governance_agents: acc.governance_agents,
           });
@@ -365,10 +372,16 @@ serve(() =>
         // 1. Look up the governance agent the buyer registered via sync_governance
         //    (accountKey = brand.domain + operator, stored by syncAccounts/syncGovernance).
         // 2. Call check_governance on it; propagate findings on denial.
-        const accountKey = `${params.account?.brand?.domain}|${params.account?.operator}`;
+        if (!params.account?.brand?.domain || !params.account?.operator) {
+          return adcpError('INVALID_REQUEST', {
+            message: 'acquire_rights requires account.brand.domain and account.operator',
+            field: 'account',
+          });
+        }
+        const accountKey = `${params.account.brand.domain}:${params.account.operator}`;
         const registration = await ctx.store.get('governance', accountKey);
         if (registration?.governance_agents?.length) {
-          const { checkGovernance } = await import('@adcp/client');   // buyer-side helper
+          const { checkGovernance } = await import('@adcp/client'); // buyer-side helper
           const plan = await checkGovernance({
             agentUrl: registration.governance_agents[0].url,
             plan_id: params.plan_id ?? registration.plan_id,
@@ -383,7 +396,7 @@ serve(() =>
           if (plan.status === 'denied') {
             return adcpError('GOVERNANCE_DENIED', {
               message: plan.explanation ?? 'Governance agent denied this rights acquisition.',
-              findings: plan.findings ?? [],   // propagate verbatim
+              findings: plan.findings ?? [], // propagate verbatim
             });
           }
           // status === 'conditions' → you may attach conditions, or deny in strict mode
@@ -398,18 +411,18 @@ serve(() =>
           status: 'acquired',
           brand_id: 'acme_outdoor',
           terms: {
-            pricing_option_id: 'monthly_standard',   // required per rights-terms.json
-            amount: 2500,                            // required
-            currency: 'USD',                         // required
-            uses: params.campaign?.uses ?? [],        // required
+            pricing_option_id: 'monthly_standard', // required per rights-terms.json
+            amount: 2500, // required
+            currency: 'USD', // required
+            uses: params.campaign?.uses ?? [], // required
             countries: ['US', 'CA'],
-            exclusivity: { scope: 'non_exclusive', countries: ['US', 'CA'] },   // object, not string
+            exclusivity: { scope: 'non_exclusive', countries: ['US', 'CA'] }, // object, not string
           },
           generation_credentials: [],
           rights_constraint: {
-            rights_id: params.rights_id,             // required — NOT brand_id
-            rights_agent: { url: AGENT_URL, id: 'acme_outdoor' },   // required — {url, id}
-            uses: params.campaign?.uses ?? [],        // required
+            rights_id: params.rights_id, // required — NOT brand_id
+            rights_agent: { url: AGENT_URL, id: 'acme_outdoor' }, // required — {url, id}
+            uses: params.campaign?.uses ?? [], // required
           },
           // URL you host — buyer POSTs creative-approval-request here for review.
           // `credentials` MUST be ≥32 chars (spec: push-notification-config.json
@@ -418,7 +431,7 @@ serve(() =>
             url: `https://brand.example/webhooks/approval/${grantId}`,
             authentication: {
               schemes: ['Bearer'],
-              credentials: randomUUID().replace(/-/g, ''),  // 32-char high-entropy token
+              credentials: randomUUID().replace(/-/g, ''), // 32-char high-entropy token
             },
           },
         };
@@ -442,7 +455,7 @@ import { verifyApiKey } from '@adcp/client/server';
 
 serve(createAgent, {
   authenticate: verifyApiKey({
-    keys: { 'compliance-runner': { principal: 'compliance-runner' } },   // replace with db-backed lookup in prod
+    keys: { 'compliance-runner': { principal: 'compliance-runner' } }, // replace with db-backed lookup in prod
   }),
 });
 ```
@@ -473,6 +486,7 @@ npx @adcp/client fuzz http://localhost:3001/mcp --auth-token $TOKEN
 ```
 
 Common failure decoder:
+
 - `exclusivity: 'non_exclusive'` (string) → must be object `{ scope, countries }` — see § Concept model
 - `available_uses` enum mismatch → `right-use.json` enum is the source of truth; includes `ai_generated_image` in AdCP 3.0+
 - `acquire_rights` rejected with `Invalid input` → buyer omitted required `revocation_webhook: { url }`
@@ -481,21 +495,21 @@ Common failure decoder:
 
 ## Common Mistakes
 
-| Mistake                                           | Fix                                                                  |
-| ------------------------------------------------- | -------------------------------------------------------------------- |
-| `names: [{name, language}]`                       | `names` is an array of locale-keyed objects: `[{en_US: "Acme"}]`     |
-| `pricing_options` using `pricing_model`/`fixed_price` | Schema uses `model` + `price` + `currency` + `uses`                |
-| `uses` containing `digital_display` etc.          | Only values from `right-use` enum (likeness, voice, ai_generated_image, commercial, ...) |
-| `logos` with `format: 'png'`                      | Use `orientation`, `background`, `variant`, plus optional `width`/`height` — derive format from the URL extension |
-| Acquire rights returning `status: 'active'`       | Valid values are `acquired`, `pending_approval`, `rejected`          |
-| Treating `approval_webhook` as a URL the buyer supplies | The seller *returns* `approval_webhook` in `acquire_rights` response. The buyer POSTs `creative-approval-request` to that URL later — your agent hosts the endpoint. |
-| Shipping a concrete `creative-approval-request` shape | Spec names the payload but has not published the schema (see https://github.com/adcontextprotocol/adcp/issues/2253). Treat the body as TBD; don't lock buyers into an invented shape. |
-| Dropping `context` from responses                 | Framework echoes it automatically — don't read or write it yourself  |
+| Mistake                                                 | Fix                                                                                                                                                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `names: [{name, language}]`                             | `names` is an array of locale-keyed objects: `[{en_US: "Acme"}]`                                                                                                                      |
+| `pricing_options` using `pricing_model`/`fixed_price`   | Schema uses `model` + `price` + `currency` + `uses`                                                                                                                                   |
+| `uses` containing `digital_display` etc.                | Only values from `right-use` enum (likeness, voice, ai_generated_image, commercial, ...)                                                                                              |
+| `logos` with `format: 'png'`                            | Use `orientation`, `background`, `variant`, plus optional `width`/`height` — derive format from the URL extension                                                                     |
+| Acquire rights returning `status: 'active'`             | Valid values are `acquired`, `pending_approval`, `rejected`                                                                                                                           |
+| Treating `approval_webhook` as a URL the buyer supplies | The seller _returns_ `approval_webhook` in `acquire_rights` response. The buyer POSTs `creative-approval-request` to that URL later — your agent hosts the endpoint.                  |
+| Shipping a concrete `creative-approval-request` shape   | Spec names the payload but has not published the schema (see https://github.com/adcontextprotocol/adcp/issues/2253). Treat the body as TBD; don't lock buyers into an invented shape. |
+| Dropping `context` from responses                       | Framework echoes it automatically — don't read or write it yourself                                                                                                                   |
 
 ## Storyboards
 
-| Storyboard     | Tests                                                            |
-| -------------- | ---------------------------------------------------------------- |
+| Storyboard     | Tests                                                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `brand_rights` | Discover brand → browse rights → acquire license → enforce expired campaigns (update/approval covered once spec schemas land) |
 
 ## Reference
