@@ -20,7 +20,13 @@ export type ConformanceToolName =
   | 'get_content_standards'
   | 'get_creative_delivery'
   | 'tasks_get'
-  | 'preview_creative';
+  | 'preview_creative'
+  // Tier 3: mutating updates. Only meaningful against real entity IDs —
+  // either pre-seeded via `options.fixtures` or auto-seeded via
+  // `autoSeed: true`. Excluded from DEFAULT_TOOLS when neither is active.
+  | 'update_media_buy'
+  | 'update_property_list'
+  | 'update_content_standards';
 
 export const STATELESS_TIER_TOOLS: readonly ConformanceToolName[] = [
   'get_products',
@@ -51,10 +57,32 @@ export const REFERENTIAL_STATELESS_TOOLS: readonly ConformanceToolName[] = [
   'preview_creative',
 ] as const;
 
+/**
+ * Tier-3 mutating updates. Only meaningful when the fuzzer has real
+ * entity IDs to target — either pre-seeded via
+ * {@link RunConformanceOptions.fixtures} or auto-seeded via
+ * {@link RunConformanceOptions.autoSeed}. {@link runConformance}
+ * excludes these from the default tool list when neither is active.
+ *
+ * WARNING: running these mutates agent state. Point the fuzzer at a
+ * sandbox / test tenant.
+ */
+export const UPDATE_TIER_TOOLS: readonly ConformanceToolName[] = [
+  'update_media_buy',
+  'update_property_list',
+  'update_content_standards',
+] as const;
+
 /** Tier 1 + Tier 2 combined. Default tool set for {@link runConformance}. */
 export const DEFAULT_TOOLS: readonly ConformanceToolName[] = [
   ...STATELESS_TIER_TOOLS,
   ...REFERENTIAL_STATELESS_TOOLS,
+] as const;
+
+/** Tier 1 + Tier 2 + Tier 3. Used when `autoSeed` is true or fixtures were supplied. */
+export const DEFAULT_TOOLS_WITH_UPDATES: readonly ConformanceToolName[] = [
+  ...DEFAULT_TOOLS,
+  ...UPDATE_TIER_TOOLS,
 ] as const;
 
 export interface RunConformanceOptions {
@@ -98,6 +126,19 @@ export interface RunConformanceOptions {
    * ```
    */
   fixtures?: ConformanceFixtures;
+  /**
+   * When true, `runConformance` calls `seedFixtures` before fuzzing: it
+   * creates a property list, a content-standards config, and (if the
+   * agent returns at least one product from `get_products`) a media
+   * buy. The returned IDs are merged into `fixtures` (explicit fixtures
+   * win on conflict) and Tier-3 update tools are added to the default
+   * tool list.
+   *
+   * WARNING: auto-seed mutates agent state. Point at a sandbox.
+   *
+   * @default false
+   */
+  autoSeed?: boolean;
 }
 
 /**
@@ -109,8 +150,10 @@ export interface ConformanceFixtures {
   creative_ids?: readonly string[];
   /** Pool for `media_buy_id` and `media_buy_ids[]` properties. */
   media_buy_ids?: readonly string[];
-  /** Pool for `list_id` properties on property-list / content-standards tools. */
+  /** Pool for `list_id` properties on property-list tools. */
   list_ids?: readonly string[];
+  /** Pool for `standards_id` properties on content-standards tools. */
+  standards_ids?: readonly string[];
   /** Pool for `task_id` / `taskId` properties. */
   task_ids?: readonly string[];
   /** Pool for `plan_id` properties. */
@@ -172,6 +215,14 @@ export interface ConformanceReport {
    * self-reproducible without the original invocation.
    */
   fixturesUsed: ConformanceFixtures;
+  /**
+   * Whether auto-seeding ran this cycle. When true, `seedWarnings`
+   * carries any per-seeder reasons a pool ended up empty (e.g., the
+   * agent rejected create_media_buy, or get_products returned no
+   * products). Empty array means all requested seeders succeeded.
+   */
+  autoSeeded: boolean;
+  seedWarnings: ReadonlyArray<{ seeder: string; reason: string }>;
   totalRuns: number;
   totalFailures: number;
   /** Count of failures dropped when `maxFailures` was hit. */

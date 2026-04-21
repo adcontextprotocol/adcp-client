@@ -20,7 +20,15 @@
  */
 
 export { runConformance } from './runConformance';
-export { STATELESS_TIER_TOOLS, REFERENTIAL_STATELESS_TOOLS, DEFAULT_TOOLS } from './types';
+export { seedFixtures } from './seeder';
+export type { SeedOptions, SeedResult, SeederName, SeedWarning } from './seeder';
+export {
+  STATELESS_TIER_TOOLS,
+  REFERENTIAL_STATELESS_TOOLS,
+  UPDATE_TIER_TOOLS,
+  DEFAULT_TOOLS,
+  DEFAULT_TOOLS_WITH_UPDATES,
+} from './types';
 export type {
   ConformanceFailure,
   ConformanceFixtures,

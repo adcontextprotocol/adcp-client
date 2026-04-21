@@ -182,6 +182,40 @@ describe('adcp fuzz CLI', () => {
     assert.match(stdout, /Pin this seed in CI: --seed 7/);
   });
 
+  test('--list-tools marks Tier-3 update tools too', async () => {
+    const { code, stdout } = await runCli(['--list-tools']);
+    assert.equal(code, 0);
+    assert.match(stdout, /update_media_buy.*update.*--auto-seed/);
+  });
+
+  test('--auto-seed surfaces seed warnings on the report', async () => {
+    // The default signals agent from earlier tests has no create_* handlers,
+    // so all three seeders will produce warnings. We just check the plumbing:
+    // --auto-seed is honored, autoSeeded is set, warnings propagate.
+    const { code, stdout } = await runCli([
+      `http://localhost:${port}/mcp`,
+      '--seed',
+      '3',
+      '--tools',
+      'get_signals',
+      '--turn-budget',
+      '1',
+      '--protocol',
+      'mcp',
+      '--auto-seed',
+      '--format',
+      'json',
+    ]);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.autoSeeded, true);
+    assert.ok(Array.isArray(parsed.seedWarnings));
+    // Seeders all fail against this stub (only getSignals is implemented) —
+    // that's what we're asserting: the pipeline runs, records warnings,
+    // and keeps fuzzing the tools that do work.
+    assert.ok(parsed.seedWarnings.length >= 1);
+  });
+
   test('JSON report includes reproducibility metadata', async () => {
     const { stdout } = await runCli([
       `http://localhost:${port}/mcp`,

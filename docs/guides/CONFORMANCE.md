@@ -44,11 +44,44 @@ if (report.totalFailures > 0) {
 adcp fuzz https://agent.example.com/mcp --seed 42 --turn-budget 50
 adcp fuzz <url> --tools get_signals,get_products --format json | jq
 adcp fuzz <url> --fixture creative_ids=cre_a,cre_b
+adcp fuzz <url> --auto-seed
 adcp fuzz --list-tools
 ```
 
 The CLI exits 1 on any failure, 0 on clean. Use `--format json` for CI
 consumers that want the structured report.
+
+## Auto-seed (Tier 3)
+
+Passing `autoSeed: true` (or `--auto-seed` on the CLI) tells
+`runConformance` to bootstrap real agent state before fuzzing:
+
+```ts
+await runConformance(url, { autoSeed: true, ... });
+```
+
+The seeder calls `create_property_list`, `create_content_standards`, and
+(via a `get_products` preflight) `create_media_buy` against the agent,
+captures the returned IDs, and merges them into `options.fixtures`
+before the fuzz loop starts. Tier-3 update tools (`update_media_buy`,
+`update_property_list`, `update_content_standards`) are added to the
+default tool list automatically — they're no-ops against random IDs, so
+they only run when real IDs are available.
+
+The seeder is best-effort: a rejection from any seeder becomes a
+`report.seedWarnings` entry and the pool stays empty for that key. The
+fuzzer continues with whatever it got.
+
+**⚠️  Auto-seed mutates agent state.** Point at a sandbox / test tenant —
+the fuzzer will create artifacts that the agent owns. There is no
+teardown; seeded rows stay until the agent's own lifecycle reclaims
+them.
+
+**Reproduction note**: when a Tier-3 failure is reported, the
+reproduction hint echoes `--auto-seed` rather than the captured IDs.
+Seeded IDs are agent-generated and differ per run; replaying with the
+same `--seed --tools T --auto-seed` triggers a fresh seed with the same
+fast-check arbitrary walk.
 
 ## What's fuzzed
 
@@ -109,9 +142,7 @@ match. Supported pools (mapped by property name):
 | `plan_ids` | `plan_id` |
 | `account_ids` | `account_id` |
 | `package_ids` | `package_id`, `package_ids` |
-
-Stateful Tier 3 (full `sync_creatives` → read-back flow driven by the
-runner itself) is tracked in adcontextprotocol/adcp-client#698.
+| `standards_ids` | `standards_id`, `standards_ids` |
 
 ## Interpreting failures
 
