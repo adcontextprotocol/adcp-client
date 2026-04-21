@@ -459,13 +459,24 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
 
 function assertWebhookCredentials(
   fieldName: string,
-  webhook: { authentication?: { credentials?: string } } | undefined
+  webhook: { authentication?: { credentials?: string; schemes?: unknown[] } } | undefined
 ): void {
-  const cred = webhook?.authentication?.credentials;
+  const auth = webhook?.authentication;
+  if (!auth) return;
+  const cred = auth.credentials;
   if (cred !== undefined && cred.length < 32) {
     throw new Error(
       `acquireRightsResponse: ${fieldName}.authentication.credentials must be ≥32 chars (got ${cred.length}). ` +
         `Use a high-entropy token (e.g., randomUUID().replace(/-/g, "") returns 32 hex chars).`
+    );
+  }
+  // push-notification-config.json requires schemes: exactly one entry.
+  const schemes = auth.schemes;
+  if (schemes !== undefined && (!Array.isArray(schemes) || schemes.length !== 1)) {
+    throw new Error(
+      `acquireRightsResponse: ${fieldName}.authentication.schemes must be a 1-item array (got ${
+        Array.isArray(schemes) ? `length ${schemes.length}` : typeof schemes
+      }). ` + `Spec: authentication.schemes has minItems=1, maxItems=1.`
     );
   }
 }
