@@ -82,12 +82,14 @@ import type {
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
+import { attachMatch } from './match';
 import { createMCPAuthHeaders } from '../auth';
 import {
   AuthenticationRequiredError,
   ConfigurationError,
   FeatureUnsupportedError,
   TaskTimeoutError,
+  VersionUnsupportedError,
   is401Error,
 } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
@@ -226,6 +228,28 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    */
   validateFeatures?: boolean;
   /**
+   * Refuse to dispatch mutating tasks unless the seller's capabilities
+   * corroborate AdCP v3. The guard requires all of:
+   *   1. `major_versions` includes 3
+   *   2. `adcp.idempotency.replay_ttl_seconds` is declared (spec-required)
+   *   3. capabilities came from a real `get_adcp_capabilities` response
+   *      (not synthesized from a tool list)
+   *
+   * Throws `VersionUnsupportedError` before the request is sent. Bypass
+   * with `allowV2` or — process-wide as a fallback — `ADCP_ALLOW_V2=1`.
+   *
+   * @default false
+   */
+  requireV3ForMutations?: boolean;
+  /**
+   * Per-client bypass for the v3 guard. When `true`, the guard is off
+   * regardless of the `ADCP_ALLOW_V2` env var. When `undefined`, the env
+   * var is consulted as a fallback. Set explicitly in multi-tenant
+   * deployments so one tenant's override can't silently disable safety
+   * for another.
+   */
+  allowV2?: boolean;
+  /**
    * Runtime schema validation options
    */
   validation?: {
@@ -284,6 +308,7 @@ export class SingleAgentClient {
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
+  private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
 
   constructor(
     private agent: AgentConfig,
@@ -1046,10 +1071,15 @@ export class SingleAgentClient {
     // Validate required features before sending request
     await this.validateTaskFeatures(taskType);
 
+    // Guard mutating calls against pre-v3 sellers when opted in.
+    if (this.config.requireV3ForMutations && isMutatingTask(taskType)) {
+      await this.requireV3(taskType);
+    }
+
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
     if (earlyResult) {
-      return earlyResult;
+      return attachMatch(earlyResult);
     }
 
     const agent = await this.ensureEndpointDiscovered();
@@ -1999,6 +2029,9 @@ export class SingleAgentClient {
       skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
     });
     await this.validateTaskFeatures(taskName);
+    if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
+      await this.requireV3(taskName);
+    }
     const agent = await this.ensureEndpointDiscovered();
 
     // Adapt request for the server's protocol version (e.g. strip v3-only
@@ -2515,6 +2548,7 @@ export class SingleAgentClient {
   async getCapabilities(): Promise<AdcpCapabilities> {
     // Return cached if available
     if (this.cachedCapabilities) {
+      this.maybeWarnV2Sunset(this.cachedCapabilities);
       return this.cachedCapabilities;
     }
 
@@ -2545,6 +2579,7 @@ export class SingleAgentClient {
 
         if (result.success && result.data) {
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          this.maybeWarnV2Sunset(this.cachedCapabilities);
           return this.cachedCapabilities;
         }
         // Log when executeTask returns but success is false — this causes
@@ -2585,6 +2620,34 @@ export class SingleAgentClient {
     );
     this.cachedCapabilities = buildSyntheticCapabilities(tools);
     return this.cachedCapabilities;
+  }
+
+  /**
+   * Emit a one-time warning when the agent reports v2 capabilities.
+   *
+   * v2 went unsupported on 2026-04-20 (AdCP 3.0 GA — adcp#2220). We still
+   * execute v2 code paths (no behaviour change), but clients integrating
+   * against an unsupported agent should hear about it loudly.
+   *
+   * Synthetic capabilities (no `get_adcp_capabilities` tool available) don't
+   * trigger the warning — we don't actually know the agent's version, and
+   * shouting at legitimately-unversioned agents would be noise.
+   *
+   * Suppression: `process.env.ADCP_ALLOW_V2 === '1'`.
+   */
+  private maybeWarnV2Sunset(capabilities: AdcpCapabilities): void {
+    if (this._v2WarningFired) return;
+    if (capabilities.version === 'v3') return;
+    if (capabilities._synthetic) return;
+    if (process.env.ADCP_ALLOW_V2 === '1') return;
+
+    this._v2WarningFired = true;
+    console.warn(
+      `[adcp] Warning: agent ${this.agent.agent_uri} reports v2 capabilities. ` +
+        `v2 went unsupported on 2026-04-20 (AdCP 3.0 GA). ` +
+        `Upgrade the agent to v3 or set ADCP_ALLOW_V2=1 to suppress this warning. ` +
+        `See https://github.com/adcontextprotocol/adcp/issues/2220`
+    );
   }
 
   /**
@@ -2684,6 +2747,43 @@ export class SingleAgentClient {
     await this.require(...requiredFeatures);
   }
 
+  /**
+   * Assert that the seller's capabilities corroborate AdCP v3.
+   *
+   * A self-reported `version: 'v3'` is not enough — a hostile or
+   * misconfigured seller can just string-claim the version. The guard
+   * requires:
+   *
+   *   1. `capabilities.majorVersions.includes(3)` (multi-version aware)
+   *   2. `capabilities.idempotency.replayTtlSeconds` present (spec-required
+   *      for real v3 sellers; synthetic capabilities don't get this free)
+   *   3. capabilities were not synthesized from a tool list
+   *
+   * Per-client `allowV2: true` or, when that's undefined,
+   * `ADCP_ALLOW_V2=1` in the environment bypasses the check.
+   *
+   * Throws `VersionUnsupportedError` with the specific reason on failure.
+   */
+  async requireV3(taskType: string = 'request'): Promise<void> {
+    if (this.isV2Allowed()) return;
+    const capabilities = await this.getCapabilities();
+
+    if (capabilities._synthetic) {
+      throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
+    }
+    if (!capabilities.majorVersions.includes(3)) {
+      throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+    }
+    if (!capabilities.idempotency?.replayTtlSeconds) {
+      throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);
+    }
+  }
+
+  private isV2Allowed(): boolean {
+    if (this.config.allowV2 !== undefined) return this.config.allowV2 === true;
+    return process.env.ADCP_ALLOW_V2 === '1';
+  }
+
   // ====== STATIC HELPER METHODS ======
 
   /**
@@ -2739,7 +2839,16 @@ export class SingleAgentClient {
   }
 
   /**
-   * Validate request parameters against AdCP schema
+   * Validate request parameters against AdCP schema.
+   *
+   * Uses default (non-strict) parsing so required fields are still enforced
+   * but unknown top-level keys pass through. This matters because callers —
+   * including the storyboard runner's `applyBrandInvariant` — inject
+   * scoping fields (`brand`, `account`) onto every outgoing request, and
+   * `adaptRequestForServerVersion` strips those fields downstream for tools
+   * whose schema doesn't declare them. A strict parse here rejects the
+   * injected fields before the adapter gets a chance to clean them up, so
+   * the two passes have to agree on "extra keys are fine."
    */
   private validateRequest(taskType: string, params: any): void {
     const schema = this.getRequestSchema(taskType);
@@ -2748,15 +2857,7 @@ export class SingleAgentClient {
     }
 
     try {
-      // Use strict() to reject unknown top-level keys so callers get fast failures
-      // on typos. Strip known deprecated fields that the normalizer preserves
-      // (e.g. brand_manifest, buyer_ref) before the strict check so they don't trigger it.
-      if (schema instanceof z.ZodObject) {
-        const { brand_manifest, buyer_ref, ...validationParams } = params;
-        schema.strict().parse(validationParams);
-      } else {
-        schema.parse(params);
-      }
+      schema.parse(params);
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issues = error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');

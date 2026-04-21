@@ -69,6 +69,9 @@ export function memoryBackend(options: MemoryBackendOptions = {}): IdempotencyBa
       if (sweeper) clearInterval(sweeper);
       store.clear();
     },
+    async clearAll(): Promise<void> {
+      store.clear();
+    },
   };
 }
 

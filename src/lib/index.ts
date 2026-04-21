@@ -106,6 +106,8 @@ export {
   type CreativeAgentClientConfig,
 } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
+export { match, attachMatch } from './core/match';
+export type { MatchHandlers, PartialMatchHandlers } from './core/match';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
 export {
   ResponseValidator,
@@ -231,6 +233,7 @@ export {
   ConfigurationError,
   AuthenticationRequiredError,
   FeatureUnsupportedError,
+  VersionUnsupportedError,
   IdempotencyConflictError,
   IdempotencyExpiredError,
   adcpErrorToTypedError,
@@ -510,6 +513,7 @@ export {
   getMcpTasksMigration,
   MCP_TASKS_MIGRATION,
   createAdcpServer,
+  ADCP_PRE_TRANSPORT,
   checkGovernance,
   governanceDeniedError,
   DEFAULT_REPORTING_CAPABILITIES,
@@ -556,6 +560,7 @@ export type {
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
+  AdcpCustomToolConfig,
   AdcpLogger,
   HandlerContext,
   MediaBuyHandlers,
@@ -565,6 +570,13 @@ export type {
   AccountHandlers,
   EventTrackingHandlers,
   SponsoredIntelligenceHandlers,
+  SignedRequestsConfig,
+  AdcpPreTransport,
+  AdcpServer,
+  AdcpServerTransport,
+  AdcpTestRequest,
+  AdcpTestToolsCallRequest,
+  AdcpTestResponse,
   CheckGovernanceOptions,
   GovernanceCallResult,
   GovernanceApproved,
@@ -671,6 +683,13 @@ export { TOOL_RESPONSE_SCHEMAS } from './utils/response-schemas';
 // ====== VALIDATION ======
 // Schema validation for requests/responses
 export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPResponse } from './validation';
+export {
+  SyncCreativesItemSchema,
+  SyncCreativesSuccessStrictSchema,
+  SyncCreativesResponseStrictSchema,
+  SyncCreativesActionSchema,
+} from './validation/sync-creatives';
+export type { SyncCreativesItem, SyncCreativesSuccessStrict } from './validation/sync-creatives';
 
 // ====== PROTOCOL CLIENTS ======
 // Low-level protocol clients for MCP and A2A (primarily for testing)
@@ -712,7 +731,12 @@ export {
 } from './utils/format-assets';
 
 // ====== V3.0 COMPATIBILITY UTILITIES ======
-// Capabilities detection and synthetic capabilities for v2 servers
+// Capabilities detection, version negotiation, and v3 enforcement.
+// See also:
+//   - `VersionUnsupportedError` in errors — thrown by requireV3()/requireV3ForMutations
+//   - `SyncCreativesItemSchema` in validation — per-item sync_creatives validator
+//   - `ADCP_MAJOR_VERSION` / `COMPATIBLE_ADCP_VERSIONS` in version information
+//   - `SingleAgentClient#requireV3()` / `AgentClient#requireV3()` — runtime gate
 export {
   buildSyntheticCapabilities,
   parseCapabilitiesResponse,
@@ -723,6 +747,7 @@ export {
   requiresOperatorAuth,
   requiresAccountForProducts,
   supportsSandbox,
+  supportsExperimentalFeature,
   resolveFeature,
   listDeclaredFeatures,
   MEDIA_BUY_TOOLS,

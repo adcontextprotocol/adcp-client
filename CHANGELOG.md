@@ -1,5 +1,744 @@
 # Changelog
 
+## 5.7.0
+
+### Minor Changes
+
+- 7d33a92: AdCP 3.0 release blockers — SDK-level wiring for conformance-runner integration.
+
+  **New subpath exports**
+  - `@adcp/client/compliance-fixtures` — canonical `COMPLIANCE_FIXTURES` data for every hardcoded ID storyboards reference (`test-product`, `sports_ctv_q2`, `video_30s`, `native_post`, `native_content`, `campaign_hero_video`, `gov_acme_q2_2027`, `mb_acme_q2_2026_auction`, `cpm_guaranteed`, etc.) plus a `seedComplianceFixtures(server)` helper that writes fixtures into the state store under well-known `compliance:*` collections. Closes [#663](https://github.com/adcontextprotocol/adcp-client/issues/663).
+  - `@adcp/client/schemas` — re-exports every generated Zod request schema plus `TOOL_INPUT_SHAPES` (ready-to-register `inputSchema` map covering non-framework tools like `creative_approval` and `update_rights`) and a `customToolFor(name, description, shape, handler)` helper. Closes [#667](https://github.com/adcontextprotocol/adcp-client/issues/667).
+
+  **Server (`@adcp/client/server`)**
+  - `createExpressAdapter({ mountPath, publicUrl, prm, server })` returns the four pieces an Express-mounted agent needs: `rawBodyVerify` (captures raw bytes for RFC 9421), `protectedResourceMiddleware` (RFC 9728 PRM at the origin root), `getUrl` (mount-aware URL reconstruction for the signature verifier), and `resetHook` (delegates to `server.compliance.reset()`). Closes [#664](https://github.com/adcontextprotocol/adcp-client/issues/664).
+  - `requireAuthenticatedOrSigned({ signature, fallback, requiredFor, resolveOperation })` bundles presence-gated signature composition with `required_for` enforcement on the no-signature path. `requireSignatureWhenPresent` grew an options parameter that carries the same `requiredFor` + `resolveOperation` semantics. Unsigned requests with no credentials on a `required_for` operation throw `AuthError` whose cause is `RequestSignatureError('request_signature_required')`; valid bearer bypass stays valid. Closes [#665](https://github.com/adcontextprotocol/adcp-client/issues/665).
+  - `respondUnauthorized({ signatureError })` emits a `WWW-Authenticate: Signature error="<code>"` challenge when the rejection comes from the RFC 9421 verifier. `serve()` auto-detects this via `signatureErrorCodeFromCause(err)` — the signed_requests negative-vector grader reads the error code off the challenge, so previously callers had to override the 401 response by hand.
+  - `AdcpServer.compliance.reset({ force? })` drops session state and the idempotency cache between storyboards. Refuses to run in production-like deployments unless `force: true` is passed. `IdempotencyStore.clearAll` is now an optional method on the store; `memoryBackend` implements it, production backends leave it undefined. Closes [#666](https://github.com/adcontextprotocol/adcp-client/issues/666).
+
+  **Testing (`@adcp/client/testing`)**
+  - Request-signing grader accepts an `agentCapability` option. When present, vectors whose `verifier_capability` can't coexist with the agent's declared profile (`covers_content_digest` disagreement, vector-asserted `required_for` not in agent's list) auto-skip with `skip_reason: 'capability_profile_mismatch'`. `skipVectors` stays available for operator-driven overrides. Closes [#668](https://github.com/adcontextprotocol/adcp-client/issues/668).
+
+- 5b2ebb3: v3 audit follow-ups — tightened per expert review:
+
+  **Build pipeline**
+  - `build:lib` now runs `sync-version` before `tsc` so `src/lib/version.ts` can't drift from `package.json` across changeset-driven bumps. `sync-version` now validates both version strings against `/^[0-9A-Za-z.\-+]+$/` to prevent template injection into the generated TS file.
+
+  **sync_creatives validator**
+  - New `SyncCreativesItemSchema`, `SyncCreativesSuccessStrictSchema`, and `SyncCreativesResponseStrictSchema` exports. The strict schema enforces: required `creative_id` + `action`; spec's conditional that `status` MUST be absent when `action ∈ {failed, deleted}`; `preview_url` limited to `http(s):` URLs; ISO-8601 `expires_at`; `assignment_errors` key regex. Wired into `TOOL_RESPONSE_SCHEMAS` so pipeline-level strict validation catches per-item drift for `sync_creatives` responses automatically.
+
+  **V3 guard**
+  - New `VersionUnsupportedError` with typed `reason` ('version' | 'idempotency' | 'synthetic'). Agent URL stays on the instance property but is omitted from the default message to prevent leakage into shared log sinks.
+  - `client.requireV3()` now corroborates the v3 claim: requires `majorVersions.includes(3)`, `adcp.idempotency.replayTtlSeconds` present, and rejects synthetic capabilities. Closes the "lying seller" bypass path.
+  - New `allowV2` config option on `SingleAgentClientConfig` — per-client bypass; `ADCP_ALLOW_V2=1` env fallback only applies when `allowV2` is `undefined`. Enables safe use in multi-tenant deployments.
+  - `requireV3ForMutations: true` opt-in gates mutating calls before dispatch.
+
+## 5.6.0
+
+### Minor Changes
+
+- 0891b98: Add `multi-pass` multi-instance strategy for storyboard runner (#607)
+
+  Opt-in via `--multi-instance-strategy multi-pass` (CLI) or
+  `multi_instance_strategy: 'multi-pass'` (library). Runs the storyboard once
+  per replica, each pass starting the round-robin dispatcher at a different
+  replica. Ensures each step is exercised against a different replica across
+  passes — surfacing bugs isolated to one replica (stale config, divergent
+  version, local-cache miss) that single-pass round-robin can't distinguish
+  from a success. Default stays `round-robin` to keep CI time predictable.
+
+  `StoryboardResult` gains `passes?: StoryboardPassResult[]` with per-pass
+  detail. Top-level `passed_count` / `failed_count` / `skipped_count` and
+  `overall_passed` aggregate across passes; top-level `phases` remains the
+  first pass for backward compatibility.
+
+  Known limitation: for N=2, offset-shift preserves pair parity, so a
+  write→read pair whose dispatch indices differ by an even amount lands
+  same-replica in every pass (the canonical property_lists case:
+  write at step 0, read at step 2, distance 2). Dependency-aware
+  dispatch reading `context_inputs` (tracked as #607 option 2) is the
+  recommended path for testing cross-replica state at N=2.
+
+- 63b6de7: Add `requireSignatureWhenPresent(signatureAuth, fallbackAuth)` — presence-gated composition for RFC 9421 signatures (#659)
+
+  `anyOf(verifyApiKey, verifySignatureAsAuthenticator)` has either-or
+  semantics: a request with a valid bearer and a present-but-invalid
+  signature is accepted because `anyOf` catches the sig adapter's
+  `AuthError` and falls through. That's wrong for the `signed-requests`
+  specialism, whose conformance vectors include negatives like
+  `request_signature_revoked` and `request_signature_window_invalid`
+  that must reject even when a bearer is also supplied.
+
+  `requireSignatureWhenPresent` encodes the spec-compliant contract:
+
+  | RFC 9421 signature header present? | Outcome                                                                                                 |
+  | ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+  | yes                                | signature authenticator runs; principal / `AuthError` / `null→AuthError` is final — fallback never runs |
+  | no                                 | fallback runs verbatim                                                                                  |
+
+  Presence is detected from either `Signature-Input` OR `Signature` — a
+  request with only one of the pair is malformed but still signed intent
+  and MUST NOT silently fall through to bearer. The existing
+  `verifySignatureAsAuthenticator` adapter now recognizes the same pair
+  (previously it required `Signature-Input`; a solo `Signature` header
+  incorrectly fell through).
+
+  The composed authenticator propagates `AUTH_NEEDS_RAW_BODY` when either
+  branch needs it, so `serve()` still buffers `req.rawBody` ahead of
+  authentication.
+
+  **Composition guard**: the returned authenticator is tagged
+  `AUTH_PRESENCE_GATED`; `anyOf` throws at wire-up time when any child
+  carries the tag, because wrapping would re-open the bypass the gate
+  exists to prevent. Invert the order instead:
+  `requireSignatureWhenPresent(sig, anyOf(bearer, apiKey))`.
+
+  ```ts
+  import {
+    serve,
+    anyOf,
+    verifyApiKey,
+    verifyBearer,
+    verifySignatureAsAuthenticator,
+    requireSignatureWhenPresent,
+  } from '@adcp/client/server';
+
+  serve(createAgent, {
+    authenticate: requireSignatureWhenPresent(
+      verifySignatureAsAuthenticator({ jwks, replayStore, revocationStore, capability, resolveOperation }),
+      anyOf(verifyApiKey({ keys }), verifyBearer({ jwksUri, issuer, audience }))
+    ),
+  });
+  ```
+
+  New public exports: `requireSignatureWhenPresent`, `AUTH_PRESENCE_GATED`,
+  `tagAuthenticatorPresenceGated`, `isAuthenticatorPresenceGated`.
+
+## 5.5.0
+
+### Minor Changes
+
+- c3eb9a1: feat(server): bearer-or-signature composition (#655) + capability overrides (#654)
+
+  Two additions for downstream agents that claim the `signed-requests` specialism
+  and/or need to surface per-domain capability fields the framework doesn't
+  auto-derive.
+
+  **`verifySignatureAsAuthenticator` (#655).** New adapter that turns
+  `verifyRequestSignature` into an `Authenticator` composable with
+  `anyOf(verifyApiKey(...), verifySignatureAsAuthenticator(...))`. Lets a single
+  endpoint accept either bearer credentials OR a valid RFC 9421 signature —
+  previously, mounting the Express-shaped verifier downstream of a bearer gate
+  caused signed-but-unauthed requests to fail 401 before the verifier ran.
+
+  ```ts
+  import { serve, verifyApiKey, anyOf, verifySignatureAsAuthenticator } from '@adcp/client/server';
+
+  serve(createAgent, {
+    authenticate: anyOf(
+      verifyApiKey({ keys: { sk_live_abc: { principal: 'acct_42' } } }),
+      verifySignatureAsAuthenticator({
+        jwks,
+        replayStore,
+        revocationStore,
+        capability: { supported: true, required_for: [], covers_content_digest: 'either' },
+        resolveOperation: req => {
+          try {
+            const body = JSON.parse(req.rawBody ?? '');
+            if (body.method === 'tools/call') return body.params?.name;
+          } catch {}
+          return undefined;
+        },
+      })
+    ),
+  });
+  ```
+
+  `serve()` now buffers `req.rawBody` before authentication when any wired
+  authenticator carries the `AUTH_NEEDS_RAW_BODY` tag (the signature adapter
+  sets it; `anyOf` propagates it). Bearer-only and JWT-only configurations are
+  unaffected — buffering stays deferred until preTransport runs.
+
+  **`capabilities.overrides` (#654).** New per-domain merge field on
+  `AdcpCapabilitiesConfig`. Deep-merges on top of the framework's auto-derived
+  `get_adcp_capabilities` response so agents can surface fields like
+  `media_buy.execution.targeting.*`, `media_buy.audience_targeting`,
+  `media_buy.content_standards.supported_channels`, or
+  `compliance_testing.scenarios` without reaching for `getSdkServer()` to
+  replace the tool.
+
+  ```ts
+  createAdcpServer({
+    name: 'My Seller',
+    version: '1.0.0',
+    mediaBuy: {
+      /* handlers */
+    },
+    capabilities: {
+      features: { audienceTargeting: true },
+      overrides: {
+        media_buy: {
+          execution: { targeting: { geo_countries: true, language: true } },
+          audience_targeting: {
+            supported_identifier_types: ['hashed_email'],
+            minimum_audience_size: 500,
+          },
+        },
+        compliance_testing: { scenarios: ['force_media_buy_status'] },
+      },
+    },
+  });
+  ```
+
+  Nested objects merge; arrays and primitives replace; `null` on a top-level
+  override removes the auto-derived block. Top-level fields the framework owns
+  (`adcp`, `supported_protocols`, `specialisms`, `extensions_supported`) stay
+  managed by their dedicated config fields.
+
+  New exports from `@adcp/client/server`:
+  `verifySignatureAsAuthenticator`, `VerifySignatureAsAuthenticatorOptions`,
+  `AUTH_NEEDS_RAW_BODY`, `tagAuthenticatorNeedsRawBody`,
+  `authenticatorNeedsRawBody`, `AdcpCapabilitiesOverrides`.
+
+## 5.4.0
+
+### Minor Changes
+
+- e6abfdd: Ship five downstream-ergonomics fixes surfaced while porting a training agent onto 5.3. One public-type change (breaking for pre-release consumers only — the type never reached a stable release), four additive.
+
+  **BREAKING (pre-release only) — `createAdcpServer()` returns `AdcpServer` instead of SDK `McpServer`.** Re-exporting the SDK's `McpServer` type forced consumers through a specific module resolution path. A TypeScript ESM consumer importing `@adcp/client` (CJS) and separately importing `@modelcontextprotocol/sdk` (ESM) got two structurally-identical but distinct `McpServer` types — the SDK's private `_serverInfo` field breaks assignment compatibility between them. Owning the type on our side eliminates the hazard for every consumer. `AdcpServer` exposes `connect`, `close`, and the new `dispatchTestRequest`. Tool registration continues to flow through `createAdcpServer`'s domain-grouped handler config. For seller extensions outside `AdcpToolMap`, pass a `customTools` map in the same config — no `getSdkServer()` escape hatch required. `serve()` accepts both `AdcpServer` and raw `McpServer` (for `createTaskCapableServer` users). See `docs/migration-5.3-to-5.4.md` for the verbatim diffs.
+
+  **`AdcpServer.dispatchTestRequest({ method, params })`** — encapsulated test-only dispatch so downstream harnesses stop writing `(server as any)._requestHandlers.get(...)`. The `'tools/call'` overload returns a typed `CallToolResult`; the generic fallback returns `unknown`.
+
+  **`McpToolResponse.structuredContent` is now optional.** Error responses no longer need to fabricate an empty `structuredContent` to satisfy the type. All built-in success builders still populate it.
+
+  **`SingleAgentClient.validateRequest` drops `schema.strict()`.** The storyboard runner's `applyBrandInvariant` injects top-level `brand`/`account` onto every outgoing request for run-scoped tenancy. Tools whose schema declares neither (`list_creative_formats`, `get_signals`, `activate_signal`, `sync_creatives`) had strict() rejecting the injection client-side BEFORE `adaptRequestForServerVersion` could strip by schema. Non-strict parse lets the injection flow to the adapter. Required-field and shape violations still reject. Typo detection on unknown top-level keys now happens server-side.
+
+  **Storyboard runner `request_signing.transport: 'raw' | 'mcp'`.** Plumbs the existing grader option through the storyboard runner so MCP-only agents can pass the `signed-requests` specialism's vectors — each vector body is wrapped in a JSON-RPC `tools/call` envelope and posted to the `/mcp` mount instead of per-operation HTTP endpoints. Matches the `adcp grade request-signing --transport mcp` CLI flag.
+
+## 5.3.0
+
+### Minor Changes
+
+- b6eb1ff: `createAdcpServer` auto-wires the RFC 9421 verifier when the seller declares the `signed-requests` specialism and provides `signedRequests: { jwks, replayStore, revocationStore }`. Startup-fails when `signedRequests` is configured without the specialism claim; logs a loud error when the specialism is claimed without a `signedRequests` config (to avoid breaking legacy manual `serve({ preTransport })` wiring). Closes the footgun where claiming the specialism didn't enforce it.
+- 65d851a: Add `experimental_features` support on capabilities (adcp-client#627).
+
+  `AdcpCapabilities` now carries an `experimentalFeatures?: string[]` field populated from the AdCP 3.0 GA `experimental_features` envelope on `get_adcp_capabilities` responses. New helper `supportsExperimentalFeature(caps, id)` lets consumers gate reliance on `x-status: experimental` surfaces (`brand.rights_lifecycle`, `governance.campaign`, `trusted_match.core`, etc.) on an explicit seller opt-in. `resolveFeature` handles the `experimental:<id>` namespace so `require()`/`supports()` flows work the same way they do for `ext:<name>` extensions.
+
+  The `custom` vendor-pricing variant and the `per_unit` catchup from AdCP 3.0 GA were already picked up in the previous types regeneration — no type-surface changes ship with this release.
+
+- b6eb1ff: Add fluent `result.match({...})` method on `TaskResult`. Mirrors the free-function `match(result, handlers)` so autocomplete on `result.` surfaces the handler-dispatch helper alongside the other accessors. Method is attached non-enumerably by the client when a result leaves `executeTask`/`pollTaskCompletion`/`resumeDeferredTask`, so `JSON.stringify(result)` and `{...result}` are unaffected. For hand-constructed results (test fixtures, custom middleware), call the exported `attachMatch(result)` helper or keep using the free function.
+- b6eb1ff: Add `match(result, handlers)` — exhaustive, compile-time-checked handler for the `TaskResult` discriminated union. Replaces manual `if (result.status === ...)` narrowing at response sites. Optional `_` catchall makes handlers optional.
+
+### Patch Changes
+
+- 7d50ecf: Fix `applyBrandInvariant` scoping for tools whose schema declares `account` but not top-level `brand` (e.g. `get_media_buys`, `get_media_buy_delivery`, `list_creatives`). The helper was only injecting top-level `brand` and merging into an existing `account`; when the request-builder produced no `account`, `adaptRequestForServerVersion` would strip the unrecognized top-level `brand` and the run-scoped brand was lost on the wire. Now the helper constructs an `account` (via `resolveAccount(options)`) when the request omits one, so session scoping survives for every schema shape. Non-object `account` values (`null`, arrays) are still passed through unchanged. (adcp-client#643)
+- b8edc63: Storyboard `error_code` validation now reads the spec-canonical `data.errors[0].code` envelope (per `core/error.json`), falling back to legacy locations (`adcp_error.code`, `error_code`, `code`, `error.code`) and the regex on `taskResult.error`. Previously, spec-conformant agents returning `{ errors: [...], context }` had their code extracted via regex instead of typed field access.
+- cca6c57: Fix `ProtocolResponseParser.getStatus()` misclassifying spec-compliant AdCP v3 domain envelopes as MCP task-status envelopes. Four `ADCP_STATUS` literals (`completed`, `canceled`, `failed`, `rejected`) collide with domain status enums like `MediaBuyStatus` / `CreativeStatus`. Previously, a seller returning `cancel_media_buy` with `{ structuredContent: { status: "canceled", media_buy: {...}, adcp_version: "3.0.0" } }` got routed through `TaskExecutor`'s terminal-failure branch — the client returned `{ success: false, data: undefined, error: "Task canceled" }` on a successful cancellation.
+
+  The parser now disambiguates using an envelope-shape check: exclusive task-lifecycle literals (`submitted`, `working`, `input-required`, `auth-required`) are trusted from `structuredContent.status` unconditionally; shared literals are only treated as task status when the envelope carries no keys outside the `ProtocolEnvelope` allowlist. Otherwise the response falls through to the `COMPLETED` fallback so Zod validators parse the domain payload. Unblocks the `media_buy_state_machine` storyboard on `cancel_buy` / `resume_canceled_buy`. Reported and root-caused by @fgranata in adcp-client#646.
+
+- b6eb1ff: Extend `skills/build-seller-agent/SKILL.md` with a worked GDPR Art 22 / EU AI Act Annex III example — shows `plan.human_review_required` threaded through `createAdcpServer.mediaBuy.createMediaBuy` with `buildHumanOverride` on approval. No code changes.
+- b6eb1ff: Flag the webhook HMAC-SHA256 authentication path as SDK-deprecated. Emits a one-time `console.warn` on first use per process; suppress with `ADCP_SUPPRESS_HMAC_WARNING=1`. `@deprecated` JSDoc tag added to `WebhookAuthentication.hmac_sha256`. HMAC remains in the AdCP spec as a legacy fallback for buyers that registered `push_notification_config.authentication.credentials`, so the SDK keeps supporting it — no hard removal date. Migrate to RFC 9421 webhook signatures when your counterparties are ready (see `docs/migration-4.30-to-5.2.md#webhook-hmac-legacy-deprecation`).
+- 65d851a: Auto-inject `idempotency_key` on mutating storyboard requests and untyped `executeTask` calls (adcp-client#625).
+
+  The storyboard runner now mints a UUID v4 `idempotency_key` on any mutating step whose `sample_request` omits one — matching how a real buyer operates, so compliance storyboards exercise handler logic rather than short-circuiting on the server's required-field check. Auto-injection applies to `expect_error` steps too, so scenarios that expect specific failures (GOVERNANCE_DENIED, UNAUTHORIZED, brand_mismatch, etc.) reach the error path they named instead of hitting INVALID_REQUEST first. Storyboards that intentionally test the server's missing-key rejection opt out with the new `step.omit_idempotency_key: true` flag.
+
+  The underlying `normalizeRequestParams` helper now derives its mutating-task set from the Zod request schemas (`MUTATING_TASKS` in `utils/idempotency`) rather than a hand-maintained list. The Zod-derived set adds auto-injection for `acquire_rights`, `update_media_buy`, `si_initiate_session`, `si_send_message`, `build_creative`, and the property / collection / content-standards writes — all of which the spec declares as mutating but the hand-maintained list was missing. Any caller using `client.executeTask(<mutating-task>, params)` — typed or untyped — now receives the same auto-injected key the typed methods already minted via `executeAndHandle`.
+
+- b6eb1ff: Add `docs/guides/idempotency-crash-recovery.md` — worked buyer-side recipe for crash-recovery using `IdempotencyConflictError` + `IdempotencyExpiredError` + natural-key lookup + `metadata.replayed`. No code changes.
+- 4fd7091: Regenerate TypeScript types for the new `governance-aware-seller` specialism in `AdCPSpecialism`. Pure regeneration from upstream schemas — no code changes.
+- 24131aa: Scope replay store by (keyid, @target-uri) instead of keyid alone (adcp#2460). A captured signature on one endpoint can no longer be replayed against another. Pass a `scope` argument to `ReplayStore.has/insert/isCapHit` — existing custom implementations must update their signatures.
+- 8455c8e: Fix `adcp storyboard run <agent> --file <path.yaml>` erroring out with "Cannot combine a storyboard ID with --file". The CLI parser was not stripping `--file` and its value from the positional-argument list, so the file path collided with the storyboard-ID slot (adcp-client#637). `--file=<path>` (equals form) is now parsed too.
+- 24131aa: Emit a one-time `console.warn` when a client receives v2 capabilities — v2 is unsupported as of AdCP 3.0 GA (2026-04-20, adcp#2220). Suppress with `ADCP_ALLOW_V2=1` env var or `adcp --allow-v2` on the CLI. Functional behavior unchanged — v2 paths still execute, just loud about it.
+- 24131aa: Add `webhook_mode_mismatch` and `webhook_target_uri_malformed` to the webhook-signature error taxonomy (adcp#2467). Verifier now splits key-purpose failures into "no purpose declared" (`key_purpose_invalid`) vs "wrong purpose for mode" (`mode_mismatch`), and rejects malformed `@target-uri` components with a dedicated code before signature computation.
+
+## 5.2.0
+
+### Minor Changes
+
+- 9c2d5cc: `BrandJsonJwksResolver` — discover a sender's webhook-signing keys from their `brand.json`.
+
+  Receiver-side ergonomic: instead of pre-configuring a `jwks_uri` per counterparty, point the verifier at the sender's `brand.json` and the resolver walks `agents[]`, extracts the right `jwks_uri`, and delegates caching to `HttpsJwksResolver`. Delivers the `brand.json → JWKS auto-resolver` piece of the #631 follow-up list.
+
+  **New**
+  - `BrandJsonJwksResolver` — implements `JwksResolver`, pluggable into `verifyWebhookSignature.jwks` (or `verifyRequestSignature.jwks`).
+  - `BrandJsonResolverError` + `BrandJsonResolverErrorCode` — typed error surface (`invalid_url`, `invalid_house`, `redirect_loop`, `redirect_depth_exceeded`, `fetch_failed`, `invalid_body`, `schema_invalid`, `agent_not_found`, `agent_ambiguous`, `jwks_origin_mismatch`). Verifier callers can fold transient failures into `webhook_signature_key_unknown` without parsing error message strings.
+  - `BrandAgentType`, `BrandJsonJwksResolverOptions` — selector types (agent type plus optional `agentId` / `brandId`).
+
+  **Behavior**
+  - Follows `authoritative_location` and `house` redirect variants up to `maxRedirects` hops (default 3); loops and depth-exceeded chains are rejected explicitly.
+  - Structurally validates every redirect target (scheme, no userinfo, no fragments smuggled into loop detection) before dispatch; the `house` string variant is gated on a bare-hostname regex so an attacker-supplied brand.json can't inject userinfo or paths via the `https://${house}/…` interpolation.
+  - Honors the spec fallback: when `jwks_uri` is absent on the selected agent, defaults to `/.well-known/jwks.json` on the origin of the agent's `url` — **but only when that origin matches the final brand.json origin**. Cross-origin fallback is rejected with `jwks_origin_mismatch`; publishers hosting their agent on a different origin must declare an explicit `jwks_uri`.
+  - Brand.json cache tracks `ETag` + `Cache-Control: max-age` (capped by `maxAgeSeconds`, default 1h). Unknown `kid` cascades: the inner JWKS refreshes first; if still unknown and the brand.json cooldown has elapsed, brand.json re-resolves to pick up a rotated `jwks_uri`.
+  - Ambiguous selectors (multiple agents of the same type, no `agentId`) throw `agent_ambiguous` with a clear error listing the candidate ids.
+  - All fetches go through `ssrfSafeFetch`, so an attacker-supplied brand.json or JWKS URL can't resolve to the receiver's private network or IMDS.
+
+  **Example**
+
+  ```typescript
+  import {
+    BrandJsonJwksResolver,
+    verifyWebhookSignature,
+    InMemoryReplayStore,
+    InMemoryRevocationStore,
+  } from '@adcp/client/signing';
+
+  const jwks = new BrandJsonJwksResolver('https://publisher.example/.well-known/brand.json', {
+    agentType: 'sales',
+  });
+
+  await verifyWebhookSignature(request, {
+    jwks,
+    replayStore: new InMemoryReplayStore(),
+    revocationStore: new InMemoryRevocationStore(),
+  });
+  ```
+
+- e557245: Request-signing verifier: tighten RFC 9421 conformance against new spec
+  vectors (#2323) and adcp#2468.
+  - `@target-uri` canonicalization now decodes percent-encoded unreserved
+    bytes (RFC 3986 §6.2.2.2) so `%7E` and `~` produce a byte-identical
+    signature base.
+  - Verifier rejects at step 1 when a signed request carries duplicate
+    Signature-Input dictionary keys, multi-valued Content-Type or
+    Content-Digest headers covered by the signature, a non-ASCII
+    authority (U-label), or userinfo on the `@authority` component.
+  - Step 8 binds sig-params `alg` to the resolved JWK's `alg`: a missing
+    JWK `alg`, an alg mismatch, or inconsistent kty/crv per RFC 8037
+    (EdDSA↔OKP) / RFC 7518 (ES256↔EC/P-256) all fail with
+    `request_signature_key_purpose_invalid`.
+  - Compliance test-vector loader accepts `jwks_override` as an
+    alternative to `jwks_ref`; the grader routes `jwks_override` vectors
+    through the library verifier directly since a live HTTP probe can't
+    mutate a target agent's JWKS per-vector.
+
+- fd49ecc: Rollup 5.2.0 — bundles the work that went into the unpublished 6.0.0. Treat the
+  heads-up section below as "breaking" if you're upgrading directly from 5.1.0.
+
+  ## ⚠️ 5.1.0 → 5.2.0 — treat as MAJOR
+
+  This rollup is labeled `minor` because 5.1.0 had negligible adoption and the jump from 4.x is the intended upgrade path. If you are on 5.1.0, **treat this as a major upgrade** — the following source-level breaks require code changes:
+  - `VerifyResult` is now a discriminated union (`status: 'verified' | 'unsigned'`); branching on `result.keyid === ''` no longer works.
+  - `TaskStatus` narrowed — `'governance-escalated'` removed; fold into `'governance-denied'` and inspect `governance.findings`.
+  - `domain` → `protocol` rename threaded through public types, compliance cache paths, and `TasksGetResponse` / `TasksListRequest.filters` / `MCPWebhookPayload`.
+  - `BudgetAuthorityLevel` type removed; migrate to `budget.reallocation_threshold` / `budget.reallocation_unlimited` and `plan.human_review_required`.
+
+  See the "Heads-up if tracking 5.1.0 → 5.2.0" section below for full migration detail.
+
+  ## Heads-up if tracking 5.1.0 → 5.2.0
+
+  ### Verifier API v3 (closes #583 items 1 and 2, #584)
+
+  `verifyRequestSignature` return shape is now a discriminated union:
+
+  ```ts
+  type VerifyResult =
+    | { status: 'verified'; keyid: string; agent_url?: string; verified_at: number }
+    | { status: 'unsigned'; verified_at: number };
+  ```
+
+  Pre-5.2 returned a `VerifiedSigner` with `keyid: ''` as a sentinel when the
+  request was unsigned on an operation not in `required_for`. Consumers that
+  branched on `result.keyid === ''` must now branch on `result.status`.
+
+  `createExpressVerifier` updates `req.verifiedSigner` accordingly — the field is
+  set only when `status === 'verified'`.
+
+  `VerifyRequestOptions.operation` is now optional. Omitting it treats the
+  operation as "not in any `required_for`" and returns an unsigned result.
+
+  `ExpressMiddlewareOptions.resolveOperation` may now return `undefined` — bypass
+  `required_for` enforcement without losing verifier coverage on signed paths.
+
+  ### Governance status narrowing
+
+  `GovernanceCheckResult.status` narrows to `'approved' | 'denied' | 'conditions'`.
+  `TaskStatus` drops `'governance-escalated'`. `TaskResultFailure.status` narrows
+  to `'failed' | 'governance-denied'`. If you branch on
+  `result.status === 'governance-escalated'`, fold into `'governance-denied'` and
+  inspect `governance.findings` for human-review signals.
+
+  ### Governance `budget.authority_level` removed
+
+  AdCP dropped `budget.authority_level` in favor of:
+  - `budget.reallocation_threshold: number ≥ 0` / `budget.reallocation_unlimited: true` (mutually exclusive)
+  - `plan.human_review_required: boolean` for GDPR Art 22 / EU AI Act Annex III
+
+  Mapping: `agent_full → reallocation_unlimited: true`; `agent_limited → keep
+reallocation_threshold`; `human_required → plan.human_review_required: true`.
+
+  ### Compliance cache rename: `domain` → `protocol`
+
+  `compliance/cache/{version}/domains/` → `.../protocols/`.
+  `PROTOCOL_TO_DOMAIN` → `PROTOCOL_TO_PATH`. `ComplianceIndexDomain` →
+  `ComplianceIndexProtocol`. `BundleKind` value `'domain'` → `'protocol'`.
+  `AdCPDomain` → `AdCPProtocol`. `TasksGetResponse.domain` → `protocol`;
+  `TasksListRequest.filters.{domain,domains}` → `{protocol,protocols}`;
+  `MCPWebhookPayload.domain` → `protocol`. `PROTOCOLS_WITHOUT_BASELINE` removed.
+
+  ### Generated-types cleanup (#621)
+
+  Typeless JSON Schema nodes (e.g. `check_governance.conditions[].required_value`)
+  now compile to `unknown` / `z.unknown()` instead of being narrowed to
+  `Record<string, unknown>`. Spec-correct scalar responses from compliant agents
+  no longer fail validation. Multi-pass dedup removes ~7000 lines from
+  `core.generated.ts`.
+
+  ### Property-list account migration
+
+  AdCP 3.0 account migration absorbed. `BudgetAuthorityLevel` type removed.
+  `DelegationAuthority` now re-exported from `./types/core.generated`.
+  `PropertyListAdapter.listLists` filters by `account` primitive (not removed
+  `principal`).
+
+  ## Additions
+
+  ### Idempotency for v3 mutating requests (#568, #569; upstream adcp#2315)
+  - Client methods for mutating tools auto-generate UUID v4 `idempotency_key` when
+    the caller omits one. Internal retries reuse the same key.
+  - `result.metadata.idempotency_key` surfaces the sent key.
+  - `result.metadata.replayed` surfaces whether the seller returned a cached
+    response. Side-effect-emitting agents MUST check this before re-firing.
+  - Typed errors: `IdempotencyConflictError` (mint fresh key), `IdempotencyExpiredError` (look up by natural key).
+  - `result.errorInstance` carries a typed `ADCPError` subclass when available.
+  - New `getIdempotencyReplayTtlSeconds()` on `SingleAgentClient` / `AgentClient`.
+    Throws on v3 sellers that omit the REQUIRED declaration — no silent default.
+  - `useIdempotencyKey(key)` BYOK helper validates format up-front.
+  - Idempotency keys redacted in debug logs by default (`ADCP_LOG_IDEMPOTENCY_KEYS=1` to opt in).
+    `redactIdempotencyKey(key)` exported.
+
+  ### Server-side middleware (`@adcp/client/server`)
+  - `createIdempotencyStore({ backend, ttlSeconds })` — RFC 8785 JCS payload
+    canonicalization, atomic `putIfAbsent` claim step, auto-declares
+    `adcp.idempotency.replay_ttl_seconds`, rejects low-entropy keys, excludes
+    the echo-back `context` from the hash but keeps string-typed `context` on SI
+    tools.
+  - Backends: `memoryBackend()`, `pgBackend(pool, { tableName? })`.
+  - `getIdempotencyMigration()` DDL + `cleanupExpiredIdempotency(pool)` periodic
+    reclaim.
+  - Guardrail: logs error when mutating handlers are registered without an
+    idempotency store.
+
+  ### OAuth zero-config + diagnostics
+  - `NeedsAuthorizationError` — thrown automatically on 401 Bearer challenge;
+    carries `agentUrl`, `resource`, `resourceMetadataUrl`, `authorizationServer`,
+    `authorizationEndpoint`, `tokenEndpoint`, `registrationEndpoint`,
+    `scopesSupported`, parsed challenge.
+  - `discoverAuthorizationRequirements(agentUrl, options?)` — RFC 9728 +
+    RFC 8414 walk.
+  - `createFileOAuthStorage({ configPath, agentKey? })` — atomic writes against
+    the CLI's agents.json.
+  - `bindAgentStorage` / `getAgentStorage` — per-agent WeakMap storage binding.
+  - OAuth tokens now thread through `ADCPMultiAgentClient` and the storyboard
+    runner (previously bearer-only). `NonInteractiveFlowHandler` +
+    `createNonInteractiveOAuthProvider(agent, { agentHint? })`.
+  - `TestOptions.auth` accepts `{ type: 'oauth', tokens, client? }`.
+  - CLI `adcp diagnose-auth <alias|url>` — end-to-end OAuth diagnostic with ranked
+    hypotheses. `runAuthDiagnosis`, `parseWWWAuthenticate`,
+    `decodeAccessTokenClaims`, `validateTokenAudience`, `InvalidTokenError`,
+    `InsufficientScopeError` exported.
+
+  ### Signing — HTTPS stores + structured headers + replay buckets
+  - `HttpsJwksResolver(url, options)` — HTTPS-fetching JWKS with `ETag`,
+    `Cache-Control`, lazy refetch on key-unknown, SSRF-guarded.
+  - `HttpsRevocationStore(url, options)` — cached `RevocationSnapshot`, fails
+    closed past `next_update + graceSeconds` with
+    `request_signature_revocation_stale`.
+  - Parser swap to `structured-headers` library (RFC 8941 / RFC 9651) — profile
+    checks (required params, tag, alg allowlist, typing) stay as typed wrappers.
+  - Time-bucket replay store — O(1) amortized `has`/`insert`/`isCapHit` on hot
+    keyids. Default `maxEntriesPerKeyid` 1M → 100k.
+  - `ssrfSafeFetch` — primitive blocking IMDS / private networks.
+
+  ### Request-signing grader — MCP mode + review fixes
+  - `GradeOptions.transport: 'raw' | 'mcp'` (default `'raw'`). MCP mode wraps
+    vectors in `tools/call` envelopes and extracts `operation` from the vector
+    URL's last path segment.
+  - CLI: `adcp grade request-signing <agent-url>` with `--transport`,
+    `--skip-rate-abuse`, `--rate-abuse-cap`, `--only`, `--skip`,
+    `--allow-live-side-effects`, `--allow-http`, `--json`.
+  - `GradeReport` exposes `passed_count` / `failed_count` / `skipped_count`.
+  - Safety: vectors 016 (`replay_window`) and 020 (`rate_abuse`) auto-skip
+    against non-sandbox endpoints unless `allowLiveSideEffects: true`.
+  - `live_endpoint_warning` replaces misleading `endpoint_scope_warning`.
+  - Skipped vectors report as `skipped: true` (not scored as failures).
+  - Hardened `extractSignatureErrorCode` (alphabet-constrained),
+    `splitChallenges` (quote-state tracked).
+  - New test-agent `test-agents/seller-agent-signed-mcp.ts`.
+
+  ### Storyboard runner — multi-instance mode
+  - `runStoryboard` accepts an array of agent URLs. Steps round-robin across
+    replicas so writes on one instance must be visible on another. Canonical
+    `write on [#A] → read on [#B] → NOT_FOUND` failure signature.
+  - CLI: repeated `--url` engages multi-instance mode (minimum 2). JSON output
+    gains `agent_urls[]`, `multi_instance_strategy`, per-step `agent_url` +
+    `agent_index`. `--dry-run` prints the assignment plan.
+  - Guide: `docs/guides/MULTI-INSTANCE-TESTING.md`. Implements client-side half
+    of adcp#2363; closes adcp#2267.
+
+  ### Governance helpers
+  - `buildHumanReviewPlan(input)` — stamps `human_review_required: true`.
+  - `buildHumanOverride({ reason, approver, approvedAt? })` — builds the artifact
+    for downgrading `human_review_required: true → false` on re-sync. Validates
+    reason ≥20 chars, approver is an email, no control chars, ISO 8601 dates.
+  - `validateGovernancePlan(plan)` — client-side XOR + Annex III invariant check
+    that codegen drops from `if/then`.
+  - Constants: `REGULATED_HUMAN_REVIEW_CATEGORIES`, `ANNEX_III_POLICY_IDS`.
+
+  ### Idempotency storyboard end-to-end
+  - Middleware stamps `metadata.replayed: false` on every mutating response (not
+    just replays).
+  - Replay echoes the current retry's `context` (middleware strips `context`
+    before caching; re-injects on replay).
+  - MCP-level `idempotency_key` relaxed to optional when the framework has an
+    idempotency store wired — middleware returns structured `adcp_error`.
+  - Harness: `$generate:uuid_v4[#alias]` placeholder, forwarded
+    `idempotency_key`, `$context.<key>` in validation `value` / `allowed_values`,
+    `TaskOptions.skipIdempotencyAutoInject` for compliance runs.
+
+  ## Fixes
+  - Governance E2E — removed stale `plan.campaigns` assertion; approve test now
+    picks a `fixed_price` pricing option (was `[0]`, which broke on agents that
+    ordered auction options first). Closes #613.
+  - Property-list storyboard — brand-injection builders removed so runner falls
+    through to spec-correct `account` primitive. Closes #577.
+  - Governance: dropped non-spec `'escalated'` status. Closes #589.
+  - Protocol rename `domain` → `protocol` threaded end-to-end.
+  - Request-signing grader vector 010 (`content-digest-mismatch`) now tests
+    lying-signer detection, vector 009 (`key-purpose-invalid`) honors pinned
+    `jwks_ref`.
+
+  ## Public API additions (overview)
+
+  ```ts
+  // Client
+  import {
+    IdempotencyConflictError,
+    IdempotencyExpiredError,
+    NeedsAuthorizationError,
+    generateIdempotencyKey,
+    isMutatingTask,
+    isValidIdempotencyKey,
+    canonicalize,
+    canonicalJsonSha256,
+    closeMCPConnections,
+    adcpErrorToTypedError,
+    useIdempotencyKey,
+    redactIdempotencyKey,
+    discoverAuthorizationRequirements,
+    createFileOAuthStorage,
+    bindAgentStorage,
+    getAgentStorage,
+    createNonInteractiveOAuthProvider,
+    runAuthDiagnosis,
+    parseWWWAuthenticate,
+    decodeAccessTokenClaims,
+    validateTokenAudience,
+    InvalidTokenError,
+    InsufficientScopeError,
+    buildHumanReviewPlan,
+    buildHumanOverride,
+    validateGovernancePlan,
+    REGULATED_HUMAN_REVIEW_CATEGORIES,
+    ANNEX_III_POLICY_IDS,
+    type MutatingRequestInput,
+    type IdempotencyCapabilities,
+  } from '@adcp/client';
+
+  // Server
+  import {
+    createIdempotencyStore,
+    memoryBackend,
+    pgBackend,
+    hashPayload,
+    getIdempotencyMigration,
+    cleanupExpiredIdempotency,
+    HttpsJwksResolver,
+    HttpsRevocationStore,
+    type IdempotencyStore,
+    type IdempotencyBackend,
+  } from '@adcp/client/server';
+  ```
+
+- 7e5d228: Server-side authentication middleware: API key, OAuth JWT, or both.
+
+  AdCP agents MUST authenticate incoming requests (per the `security_baseline` storyboard in the universal track). This release adds first-class middleware so sellers can wire auth in ~5 lines.
+
+  **New**
+  - `verifyApiKey({ keys? | verify? })` — static or dynamic API-key authenticator.
+  - `verifyBearer({ jwksUri, issuer, audience, requiredScopes? })` — OAuth 2.0 JWT validation via `jose` + JWKS. Strict audience enforcement catches the "resource URL mismatch" class of bug. Defaults to an asymmetric-only algorithm allowlist (RS*/ES*/PS\*/EdDSA) to block algorithm-confusion attacks, and extracts scopes from both `scope` (string) and `scp` (string | array) claims.
+  - `anyOf(a, b, ...)` — combinator for accepting API key OR OAuth. Wraps rejections in a sanitized `AuthError` so probing attackers can't learn expected-audience or token-shape details from error responses.
+  - `respondUnauthorized(req, res, opts)` — RFC 6750-compliant 401/403 with `WWW-Authenticate: Bearer`. `realm` defaults to `"mcp"` (stable) instead of the attacker-controlled `Host` header.
+  - `AuthError` — exported error class with a sanitized `publicMessage`; the underlying implementation error is preserved as `cause` for server-side logging.
+  - `ServeOptions.authenticate` — plug any authenticator into `serve()`; no request reaches the MCP transport without passing.
+  - `ServeOptions.publicUrl` — canonical https:// URL of the MCP endpoint. Required when `protectedResource` is configured. The RFC 9728 `resource` field, the RFC 6750 `resource_metadata` URL on 401 challenges, and the JWT audience all come from this — closes a Host-header phishing vector where a server would otherwise advertise whatever host a caller sent.
+  - `ServeOptions.protectedResource` — advertise OAuth 2.0 protected-resource metadata (RFC 9728) at `/.well-known/oauth-protected-resource<mountPath>`.
+  - MCP `AuthInfo` propagation — `serve()` sets `req.auth` from the auth principal (token, clientId, scopes, expiresAt, extra) so MCP tool handlers receive it via `extra.authInfo`. `createAdcpServer` handlers see it on `ctx.authInfo`.
+
+  **Skills**
+  - `build-seller-agent/SKILL.md` gains a full "Protecting your agent" section with API key, OAuth, and both-at-once examples, plus a conformance checklist.
+  - Short "Protecting your agent" section added to every other `build-*-agent` skill (signals, creative, retail-media, governance, si, brand-rights, generative-seller) so every agent-builder walks past the auth prompt on their way to validation.
+
+  **Dependency**
+  - Promoted `jose` from transitive to direct (it was already in the tree via `@modelcontextprotocol/sdk`).
+
+- 2756df6: Storyboard runner: outbound-webhook conformance grading (adcontextprotocol/adcp#2426, matching the spec shape from adcontextprotocol/adcp#2431).
+
+  **Storyboard runtime:**
+  - `runStoryboard` / `runStoryboardStep` accept a `webhook_receiver` option that binds an ephemeral HTTP listener (loopback-mock mode default; `proxy_url` mode accepts an operator-supplied public base). The receiver mints per-step URLs under `/step/<step_id>/<operation_id>` and exposes `{{runner.webhook_base}}` / `{{runner.webhook_url:<step_id>}}` substitutions so storyboards inject them into `push_notification_config.url`. Downstream filters pick up the same operation_id via `{{prior_step.<step_id>.operation_id}}`.
+  - Three new pseudo-tasks (step `task` values, not validation checks):
+    - **`expect_webhook`** — asserts a matching delivery arrived carrying a well-formed `idempotency_key` (pattern `^[A-Za-z0-9_.:-]{16,255}$`). Optional `expect_max_deliveries_per_logical_event` caps distinct logical events in the window — catches publishers that re-execute on replay under a fresh key.
+    - **`expect_webhook_retry_keys_stable`** — configures the receiver to reject the first N deliveries with a configurable 5xx, then asserts every observed delivery carries the byte-identical `idempotency_key`. Fails with `insufficient_retries`, `idempotency_key_rotated`, or `idempotency_key_format_changed`.
+    - **`expect_webhook_signature_valid`** — delegates to the new RFC 9421 webhook verifier. Grades `not_applicable` when `webhook_signing` is not configured on runStoryboard options.
+  - `requires_contract` on any webhook-assertion step grades `not_applicable` when the contract id is not listed in `options.contracts` — lets cross-cutting storyboards (e.g. idempotency) reference webhook assertions without forcing every runner to host a receiver.
+
+  **RFC 9421 webhook signing:**
+  - `verifyWebhookSignature` in `@adcp/client/signing/server` — 14-step verifier checklist per `docs/building/implementation/security.mdx#verifier-checklist-for-webhooks`. Tag `adcp/webhook-signing/v1`, mandatory covered components `@method`, `@target-uri`, `@authority`, `content-type`, `content-digest`, key purpose `adcp_use: "webhook-signing"`. Throws `WebhookSignatureError` with a specific `webhook_signature_*` code.
+  - `signWebhook` in `@adcp/client/signing/client` — companion signer for publishers emitting conformant webhooks.
+  - `WEBHOOK_SIGNING_TAG` and `WEBHOOK_MANDATORY_COMPONENTS` constants exported from both sub-barrels.
+
+  **Test coverage:** 25 new tests across `test/lib/storyboard-webhook-receiver.test.js` and `test/lib/storyboard-webhook-signature.test.js` covering per-step routing, retry-replay policy, runner-variable substitution, every expect_webhook\* error code, and a full E2E flow with a signing publisher.
+
+- b4709ad: Regenerated types from latest AdCP schemas. Adds `idempotency_key` (required, string) to webhook payloads — `MCPWebhookPayload`, `ArtifactWebhookPayload`, `CollectionListChangedWebhook`, `PropertyListChangedWebhook` — and renames `RevocationNotification.notification_id` → `idempotency_key`.
+
+  Upstream migrated these surfaces to a single canonical dedup field. Receivers must dedupe by `idempotency_key` scoped to the authenticated sender identity. Publishers populating `RevocationNotification.notification_id` must rename the field.
+
+- 6ec01c6: Regenerated types from latest AdCP schemas.
+  - `CreateMediaBuyResponse` union gains `CreateMediaBuySubmitted` — async task envelope with `status: 'submitted'` and `task_id`, returned when a media buy cannot be confirmed synchronously (IO signing, governance review, batched processing). The `media_buy_id` and `packages` land on the completion artifact, not this envelope.
+  - `PushNotificationConfig.authentication` is now optional and deprecated. Omitting it opts in to the RFC 9421 webhook profile (the default in 4.0); Bearer and HMAC-SHA256 remain for legacy compatibility only.
+  - `RightUse` adds `ai_generated_image`.
+
+  Consumers of `CreateMediaBuyResponse` that exhaustively discriminate on the union must handle the new `'submitted'` branch.
+
+- 078b52c: Publisher-side webhook emission — the symmetric counterpart to PR #629's receiver-side dedup.
+
+  **New `createWebhookEmitter`** in `@adcp/client/server`. One `emit(url, payload, operation_id)` call and the emitter handles:
+  - RFC 9421 signing with a fresh nonce per attempt (adcp#2423).
+  - Stable `idempotency_key` per `operation_id` reused across retries (adcp#2417) — regenerating on retry is the highest-impact at-least-once-delivery bug the runner-side conformance suite catches.
+  - JSON serialized once with compact separators (`,` / `:`, no spaces) and posted byte-identically — the signature-base input and the wire body come from the same bytes, preventing the Python `json.dumps` default-spacing trap pinned by adcp#2478.
+  - Retry with exponential backoff + jitter on 5xx / 429. Terminal on 4xx and on 401 responses carrying `WWW-Authenticate: Signature error="webhook_signature_*"` (retrying a signature failure produces identical bytes and identical rejection).
+  - Pluggable `WebhookIdempotencyKeyStore` (default in-memory) — swap in a durable backend for multi-replica publishers.
+  - HMAC-SHA256 / Bearer fallback modes for legacy buyers that registered `push_notification_config.authentication.credentials`. HMAC path uses the same compact-separators pinning.
+
+  **`createAdcpServer` integration.** New `webhooks?: { signerKey, retries?, idempotencyKeyStore?, ... }` config option. When set, `ctx.emitWebhook` is populated on every handler's context — completion handlers post signed webhooks without constructing the signer, fetching, or tracking idempotency themselves:
+
+  ```ts
+  createAdcpServer({
+    name,
+    version,
+    webhooks: { signerKey: { keyid, alg: 'ed25519', privateKey: jwk } },
+    mediaBuy: {
+      createMediaBuy: async (params, ctx) => {
+        const media_buy_id = await persist(params);
+        await ctx.emitWebhook({
+          url: params.push_notification_config.url,
+          payload: { task: { task_id, status: 'completed', result: { media_buy_id } } },
+          operation_id: `create_media_buy.${media_buy_id}`,
+        });
+        return { media_buy_id, packages: [] };
+      },
+    },
+  });
+  ```
+
+  **Full-stack E2E test.** `test/lib/webhook-emitter-server-e2e.test.js`: `createAdcpServer` with a real handler → `ctx.emitWebhook` → real HTTP POST → receiver captures → `verifyWebhookSignature` accepts. No mocks on the signer or verifier path. Closes the "we haven't spun up an actual server and watched the full stack verify" gap flagged during PR #631 review.
+
+  **Exports** from `@adcp/client/server`:
+  - `createWebhookEmitter`, `memoryWebhookKeyStore`
+  - Types: `WebhookEmitter`, `WebhookEmitterOptions`, `WebhookEmitParams`, `WebhookEmitResult`, `WebhookEmitAttempt`, `WebhookEmitAttemptResult`, `WebhookIdempotencyKeyStore`, `WebhookRetryOptions`, `WebhookAuthentication`
+  - `HandlerContext.emitWebhook` — new optional field, populated when `webhooks` config is set.
+
+- 7b76326: Webhook receiver-side deduplication via `AsyncHandlerConfig.webhookDedup`.
+
+  AdCP webhooks use at-least-once delivery — publishers retry until they see a 2xx, so the same event can arrive more than once. The spec now requires an `idempotency_key` on every MCP, governance, artifact, and revocation webhook payload so receivers have a canonical dedup field. This release plumbs that key through the client pipeline and ships a drop-in dedup layer for the MCP envelope path.
+
+  **New**
+  - `AsyncHandlerConfig.webhookDedup?: { backend: IdempotencyBackend; ttlSeconds?: number }` — drop duplicate deliveries with a single config. Reuses `IdempotencyBackend` from `@adcp/client/server`, so the same `memoryBackend()` or `pgBackend(...)` used for request-side idempotency can back webhook dedup. Defaults to 24h retention.
+  - `WebhookMetadata.idempotency_key?: string` — extracted from the MCP envelope and passed to every `onXxxStatusChange` handler so application code can log, trace, or build its own dedup on top.
+  - `WebhookMetadata.protocol?: 'mcp' | 'a2a'` — transport that delivered the webhook; useful for handler code that branches on protocol (A2A lacks `idempotency_key`).
+  - `Activity` union gains `'webhook_duplicate'` — surfaced via `onActivity` when a repeat key is dropped. The typed handler is NOT called for duplicates.
+  - `Activity.idempotency_key?: string` — surfaced on both `webhook_received` and `webhook_duplicate` for correlation.
+
+  **Type changes (strict-TS callers may need to update)**
+  - The `Activity.type` union gains `'webhook_duplicate'`. TypeScript users doing exhaustive `switch (activity.type)` with a `never`-check will see a new missing-case error. Treat `webhook_duplicate` the same as `webhook_received` in `onActivity` logging, or branch on `activity.type` to suppress side effects for duplicates.
+
+  **Behavior**
+  - Scope is per-agent under a reserved prefix (`adcp\u001fwebhook\u001fv1\u001f{agent_id}\u001f{idempotency_key}`) — keys from different senders are independent, and the prefix guarantees no collision with request-side idempotency entries when sharing a backend.
+  - `putIfAbsent` closes the concurrent-retry race: when two retries race on the same fresh key, exactly one wins the claim and dispatches; the rest surface as `webhook_duplicate`.
+  - MCP payloads missing or violating the `idempotency_key` format (`^[A-Za-z0-9_.:-]{16,255}$`) dispatch without dedup and log a `console.warn` with the spec pattern and a docs pointer. A2A payloads (which do not carry the field) dispatch silently — the absence is expected and unactionable.
+  - Handler exceptions inside the dispatched handler are caught and logged as today; the dedup claim is intentionally NOT released on handler error. This preserves at-most-once handler execution: the publisher sees 2xx once (because `handleWebhook` returns normally) and won't retry, so releasing the claim would only matter on a future unrelated retry of the same key, which is never expected.
+
+  **Schema sync**
+  - `MCPWebhookPayload`, `CollectionListChangedWebhook`, `PropertyListChangedWebhook`, `ArtifactWebhookPayload`, and `RevocationNotification` now include `idempotency_key` as a required field (picked up from AdCP `latest`).
+
+  **Example**
+
+  ```typescript
+  import { AdCPClient } from '@adcp/client';
+  import { memoryBackend } from '@adcp/client/server';
+
+  const client = new AdCPClient(agents, {
+    webhookUrlTemplate: 'https://your-app.com/adcp/webhook/{task_type}/{agent_id}/{operation_id}',
+    webhookSecret: process.env.WEBHOOK_SECRET,
+    handlers: {
+      webhookDedup: { backend: memoryBackend() },
+      onCreateMediaBuyStatusChange: async (result, metadata) => {
+        // First delivery runs here; publisher retries are dropped.
+      },
+    },
+  });
+  ```
+
+  Governance list-change / artifact / brand-rights revocation webhooks are not yet routed through `AsyncHandler`; dedup for those payload types is a follow-up.
+
+- 2756df6: Close the webhook-signing conformance gap after adcontextprotocol/adcp#2445 merged canonical test vectors.
+
+  **Error enum aligned with merged spec.** The webhook-signature error taxonomy (`security.mdx#webhook-callbacks`) folds every window-level failure into a single `webhook_signature_window_invalid` code — `webhook_signature_expired` isn't in the enum. Drops our stray `_expired` code; adds `webhook_signature_rate_abuse` (per-keyid cap exceeded, step 9a) and `webhook_signature_revocation_stale` (revocation list past grace). Verifier step numbers realigned to the canonical 1–13 + 9a.
+
+  **Parser now enforces the single-alphabet rule.** RFC 9421 `Signature` / `Content-Digest` tokens that mix base64url (`[-_]`) with standard-base64 (`[+/=]`) are ambiguous and the spec mandates rejection with `*_header_malformed`. Both verifiers inherit the fix.
+
+  **Storyboard error enum** extended in lockstep: `signature_window_invalid` replaces `signature_expired`, plus `signature_rate_abuse`, `signature_revocation_stale`, `signature_alg_not_allowed`, `signature_components_incomplete`, `signature_header_malformed`, `signature_params_incomplete`. Exhaustive mapping catches new verifier codes at compile time.
+
+  **Conformance harness.** Vendored the 7 positive + 21 negative vectors from adcontextprotocol/adcp under `test/fixtures/webhook-signing-vectors/` (AdCP tarball hasn't re-released yet; swap to `compliance/cache/...` on the next sync). Every vector runs through `verifyWebhookSignature` — passing vectors verify cleanly, negative vectors throw with byte-matching error codes. State-dependent vectors (replay, revocation, rate-abuse, revocation-stale) install their `test_harness_state` into fresh stores per vector. 2 positive vectors (`004-default-port-stripped`, `005-percent-encoded-path`) are skipped pending an upstream regeneration — their baked signatures contradict the request-signing canonicalization rules the webhook spec inherits.
+
+### Patch Changes
+
+- c94935b: `build-seller-agent` SKILL.md — document two more Common Mistakes surfaced by real seller-agent builds: (1) placing the IO-signing `setup` URL at the top level of a media buy response instead of nesting it under `account.setup` (response builders now reject this at runtime), and (2) bypassing response builders and forgetting `valid_actions` — `mediaBuyResponse` and `updateMediaBuyResponse` auto-populate it from `status`; `get_media_buys` callers should use `validActionsForStatus()` per buy.
+- 3c293ae: Skill docs: specialism coverage tables, composition guide, AdCP 3.0 GA alignment.
+
+  Every `build-*-agent/SKILL.md` now maps specialism IDs to concrete per-specialism deltas, with archetype splits where the contracts diverge (creative: ad-server / template / generative). Root `CLAUDE.md` gets the inverse specialism → skill index.
+
+  Seller skill picks up:
+  - Protocol-Wide Requirements: `idempotency_key` via `createIdempotencyStore`, mandatory auth pointer, signature-header transparency.
+  - Composing OAuth + signing + idempotency: real `serve({ authenticate, preTransport })` wiring, `verifyBearer` from `@adcp/client/server`, low-level `verifyRequestSignature` (preTransport-shaped; not `createExpressVerifier` which is Express-shaped), `resolveIdempotencyPrincipal` threading from `ctx.authInfo.clientId` + multi-tenant composition.
+  - Per-specialism sections for `sales-guaranteed` (A2A task envelope for IO approval), `sales-non-guaranteed` (bid_price + update_media_buy), `sales-broadcast-tv`, `sales-social`, `sales-proposal-mode`, `audience-sync`, `signed-requests`.
+
+  Governance skill: Plan shape updated to `budget.reallocation_threshold` / `reallocation_unlimited` + `human_review_required` (no more `authority_level`), `content_standards.policies[]` as structured array with per-entry `enforcement`, `validate_content_delivery.artifact.assets` as array, `property-lists` / `collection-lists` (new) / `content-standards` specialism sections. Governance status enum is approved | denied | conditions — approved-with-conditions is `status: 'conditions'`, not an approved + conditions array.
+
+  Signals skill: async platform-activation pattern, value-type constraints, deployed_at.
+
+  Brand-rights skill: schema-accurate `logos[].background` (dark-bg/light-bg/transparent-bg), `tone.voice` nesting, `terms` with required pricing_option_id/amount/currency/uses, `rights_constraint` with required `rights_agent`, `approval_webhook` credentials minLength 32, `available_uses` using spec-valid enum values.
+
+  Retail-media skill: scope note (catalog-driven ≠ retail-only).
+
+  Validated via five rounds of fresh-builder tests against the skills + one end-to-end test with the storyboard runner. Median build confidence climbed from 3/5 (round 1) to 4-5/5 (round 5). End-to-end runs surfaced three upstream spec/runner bugs now tracked in adcontextprotocol/adcp#2418, adcontextprotocol/adcp#2420, and adcontextprotocol/adcp-client#625.
+
+- 5d81fe9: Generator: typeless JSON Schema properties now emit `unknown` instead of `Record<string, unknown>`.
+
+  JSON Schema properties declared with only a `description` (no `type`, `$ref`, combinator, enum, or structural keyword) are defined by the spec to accept any JSON value — scalar or object. `json-schema-to-typescript` defaults these to `{ [k: string]: unknown }`, which downstream Zod generation then narrowed to `z.record(z.string(), z.unknown())`. That schema rejected scalar values the spec legitimately allows, e.g. a number returned for `check_governance` `conditions[].required_value`.
+
+  `enforceStrictSchema` in `scripts/generate-types.ts` now annotates schema nodes whose keys are all metadata-only (`description`, `title`, `$comment`, `examples`, `default`, `deprecated`, `readOnly`, `writeOnly`, `$id`, `$anchor`, `$schema`) with `tsType: 'unknown'` before handing them to `json-schema-to-typescript`, so the emitted TS is `unknown` and the Zod mirror is `z.unknown()`. Validation-only keywords like `required` (common in `anyOf` branches on request schemas) are not metadata, so constraints still compose. The recursion now also reaches `patternProperties`, schema-valued `additionalProperties`, `not`, `if`/`then`/`else`, `contains`, `propertyNames`, `unevaluatedItems`/`unevaluatedProperties`, and schema-valued `dependencies`/`dependentSchemas`.
+
+  Side fix: `removeNumberedTypeDuplicates` now iterates passes (up to 10) until no further collapses occur. Nested numbered references (e.g. `CatalogFieldMapping2` references `ExtensionObject32`) previously caused the outer duplicate to fail body comparison and stay in the output; they now collapse once the inner reference resolves on an earlier pass.
+
+  Regenerated affected types in `src/lib/types/*.generated.ts`. Notable corrections:
+  - `CheckGovernanceResponse.conditions[].required_value`: `Record<string, unknown>` → `unknown`.
+  - `CatalogFieldMapping.value` / `.default`: `Record<string, unknown>` → `unknown`.
+  - `Response.data`: `Record<string, unknown>` → `unknown`.
+
+  If you narrowed one of these fields with `as Record<string, unknown>`, replace with a value-shape assertion appropriate to the spec.
+
 ## 5.1.0
 
 ### Minor Changes

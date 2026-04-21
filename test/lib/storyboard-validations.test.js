@@ -16,6 +16,70 @@ function runOne(validations, taskName, taskResult) {
 }
 
 describe('validateErrorCode', () => {
+  it('reads spec-canonical code from data.errors[0].code', () => {
+    const taskResult = {
+      success: false,
+      data: {
+        errors: [{ code: 'BUDGET_TOO_LOW', message: 'Minimum spend is $100' }],
+        context: { request_id: 'abc' },
+      },
+      error: 'BUDGET_TOO_LOW: Minimum spend is $100',
+    };
+    const [result] = runOne([errorCodeValidation('BUDGET_TOO_LOW')], 'create_media_buy', taskResult);
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.json_pointer, '/errors/0/code');
+  });
+
+  it('prefers data.errors[0].code over legacy adcp_error.code', () => {
+    const taskResult = {
+      success: false,
+      data: {
+        errors: [{ code: 'INVALID_REQUEST', message: 'bad input' }],
+        adcp_error: { code: 'LEGACY_CODE' },
+      },
+      error: 'INVALID_REQUEST: bad input',
+    };
+    const [result] = runOne([errorCodeValidation('INVALID_REQUEST')], 'create_media_buy', taskResult);
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.json_pointer, '/errors/0/code');
+  });
+
+  it('ignores advisory errors[0].code on a successful task (submitted/input-required envelopes)', () => {
+    // AdCP permits an advisory `errors` array on non-failed async envelopes
+    // (e.g., `create_media_buy` submitted with non-blocking warnings). A
+    // `error_code` validation should not false-positive on these.
+    const taskResult = {
+      success: true,
+      data: {
+        media_buy_id: 'mb_123',
+        status: 'submitted',
+        errors: [{ code: 'WARN_RATE_LIMITED', message: 'slow response' }],
+      },
+      error: undefined,
+    };
+    const [result] = runOne([errorCodeValidation('WARN_RATE_LIMITED')], 'create_media_buy', taskResult);
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.json_pointer, null);
+  });
+
+  it('handles empty errors[] and non-object entries without throwing', () => {
+    const taskResult = {
+      success: false,
+      data: { errors: [] },
+      error: 'VALIDATION_ERROR: bad request',
+    };
+    const [result] = runOne([errorCodeValidation('VALIDATION_ERROR')], 'create_media_buy', taskResult);
+    assert.strictEqual(result.passed, true, result.error);
+
+    const stringEntry = {
+      success: false,
+      data: { errors: ['not an object'] },
+      error: 'VALIDATION_ERROR: bad',
+    };
+    const [r2] = runOne([errorCodeValidation('VALIDATION_ERROR')], 'create_media_buy', stringEntry);
+    assert.strictEqual(r2.passed, true, r2.error);
+  });
+
   it('reads L3 structured code from data.adcp_error.code', () => {
     const taskResult = {
       success: false,

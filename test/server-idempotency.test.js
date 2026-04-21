@@ -5,10 +5,10 @@ const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 
 async function callTool(server, toolName, params) {
-  const tool = server._registeredTools[toolName];
-  if (!tool) throw new Error(`Tool "${toolName}" not registered`);
-  const extra = { signal: new AbortController().signal };
-  const raw = await tool.handler(params, extra);
+  const raw = await server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: toolName, arguments: params ?? {} },
+  });
   return raw.structuredContent;
 }
 

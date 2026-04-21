@@ -1,12 +1,18 @@
 const { describe, it, mock } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
+const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { adcpError } = require('../dist/lib/server/errors');
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
+//
+// Tool invocations go through AdcpServer.dispatchTestRequest — the same
+// public surface downstream consumers use. Tool enumeration reaches into
+// the internal SDK handle (package-private) since there's no public
+// synchronous equivalent and this file is inside our own package.
 
 async function callTool(server, toolName, params) {
   const raw = await callToolRaw(server, toolName, params);
@@ -14,14 +20,22 @@ async function callTool(server, toolName, params) {
 }
 
 async function callToolRaw(server, toolName, params) {
-  const tool = server._registeredTools[toolName];
-  if (!tool) throw new Error(`Tool "${toolName}" not registered`);
-  const extra = { signal: new AbortController().signal };
-  return tool.handler(params, extra);
+  return server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: toolName, arguments: params ?? {} },
+  });
 }
 
 function registeredTools(server) {
-  return Object.keys(server._registeredTools);
+  const sdk = getSdkServer(server);
+  if (!sdk) throw new Error('registeredTools: value is not an AdcpServer');
+  return Object.keys(sdk._registeredTools);
+}
+
+function registeredTool(server, toolName) {
+  const sdk = getSdkServer(server);
+  if (!sdk) throw new Error('registeredTool: value is not an AdcpServer');
+  return sdk._registeredTools[toolName];
 }
 
 // ---------------------------------------------------------------------------
@@ -29,9 +43,54 @@ function registeredTools(server) {
 // ---------------------------------------------------------------------------
 
 describe('createAdcpServer', () => {
-  it('returns an McpServer with .tool() method', () => {
+  it('returns an AdcpServer with connect / close / dispatchTestRequest', () => {
     const server = createAdcpServer({ name: 'Test', version: '1.0.0' });
-    assert.strictEqual(typeof server.tool, 'function');
+    assert.strictEqual(typeof server.connect, 'function');
+    assert.strictEqual(typeof server.close, 'function');
+    assert.strictEqual(typeof server.dispatchTestRequest, 'function');
+  });
+
+  it('wraps an SDK McpServer reachable via getSdkServer', () => {
+    const server = createAdcpServer({ name: 'Test', version: '1.0.0' });
+    const sdk = getSdkServer(server);
+    assert.ok(sdk, 'getSdkServer should return the underlying McpServer');
+    assert.strictEqual(typeof sdk.connect, 'function');
+    // Private SDK field we rely on for test dispatch — lock in the contract
+    // so a SDK bump that renames it trips this test.
+    assert.strictEqual(typeof sdk._registeredTools, 'object');
+  });
+
+  it('dispatchTestRequest routes tools/call through the registered handler', async () => {
+    let sawParams;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getProducts: async params => {
+          sawParams = params;
+          return { products: [] };
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { brief: 'premium' } },
+    });
+    assert.deepStrictEqual(sawParams, { brief: 'premium' });
+    assert.ok(result.content, 'CallToolResult should carry content');
+    assert.ok(result.structuredContent, 'CallToolResult should carry structuredContent');
+  });
+
+  it('dispatchTestRequest throws for unknown tools and methods', async () => {
+    const server = createAdcpServer({ name: 'Test', version: '1.0.0' });
+    await assert.rejects(
+      () => server.dispatchTestRequest({ method: 'tools/call', params: { name: 'nope' } }),
+      /tool "nope" is not registered/
+    );
+    await assert.rejects(
+      () => server.dispatchTestRequest({ method: 'made/up' }),
+      /no handler registered for method "made\/up"/
+    );
   });
 
   describe('domain grouping', () => {
@@ -121,6 +180,73 @@ describe('createAdcpServer', () => {
       // Should not throw — second registration is silently skipped
       const count = registeredTools(server).filter(t => t === 'list_creative_formats').length;
       assert.strictEqual(count, 1);
+    });
+  });
+
+  describe('customTools', () => {
+    const { z } = require('zod');
+
+    it('registers a custom tool the handler dispatches through dispatchTestRequest', async () => {
+      let seenArgs;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        customTools: {
+          creative_approval: {
+            description: 'Approve or reject a creative out-of-band.',
+            inputSchema: { creative_id: z.string(), approved: z.boolean() },
+            handler: async ({ creative_id, approved }) => {
+              seenArgs = { creative_id, approved };
+              return {
+                content: [{ type: 'text', text: `creative ${creative_id} ${approved ? 'approved' : 'rejected'}` }],
+                structuredContent: { creative_id, approved },
+              };
+            },
+          },
+        },
+      });
+      assert.ok(registeredTools(server).includes('creative_approval'));
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'creative_approval', arguments: { creative_id: 'cr_1', approved: true } },
+      });
+      assert.deepStrictEqual(seenArgs, { creative_id: 'cr_1', approved: true });
+      assert.deepStrictEqual(result.structuredContent, { creative_id: 'cr_1', approved: true });
+    });
+
+    it('refuses customTools that collide with a framework-registered tool', () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            mediaBuy: { getProducts: async () => ({ products: [] }) },
+            customTools: {
+              get_products: {
+                description: 'Shadows the spec handler — should throw.',
+                handler: async () => ({ content: [{ type: 'text', text: 'shadow' }] }),
+              },
+            },
+          }),
+        /customTools\["get_products"\] collides with a framework-registered tool/
+      );
+    });
+
+    it('refuses customTools["get_adcp_capabilities"]', () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            customTools: {
+              get_adcp_capabilities: {
+                description: 'Framework owns this one.',
+                handler: async () => ({ content: [{ type: 'text', text: 'override' }] }),
+              },
+            },
+          }),
+        /customTools\["get_adcp_capabilities"\] is not allowed/
+      );
     });
   });
 
@@ -716,7 +842,7 @@ describe('createAdcpServer', () => {
           getProducts: async () => ({ products: [] }),
         },
       });
-      const tool = server._registeredTools['get_products'];
+      const tool = registeredTool(server, 'get_products');
       assert.strictEqual(tool.annotations.readOnlyHint, true);
     });
 
@@ -729,7 +855,7 @@ describe('createAdcpServer', () => {
           createMediaBuy: async () => ({ media_buy_id: 'mb1', packages: [] }),
         },
       });
-      const tool = server._registeredTools['create_media_buy'];
+      const tool = registeredTool(server, 'create_media_buy');
       assert.strictEqual(tool.annotations.readOnlyHint, false);
       assert.strictEqual(tool.annotations.destructiveHint, false);
     });
@@ -742,7 +868,7 @@ describe('createAdcpServer', () => {
           deletePropertyList: async () => ({ deleted: true }),
         },
       });
-      const tool = server._registeredTools['delete_property_list'];
+      const tool = registeredTool(server, 'delete_property_list');
       assert.strictEqual(tool.annotations.destructiveHint, true);
     });
 
@@ -754,7 +880,7 @@ describe('createAdcpServer', () => {
           syncCreatives: async () => ({ creatives: [] }),
         },
       });
-      const tool = server._registeredTools['sync_creatives'];
+      const tool = registeredTool(server, 'sync_creatives');
       assert.strictEqual(tool.annotations.idempotentHint, true);
     });
   });

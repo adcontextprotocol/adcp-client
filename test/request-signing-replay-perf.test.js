@@ -26,17 +26,18 @@ function timeBatch(fn, iterations) {
 test('InMemoryReplayStore: has() stays sub-linear as entries-per-keyid grows', () => {
   const now = 1_000_000;
   const keyid = 'hotkey';
+  const scope = 'https://seller.example.com/adcp/create_media_buy';
   const ttl = 300;
 
   const smallStore = new InMemoryReplayStore({ maxEntriesPerKeyid: 1_000_000 });
-  for (let i = 0; i < 1_000; i++) smallStore.preload(keyid, `nonce-s-${i}`, ttl, now);
+  for (let i = 0; i < 1_000; i++) smallStore.preload(keyid, scope, `nonce-s-${i}`, ttl, now);
 
   const bigStore = new InMemoryReplayStore({ maxEntriesPerKeyid: 1_000_000 });
-  for (let i = 0; i < 50_000; i++) bigStore.preload(keyid, `nonce-b-${i}`, ttl, now);
+  for (let i = 0; i < 50_000; i++) bigStore.preload(keyid, scope, `nonce-b-${i}`, ttl, now);
 
   // has() at now+10 — well within the window, so no bucket eviction runs.
-  const smallNs = timeBatch(i => smallStore.has(keyid, `nonce-s-${i % 1_000}`, now + 10), 10_000);
-  const bigNs = timeBatch(i => bigStore.has(keyid, `nonce-b-${i % 50_000}`, now + 10), 10_000);
+  const smallNs = timeBatch(i => smallStore.has(keyid, scope, `nonce-s-${i % 1_000}`, now + 10), 10_000);
+  const bigNs = timeBatch(i => bigStore.has(keyid, scope, `nonce-b-${i % 50_000}`, now + 10), 10_000);
 
   // 50x more entries → at most 4x per-op latency. Linear behaviour would be
   // ~50x. The fudge factor absorbs GC + measurement jitter on CI.
@@ -49,18 +50,19 @@ test('InMemoryReplayStore: has() stays sub-linear as entries-per-keyid grows', (
 
 test('InMemoryReplayStore: insert() stays sub-linear as entries-per-keyid grows', () => {
   const now = 1_000_000;
+  const scope = 'https://seller.example.com/adcp/create_media_buy';
   const ttl = 300;
 
   const smallStore = new InMemoryReplayStore({ maxEntriesPerKeyid: 10_000_000 });
-  for (let i = 0; i < 1_000; i++) smallStore.preload('k1', `seed-s-${i}`, ttl, now);
+  for (let i = 0; i < 1_000; i++) smallStore.preload('k1', scope, `seed-s-${i}`, ttl, now);
 
   const bigStore = new InMemoryReplayStore({ maxEntriesPerKeyid: 10_000_000 });
-  for (let i = 0; i < 50_000; i++) bigStore.preload('k1', `seed-b-${i}`, ttl, now);
+  for (let i = 0; i < 50_000; i++) bigStore.preload('k1', scope, `seed-b-${i}`, ttl, now);
 
   let sCounter = 0;
-  const smallNs = timeBatch(() => smallStore.insert('k1', `fresh-s-${sCounter++}`, ttl, now + 10), 2_000);
+  const smallNs = timeBatch(() => smallStore.insert('k1', scope, `fresh-s-${sCounter++}`, ttl, now + 10), 2_000);
   let bCounter = 0;
-  const bigNs = timeBatch(() => bigStore.insert('k1', `fresh-b-${bCounter++}`, ttl, now + 10), 2_000);
+  const bigNs = timeBatch(() => bigStore.insert('k1', scope, `fresh-b-${bCounter++}`, ttl, now + 10), 2_000);
 
   const ratio = bigNs / smallNs;
   assert.ok(
@@ -72,13 +74,14 @@ test('InMemoryReplayStore: insert() stays sub-linear as entries-per-keyid grows'
 test('InMemoryReplayStore: bucket eviction releases memory when entries expire', async () => {
   const store = new InMemoryReplayStore({ maxEntriesPerKeyid: 1_000_000, bucketSizeSeconds: 60 });
   const keyid = 'k1';
+  const scope = 'https://seller.example.com/adcp/create_media_buy';
 
   // Insert 10k entries that all expire at now+60 (single bucket).
-  for (let i = 0; i < 10_000; i++) store.preload(keyid, `old-${i}`, 60, 1_000_000);
-  assert.strictEqual(await store.isCapHit(keyid, 1_000_000), false);
-  assert.strictEqual(await store.has(keyid, 'old-0', 1_000_059), true);
+  for (let i = 0; i < 10_000; i++) store.preload(keyid, scope, `old-${i}`, 60, 1_000_000);
+  assert.strictEqual(await store.isCapHit(keyid, scope, 1_000_000), false);
+  assert.strictEqual(await store.has(keyid, scope, 'old-0', 1_000_059), true);
 
   // Advance past the bucket's latest expiry. The next call prunes the whole
   // bucket; old-0 must be gone.
-  assert.strictEqual(await store.has(keyid, 'old-0', 1_000_121), false);
+  assert.strictEqual(await store.has(keyid, scope, 'old-0', 1_000_121), false);
 });

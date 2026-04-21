@@ -16,10 +16,11 @@ import type {
   RunnerRequestRecord,
   RunnerResponseRecord,
   SchemaValidationError,
+  StoryboardContext,
   StoryboardValidation,
   ValidationResult,
 } from './types';
-import { resolvePath, toJsonPointer } from './path';
+import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
 /**
@@ -44,6 +45,12 @@ export interface ValidationContext {
   request?: RunnerRequestRecord;
   /** Exact response observed — echoed on failed validations. */
   response?: RunnerResponseRecord;
+  /**
+   * Accumulated storyboard context from prior steps. Exposed to cross-step
+   * checks (`refs_resolve`) that need to reference values extracted earlier
+   * in the run. Single-step checks ignore it.
+   */
+  storyboardContext?: StoryboardContext;
 }
 
 /**
@@ -91,6 +98,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return requireHttpResult(ctx, validation, hr => validateResourceEqualsAgentUrl(validation, hr, ctx.agentUrl));
     case 'any_of':
       return validateAnyOf(validation, ctx.contributions);
+    case 'refs_resolve':
+      return validateRefsResolve(validation, ctx);
     default:
       return {
         check: validation.check,
@@ -449,11 +458,24 @@ function extractCodeFromErrorString(raw: string | undefined): string | undefined
 
 function validateErrorCode(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   // Extract error code from various locations agents might put it.
-  // Prefer the L3 structured path (data.adcp_error.code) so we get a bare code
-  // instead of the "CODE: message" string materialized on taskResult.error.
+  // Prefer the spec-canonical `errors[0].code` envelope (core/error.json), then
+  // fall back to legacy/structured locations so we get a bare code instead of
+  // the "CODE: message" string materialized on taskResult.error.
+  //
+  // Guarded by `success === false` because AdCP async envelopes (`submitted`,
+  // `input-required`) explicitly permit an advisory `errors[]` on non-failed
+  // tasks for non-blocking warnings — reading it unconditionally would
+  // false-positive `error_code` validations on successful responses.
   const data = taskResult.data as Record<string, unknown> | undefined;
+  const errors = data?.errors;
+  const firstError = !taskResult.success && Array.isArray(errors) ? errors[0] : undefined;
+  const firstErrorCode =
+    firstError && typeof firstError === 'object' && typeof (firstError as Record<string, unknown>).code === 'string'
+      ? ((firstError as Record<string, unknown>).code as string)
+      : undefined;
   const adcpError = data?.adcp_error as Record<string, unknown> | undefined;
   const errorCode =
+    firstErrorCode ??
     adcpError?.code ??
     data?.error_code ??
     data?.code ??
@@ -461,7 +483,13 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
     extractCodeFromErrorString(taskResult.error);
 
   const pointer =
-    adcpError?.code !== undefined ? '/adcp_error/code' : data?.error_code !== undefined ? '/error_code' : null;
+    firstErrorCode !== undefined
+      ? '/errors/0/code'
+      : adcpError?.code !== undefined
+        ? '/adcp_error/code'
+        : data?.error_code !== undefined
+          ? '/error_code'
+          : null;
 
   if (validation.allowed_values?.length) {
     const actualCode = errorCode !== undefined && errorCode !== null ? String(errorCode) : undefined;
@@ -752,6 +780,193 @@ function validateAnyOf(validation: StoryboardValidation, contributions: Set<stri
     expected: flags,
     actual: Array.from(contributions),
   };
+}
+
+// ────────────────────────────────────────────────────────────
+// refs_resolve (cross-step integrity check)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Assert every ref in a source set resolves to a member of a target set.
+ *
+ * Used by `media_buy_seller` to check that every `format_id` returned on
+ * `get_products` products actually resolves to a format in the subsequent
+ * `list_creative_formats` response — catches invalid references before
+ * `sync_creatives` fails at runtime.
+ *
+ * `scope` lets the check distinguish refs the agent under test owns
+ * (`agent_url` matches) from third-party refs (pointing at a different
+ * creative agent). Third-party refs can't be verified without calling
+ * that agent's `list_creative_formats`, so `on_out_of_scope` controls
+ * whether they pass (`warn` with observations, `ignore` silently) or
+ * fail.
+ */
+function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const source = validation.source;
+  const target = validation.target;
+  const matchKeys = validation.match_keys;
+
+  if (!source || !target || !matchKeys?.length) {
+    return {
+      check: 'refs_resolve',
+      passed: false,
+      description: validation.description,
+      error: '`source`, `target`, and `match_keys` are all required for refs_resolve.',
+      json_pointer: null,
+      expected: '{ source, target, match_keys }',
+      actual: {
+        source: source ?? null,
+        target: target ?? null,
+        match_keys: matchKeys ?? null,
+      },
+    };
+  }
+
+  const sourceRoot = resolveRefsRoot(source.from, ctx);
+  const targetRoot = resolveRefsRoot(target.from, ctx);
+  const sourceRaw = resolvePathAll(sourceRoot, source.path);
+  const targetRaw = resolvePathAll(targetRoot, target.path);
+  const sourceRefs = sourceRaw.filter(isRefObject);
+  const targetRefs = targetRaw.filter(isRefObject);
+
+  const scalarObservations: Array<{ kind: string; side: 'source' | 'target'; count: number }> = [];
+  if (sourceRaw.length > 0 && sourceRefs.length === 0) {
+    scalarObservations.push({ kind: 'non_object_values_filtered', side: 'source', count: sourceRaw.length });
+  }
+  if (targetRaw.length > 0 && targetRefs.length === 0) {
+    scalarObservations.push({ kind: 'non_object_values_filtered', side: 'target', count: targetRaw.length });
+  }
+
+  const scope = validation.scope;
+  const outOfScopeMode = validation.on_out_of_scope ?? 'warn';
+  const scopeEquals = scope ? resolveScopeEquals(scope.equals, scope.key, ctx.agentUrl) : undefined;
+
+  const inScope: Array<Record<string, unknown>> = [];
+  const outOfScope: Array<Record<string, unknown>> = [];
+
+  for (const ref of sourceRefs) {
+    if (!scope) {
+      inScope.push(ref);
+      continue;
+    }
+    const refValue = ref[scope.key];
+    const normalized = normalizeIfUrlKey(refValue, scope.key);
+    if (scopeEquals !== undefined && normalized === scopeEquals) {
+      inScope.push(ref);
+    } else {
+      outOfScope.push(ref);
+    }
+  }
+
+  const missing = dedupRefs(
+    inScope.filter(s => !targetRefs.some(t => refsMatch(s, t, matchKeys))),
+    matchKeys
+  );
+
+  // `fail` mode promotes out-of-scope refs into the missing set so compliance
+  // reports name them the same way they name truly broken refs.
+  const failOutOfScope = outOfScopeMode === 'fail' ? dedupRefs(outOfScope, matchKeys) : [];
+  const allMissing = [...missing, ...failOutOfScope];
+
+  const warnObservations =
+    outOfScopeMode === 'warn' && outOfScope.length > 0
+      ? dedupRefs(outOfScope, matchKeys).map(ref => ({ kind: 'out_of_scope_ref', ref: projectRef(ref, matchKeys) }))
+      : [];
+  const observations =
+    warnObservations.length + scalarObservations.length > 0 ? [...warnObservations, ...scalarObservations] : undefined;
+
+  if (allMissing.length === 0) {
+    return {
+      check: 'refs_resolve',
+      passed: true,
+      description: validation.description,
+      ...(observations && { observations }),
+    };
+  }
+
+  const preview = allMissing
+    .slice(0, 3)
+    .map(r => JSON.stringify(projectRef(r, matchKeys)))
+    .join(', ');
+  const errorMsg =
+    allMissing.length > 3
+      ? `${allMissing.length} ref(s) did not resolve; first 3: ${preview}`
+      : `${allMissing.length} ref(s) did not resolve: ${preview}`;
+
+  return {
+    check: 'refs_resolve',
+    passed: false,
+    description: validation.description,
+    path: source.path,
+    error: errorMsg,
+    json_pointer: null,
+    expected: `every source ref resolves to a target ref matched on [${matchKeys.join(', ')}]`,
+    actual: {
+      missing: allMissing.map(r => projectRef(r, matchKeys)),
+      ...(failOutOfScope.length > 0 && {
+        out_of_scope_failed: failOutOfScope.map(r => projectRef(r, matchKeys)),
+      }),
+    },
+    ...(observations && { observations }),
+  };
+}
+
+function resolveRefsRoot(from: 'current_step' | 'context', ctx: ValidationContext): unknown {
+  if (from === 'context') return ctx.storyboardContext ?? {};
+  if (ctx.taskResult) return ctx.taskResult.data;
+  if (ctx.httpResult) return ctx.httpResult.body;
+  return undefined;
+}
+
+function resolveScopeEquals(equals: string, key: string, agentUrl: string): string {
+  const raw = equals === '$agent_url' ? agentUrl : equals;
+  return key.toLowerCase().endsWith('url') ? normalizeAgentUrl(raw) : raw;
+}
+
+function normalizeIfUrlKey(value: unknown, key: string): unknown {
+  return typeof value === 'string' && key.toLowerCase().endsWith('url') ? normalizeAgentUrl(value) : value;
+}
+
+function isRefObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function refsMatch(a: Record<string, unknown>, b: Record<string, unknown>, keys: string[]): boolean {
+  for (const key of keys) {
+    const av = a[key];
+    const bv = b[key];
+    // Missing match-key on either side is NOT a match — agents that omit a
+    // key shouldn't fuzzy-match other agents that also happen to omit it.
+    if (av === undefined || bv === undefined) return false;
+    // URL-ish fields get trailing-slash / case normalization so declared
+    // and probed URLs compare equal even when one side includes a trailing
+    // "/". `format_id` fields are exact-compare.
+    const normA = normalizeIfUrlKey(av, key);
+    const normB = normalizeIfUrlKey(bv, key);
+    if (normA !== normB) return false;
+  }
+  return true;
+}
+
+function projectRef(ref: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key in ref) out[key] = ref[key];
+  }
+  return out;
+}
+
+/**
+ * Deduplicate refs by their projected match-key tuple so a single broken
+ * reference in a 50-product response doesn't show up 50× in `actual.missing`.
+ */
+function dedupRefs(refs: Array<Record<string, unknown>>, keys: string[]): Array<Record<string, unknown>> {
+  const seen = new Map<string, Record<string, unknown>>();
+  for (const ref of refs) {
+    const k = JSON.stringify(projectRef(ref, keys));
+    if (!seen.has(k)) seen.set(k, ref);
+  }
+  return Array.from(seen.values());
 }
 
 // resolvePath re-exported from ./path for backwards compat

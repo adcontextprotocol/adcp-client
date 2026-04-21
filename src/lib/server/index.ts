@@ -75,13 +75,23 @@ export type {
 export { serve } from './serve';
 export type { ServeContext, ServeOptions, ProtectedResourceMetadata } from './serve';
 
+export { createExpressAdapter } from './express-adapter';
+export type { ExpressAdapter, ExpressAdapterOptions } from './express-adapter';
+
 export {
   verifyApiKey,
   verifyBearer,
   anyOf,
   extractBearerToken,
   respondUnauthorized,
+  signatureErrorCodeFromCause,
   AuthError,
+  AUTH_NEEDS_RAW_BODY,
+  tagAuthenticatorNeedsRawBody,
+  authenticatorNeedsRawBody,
+  AUTH_PRESENCE_GATED,
+  tagAuthenticatorPresenceGated,
+  isAuthenticatorPresenceGated,
   DEFAULT_JWT_ALGORITHMS,
   DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
 } from './auth';
@@ -93,6 +103,17 @@ export type {
   VerifyBearerOptions,
   RespondUnauthorizedOptions,
 } from './auth';
+
+export {
+  verifySignatureAsAuthenticator,
+  requireSignatureWhenPresent,
+  requireAuthenticatedOrSigned,
+} from './auth-signature';
+export type {
+  VerifySignatureAsAuthenticatorOptions,
+  RequireSignatureWhenPresentOptions,
+  RequireAuthenticatedOrSignedOptions,
+} from './auth-signature';
 
 export {
   InMemoryStateStore,
@@ -125,13 +146,31 @@ export type { PostgresStateStoreOptions } from './postgres-state-store';
 
 export { structuredSerialize, structuredDeserialize } from './structured-serialize';
 
-export { createAdcpServer, requireSessionKey } from './create-adcp-server';
+export {
+  createAdcpServer,
+  requireSessionKey,
+  ADCP_PRE_TRANSPORT,
+  ADCP_SIGNED_REQUESTS_STATE,
+} from './create-adcp-server';
+export type {
+  AdcpServer,
+  AdcpServerComplianceApi,
+  AdcpServerTransport,
+  AdcpTestRequest,
+  AdcpTestToolsCallRequest,
+  AdcpTestResponse,
+} from './adcp-server';
 export type {
   AdcpServerConfig,
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
+  AdcpCapabilitiesOverrides,
+  AdcpCustomToolConfig,
   AdcpLogger,
+  SignedRequestsConfig,
+  AdcpPreTransport,
+  AdcpSignedRequestsState,
   HandlerContext,
   SessionKeyContext,
   MediaBuyHandlers,

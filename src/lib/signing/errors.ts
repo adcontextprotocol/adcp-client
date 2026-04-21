@@ -48,8 +48,21 @@ export type WebhookSignatureErrorCode =
   | 'webhook_signature_alg_not_allowed'
   | 'webhook_signature_window_invalid'
   | 'webhook_signature_components_incomplete'
+  // `@target-uri` covered-component value failed syntactic validation (non-
+  // parseable URL, non-https scheme, userinfo present, fragment present).
+  // Distinct from `header_malformed`, which flags the `Signature` /
+  // `Signature-Input` headers themselves; this flags the covered URI.
+  | 'webhook_target_uri_malformed'
   | 'webhook_signature_key_unknown'
+  // JWK has no `adcp_use` declared (or lacks the `verify` key_op). Kept
+  // distinct from `webhook_mode_mismatch` so operators can tell "key is not
+  // scoped at all" apart from "key is scoped for the wrong mode".
   | 'webhook_signature_key_purpose_invalid'
+  // JWK declares `adcp_use` but for a different mode than webhook-signing
+  // (e.g. `request-signing`). Separate code from `key_purpose_invalid` so
+  // the remediation is clear: mint a new key scoped for `webhook-signing`
+  // rather than adding the purpose to an existing request-signing key.
+  | 'webhook_mode_mismatch'
   | 'webhook_signature_key_revoked'
   | 'webhook_signature_revocation_stale'
   | 'webhook_signature_rate_abuse'

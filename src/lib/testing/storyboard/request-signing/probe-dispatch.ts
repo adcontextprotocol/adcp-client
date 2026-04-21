@@ -50,6 +50,7 @@ export async function probeRequestSigningVector(
       onlyVectors: rsOpts.onlyVectors,
       skipVectors: rsOpts.skipVectors,
       skipRateAbuse: rsOpts.skipRateAbuse,
+      ...(rsOpts.transport && { transport: rsOpts.transport }),
     });
     if (result.skipped) {
       return skipProbe(agentUrl, result.skip_reason ?? 'grader_skipped');

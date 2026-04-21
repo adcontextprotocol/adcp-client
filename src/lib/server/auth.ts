@@ -15,9 +15,21 @@
  * On failure, the {@link respondUnauthorized} helper produces an RFC 6750
  * compliant 401 (or 403) with a `WWW-Authenticate` header — required for
  * compliance and what the storyboard runner probes for.
+ *
+ * **Audience binding is not optional.** `verifyBearer` requires an `audience`
+ * and rejects tokens whose `aud` claim doesn't match — this is what stops
+ * same-tenant tokens from being replayed against any agent that shares the
+ * tenant. If you write a CUSTOM `authenticate` callback (instead of using
+ * `verifyBearer`), you MUST validate `aud` yourself against your canonical
+ * public URL. IdPs that don't include `aud` in user tokens (some WorkOS /
+ * Clerk defaults) break the model: either add `aud` at mint time via a
+ * custom claim, or pick a different IdP configuration. Signature + expiry
+ * + scope alone is not per-resource isolation.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyOptions } from 'jose';
+import type { RequestSignatureErrorCode } from '../signing/errors';
+import { RequestSignatureError } from '../signing/errors';
 
 /**
  * Default JWT algorithm allowlist. Asymmetric only — HS-family is intentionally
@@ -83,6 +95,68 @@ export class AuthError extends Error {
     this.publicMessage = publicMessage;
     if (options?.cause !== undefined) (this as Error & { cause?: unknown }).cause = options.cause;
   }
+}
+
+/**
+ * Marker tag on an {@link Authenticator} that needs `req.rawBody` to be
+ * populated before it runs. `serve()` buffers the request body ahead of
+ * authentication when any wired authenticator carries this tag — RFC 9421
+ * signature verifiers need the raw bytes to recompute `Content-Digest`.
+ *
+ * Attach via {@link tagAuthenticatorNeedsRawBody}; {@link anyOf} propagates
+ * the tag when any wrapped authenticator carries it.
+ */
+export const AUTH_NEEDS_RAW_BODY: unique symbol = Symbol.for('@adcp/client.auth.needsRawBody');
+
+/**
+ * Marker tag on an {@link Authenticator} whose contract depends on being the
+ * sole path for some class of requests — wrapping it in {@link anyOf} would
+ * reintroduce an either-or fall-through that the gate was built to prevent.
+ *
+ * Currently carried by the authenticator returned from
+ * `requireSignatureWhenPresent`, which guarantees "if `Signature-Input` is
+ * present, the signature path is the ONLY outcome." Composing it under
+ * `anyOf` would let a valid bearer silently accept an invalid signature —
+ * the exact bug the helper closes. `anyOf` throws at composition time when
+ * any child is tagged.
+ */
+export const AUTH_PRESENCE_GATED: unique symbol = Symbol.for('@adcp/client.auth.presenceGated');
+
+interface AuthenticatorFlags {
+  [AUTH_NEEDS_RAW_BODY]?: boolean;
+  [AUTH_PRESENCE_GATED]?: boolean;
+}
+
+/**
+ * Mark an authenticator as needing `req.rawBody`. Safe to call more than once.
+ */
+export function tagAuthenticatorNeedsRawBody(auth: Authenticator): Authenticator {
+  (auth as unknown as AuthenticatorFlags)[AUTH_NEEDS_RAW_BODY] = true;
+  return auth;
+}
+
+/**
+ * Check whether an authenticator (possibly composed via {@link anyOf}) requires
+ * the raw request body to be buffered before invocation.
+ */
+export function authenticatorNeedsRawBody(auth: Authenticator | undefined): boolean {
+  return !!auth && (auth as unknown as AuthenticatorFlags)[AUTH_NEEDS_RAW_BODY] === true;
+}
+
+/**
+ * Mark an authenticator as presence-gated. {@link anyOf} refuses to wrap a
+ * tagged authenticator — wrapping would defeat the gate.
+ */
+export function tagAuthenticatorPresenceGated(auth: Authenticator): Authenticator {
+  (auth as unknown as AuthenticatorFlags)[AUTH_PRESENCE_GATED] = true;
+  return auth;
+}
+
+/**
+ * Check whether an authenticator is presence-gated (see {@link AUTH_PRESENCE_GATED}).
+ */
+export function isAuthenticatorPresenceGated(auth: Authenticator | undefined): boolean {
+  return !!auth && (auth as unknown as AuthenticatorFlags)[AUTH_PRESENCE_GATED] === true;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +351,16 @@ function extractScopes(payload: JWTPayload): string[] {
  * which mechanism rejected them.
  */
 export function anyOf(...authenticators: Authenticator[]): Authenticator {
-  return async req => {
+  for (const auth of authenticators) {
+    if (isAuthenticatorPresenceGated(auth)) {
+      throw new Error(
+        'anyOf: refusing to wrap a presence-gated authenticator. Wrapping would ' +
+          'reintroduce the bearer-bypass bug the gate was built to prevent. ' +
+          'Invert the composition: requireSignatureWhenPresent(sig, anyOf(...others)).'
+      );
+    }
+  }
+  const combined: Authenticator = async req => {
     let rejected = false;
     const causes: unknown[] = [];
     for (const auth of authenticators) {
@@ -294,6 +377,10 @@ export function anyOf(...authenticators: Authenticator[]): Authenticator {
     }
     return null;
   };
+  if (authenticators.some(a => authenticatorNeedsRawBody(a))) {
+    tagAuthenticatorNeedsRawBody(combined);
+  }
+  return combined;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,12 +404,30 @@ export interface RespondUnauthorizedOptions {
   resourceMetadata?: string;
   /** Set to 403 instead of 401 for valid-but-unauthorized scenarios. */
   status?: 401 | 403;
+  /**
+   * RFC 9421 signature error code. When set, the challenge scheme switches
+   * from `Bearer` to `Signature` and the body's `error` field carries the
+   * signature code verbatim — what the `signed_requests` conformance grader
+   * reads from `WWW-Authenticate` to decide pass/fail on negative vectors.
+   *
+   * Set this whenever the rejection is a signature-layer failure (invalid
+   * signature, missing required signature, revoked key, replayed nonce,
+   * etc.). `serve()` auto-detects this from an {@link AuthError} whose
+   * `cause` is a {@link RequestSignatureError}; callers rarely set it
+   * directly.
+   */
+  signatureError?: RequestSignatureErrorCode;
 }
 
 /**
  * Send an RFC 6750-compliant 401/403 response with the `WWW-Authenticate`
  * header set. Called automatically by {@link serve} when `authenticate`
  * returns `null` or throws.
+ *
+ * When {@link RespondUnauthorizedOptions.signatureError} is set, the
+ * challenge scheme becomes `Signature` (per the `signed-requests`
+ * specialism) and the body's `error` field carries the RFC 9421 error
+ * code — the `signed_requests` grader reads both from the challenge.
  */
 export function respondUnauthorized(
   _req: IncomingMessage,
@@ -331,20 +436,54 @@ export function respondUnauthorized(
 ): void {
   const realm = options.realm ?? 'mcp';
   const parts = [`realm="${escapeQuotes(realm)}"`];
-  if (options.error) parts.push(`error="${options.error}"`);
+  const useSignatureChallenge = options.signatureError !== undefined;
+  // The `error` codes are typed unions — the type system gives us the
+  // only quote-safe guarantee. Route through `escapeQuotes` so a future
+  // widening to `string` or a code that happens to include `"` doesn't
+  // inject a new parameter into the challenge header.
+  if (useSignatureChallenge) {
+    parts.push(`error="${escapeQuotes(options.signatureError!)}"`);
+  } else if (options.error) {
+    parts.push(`error="${escapeQuotes(options.error)}"`);
+  }
   if (options.errorDescription) parts.push(`error_description="${escapeQuotes(options.errorDescription)}"`);
   if (options.resourceMetadata) parts.push(`resource_metadata="${escapeQuotes(options.resourceMetadata)}"`);
 
+  const scheme = useSignatureChallenge ? 'Signature' : 'Bearer';
   res.writeHead(options.status ?? 401, {
     'Content-Type': 'application/json',
-    'WWW-Authenticate': `Bearer ${parts.join(', ')}`,
+    'WWW-Authenticate': `${scheme} ${parts.join(', ')}`,
   });
   res.end(
     JSON.stringify({
-      error: options.error ?? 'unauthorized',
+      error: useSignatureChallenge ? options.signatureError : (options.error ?? 'unauthorized'),
       error_description: options.errorDescription ?? 'Authentication required.',
     })
   );
+}
+
+/**
+ * Unwrap the first {@link RequestSignatureError} found walking the
+ * `cause` chain of an {@link AuthError} (or any error), so callers can
+ * switch the `WWW-Authenticate` challenge scheme on signature-layer
+ * failures. Returns `null` for non-signature errors.
+ */
+export function signatureErrorCodeFromCause(err: unknown): RequestSignatureErrorCode | null {
+  // Track visited refs to break arbitrary cycles (self-reference, N-cycles,
+  // or a long non-signature chain that would otherwise exhaust the walker).
+  // The visited set is a belt-and-suspenders companion to the hop cap —
+  // either one alone is enough for legitimate chains, but cycle resistance
+  // is the security-relevant property.
+  const visited = new Set<unknown>();
+  let current: unknown = err;
+  let hops = 0;
+  while (current != null && hops < 32 && !visited.has(current)) {
+    if (current instanceof RequestSignatureError) return current.code;
+    visited.add(current);
+    current = (current as { cause?: unknown }).cause;
+    hops++;
+  }
+  return null;
 }
 
 function escapeQuotes(s: string): string {

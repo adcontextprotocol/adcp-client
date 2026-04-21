@@ -292,7 +292,7 @@ export interface TaskResultMetadata {
 }
 
 /** Fields shared across all TaskResult variants. */
-interface TaskResultBase {
+interface TaskResultBase<T = any> {
   metadata: TaskResultMetadata;
   /** Governance check result (present when governance is configured) */
   governance?: import('./GovernanceTypes').GovernanceCheckResult;
@@ -304,10 +304,24 @@ interface TaskResultBase {
   conversation?: Message[];
   /** Debug logs (if debug enabled) */
   debug_logs?: any[];
+  /**
+   * Exhaustive pattern match on the result's `status`. Prefer this method
+   * form — it autocompletes alongside the other `TaskResult` accessors.
+   *
+   * The free function {@link import('./match').match} is also exported for
+   * compositional use (e.g., point-free style or when the result type is
+   * not yet narrowed).
+   *
+   * Attached non-enumerably by the client when the result is returned
+   * from `executeTask`. Results constructed by hand (e.g., in test
+   * fixtures or custom middleware) will not have this method — use the
+   * free function, or call `attachMatch(result)` first.
+   */
+  match?: <R>(handlers: import('./match').MatchHandlers<T, R> | import('./match').PartialMatchHandlers<T, R>) => R;
 }
 
 /** Successful completion — `data` is always present. */
-export interface TaskResultCompleted<T> extends TaskResultBase {
+export interface TaskResultCompleted<T> extends TaskResultBase<T> {
   success: true;
   status: 'completed';
   data: T;
@@ -320,7 +334,7 @@ export interface TaskResultCompleted<T> extends TaskResultBase {
 }
 
 /** Task is still progressing (working, submitted, input-required, deferred). */
-export interface TaskResultIntermediate<T> extends TaskResultBase {
+export interface TaskResultIntermediate<T> extends TaskResultBase<T> {
   success: true;
   status: 'working' | 'submitted' | 'input-required' | 'deferred';
   data?: T;
@@ -335,7 +349,7 @@ export interface TaskResultIntermediate<T> extends TaskResultBase {
 }
 
 /** Task failed — `error` is always present. */
-export interface TaskResultFailure<T> extends TaskResultBase {
+export interface TaskResultFailure<T> extends TaskResultBase<T> {
   success: false;
   status: 'failed' | 'governance-denied';
   /** Response payload with structured error details (adcp_error, context, ext) */

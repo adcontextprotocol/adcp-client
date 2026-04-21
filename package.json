@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "5.1.0",
+  "version": "5.7.0",
   "description": "AdCP client library with protocol support for MCP and A2A",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
@@ -50,6 +50,16 @@
       "import": "./dist/lib/signing/server.js",
       "require": "./dist/lib/signing/server.js",
       "types": "./dist/lib/signing/server.d.ts"
+    },
+    "./schemas": {
+      "import": "./dist/lib/schemas/index.js",
+      "require": "./dist/lib/schemas/index.js",
+      "types": "./dist/lib/schemas/index.d.ts"
+    },
+    "./compliance-fixtures": {
+      "import": "./dist/lib/compliance-fixtures/index.js",
+      "require": "./dist/lib/compliance-fixtures/index.js",
+      "types": "./dist/lib/compliance-fixtures/index.d.ts"
     }
   },
   "typesVersions": {
@@ -77,6 +87,12 @@
       ],
       "signing/server": [
         "dist/lib/signing/server.d.ts"
+      ],
+      "schemas": [
+        "dist/lib/schemas/index.d.ts"
+      ],
+      "compliance-fixtures": [
+        "dist/lib/compliance-fixtures/index.d.ts"
       ]
     }
   },
@@ -101,7 +117,7 @@
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
     "prepublishOnly": "npm run clean && npm run sync-schemas && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "tsc --project tsconfig.lib.json",
+    "build:lib": "npm run sync-version && tsc --project tsconfig.lib.json",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "test": "node --test-force-exit --test test/*.test.js test/lib/*.test.js",
     "test:lib": "node --test-force-exit --test test/lib/*.test.js",

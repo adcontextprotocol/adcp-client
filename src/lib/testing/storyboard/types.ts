@@ -132,6 +132,18 @@ export interface StoryboardStep {
   stateful?: boolean;
   /** When true, the step passes if the task returns an error */
   expect_error?: boolean;
+  /**
+   * When true, suppress the runner's `idempotency_key` auto-injection on a
+   * mutating step so the storyboard can exercise the server's missing-key
+   * rejection path. The runner also disables the SDK's client-side
+   * auto-inject for this step so the request reaches the wire without a key.
+   *
+   * Default (false) matches buyer-agent behavior: every mutating request
+   * carries a fresh UUID v4 so handlers under test run against the actual
+   * error path the storyboard names (GOVERNANCE_DENIED, UNAUTHORIZED, etc.)
+   * rather than short-circuiting on `INVALID_REQUEST: idempotency_key`.
+   */
+  omit_idempotency_key?: boolean;
   /** Tool name required for this step to run. Skipped if agent lacks it. */
   requires_tool?: string;
   /** Explicit context extraction rules (supplements convention-based extractors) */
@@ -206,7 +218,32 @@ export type StoryboardValidationCheck =
   | 'on_401_require_header'
   // Cross-cutting
   | 'resource_equals_agent_url'
-  | 'any_of';
+  | 'any_of'
+  // Cross-step checks
+  | 'refs_resolve';
+
+/**
+ * Set of references for `refs_resolve`. `from` picks the root object —
+ * `current_step` reads the step's task-result `data`; `context` reads the
+ * accumulated `StoryboardContext`. `path` supports `[*]` wildcard segments
+ * that flatten into the aggregated result (so `products[*].format_ids[*]`
+ * walks every product and flattens every `format_ids` array).
+ */
+export interface RefsResolveSet {
+  from: 'current_step' | 'context';
+  path: string;
+}
+
+/**
+ * Scope filter for `refs_resolve`. Only source refs whose `key` equals
+ * (after `$agent_url` substitution + `normalizeAgentUrl` normalization)
+ * are in scope. Out-of-scope refs are graded by `on_out_of_scope`.
+ */
+export interface RefsResolveScope {
+  key: string;
+  /** String to compare against. `$agent_url` expands to the runner target URL. */
+  equals: string;
+}
 
 export interface StoryboardValidation {
   check: StoryboardValidationCheck;
@@ -217,6 +254,22 @@ export interface StoryboardValidation {
   /** Accepted values for list-match checks (passes if actual matches any). */
   allowed_values?: unknown[];
   description: string;
+  // ─── refs_resolve fields ───────────────────────────────────
+  /** Source refs (the refs being checked). */
+  source?: RefsResolveSet;
+  /** Target refs (the set the source refs must resolve into). */
+  target?: RefsResolveSet;
+  /** Keys to compare between each source ref and each target ref. */
+  match_keys?: string[];
+  /** Only enforce integrity for refs matching this scope. */
+  scope?: RefsResolveScope;
+  /**
+   * How to grade source refs that fall outside `scope`.
+   *  - `warn` (default) — attach observations, pass the check
+   *  - `ignore` — silent, pass the check
+   *  - `fail` — treat as missing
+   */
+  on_out_of_scope?: 'warn' | 'ignore' | 'fail';
 }
 
 // ────────────────────────────────────────────────────────────
@@ -275,6 +328,8 @@ export type WebhookAssertionErrorCode =
   | 'signature_params_incomplete'
   | 'signature_key_unknown'
   | 'signature_key_purpose_invalid'
+  | 'signature_mode_mismatch'
+  | 'signature_target_uri_malformed'
   | 'signature_key_revoked'
   | 'signature_revocation_stale'
   | 'signature_rate_abuse'
@@ -364,13 +419,44 @@ export interface StoryboardRunOptions extends TestOptions {
      * `endpoint_scope: sandbox`.
      */
     allowLiveSideEffects?: boolean;
+    /**
+     * How the grader dispatches each vector to the agent.
+     *
+     *   - `raw` (default) — POSTs each vector body directly to a per-
+     *     operation AdCP endpoint (e.g. `<baseUrl>/create_media_buy`).
+     *     Works for agents that expose AdCP tools as discrete HTTP
+     *     operations.
+     *   - `mcp` — wraps each vector body in a JSON-RPC `tools/call`
+     *     envelope and POSTs to the agent's single `/mcp` mount. Required
+     *     for MCP-only agents that don't expose per-operation endpoints.
+     *     The operation name is derived from the last path segment of the
+     *     vector's target URL.
+     *
+     * Matches the `adcp grade request-signing --transport <mode>` CLI flag.
+     * Agents that only speak MCP JSON-RPC can't grade under `raw`; use
+     * `mcp` to let the runner round-trip every vector through `tools/call`.
+     */
+    transport?: 'raw' | 'mcp';
   };
   /**
-   * Distribution strategy across agent URLs in multi-instance mode (#608).
+   * Distribution strategy across agent URLs in multi-instance mode.
    * Only consulted when the runner is given 2+ URLs. Defaults to 'round-robin'.
-   * Reserved enum; additional strategies may land without a signature change.
+   *
+   *  - `round-robin` (default): step N hits `urls[N % urls.length]`. One pass.
+   *  - `multi-pass` (narrow use case): runs the storyboard `urls.length`
+   *    times, each pass starting the dispatcher at a different replica.
+   *    Surfaces single-replica bugs (stale config, divergent version,
+   *    local-cache miss) that single-pass round-robin may not catch when
+   *    the buggy replica happens to serve only passive steps. N-multiplies
+   *    run time. NOT a full cross-replica state-persistence test at N=2:
+   *    offset-shift preserves pair parity, so write→read pairs with even
+   *    dispatch-index distance (e.g., the property_lists case: write at 0,
+   *    read at 2) land same-replica in every pass. Use single-pass
+   *    round-robin (adjacent pairs) + follow-up dependency-aware dispatch
+   *    (non-adjacent pairs, #607 option 2) for the spec's horizontal-
+   *    scaling requirement. See docs/guides/MULTI-INSTANCE-TESTING.md.
    */
-  multi_instance_strategy?: 'round-robin';
+  multi_instance_strategy?: 'round-robin' | 'multi-pass';
   /**
    * Host an ephemeral webhook receiver during the run so `expect_webhook*`
    * pseudo-steps can observe outbound webhooks from the agent under test.
@@ -582,6 +668,12 @@ export interface ValidationResult {
   response?: RunnerResponseRecord;
   /** Optional remediation hint. */
   remediation?: string;
+  /**
+   * Non-fatal notes emitted by the check — e.g. `refs_resolve` records the
+   * out-of-scope refs it skipped when `on_out_of_scope: warn`. Present only
+   * when the check has something to report; absent otherwise.
+   */
+  observations?: unknown[];
 }
 
 export interface StoryboardStepPreview {
@@ -654,9 +746,22 @@ export interface StoryboardResult {
   /** All agent URLs used in multi-instance mode. Absent (or single-entry) in single-URL mode. */
   agent_urls?: string[];
   /** Distribution strategy used across agent_urls. Absent in single-URL mode. */
-  multi_instance_strategy?: 'round-robin';
+  multi_instance_strategy?: 'round-robin' | 'multi-pass';
   overall_passed: boolean;
+  /**
+   * Phases from the first pass. In `multi-pass` mode see `passes` for the full
+   * per-pass detail; `passed_count`/`failed_count`/`skipped_count` and
+   * `overall_passed` aggregate across all passes.
+   */
   phases: StoryboardPhaseResult[];
+  /**
+   * Per-pass detail in `multi-pass` mode — one entry per starting replica so
+   * each step is served by each replica at least once across passes. Absent
+   * in single-pass modes. Per-pair cross-replica coverage depends on
+   * dispatch-index distance modulo `agent_urls.length` (see
+   * `multi_instance_strategy` on `StoryboardRunOptions`).
+   */
+  passes?: StoryboardPassResult[];
   /** Final accumulated context */
   context: StoryboardContext;
   total_duration_ms: number;
@@ -670,4 +775,24 @@ export interface StoryboardResult {
    * locally against the same artifacts.
    */
   schemas_used?: Array<{ schema_id: string; schema_url: string }>;
+}
+
+/**
+ * Single pass in `multi-pass` multi-instance mode. Each pass re-runs the
+ * whole storyboard with a different round-robin starting offset so each
+ * step is served by each replica at least once across passes. See
+ * `multi_instance_strategy` on `StoryboardRunOptions` for the N=2
+ * per-pair coverage caveat.
+ */
+export interface StoryboardPassResult {
+  /** 1-based pass index. */
+  pass_index: number;
+  /** 0-based starting replica for this pass's round-robin dispatch. */
+  dispatch_offset: number;
+  overall_passed: boolean;
+  phases: StoryboardPhaseResult[];
+  passed_count: number;
+  failed_count: number;
+  skipped_count: number;
+  duration_ms: number;
 }

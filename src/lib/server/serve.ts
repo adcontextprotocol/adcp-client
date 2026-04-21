@@ -25,7 +25,9 @@ import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/int
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { AuthPrincipal, Authenticator } from './auth';
-import { AuthError, respondUnauthorized } from './auth';
+import { AuthError, authenticatorNeedsRawBody, respondUnauthorized, signatureErrorCodeFromCause } from './auth';
+import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
+import type { AdcpServer } from './adcp-server';
 
 /**
  * Context passed to the agent factory on each request.
@@ -90,6 +92,18 @@ export interface ServeOptions {
    * the server would advertise whatever host a caller happened to send.
    *
    * Must be an absolute https:// URL whose path matches the mount path.
+   *
+   * **Multi-host caveat.** `publicUrl` is static per `serve()` call. If a
+   * single Node process fronts multiple hostnames (e.g., a reverse-proxy
+   * splitting `seller-a.example.com` and `seller-b.example.com` into one
+   * backend), every host sees the same advertised `resource` — buyers
+   * hitting `seller-b` will get a token audience-bound to `seller-a`'s
+   * URL and fail JWT audience validation. For multi-host deployments,
+   * run one `serve()` per host (separate ports + reverse proxy by Host
+   * header) or route hosts to isolated Node processes upstream. A
+   * host-aware helper is on the roadmap but not in 5.2.x — until it
+   * ships, the single-`publicUrl`-per-process model is the only
+   * supported configuration.
    */
   publicUrl?: string;
 
@@ -138,15 +152,17 @@ export interface ServeOptions {
  * request via `ServeContext`. This ensures MCP Tasks (create → poll → result)
  * work correctly across stateless HTTP requests.
  *
- * @param createAgent - Factory function that returns a configured McpServer.
- *   Called once per request so each gets a fresh server instance (McpServer
- *   can only be connected once). Receives a `ServeContext` with a shared
- *   `taskStore` — pass it to `createTaskCapableServer()` so tasks persist.
+ * @param createAgent - Factory function that returns a configured server —
+ *   either an `AdcpServer` from `createAdcpServer()` or a raw SDK `McpServer`
+ *   from `createTaskCapableServer()`. Called once per request so each gets a
+ *   fresh instance (a server can only be connected once). Receives a
+ *   `ServeContext` with a shared `taskStore` — pass it to
+ *   `createTaskCapableServer()` so tasks persist across stateless requests.
  * @param options - Port, path, and callback configuration.
  * @returns The http.Server instance. Use the `onListening` callback or
  *   listen for the 'listening' event to know when it's ready.
  */
-export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: ServeOptions): HttpServer {
+export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer, options?: ServeOptions): HttpServer {
   const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
   if (envPort !== undefined && (Number.isNaN(envPort) || envPort < 0 || envPort > 65535)) {
     throw new Error(`Invalid PORT environment variable: "${process.env.PORT}"`);
@@ -188,6 +204,8 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
     );
   }
 
+  const explicitPreTransport = options?.preTransport as AdcpPreTransport | undefined;
+
   const protectedResourcePath = `/.well-known/oauth-protected-resource${mountPath}`;
   const resourceMetadataUrl =
     options?.protectedResource && publicOrigin ? `${publicOrigin}${protectedResourcePath}` : undefined;
@@ -209,7 +227,45 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
     }
 
     if (pathname === mountPath || pathname === `${mountPath}/`) {
-      // Enforce authentication before any body processing or transport work.
+      // Body buffering happens at most once per request. An idempotent helper
+      // lets the auth path (for signature authenticators) and the preTransport
+      // path share the buffer without re-reading a drained stream.
+      let rawBody: string | undefined;
+      let parsedBody: unknown;
+      const ensureRawBody = async (): Promise<void> => {
+        if (rawBody !== undefined) return;
+        rawBody = await bufferBody(req);
+        (req as { rawBody?: string }).rawBody = rawBody;
+        if (rawBody.length > 0) {
+          try {
+            parsedBody = JSON.parse(rawBody);
+          } catch {
+            // Non-JSON body — let transport reject as malformed JSON-RPC.
+          }
+        }
+      };
+
+      // RFC 9421 signature authenticators need `req.rawBody` for Content-Digest
+      // recompute, so buffer before authentication runs when the authenticator
+      // (or any branch of an anyOf composition) carries the needs-raw-body tag.
+      if (authenticatorNeedsRawBody(options?.authenticate)) {
+        try {
+          await ensureRawBody();
+        } catch (err) {
+          // `bufferBody` has already called `req.destroy()` on the
+          // oversize path; additional teardown here would race the
+          // response write. Write the status and return.
+          const errName = (err as Error).name || 'Error';
+          console.error(`[adcp/serve] request body read failed before auth: ${errName}`);
+          if (!res.headersSent) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Request body read failed.' }));
+          }
+          return;
+        }
+      }
+
+      // Enforce authentication before transport work.
       if (options?.authenticate) {
         let principal: AuthPrincipal | null;
         try {
@@ -218,6 +274,21 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
           // Surface only sanitized messages to the client; log internal cause server-side.
           const publicMessage = err instanceof AuthError ? err.publicMessage : 'Credentials rejected.';
           console.error('[adcp/auth] rejected:', err);
+          // Switch challenge scheme to `Signature` when the rejection
+          // originates in the RFC 9421 verifier — the signed_requests
+          // negative-vector grader reads the error code from the
+          // `WWW-Authenticate` header, so collapsing it into the generic
+          // `Bearer error="invalid_token"` challenge would surface the
+          // wrong code and fail every negative vector.
+          const signatureCode = signatureErrorCodeFromCause(err);
+          if (signatureCode) {
+            respondUnauthorized(req, res, {
+              signatureError: signatureCode,
+              errorDescription: publicMessage,
+              resourceMetadata: resourceMetadataUrl,
+            });
+            return;
+          }
           respondUnauthorized(req, res, {
             error: 'invalid_token',
             errorDescription: publicMessage,
@@ -237,34 +308,40 @@ export function serve(createAgent: (ctx: ServeContext) => McpServer, options?: S
         attachAuthInfo(req, principal);
       }
 
-      // Buffer the request body once when preTransport middleware is wired —
-      // RFC 9421 verifiers need the raw bytes for Content-Digest recompute,
-      // and the MCP transport's own body read would race the verifier otherwise.
-      let parsedBody: unknown;
-      if (options?.preTransport) {
+      // Create the agent first so we can inspect it for an auto-wired
+      // preTransport attached by `createAdcpServer({ signedRequests })`. An
+      // explicit `options.preTransport` wins — it lets callers override the
+      // default wiring (e.g., to add request logging or swap verifier
+      // implementations).
+      const agentServer = createAgent(ctx);
+      const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
+      const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
+      const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;
+
+      if (activePreTransport) {
         try {
-          const raw = await bufferBody(req);
-          (req as { rawBody?: string }).rawBody = raw;
-          if (raw.length > 0) {
-            try {
-              parsedBody = JSON.parse(raw);
-            } catch {
-              // Non-JSON body — let transport reject as malformed JSON-RPC.
-            }
+          await ensureRawBody();
+          const handled = await activePreTransport(req as import('http').IncomingMessage & { rawBody?: string }, res);
+          if (handled) {
+            // PreTransport already responded (401, etc.). Close the agent
+            // before returning so the McpServer doesn't leak.
+            await agentServer.close();
+            return;
           }
-          const handled = await options.preTransport(req as import('http').IncomingMessage & { rawBody?: string }, res);
-          if (handled) return;
         } catch (err) {
-          console.error('preTransport middleware error:', err);
+          // Narrow to name+code — transport errors can embed remote URLs.
+          const errName = (err as Error).name || 'Error';
+          const errCode = (err as { code?: string }).code ?? 'unknown';
+          console.error(`preTransport middleware error: ${errName} (${errCode})`);
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Internal server error' }));
           }
+          await agentServer.close();
           return;
         }
       }
 
-      const agentServer = createAgent(ctx);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       });

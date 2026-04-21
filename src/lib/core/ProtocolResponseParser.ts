@@ -28,6 +28,42 @@ export const ADCP_STATUS = {
 export type ADCPStatus = (typeof ADCP_STATUS)[keyof typeof ADCP_STATUS];
 
 /**
+ * Fields that belong to the task envelope, not to a domain payload. Derived
+ * from `ProtocolEnvelope` (core/protocol-envelope.json) plus the optional
+ * `errors` / `context` / `ext` fields that AdCP task-response schemas place at
+ * envelope level. Used to disambiguate `structuredContent.status` from AdCP v3
+ * domain status enums (MediaBuyStatus, CreativeStatus, etc.) that share
+ * literals like `completed` / `canceled` / `failed` / `rejected` — see #646.
+ */
+const TASK_ENVELOPE_FIELDS: ReadonlySet<string> = new Set([
+  'status',
+  'message',
+  'timestamp',
+  'context_id',
+  'task_id',
+  'replayed',
+  'push_notification_config',
+  'governance_context',
+  'adcp_version',
+  'errors',
+  'context',
+  'ext',
+]);
+
+/**
+ * ADCP task-lifecycle statuses that never overlap with AdCP domain status
+ * enums and can be trusted from `structuredContent.status` unconditionally.
+ * The other literals (`completed` / `canceled` / `failed` / `rejected`) share
+ * values with `MediaBuyStatus` et al and require envelope-shape disambiguation.
+ */
+const EXCLUSIVE_TASK_STATUSES: ReadonlySet<string> = new Set([
+  ADCP_STATUS.SUBMITTED,
+  ADCP_STATUS.WORKING,
+  ADCP_STATUS.INPUT_REQUIRED,
+  ADCP_STATUS.AUTH_REQUIRED,
+]);
+
+/**
  * Simple parser that follows ADCP spec exactly
  */
 export class ProtocolResponseParser {
@@ -87,9 +123,24 @@ export class ProtocolResponseParser {
       return response.status as ADCPStatus;
     }
 
-    // Check MCP structuredContent.status
-    if (response?.structuredContent?.status && Object.values(ADCP_STATUS).includes(response.structuredContent.status)) {
-      return response.structuredContent.status as ADCPStatus;
+    // Check MCP structuredContent.status.
+    // Exclusive task-lifecycle statuses (submitted/working/input-required/
+    // auth-required) never appear in domain enums and are trusted unconditionally.
+    // Shared literals (completed/canceled/failed/rejected) collide with AdCP v3
+    // domain status enums like MediaBuyStatus, so we only treat them as task
+    // status when the envelope has no keys outside the task-envelope allowlist.
+    // Otherwise we fall through to the structuredContent fallback below, so Zod
+    // validators parse the domain payload. See issue #646.
+    const sc = response?.structuredContent;
+    if (sc?.status && Object.values(ADCP_STATUS).includes(sc.status)) {
+      if (EXCLUSIVE_TASK_STATUSES.has(sc.status)) {
+        return sc.status as ADCPStatus;
+      }
+      const hasDomainPayload = Object.keys(sc).some(k => !TASK_ENVELOPE_FIELDS.has(k));
+      if (!hasDomainPayload) {
+        return sc.status as ADCPStatus;
+      }
+      // Domain payload present alongside a shared-literal status — fall through.
     }
 
     // Check for MCP error responses

@@ -12679,6 +12679,7 @@ export type AdCPSpecialism =
   | 'creative-ad-server'
   | 'creative-generative'
   | 'creative-template'
+  | 'governance-aware-seller'
   | 'governance-delivery-monitor'
   | 'governance-spend-authority'
   | 'measurement-verification'
@@ -13891,7 +13892,7 @@ export type ComplyTestControllerRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. Others trigger state transitions for the specified domain.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'seed_*' scenarios pre-populate fixtures (product, pricing option, creative, plan, media buy) so storyboards can reference them by stable ID without the implementer having to guess which IDs the conformance suite expects.
    */
   scenario:
     | 'list_scenarios'
@@ -13900,13 +13901,18 @@ export type ComplyTestControllerRequest = {
     | 'force_media_buy_status'
     | 'force_session_status'
     | 'simulate_delivery'
-    | 'simulate_budget_spend';
+    | 'simulate_budget_spend'
+    | 'seed_product'
+    | 'seed_pricing_option'
+    | 'seed_creative'
+    | 'seed_plan'
+    | 'seed_media_buy';
   /**
    * Scenario-specific parameters. Required for all scenarios except list_scenarios.
    */
   params?: {
     /**
-     * Creative to transition. Used by force_creative_status.
+     * Creative to transition (force_creative_status) or seed (seed_creative).
      */
     creative_id?: string;
     /**
@@ -13914,13 +13920,29 @@ export type ComplyTestControllerRequest = {
      */
     account_id?: string;
     /**
-     * Media buy to transition. Used by force_media_buy_status, simulate_delivery, and simulate_budget_spend.
+     * Media buy to transition (force_media_buy_status, simulate_delivery, simulate_budget_spend) or seed (seed_media_buy).
      */
     media_buy_id?: string;
     /**
      * Session to transition. Used by force_session_status.
      */
     session_id?: string;
+    /**
+     * Product to seed. Used by seed_product and seed_pricing_option.
+     */
+    product_id?: string;
+    /**
+     * Pricing option to seed, scoped to a product. Used by seed_pricing_option.
+     */
+    pricing_option_id?: string;
+    /**
+     * Plan to seed. Used by seed_plan.
+     */
+    plan_id?: string;
+    /**
+     * Arbitrary fixture payload carried by seed_* scenarios. Shape matches the domain object the seed scenario creates (product, creative, plan, media buy, pricing option). Seller MAY reject malformed fixtures with INVALID_PARAMS. Kept permissive so storyboard authors can declare the minimum shape each test needs without the spec locking down every field.
+     */
+    fixture?: {};
     /**
      * Target status for the resource. Type depends on scenario: creative-status for force_creative_status, account-status for force_account_status, media-buy-status for force_media_buy_status. For force_session_status, must be 'complete' or 'terminated'.
      */

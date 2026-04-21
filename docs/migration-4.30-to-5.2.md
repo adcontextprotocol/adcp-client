@@ -406,6 +406,28 @@ Server-side: see `skills/build-seller-agent/SKILL.md` § signed-requests for `ve
 - `InMemoryRevocationStore({ issuer, updated, next_update, revoked_kids, revoked_jtis })` — constructor-only; no `.insert()` method.
 - `VerifierCapability` — `{ supported, covers_content_digest, required_for, warn_for?, supported_for? }`; no `agent_url` or `per_keyid_request_rate_limit` field.
 
+## v2 sunset
+
+AdCP v2 went unsupported on 2026-04-20 as part of the 3.0 GA cutover ([adcp#2220](https://github.com/adcontextprotocol/adcp/issues/2220)). The client still executes v2 code paths — no functional break — but emits a one-time `console.warn` the first time a client instance sees v2 capabilities from an agent, so integrations don't accumulate subtle bugs against an unsupported surface. Suppress the warning with `ADCP_ALLOW_V2=1` (or `adcp --allow-v2` on the CLI) if you're knowingly running against a legacy holdout; upgrade the agent otherwise. Synthetic capabilities (agents that don't implement `get_adcp_capabilities`) don't fire the warning because their version is unknown.
+
+<a id="webhook-hmac-legacy-deprecation"></a>
+
+## Webhook HMAC legacy deprecation
+
+**What.** The `type: 'hmac_sha256'` variant of `WebhookAuthentication` on outbound webhook emission — the one that emits `x-adcp-timestamp` + `x-adcp-signature: sha256=...` headers over `${ts}.${body_bytes}`.
+
+**Why deprecated.** The spec-current webhook authentication is an RFC 9421 signature with `adcp_use: "webhook-signing"` JWKs (adcp#2423). HMAC predates the 9421 webhook mode and is kept only for buyers who registered `push_notification_config.authentication.credentials` before the 9421 rollout.
+
+**Status in 5.x.** Supported, no behavioral change. The emitter logs a one-time `console.warn` the first time it emits an HMAC-signed webhook per process, so integrations surface the deprecation notice in logs without spamming every retry. The `WebhookAuthentication` type carries an `@deprecated` JSDoc tag flagging the `hmac_sha256` variant. Suppress the warning with `ADCP_SUPPRESS_HMAC_WARNING=1` if you're knowingly staying on HMAC until your buyers migrate.
+
+**SDK vs spec status.** The AdCP spec still supports HMAC as a legacy fallback for buyers that registered `push_notification_config.authentication.credentials` — it is not spec-deprecated. The SDK flags it as deprecated to steer new integrations at the spec-current RFC 9421 path, but the implementation will remain until the spec itself retires the mode. No hard SDK removal date; tracking indicator is "post-2026 H2 when buyer 9421-adoption telemetry stabilizes."
+
+**Migration.** Switch emitters to the default 9421 path (omit `authentication` entirely, or pass `null`). Buyers verify with `verifyWebhookSignature` using a `BrandJsonJwksResolver` or a pre-configured JWKS URL — see the seller skill's webhook signing section and the `signed-requests` specialism doc for end-to-end wiring.
+
+**Suppressing the deprecation log.** Two paths, use whichever fits your deployment:
+- Env var: `ADCP_SUPPRESS_HMAC_WARNING=1` — right for CI runners, container images, or anywhere setting env is cheap.
+- Programmatic: `createWebhookEmitter({ suppressLegacyWarnings: true })` — right for libraries embedded in agents where setting env vars is awkward, or where you want the suppression tied to a specific emitter instance.
+
 ## Migration checklist
 
 Work this list in order — earlier items are prerequisites for later ones.

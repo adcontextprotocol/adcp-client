@@ -96,7 +96,25 @@ The current working directory already has a \`package.json\` with \`@adcp/client
    - Implements handlers minimally sufficient to pass \`${storyboardId}\`.
    - If the storyboard grades outbound webhooks, generate an Ed25519 keypair at startup and pass \`webhooks: { signerKey }\` to \`createAdcpServer\`. Call \`ctx.emitWebhook\` on completion.
    - Binds MCP over HTTP on port **${port}** exactly (the harness connects to \`http://127.0.0.1:${port}/mcp\`).
-   - Uses \`serve()\` from \`@adcp/client/server\`.
+   - Uses \`serve()\` from \`@adcp/client/server\` and wires authentication with the harness key below.
+
+**Authentication (non-negotiable, overrides any conflicting guidance from the skill above).** The harness grader authenticates with a static API key. Wire it exactly like this:
+
+\`\`\`ts
+import { serve, createAdcpServer, verifyApiKey, type ServeContext } from '@adcp/client/server';
+
+function createAgent(_ctx: ServeContext) {
+  return createAdcpServer({ /* your handlers here */ });
+}
+
+serve(createAgent, {
+  authenticate: verifyApiKey({
+    keys: { 'sk_harness_do_not_use_in_prod': { principal: 'compliance-runner' } },
+  }),
+});
+\`\`\`
+
+The harness grader sends \`Authorization: Bearer sk_harness_do_not_use_in_prod\`. This is the compliance-test equivalent of a registered counterparty with a static API key — it satisfies the universal \`security_baseline\` storyboard (authentication is mandatory) while letting the grader get past auth. Do not copy this key/principal pair into production docs or examples; the scary token name exists to make accidental copy-paste obvious.
 
 2. Write \`start.sh\`:
    \`\`\`bash
@@ -217,10 +235,28 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
   // `--allow-http` is mandatory — the grader hard-refuses plain-http URLs
   // otherwise (production agents MUST terminate TLS). Harness-tested agents
   // bind on loopback, so we opt in explicitly.
-  const res = spawnSync('node', [cliPath, 'storyboard', 'run', url, storyboardId, '--json', '--allow-http'], {
-    encoding: 'utf8',
-    timeout: 120_000,
-  });
+  // Presents the harness key wired by the generated server — symmetric with
+  // the `verifyApiKey` block in buildPrompt(). The scary token name exists so
+  // anyone who encounters it in logs or --keep output workspaces recognizes
+  // it's a harness-only credential, not a production pattern.
+  const res = spawnSync(
+    'node',
+    [
+      cliPath,
+      'storyboard',
+      'run',
+      url,
+      storyboardId,
+      '--json',
+      '--allow-http',
+      '--auth',
+      'sk_harness_do_not_use_in_prod',
+    ],
+    {
+      encoding: 'utf8',
+      timeout: 120_000,
+    }
+  );
   const raw = (res.stdout ?? '') + (res.stderr ?? '');
   let passed = false;
   try {

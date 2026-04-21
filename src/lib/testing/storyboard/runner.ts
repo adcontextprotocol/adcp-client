@@ -20,8 +20,8 @@ import {
 } from './context';
 import { runValidations, type ValidationContext } from './validations';
 import { buildRequest, hasRequestBuilder } from './request-builder';
-import { resolveBrand } from '../client';
-import { isMutatingTask } from '../../utils/idempotency';
+import { resolveAccount, resolveBrand } from '../client';
+import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -48,6 +48,7 @@ import type {
   StoryboardContext,
   StoryboardRunOptions,
   StoryboardResult,
+  StoryboardPassResult,
   StoryboardPhaseResult,
   StoryboardStepResult,
   StoryboardStepPreview,
@@ -168,7 +169,6 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   validateTestKit(options.test_kit);
-  const start = Date.now();
   const agentUrls = Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls];
   if (agentUrls.length === 0) {
     throw new Error('runStoryboard: at least one agent URL required');
@@ -180,6 +180,42 @@ export async function runStoryboard(
         'Remove _client (or pass a single agent URL) to use round-robin dispatch.'
     );
   }
+
+  const requestedStrategy = options.multi_instance_strategy ?? 'round-robin';
+  if (requestedStrategy === 'multi-pass' && isMultiInstance) {
+    // Webhook receivers bind a fresh ephemeral port per pass. Each pass would
+    // advertise a different URL via `{{runner.webhook_base}}`; agents caching
+    // the pass-1 URL would deliver into a dead port in pass 2. Reject rather
+    // than silently mis-route. The spec-correct test for webhook retry /
+    // idempotency is one pass.
+    if (options.webhook_receiver) {
+      throw new Error(
+        'runStoryboard: webhook_receiver is incompatible with multi_instance_strategy: "multi-pass". ' +
+          'Each pass would bind a fresh receiver URL, so agents caching the pass-1 URL would deliver ' +
+          'to a dead port in pass 2. Use round-robin when the storyboard needs a webhook receiver, ' +
+          'or run multi-pass on a storyboard without webhook observation.'
+      );
+    }
+    return runMultiPass(agentUrls, storyboard, options);
+  }
+  return executeStoryboardPass(agentUrls, storyboard, options, 0);
+}
+
+/**
+ * Execute a single pass of the storyboard against the supplied replica URLs
+ * using round-robin dispatch starting at `dispatchOffset`. Called directly
+ * by `runStoryboard` (offset 0) and repeatedly by `runMultiPass` (offsets
+ * 0..N-1). Taking the offset as an explicit parameter keeps the dispatcher
+ * primitive out of the public `StoryboardRunOptions` type.
+ */
+async function executeStoryboardPass(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions,
+  dispatchOffset: number
+): Promise<StoryboardResult> {
+  const start = Date.now();
+  const isMultiInstance = agentUrls.length > 1;
 
   // Build one client per URL. In single-URL mode `_client` (from comply()) is
   // honored so the shared MCP transport is reused across storyboards.
@@ -230,7 +266,10 @@ export async function runStoryboard(
 
   // Flatten all steps for next-step preview lookups
   const allSteps = flattenSteps(storyboard);
-  const dispatch = createDispatcher(agentUrls, clients, options.multi_instance_strategy ?? 'round-robin');
+  // Inner passes always dispatch round-robin; only the outer runMultiPass
+  // caller knows about the multi-pass strategy. This keeps createDispatcher's
+  // strategy parameter narrow.
+  const dispatch = createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset);
 
   // Placeholder storyboards with no executable phases get a distinct skip
   // reason per the runner-output contract. Without this, the overall result
@@ -381,7 +420,10 @@ export async function runStoryboard(
     storyboard_title: storyboard.title,
     agent_url: agentUrls[0]!,
     ...(isMultiInstance && { agent_urls: [...agentUrls] }),
-    ...(isMultiInstance && { multi_instance_strategy: options.multi_instance_strategy ?? 'round-robin' }),
+    // Inner multi-pass passes surface as `round-robin` (that's what they are
+    // individually); the aggregating wrapper relabels the top-level result
+    // `multi-pass`.
+    ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
     overall_passed: failedCount === 0 && requiredPhasesPassed,
     phases: phaseResults,
     context,
@@ -403,6 +445,79 @@ export async function runStoryboard(
   if (webhookReceiver) await webhookReceiver.close();
 
   return result;
+}
+
+/**
+ * Run the storyboard N times — once per replica — with the round-robin
+ * dispatcher starting at a different replica each pass. Lets each step hit
+ * a different replica across passes, so a bug isolated to one replica
+ * (stale config, divergent version, local cache miss) surfaces on the pass
+ * that sends the relevant step there.
+ *
+ * Known limitation (follow-up adcontextprotocol/adcp-client#607 option 2):
+ * for N=2, offset-shift preserves pair parity — a write→read pair whose
+ * dispatch indices differ by an even amount lands same-replica in every
+ * pass (the canonical property_lists case: write at step 0, read at step
+ * 2). Cross-replica state-persistence testing at N=2 is primarily the job
+ * of single-pass round-robin (which catches adjacent write→read pairs);
+ * dependency-aware dispatch that reads `context_inputs` and assigns a
+ * replica different from the writer of the specific state key being read
+ * is the spec-aligned fix for non-adjacent pairs and should be preferred
+ * over multi-pass for that purpose.
+ *
+ * The aggregated result AND-combines `overall_passed` across passes, sums
+ * the pass/fail/skip counts, and exposes the per-pass detail via `passes[]`.
+ * The top-level `phases` is the first pass's phases so single-pass consumers
+ * keep working; richer consumers read `passes[]`.
+ */
+async function runMultiPass(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<StoryboardResult> {
+  const start = Date.now();
+  const passes: StoryboardPassResult[] = [];
+  const passResults: StoryboardResult[] = [];
+  for (let passIdx = 0; passIdx < agentUrls.length; passIdx++) {
+    const result = await executeStoryboardPass(agentUrls, storyboard, options, passIdx);
+    passResults.push(result);
+    passes.push({
+      pass_index: passIdx + 1,
+      dispatch_offset: passIdx,
+      overall_passed: result.overall_passed,
+      phases: result.phases,
+      passed_count: result.passed_count,
+      failed_count: result.failed_count,
+      skipped_count: result.skipped_count,
+      duration_ms: result.total_duration_ms,
+    });
+  }
+
+  const first = passResults[0]!;
+  const overallPassed = passes.every(p => p.overall_passed);
+  const passed = passes.reduce((sum, p) => sum + p.passed_count, 0);
+  const failed = passes.reduce((sum, p) => sum + p.failed_count, 0);
+  const skipped = passes.reduce((sum, p) => sum + p.skipped_count, 0);
+  const schemasUsed = passResults.flatMap(r => r.schemas_used ?? []);
+  const schemasDedup = [...new Map(schemasUsed.map(s => [s.schema_id, s])).values()];
+
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    agent_urls: [...agentUrls],
+    multi_instance_strategy: 'multi-pass',
+    overall_passed: overallPassed,
+    phases: first.phases,
+    passes,
+    context: first.context,
+    total_duration_ms: Date.now() - start,
+    passed_count: passed,
+    failed_count: failed,
+    skipped_count: skipped,
+    tested_at: new Date().toISOString(),
+    ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
+  };
 }
 
 /**
@@ -658,6 +773,14 @@ async function executeStep(
   // when individual builders or sample_request YAML omit brand.
   request = applyBrandInvariant(request, options);
 
+  // Mutating AdCP requests require idempotency_key per spec. Storyboard
+  // yamls generally omit it so authors don't have to remember it on every
+  // mutating step — mint one here on the runner's behalf, matching how a
+  // real buyer would operate. Suppressed when the step expects a missing-key
+  // error (see `testsMissingIdempotencyKey` below) so that compliance
+  // surfaces can still exercise the server's required-field check.
+  request = applyIdempotencyInvariant(request, effectiveStep.task, step);
+
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
   const unresolvedVars = findUnresolvedContextVars(request);
@@ -688,15 +811,12 @@ async function executeStep(
   // + `WWW-Authenticate` header for http_* validations.
   //
   // Tests for envelope validation on mutating tasks (e.g., "missing
-  // idempotency_key returns INVALID_REQUEST") need to suppress the AdCP
-  // client's auto-inject — otherwise the client helpfully generates a
-  // UUID and the server never sees a missing-key request. Narrow trigger:
-  // the step expects an error, the task is mutating, and the request
-  // doesn't provide idempotency_key.
-  const testsMissingIdempotencyKey =
-    step.expect_error === true &&
-    isMutatingTask(effectiveStep.task) &&
-    (request as Record<string, unknown>).idempotency_key === undefined;
+  // idempotency_key returns INVALID_REQUEST") set `step.omit_idempotency_key`
+  // to suppress both the runner's `applyIdempotencyInvariant` (above) and the
+  // AdCP client's auto-inject — otherwise the SDK helpfully generates a UUID
+  // and the server never sees a missing-key request. Paired flags so the two
+  // layers agree; see `applyIdempotencyInvariant` for the runner-level skip.
+  const testsMissingIdempotencyKey = step.omit_idempotency_key === true && isMutatingTask(effectiveStep.task);
 
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
@@ -829,6 +949,7 @@ async function executeStep(
       ...(effectiveStep.response_schema_ref && { responseSchemaRef: effectiveStep.response_schema_ref }),
       request: requestRecord,
       ...(responseRecord && { response: responseRecord }),
+      storyboardContext: context,
     };
     validations = runValidations(resolvedValidations, vctx);
   }
@@ -960,6 +1081,7 @@ async function executeProbeStep(
     contributions: runState.contributions,
     request: requestRecord,
     ...(responseRecord && { response: responseRecord }),
+    storyboardContext: context,
   };
   const validations = step.validations?.length ? runValidations(step.validations, vctx) : [];
   const allValidationsPassed = validations.every(v => v.passed);
@@ -1107,15 +1229,24 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
  * different brand, it lands in a different session and can't see state
  * created by earlier steps.
  *
- * This helper runs after builder / sample_request resolution and overwrites
- * any conflicting brand on the request with `options.brand`. When the
- * request carries an `account` object, we also set `account.brand` so both
- * addressing forms converge.
+ * This helper runs after builder / sample_request resolution and writes the
+ * run-scoped brand into both addressing forms:
+ *
+ *   - Top-level `brand` — for tools whose schema declares it (e.g.
+ *     `get_products`, `create_media_buy`, signal tools).
+ *   - `account.brand` — for tools whose schema declares `account` but not
+ *     top-level `brand` (e.g. `get_media_buys`, `get_media_buy_delivery`,
+ *     `list_creatives`). When the incoming request has no `account`, we
+ *     construct one from `resolveAccount(options)` so the scoping survives
+ *     `adaptRequestForServerVersion`'s schema-aware field stripping.
+ *
+ * For any given tool, only one of the two addressing forms is declared in
+ * its schema; the other is stripped downstream. Setting both here lets the
+ * helper stay tool-agnostic.
  *
  * `AccountReference` is a union of `{account_id}` or `{brand, operator, sandbox?}`.
  * Injecting `brand` into an `{account_id}`-branch account still passes schema
- * validation (request schemas use `.passthrough()`) but is semantically
- * redundant. No storyboard currently uses the `{account_id}` branch.
+ * validation but is semantically redundant.
  */
 export function applyBrandInvariant(
   request: Record<string, unknown>,
@@ -1127,11 +1258,47 @@ export function applyBrandInvariant(
   if (!options.brand && !options.brand_manifest) return request;
   const brand = resolveBrand(options);
   const result: Record<string, unknown> = { ...request, brand };
-  const existingAccount = request.account;
-  if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
-    result.account = { ...(existingAccount as Record<string, unknown>), brand };
+  if ('account' in request) {
+    // Caller sent an account — merge brand in when it's a plain object.
+    // Leave non-object values (null, array) alone so intentionally malformed
+    // requests aren't silently "corrected."
+    const existingAccount = request.account;
+    if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
+      result.account = { ...(existingAccount as Record<string, unknown>), brand };
+    }
+  } else {
+    // No account on the request — construct one so tools whose schema
+    // declares `account` but not top-level `brand` (e.g. get_media_buys,
+    // list_creatives) still carry the run-scoped brand on the wire.
+    result.account = resolveAccount(options);
   }
   return result;
+}
+
+/**
+ * Mint an `idempotency_key` for mutating storyboard requests when one wasn't
+ * supplied. Storyboard `sample_request` blocks generally omit it; the runner
+ * fills it in so the server's required-field check doesn't short-circuit the
+ * handler under test, including on `expect_error` steps that name specific
+ * failure modes (GOVERNANCE_DENIED, UNAUTHORIZED, brand_mismatch, etc.).
+ *
+ * Skipped when:
+ *   - `step.omit_idempotency_key === true` — the scenario is explicitly
+ *     exercising the server's missing-key rejection path.
+ *   - the task isn't mutating per {@link MUTATING_TASKS}.
+ *   - the request already carries a key — typically a
+ *     `$generate:uuid_v4#alias` the context injector has resolved to a
+ *     concrete UUID for replay scenarios, or a BYOK key supplied inline.
+ */
+export function applyIdempotencyInvariant(
+  request: Record<string, unknown>,
+  taskName: string,
+  step: StoryboardStep
+): Record<string, unknown> {
+  if (step.omit_idempotency_key === true) return request;
+  if (!isMutatingTask(taskName)) return request;
+  if (typeof request.idempotency_key === 'string' && request.idempotency_key.length > 0) return request;
+  return { ...request, idempotency_key: generateIdempotencyKey() };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1228,18 +1395,25 @@ interface Dispatcher {
 /**
  * Build a dispatcher that picks an (agent URL, client) pair per step.
  *
- * Single-URL runs always return the same assignment. Multi-URL runs use the
- * configured strategy — currently round-robin only (other strategies reserved
- * in the enum; see tracking issue adcontextprotocol/adcp-client#607 for a
- * dependency-aware variant that closes the 2-replica coverage gap). Each
- * step increments the counter so step N hits `clients[N % N_urls]`,
- * deterministic and reproducible for bug reports.
+ * Single-URL runs always return the same assignment. Multi-URL runs use
+ * round-robin — step N hits `clients[(N + startOffset) % N_urls]`.
+ * Deterministic and reproducible for bug reports.
+ *
+ * `startOffset` lets the `multi-pass` strategy run the same storyboard with
+ * the dispatcher starting at a different replica each pass so write→read
+ * pairs separated by an even number of stateful steps get exercised
+ * cross-replica on at least one pass.
  */
-function createDispatcher(agentUrls: string[], clients: TestClient[], _strategy: 'round-robin'): Dispatcher {
-  let counter = 0;
+function createDispatcher(
+  agentUrls: string[],
+  clients: TestClient[],
+  _strategy: 'round-robin',
+  startOffset = 0
+): Dispatcher {
+  let counter = startOffset;
   return {
     nextFor(_step: StoryboardStep): StepAssignment {
-      const idx = counter % agentUrls.length;
+      const idx = ((counter % agentUrls.length) + agentUrls.length) % agentUrls.length;
       counter++;
       return {
         client: clients[idx]!,

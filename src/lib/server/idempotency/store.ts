@@ -118,6 +118,18 @@ export interface IdempotencyBackend {
    * (close pools, clear timers). Called by `store.close()`.
    */
   close?(): Promise<void>;
+  /**
+   * Optional test-harness hook that drops every cached entry without
+   * releasing backend resources. Used by `AdcpServer.compliance.reset()`
+   * between storyboards so idempotency cache hits from one storyboard
+   * don't replay into the next (shared brand domain, same key prefix).
+   *
+   * Production backends that can't cheaply flush everything (e.g., a
+   * shared Postgres cluster) should leave this undefined — the reset
+   * hook refuses to run when this method is missing unless the caller
+   * explicitly opts in with `{ force: true }`.
+   */
+  clearAll?(): Promise<void>;
 }
 
 /**
@@ -218,6 +230,16 @@ export interface IdempotencyStore {
   readonly ttlSeconds: number;
   /** Release backend resources (close pools, clear timers). */
   close(): Promise<void>;
+  /**
+   * Drop every cached entry without releasing backend resources.
+   * Present only when the configured backend supports it (e.g.,
+   * `memoryBackend`). Production-leaning backends leave this undefined
+   * so an accidental production call can't flush the cache.
+   *
+   * Only invoked from `AdcpServer.compliance.reset()` — do not call from
+   * production code paths.
+   */
+  clearAll?(): Promise<void>;
 }
 
 const MIN_TTL = 3600; // 1 hour
@@ -315,6 +337,14 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
     async close() {
       if (backend.close) await backend.close();
     },
+
+    ...(backend.clearAll
+      ? {
+          async clearAll() {
+            await backend.clearAll!();
+          },
+        }
+      : {}),
   };
 }
 

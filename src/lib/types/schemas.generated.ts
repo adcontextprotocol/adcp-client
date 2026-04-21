@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-20T05:54:10.361Z
+// Generated at: 2026-04-20T23:50:36.784Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2554,7 +2554,7 @@ export const GetAdCPCapabilitiesRequestSchema = z.object({
 
 export const TransportModeSchema = z.union([z.literal("walking"), z.literal("cycling"), z.literal("driving"), z.literal("public_transport")]);
 
-export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("measurement-verification"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-exchange"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-retail-media"), z.literal("sales-social"), z.literal("sales-streaming-tv"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests")]);
+export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("governance-aware-seller"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("measurement-verification"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-exchange"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-retail-media"), z.literal("sales-social"), z.literal("sales-streaming-tv"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests")]);
 
 export const IdempotencySupportedSchema = z.object({
     supported: z.literal(true),
@@ -5448,12 +5448,16 @@ export const GetAccountFinancialsErrorSchema = z.object({
 }).passthrough();
 
 export const ComplyTestControllerRequestSchema = z.object({
-    scenario: z.union([z.literal("list_scenarios"), z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend")]),
+    scenario: z.union([z.literal("list_scenarios"), z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend"), z.literal("seed_product"), z.literal("seed_pricing_option"), z.literal("seed_creative"), z.literal("seed_plan"), z.literal("seed_media_buy")]),
     params: z.object({
         creative_id: z.string().optional(),
         account_id: z.string().optional(),
         media_buy_id: z.string().optional(),
         session_id: z.string().optional(),
+        product_id: z.string().optional(),
+        pricing_option_id: z.string().optional(),
+        plan_id: z.string().optional(),
+        fixture: z.object({}).passthrough().optional(),
         status: z.string().optional(),
         rejection_reason: z.string().optional(),
         termination_reason: z.string().optional(),

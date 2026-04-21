@@ -33,6 +33,7 @@ import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './Protocol
 import type { Activity } from './AsyncHandler';
 import { GovernanceMiddleware } from './GovernanceMiddleware';
 import type { GovernanceConfig, GovernanceCheckResult } from './GovernanceTypes';
+import { attachMatch } from './match';
 /**
  * Custom errors for task execution
  */
@@ -319,11 +320,11 @@ export class TaskExecutor {
         const isBlocking = true;
 
         if (govResult.status === 'denied' && isBlocking) {
-          return this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
+          return attachMatch(this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs));
         }
 
         if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
-          return this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
+          return attachMatch(this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs));
         }
 
         // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
@@ -433,7 +434,7 @@ export class TaskExecutor {
         }
       }
 
-      return result;
+      return attachMatch(result);
     } catch (error) {
       // Report failed outcome on error
       if (governanceCheckId && this.governanceMiddleware && governanceResult?.governanceContext) {
@@ -446,7 +447,7 @@ export class TaskExecutor {
           governanceResult.governanceContext
         );
       }
-      return this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);
+      return attachMatch(this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime));
     }
   }
 
@@ -1099,7 +1100,7 @@ export class TaskExecutor {
         const pollSuccess = this.isOperationSuccess(status.result);
 
         if (pollSuccess) {
-          return {
+          return attachMatch({
             success: true as const,
             status: 'completed' as const,
             data: status.result,
@@ -1111,10 +1112,10 @@ export class TaskExecutor {
               status: 'completed',
               response: status.result,
             }),
-          };
+          });
         }
         const asyncResultErr = extractAdcpErrorInfo(status.result);
-        return {
+        return attachMatch({
           success: false as const,
           status: 'failed' as const,
           data: status.result,
@@ -1130,12 +1131,12 @@ export class TaskExecutor {
             status: 'failed',
             response: status.result,
           }),
-        };
+        });
       }
 
       if (status.status === ADCP_STATUS.FAILED || status.status === ADCP_STATUS.CANCELED) {
         const asyncFailedErr = extractAdcpErrorInfo(status.result);
-        return {
+        return attachMatch({
           success: false as const,
           status: 'failed' as const,
           data: status.result,
@@ -1151,7 +1152,7 @@ export class TaskExecutor {
             status: 'failed',
             response: status.result,
           }),
-        };
+        });
       }
 
       await this.sleep(pollInterval);
@@ -1172,7 +1173,7 @@ export class TaskExecutor {
     }
 
     // Continue task with the provided input (no handler for resumed deferred tasks)
-    return this.continueTaskWithInput<T>(
+    const resumed = await this.continueTaskWithInput<T>(
       state.agent,
       state.taskId,
       state.taskName,
@@ -1182,6 +1183,7 @@ export class TaskExecutor {
       state.messages,
       undefined // No handler for deferred tasks - input was provided by human
     );
+    return attachMatch(resumed);
   }
 
   /**

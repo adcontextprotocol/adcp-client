@@ -13,7 +13,7 @@
  * `WWW-Authenticate: Signature error="webhook_signature_*"` terminal.
  */
 
-const { describe, test } = require('node:test');
+const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { generateKeyPairSync } = require('node:crypto');
 
@@ -243,6 +243,19 @@ describe('createWebhookEmitter: cross-call stability', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('createWebhookEmitter: HMAC fallback', () => {
+  // The HMAC path fires a deprecation console.warn (covered in
+  // test/lib/webhook-hmac-deprecation.test.js). Silence it here so these
+  // header-correctness tests don't spam CI output.
+  let prevSuppress;
+  before(() => {
+    prevSuppress = process.env.ADCP_SUPPRESS_HMAC_WARNING;
+    process.env.ADCP_SUPPRESS_HMAC_WARNING = '1';
+  });
+  after(() => {
+    if (prevSuppress === undefined) delete process.env.ADCP_SUPPRESS_HMAC_WARNING;
+    else process.env.ADCP_SUPPRESS_HMAC_WARNING = prevSuppress;
+  });
+
   test('signs with X-ADCP-Signature when authentication.type = hmac_sha256', async () => {
     const { signerKey } = makeSignerKey();
     const fetch = stubFetch([{ status: 204 }]);

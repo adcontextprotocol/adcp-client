@@ -33,6 +33,10 @@
 
 import type { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import { ADCP_STATE_STORE, wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
@@ -60,6 +64,12 @@ import {
 } from './responses';
 
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
+
+function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
+  // `clearAll` is optional on `IdempotencyStore` — only present when the
+  // configured backend opts in (memory backend does; pg backend does not).
+  return typeof store.clearAll === 'function';
+}
 import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import type { IdempotencyStore } from './idempotency';
 import {
@@ -68,6 +78,11 @@ import {
   type WebhookEmitResult,
   type WebhookEmitterOptions,
 } from './webhook-emitter';
+import { createExpressVerifier, type ExpressLike } from '../signing/middleware';
+import type { JwksResolver } from '../signing/jwks';
+import type { ReplayStore } from '../signing/replay';
+import type { RevocationStore } from '../signing/revocation';
+import type { ContentDigestPolicy } from '../signing/types';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
@@ -514,6 +529,185 @@ export interface AdcpCapabilitiesConfig {
     description?: string;
     advertising_policies?: string;
   };
+  /**
+   * Per-domain capability blocks deep-merged on top of the framework's
+   * auto-derived response. Use when you need to surface fields the top-level
+   * `AdcpCapabilitiesConfig` doesn't model — execution.targeting,
+   * audience_targeting, content_standards channels, conversion_tracking
+   * identifier types, compliance_testing scenarios, etc.
+   *
+   * Deep-merge semantics:
+   * - nested objects merge recursively;
+   * - arrays REPLACE (not concat) so callers stay in control of cardinality;
+   * - primitive overrides replace the auto-derived value.
+   *
+   * Top-level fields the framework owns (`adcp`, `supported_protocols`,
+   * `specialisms`, `extensions_supported`) are not accepted here — configure
+   * them via their dedicated fields on {@link AdcpCapabilitiesConfig}.
+   */
+  overrides?: AdcpCapabilitiesOverrides;
+}
+
+/**
+ * Per-domain capability overrides. See {@link AdcpCapabilitiesConfig.overrides}.
+ *
+ * Each field accepts the same shape as the corresponding block on
+ * {@link GetAdCPCapabilitiesResponse}. A value of `null` explicitly removes
+ * the auto-derived block; `undefined` (omission) is a no-op.
+ *
+ * **Values must be JSON-serializable plain objects.** Class instances, `Date`,
+ * `Map`, `Set`, or any value with a non-`Object.prototype` prototype are
+ * treated as opaque leaves and replace their target rather than merging.
+ */
+export interface AdcpCapabilitiesOverrides {
+  media_buy?: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> | null;
+  creative?: Partial<NonNullable<GetAdCPCapabilitiesResponse['creative']>> | null;
+  signals?: Partial<NonNullable<GetAdCPCapabilitiesResponse['signals']>> | null;
+  governance?: Partial<NonNullable<GetAdCPCapabilitiesResponse['governance']>> | null;
+  brand?: Partial<NonNullable<GetAdCPCapabilitiesResponse['brand']>> | null;
+  sponsored_intelligence?: Partial<NonNullable<GetAdCPCapabilitiesResponse['sponsored_intelligence']>> | null;
+  account?: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> | null;
+  compliance_testing?: GetAdCPCapabilitiesResponse['compliance_testing'] | null;
+  webhook_signing?: GetAdCPCapabilitiesResponse['webhook_signing'] | null;
+  identity?: GetAdCPCapabilitiesResponse['identity'] | null;
+  request_signing?: GetAdCPCapabilitiesResponse['request_signing'] | null;
+}
+
+// ---------------------------------------------------------------------------
+// Signed-requests auto-wiring
+// ---------------------------------------------------------------------------
+
+/**
+ * Inputs for the auto-wired RFC 9421 request-signature verifier. When set on
+ * {@link AdcpServerConfig}, `createAdcpServer` builds an Express-shaped
+ * verifier middleware and attaches it to the returned `McpServer` via
+ * {@link ADCP_PRE_TRANSPORT}. `serve()` discovers the attached middleware and
+ * mounts it as the transport-layer `preTransport` hook, so every inbound MCP
+ * request passes the verifier before reaching the JSON-RPC router.
+ *
+ * A seller that declares the `signed-requests` specialism in
+ * `capabilities.specialisms` MUST provide this config, and vice-versa — both
+ * together or neither. `createAdcpServer` throws at construction time when
+ * only one is set, closing the footgun where claiming the specialism
+ * accepts unsigned mutating traffic.
+ *
+ * `jwks`, `replayStore`, and `revocationStore` should be hoisted outside
+ * the agent factory so a single verifier instance serves every request —
+ * otherwise each request would build a fresh replay store and the rate-
+ * abuse / replay-detection guards would be per-request (i.e. broken).
+ */
+export interface SignedRequestsConfig {
+  /** Resolves verification keys by `keyid`. */
+  jwks: JwksResolver;
+  /** Stores `(keyid, signature-bytes, expires)` tuples for replay detection. */
+  replayStore: ReplayStore;
+  /** Consulted for revoked `kid` / `jti` before accepting a signature. */
+  revocationStore: RevocationStore;
+  /**
+   * Operation names that MUST arrive signed. Defaults to every mutating
+   * AdCP tool (per the framework's {@link MUTATING_TASKS}). Read-only tools
+   * are optional — callers can sign them for authenticity but the verifier
+   * accepts unsigned traffic outside this list.
+   */
+  required_for?: string[];
+  /** Default `'either'` — accept signatures with or without Content-Digest. */
+  covers_content_digest?: ContentDigestPolicy;
+  /**
+   * Resolve the `agent_url` claim the verifier stamps on successful results.
+   * Useful when a single seller hosts multiple brands and the buyer's
+   * signing key is scoped to a brand identifier rather than the root.
+   */
+  agentUrlForKeyid?: (keyid: string) => string | undefined;
+}
+
+/**
+ * Symbol under which `createAdcpServer` attaches the auto-wired `preTransport`
+ * function to the returned `McpServer`. `serve()` reads this symbol to mount
+ * the verifier. Consumers typically don't need to touch it; it's exported for
+ * tests and for downstream frameworks that want the same wiring.
+ */
+export const ADCP_PRE_TRANSPORT: unique symbol = Symbol.for('@adcp/client.preTransport');
+
+/**
+ * Diagnostic snapshot of the signed-requests wiring on a returned server.
+ * Read via `server[ADCP_SIGNED_REQUESTS_STATE]` so integration tests and
+ * operator boot diagnostics can assert on the claim/config pairing without
+ * parsing log output. Populated on every `createAdcpServer` call.
+ */
+export interface AdcpSignedRequestsState {
+  /** True when `signedRequests: {...}` was passed and the verifier is auto-wired. */
+  autoWired: boolean;
+  /** True when `capabilities.specialisms` includes `'signed-requests'`. */
+  specialismClaimed: boolean;
+  /** True when `capabilities.request_signing.supported === true`. */
+  capabilitySupported: boolean;
+  /**
+   * Non-fatal mismatch state. `'ok'` when wiring + claim + supported are
+   * all aligned (or all off); `'claim_without_config'` when the claim is
+   * set but no `signedRequests` config was passed (legacy manual
+   * `serve({ preTransport })` path — logged but not thrown).
+   */
+  mismatch: 'ok' | 'claim_without_config';
+}
+
+/**
+ * Symbol under which `createAdcpServer` attaches the `AdcpSignedRequestsState`
+ * snapshot. Use `server[ADCP_SIGNED_REQUESTS_STATE]` to inspect wiring from
+ * tests or boot diagnostics.
+ */
+export const ADCP_SIGNED_REQUESTS_STATE: unique symbol = Symbol.for('@adcp/client.signedRequestsState');
+
+/**
+ * Shape of the preTransport function attached by `createAdcpServer` when
+ * `signedRequests` is configured. Returns `true` if the middleware has already
+ * sent a response (e.g., 401 on verification failure), `false` to continue
+ * into MCP dispatch.
+ */
+export type AdcpPreTransport = (
+  req: import('http').IncomingMessage & { rawBody?: string },
+  res: import('http').ServerResponse
+) => Promise<boolean>;
+
+// ---------------------------------------------------------------------------
+// Custom tool config
+// ---------------------------------------------------------------------------
+
+/**
+ * Declarative registration for a tool outside {@link AdcpToolMap} — seller
+ * extensions (e.g. collection-list helpers), test-harness endpoints
+ * (`comply_test_controller`), or AdCP surfaces whose JSON Schemas haven't
+ * landed in the framework yet (`creative_approval`, `update_rights`).
+ *
+ * These tools **bypass the framework's spec-tool pipeline**:
+ * idempotency middleware, governance pre-checks, account resolution,
+ * and response wrapping are all skipped. The handler receives the
+ * SDK-validated arguments and must return a `CallToolResult` directly.
+ * If you need any of those behaviors, call the framework helpers from
+ * inside the handler (e.g., `checkGovernance(...)`, `adcpError(...)`).
+ *
+ * Type parameters match the SDK's `McpServer.registerTool` signature so
+ * argument and response types infer from the declared schemas.
+ */
+export interface AdcpCustomToolConfig<
+  InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined,
+  OutputArgs extends ZodRawShapeCompat | AnySchema | undefined = undefined,
+> {
+  /** Human-readable description — surfaced in `tools/list`. */
+  description?: string;
+  /** Optional title hint for the MCP inspector. */
+  title?: string;
+  /** Zod raw shape or schema for argument validation. */
+  inputSchema?: InputArgs;
+  /** Zod raw shape or schema for the declared response payload. */
+  outputSchema?: OutputArgs;
+  /** Tool annotations (readOnlyHint / destructiveHint / idempotentHint / openWorldHint). */
+  annotations?: ToolAnnotations;
+  /**
+   * Tool handler. Gets SDK-validated `args` based on `inputSchema` and
+   * must return a `CallToolResult`. Use `capabilitiesResponse`,
+   * `mediaBuyResponse`, `adcpError`, or a hand-built `{ content, structuredContent? }`.
+   */
+  handler: ToolCallback<InputArgs>;
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +824,47 @@ export interface AdcpServerConfig<TAccount = unknown> {
     /** Observability: emitter-wide onAttemptResult hook. */
     onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
   };
+  /**
+   * Auto-wire the RFC 9421 request-signature verifier onto the HTTP transport.
+   * When set together with `capabilities.specialisms` containing
+   * `signed-requests`, `serve()` mounts the verifier as `preTransport` so
+   * every inbound MCP request is verified before JSON-RPC dispatch. Setting
+   * one without the other throws at construction time — the spec requires
+   * the specialism claim and a working verifier to stay in lock-step.
+   *
+   * Omit entirely when the seller doesn't verify inbound signatures. Servers
+   * that wire the verifier manually via `serve({ preTransport })` are
+   * unaffected — auto-wiring only kicks in through this field.
+   */
+  signedRequests?: SignedRequestsConfig;
+
+  /**
+   * Register tools outside {@link AdcpToolMap}. Keys are the public tool
+   * names; values follow {@link AdcpCustomToolConfig}.
+   *
+   * Gives sellers a declarative extension point without reaching for the
+   * `getSdkServer()` escape hatch. Typical callers:
+   *
+   *   - AdCP surfaces whose JSON Schemas haven't landed yet
+   *     (`creative_approval`, `update_rights`).
+   *   - Governance specialism helpers (`*_collection_list` family).
+   *   - Test-harness tools (`comply_test_controller` — prefer
+   *     {@link registerTestController} which wraps this).
+   *   - Seller-specific extensions outside the AdCP spec.
+   *
+   * **Custom tools bypass the framework's spec-tool pipeline.** No
+   * idempotency middleware, no governance pre-check, no account
+   * resolution, no response wrapping. The handler receives SDK-validated
+   * args and must return a `CallToolResult`. Call framework helpers
+   * (`checkGovernance`, `adcpError`, `capabilitiesResponse`, …) from
+   * inside the handler if you need those behaviors.
+   *
+   * Name collisions with registered AdcpToolMap tools (from `mediaBuy`,
+   * `signals`, `creative`, `governance`, `accounts`, `eventTracking`,
+   * `sponsoredIntelligence`) or with `get_adcp_capabilities` throw at
+   * construction time — the spec handler wins by convention.
+   */
+  customTools?: Record<string, AdcpCustomToolConfig<any, any>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -657,6 +892,47 @@ function clampReplayTtl(seconds: number): number {
   if (!Number.isFinite(seconds) || seconds < MIN) return MIN;
   if (seconds > MAX) return MAX;
   return Math.floor(seconds);
+}
+
+/**
+ * Deep-merge the per-domain blocks from `overrides` onto `target`. Nested
+ * objects merge recursively; arrays and primitives replace. `null` at the
+ * top-level field explicitly drops the block; `undefined` is a no-op.
+ */
+function applyCapabilityOverrides(target: GetAdCPCapabilitiesResponse, overrides: AdcpCapabilitiesOverrides): void {
+  const targetAny = target as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) continue;
+    if (value === null) {
+      delete targetAny[key];
+      continue;
+    }
+    targetAny[key] = deepMergePlainObjects(targetAny[key], value);
+  }
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object') return false;
+  if (Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMergePlainObjects(target: unknown, source: unknown): unknown {
+  if (source === undefined) return target;
+  if (source === null) return null;
+  if (!isPlainObject(source)) return source;
+  if (!isPlainObject(target)) return { ...(source as Record<string, unknown>) };
+  const out: Record<string, unknown> = { ...target };
+  for (const [k, v] of Object.entries(source as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    if (v === null) {
+      delete out[k];
+      continue;
+    }
+    out[k] = deepMergePlainObjects(out[k], v);
+  }
+  return out;
 }
 
 /**
@@ -1022,6 +1298,144 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
 }
 
 // ---------------------------------------------------------------------------
+// Signed-requests preTransport builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a `preTransport` middleware that runs `createExpressVerifier` against
+ * the incoming Node request/response. The returned function matches the shape
+ * `serve({ preTransport })` expects: it resolves to `true` when the verifier
+ * has already written a 401 (headers sent), `false` otherwise.
+ *
+ * `serve()` buffers the request body into `req.rawBody` before invoking the
+ * preTransport hook, so the verifier sees the exact bytes the signer hashed
+ * for Content-Digest. For MCP the operation name comes from the JSON-RPC
+ * `params.name`; the resolver below falls back to `undefined` for non-JSON or
+ * non-`tools/call` bodies, which makes the verifier treat them as not-in-
+ * `required_for` rather than rejecting (discovery probes, health checks).
+ */
+function buildSignedRequestsPreTransport(
+  signedRequests: SignedRequestsConfig,
+  capabilityRequiredFor?: string[]
+): AdcpPreTransport {
+  // Precedence: explicit signedRequests.required_for > capabilities.request_signing.required_for
+  // > fallback to every mutating task. Buyers read required_for from
+  // get_adcp_capabilities to decide which calls to sign — defaulting to
+  // MUTATING_TASKS when the seller advertised a narrower list would cause
+  // buyers to get request_signature_required on tools they had no contractual
+  // duty to sign.
+  const requiredFor = signedRequests.required_for ?? capabilityRequiredFor ?? [...MUTATING_TASKS];
+  const verifier = createExpressVerifier({
+    capability: {
+      supported: true,
+      covers_content_digest: signedRequests.covers_content_digest ?? 'either',
+      required_for: requiredFor,
+    },
+    jwks: signedRequests.jwks,
+    replayStore: signedRequests.replayStore,
+    revocationStore: signedRequests.revocationStore,
+    ...(signedRequests.agentUrlForKeyid ? { agentUrlForKeyid: signedRequests.agentUrlForKeyid } : {}),
+    resolveOperation: req => {
+      const raw = (req as { rawBody?: string }).rawBody;
+      if (!raw) return undefined;
+      try {
+        const parsed = JSON.parse(raw) as { method?: string; params?: { name?: string } };
+        if (parsed.method === 'tools/call' && typeof parsed.params?.name === 'string') {
+          return parsed.params.name;
+        }
+      } catch {
+        // Non-JSON or malformed body — let transport handle rejection.
+      }
+      return undefined;
+    },
+  });
+
+  return async function adcpPreTransport(req, res) {
+    const reqShim: ExpressLike = {
+      method: req.method ?? 'POST',
+      url: req.url ?? '/mcp',
+      originalUrl: req.url ?? '/mcp',
+      headers: req.headers,
+      rawBody: req.rawBody ?? '',
+      protocol: 'http',
+      get(name: string) {
+        const v = req.headers[name.toLowerCase()];
+        return Array.isArray(v) ? v.join(', ') : v;
+      },
+    };
+    const resShim = {
+      status(code: number) {
+        res.statusCode = code;
+        return {
+          set(k: string, v: string) {
+            res.setHeader(k, v);
+            return {
+              json(body: unknown) {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify(body));
+              },
+            };
+          },
+        };
+      },
+    };
+
+    let handled = false;
+    let verifierCompleted = false;
+    // The verifier calls `next(err?)` in the success / error path, but the
+    // 401 RequestSignatureError path writes the response and returns WITHOUT
+    // calling next. Race the next-callback against the response's 'finish' /
+    // 'close' events so a terminal 401 resolves the promise; otherwise the
+    // wrapper hangs forever and the agent server leaks (one McpServer per
+    // unsigned request under attack).
+    //
+    // Security: if 'close' fires before the verifier completes (client
+    // aborted the TCP connection mid-JWKS-fetch), we MUST NOT fall through
+    // to the MCP transport — doing so would execute the tool handler
+    // without a verified signature on an attacker-dropped connection. Mark
+    // handled=true so serve.ts skips dispatch.
+    await new Promise<void>(resolve => {
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+      res.once('finish', () => {
+        if (res.writableEnded) handled = true;
+        done();
+      });
+      res.once('close', () => {
+        if (!verifierCompleted) handled = true;
+        done();
+      });
+      verifier(reqShim, resShim, err => {
+        verifierCompleted = true;
+        if (err) {
+          // Log internally; a leaked stack trace to the caller would
+          // enumerate the verifier pipeline (js/stack-trace-exposure).
+          // Narrow to name+code only — full error stringification can embed
+          // JWKS URLs from transport failures, which leaks counterparty
+          // key-discovery topology on shared log aggregators.
+          const errName = (err as Error).name || 'Error';
+          const errCode = (err as { code?: string }).code ?? 'unknown';
+          console.error(`[adcp/signed-requests] verifier middleware error: ${errName} (${errCode})`);
+          if (!res.writableEnded) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'verifier_error' }));
+          }
+          handled = true;
+        }
+        if (res.writableEnded) handled = true;
+        done();
+      });
+    });
+    return handled;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // createAdcpServer
 // ---------------------------------------------------------------------------
 
@@ -1037,7 +1451,7 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
  *
  * `get_adcp_capabilities` is auto-generated from registered tools.
  */
-export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TAccount>): McpServer {
+export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TAccount>): AdcpServer {
   const {
     name,
     version,
@@ -1053,7 +1467,51 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     taskStore,
     taskMessageQueue,
     webhooks,
+    signedRequests,
   } = config;
+
+  // Enforce lock-step between the `signed-requests` specialism claim and the
+  // verifier config for the auto-wiring path. When `signedRequests` is set
+  // but the specialism isn't declared, buyers can't discover the signing
+  // requirement from `get_adcp_capabilities` — they won't sign, the
+  // verifier rejects every mutating call, and the agent is dead on arrival.
+  // That's unambiguously wrong, so we throw.
+  //
+  // The opposite direction — claiming the specialism without a
+  // `signedRequests` config — is only wrong when the agent also doesn't
+  // wire a verifier via `serve({ preTransport })`. Legacy servers that
+  // hand-build the middleware fall into this case and are still conformant.
+  // We log a loud error so operators notice (matching the idempotency
+  // guardrail precedent) but don't throw, leaving the manual path working.
+  const specialismsClaimed = capConfig?.specialisms ?? [];
+  const claimsSignedRequests = specialismsClaimed.includes('signed-requests');
+  if (signedRequests && !claimsSignedRequests) {
+    throw new Error(
+      'createAdcpServer: `signedRequests` is configured but `capabilities.specialisms` does not include "signed-requests". ' +
+        'Add "signed-requests" to the specialisms list — buyers discover the signing requirement from get_adcp_capabilities, ' +
+        "and omitting the claim means they won't sign their requests."
+    );
+  }
+  if (claimsSignedRequests && !signedRequests) {
+    logger.error(
+      'createAdcpServer: `capabilities.specialisms` claims "signed-requests" but no `signedRequests` config was provided. ' +
+        'Either pass `signedRequests: { jwks, replayStore, revocationStore }` to auto-wire the verifier, or ensure you wire ' +
+        'one manually via `serve({ preTransport })`. Claiming the specialism without verifying signatures is a spec violation.'
+    );
+  }
+  // The specialism is only meaningful when `capabilities.request_signing.supported`
+  // is true — the compliance storyboard treats a missing or false `supported`
+  // flag as "not opted in" and silently skips the whole conformance run. Claim
+  // + supported:false is the worst failure mode: the claim advertises
+  // signature enforcement while the capability block tells buyers the agent
+  // doesn't verify. Fail fast so the mismatch is caught at construction.
+  if (claimsSignedRequests && capConfig?.request_signing?.supported !== true) {
+    throw new Error(
+      'createAdcpServer: `capabilities.specialisms` claims "signed-requests" but `capabilities.request_signing.supported` is not true. ' +
+        'Set `capabilities.request_signing = { supported: true, ... }` — the compliance storyboard skips conformance entirely when ' +
+        '`supported` is falsy, and buyers cannot discover the signing requirement without the capability block.'
+    );
+  }
 
   // Instantiate the emitter once — handler contexts expose its `emit`
   // bound method so per-request code calls `ctx.emitWebhook(...)` without
@@ -1391,6 +1849,44 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     }
   }
 
+  // ─── Custom tools ──────────────────────────────────────────
+  // Seller extensions outside AdcpToolMap. No idempotency / governance /
+  // response-wrapping — handlers own those concerns directly. Registered
+  // after spec tools so the collision check can authoritatively block
+  // overlap with framework-owned names.
+  if (config.customTools) {
+    const customNames = Object.keys(config.customTools);
+    for (const customName of customNames) {
+      if (registeredToolNames.has(customName)) {
+        throw new Error(
+          `createAdcpServer: customTools["${customName}"] collides with a framework-registered tool. ` +
+            `Rename the custom tool or remove the handler from the conflicting domain group.`
+        );
+      }
+      if (customName === 'get_adcp_capabilities') {
+        throw new Error(
+          `createAdcpServer: customTools["get_adcp_capabilities"] is not allowed. ` +
+            `The framework auto-generates this tool from registered handlers and capability config.`
+        );
+      }
+      const custom = config.customTools[customName];
+      if (!custom) continue;
+      const { description, title, inputSchema, outputSchema, annotations, handler } = custom;
+      server.registerTool(
+        customName,
+        {
+          ...(description != null && { description }),
+          ...(title != null && { title }),
+          ...(inputSchema != null && { inputSchema }),
+          ...(outputSchema != null && { outputSchema }),
+          ...(annotations != null && { annotations }),
+        } as Parameters<typeof server.registerTool>[1],
+        handler as Parameters<typeof server.registerTool>[2]
+      );
+      registeredToolNames.add(customName);
+    }
+  }
+
   // Tool coherence warnings
   checkCoherence(registeredToolNames, logger);
 
@@ -1499,6 +1995,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     capabilitiesData.specialisms = capConfig.specialisms;
   }
 
+  if (capConfig?.overrides) {
+    applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
+  }
+
   const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;
   server.tool('get_adcp_capabilities', capSchema?.shape ?? {}, async (params: any) => {
     const data = { ...capabilitiesData };
@@ -1508,10 +2008,95 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     return capabilitiesResponse(data);
   });
 
+  const compliance = {
+    async reset({
+      force = false,
+      allowProduction = false,
+    }: { force?: boolean; allowProduction?: boolean } = {}): Promise<void> {
+      // Check NODE_ENV BEFORE store-shape probes: the environment guard
+      // is the strongest signal that "this is not a test harness." An
+      // operator who reached this call in production by mistake hits the
+      // env gate regardless of which backend they wired.
+      if (!allowProduction && process.env.NODE_ENV === 'production') {
+        throw new Error(
+          'AdcpServer.compliance.reset: refused to run with NODE_ENV=production. ' +
+            'Pass `{ allowProduction: true }` if you deliberately set NODE_ENV=production in a test environment, ' +
+            'or unset NODE_ENV before running storyboards.'
+        );
+      }
+      // Positive allowlist for stores, not method-presence. A
+      // PostgresStateStore might expose `.clear()` for its own test
+      // utility needs — we don't want method-existence alone to permit
+      // a flush that would take out a shared test cluster. `force: true`
+      // is the documented opt-in for non-memory backends.
+      const stateStoreIsMemory = stateStore instanceof InMemoryStateStore;
+      const idempotencyIsFlushable = !idempotency || hasIdempotencyClearAll(idempotency);
+      if (!force) {
+        if (!stateStoreIsMemory) {
+          throw new Error(
+            'AdcpServer.compliance.reset: configured stateStore is not InMemoryStateStore. ' +
+              'Pass `{ force: true }` to acknowledge that flushing the configured backend is safe for this environment ' +
+              '(e.g., a disposable test Postgres).'
+          );
+        }
+        if (!idempotencyIsFlushable) {
+          throw new Error(
+            'AdcpServer.compliance.reset: configured idempotency backend does not expose `clearAll()`. ' +
+              'Use `memoryBackend()` for test harnesses, or pass `{ force: true }` to skip idempotency flush.'
+          );
+        }
+      }
+      // `force` bypasses the allowlist checks but never the flush
+      // itself — if we reached here, the caller wants the flush to
+      // happen. `clear()` is only called when the store exposes it;
+      // a store without `clear()` reaching here under `force: true`
+      // is a no-op for the state side, which matches the shape the
+      // caller opted into.
+      const storeWithClear = stateStore as unknown as { clear?: () => void };
+      if (typeof storeWithClear.clear === 'function') storeWithClear.clear();
+      if (idempotency && idempotency.clearAll) await idempotency.clearAll();
+    },
+  };
+  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance);
+
+  // Attach the auto-wired preTransport so `serve()` mounts the verifier
+  // on the HTTP transport. Stashed under a non-enumerable symbol property
+  // on the wrapper — it's a private contract between this function and
+  // `serve()` for wiring, not part of the AdcpServer public API.
+  if (signedRequests) {
+    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing?.required_for);
+    Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
+      value: preTransport,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+  }
+
+  const signedRequestsState: AdcpSignedRequestsState = {
+    autoWired: Boolean(signedRequests),
+    specialismClaimed: claimsSignedRequests,
+    capabilitySupported: capConfig?.request_signing?.supported === true,
+    mismatch: claimsSignedRequests && !signedRequests ? 'claim_without_config' : 'ok',
+  };
+  Object.defineProperty(wrapped, ADCP_SIGNED_REQUESTS_STATE, {
+    value: signedRequestsState,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+  Object.defineProperty(wrapped, ADCP_STATE_STORE, {
+    value: stateStore,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+
   logger.info('AdCP server created', {
     tools: [...registeredToolNames],
     protocols,
+    signedRequests: signedRequestsState,
   });
 
-  return server;
+  return wrapped;
 }

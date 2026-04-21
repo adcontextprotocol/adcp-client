@@ -283,9 +283,10 @@ describe('createSessionedStore', () => {
 
 describe('resolveSessionKey', () => {
   async function callTool(server, toolName, params) {
-    const tool = server._registeredTools[toolName];
-    const extra = { signal: new AbortController().signal };
-    return tool.handler(params, extra);
+    return server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: toolName, arguments: params ?? {} },
+    });
   }
 
   it('populates ctx.sessionKey before the handler runs', async () => {

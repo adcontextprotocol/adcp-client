@@ -11,6 +11,7 @@ const {
   verifyRequestSignature,
   signRequest,
   buildSignatureBase,
+  canonicalTargetUri,
   parseSignatureInput,
 } = require('../dist/lib/signing/index.js');
 
@@ -39,10 +40,14 @@ async function runVector(vector) {
   const now = vector.reference_now;
   const replayStore = new InMemoryReplayStore();
   const revocationStore = new InMemoryRevocationStore();
+  // Replay entries are scoped by `(keyid, @target-uri)` (adcp#2460). Vector
+  // harness-state preloads inherit the scope from the vector's request URL
+  // — that's the endpoint the verifier will canonicalize when committing.
+  const scope = canonicalTargetUri(vector.request.url);
   const state = vector.test_harness_state ?? {};
   if (state.replay_cache_entries) {
     for (const entry of state.replay_cache_entries) {
-      replayStore.preload(entry.keyid, entry.nonce, entry.ttl_seconds, now);
+      replayStore.preload(entry.keyid, scope, entry.nonce, entry.ttl_seconds, now);
     }
   }
   if (state.revocation_list) revocationStore.load(state.revocation_list);
