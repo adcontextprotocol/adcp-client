@@ -1,0 +1,239 @@
+/**
+ * Targeted HTML attribute extractor. Pulls tracker URLs from the
+ * contract's normative tag/attribute set only — deliberately narrower
+ * than a general-purpose HTML parser.
+ *
+ * The set (from `substitution-observer-runner.yaml`):
+ *   a/href, img/src, img/srcset, iframe/src, source/src, source/srcset,
+ *   link/href, meta/content, *\/data-impression-url, *\/data-click-url,
+ *   *\/data-tracker-url, *\/data-vast-url
+ *
+ * Script text and HTML comments are ignored. `srcset` values are split
+ * per-descriptor; every URL component is emitted.
+ */
+
+import type { TrackerUrlRecord } from '../types';
+
+const SYNTHETIC_BASE = 'https://observer.test/';
+
+const TAG_SPECIFIC_ATTRS: Record<string, readonly string[]> = {
+  a: ['href'],
+  img: ['src', 'srcset'],
+  iframe: ['src'],
+  source: ['src', 'srcset'],
+  link: ['href'],
+  meta: ['content'],
+};
+
+const WILDCARD_ATTRS: readonly string[] = [
+  'data-impression-url',
+  'data-click-url',
+  'data-tracker-url',
+  'data-vast-url',
+];
+
+const SRCSET_ATTRS = new Set(['srcset']);
+
+interface AttrHit {
+  tag: string;
+  attr: string;
+  value: string;
+  line: number;
+}
+
+/**
+ * Parse `html` and return every tracker URL in the normative extraction
+ * set. URLs that fail WHATWG URL parsing (even after resolving against
+ * `https://observer.test/`) are skipped — the runner asserts on
+ * extractable URLs only.
+ */
+export function extractTrackerUrls(html: string): TrackerUrlRecord[] {
+  const hits = findAttributeHits(html);
+  const records: TrackerUrlRecord[] = [];
+  for (const hit of hits) {
+    const values = SRCSET_ATTRS.has(hit.attr) ? splitSrcset(hit.value) : [hit.value];
+    for (const raw of values) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const parsed = tryParseUrl(trimmed);
+      if (!parsed) continue;
+      records.push({
+        url: parsed,
+        source_attr: hit.attr,
+        source_tag: hit.tag,
+        line_hint: hit.line,
+      });
+    }
+  }
+  return records;
+}
+
+function tryParseUrl(raw: string): URL | null {
+  try {
+    return new URL(raw, SYNTHETIC_BASE);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `srcset` carries `URL [descriptor]` pairs separated by commas. The
+ * descriptor is optional (`1x`, `2x`, `640w`, ...). Commas can appear
+ * inside URLs only percent-encoded, so `,` splits are unambiguous.
+ */
+function splitSrcset(value: string): string[] {
+  return value
+    .split(',')
+    .map(part => part.trim().split(/\s+/)[0] ?? '')
+    .filter(u => u.length > 0);
+}
+
+/**
+ * Walk `html` as a simple state machine, skipping comments, CDATA,
+ * <script>, and <style>. Emit one hit per matching attribute.
+ */
+function findAttributeHits(html: string): AttrHit[] {
+  const hits: AttrHit[] = [];
+  const len = html.length;
+  let i = 0;
+  let line = 1;
+
+  const advance = (to: number): void => {
+    for (let k = i; k < to && k < len; k++) {
+      if (html.charCodeAt(k) === 0x0a) line += 1;
+    }
+    i = to;
+  };
+
+  while (i < len) {
+    const c = html.charCodeAt(i);
+    if (c === 0x0a) {
+      line += 1;
+      i += 1;
+      continue;
+    }
+    if (c !== 0x3c /* < */) {
+      i += 1;
+      continue;
+    }
+
+    // Comment <!-- ... -->
+    if (html.startsWith('<!--', i)) {
+      const end = html.indexOf('-->', i + 4);
+      if (end === -1) break;
+      advance(end + 3);
+      continue;
+    }
+
+    // CDATA <![CDATA[ ... ]]>
+    if (html.startsWith('<![CDATA[', i)) {
+      const end = html.indexOf(']]>', i + 9);
+      if (end === -1) break;
+      advance(end + 3);
+      continue;
+    }
+
+    // DOCTYPE / XML decl — ignore up to first '>'
+    if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
+      const end = html.indexOf('>', i + 2);
+      if (end === -1) break;
+      advance(end + 1);
+      continue;
+    }
+
+    // Closing tag </foo>
+    if (html.startsWith('</', i)) {
+      const end = html.indexOf('>', i + 2);
+      if (end === -1) break;
+      advance(end + 1);
+      continue;
+    }
+
+    // Only opening / self-closing tags remain. Parse tag name.
+    const tagMatch = /^[A-Za-z][A-Za-z0-9:_-]*/.exec(html.slice(i + 1));
+    if (!tagMatch) {
+      i += 1;
+      continue;
+    }
+    const tag = tagMatch[0].toLowerCase();
+    const tagEnd = findTagEnd(html, i);
+    if (tagEnd === -1) break;
+    const tagStartLine = line;
+    const tagBody = html.slice(i + 1 + tag.length, tagEnd);
+
+    // <script>/<style>: skip until the matching close tag. Content
+    // is ignored per the contract (script_text_content: ignored).
+    if (tag === 'script' || tag === 'style') {
+      advance(tagEnd + 1);
+      const closeRegex = new RegExp(`</${tag}\\s*>`, 'i');
+      const rest = html.slice(i);
+      const m = closeRegex.exec(rest);
+      if (!m) break;
+      advance(i + m.index + m[0].length);
+      continue;
+    }
+
+    collectAttributes(tagBody, tag, tagStartLine, hits);
+    advance(tagEnd + 1);
+  }
+
+  return hits;
+}
+
+/**
+ * Return the offset (relative to `html`) of the closing `>` that ends
+ * the opening-tag token starting at `start`. Handles quoted attribute
+ * values so a `>` inside an attribute doesn't close the tag early.
+ */
+function findTagEnd(html: string, start: number): number {
+  const len = html.length;
+  let k = start + 1;
+  let quote: number | null = null;
+  while (k < len) {
+    const ch = html.charCodeAt(k);
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else {
+      if (ch === 0x22 /* " */ || ch === 0x27 /* ' */) {
+        quote = ch;
+      } else if (ch === 0x3e /* > */) {
+        return k;
+      }
+    }
+    k += 1;
+  }
+  return -1;
+}
+
+const ATTR_REGEX = /([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/g;
+
+function collectAttributes(body: string, tag: string, line: number, out: AttrHit[]): void {
+  const tagAttrs = TAG_SPECIFIC_ATTRS[tag] ?? [];
+  ATTR_REGEX.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ATTR_REGEX.exec(body)) !== null) {
+    const name = (m[1] ?? '').toLowerCase();
+    const value = m[2] ?? m[3] ?? m[4] ?? '';
+    const isTagAttr = tagAttrs.includes(name);
+    const isWildcard = WILDCARD_ATTRS.includes(name);
+    if (!isTagAttr && !isWildcard) continue;
+    out.push({ tag, attr: name, value: decodeHtmlEntities(value), line });
+  }
+}
+
+/**
+ * Minimal entity decoding — covers the handful of cases that could
+ * hide a value that still parses as a URL. The goal is parity with a
+ * browser's attribute-value decoding step, not a full HTML5 named-
+ * entity table.
+ */
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}

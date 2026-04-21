@@ -65,6 +65,11 @@
       "import": "./dist/lib/conformance/index.js",
       "require": "./dist/lib/conformance/index.js",
       "types": "./dist/lib/conformance/index.d.ts"
+    },
+    "./substitution": {
+      "import": "./dist/lib/substitution/index.js",
+      "require": "./dist/lib/substitution/index.js",
+      "types": "./dist/lib/substitution/index.d.ts"
     }
   },
   "typesVersions": {
@@ -101,6 +106,9 @@
       ],
       "conformance": [
         "dist/lib/conformance/index.d.ts"
+      ],
+      "substitution": [
+        "dist/lib/substitution/index.d.ts"
       ]
     }
   },
