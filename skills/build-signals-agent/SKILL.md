@@ -152,7 +152,9 @@ activateSignalResponse({
 
 ### Context and Ext Passthrough
 
-`createAdcpServer` handles context and ext passthrough automatically. You do not need to echo `context` in your handler return values — the framework does it.
+`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
+
+**Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description, validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely; the framework handles it.
 
 Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `activate_signal`.
 

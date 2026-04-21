@@ -107,20 +107,11 @@ taskToolResponse({
 
 ### Context and Ext Passthrough
 
-Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler when the field isn't already present.
 
-```typescript
-// In every tool handler:
-const context = args.context; // may be undefined — that's fine
+**Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string ("E2E test session", a narrative description, the SI-specific `campaign_context`, etc.), validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out; let the framework echo the request's context object unchanged.
 
-// In every response:
-return taskToolResponse({
-  // ... your response fields ...
-  context,  // echo it back unchanged
-});
-```
-
-Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+Some requests also carry domain-specific fields that look like context (e.g., `campaign_context: string` on `si_initiate_session`). Those are tool params, **not** the protocol echo field — keep them in your domain logic and never assign them to `context`.
 
 ## SDK Quick Reference
 

@@ -408,8 +408,9 @@ adcpError('INVALID_REQUEST', { message: 'start_time must be before end_time' })
 getMediaBuysResponse({
   media_buys: [{
     media_buy_id: string,   // required
-    status: 'active' | 'pending_start' | ...,  // required
+    status: 'active' | 'pending_start' | 'pending_creatives' | ...,  // required
     currency: 'USD',        // required
+    total_budget: 5000,     // required — numeric, same currency as `currency`
     confirmed_at: string,   // required for guaranteed approval — ISO timestamp
     packages: [{
       package_id: string,   // required
@@ -418,13 +419,21 @@ getMediaBuysResponse({
 })
 ```
 
+When you persist a media buy, save `currency` + `total_budget` from the `create_media_buy` request (budgets sum across packages) so subsequent `get_media_buys` calls can return them verbatim. Missing either field on any row fails schema validation and every subsequent step depending on that media_buy's history.
+
 **`list_creative_formats`** — `ListCreativeFormatsRequestSchema.shape`
 
 ```
 listCreativeFormatsResponse({
   formats: [{
     format_id: { agent_url: string, id: string },  // required
-    name: string,  // required
+    name: string,                                  // required
+    renders: [{                                    // required — at least one render
+      role: 'primary',                             // required
+      // oneOf: specify dimensions OR parameters_from_format_id, not both
+      dimensions: { width: 300, height: 250 },     // object — defaults to px
+      // parameters_from_format_id: true,          // alternative: parameters come from format_id
+    }],
   }]
 })
 ```
@@ -456,20 +465,9 @@ deliveryResponse({
 
 ### Context and Ext Passthrough
 
-Every AdCP request includes an optional `context` field. Buyers use it to carry correlation IDs, orchestration metadata, and workflow state across multi-agent calls. Your agent **must** echo the `context` object back unchanged in every response.
+`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
 
-```typescript
-// In every tool handler:
-const context = args.context; // may be undefined — that's fine
-
-// In every response:
-return taskToolResponse({
-  // ... your response fields ...
-  context, // echo it back unchanged
-});
-```
-
-Do not modify, inspect, or omit the context — treat it as opaque. If the request has no context, omit it from the response.
+**Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description (e.g., "E2E test run", a scenario label, `campaign_context` from the request body), validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely; the framework handles it.
 
 Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `sync_governance`, `provide_performance_feedback`, `sync_event_sources`.
 
@@ -968,6 +966,8 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 2. If you register mutating handlers without passing `idempotency`, the framework logs an error at server-creation time (v3 non-compliance). Silence it by either wiring idempotency or setting `capabilities.idempotency.replay_ttl_seconds` in your config (declares non-compliance to buyers).
 
 **Buyer-side crash recovery.** When your buyers' processes die mid-retry they need to know whether to re-send. Point them at [`docs/guides/idempotency-crash-recovery.md`](../../docs/guides/idempotency-crash-recovery.md) — worked recipe for natural-key lookup, `IdempotencyConflictError` / `IdempotencyExpiredError`, and `metadata.replayed` as the side-effect gate.
+
+**Known grader limitation (tracked upstream as [#678](https://github.com/adcontextprotocol/adcp-client/issues/678)).** The `idempotency` storyboard's missing-key step probes your agent with a raw HTTP POST (bypassing the SDK's `idempotency_key` auto-injection) but may not negotiate the MCP Streamable HTTP `Accept` header correctly, returning `Not Acceptable: Client must accept both application/json and text/event-stream` instead of the expected `INVALID_REQUEST`. This is a grader-side issue — your framework wiring is still correct, it'll pass once #678 lands. Ignore this specific sub-step failure in the interim.
 
 ## Going to Production
 
