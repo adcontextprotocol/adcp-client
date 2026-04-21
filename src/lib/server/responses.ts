@@ -50,14 +50,10 @@ import type {
   ListAccountsResponse,
   ReportUsageRequest,
   ReportUsageResponse,
-  SyncAccountsSuccess,
+  SyncAccountsResponse,
   SyncGovernanceResponse,
 } from '../types/tools.generated';
-import type {
-  AcquireRightsAcquired,
-  AcquireRightsPendingApproval,
-  AcquireRightsRejected,
-} from '../types/core.generated';
+import type { AcquireRightsResponse } from '../types/core.generated';
 
 /**
  * MCP-compatible tool response shape.
@@ -423,27 +419,31 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
 }
 
 /**
- * Build an acquire_rights response. Accepts the `acquired`, `pending_approval`,
- * or `rejected` success variants; the compiler enforces discrimination on
- * `status` so a sparse `{ rights_id, status: 'acquired' }` fails to type-check
- * without the required `terms` / `rights_constraint` / `generation_credentials`
- * fields. Validates `approval_webhook.authentication.credentials` length at
- * runtime (spec: ≥32 chars) because the Zod schema tolerates shorter strings
- * until the full validation layer kicks in.
+ * Build an acquire_rights response. Accepts the full
+ * `AcquireRightsResponse` union (`acquired | pending_approval | rejected`
+ * + an error variant that carries `errors[]` instead of `rights_id`). Error
+ * payloads pass through as an `errors` structuredContent so the framework
+ * surfaces them the same way `adcpError(...)` does.
+ *
+ * Validates `approval_webhook.authentication.credentials` AND
+ * `revocation_webhook.authentication.credentials` length at runtime (spec:
+ * ≥32 chars). Zod tolerates shorter strings until full validation kicks
+ * in; this builder fails loudly at response-construction time with a
+ * pointer at the easy fix.
  */
-export function acquireRightsResponse(
-  data: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected,
-  summary?: string
-): McpToolResponse {
+export function acquireRightsResponse(data: AcquireRightsResponse, summary?: string): McpToolResponse {
+  if ('errors' in data) {
+    return {
+      content: [{ type: 'text', text: summary ?? 'Rights acquisition error' }],
+      structuredContent: toStructuredContent(data),
+    };
+  }
   if (data.status === 'acquired') {
-    const acquired = data as AcquireRightsAcquired;
-    const cred = acquired.approval_webhook?.authentication?.credentials;
-    if (cred !== undefined && cred.length < 32) {
-      throw new Error(
-        `acquireRightsResponse: approval_webhook.authentication.credentials must be ≥32 chars (got ${cred.length}). ` +
-          `Use a high-entropy token (e.g., randomUUID().replace(/-/g, "") returns 32 hex chars).`
-      );
-    }
+    assertWebhookCredentials('approval_webhook', data.approval_webhook);
+    assertWebhookCredentials(
+      'revocation_webhook',
+      (data as unknown as { revocation_webhook?: { authentication?: { credentials?: string } } }).revocation_webhook
+    );
   }
   const defaultSummary =
     data.status === 'acquired'
@@ -457,13 +457,34 @@ export function acquireRightsResponse(
   };
 }
 
+function assertWebhookCredentials(
+  fieldName: string,
+  webhook: { authentication?: { credentials?: string } } | undefined
+): void {
+  const cred = webhook?.authentication?.credentials;
+  if (cred !== undefined && cred.length < 32) {
+    throw new Error(
+      `acquireRightsResponse: ${fieldName}.authentication.credentials must be ≥32 chars (got ${cred.length}). ` +
+        `Use a high-entropy token (e.g., randomUUID().replace(/-/g, "") returns 32 hex chars).`
+    );
+  }
+}
+
 /**
- * Build a sync_accounts response. Validates every account has an `account_id`
- * before wrapping — matrix runs caught Claude-built agents echoing request
- * fields without stamping a server-generated id, which fails the
- * "platform-assigned ID" storyboard step.
+ * Build a sync_accounts response. Accepts the full
+ * `SyncAccountsResponse` union — error payloads pass through. On the
+ * success branch, validates every account has an `account_id`; matrix runs
+ * caught fresh agents echoing request fields without stamping a
+ * server-generated id, which fails the "platform-assigned ID"
+ * storyboard step.
  */
-export function syncAccountsResponse(data: SyncAccountsSuccess, summary?: string): McpToolResponse {
+export function syncAccountsResponse(data: SyncAccountsResponse, summary?: string): McpToolResponse {
+  if ('errors' in data) {
+    return {
+      content: [{ type: 'text', text: summary ?? 'Account sync error' }],
+      structuredContent: toStructuredContent(data),
+    };
+  }
   if (Array.isArray(data.accounts)) {
     for (let i = 0; i < data.accounts.length; i++) {
       if (!data.accounts[i]?.account_id) {
@@ -497,24 +518,41 @@ export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: s
 }
 
 /**
- * Build a report_usage response. Auto-fills `accepted` from the request's
- * `usage.length` when the handler didn't supply one — the common "ack every
- * item" case. Pass `data.accepted` explicitly to record rejections.
+ * Build a report_usage response. Requires an explicit `accepted` count —
+ * defaulting to `0` would silently mis-report a failed ingest as "nothing
+ * accepted," which is the opposite of what a forgetful handler needs.
+ * Throws at response-construction time with a pointer at the
+ * `.fromRequest(request)` shortcut below.
  *
  * @example
  * ```typescript
+ * // Ack every usage[] row from the request as accepted:
  * reportUsage: async (params) => reportUsageResponse.fromRequest(params)
+ *
+ * // Explicit count (e.g., when the handler rejected some rows):
+ * reportUsage: async (params) => reportUsageResponse({ accepted: 8, errors: [...] })
  * ```
  */
 export function reportUsageResponse(data: ReportUsageResponse, summary?: string): McpToolResponse {
-  const accepted = data.accepted ?? 0;
+  if (typeof data?.accepted !== 'number') {
+    throw new Error(
+      `reportUsageResponse: data.accepted is required (number). ` +
+        `Use reportUsageResponse.fromRequest(request) for the "ack every usage[] row" case, ` +
+        `or pass { accepted: <count>, errors?: [...] } explicitly.`
+    );
+  }
   return {
-    content: [{ type: 'text', text: summary ?? `Accepted ${accepted} usage record${accepted === 1 ? '' : 's'}` }],
+    content: [
+      { type: 'text', text: summary ?? `Accepted ${data.accepted} usage record${data.accepted === 1 ? '' : 's'}` },
+    ],
     structuredContent: toStructuredContent(data),
   };
 }
 
-/** Shortcut: acknowledge every `usage[]` entry from the request as accepted. */
+/**
+ * Shortcut: acknowledge every `usage[]` entry from the request as accepted.
+ * Sets `accepted = request.usage?.length ?? 0`.
+ */
 reportUsageResponse.fromRequest = function fromRequest(
   request: ReportUsageRequest,
   summary?: string
