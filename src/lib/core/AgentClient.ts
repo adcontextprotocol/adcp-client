@@ -113,20 +113,88 @@ export type TaskResponseTypeMap = {
 export type AdcpTaskName = keyof TaskResponseTypeMap;
 
 /**
- * Per-agent client that maintains conversation context across calls
+ * Task result states where the server is still holding the task open. While
+ * the last response was in one of these states the AgentClient retains the
+ * server-returned `taskId` so a follow-up call can resume the same
+ * server-side task (HITL approvals, long-running workflows).
+ */
+const NON_TERMINAL_STATES: ReadonlySet<string> = new Set([
+  'working',
+  'input-required',
+  'submitted',
+  'auth-required',
+  'deferred',
+]);
+
+/**
+ * Per-agent client that maintains conversation context across calls.
  *
- * This wrapper provides a persistent conversation context for a single agent,
- * making it easy to have multi-turn conversations and maintain state.
+ * **One AgentClient per conversation.** The client retains `contextId` and
+ * `pendingTaskId` in-memory so subsequent calls ride the same A2A session.
+ * Sharing an AgentClient across concurrent conversations will interleave
+ * their contexts (last-write-wins). Create a fresh AgentClient — or call
+ * {@link resetContext} — per logical conversation.
+ *
+ * **Resume across process restart** — persist `getContextId()` after a
+ * non-terminal response and pass it to `resetContext(id)` on rehydration.
+ * The server will route the next call back to the same session.
  */
 export class AgentClient {
   private client: SingleAgentClient;
   private currentContextId?: string;
+  private pendingTaskId?: string;
 
   constructor(
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
     this.client = new SingleAgentClient(agent, config);
+  }
+
+  /**
+   * Absorb the session ids the server returned on `result.metadata`:
+   * retain `contextId` whenever one is present, and retain `serverTaskId`
+   * only while the response was non-terminal. Terminal responses clear
+   * `pendingTaskId` so the next call starts a fresh server-side task.
+   *
+   * The `deferred` case is deliberately asymmetric: deferred results don't
+   * surface a new `serverTaskId` on metadata (the caller holds a resume
+   * token, not a task-id), so the `if (serverTaskId)` guard preserves the
+   * pre-defer `pendingTaskId` — which is exactly what a later resume needs.
+   */
+  private retainSession<T>(result: TaskResult<T>): void {
+    const meta = result.metadata;
+    if (meta?.contextId) {
+      this.currentContextId = meta.contextId;
+    }
+    if (NON_TERMINAL_STATES.has(meta?.status as string)) {
+      if (meta?.serverTaskId) {
+        this.pendingTaskId = meta.serverTaskId;
+      }
+    } else {
+      this.pendingTaskId = undefined;
+    }
+  }
+
+  /**
+   * Merge the caller's `TaskOptions` with the retained session ids so the
+   * outbound request carries whatever session continuity is in scope.
+   * Caller-supplied ids win (explicit > implicit); unset caller fields fall
+   * back to the retained ones.
+   *
+   * Switching conversations: if the caller explicitly supplies a
+   * `contextId` that differs from the retained one, the retained
+   * `pendingTaskId` is dropped from the merge. Carrying a stale taskId
+   * from a previous conversation into a new one is never what you want —
+   * it either resumes the wrong task or confuses the server.
+   */
+  private withSession(options?: TaskOptions): TaskOptions {
+    const explicitSwitch = options?.contextId !== undefined && options.contextId !== this.currentContextId;
+    return {
+      ...options,
+      contextId: options?.contextId ?? this.currentContextId,
+      taskId: options?.taskId ?? (explicitSwitch ? undefined : this.pendingTaskId),
+    };
   }
 
   /**
@@ -189,13 +257,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
     const result = await this.client.getProducts(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -209,13 +274,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativeFormatsResponse>> {
     const result = await this.client.listCreativeFormats(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -229,13 +291,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     const result = await this.client.createMediaBuy(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -249,13 +308,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
     const result = await this.client.updateMediaBuy(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -269,13 +325,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
     const result = await this.client.syncCreatives(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -289,13 +342,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativesResponse>> {
     const result = await this.client.listCreatives(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -309,13 +359,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuysResponse>> {
     const result = await this.client.getMediaBuys(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -329,13 +376,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
     const result = await this.client.getMediaBuyDelivery(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -349,13 +393,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
     const result = await this.client.providePerformanceFeedback(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -370,11 +411,9 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetSignalsResponse>> {
-    const result = await this.client.getSignals(params, inputHandler, { ...options, contextId: this.currentContextId });
+    const result = await this.client.getSignals(params, inputHandler, this.withSession(options));
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -388,13 +427,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
     const result = await this.client.activateSignal(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -410,13 +446,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const result = await this.client.getAdcpCapabilities(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -458,12 +491,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<PreviewCreativeResponse>> {
     const result = await this.client.previewCreative(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -476,12 +506,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<BuildCreativeResponse>> {
     const result = await this.client.buildCreative(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -496,12 +523,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListAccountsResponse>> {
     const result = await this.client.listAccounts(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -514,12 +538,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SyncAccountsResponse>> {
     const result = await this.client.syncAccounts(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -532,12 +553,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SyncAudiencesResponse>> {
     const result = await this.client.syncAudiences(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -552,12 +570,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<CreatePropertyListResponse>> {
     const result = await this.client.createPropertyList(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -570,12 +585,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetPropertyListResponse>> {
     const result = await this.client.getPropertyList(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -588,12 +600,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<UpdatePropertyListResponse>> {
     const result = await this.client.updatePropertyList(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -606,12 +615,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListPropertyListsResponse>> {
     const result = await this.client.listPropertyLists(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -624,12 +630,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<DeletePropertyListResponse>> {
     const result = await this.client.deletePropertyList(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -642,12 +645,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListContentStandardsResponse>> {
     const result = await this.client.listContentStandards(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -660,12 +660,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetContentStandardsResponse>> {
     const result = await this.client.getContentStandards(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -678,12 +675,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<CalibrateContentResponse>> {
     const result = await this.client.calibrateContent(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -696,12 +690,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ValidateContentDeliveryResponse>> {
     const result = await this.client.validateContentDelivery(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -716,12 +707,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SIGetOfferingResponse>> {
     const result = await this.client.siGetOffering(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -734,12 +722,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SIInitiateSessionResponse>> {
     const result = await this.client.siInitiateSession(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -752,12 +737,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SISendMessageResponse>> {
     const result = await this.client.siSendMessage(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -770,12 +752,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SITerminateSessionResponse>> {
     const result = await this.client.siTerminateSession(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
     return result;
   }
 
@@ -809,9 +788,7 @@ export class AgentClient {
 
     const result = await this.client.continueConversation<T>(message, this.currentContextId, inputHandler);
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }
@@ -827,13 +804,29 @@ export class AgentClient {
   }
 
   /**
-   * Clear the conversation context (start fresh)
+   * Clear the conversation context (start fresh).
+   *
+   * Equivalent to `resetContext()` — clears both the retained `contextId`
+   * and any pending server-side `taskId`, and drops cached history.
    */
   clearContext(): void {
+    this.resetContext();
+  }
+
+  /**
+   * Reset conversation state. Call with no args to start a fresh
+   * conversation; pass a seed to rehydrate a persisted session id (e.g.,
+   * across a process restart).
+   *
+   * Always clears `pendingTaskId` — a persisted `contextId` places the next
+   * send into the same server-side session, but any old `taskId` is stale.
+   */
+  resetContext(seed?: string): void {
     if (this.currentContextId) {
       this.client.clearConversationHistory(this.currentContextId);
-      this.currentContextId = undefined;
     }
+    this.currentContextId = seed;
+    this.pendingTaskId = undefined;
   }
 
   /**
@@ -841,6 +834,19 @@ export class AgentClient {
    */
   getContextId(): string | undefined {
     return this.currentContextId;
+  }
+
+  /**
+   * Get the pending server-side `taskId` from the last non-terminal
+   * response, if any. Populated when the server returned
+   * `input-required` / `working` / `submitted` / `auth-required`;
+   * cleared when the task reaches a terminal state.
+   *
+   * Persist this alongside `getContextId()` if you need to resume a
+   * specific task (not just a conversation) across a process restart.
+   */
+  getPendingTaskId(): string | undefined {
+    return this.pendingTaskId;
   }
 
   /**
@@ -992,13 +998,10 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     const result = await this.client.executeTask<T>(taskName, params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
+      ...this.withSession(options),
     });
 
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
+    this.retainSession(result);
 
     return result;
   }

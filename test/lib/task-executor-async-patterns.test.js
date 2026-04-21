@@ -634,7 +634,13 @@ describe(
         assert(elapsed < 200, `Should return quickly, took: ${elapsed}ms`);
       });
 
-      test('should use provided context ID', async () => {
+      test('should forward provided context ID to the protocol layer', async () => {
+        // The caller-supplied `contextId` rides on the protocol envelope as
+        // the A2A session binding — it must NOT be aliased to the local
+        // correlation `taskId`, which is always a fresh UUID so retries and
+        // concurrent calls don't collide. We assert both: the wire-level
+        // session arg carries the contextId, and metadata.taskId is a
+        // distinct client-minted UUID.
         const customContextId = 'custom-ctx-456';
 
         ProtocolClient.callTool = mock.fn(async () => ({
@@ -647,7 +653,10 @@ describe(
           contextId: customContextId,
         });
 
-        assert.strictEqual(result.metadata.taskId, customContextId);
+        const sessionArg = ProtocolClient.callTool.mock.calls[0].arguments[8];
+        assert.deepStrictEqual(sessionArg, { contextId: customContextId, taskId: undefined });
+        assert.notStrictEqual(result.metadata.taskId, customContextId);
+        assert.match(result.metadata.taskId, /^[0-9a-f-]{36}$/, 'taskId is a fresh UUID');
       });
 
       test('should handle max clarifications option', async () => {

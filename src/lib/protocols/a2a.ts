@@ -200,6 +200,19 @@ function buildFetchImpl(authToken: string | undefined) {
   return signingFetch;
 }
 
+/**
+ * Protocol-level session identifiers that ride on the A2A Message envelope
+ * (not in the skill parameters). `contextId` binds sends to a server-side
+ * conversation; `taskId` resumes an existing non-terminal task.
+ *
+ * Callers (buyers) typically retain these across calls on a per-conversation
+ * AgentClient; see AgentClient.getContextId() / getPendingTaskId().
+ */
+export interface A2ASessionIds {
+  contextId?: string;
+  taskId?: string;
+}
+
 export async function callA2ATool(
   agentUrl: string,
   toolName: string,
@@ -208,7 +221,8 @@ export async function callA2ATool(
   debugLogs: DebugLogEntry[] = [],
   pushNotificationConfig?: PushNotificationConfig,
   customHeaders?: Record<string, string>,
-  signingContext?: AgentSigningContext
+  signingContext?: AgentSigningContext,
+  session?: A2ASessionIds
 ): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
@@ -224,7 +238,16 @@ export async function callA2ATool(
       };
       return signingContextStorage.run(signingContext, () =>
         callContextStorage.run(context, () =>
-          callA2AToolImpl(agentUrl, toolName, parameters, authToken, debugLogs, pushNotificationConfig, context)
+          callA2AToolImpl(
+            agentUrl,
+            toolName,
+            parameters,
+            authToken,
+            debugLogs,
+            pushNotificationConfig,
+            context,
+            session
+          )
         )
       );
     }
@@ -238,7 +261,8 @@ async function callA2AToolImpl(
   authToken: string | undefined,
   debugLogs: DebugLogEntry[],
   pushNotificationConfig: PushNotificationConfig | undefined,
-  context: A2ACallContext
+  context: A2ACallContext,
+  session: A2ASessionIds | undefined
 ): Promise<unknown> {
   try {
     const client = await getOrCreateA2AClient(agentUrl, authToken);
@@ -249,6 +273,8 @@ async function callA2AToolImpl(
         role: string;
         kind: string;
         parts: Array<{ kind: string; data: { skill: string; parameters: Record<string, unknown> } }>;
+        contextId?: string;
+        taskId?: string;
       };
       configuration?: { pushNotificationConfig: PushNotificationConfig };
     } = {
@@ -265,6 +291,8 @@ async function callA2AToolImpl(
             },
           },
         ],
+        ...(session?.contextId && { contextId: session.contextId }),
+        ...(session?.taskId && { taskId: session.taskId }),
       },
     };
 

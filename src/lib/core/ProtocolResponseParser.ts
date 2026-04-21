@@ -64,6 +64,38 @@ const EXCLUSIVE_TASK_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Max length for a server-issued session id (`contextId` / `taskId`) we
+ * will retain on the client. Well above any sane UUID, opaque token, or
+ * ADK-style hierarchical id — exceeding it signals a misbehaving seller,
+ * not a legitimate identifier.
+ */
+const SESSION_ID_MAX_LENGTH = 256;
+
+/**
+ * Printable ASCII only (0x20–0x7E). Rejects control characters (CR, LF,
+ * NUL, ANSI sequences) that would be retained verbatim on future sends
+ * and echoed into debug logs — a log-injection vector if those logs reach
+ * third-party observability stacks. This is stricter than the A2A spec,
+ * which treats the id as opaque, but matches every id format we've seen
+ * in the wild (UUIDs, KSUIDs, ADK `app/user/session` triples, etc.).
+ */
+const SESSION_ID_PATTERN = /^[\x20-\x7E]+$/;
+
+function isSafeSessionId(v: unknown): v is string {
+  if (typeof v !== 'string') return false;
+  if (v.length === 0 || v.length > SESSION_ID_MAX_LENGTH) return false;
+  return SESSION_ID_PATTERN.test(v);
+}
+
+/** Return the first argument that passes {@link isSafeSessionId}, else `undefined`. */
+function firstSafeSessionId(...candidates: unknown[]): string | undefined {
+  for (const c of candidates) {
+    if (isSafeSessionId(c)) return c;
+  }
+  return undefined;
+}
+
+/**
  * Simple parser that follows ADCP spec exactly
  */
 export class ProtocolResponseParser {
@@ -184,6 +216,76 @@ export class ProtocolResponseParser {
     }
 
     return undefined;
+  }
+
+  /**
+   * Extract the A2A `contextId` / AdCP `context_id` that binds the response
+   * to a server-side conversation. Buyers retain this across calls on the
+   * same AgentClient so the server can route subsequent sends to the same
+   * session. Returns `undefined` when the server did not surface one (e.g.,
+   * MCP completed responses that don't need conversation continuity).
+   *
+   * Values that fail {@link isSafeSessionId} (overlong, control characters,
+   * non-string) are rejected and return `undefined` — retention falls back
+   * to the previously retained id. The server is the authoritative issuer
+   * but a compromised or buggy seller shouldn't be able to exhaust buyer
+   * memory or inject control sequences into buyer debug logs.
+   */
+  getContextId(response: any): string | undefined {
+    if (response == null) return undefined;
+
+    // A2A sendMessage returns either a Task (has `contextId`) or a Message
+    // (may have `contextId`). With the A2AClient SDK these arrive unwrapped
+    // on `response.result`; some transports surface them directly on the
+    // response envelope, so check both.
+    if (response.result) {
+      const fromResult = firstSafeSessionId(response.result.contextId, response.result.context_id);
+      if (fromResult) return fromResult;
+    }
+    const fromEnvelope = firstSafeSessionId(response.contextId);
+    if (fromEnvelope) return fromEnvelope;
+
+    // MCP structuredContent / top-level AdCP envelope.
+    const sc = response.structuredContent;
+    if (sc) {
+      const fromSc = firstSafeSessionId(sc.context_id);
+      if (fromSc) return fromSc;
+    }
+    return firstSafeSessionId(response.context_id);
+  }
+
+  /**
+   * Extract the A2A `taskId` for the task the server is tracking (or just
+   * created) for this send. Retained across calls only while the last
+   * response was non-terminal (working / input-required / submitted /
+   * auth-required) so buyers can resume the same server-side task; cleared
+   * by the caller on terminal responses.
+   *
+   * Same sanitization rules as {@link getContextId}: malformed ids return
+   * `undefined`.
+   */
+  getTaskId(response: any): string | undefined {
+    if (response == null) return undefined;
+
+    if (response.result) {
+      // A2A Task result carries its own id; Message results carry `taskId`
+      // when bound to a task.
+      if (response.result.kind === 'task') {
+        const taskKindId = firstSafeSessionId(response.result.id);
+        if (taskKindId) return taskKindId;
+      }
+      const fromResult = firstSafeSessionId(response.result.taskId, response.result.id, response.result.task_id);
+      if (fromResult) return fromResult;
+    }
+    const fromEnvelope = firstSafeSessionId(response.taskId);
+    if (fromEnvelope) return fromEnvelope;
+
+    const sc = response.structuredContent;
+    if (sc) {
+      const fromSc = firstSafeSessionId(sc.task_id);
+      if (fromSc) return fromSc;
+    }
+    return firstSafeSessionId(response.task_id);
   }
 
   private parseExpectedType(rawType: unknown): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {
