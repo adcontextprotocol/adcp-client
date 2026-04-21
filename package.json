@@ -60,6 +60,11 @@
       "import": "./dist/lib/compliance-fixtures/index.js",
       "require": "./dist/lib/compliance-fixtures/index.js",
       "types": "./dist/lib/compliance-fixtures/index.d.ts"
+    },
+    "./conformance": {
+      "import": "./dist/lib/conformance/index.js",
+      "require": "./dist/lib/conformance/index.js",
+      "types": "./dist/lib/conformance/index.d.ts"
     }
   },
   "typesVersions": {
@@ -93,6 +98,9 @@
       ],
       "compliance-fixtures": [
         "dist/lib/compliance-fixtures/index.d.ts"
+      ],
+      "conformance": [
+        "dist/lib/conformance/index.d.ts"
       ]
     }
   },
@@ -105,6 +113,7 @@
     "skills/**/*",
     ".claude-plugin/**/*",
     "compliance/cache/**/*",
+    "schemas/cache/latest/bundled/**/*.json",
     "ADCP_VERSION",
     "docs/llms.txt",
     "docs/guides/BUILD-AN-AGENT.md",
@@ -191,6 +200,7 @@
   "dependencies": {
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
+    "fast-check": "^3.23.2",
     "jose": "^6.2.2",
     "structured-headers": "^2.0.2",
     "undici": "^6.25.0",
