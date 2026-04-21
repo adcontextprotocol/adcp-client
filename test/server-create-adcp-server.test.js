@@ -721,10 +721,7 @@ describe('createAdcpServer', () => {
         context: 'mens size 14 near Cincinnati',
       });
       assert.strictEqual(result.isError, undefined);
-      assert.ok(
-        !('context' in result.structuredContent),
-        'string request.context must not leak into response.context'
-      );
+      assert.ok(!('context' in result.structuredContent), 'string request.context must not leak into response.context');
     });
 
     it('echoes context on framework SERVICE_UNAVAILABLE when handler throws', async () => {

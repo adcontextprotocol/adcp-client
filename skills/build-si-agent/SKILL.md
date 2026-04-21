@@ -23,9 +23,9 @@ A sponsored intelligence (SI) agent serves conversational sponsored content with
 
 ## Specialisms This Skill Covers
 
-| Specialism | Status | Delta |
-|---|---|---|
-| _(none yet)_ | — | SI has no specialisms in AdCP 3.0 — pass the `sponsored-intelligence` protocol baseline. Specialism storyboards for conversational-ad-specific patterns are pending future AdCP releases. |
+| Specialism   | Status | Delta                                                                                                                                                                                     |
+| ------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(none yet)_ | —      | SI has no specialisms in AdCP 3.0 — pass the `sponsored-intelligence` protocol baseline. Specialism storyboards for conversational-ad-specific patterns are pending future AdCP releases. |
 
 ## Before Writing Code
 
@@ -109,18 +109,18 @@ taskToolResponse({
 
 `createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself** on responses for tools whose request-side `context` is the protocol echo object (`core/context.json`).
 
-**SI override.** `si_get_offering` and `si_initiate_session` override `context` on the request as a domain-specific **string** (natural-language intent hint, per spec: *'mens size 14 near Cincinnati'*). The response schema still keeps `context` as the protocol echo object. The framework detects this mismatch and skips the auto-echo for non-object values — your response simply won't carry a `context` field unless you populate it. If you want correlation tracking for SI responses, construct the context object in your handler (e.g., from a buyer-supplied `ext.correlation_id` or your own generator) and return it on the response.
+**SI override.** `si_get_offering` and `si_initiate_session` override `context` on the request as a domain-specific **string** (natural-language intent hint, per spec: _'mens size 14 near Cincinnati'_). The response schema still keeps `context` as the protocol echo object. The framework detects this mismatch and skips the auto-echo for non-object values — your response simply won't carry a `context` field unless you populate it. If you want correlation tracking for SI responses, construct the context object in your handler (e.g., from a buyer-supplied `ext.correlation_id` or your own generator) and return it on the response.
 
 `si_send_message` and `si_terminate_session` use the standard protocol echo object on both sides — leave `context` out of the handler return and the framework will echo it.
 
 ## SDK Quick Reference
 
-| SDK piece                                               | Usage                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `createAdcpServer({ name, sponsoredIntelligence })`   | Create server with domain-grouped handlers and auto-generated capabilities |
-| `serve(() => createAdcpServer(...))`                    | Start HTTP server on `:3001/mcp`                                    |
-| `ctx.store`                                             | State persistence — `get/put/patch/delete/list` domain objects      |
-| `adcpError(code, { message })`                          | Structured error                                                    |
+| SDK piece                                           | Usage                                                                      |
+| --------------------------------------------------- | -------------------------------------------------------------------------- |
+| `createAdcpServer({ name, sponsoredIntelligence })` | Create server with domain-grouped handlers and auto-generated capabilities |
+| `serve(() => createAdcpServer(...))`                | Start HTTP server on `:3001/mcp`                                           |
+| `ctx.store`                                         | State persistence — `get/put/patch/delete/list` domain objects             |
+| `adcpError(code, { message })`                      | Structured error                                                           |
 
 Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
@@ -169,60 +169,62 @@ const idempotency = createIdempotencyStore({
   ttlSeconds: 86400,
 });
 
-serve(() => createAdcpServer({
-  name: 'SI Agent',
-  version: '1.0.0',
-  idempotency,
-  // Principal scope for idempotency. MUST never return undefined. A
-  // constant is fine for a demo; for multi-tenant production, type the
-  // account via `createAdcpServer<MyAccount>({...})` and use
-  // `(ctx) => ctx.account?.id`. The framework additionally auto-scopes
-  // `si_send_message` by `session_id`, so the same key under two
-  // sessions doesn't cross-replay.
-  resolveSessionKey: () => 'default-principal',
+serve(() =>
+  createAdcpServer({
+    name: 'SI Agent',
+    version: '1.0.0',
+    idempotency,
+    // Principal scope for idempotency. MUST never return undefined. A
+    // constant is fine for a demo; for multi-tenant production, type the
+    // account via `createAdcpServer<MyAccount>({...})` and use
+    // `(ctx) => ctx.account?.id`. The framework additionally auto-scopes
+    // `si_send_message` by `session_id`, so the same key under two
+    // sessions doesn't cross-replay.
+    resolveSessionKey: () => 'default-principal',
 
-  sponsoredIntelligence: {
-    getOffering: async (params, ctx) => ({
-      available: true,
-      offering_token: `tok_${randomUUID()}`,
-      ttl_seconds: 300,
-    }),
-    initiateSession: async (params, ctx) => {
-      // session_id MUST be high-entropy (≥122 bits) per spec — it's the
-      // scope key for conversational isolation. Never use Date.now() or
-      // predictable counters; a guessable session_id lets one buyer
-      // impersonate another's session.
-      const sessionId = `sess_${randomUUID()}`;
-      await ctx.store.put('session', sessionId, { status: 'active' });
-      return {
-        session_id: sessionId,
-        session_status: 'active',
-      };
+    sponsoredIntelligence: {
+      getOffering: async (params, ctx) => ({
+        available: true,
+        offering_token: `tok_${randomUUID()}`,
+        ttl_seconds: 300,
+      }),
+      initiateSession: async (params, ctx) => {
+        // session_id MUST be high-entropy (≥122 bits) per spec — it's the
+        // scope key for conversational isolation. Never use Date.now() or
+        // predictable counters; a guessable session_id lets one buyer
+        // impersonate another's session.
+        const sessionId = `sess_${randomUUID()}`;
+        await ctx.store.put('session', sessionId, { status: 'active' });
+        return {
+          session_id: sessionId,
+          session_status: 'active',
+        };
+      },
+      sendMessage: async (params, ctx) => {
+        const session = await ctx.store.get('session', params.session_id);
+        // Return the error — the framework echoes returned adcpError
+        // responses verbatim. Thrown errors are caught and converted to
+        // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
+        if (!session) return adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
+        return {
+          session_id: params.session_id,
+          session_status: 'active' as const,
+          response: {
+            content: 'Sponsored content response',
+            content_type: 'text',
+          },
+        };
+      },
+      terminateSession: async (params, ctx) => {
+        await ctx.store.delete('session', params.session_id);
+        return {
+          session_id: params.session_id,
+          terminated: true,
+        };
+      },
     },
-    sendMessage: async (params, ctx) => {
-      const session = await ctx.store.get('session', params.session_id);
-      // Return the error — the framework echoes returned adcpError
-      // responses verbatim. Thrown errors are caught and converted to
-      // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
-      if (!session) return adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
-      return {
-        session_id: params.session_id,
-        session_status: 'active' as const,
-        response: {
-          content: 'Sponsored content response',
-          content_type: 'text',
-        },
-      };
-    },
-    terminateSession: async (params, ctx) => {
-      await ctx.store.delete('session', params.session_id);
-      return {
-        session_id: params.session_id,
-        terminated: true,
-      };
-    },
-  },
-}));
+  })
+);
 ```
 
 ## Idempotency
@@ -241,7 +243,6 @@ Idempotency is wired in the example above. What the framework handles for you:
 
 `ttlSeconds` must be in `[3600, 604800]` — out of range throws at `createIdempotencyStore` construction. Don't pass minutes thinking they're seconds.
 
-
 ## Protecting your agent
 
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
@@ -252,7 +253,7 @@ import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
   authenticate: verifyApiKey({
-    verify: async (token) => {
+    verify: async token => {
       const row = await db.api_keys.findUnique({ where: { token } });
       return row ? { principal: row.account_id } : null;
     },
@@ -279,8 +280,7 @@ serve(createAgent, {
 });
 ```
 
-The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
-
+The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS\*/EdDSA) to prevent algorithm-confusion attacks.
 
 ## Validate Locally
 
@@ -303,6 +303,7 @@ npx @adcp/client fuzz http://localhost:3001/mcp \
 ```
 
 Common failure decoder:
+
 - `status` field on session response → rename to `session_status` (the canonical field name)
 - `status: 'terminated'` → use boolean `terminated: true`
 - Missing `session_id` on `si_send_message` response → echo from request — required
@@ -313,23 +314,23 @@ Common failure decoder:
 
 ## Common Mistakes
 
-| Mistake                                              | Fix                                                                    |
-| ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| Manually registering `get_adcp_capabilities`         | Framework auto-generates it from registered handlers — do not register it yourself |
-| Using `server.tool()` instead of domain groups       | Use `sponsoredIntelligence: { getOffering, initiateSession, ... }` — framework wires schemas and response builders |
-| Using in-memory Maps for session state               | Use `ctx.store.put/get/delete` — built-in state persistence            |
-| Returns `status` instead of `session_status`         | Field name is `session_status` — `status` will fail schema validation  |
-| Returns `status: 'terminated'` instead of `terminated: true` | Termination response uses boolean `terminated` field          |
-| Missing `session_id` in si_send_message response     | Echo `session_id` back from request — required                         |
-| Missing `available` in si_get_offering               | Boolean `available` is required — even for mock data                   |
-| Missing `reason` in si_terminate_session request     | `reason` is required — one of: `user_exit`, `session_timeout`, `host_terminated`, `handoff_transaction`, `handoff_complete` |
-| Dropping `context` from responses              | Let the framework echo — except for `si_get_offering` / `si_initiate_session`, whose request `context` is a string. For those, build your own response context object if correlation tracking matters. |
+| Mistake                                                      | Fix                                                                                                                                                                                                    |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Manually registering `get_adcp_capabilities`                 | Framework auto-generates it from registered handlers — do not register it yourself                                                                                                                     |
+| Using `server.tool()` instead of domain groups               | Use `sponsoredIntelligence: { getOffering, initiateSession, ... }` — framework wires schemas and response builders                                                                                     |
+| Using in-memory Maps for session state                       | Use `ctx.store.put/get/delete` — built-in state persistence                                                                                                                                            |
+| Returns `status` instead of `session_status`                 | Field name is `session_status` — `status` will fail schema validation                                                                                                                                  |
+| Returns `status: 'terminated'` instead of `terminated: true` | Termination response uses boolean `terminated` field                                                                                                                                                   |
+| Missing `session_id` in si_send_message response             | Echo `session_id` back from request — required                                                                                                                                                         |
+| Missing `available` in si_get_offering                       | Boolean `available` is required — even for mock data                                                                                                                                                   |
+| Missing `reason` in si_terminate_session request             | `reason` is required — one of: `user_exit`, `session_timeout`, `host_terminated`, `handoff_transaction`, `handoff_complete`                                                                            |
+| Dropping `context` from responses                            | Let the framework echo — except for `si_get_offering` / `si_initiate_session`, whose request `context` is a string. For those, build your own response context object if correlation tracking matters. |
 
 ## Storyboards
 
-| Storyboard    | Tests                                                            |
-| ------------- | ---------------------------------------------------------------- |
-| `si_session`  | Full session lifecycle: offering → initiate → message → terminate |
+| Storyboard   | Tests                                                             |
+| ------------ | ----------------------------------------------------------------- |
+| `si_session` | Full session lifecycle: offering → initiate → message → terminate |
 
 ## Reference
 
