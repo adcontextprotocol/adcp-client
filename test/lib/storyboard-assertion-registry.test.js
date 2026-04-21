@@ -36,10 +36,7 @@ describe('assertion registry', () => {
 
   test('register throws on duplicate id', () => {
     registerAssertion({ id: 'dup', description: 'first' });
-    assert.throws(
-      () => registerAssertion({ id: 'dup', description: 'second' }),
-      /already registered/
-    );
+    assert.throws(() => registerAssertion({ id: 'dup', description: 'second' }), /already registered/);
   });
 
   test('register throws on missing id', () => {
@@ -57,11 +54,11 @@ describe('assertion registry', () => {
     registerAssertion({ id: 'known.one', description: 'one' });
     registerAssertion({ id: 'known.two', description: 'two' });
     const resolved = resolveAssertions(['known.one', 'known.two']);
-    assert.deepStrictEqual(resolved.map(s => s.id), ['known.one', 'known.two']);
-    assert.throws(
-      () => resolveAssertions(['known.one', 'missing.a', 'missing.b']),
-      /missing\.a, missing\.b/
+    assert.deepStrictEqual(
+      resolved.map(s => s.id),
+      ['known.one', 'known.two']
     );
+    assert.throws(() => resolveAssertions(['known.one', 'missing.a', 'missing.b']), /missing\.a, missing\.b/);
   });
 
   test('resolveAssertions returns [] on undefined or empty', () => {
@@ -307,7 +304,11 @@ describe('runStoryboard: assertion hooks', () => {
     } finally {
       server.close();
     }
-    assert.strictEqual(withAssertion.overall_passed, baseline.overall_passed, 'passing assertions must not change overall_passed');
+    assert.strictEqual(
+      withAssertion.overall_passed,
+      baseline.overall_passed,
+      'passing assertions must not change overall_passed'
+    );
     assert.strictEqual(withAssertion.assertions.length, 2);
     assert.ok(withAssertion.assertions.every(a => a.passed));
   });

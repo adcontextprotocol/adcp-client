@@ -21,12 +21,7 @@
  * See adcontextprotocol/adcp#2639 for the originating design.
  */
 
-import type {
-  AssertionResult,
-  Storyboard,
-  StoryboardRunOptions,
-  StoryboardStepResult,
-} from './types';
+import type { AssertionResult, Storyboard, StoryboardRunOptions, StoryboardStepResult } from './types';
 
 // ────────────────────────────────────────────────────────────
 // Public types
