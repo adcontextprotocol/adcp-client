@@ -76,17 +76,17 @@ const TOOL_ID_CONFIG: Partial<Record<ConformanceToolName, ToolIdConfig>> = {
   get_property_list: {
     idField: 'list_id',
     fixtureKey: 'list_ids',
-    buildRequest: (id) => ({ list_id: id }),
+    buildRequest: id => ({ list_id: id }),
   },
   get_content_standards: {
     idField: 'standards_id',
     fixtureKey: 'standards_ids',
-    buildRequest: (id) => ({ standards_id: id }),
+    buildRequest: id => ({ standards_id: id }),
   },
   get_media_buy_delivery: {
     idField: 'media_buy_id',
     fixtureKey: 'media_buy_ids',
-    buildRequest: (id) => {
+    buildRequest: id => {
       // Spec-min request: one buy id + a date range wide enough to avoid
       // per-seller reporting-window rejection. Dates are arbitrary — the
       // resolution happens before access-check per the spec, so the
@@ -100,7 +100,7 @@ const TOOL_ID_CONFIG: Partial<Record<ConformanceToolName, ToolIdConfig>> = {
   get_creative_delivery: {
     idField: 'creative_id',
     fixtureKey: 'creative_ids',
-    buildRequest: (id) => {
+    buildRequest: id => {
       const now = new Date();
       const start = new Date(now.getTime() - 7 * 86400_000).toISOString().slice(0, 10);
       const end = new Date(now.getTime() + 7 * 86400_000).toISOString().slice(0, 10);
@@ -110,7 +110,7 @@ const TOOL_ID_CONFIG: Partial<Record<ConformanceToolName, ToolIdConfig>> = {
   tasks_get: {
     idField: 'task_id',
     fixtureKey: 'task_ids',
-    buildRequest: (id) => ({ task_id: id }),
+    buildRequest: id => ({ task_id: id }),
   },
 };
 
@@ -155,8 +155,7 @@ export async function runUniformErrorInvariant(
   // baseline still catches id-echo and header-divergence leaks.
   const seededPool = options.fixtures[config.fixtureKey] ?? [];
   const seededId = seededPool[0];
-  const mode: UniformErrorReport['mode'] =
-    options.crossTenantConfigured && seededId ? 'cross-tenant' : 'baseline';
+  const mode: UniformErrorReport['mode'] = options.crossTenantConfigured && seededId ? 'cross-tenant' : 'baseline';
 
   const idA = mode === 'cross-tenant' ? (seededId as string) : randomUUID();
   const idB = randomUUID();
@@ -216,12 +215,9 @@ async function capturedProbe(
   options: { maxBodyBytes?: number }
 ): Promise<ProbeOutcome> {
   try {
-    const { captures } = await withRawResponseCapture(
-      async () => {
-        await agent.executeTask(tool, request);
-      },
-      options
-    );
+    const { captures } = await withRawResponseCapture(async () => {
+      await agent.executeTask(tool, request);
+    }, options);
     const toolCallCapture = lastPostCapture(captures);
     if (!toolCallCapture) {
       return { error: 'captured only non-POST traffic' };

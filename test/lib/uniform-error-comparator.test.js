@@ -64,10 +64,7 @@ describe('uniformErrorComparator', () => {
 
   test('ETag header divergence → fail (not allowlisted)', () => {
     const body = envelope('REFERENCE_NOT_FOUND');
-    const r = compareProbes(
-      capture({ body, headers: { etag: '"v1"' } }),
-      capture({ body, headers: { etag: '"v2"' } })
-    );
+    const r = compareProbes(capture({ body, headers: { etag: '"v1"' } }), capture({ body, headers: { etag: '"v2"' } }));
     assert.equal(r.equivalent, false);
     assert.ok(r.differences.some(d => d.includes('"etag"') && d.includes('diverges')));
   });
@@ -129,10 +126,7 @@ describe('uniformErrorComparator', () => {
 
   test('header presence only on one side → fail', () => {
     const body = envelope('REFERENCE_NOT_FOUND');
-    const r = compareProbes(
-      capture({ body, headers: { etag: '"v1"' } }),
-      capture({ body, headers: {} })
-    );
+    const r = compareProbes(capture({ body, headers: { etag: '"v1"' } }), capture({ body, headers: {} }));
     assert.equal(r.equivalent, false);
     assert.ok(r.differences.some(d => d.includes('present on probe A only')));
   });
@@ -183,8 +177,12 @@ describe('uniformErrorComparator', () => {
   });
 
   test('JSON-RPC error shape with tunneled code → envelope-aware diff', () => {
-    const body1 = JSON.stringify({ error: { code: -32001, message: 'domain error', data: { code: 'REFERENCE_NOT_FOUND' } } });
-    const body2 = JSON.stringify({ error: { code: -32001, message: 'domain error', data: { code: 'PERMISSION_DENIED' } } });
+    const body1 = JSON.stringify({
+      error: { code: -32001, message: 'domain error', data: { code: 'REFERENCE_NOT_FOUND' } },
+    });
+    const body2 = JSON.stringify({
+      error: { code: -32001, message: 'domain error', data: { code: 'PERMISSION_DENIED' } },
+    });
     const r = compareProbes(capture({ body: body1 }), capture({ body: body2 }));
     assert.equal(r.equivalent, false);
     assert.ok(r.differences.some(d => d.startsWith('error.code diverges')));

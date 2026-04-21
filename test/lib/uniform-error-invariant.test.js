@@ -160,11 +160,7 @@ describe('conformance: uniform-error-response invariant', () => {
     const invariant = report.uniformError.find(r => r.tool === 'get_property_list');
     assert.ok(invariant);
     assert.equal(invariant.mode, 'cross-tenant');
-    assert.equal(
-      invariant.verdict,
-      'pass',
-      `unexpected differences: ${JSON.stringify(invariant.differences)}`
-    );
+    assert.equal(invariant.verdict, 'pass', `unexpected differences: ${JSON.stringify(invariant.differences)}`);
   });
 
   test('cross-tenant: seller leaks via divergent error.code → fail', async () => {

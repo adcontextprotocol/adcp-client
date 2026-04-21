@@ -88,11 +88,7 @@ export function compareProbes(a: RawHttpCapture, b: RawHttpCapture): ProbeCompar
   };
 }
 
-function diffHeaders(
-  headersA: Record<string, string>,
-  headersB: Record<string, string>,
-  differences: string[]
-): void {
+function diffHeaders(headersA: Record<string, string>, headersB: Record<string, string>, differences: string[]): void {
   const namesA = normalizedNames(headersA);
   const namesB = normalizedNames(headersB);
   const allNames = new Set([...namesA.keys(), ...namesB.keys()]);
@@ -105,9 +101,7 @@ function diffHeaders(
     } else if (valueA !== undefined && valueB === undefined) {
       differences.push(`header "${lower}" present on probe A only: ${JSON.stringify(valueA)}`);
     } else if (valueA !== valueB) {
-      differences.push(
-        `header "${lower}" diverges: ${JSON.stringify(valueA)} vs ${JSON.stringify(valueB)}`
-      );
+      differences.push(`header "${lower}" diverges: ${JSON.stringify(valueA)} vs ${JSON.stringify(valueB)}`);
     }
   }
 }
@@ -158,9 +152,7 @@ function diffBodies(bodyA: string, bodyB: string, differences: string[]): void {
     return;
   }
 
-  differences.push(
-    `response body diverges (${bodyA.length} bytes vs ${bodyB.length} bytes)`
-  );
+  differences.push(`response body diverges (${bodyA.length} bytes vs ${bodyB.length} bytes)`);
 }
 
 function tryParseJson(text: string): unknown {
@@ -265,11 +257,7 @@ function extractEnvelope(body: unknown): ErrorEnvelope | undefined {
   // success, `error` carries a JSON-RPC error on transport-level
   // failures. Recurse into whichever is present before the domain
   // extractors below.
-  if (
-    typeof obj.jsonrpc === 'string' &&
-    'id' in obj &&
-    (obj.result !== undefined || obj.error !== undefined)
-  ) {
+  if (typeof obj.jsonrpc === 'string' && 'id' in obj && (obj.result !== undefined || obj.error !== undefined)) {
     if (obj.result !== undefined) {
       const inner = extractEnvelope(obj.result);
       if (inner) return inner;

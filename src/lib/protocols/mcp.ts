@@ -293,7 +293,7 @@ async function connectMCPWithFallbackImpl(
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
       }) as typeof fetch)
-    : ((input, init) => fetch(input as any, init));
+    : (input, init) => fetch(input as any, init);
   const transportOptions: StreamableHTTPClientTransportOptions = {
     requestInit: { headers: authHeaders },
     fetch: wrapFetchWithCapture(baseFetch),
@@ -618,7 +618,7 @@ export async function connectMCP(options: {
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
       }) as typeof fetch)
-    : ((input, init) => fetch(input as string | URL, init));
+    : (input, init) => fetch(input as string | URL, init);
   transportOptions.fetch = wrapFetchWithCapture(signedFetch);
 
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);
