@@ -71,6 +71,8 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
   return typeof store.clearAll === 'function';
 }
 import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
+import { validateRequest, validateResponse, formatIssues } from '../validation/schema-validator';
+import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
 import type { IdempotencyStore } from './idempotency';
 import {
   createWebhookEmitter,
@@ -839,6 +841,29 @@ export interface AdcpServerConfig<TAccount = unknown> {
   signedRequests?: SignedRequestsConfig;
 
   /**
+   * Opt-in schema-driven validation of requests and responses against the
+   * bundled AdCP JSON schemas. When enabled, the dispatcher rejects bad
+   * requests with `VALIDATION_ERROR` before the handler runs and catches
+   * drift in handler-returned responses before they leave the server.
+   *
+   * Defaults to off — enabling it costs one AJV compile per tool on cold
+   * start and one validator invocation per call. Recommended in dev/test;
+   * optional in production depending on tolerance for extra CPU.
+   *
+   * Per-side modes:
+   *   - `requests: 'strict'` — reject malformed requests with VALIDATION_ERROR.
+   *     `'warn'` — log a warning, allow the handler to run.
+   *     `'off'` (default) — skip.
+   *   - `responses: 'strict'` — handler-returned drift throws (dev/test canary).
+   *     `'warn'` — log a warning, return the response unchanged.
+   *     `'off'` (default) — skip.
+   */
+  validation?: {
+    requests?: import('../validation/client-hooks').ValidationMode;
+    responses?: import('../validation/client-hooks').ValidationMode;
+  };
+
+  /**
    * Register tools outside {@link AdcpToolMap}. Keys are the public tool
    * names; values follow {@link AdcpCustomToolConfig}.
    *
@@ -1468,7 +1493,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     taskMessageQueue,
     webhooks,
     signedRequests,
+    validation: validationConfig,
   } = config;
+
+  const requestValidationMode = validationConfig?.requests ?? 'off';
+  const responseValidationMode = validationConfig?.responses ?? 'off';
 
   // Enforce lock-step between the `signed-requests` specialism claim and the
   // verifier config for the auto-wiring path. When `signedRequests` is set
@@ -1583,6 +1612,23 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
           return response;
         };
+
+        // --- Request schema validation (opt-in) ---
+        // Runs before idempotency so drifted payloads never touch the
+        // replay cache. `off` short-circuits without calling AJV.
+        if (requestValidationMode !== 'off') {
+          const outcome = validateRequest(toolName, params);
+          if (!outcome.valid) {
+            if (requestValidationMode === 'strict') {
+              const payload = buildAdcpValidationErrorPayload(toolName, 'request', outcome.issues);
+              return finalize(adcpError('VALIDATION_ERROR', payload));
+            }
+            logger.warn(`Schema validation warning (request) for ${toolName}: ${formatIssues(outcome.issues)}`, {
+              tool: toolName,
+              issues: outcome.issues,
+            });
+          }
+        }
 
         // --- Account resolution ---
         if (hasAccount && params.account != null && resolveAccount) {
@@ -1737,6 +1783,37 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         try {
           const result = await handler(params, ctx);
           const formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
+
+          // --- Response schema validation (opt-in) ---
+          // Runs on the structured payload the handler produced. Errors
+          // have their own envelope (`adcp_error`) and are skipped here —
+          // their shape is enforced by the adcpError() builder.
+          if (responseValidationMode !== 'off' && !isErrorResponse(formatted)) {
+            const payload = formatted.structuredContent;
+            const outcome = validateResponse(toolName, payload);
+            if (!outcome.valid) {
+              logger.warn(`Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues)}`, {
+                tool: toolName,
+                issues: outcome.issues,
+                variant: outcome.variant,
+              });
+              if (responseValidationMode === 'strict') {
+                const errPayload = buildAdcpValidationErrorPayload(toolName, 'response', outcome.issues);
+                if (idempotencyCheck && idempotency) {
+                  try {
+                    await idempotency.release({
+                      principal: idempotencyCheck.principal,
+                      key: idempotencyCheck.key,
+                      extraScope: idempotencyCheck.extraScope,
+                    });
+                  } catch {
+                    // Best-effort release; claim TTL evicts.
+                  }
+                }
+                return finalize(adcpError('VALIDATION_ERROR', errPayload));
+              }
+            }
+          }
           // Cache successful mutations for replay. Errors re-execute on
           // retry, not replayed — only cache when the wrapped response is
           // not an error shape. Release the in-flight claim on error so a

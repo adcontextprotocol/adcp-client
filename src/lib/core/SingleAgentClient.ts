@@ -254,10 +254,33 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    */
   validation?: {
     /**
-     * Fail tasks when response schema validation fails (default: true)
+     * Validate outgoing requests against the bundled AdCP JSON schema before
+     * dispatch. Catches field-name drift at call-time instead of at
+     * storyboard-time.
      *
-     * When true: Invalid responses cause task to fail with error
-     * When false: Schema violations are logged but task continues
+     * - `strict`: throw `ValidationError` with a JSON Pointer to the bad field
+     * - `warn`: log to debug logs and continue
+     * - `off`: skip the validator entirely (no overhead)
+     *
+     * @default `strict` in dev/test, `warn` in production
+     */
+    requests?: import('../validation/client-hooks').ValidationMode;
+    /**
+     * Validate incoming responses against the bundled AdCP JSON schema.
+     *
+     * - `strict`: fail the task with `VALIDATION_ERROR`
+     * - `warn`: log to debug logs and surface the task as successful
+     * - `off`: skip the validator entirely
+     *
+     * Overrides `strictSchemaValidation` when set.
+     *
+     * @default `strict` in dev/test, `warn` in production
+     */
+    responses?: import('../validation/client-hooks').ValidationMode;
+    /**
+     * Legacy: fail tasks when response schema validation fails (default: true).
+     * Superseded by `responses` above — retained for backward compat.
+     * `false` maps to `responses: 'warn'` when `responses` isn't set.
      *
      * @default true
      */
@@ -336,6 +359,10 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       filterInvalidProducts: config.validation?.filterInvalidProducts === true, // Default: false
+      validation: {
+        ...(config.validation?.requests != null && { requests: config.validation.requests }),
+        ...(config.validation?.responses != null && { responses: config.validation.responses }),
+      },
       onActivity: config.onActivity,
       governance: config.governance,
     });
