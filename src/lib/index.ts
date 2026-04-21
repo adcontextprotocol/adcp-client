@@ -977,7 +977,9 @@ export {
 } from './substitution';
 export type {
   ObserverFetchOptions,
+  ObserverDispatcher,
   CatalogMacroVectorName,
+  AssertionOptions as SubstitutionAssertionOptions,
   AssertionResult as SubstitutionAssertionResult,
   BindingMatch,
   CatalogBinding,

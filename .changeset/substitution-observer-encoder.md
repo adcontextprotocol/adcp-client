@@ -52,10 +52,19 @@ fixture vectors from
 `enforceSsrfPolicy` / `enforceSsrfPolicyResolved` implement the
 contract's normative deny list (IPv4 + IPv6 CIDRs, cloud metadata
 hostnames, scheme allow-list, bare-IP-literal rejection in Verified
-mode, DNS revalidation of every resolved address).
+mode, DNS revalidation of every resolved address). `fetch_and_parse`
+pins the request to the already-policy-checked address via undici's
+`connect.lookup`, closing the DNS rebinding window between
+resolve and connect.
 
 The observer additionally ships `assert_unreserved_only`,
 `assert_no_nested_expansion`, and `assert_scheme_preserved` covering
 the contract's stricter validations
 (`rfc3986_unreserved_only_at_macro_position`,
 `nested_expansion_not_re_scanned`, `url_scheme_preserved`).
+
+Custom-vector payloads (inline `raw_value` + `expected_encoded`) are
+SHA-256 redacted by default in error reports per the contract's
+`error_report_payload_policy`; canonical fixture values echo
+verbatim. Pass `{ include_raw_payloads: true }` to any assertion
+helper to override — NOT for Verified grading.

@@ -50,6 +50,15 @@ export interface BindingMatch {
     | { kind: 'href_whole_value' };
   /** Observed value at the aligned position — the bytes emitted after substitution. */
   observed_value: string;
+  /**
+   * True when the binding was resolved via inline `raw_value` /
+   * `expected_encoded` overrides rather than a canonical fixture
+   * vector. The contract's `error_report_payload_policy` requires
+   * custom vectors to be SHA-256 redacted in error reports — the
+   * assertion helpers honor this flag when populating
+   * {@link AssertionResult.observed} and `.expected`.
+   */
+  is_custom_vector: boolean;
 }
 
 export interface AssertionResult {
@@ -66,10 +75,37 @@ export interface AssertionResult {
   byte_offset?: number;
   /** Human-readable detail suitable for a grader report. */
   message?: string;
-  /** Expected bytes at the failing position. Included for error-report clarity. */
+  /**
+   * Expected bytes at the failing position. For canonical fixture
+   * vectors this is echoed verbatim; for custom bindings this is a
+   * `sha256:<hex>` digest unless {@link AssertionOptions.include_raw_payloads}
+   * is explicitly set.
+   */
   expected?: string;
-  /** Observed bytes at the failing position. */
+  /**
+   * Observed bytes at the failing position. Subject to the same
+   * redaction policy as {@link expected}.
+   */
   observed?: string;
+}
+
+/**
+ * Options for assertion helpers. Mirrors the contract's
+ * `error_report_payload_policy` block: canonical fixtures can be
+ * echoed; custom payloads are SHA-256 redacted unless the grader was
+ * started with `--include-raw-payloads` (and even then never under
+ * AdCP Verified).
+ */
+export interface AssertionOptions {
+  /**
+   * Override the redaction default. `true` echoes `raw_value` and
+   * `observed_value` verbatim regardless of `is_custom_vector`. Do
+   * NOT enable this in Verified-grading mode — the setting exists
+   * only for local debugging.
+   *
+   * Default: `false`.
+   */
+  include_raw_payloads?: boolean;
 }
 
 /**

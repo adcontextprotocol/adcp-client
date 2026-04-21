@@ -20,11 +20,11 @@
  * ```
  */
 
-import { setTimeout as delay } from 'node:timers/promises';
 import dns from 'node:dns/promises';
-import type { Dispatcher } from 'undici';
+import { isIP, isIPv6 } from 'node:net';
 
 import type {
+  AssertionOptions,
   AssertionResult,
   BindingMatch,
   CatalogBinding,
@@ -44,6 +44,13 @@ import {
 import { DEFAULT_SSRF_POLICY, enforceSsrfPolicy, enforceSsrfPolicyResolved } from './ssrf';
 
 /**
+ * Opaque dispatcher type — keeps `undici`'s type out of the public
+ * surface. Callers constructing a dispatcher hand us the instance; we
+ * pass it through to `undici.request` untouched.
+ */
+export type ObserverDispatcher = object;
+
+/**
  * Fetch knobs mirror the contract's `url_fetch.runner_config.fetch` block.
  * Callers SHOULD keep the defaults for AdCP Verified grading.
  */
@@ -59,11 +66,13 @@ export interface ObserverFetchOptions {
   /** SSRF policy to enforce. Default: {@link DEFAULT_SSRF_POLICY}. */
   ssrf_policy?: SsrfPolicy;
   /**
-   * Custom undici dispatcher. Advanced callers (e.g., tests pinning a
-   * specific agent) inject here; default uses undici's global dispatcher
-   * with a per-request Agent pinned to the first allowed DNS address.
+   * Custom undici dispatcher. Advanced callers inject here to plug in
+   * a mock or a pre-pinned Agent. When omitted, the observer
+   * constructs an `Agent` with `connect.lookup` pinned to the first
+   * policy-allowed DNS address — this is the defense the contract's
+   * `dns_revalidation: required` clause mandates.
    */
-  dispatcher?: Dispatcher;
+  dispatcher?: ObserverDispatcher;
 }
 
 export class PreviewFetchError extends Error {
@@ -117,8 +126,14 @@ export class SubstitutionObserver {
       throw new PreviewFetchError('ssrf_blocked', presync.rule ?? 'unknown_rule');
     }
 
-    let addresses: string[] = [];
-    if (isHostname(url.hostname)) {
+    // Every non-IP host path requires DNS revalidation — never pass a
+    // hostname to the HTTP client without re-checking resolved addresses.
+    const bareHost = unwrapHost(url.hostname);
+    const isBareIp = isIP(bareHost) !== 0;
+    let pinnedAddress: string | null = isBareIp ? bareHost : null;
+
+    if (!isBareIp) {
+      let addresses: string[] = [];
       try {
         const lookup = await dns.lookup(url.hostname, { all: true, verbatim: true });
         addresses = lookup.map(entry => entry.address);
@@ -129,30 +144,48 @@ export class SubstitutionObserver {
       if (!resolvedCheck.allowed) {
         throw new PreviewFetchError('ssrf_blocked', resolvedCheck.rule ?? 'unknown_rule');
       }
+      pinnedAddress = addresses[0] ?? null;
     }
 
     const { request, Agent } = await loadUndici();
-    const dispatcher =
+
+    // Pin to the already-policy-checked address. Providing `connect.lookup`
+    // makes undici resolve through our callback instead of invoking the OS
+    // resolver a second time — closes the DNS-rebinding window between
+    // our `dns.lookup` above and the TCP connect below. If the caller
+    // injected a dispatcher, trust their pinning.
+    const ownsDispatcher = !options.dispatcher;
+    const dispatcher: ObserverDispatcher =
       options.dispatcher ??
       new Agent({
-        connect: { timeout: connectTimeoutMs },
-        // Pin to the first resolved address to close the rebinding window
-        // between DNS revalidation and TCP connect.
+        connect: {
+          timeout: connectTimeoutMs,
+          ...(pinnedAddress
+            ? {
+                lookup: (
+                  _host: string,
+                  _opts: unknown,
+                  cb: (err: Error | null, address: string, family: number) => void
+                ) => cb(null, pinnedAddress, isIPv6(pinnedAddress) ? 6 : 4),
+              }
+            : {}),
+        },
         bodyTimeout: timeoutMs,
         headersTimeout: timeoutMs,
       });
 
     const abortCtrl = new AbortController();
-    const timer = delay(timeoutMs, undefined, { signal: abortCtrl.signal })
-      .then(() => {
-        abortCtrl.abort(new Error('preview fetch timeout'));
-      })
-      .catch(() => undefined);
+    const timerHandle = setTimeout(() => {
+      abortCtrl.abort(new Error('preview fetch timeout'));
+    }, timeoutMs);
+    // Allow Node to exit even if the timer is still scheduled — a
+    // stranded observer shouldn't keep the process alive.
+    timerHandle.unref?.();
 
     try {
       const res = await request(url.href, {
         method: 'GET',
-        dispatcher,
+        dispatcher: dispatcher as import('undici').Dispatcher,
         maxRedirections: 0,
         signal: abortCtrl.signal,
         headers: { accept: allowedContentTypes.join(', ') },
@@ -178,8 +211,16 @@ export class SubstitutionObserver {
       }
       throw new PreviewFetchError('fetch_timeout', (e as Error).message);
     } finally {
+      clearTimeout(timerHandle);
       abortCtrl.abort();
-      await timer;
+      if (ownsDispatcher) {
+        const closable = dispatcher as { close?: () => Promise<void> };
+        try {
+          await closable.close?.();
+        } catch {
+          // Ignore — best-effort cleanup.
+        }
+      }
     }
   }
 
@@ -193,21 +234,22 @@ export class SubstitutionObserver {
   }
 
   /** See {@link assertRfc3986Safe}. */
-  assert_rfc3986_safe(match: BindingMatch): AssertionResult {
-    return assertRfc3986Safe(match);
+  assert_rfc3986_safe(match: BindingMatch, options: AssertionOptions = {}): AssertionResult {
+    return assertRfc3986Safe(match, options);
   }
 
   /** See {@link assertUnreservedOnly}. */
-  assert_unreserved_only(match: BindingMatch): AssertionResult {
-    return assertUnreservedOnly(match);
+  assert_unreserved_only(match: BindingMatch, options: AssertionOptions = {}): AssertionResult {
+    return assertUnreservedOnly(match, options);
   }
 
   /** See {@link assertNoNestedExpansion}. */
   assert_no_nested_expansion(
     match: BindingMatch,
-    prohibited_pattern: RegExp = DEFAULT_MACRO_PROHIBITED_PATTERN
+    prohibited_pattern: RegExp = DEFAULT_MACRO_PROHIBITED_PATTERN,
+    options: AssertionOptions = {}
   ): AssertionResult {
-    return assertNoNestedExpansion(match, prohibited_pattern);
+    return assertNoNestedExpansion(match, prohibited_pattern, options);
   }
 
   /** See {@link assertSchemePreserved}. */
@@ -221,9 +263,8 @@ export class SubstitutionObserver {
   }
 }
 
-function isHostname(host: string): boolean {
-  const unwrapped = host.replace(/^\[|\]$/g, '');
-  return !/^[0-9.]+$/.test(unwrapped) && !unwrapped.includes(':');
+function unwrapHost(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
 async function readCapped(body: NodeJS.ReadableStream, capBytes: number): Promise<string> {

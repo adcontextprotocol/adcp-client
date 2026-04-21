@@ -27,7 +27,7 @@
  */
 
 export { SubstitutionObserver, PreviewFetchError } from './observer/SubstitutionObserver';
-export type { ObserverFetchOptions } from './observer/SubstitutionObserver';
+export type { ObserverFetchOptions, ObserverDispatcher } from './observer/SubstitutionObserver';
 
 export { SubstitutionEncoder, MacroInRawValueError } from './encoder/SubstitutionEncoder';
 
@@ -50,6 +50,7 @@ export {
 export { encodeUnreserved, equalUnderHexCasePolicy, isUnreservedOnly, divergenceOffset } from './rfc3986';
 
 export type {
+  AssertionOptions,
   AssertionResult,
   BindingMatch,
   CatalogBinding,

@@ -46,17 +46,43 @@ const MACRO_SEGMENT_RE = /\{[A-Z][A-Z0-9_]*\}/;
 /**
  * Resolve the fixture vector or inline overrides for a binding. The
  * `expected_encoded` field is the per-position encoded substring
- * (e.g., `00013%26cmd%3Ddrop`), NOT the full fixture URL. Without a
- * resolvable raw_value, the binding is dropped — callers surface
- * missing bindings as `substitution_binding_missing`.
+ * (e.g., `00013%26cmd%3Ddrop`), NOT the full fixture URL.
+ *
+ * Canonical vectors (referenced by `vector_name` and present in
+ * {@link CATALOG_MACRO_VECTORS}) resolve from the fixture. Custom
+ * bindings MUST supply BOTH `raw_value` and `expected_encoded` — the
+ * runner MUST NOT produce the oracle by calling its own encoder on
+ * the seller's input (that makes the test tautological). A custom
+ * binding missing `expected_encoded` is dropped; the caller surfaces
+ * it as `substitution_binding_missing`.
  */
-function resolveBinding(binding: CatalogBinding): { raw_value: string; expected_encoded: string } | null {
+function resolveBinding(
+  binding: CatalogBinding
+): { raw_value: string; expected_encoded: string; is_custom_vector: boolean } | null {
   let vector: CatalogMacroVector | undefined;
   if (binding.vector_name) vector = getCatalogMacroVector(binding.vector_name);
-  const raw_value = binding.raw_value ?? vector?.value;
-  if (raw_value === undefined) return null;
-  const expected_encoded = binding.expected_encoded ?? encodeUnreserved(raw_value);
-  return { raw_value, expected_encoded };
+
+  if (vector) {
+    const raw_value = binding.raw_value ?? vector.value;
+    // The fixture's `expected` is a full URL; the runner needs the
+    // encoded substring at the macro position. `encodeUnreserved` is
+    // the same algorithm the fixture's expected was produced by — the
+    // parity test in `substitution-fixture-parity.test.js` locks that
+    // invariant, so this is NOT tautological for canonical vectors.
+    const expected_encoded = binding.expected_encoded ?? encodeUnreserved(vector.value);
+    return { raw_value, expected_encoded, is_custom_vector: false };
+  }
+
+  // No canonical vector — caller must supply both raw_value AND
+  // expected_encoded, otherwise the binding is unresolvable.
+  if (binding.raw_value === undefined || binding.expected_encoded === undefined) {
+    return null;
+  }
+  return {
+    raw_value: binding.raw_value,
+    expected_encoded: binding.expected_encoded,
+    is_custom_vector: true,
+  };
 }
 
 /**
@@ -93,6 +119,7 @@ export function matchBindings(
           record,
           position,
           observed_value,
+          is_custom_vector: resolved.is_custom_vector,
         });
       }
     }
@@ -166,6 +193,12 @@ function parseObserved(url: URL): ObservedLayout {
  * forms of `template`: same origin, same number of path segments,
  * literal segments matching where the template has no macro, and every
  * template query key present in the observed URL.
+ *
+ * This is a same-shape filter, not an alignment oracle — two templates
+ * with identical path+key shapes but different semantics will confuse
+ * it. Runners SHOULD invoke `match_bindings` once per `(template,
+ * preview)` pair rather than pass all records from a multi-template
+ * preview to a single call.
  */
 function sameTemplateRecords(records: readonly TrackerUrlRecord[], template: TemplateLayout): TrackerUrlRecord[] {
   const templateKeys = new Set(template.query_pairs.map(p => p.key));

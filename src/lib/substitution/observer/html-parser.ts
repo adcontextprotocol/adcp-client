@@ -55,6 +55,13 @@ export function extractTrackerUrls(html: string): TrackerUrlRecord[] {
     for (const raw of values) {
       const trimmed = raw.trim();
       if (!trimmed) continue;
+      // Defense against entity-smuggled URLs (`javascript&Tab;:...`):
+      // we decode a known-safe set of named entities inside the attribute
+      // value and drop any value whose remaining ampersand sequences
+      // suggest an entity the decoder did not handle. A browser would
+      // resolve the missing entity; we would not — and the divergence
+      // is the exact gap the #2620 rule exists to close.
+      if (__hasResidualEntity(trimmed)) continue;
       const parsed = tryParseUrl(trimmed);
       if (!parsed) continue;
       records.push({
@@ -222,18 +229,95 @@ function collectAttributes(body: string, tag: string, line: number, out: AttrHit
 }
 
 /**
- * Minimal entity decoding — covers the handful of cases that could
- * hide a value that still parses as a URL. The goal is parity with a
- * browser's attribute-value decoding step, not a full HTML5 named-
- * entity table.
+ * Entities that browsers decode inside attribute values and that a
+ * seller could weaponize to smuggle a javascript:-scheme URL past a
+ * naive extractor. The set covers:
+ *
+ *   - The five basic entities (`&amp; &lt; &gt; &quot; &apos;`) that
+ *     every HTML consumer handles.
+ *   - Whitespace / control entities that let a colon or scheme prefix
+ *     hide: `&Tab;`, `&NewLine;`, `&nbsp;`, variants of newlines.
+ *   - Punctuation that appears in URL scheme injection or reserved-
+ *     char breakout: `&colon;`, `&sol;`, `&lpar;`, `&rpar;`, `&lbrace;`,
+ *     `&rbrace;`.
+ *
+ * This is NOT the full HTML5 named-character-reference table (~2200
+ * entries). The decoder additionally post-filters: if the value still
+ * contains an ampersand followed by a letter after decoding, it is
+ * treated as undecodable and the URL is dropped — refusing to classify
+ * rather than risking under-extraction.
  */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  // Whitespace / control — used in URL-scheme smuggling.
+  Tab: '\t',
+  tab: '\t',
+  NewLine: '\n',
+  newline: '\n',
+  nbsp: '\u00A0',
+  NonBreakingSpace: '\u00A0',
+  // Punctuation entities browsers decode.
+  colon: ':',
+  sol: '/',
+  bsol: '\\',
+  lpar: '(',
+  rpar: ')',
+  lbrace: '{',
+  rbrace: '}',
+  lsqb: '[',
+  rsqb: ']',
+  period: '.',
+  comma: ',',
+  semi: ';',
+  excl: '!',
+  quest: '?',
+  equals: '=',
+  num: '#',
+  dollar: '$',
+  commat: '@',
+  percnt: '%',
+};
+
+/**
+ * Detects an ampersand followed by alphanumeric entity-shaped text.
+ * After decoding, any remaining occurrence signals an entity the
+ * limited table above did not cover — callers should drop the value
+ * rather than extract a partially-decoded URL.
+ */
+const RESIDUAL_ENTITY_RE = /&(?:[A-Za-z][A-Za-z0-9]{1,31}|#[xX]?[0-9A-Fa-f]+);?/;
+
 function decodeHtmlEntities(s: string): string {
-  return s
-    .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+  return (
+    s
+      .replace(/&#[xX]([0-9A-Fa-f]+);?/g, (_, hex) => safeCodePoint(parseInt(hex, 16)))
+      .replace(/&#([0-9]+);?/g, (_, dec) => safeCodePoint(parseInt(dec, 10)))
+      // Semicolon is optional per HTML5 for legacy entities; match both.
+      .replace(/&([A-Za-z][A-Za-z0-9]{1,31});?/g, (whole, name: string) => {
+        const hit = NAMED_ENTITIES[name];
+        return hit ?? whole;
+      })
+  );
+}
+
+function safeCodePoint(cp: number): string {
+  if (!Number.isFinite(cp) || cp < 0 || cp > 0x10ffff) return '\uFFFD';
+  try {
+    return String.fromCodePoint(cp);
+  } catch {
+    return '\uFFFD';
+  }
+}
+
+/**
+ * True if the decoded value still contains an entity-shaped ampersand
+ * sequence (named or numeric) — a signal that browser-visible content
+ * may differ from what we extracted. The caller discards such values
+ * to avoid under-extraction of a smuggled javascript:-scheme URL.
+ */
+export function __hasResidualEntity(decoded: string): boolean {
+  return RESIDUAL_ENTITY_RE.test(decoded);
 }
