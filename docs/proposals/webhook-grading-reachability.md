@@ -1,7 +1,7 @@
 # Webhook-grading reachability: tunnel, sockets, or rendezvous?
 
-**Status:** Proposal
-**Date:** 2026-04-21
+**Status:** Option A shipping; Option B tracked as [adcontextprotocol/adcp#2618](https://github.com/adcontextprotocol/adcp/issues/2618) (milestone 3.1.0)
+**Date:** 2026-04-20
 **Follows:** #675 (CLI `--webhook-receiver`) / PR #679
 
 ## Problem
@@ -22,7 +22,7 @@ but setting up the tunnel is manual friction.
 
 A client surfaced this and suggested we support something like Slack's Socket
 Mode. This doc explains why that's the wrong answer, why bundling ngrok is also
-the wrong answer, and what to do instead.
+the wrong answer, and what we're doing instead.
 
 ## Why Socket Mode is the wrong answer
 
@@ -65,90 +65,68 @@ ergonomics win. But:
 3. `cloudflared`, `frp`, `bore`, and `localtunnel` are all legitimate
    alternatives. Hardcoding one picks a winner.
 
-## Two acceptable answers
+## Decisions
 
-### Option A: auto-tunnel helper (ship soon)
+### Option A: auto-tunnel helper — **shipping in this PR**
 
-A thin CLI flag that autodetects installed tunneling binaries on `PATH`,
-starts a tunnel, captures its public URL, plugs it into proxy mode, and tears
-it down on exit.
+`--webhook-receiver-auto-tunnel` autodetects a tunnel binary on `PATH`,
+spawns it pointed at the receiver port, captures its public URL, plugs it
+into proxy mode, and tears the tunnel down on exit.
 
 ```
 adcp storyboard run <remote-agent> webhook-emission --webhook-receiver-auto-tunnel
 ```
 
-Detection order (first match wins; override with `ADCP_WEBHOOK_TUNNEL=<cmd>`):
-1. `ngrok http <port>` (if `ngrok` is on `PATH` and authenticated)
+Detection order (first match wins; override with `ADCP_WEBHOOK_TUNNEL=<cmd> {port}`):
+
+1. `ngrok http <port> --log=stdout --log-format=logfmt`
 2. `cloudflared tunnel --url http://localhost:<port>`
-3. error: "no supported tunnel found — install ngrok or cloudflared, or pass
-   `--webhook-receiver-public-url` with your own tunnel"
+3. error: "no supported tunnel binary found on PATH — install ngrok or
+   cloudflared, or set `ADCP_WEBHOOK_TUNNEL`, or pass
+   `--webhook-receiver-public-url` with your own tunnel."
 
-Pros:
-- Spec-compliant (HTTP on the wire — no protocol change).
-- No vendor lock: any `cmd PATH` detection entry works.
-- One-command UX: `--webhook-receiver-auto-tunnel` subsumes the setup.
-- Works offline if tunnel binary is already installed.
+Why this is the right near-term answer:
 
-Cons:
-- Tunnel binaries are still a prerequisite (mitigated by clear error message).
+- **Spec-compliant.** HTTP on the wire — the `loopback_mock ≡ proxy_url`
+  parity invariant holds.
+- **No vendor lock.** Detection is PATH-based and override-friendly. The
+  test-kit's "MUST NOT require a specific tunnel vendor" rule is honored.
+- **One-command UX.** `--webhook-receiver-auto-tunnel` subsumes the manual
+  tunnel setup.
+- **Works offline** once the tunnel binary is installed.
+
+Tradeoffs:
+
+- Tunnel binaries are still a prerequisite (mitigated by actionable error).
 - Tunnel startup time adds 2–5s to run overhead.
+- Doesn't help graders on networks that can't reach public tunnel services
+  (Option B's target case).
 
-Implementation scope: ~80 LOC in `bin/adcp.js` (child-process spawn + URL
-extraction from stdout) plus an integration test that stubs the tunnel binary.
+Implementation: ~200 LOC in `bin/adcp.js` (detection, spawn, URL capture,
+cleanup on SIGINT/SIGTERM/exit) plus integration tests that use a stubbed
+tunnel via `$ADCP_WEBHOOK_TUNNEL`, so CI doesn't depend on ngrok/cloudflared
+being installed.
 
-### Option B: AdCP-hosted rendezvous service (right long-term answer)
+### Option B: AdCP-hosted rendezvous service — **tracked in spec repo**
 
-A public service at `rendezvous.adcontextprotocol.org` that:
+A public service at `rendezvous.adcontextprotocol.org` that mints
+short-lived HTTPS endpoints, accepts agent POSTs, and fans out to a
+grader-side WebSocket subscription. Socket-mode-style ergonomics on the
+*grader's* side without compromising what gets graded on the *agent's* side.
 
-1. Mints short-lived public HTTPS endpoints on request (e.g. 30-minute TTL).
-2. Accepts incoming HTTP POSTs from agents under test at that endpoint.
-3. Exposes a WebSocket subscription for the grader to receive inbound
-   deliveries in real time.
-4. Tears down the endpoint on grader disconnect or TTL expiry.
+Full design in [adcontextprotocol/adcp#2618](https://github.com/adcontextprotocol/adcp/issues/2618)
+(milestone 3.1.0). This is the right long-term answer for graders who
+can't install a tunnel binary or can't reach public tunnel services — e.g.
+CI inside private VPCs, corporate laptops with egress restrictions, AdCP
+Verified's grading pipeline. It lives as a spec-repo issue rather than an
+in-repo RFC because it requires hosting commitment, operational ownership,
+and an abuse-prevention story the AdCP stewards own — none of which block
+the auto-tunnel helper.
 
-```
-Grader ←──WebSocket──→ rendezvous ←──HTTPS─── Agent under test
-```
+## Rejected: Socket Mode (explicitly)
 
-Agent-side contract is unchanged — ordinary HTTP POST to a public URL,
-exactly the production wire format. Grader-side ergonomics become
-"socket-style": outbound WebSocket from the grader's machine, no inbound
-listener required.
-
-This is the socket-mode idea done right. The conformance-under-test invariant
-is preserved (HTTP POST from agent exercises the real emitter); the
-developer-side friction (public IP requirement) is removed; no third-party
-dependency.
-
-Pros:
-- Zero developer setup — works out of the box from any network.
-- Spec stewards own reliability and security posture.
-- WebSocket grader-side → operates behind NAT, corporate proxies, CI
-  boxes without ingress.
-- Supports eventual integration with AdCP Verified grading pipeline.
-
-Cons:
-- Requires hosting + SRE commitment.
-- Shared service = abuse vector; needs rate-limiting, short TTLs,
-  unlisted URLs, probably a lightweight auth layer (short-lived bearer
-  minted per grader session).
-- Longer lead time than Option A.
-
-Implementation scope: deferred to a spec-stewardship RFC. Rough sketch:
-Cloudflare Workers / Fly.io for the edge + Durable Objects or Redis for the
-endpoint→subscriber routing table.
-
-## Recommendation
-
-Ship **Option A** as a follow-up to PR #679. Track in a new GitHub issue.
-Scope: one CLI flag, one integration test, a CHANGELOG entry.
-
-Scope **Option B** as an AdCP stewardship initiative — separate RFC in the
-upstream spec repo, own design doc, own rollout plan. Don't block Option A
-on it.
-
-Reject socket mode explicitly: it fails the conformance-parity invariant
-the `webhook_receiver_runner` test-kit is built on. If a client wants
+Not acceptable. It fails the conformance-parity invariant the
+`webhook_receiver_runner` test-kit is built on. If a client wants
 "socket-mode-style ergonomics," Option B delivers that on the grader side
 without compromising what's actually being graded on the agent side.
 
