@@ -71,6 +71,18 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
 };
 
+const OAUTH_NOT_ADVERTISED_DETAIL =
+  'Skipped: agent does not advertise OAuth — /.well-known/oauth-protected-resource returned 404 (RFC 9728 §3). API-key path must carry auth_mechanism_verified for this storyboard to pass.';
+
+/**
+ * Per-reason override strings for detailed skip reasons that want a more
+ * specific message than the canonical fallback. Used only when the probe
+ * itself didn't emit an error-style detail.
+ */
+const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> = {
+  oauth_not_advertised: OAUTH_NOT_ADVERTISED_DETAIL,
+};
+
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
 }
@@ -93,7 +105,7 @@ function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExt
  * "Secrets SHOULD be redacted with the literal string '[redacted]'".
  */
 const SECRET_KEY_PATTERN =
-  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|offering[_-]token|cookie|set[_-]cookie)$/i;
+  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
 
 export function __redactSecretsForTest(value: unknown): unknown {
   return redactSecrets(value);
@@ -103,6 +115,12 @@ export function __filterResponseHeadersForTest(
   headers: Record<string, string> | undefined
 ): Record<string, string> | undefined {
   return filterResponseHeaders(headers);
+}
+
+export function __defaultAuthHeadersForRawProbeForTest(
+  options: StoryboardRunOptions
+): Record<string, string> | undefined {
+  return defaultAuthHeadersForRawProbe(options);
 }
 
 function redactSecrets(value: unknown, depth = 0): unknown {
@@ -310,6 +328,15 @@ async function executeStoryboardPass(
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
     let statefulFailed = false;
+    // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
+    // /.well-known/oauth-protected-resource returns 404 — subsequent steps
+    // in this phase cascade-skip instead of failing their http_status:200
+    // validations. `presenceDetected` flips when PRM returns a 2xx: the
+    // agent IS advertising OAuth, so validation failures in this phase
+    // become hard failures regardless of `optional: true`, closing the
+    // spoofing path where a broken PRM + valid API key could silently pass.
+    let phaseAbsent = false;
+    let presenceDetected = false;
 
     if (shouldSkipPhase(phase, options)) {
       phaseResults.push({
@@ -323,6 +350,29 @@ async function executeStoryboardPass(
     }
 
     for (const step of phase.steps) {
+      // Cascade-skip when the PRM presence probe declared the phase absent.
+      if (phaseAbsent) {
+        const cascadeResult: StoryboardStepResult = {
+          storyboard_id: storyboard.id,
+          step_id: step.id,
+          phase_id: phase.id,
+          title: step.title,
+          task: step.task,
+          passed: true,
+          skipped: true,
+          skip_reason: 'oauth_not_advertised',
+          skip: { reason: 'not_applicable', detail: OAUTH_NOT_ADVERTISED_DETAIL },
+          duration_ms: 0,
+          validations: [],
+          context,
+          extraction: { path: 'none' },
+        };
+        stepResults.push(cascadeResult);
+        priorStepResults.set(step.id, cascadeResult);
+        skippedCount++;
+        continue;
+      }
+
       // Skip remaining steps if a stateful dependency failed
       if (statefulFailed && step.stateful) {
         const detail = 'Skipped: prior stateful step failed.';
@@ -364,6 +414,19 @@ async function executeStoryboardPass(
       stepResults.push(result);
       priorStepResults.set(step.id, result);
 
+      // PRM presence accounting — must happen after the step result lands so
+      // both the skipped-404 and 2xx paths are visible.
+      if (step.task === 'protected_resource_metadata') {
+        if (result.skipped && result.skip_reason === 'oauth_not_advertised') {
+          phaseAbsent = true;
+        } else {
+          const status = (result.response as HttpProbeResult | undefined)?.status;
+          if (typeof status === 'number' && status >= 200 && status < 300) {
+            presenceDetected = true;
+          }
+        }
+      }
+
       // Record contribution on success, honoring optional contributes_if predicate.
       if (!result.skipped && result.passed && step.contributes_to) {
         if (evalContributesIf(step.contributes_if, priorStepResults)) {
@@ -379,12 +442,13 @@ async function executeStoryboardPass(
         passedCount++;
       } else {
         phasePassed = false;
-        // Optional phases contribute their failures to reporting but NOT to
-        // overall pass/fail — the storyboard's final assert_contribution
-        // phase is the gate. The "API key OR OAuth" logic lives there, so a
-        // failing optional phase (e.g., OAuth discovery when only API key is
-        // configured) must not fail the storyboard by itself.
-        if (!phase.optional) failedCount++;
+        // Optional phases normally swallow step failures — the storyboard's
+        // final assert_contribution gate decides pass/fail via the "API key
+        // OR OAuth" logic. Exception: once a PRM presence probe has
+        // detected the agent IS advertising OAuth, subsequent validation
+        // failures in this phase are hard failures (adcp-client#677). An
+        // agent that serves PRM MUST serve it correctly.
+        if (!phase.optional || presenceDetected) failedCount++;
         if (step.stateful) statefulFailed = true;
         // In multi-instance mode, annotate the failure with the cross-instance
         // attribution block so CI readers pattern-match it as a deployment bug.
@@ -818,20 +882,34 @@ async function executeStep(
   // layers agree; see `applyIdempotencyInvariant` for the runner-level skip.
   const testsMissingIdempotencyKey = step.omit_idempotency_key === true && isMutatingTask(effectiveStep.task);
 
+  // Defense-in-depth for the missing-key vector: when a mutating step sets
+  // `omit_idempotency_key: true` and `step.auth` is unset, route via
+  // `rawMcpProbe` anyway so no SDK-layer normalization can slip a key onto the
+  // wire. The SDK's `skipIdempotencyAutoInject` plumbing already honors this
+  // flag, but the raw-HTTP path removes the escape hatch entirely. A2A and
+  // oauth stay on the SDK path — their dispatch can't be replicated here
+  // (A2A uses a different envelope; oauth needs refresh semantics).
+  const rawProbeHeaders: Record<string, string> | undefined =
+    step.auth !== undefined
+      ? authHeadersForStep(step.auth, options)
+      : testsMissingIdempotencyKey && options.protocol !== 'a2a'
+        ? defaultAuthHeadersForRawProbe(options)
+        : undefined;
+  const useRawProbe = rawProbeHeaders !== undefined;
+
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
 
-  if (step.auth !== undefined) {
+  if (useRawProbe) {
     const started = Date.now();
     try {
-      const headers = authHeadersForStep(step.auth, options);
       const probe = await rawMcpProbe({
         agentUrl: runState.agentUrl,
         toolName: effectiveStep.task,
         args: request,
-        headers,
+        headers: rawProbeHeaders,
         allowPrivateIp: options.allow_http === true,
       });
       httpResult = probe.httpResult;
@@ -875,7 +953,7 @@ async function executeStep(
   }
 
   const requestRecord: RunnerRequestRecord = {
-    transport: step.auth !== undefined ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
+    transport: useRawProbe ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
     payload: redactSecrets(request),
     ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
@@ -1015,6 +1093,18 @@ async function executeProbeStep(
 
   if (step.task === 'protected_resource_metadata') {
     httpResult = await probeProtectedResourceMetadata(runState.agentUrl, probeOpts);
+    // RFC 9728 presence semantics (adcp-client#677): a 404 means the agent is
+    // honestly not advertising OAuth. Convert to a clean step skip so the
+    // phase loop can cascade-skip the rest of oauth_discovery instead of
+    // failing the http_status:200 validation. Any other status (including
+    // 200) runs validations unchanged — an agent that serves PRM MUST serve
+    // it correctly, regardless of whether the test kit also declared an
+    // API key. Fetch errors (status 0) fall through to the normal failure
+    // path since we can't distinguish "agent down" from "misconfigured".
+    if (!httpResult.error && httpResult.status === 404) {
+      httpResult.skipped = true;
+      httpResult.skip_reason = 'oauth_not_advertised';
+    }
   } else if (step.task === 'oauth_auth_server_metadata') {
     const prior = runState.priorProbes.get('protected_resource_metadata') ?? findPriorProbe(runState.priorStepResults);
     httpResult = await probeOauthAuthServerMetadata(prior, probeOpts);
@@ -1053,7 +1143,7 @@ async function executeProbeStep(
   if (httpResult?.skipped) {
     const detailedReason = (httpResult.skip_reason ?? 'probe_skipped') as RunnerDetailedSkipReason;
     const canonicalReason = DETAILED_SKIP_TO_CANONICAL[detailedReason] ?? 'not_applicable';
-    const detail = httpResult.error ?? SKIP_DETAILS[canonicalReason];
+    const detail = httpResult.error ?? DETAILED_SKIP_DETAILS[detailedReason] ?? SKIP_DETAILS[canonicalReason];
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -1172,6 +1262,58 @@ function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): s
   }
   if (typeof value === 'string' && value.length > 0) return value;
   return step.task_default;
+}
+
+/**
+ * Build headers for the raw MCP probe when a step needs raw dispatch without
+ * an explicit `auth` override (defense-in-depth for `omit_idempotency_key`).
+ * Returns `undefined` for `oauth` so the caller falls back to the SDK path —
+ * refreshable-token semantics can't be replicated here and the SDK honors
+ * `skipIdempotencyAutoInject` on that path anyway.
+ */
+function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<string, string> | undefined {
+  // Reject control chars and non-printable ASCII. Without this, undici's header
+  // validator throws a message that includes the offending value — landing
+  // secrets in logs. Validate raw inputs before encoding so the field name in
+  // the error identifies which input to fix without echoing the value.
+  const assertSafe = (value: string, field: string) => {
+    if (/[\r\n]|[^\x20-\x7E]/.test(value)) {
+      throw new Error(`${field} contains invalid characters (control chars or non-printable ASCII)`);
+    }
+  };
+
+  const headers: Record<string, string> = {};
+  if (options.auth) {
+    if (options.auth.type === 'bearer') {
+      if (!options.auth.token) throw new Error('options.auth.token is required for bearer auth');
+      assertSafe(options.auth.token, 'options.auth.token');
+      headers.authorization = `Bearer ${options.auth.token}`;
+    } else if (options.auth.type === 'basic') {
+      // RFC 7617 bans `:` in the userid — a colon would decode ambiguously on
+      // the server. Fail loudly rather than silently producing a mangled header.
+      if (options.auth.username.includes(':')) {
+        throw new Error('options.auth.username must not contain colon (RFC 7617)');
+      }
+      assertSafe(options.auth.username, 'options.auth.username');
+      assertSafe(options.auth.password, 'options.auth.password');
+      const encoded = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
+      headers.authorization = `Basic ${encoded}`;
+    } else {
+      return undefined;
+    }
+  }
+  // Match SDK header casing so a raw-probe request is byte-indistinguishable
+  // from an SDK-shaped one at the transport boundary. HTTP is case-insensitive;
+  // this is purely for parity with capture/diff tooling.
+  if (options.test_session_id) {
+    assertSafe(options.test_session_id, 'options.test_session_id');
+    headers['X-Test-Session-ID'] = options.test_session_id;
+  }
+  if (options.userAgent) {
+    assertSafe(options.userAgent, 'options.userAgent');
+    headers['User-Agent'] = options.userAgent;
+  }
+  return headers;
 }
 
 /**

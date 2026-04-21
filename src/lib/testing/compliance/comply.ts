@@ -403,6 +403,17 @@ export interface ComplyOptions extends TestOptions {
    * advisory banner so mis-published results are visible.
    */
   allow_http?: boolean;
+  /**
+   * Host an ephemeral webhook receiver during the run so `expect_webhook*`
+   * pseudo-steps can observe outbound webhooks from the agent under test.
+   * Passed through to `runStoryboard`. See `StoryboardRunOptions.webhook_receiver`.
+   */
+  webhook_receiver?: StoryboardRunOptions['webhook_receiver'];
+  /**
+   * Test-kit contract ids in scope for this run. Passed through to
+   * `runStoryboard`. See `StoryboardRunOptions.contracts`.
+   */
+  contracts?: StoryboardRunOptions['contracts'];
 }
 
 /**
@@ -731,6 +742,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     tracks: trackFilter,
     timeout_ms,
     signal: externalSignal,
+    webhook_receiver,
+    contracts,
     ...testOptions
   } = options;
 
@@ -895,6 +908,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const runOptions: StoryboardRunOptions = {
       ...effectiveOptions,
       agentTools: profile.tools,
+      ...(webhook_receiver !== undefined && { webhook_receiver }),
+      ...(contracts !== undefined && { contracts }),
     };
 
     for (const sb of applicableStoryboards) {
@@ -1089,6 +1104,8 @@ async function runWithDegradedProfile(
     // upstream. Empty agentTools means step-level requires_tool skip-logic kicks
     // in for anything else, which is what we want.
     agentTools: [],
+    ...(options.webhook_receiver !== undefined && { webhook_receiver: options.webhook_receiver }),
+    ...(options.contracts !== undefined && { contracts: options.contracts }),
   };
 
   for (const sb of storyboards) {

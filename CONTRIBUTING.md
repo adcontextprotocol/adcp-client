@@ -92,6 +92,22 @@ npm test test/client.test.js
 npm run test:coverage
 ```
 
+#### Debugging a hung test
+
+Every test has a 60-second per-test timeout (`--test-timeout=60000`). If a test legitimately runs longer you'll see a timeout error with a stack trace — that's the identifying information you need.
+
+If the runner itself appears stuck (spinning at high CPU, no output), send `SIGQUIT` to dump the JS stack before killing the process:
+
+```bash
+# In another terminal, find the PID (scoped to your user)
+pgrep -u "$USER" -af 'node --test'
+
+# Dump the V8 stack to stderr
+kill -QUIT <pid>
+```
+
+The stack trace points at the spinning function. If the same stack reappears across runs, capture it in the bug report — a 30-second autopsy beats a 30-hour one.
+
 ### Commit Messages
 
 We follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
