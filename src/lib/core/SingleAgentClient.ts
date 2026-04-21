@@ -2127,10 +2127,11 @@ export class SingleAgentClient {
    * const agent = new ADCPClient(config);
    * const initial = await agent.getProducts({ brief: 'Tech products' });
    *
-   * // Continue the conversation
+   * // Continue the conversation — use the server-returned contextId, not
+   * // the client-minted correlation taskId.
    * const refined = await agent.continueConversation(
    *   'Focus only on laptops under $1000',
-   *   initial.metadata.taskId
+   *   initial.metadata.contextId!
    * );
    * ```
    */

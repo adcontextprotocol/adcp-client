@@ -222,6 +222,10 @@ export class TaskExecutor {
     if (args.response !== undefined) {
       const replayed = this.responseParser.getReplayed(args.response);
       if (replayed !== undefined) meta.replayed = replayed;
+      const serverContextId = this.responseParser.getContextId(args.response);
+      if (serverContextId) meta.contextId = serverContextId;
+      const serverTaskId = this.responseParser.getTaskId(args.response);
+      if (serverTaskId) meta.serverTaskId = serverTaskId;
     }
     return meta;
   }
@@ -266,7 +270,13 @@ export class TaskExecutor {
     serverVersion?: 'v2' | 'v3'
   ): Promise<TaskResult<T>> {
     if (serverVersion) this.lastKnownServerVersion = serverVersion;
-    const taskId = options.contextId || randomUUID();
+    // The client-minted `taskId` is a local correlation id for tracking this
+    // call's lifecycle (activeTasks map, metadata, webhook URL macros). It is
+    // NOT the same thing as the A2A `taskId` that the server assigns — that
+    // flows in on the response and is surfaced via metadata.serverTaskId.
+    // `options.contextId` / `options.taskId` ride on the A2A message envelope
+    // and are threaded straight to the protocol adapter below.
+    const taskId = randomUUID();
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
 
@@ -373,7 +383,10 @@ export class TaskExecutor {
       // Pre-send schema check — throws in strict, logs in warn, skips in off.
       validateOutgoingRequest(taskName, effectiveParams, this.requestValidationMode, debugLogs);
 
-      // Send initial request and get streaming response with webhook URL
+      // Send initial request and get streaming response with webhook URL.
+      // Pass the caller's A2A session ids (contextId for conversation binding,
+      // taskId for resuming a non-terminal server-side task). The adapter
+      // drops these on the wire for MCP (no session concept there).
       const response = await ProtocolClient.callTool(
         agent,
         taskName,
@@ -382,7 +395,8 @@ export class TaskExecutor {
         webhookUrl,
         this.config.webhookSecret,
         undefined,
-        serverVersion
+        serverVersion,
+        { contextId: options.contextId, taskId: options.taskId }
       );
 
       // Emit protocol_response activity
