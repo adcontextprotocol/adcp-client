@@ -272,6 +272,7 @@ const MUTATIONS: Record<string, Mutator> = {
   '024-unquoted-string-param': (vector, _keys, options) => passthrough(vector, options),
   '025-jwk-alg-crv-mismatch': (vector, _keys, options) => passthrough(vector, options),
   '026-non-ascii-host': (vector, _keys, options) => passthrough(vector, options),
+  '027-webhook-registration-authentication-unsigned': (vector, _keys, options) => passthrough(vector, options),
 };
 
 function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {

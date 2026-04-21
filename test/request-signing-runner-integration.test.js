@@ -140,7 +140,7 @@ describe('request-signing: synthesize step expansion', () => {
     const negativePhase = sb.phases.find(p => p.id === 'negative_vectors');
     assert.ok(positivePhase && negativePhase, 'vector phases present');
     assert.strictEqual(positivePhase.steps.length, 12, 'all 12 positive steps synthesized');
-    assert.strictEqual(negativePhase.steps.length, 26, 'all 26 negative steps synthesized');
+    assert.strictEqual(negativePhase.steps.length, 27, 'all 27 negative steps synthesized');
 
     for (const step of positivePhase.steps) {
       assert.ok(step.id.startsWith('positive-'), `positive step id: ${step.id}`);
@@ -178,7 +178,7 @@ describe('request-signing: synthesize step expansion', () => {
     assert.ok(!posIds.includes('positive-001-basic-post'), 'positive 001 skipped');
     assert.ok(!negIds.includes('negative-015-signature-invalid'), 'negative 015 skipped');
     assert.strictEqual(posIds.length, 11, 'remaining positives = 11');
-    assert.strictEqual(negIds.length, 25, 'remaining negatives = 25');
+    assert.strictEqual(negIds.length, 26, 'remaining negatives = 26');
   });
 });
 

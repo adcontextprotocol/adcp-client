@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-20T23:50:36.784Z
+// Generated at: 2026-04-21T01:31:33.141Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -996,9 +996,13 @@ export const SyncCreativesSuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CatalogActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
-
-export const CatalogItemStatusSchema = z.union([z.literal("approved"), z.literal("pending"), z.literal("rejected"), z.literal("warning")]);
+export const SyncCatalogsSuccessSchema = z.object({
+    dry_run: z.boolean().optional(),
+    catalogs: z.array(z.record(z.string(), z.unknown())),
+    sandbox: z.boolean().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const ErrorSchema = z.object({
     code: z.string(),
@@ -1201,32 +1205,6 @@ export const SyncCreativesSubmittedSchema = z.object({
     task_id: z.string(),
     message: z.string().optional(),
     errors: z.array(ErrorSchema).optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const SyncCatalogsSuccessSchema = z.object({
-    dry_run: z.boolean().optional(),
-    catalogs: z.array(z.object({
-        catalog_id: z.string(),
-        action: CatalogActionSchema,
-        platform_id: z.string().optional(),
-        item_count: z.number().optional(),
-        items_approved: z.number().optional(),
-        items_pending: z.number().optional(),
-        items_rejected: z.number().optional(),
-        item_issues: z.array(z.object({
-            item_id: z.string(),
-            status: CatalogItemStatusSchema,
-            reasons: z.array(z.string()).optional()
-        }).passthrough()).optional(),
-        last_synced_at: z.string().optional(),
-        next_fetch_at: z.string().optional(),
-        changes: z.array(z.string()).optional(),
-        errors: z.array(ErrorSchema).optional(),
-        warnings: z.array(z.string()).optional()
-    }).passthrough()),
-    sandbox: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -1887,31 +1865,6 @@ export const CreativeFeatureResultSchema = z.object({
 
 export const WCAGLevelSchema = z.union([z.literal("A"), z.literal("AA"), z.literal("AAA")]);
 
-export const ListCreativeFormatsRequestCreativeAgentSchema = z.object({
-    adcp_major_version: z.number().optional(),
-    format_ids: z.array(FormatIDSchema).optional(),
-    type: z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("dooh")]).optional(),
-    asset_types: z.array(z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("html"), z.literal("javascript"), z.literal("url")])).optional(),
-    max_width: z.number().optional(),
-    max_height: z.number().optional(),
-    min_width: z.number().optional(),
-    min_height: z.number().optional(),
-    is_responsive: z.boolean().optional(),
-    name_search: z.string().optional(),
-    wcag_level: WCAGLevelSchema.optional(),
-    disclosure_positions: z.array(DisclosurePositionSchema).optional(),
-    disclosure_persistence: z.array(DisclosurePersistenceSchema).optional(),
-    output_format_ids: z.array(FormatIDSchema).optional(),
-    input_format_ids: z.array(FormatIDSchema).optional(),
-    include_pricing: z.boolean().optional(),
-    account: AccountReferenceSchema.optional(),
-    pagination: PaginationRequestSchema.optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const CreativeSortFieldSchema = z.union([z.literal("created_date"), z.literal("updated_date"), z.literal("name"), z.literal("status"), z.literal("assignment_count")]);
-
 export const CreativeFiltersSchema = z.object({
     accounts: z.array(AccountReferenceSchema).optional(),
     statuses: z.array(CreativeStatusSchema).optional(),
@@ -1931,6 +1884,8 @@ export const CreativeFiltersSchema = z.object({
     format_ids: z.array(FormatIDSchema).optional(),
     has_variables: z.boolean().optional()
 }).passthrough();
+
+export const CreativeSortFieldSchema = z.union([z.literal("created_date"), z.literal("updated_date"), z.literal("name"), z.literal("status"), z.literal("assignment_count")]);
 
 export const CreativeItemSchema = z.union([z.object({
         asset_kind: z.literal("media"),
@@ -3506,6 +3461,10 @@ export const VehicleItemSchema = z.object({
 }).passthrough();
 
 export const BrandAgentTypeSchema = z.union([z.literal("brand"), z.literal("rights"), z.literal("measurement"), z.literal("governance"), z.literal("creative"), z.literal("sales"), z.literal("buying"), z.literal("signals")]);
+
+export const CatalogActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
+
+export const CatalogItemStatusSchema = z.union([z.literal("approved"), z.literal("pending"), z.literal("rejected"), z.literal("warning")]);
 
 export const CreativeActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
 
@@ -5754,6 +5713,29 @@ export const GetRightsSuccessSchema = z.object({
 }).passthrough();
 
 export const UpdateRightsResponseSchema = z.union([UpdateRightsSuccessSchema, UpdateRightsErrorSchema]);
+
+export const ListCreativeFormatsRequestCreativeAgentSchema = z.object({
+    adcp_major_version: z.number().optional(),
+    format_ids: z.array(FormatIDSchema).optional(),
+    type: z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("dooh")]).optional(),
+    asset_types: z.array(z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("html"), z.literal("javascript"), z.literal("url")])).optional(),
+    max_width: z.number().optional(),
+    max_height: z.number().optional(),
+    min_width: z.number().optional(),
+    min_height: z.number().optional(),
+    is_responsive: z.boolean().optional(),
+    name_search: z.string().optional(),
+    wcag_level: WCAGLevelSchema.optional(),
+    disclosure_positions: z.array(DisclosurePositionSchema).optional(),
+    disclosure_persistence: z.array(DisclosurePersistenceSchema).optional(),
+    output_format_ids: z.array(FormatIDSchema).optional(),
+    input_format_ids: z.array(FormatIDSchema).optional(),
+    include_pricing: z.boolean().optional(),
+    account: AccountReferenceSchema.optional(),
+    pagination: PaginationRequestSchema.optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const PreviewCreativeResponseSchema = z.union([PreviewCreativeSingleResponseSchema, PreviewCreativeBatchResponseSchema, PreviewCreativeVariantResponseSchema]);
 

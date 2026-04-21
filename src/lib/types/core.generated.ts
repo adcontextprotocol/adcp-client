@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-20T12:09:23.511Z
+// Generated at: 2026-04-21T01:31:29.081Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -4098,14 +4098,6 @@ export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError | 
  * Response for completed or failed sync_catalogs
  */
 export type SyncCatalogsResponse = SyncCatalogsSuccess | SyncCatalogsError;
-/**
- * Action taken for this catalog
- */
-export type CatalogAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
-/**
- * Item review status
- */
-export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
 
 /**
  * Standard envelope for HTTP-based push notifications (MCP). This defines the wire format sent to the URL configured in `pushNotificationConfig`. NOTE: This envelope is NOT used in A2A integration, which uses native Task/TaskStatusUpdateEvent messages with the AdCP payload nested in `status.message.parts[].data`.
@@ -5184,65 +5176,7 @@ export interface SyncCatalogsSuccess {
    * Results for each catalog processed. Items with action='failed' indicate per-catalog validation/processing failures, not operation-level failures.
    */
   catalogs: {
-    /**
-     * Catalog ID from the request
-     */
-    catalog_id: string;
-    action: CatalogAction;
-    /**
-     * Platform-specific ID assigned to the catalog
-     */
-    platform_id?: string;
-    /**
-     * Total number of items in the catalog after sync
-     */
-    item_count?: number;
-    /**
-     * Number of items approved by the platform. Populated when the platform performs item-level review.
-     */
-    items_approved?: number;
-    /**
-     * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
-     */
-    items_pending?: number;
-    /**
-     * Number of items rejected by the platform. Check item_issues for rejection reasons.
-     */
-    items_rejected?: number;
-    /**
-     * Per-item issues reported by the platform (rejections, warnings). Only present when the platform performs item-level review.
-     */
-    item_issues?: {
-      /**
-       * ID of the catalog item with an issue
-       */
-      item_id: string;
-      status: CatalogItemStatus;
-      /**
-       * Reasons for rejection or warning
-       */
-      reasons?: string[];
-    }[];
-    /**
-     * ISO 8601 timestamp of when the most recent sync was accepted by the platform
-     */
-    last_synced_at?: string;
-    /**
-     * ISO 8601 timestamp of when the platform will next fetch the feed URL. Only present for URL-based catalogs with update_frequency.
-     */
-    next_fetch_at?: string;
-    /**
-     * Field names that were modified (only present when action='updated')
-     */
-    changes?: string[];
-    /**
-     * Validation or processing errors (only present when action='failed')
-     */
-    errors?: Error[];
-    /**
-     * Non-fatal warnings about this catalog
-     */
-    warnings?: string[];
+    [k: string]: unknown | undefined;
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -7564,13 +7498,11 @@ export interface CreativeFeatureResult {
 
 // bundled/creative/list-creative-formats-request.json
 /**
- * Filter to formats that meet at least this WCAG conformance level (A < AA < AAA)
- */
-export type WCAGLevel = 'A' | 'AA' | 'AAA';
-/**
  * Request parameters for discovering creative formats provided by this creative agent
  */
-export interface ListCreativeFormatsRequestCreativeAgent {
+export type ListCreativeFormatsRequestCreativeAgent = {
+  [k: string]: unknown | undefined;
+} & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -7636,17 +7568,19 @@ export interface ListCreativeFormatsRequestCreativeAgent {
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
-}
+};
+/**
+ * Filter to formats that meet at least this WCAG conformance level (A < AA < AAA)
+ */
+export type WCAGLevel = 'A' | 'AA' | 'AAA';
 
 // bundled/creative/list-creatives-request.json
 /**
- * Field to sort by
- */
-export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
-/**
  * Request parameters for querying creative assets from a creative library with filtering, sorting, and pagination. Implemented by any agent that hosts a creative library — creative agents (ad servers, creative platforms) and sales agents that manage creatives.
  */
-export interface ListCreativesRequest {
+export type ListCreativesRequest = {
+  [k: string]: unknown | undefined;
+} & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -7701,7 +7635,11 @@ export interface ListCreativesRequest {
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
-}
+};
+/**
+ * Field to sort by
+ */
+export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
 /**
  * Filter criteria for querying creatives from a creative library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
  */
@@ -16075,6 +16013,20 @@ export type BrandAgentType =
   | 'sales'
   | 'buying'
   | 'signals';
+
+
+// enums/catalog-action.json
+/**
+ * Action taken on a catalog during sync operation
+ */
+export type CatalogAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+
+
+// enums/catalog-item-status.json
+/**
+ * Approval status of an individual item within a synced catalog. Platforms review catalog items and may approve, reject, or flag them for issues (similar to Google Merchant Center product review).
+ */
+export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
 
 
 // enums/creative-action.json

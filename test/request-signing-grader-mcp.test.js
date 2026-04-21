@@ -146,7 +146,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
       allowPrivateIp: true,
       transport: 'mcp',
       skipRateAbuse: true,
-      skipVectors: CAPABILITY_PROFILE_VECTORS,
+      skipVectors: [...CAPABILITY_PROFILE_VECTORS, '027-webhook-registration-authentication-unsigned'],
     });
 
     // Collect failures so a regression prints all at once.
@@ -159,7 +159,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     assert.deepStrictEqual(failures, [], 'every non-profile vector grades as expected under MCP transport');
     assert.ok(report.passed, 'overall grade is PASS');
     assert.strictEqual(report.positive.length, 12);
-    assert.strictEqual(report.negative.length, 26);
+    assert.strictEqual(report.negative.length, 27);
   });
 
   test('MCP mode vector bodies are wrapped in JSON-RPC tools/call envelopes', async () => {
