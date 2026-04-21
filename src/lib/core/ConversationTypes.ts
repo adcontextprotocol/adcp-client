@@ -125,8 +125,19 @@ export interface TaskOptions {
   timeout?: number;
   /** Maximum clarification rounds before failing */
   maxClarifications?: number;
-  /** Context ID to continue existing conversation */
+  /**
+   * A2A `contextId` that binds this call to a server-side conversation.
+   * When set, the client sends it on the A2A Message envelope so the server
+   * can route to the existing session instead of starting a new one.
+   * Retained automatically across calls on the same `AgentClient`.
+   */
   contextId?: string;
+  /**
+   * A2A `taskId` of a non-terminal task to resume (HITL / approval flows).
+   * When set, the client sends it on the A2A Message envelope so the server
+   * continues the same task rather than opening a new one.
+   */
+  taskId?: string;
   /** Enable debug logging for this task */
   debug?: boolean;
   /** Additional metadata to include */
@@ -260,7 +271,29 @@ export interface AdcpErrorInfo {
  * Task execution metadata, shared across all result variants.
  */
 export interface TaskResultMetadata {
+  /**
+   * Client-minted correlation id for this specific request attempt. Used
+   * for internal tracking (activeTasks map, webhook URL macros, debug
+   * logs) and retried/refired across attempts — NOT the A2A task id the
+   * server is tracking. For the server-side id, use {@link serverTaskId}.
+   */
   taskId: string;
+  /**
+   * Server-returned A2A `contextId` / AdCP `context_id` that binds this
+   * response to a server-side conversation. Present when the server surfaced
+   * one; `undefined` otherwise (e.g., fire-and-forget MCP completions).
+   *
+   * Buyers who persist conversation across process restarts should save this
+   * and seed it into `AgentClient.resetContext(id)` on rehydration.
+   */
+  contextId?: string;
+  /**
+   * A2A `taskId` of the server-tracked task for this response. Populated
+   * from A2A Task / Message responses; `undefined` for MCP and for A2A
+   * responses that carry no task binding. Distinct from {@link taskId},
+   * which is the client-minted correlation id.
+   */
+  serverTaskId?: string;
   taskName: string;
   agent: { id: string; name: string; protocol: 'mcp' | 'a2a' };
   /** Total execution time in milliseconds */

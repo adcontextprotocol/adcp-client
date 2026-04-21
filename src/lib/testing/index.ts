@@ -173,6 +173,7 @@ export {
   findBundleById,
   resolveBundleOrStoryboard,
   resolveStoryboardsForCapabilities,
+  CapabilityResolutionError,
   // Task mapping
   TASK_TO_METHOD,
   executeStoryboardTask,
@@ -214,6 +215,7 @@ export {
   type AgentCapabilities,
   type BundleKind,
   type BundleRef,
+  type CapabilityResolutionCode,
   type ComplianceIndex,
   type ComplianceIndexProtocol,
   type ComplianceIndexSpecialism,

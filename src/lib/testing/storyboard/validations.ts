@@ -9,6 +9,7 @@
  */
 
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
+import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
 import type {
@@ -727,7 +728,6 @@ function normalizeAgentUrl(url: string): string {
  * Also: lowercase scheme/host, drop default ports, strip userinfo, query,
  * fragment — normal RFC 3986 §6.2 canonicalization. Closes adcp-client#710.
  */
-const TRANSPORT_SUFFIX_RE = /\/(?:mcp|a2a|sse)\/?$/i;
 const AGENT_CARD_SUFFIX_RE = /\/\.well-known\/agent(?:-card)?\.json$/i;
 function canonicalizeAgentUrlForScope(url: string): string {
   try {
@@ -738,7 +738,7 @@ function canonicalizeAgentUrlForScope(url: string): string {
     u.password = '';
     let path = u.pathname;
     path = path.replace(AGENT_CARD_SUFFIX_RE, '');
-    path = path.replace(TRANSPORT_SUFFIX_RE, '');
+    path = path.replace(TRANSPORT_SUFFIX_REGEX, '');
     // A bare `/` and the empty string denote the same origin-relative root;
     // collapse them so `https://host` and `https://host/` canonicalize equally.
     if (path === '/' || path === '') path = '';
@@ -964,9 +964,27 @@ function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationCo
     kind: 'unresolved_with_pagination',
     ref: projectRefForReport(ref, matchKeys),
   }));
+
+  // adcp-client#718: when target_paginated AND at least one ref is
+  // unresolved-with-pagination, emit a neutral structural meta-observation
+  // naming the co-occurrence. A seller that unconditionally returns
+  // pagination.has_more: true masks unresolved refs via the pagination
+  // demotion (#712/#717) and passes refs_resolve cleanly; graders keying
+  // on `passed` alone wouldn't see the problem. This gives dashboards an
+  // independent signal without changing pass/fail semantics. Becomes
+  // redundant when adcp#2601's "compliance mode returns everything
+  // referenced" rule lands.
+  if (targetPaginated && paginatedUnresolved.length > 0) {
+    metaObservations.push({
+      kind: 'unresolved_hidden_by_pagination',
+      unresolved_count: paginatedUnresolved.length,
+    });
+  }
+
   // Meta-observations precede per-ref observations so the array cap never
   // drops the grader-signal primitives (scope_excluded_all_refs,
-  // target_paginated) in favor of redundant out-of-scope entries.
+  // target_paginated, unresolved_hidden_by_pagination) in favor of
+  // redundant out-of-scope entries.
   const observations = capObservations([...metaObservations, ...paginatedObservations, ...warnObservations]);
 
   if (allMissing.length === 0) {

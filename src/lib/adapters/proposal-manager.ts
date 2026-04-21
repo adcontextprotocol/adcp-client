@@ -73,11 +73,11 @@ export interface IProposalManager {
  * Error codes for proposal operations
  */
 export const ProposalErrorCodes = {
-  NOT_SUPPORTED: 'proposals_not_supported',
-  PROPOSAL_NOT_FOUND: 'proposal_not_found',
-  PROPOSAL_EXPIRED: 'proposal_expired',
-  INVALID_ALLOCATION: 'invalid_allocation',
-  GENERATION_FAILED: 'generation_failed',
+  NOT_SUPPORTED: 'UNSUPPORTED_FEATURE',
+  PROPOSAL_NOT_FOUND: 'REFERENCE_NOT_FOUND',
+  PROPOSAL_EXPIRED: 'PROPOSAL_EXPIRED',
+  INVALID_ALLOCATION: 'INVALID_REQUEST',
+  GENERATION_FAILED: 'SERVICE_UNAVAILABLE',
 } as const;
 
 /**

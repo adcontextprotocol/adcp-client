@@ -747,8 +747,14 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * underlying `err.message` in `details.reason` (helpful in dev, but can leak
    * DB driver messages, file paths, or schema info to remote callers).
    *
-   * Defaults to `false`. Enable in trusted environments when you want
-   * debuggable failures at the call site.
+   * Defaults:
+   *   - `NODE_ENV === 'production'` → `false` (safe default for live agents).
+   *   - Otherwise → `true` (dev/test/CI surface the cause chain so
+   *     `SERVICE_UNAVAILABLE: encountered an internal error` becomes
+   *     `SERVICE_UNAVAILABLE: Cannot find module '@adcp/client/foo'`.
+   *     Matrix runs spent weeks on opaque SU errors before this default flipped).
+   *
+   * Explicit `exposeErrorDetails: true | false` always wins.
    */
   exposeErrorDetails?: boolean;
 
@@ -845,22 +851,35 @@ export interface AdcpServerConfig<TAccount = unknown> {
   signedRequests?: SignedRequestsConfig;
 
   /**
-   * Opt-in schema-driven validation of requests and responses against the
-   * bundled AdCP JSON schemas. When enabled, the dispatcher rejects bad
-   * requests with `VALIDATION_ERROR` before the handler runs and catches
-   * drift in handler-returned responses before they leave the server.
+   * Schema-driven validation of requests and responses against the bundled
+   * AdCP JSON schemas. When enabled, the dispatcher rejects bad requests
+   * with `VALIDATION_ERROR` before the handler runs and catches drift in
+   * handler-returned responses before they leave the server.
    *
-   * Defaults to off — enabling it costs one AJV compile per tool on cold
-   * start and one validator invocation per call. Recommended in dev/test;
-   * optional in production depending on tolerance for extra CPU.
+   * Defaults:
+   *   - When `NODE_ENV === 'production'` → both sides `'off'` (zero overhead
+   *     in prod; trust the handler after its test suite has exercised it).
+   *   - Otherwise (dev, test, CI) → `responses: 'warn'`, `requests: 'off'`.
+   *     The default warn on responses catches the "handler returned a sparse
+   *     object that fails the wire schema" class of bug at development time
+   *     with a clear field path, instead of letting it surface downstream as
+   *     a cryptic `SERVICE_UNAVAILABLE` or `oneOf` discriminator failure.
+   *
+   * Pass an explicit `validation: { requests: 'off', responses: 'off' }` to
+   * override the dev-mode default. Set `responses: 'strict'` in CI if you
+   * want drift to fail loudly rather than warn.
    *
    * Per-side modes:
    *   - `requests: 'strict'` — reject malformed requests with VALIDATION_ERROR.
    *     `'warn'` — log a warning, allow the handler to run.
-   *     `'off'` (default) — skip.
+   *     `'off'` — skip.
    *   - `responses: 'strict'` — handler-returned drift throws (dev/test canary).
    *     `'warn'` — log a warning, return the response unchanged.
-   *     `'off'` (default) — skip.
+   *     `'off'` — skip.
+   *
+   * Cost: one AJV compile per tool on cold start, one validator invocation
+   * per call. The dev-mode default trades that for field-level diagnostics
+   * when handlers drift from the wire contract.
    */
   validation?: {
     requests?: import('../validation/client-hooks').ValidationMode;
@@ -1491,7 +1510,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     version,
     resolveAccount,
     resolveSessionKey,
-    exposeErrorDetails = false,
+    exposeErrorDetails = process.env.NODE_ENV !== 'production',
     stateStore = new InMemoryStateStore(),
     logger = noopLogger,
     capabilities: capConfig,
@@ -1505,8 +1524,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     validation: validationConfig,
   } = config;
 
+  // Dev/test/CI default: warn on response drift. Production default: off.
+  // Explicit `validation: { requests, responses }` on the config always wins.
+  // Using `process.env.NODE_ENV` matches the convention every other SDK
+  // consumer already tunes (Express, React, etc.); containers/CI that want
+  // prod-like behavior set NODE_ENV=production before start.
+  const isProduction = process.env.NODE_ENV === 'production';
   const requestValidationMode = validationConfig?.requests ?? 'off';
-  const responseValidationMode = validationConfig?.responses ?? 'off';
+  const responseValidationMode = validationConfig?.responses ?? (isProduction ? 'off' : 'warn');
 
   // Enforce lock-step between the `signed-requests` specialism claim and the
   // verifier config for the auto-wiring path. When `signedRequests` is set
@@ -1885,7 +1910,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           return finalize(formatted);
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
-          logger.error('Handler failed', { tool: toolName, error: reason });
+          // Log the full stack — `logger.error` with just the message turned
+          // every "Handler failed" into a guessing game for agent authors.
+          // Stack tells you which import/typo/access chain blew up.
+          logger.error('Handler failed', {
+            tool: toolName,
+            handler: handlerKey,
+            error: reason,
+            stack: err instanceof Error ? err.stack : undefined,
+          });
           if (idempotencyCheck && idempotency) {
             try {
               await idempotency.release({
@@ -1903,8 +1936,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
           return finalize(
             adcpError('SERVICE_UNAVAILABLE', {
-              message: `Tool ${toolName} encountered an internal error`,
-              ...(exposeErrorDetails && { details: { reason } }),
+              // Include the cause message directly in the response text when
+              // `exposeErrorDetails` is on. The opaque
+              // "Tool X encountered an internal error" string cost us weeks
+              // of diagnostic time on the matrix harness — dev callers want
+              // the real reason at the call site, not hidden in server logs.
+              message: exposeErrorDetails
+                ? `Tool ${toolName} handler threw: ${reason}`
+                : `Tool ${toolName} encountered an internal error`,
+              ...(exposeErrorDetails && { details: { reason, handler: handlerKey } }),
             })
           );
         }
