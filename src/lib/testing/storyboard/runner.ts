@@ -93,7 +93,7 @@ function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExt
  * "Secrets SHOULD be redacted with the literal string '[redacted]'".
  */
 const SECRET_KEY_PATTERN =
-  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|offering[_-]token|cookie|set[_-]cookie)$/i;
+  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
 
 export function __redactSecretsForTest(value: unknown): unknown {
   return redactSecrets(value);
@@ -103,6 +103,12 @@ export function __filterResponseHeadersForTest(
   headers: Record<string, string> | undefined
 ): Record<string, string> | undefined {
   return filterResponseHeaders(headers);
+}
+
+export function __defaultAuthHeadersForRawProbeForTest(
+  options: StoryboardRunOptions
+): Record<string, string> | undefined {
+  return defaultAuthHeadersForRawProbe(options);
 }
 
 function redactSecrets(value: unknown, depth = 0): unknown {
@@ -818,20 +824,34 @@ async function executeStep(
   // layers agree; see `applyIdempotencyInvariant` for the runner-level skip.
   const testsMissingIdempotencyKey = step.omit_idempotency_key === true && isMutatingTask(effectiveStep.task);
 
+  // Defense-in-depth for the missing-key vector: when a mutating step sets
+  // `omit_idempotency_key: true` and `step.auth` is unset, route via
+  // `rawMcpProbe` anyway so no SDK-layer normalization can slip a key onto the
+  // wire. The SDK's `skipIdempotencyAutoInject` plumbing already honors this
+  // flag, but the raw-HTTP path removes the escape hatch entirely. A2A and
+  // oauth stay on the SDK path — their dispatch can't be replicated here
+  // (A2A uses a different envelope; oauth needs refresh semantics).
+  const rawProbeHeaders: Record<string, string> | undefined =
+    step.auth !== undefined
+      ? authHeadersForStep(step.auth, options)
+      : testsMissingIdempotencyKey && options.protocol !== 'a2a'
+        ? defaultAuthHeadersForRawProbe(options)
+        : undefined;
+  const useRawProbe = rawProbeHeaders !== undefined;
+
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
 
-  if (step.auth !== undefined) {
+  if (useRawProbe) {
     const started = Date.now();
     try {
-      const headers = authHeadersForStep(step.auth, options);
       const probe = await rawMcpProbe({
         agentUrl: runState.agentUrl,
         toolName: effectiveStep.task,
         args: request,
-        headers,
+        headers: rawProbeHeaders,
         allowPrivateIp: options.allow_http === true,
       });
       httpResult = probe.httpResult;
@@ -875,7 +895,7 @@ async function executeStep(
   }
 
   const requestRecord: RunnerRequestRecord = {
-    transport: step.auth !== undefined ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
+    transport: useRawProbe ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
     payload: redactSecrets(request),
     ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
@@ -1172,6 +1192,58 @@ function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): s
   }
   if (typeof value === 'string' && value.length > 0) return value;
   return step.task_default;
+}
+
+/**
+ * Build headers for the raw MCP probe when a step needs raw dispatch without
+ * an explicit `auth` override (defense-in-depth for `omit_idempotency_key`).
+ * Returns `undefined` for `oauth` so the caller falls back to the SDK path —
+ * refreshable-token semantics can't be replicated here and the SDK honors
+ * `skipIdempotencyAutoInject` on that path anyway.
+ */
+function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<string, string> | undefined {
+  // Reject control chars and non-printable ASCII. Without this, undici's header
+  // validator throws a message that includes the offending value — landing
+  // secrets in logs. Validate raw inputs before encoding so the field name in
+  // the error identifies which input to fix without echoing the value.
+  const assertSafe = (value: string, field: string) => {
+    if (/[\r\n]|[^\x20-\x7E]/.test(value)) {
+      throw new Error(`${field} contains invalid characters (control chars or non-printable ASCII)`);
+    }
+  };
+
+  const headers: Record<string, string> = {};
+  if (options.auth) {
+    if (options.auth.type === 'bearer') {
+      if (!options.auth.token) throw new Error('options.auth.token is required for bearer auth');
+      assertSafe(options.auth.token, 'options.auth.token');
+      headers.authorization = `Bearer ${options.auth.token}`;
+    } else if (options.auth.type === 'basic') {
+      // RFC 7617 bans `:` in the userid — a colon would decode ambiguously on
+      // the server. Fail loudly rather than silently producing a mangled header.
+      if (options.auth.username.includes(':')) {
+        throw new Error('options.auth.username must not contain colon (RFC 7617)');
+      }
+      assertSafe(options.auth.username, 'options.auth.username');
+      assertSafe(options.auth.password, 'options.auth.password');
+      const encoded = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
+      headers.authorization = `Basic ${encoded}`;
+    } else {
+      return undefined;
+    }
+  }
+  // Match SDK header casing so a raw-probe request is byte-indistinguishable
+  // from an SDK-shaped one at the transport boundary. HTTP is case-insensitive;
+  // this is purely for parity with capture/diff tooling.
+  if (options.test_session_id) {
+    assertSafe(options.test_session_id, 'options.test_session_id');
+    headers['X-Test-Session-ID'] = options.test_session_id;
+  }
+  if (options.userAgent) {
+    assertSafe(options.userAgent, 'options.userAgent');
+    headers['User-Agent'] = options.userAgent;
+  }
+  return headers;
 }
 
 /**
