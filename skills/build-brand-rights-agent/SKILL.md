@@ -412,11 +412,13 @@ serve(() =>
             uses: params.campaign?.uses ?? [],        // required
           },
           // URL you host — buyer POSTs creative-approval-request here for review.
+          // `credentials` MUST be ≥32 chars (spec: push-notification-config.json
+          // minLength: 32). `randomUUID().replace(/-/g, '')` produces 32 hex chars.
           approval_webhook: {
             url: `https://brand.example/webhooks/approval/${grantId}`,
             authentication: {
               schemes: ['Bearer'],
-              credentials: '<token your endpoint validates>',
+              credentials: randomUUID().replace(/-/g, ''),  // 32-char high-entropy token
             },
           },
         };

@@ -59,6 +59,10 @@ import {
   syncCreativesResponse,
   getSignalsResponse,
   activateSignalResponse,
+  acquireRightsResponse,
+  syncAccountsResponse,
+  syncGovernanceResponse,
+  reportUsageResponse,
   toStructuredContent,
   type McpToolResponse,
 } from './responses';
@@ -1101,10 +1105,10 @@ const TOOL_META: Record<string, ToolMeta> = {
 
   // Accounts
   list_accounts: { wrap: listAccountsResponse, annotations: RO },
-  sync_accounts: { wrap: null, annotations: IDEMP },
-  sync_governance: { wrap: null, annotations: IDEMP },
+  sync_accounts: { wrap: syncAccountsResponse, annotations: IDEMP },
+  sync_governance: { wrap: syncGovernanceResponse, annotations: IDEMP },
   get_account_financials: { wrap: null, annotations: RO },
-  report_usage: { wrap: null, annotations: MUT },
+  report_usage: { wrap: reportUsageResponse, annotations: MUT },
 
   // Event Tracking
   sync_event_sources: { wrap: null, annotations: IDEMP },
@@ -1146,7 +1150,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   // Brand Rights
   get_brand_identity: { wrap: null, annotations: RO },
   get_rights: { wrap: null, annotations: RO },
-  acquire_rights: { wrap: null, annotations: MUT },
+  acquire_rights: { wrap: acquireRightsResponse, annotations: MUT },
 };
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-21T17:40:48.711Z
+// Generated at: 2026-04-21T19:54:54.205Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -16403,7 +16403,8 @@ export type XEntityTypes =
   | 'media_buy'
   | 'package'
   | 'product'
-  | 'pricing_option'
+  | 'product_pricing_option'
+  | 'vendor_pricing_option'
   | 'creative'
   | 'creative_format'
   | 'audience'
