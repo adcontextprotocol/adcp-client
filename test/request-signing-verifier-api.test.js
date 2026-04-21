@@ -127,6 +127,127 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     assert.notStrictEqual(result.keyid, '');
   });
 
+  // ── Vector 027: webhook-authentication downgrade resistance ─────────
+  //
+  // The verifier rejects unsigned requests whose JSON body carries a
+  // non-empty `push_notification_config.authentication` anywhere in the
+  // tree, regardless of whether the operation is in `required_for`.
+  // These tests lock the surface around the happy-path conformance
+  // vector (which only proves the top-level-object case).
+
+  const webhookOperation = 'update_media_buy';
+  const webhookUrl = `https://seller.example.com/adcp/${webhookOperation}`;
+  const webhookCapability = {
+    supported: true,
+    covers_content_digest: 'either',
+    // Deliberately empty so the webhook-auth rule is the ONLY reason to
+    // reject — not the `required_for` precedence above it.
+    required_for: [],
+  };
+
+  async function verifyUnsigned(body) {
+    return verifyRequestSignature(
+      { method: 'POST', url: webhookUrl, headers: { 'Content-Type': 'application/json' }, body },
+      { ...baseStores(), capability: webhookCapability, now: () => 1_776_520_800, operation: webhookOperation }
+    );
+  }
+
+  it('unsigned request with push_notification_config but no authentication returns unsigned', async () => {
+    const result = await verifyUnsigned(
+      JSON.stringify({ push_notification_config: { url: 'https://buyer.example/webhook' } })
+    );
+    assert.strictEqual(result.status, 'unsigned');
+  });
+
+  it('unsigned request with empty authentication object returns unsigned', async () => {
+    const result = await verifyUnsigned(
+      JSON.stringify({ push_notification_config: { url: 'https://buyer.example/webhook', authentication: {} } })
+    );
+    assert.strictEqual(result.status, 'unsigned');
+  });
+
+  it('unsigned request with authentication: null returns unsigned', async () => {
+    const result = await verifyUnsigned(
+      JSON.stringify({ push_notification_config: { url: 'https://buyer.example/webhook', authentication: null } })
+    );
+    assert.strictEqual(result.status, 'unsigned');
+  });
+
+  it('unsigned request with authentication as a string (non-object) returns unsigned', async () => {
+    const result = await verifyUnsigned(
+      JSON.stringify({ push_notification_config: { url: 'https://buyer.example/webhook', authentication: 'Bearer xyz' } })
+    );
+    assert.strictEqual(result.status, 'unsigned');
+  });
+
+  it('unsigned request with authentication nested inside an array rejects', async () => {
+    await assert.rejects(
+      () =>
+        verifyUnsigned(
+          JSON.stringify({
+            updates: [
+              { media_buy_id: 'mb_001' },
+              {
+                media_buy_id: 'mb_002',
+                push_notification_config: {
+                  url: 'https://buyer.example/webhook',
+                  authentication: { scheme: 'HMAC-SHA256', credentials: 'secret' },
+                },
+              },
+            ],
+          })
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
+    );
+  });
+
+  it('unsigned request with non-JSON body does not reject', async () => {
+    const result = await verifyRequestSignature(
+      {
+        method: 'POST',
+        url: webhookUrl,
+        headers: { 'Content-Type': 'text/plain' },
+        body: 'push_notification_config authentication credentials=secret',
+      },
+      { ...baseStores(), capability: webhookCapability, now: () => 1_776_520_800, operation: webhookOperation }
+    );
+    assert.strictEqual(result.status, 'unsigned');
+  });
+
+  it('unsigned body over the inspection cap rejects (defense in depth)', async () => {
+    // Build a 1 MB + 1 byte body of arbitrary JSON. We can't prove absence
+    // of webhook auth over our DoS budget, so we must reject.
+    const padding = 'x'.repeat(1_048_576);
+    const oversized = JSON.stringify({ padding });
+    assert.ok(oversized.length > 1_048_576, 'body exceeds 1 MB cap');
+    await assert.rejects(
+      () => verifyUnsigned(oversized),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
+    );
+  });
+
+  it('signed request carrying webhook authentication reaches the crypto path (not re-rejected at step 0)', async () => {
+    const now = 1_776_520_800;
+    const body = JSON.stringify({
+      media_buy_id: 'mb_001',
+      push_notification_config: {
+        url: 'https://buyer.example/webhook',
+        authentication: { scheme: 'HMAC-SHA256', credentials: 'shared-secret' },
+      },
+    });
+    const signed = signRequest(
+      { method: 'POST', url: webhookUrl, headers: { 'Content-Type': 'application/json' }, body },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
+      { now: () => now, windowSeconds: 300, nonce: 'webhook-signed-zzzz' }
+    );
+    const result = await verifyRequestSignature(
+      { method: 'POST', url: webhookUrl, headers: signed.headers, body },
+      { ...baseStores(), capability: webhookCapability, now: () => now, operation: webhookOperation }
+    );
+    assert.strictEqual(result.status, 'verified');
+    assert.strictEqual(result.keyid, 'test-ed25519-2026');
+  });
+
   it('agent_url is populated on verified via agentUrlForKeyid hook', async () => {
     const now = 1_776_520_800;
     const url = 'https://seller.example.com/adcp/create_media_buy';

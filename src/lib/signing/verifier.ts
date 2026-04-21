@@ -51,11 +51,27 @@ export async function verifyRequestSignature(
   // Pre-check: both headers present or both absent.
   if (!sigInputHeader && !sigHeader) {
     const operation = options.operation;
+    // `required_for` takes precedence over the webhook-auth elevation below
+    // so the more specific error message ("Operation X requires...") wins
+    // when the op is already on the always-sign list.
     if (operation && options.capability.required_for.includes(operation)) {
       throw new RequestSignatureError(
         'request_signature_required',
         0,
         `Operation "${operation}" requires a signed request`
+      );
+    }
+    // Payload-driven elevation: any request carrying
+    // `push_notification_config.authentication` MUST be RFC 9421 signed,
+    // regardless of whether the operation appears in `required_for`
+    // (#webhook-security downgrade-resistance). A bearer-only channel
+    // would otherwise let an attacker who captured a token register or
+    // update webhook credentials and redirect callbacks to a hostile URL.
+    if (carriesWebhookAuthentication(request)) {
+      throw new RequestSignatureError(
+        'request_signature_required',
+        0,
+        'Requests carrying push_notification_config.authentication must be RFC 9421 signed'
       );
     }
     return { status: 'unsigned', verified_at: now };
@@ -429,6 +445,75 @@ function containsDuplicateDictKey(value: string): boolean {
   for (const key of keys) {
     if (seen.has(key)) return true;
     seen.add(key);
+  }
+  return false;
+}
+
+/**
+ * Upper bound on request body size we will JSON.parse and walk on the
+ * unsigned branch. Real AdCP `update_media_buy` / `create_media_buy` payloads
+ * are O(kilobytes); 1 MB is ~1000x that. Over this, require signing rather
+ * than spend unbounded pre-crypto CPU on attacker-shaped input — a 1 MB
+ * nested-array body would otherwise let an unauthenticated caller force
+ * deep recursion on every request.
+ */
+const MAX_UNSIGNED_BODY_INSPECTION_BYTES = 1_048_576;
+/**
+ * Upper bound on recursion depth in `containsWebhookAuthentication`. Real
+ * AdCP payloads reach depth ~5-8; 64 is generous without leaving room for
+ * a pathological `{"a":{"a":{...}}}` to burn the stack.
+ */
+const MAX_BODY_TRAVERSAL_DEPTH = 64;
+
+/**
+ * Scan a JSON request body for a non-empty
+ * `push_notification_config.authentication` object — anywhere in the tree,
+ * including inside arrays of pending config updates. Runs only on the
+ * unsigned branch; returning `true` triggers the webhook-security downgrade
+ * rejection in {@link verifyRequestSignature}.
+ *
+ * The check is Content-Type independent: an attacker can't evade by
+ * labeling a JSON body `text/plain`. A body that fails to parse as JSON
+ * returns false so legitimate non-JSON transports (SSE posts, form uploads)
+ * aren't blocked; signed-request enforcement for those remains
+ * `required_for`-driven. A body over {@link MAX_UNSIGNED_BODY_INSPECTION_BYTES}
+ * returns `true` — we can't prove absence of webhook auth within our DoS
+ * budget, and oversized unsigned bodies are outside normal AdCP operation.
+ */
+function carriesWebhookAuthentication(request: RequestLike): boolean {
+  const body = request.body;
+  if (!body) return false;
+  if (body.length > MAX_UNSIGNED_BODY_INSPECTION_BYTES) return true;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  return containsWebhookAuthentication(parsed, MAX_BODY_TRAVERSAL_DEPTH);
+}
+
+function containsWebhookAuthentication(value: unknown, depthRemaining: number): boolean {
+  if (depthRemaining <= 0) return false;
+  if (value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (containsWebhookAuthentication(item, depthRemaining - 1)) return true;
+    }
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  const pnc = obj.push_notification_config;
+  if (pnc && typeof pnc === 'object' && !Array.isArray(pnc)) {
+    const auth = (pnc as Record<string, unknown>).authentication;
+    if (auth && typeof auth === 'object' && !Array.isArray(auth) && Object.keys(auth).length > 0) {
+      return true;
+    }
+  }
+  for (const [key, v] of Object.entries(obj)) {
+    // Already inspected push_notification_config above; don't re-walk it.
+    if (key === 'push_notification_config') continue;
+    if (containsWebhookAuthentication(v, depthRemaining - 1)) return true;
   }
   return false;
 }
