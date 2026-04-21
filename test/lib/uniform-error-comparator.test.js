@@ -129,10 +129,7 @@ describe('uniformErrorComparator', () => {
 
   test('Retry-After divergence → fail (must match; 429-on-one-path-only is a leak)', () => {
     const body = envelope('REFERENCE_NOT_FOUND');
-    const r = compareProbes(
-      capture({ body, headers: { 'retry-after': '30' } }),
-      capture({ body, headers: {} })
-    );
+    const r = compareProbes(capture({ body, headers: { 'retry-after': '30' } }), capture({ body, headers: {} }));
     assert.equal(r.equivalent, false);
     assert.ok(r.differences.some(d => d.includes('"retry-after"')));
   });
@@ -233,6 +230,87 @@ describe('uniformErrorComparator', () => {
     const r = compareProbes(capture({ body: body1 }), capture({ body: body2 }));
     assert.equal(r.equivalent, false);
     assert.ok(r.differences.some(d => d.includes('A2A task.status.state diverges')));
+  });
+
+  // A2A AdCP shape: adcp_error lives inside result.artifacts[0].parts[0].data.
+  // The real @a2a-js/sdk wire response wraps this in a JSON-RPC envelope
+  // with per-request task.id / contextId / artifactId — the comparator must
+  // walk past those to find the envelope without tripping on metadata.
+  const a2aTaskBody = payload =>
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        kind: 'task',
+        id: `task_${Math.random().toString(36).slice(2)}`,
+        contextId: `ctx_${Math.random().toString(36).slice(2)}`,
+        status: { state: 'completed', timestamp: new Date().toISOString() },
+        artifacts: [
+          {
+            artifactId: `art_${Math.random().toString(36).slice(2)}`,
+            parts: [{ kind: 'data', data: payload }],
+          },
+        ],
+      },
+    });
+
+  test('A2A task artifact with identical adcp_error → equivalent (ignores task/contextId/artifactId)', () => {
+    const payload = { adcp_error: { code: 'REFERENCE_NOT_FOUND', message: 'not found' } };
+    const r = compareProbes(capture({ body: a2aTaskBody(payload) }), capture({ body: a2aTaskBody(payload) }));
+    assert.equal(r.equivalent, true, `unexpected differences: ${JSON.stringify(r.differences)}`);
+  });
+
+  test('A2A task artifact with divergent adcp_error.code → fail', () => {
+    const r = compareProbes(
+      capture({ body: a2aTaskBody({ adcp_error: { code: 'REFERENCE_NOT_FOUND', message: 'not found' } }) }),
+      capture({ body: a2aTaskBody({ adcp_error: { code: 'PERMISSION_DENIED', message: 'not found' } }) })
+    );
+    assert.equal(r.equivalent, false);
+    assert.ok(r.differences.some(d => d.startsWith('error.code diverges')));
+  });
+
+  test('A2A task artifact with divergent adcp_error.details → fail', () => {
+    const r = compareProbes(
+      capture({
+        body: a2aTaskBody({
+          adcp_error: { code: 'REFERENCE_NOT_FOUND', message: 'not found', details: { looked_up: 'abc' } },
+        }),
+      }),
+      capture({
+        body: a2aTaskBody({
+          adcp_error: { code: 'REFERENCE_NOT_FOUND', message: 'not found', details: { looked_up: 'xyz' } },
+        }),
+      })
+    );
+    assert.equal(r.equivalent, false);
+    assert.ok(r.differences.some(d => d.startsWith('error.details diverges')));
+  });
+
+  test('A2A message reply with identical adcp_error → equivalent (ignores messageId)', () => {
+    // Some sellers skip the Task wrapper and reply with a Message directly.
+    const messageBody = messageId =>
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          kind: 'message',
+          messageId,
+          role: 'agent',
+          parts: [{ kind: 'data', data: { adcp_error: { code: 'REFERENCE_NOT_FOUND', message: 'not found' } } }],
+        },
+      });
+    const r = compareProbes(capture({ body: messageBody('msg-a') }), capture({ body: messageBody('msg-b') }));
+    assert.equal(r.equivalent, true, `unexpected differences: ${JSON.stringify(r.differences)}`);
+  });
+
+  test('A2A task success bodies with identical domain payload → equivalent (ignores task/contextId)', () => {
+    // Exercises peelWrappers: two successful Tasks with identical artifact
+    // data but different task.id / contextId / artifactId must compare equal.
+    const r = compareProbes(
+      capture({ body: a2aTaskBody({ list: { list_id: 'L', properties: [] } }) }),
+      capture({ body: a2aTaskBody({ list: { list_id: 'L', properties: [] } }) })
+    );
+    assert.equal(r.equivalent, true, `unexpected differences: ${JSON.stringify(r.differences)}`);
   });
 
   test('JSON-RPC error shape with tunneled code → envelope-aware diff', () => {
