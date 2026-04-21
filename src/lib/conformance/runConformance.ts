@@ -1,11 +1,6 @@
 import { AgentClient } from '../core/AgentClient';
 import type { AgentConfig } from '../types';
-import type {
-  ConformanceFailure,
-  ConformanceReport,
-  ConformanceToolStats,
-  RunConformanceOptions,
-} from './types';
+import type { ConformanceFailure, ConformanceReport, ConformanceToolStats, RunConformanceOptions } from './types';
 import { STATELESS_TIER_TOOLS } from './types';
 import { detectSchemaVersion, hasSchemas } from './schemaLoader';
 import { runToolFuzz } from './runners';

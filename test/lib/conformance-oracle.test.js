@@ -56,7 +56,7 @@ describe('conformance: oracle', () => {
       errors: [{ code: 'INTERNAL', message: 'boom\n    at Object.handler (/app/x.js:42:10)' }],
     });
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('stack trace leak')));
+    assert.ok(out.invariantFailures.some(f => f.includes('stack trace leak')));
   });
 
   test('Go stack trace in response body → invariant failure', () => {
@@ -70,7 +70,7 @@ describe('conformance: oracle', () => {
       ],
     });
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('stack trace leak')));
+    assert.ok(out.invariantFailures.some(f => f.includes('stack trace leak')));
   });
 
   test('PHP stack trace in response body → invariant failure', () => {
@@ -80,12 +80,12 @@ describe('conformance: oracle', () => {
         {
           code: 'INTERNAL',
           message:
-            "Uncaught Exception: boom in /var/www/app.php:42\nStack trace:\n#0 /var/www/app.php(99): Handler->run()\n#1 {main}",
+            'Uncaught Exception: boom in /var/www/app.php:42\nStack trace:\n#0 /var/www/app.php(99): Handler->run()\n#1 {main}',
         },
       ],
     });
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('stack trace leak')));
+    assert.ok(out.invariantFailures.some(f => f.includes('stack trace leak')));
   });
 
   test('credential echo in response → invariant failure', () => {
@@ -101,7 +101,7 @@ describe('conformance: oracle', () => {
       authToken: token,
     });
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('auth token')));
+    assert.ok(out.invariantFailures.some(f => f.includes('auth token')));
   });
 
   test('credential echo through adcpError.details → invariant failure', () => {
@@ -118,7 +118,7 @@ describe('conformance: oracle', () => {
       authToken: token,
     });
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('auth token')));
+    assert.ok(out.invariantFailures.some(f => f.includes('auth token')));
   });
 
   test('context echoed with reordered keys → accepted', () => {
@@ -143,13 +143,13 @@ describe('conformance: oracle', () => {
       result: { success: false, status: 'failed', error: 'oops' },
     });
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('reason code')));
+    assert.ok(out.invariantFailures.some(f => f.includes('reason code')));
   });
 
   test('lowercase reason code → invariant failure', () => {
     const out = rejected('get_signals', 'not_found', 'unknown');
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('uppercase-snake')));
+    assert.ok(out.invariantFailures.some(f => f.includes('uppercase-snake')));
   });
 
   test('context echoed unchanged → accepted', () => {
@@ -169,6 +169,6 @@ describe('conformance: oracle', () => {
       result: { success: true, status: 'completed', data: { signals: [], context: { trace_id: 'mutated' } } },
     });
     assert.equal(out.verdict, 'invalid');
-    assert.ok(out.invariantFailures.some((f) => f.includes('context not echoed')));
+    assert.ok(out.invariantFailures.some(f => f.includes('context not echoed')));
   });
 });

@@ -1,11 +1,6 @@
 import fc from 'fast-check';
 import type { AgentClient } from '../core/AgentClient';
-import type {
-  ConformanceFailure,
-  ConformanceToolName,
-  ConformanceToolStats,
-  SkipReason,
-} from './types';
+import type { ConformanceFailure, ConformanceToolName, ConformanceToolStats, SkipReason } from './types';
 import { schemaToArbitrary } from './schemaArbitrary';
 import { loadRequestSchema } from './schemaLoader';
 import { evaluate, prepareResponseValidator } from './oracle';
@@ -61,7 +56,7 @@ export async function runToolFuzz(
   const stats: ConformanceToolStats = { runs: 0, accepted: 0, rejected: 0, failed: 0, skipped: false };
   let transportUnsupported: string | null = null;
 
-  const property = fc.asyncProperty(arb, async (request) => {
+  const property = fc.asyncProperty(arb, async request => {
     const sampleKey = safeHash(request);
     const isFreshSample = !seenSamples.has(sampleKey);
     if (isFreshSample) {
@@ -81,10 +76,9 @@ export async function runToolFuzz(
         transportUnsupported = message;
         return; // pass — we'll convert the whole tool to skipped below
       }
-      throw new InvariantViolation(
-        { thrown: String(err), name: (err as Error)?.name, message },
-        ['unhandled transport error: ' + message]
-      );
+      throw new InvariantViolation({ thrown: String(err), name: (err as Error)?.name, message }, [
+        'unhandled transport error: ' + message,
+      ]);
     }
 
     const verdict = evaluate({ tool, request, result, authToken: options.authToken });

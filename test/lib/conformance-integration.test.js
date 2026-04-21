@@ -23,7 +23,7 @@ const SIGNALS = [
 ];
 
 function waitForListening(server) {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     if (server.listening) return resolve();
     server.on('listening', resolve);
   });
@@ -36,12 +36,12 @@ function makeSignalsServer() {
         name: 'Conformance Test Signals Agent',
         version: '1.0.0',
         signals: {
-          getSignals: async (params) => {
+          getSignals: async params => {
             // Honor the spec: if signal_ids is passed and none match, return
             // empty + a recoverable error. Otherwise return all signals.
             if (params.signal_ids && params.signal_ids.length > 0) {
-              const matches = SIGNALS.filter((s) =>
-                params.signal_ids.some((id) => id.source === 'catalog' && id.id === s.signal_id.id)
+              const matches = SIGNALS.filter(s =>
+                params.signal_ids.some(id => id.source === 'catalog' && id.id === s.signal_id.id)
               );
               if (matches.length === 0) {
                 return adcpError('REFERENCE_NOT_FOUND', 'No signals matched the requested IDs');
@@ -126,7 +126,7 @@ describe('conformance: integration', () => {
       assert.equal(failure.tool, 'get_signals');
       assert.equal(failure.verdict, 'invalid');
       assert.ok(
-        failure.invariantFailures.some((m) => m.includes('uppercase-snake')),
+        failure.invariantFailures.some(m => m.includes('uppercase-snake')),
         `expected uppercase-snake failure, got: ${failure.invariantFailures.join('; ')}`
       );
       assert.equal(typeof failure.seed, 'number', 'failure should include reproducible seed');

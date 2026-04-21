@@ -19,10 +19,10 @@ export function schemaToArbitrary(schema: JsonSchema): fc.Arbitrary<unknown> {
   // Only replaces the dispatch when the outer schema has no standalone
   // `properties` — otherwise oneOf is a side-constraint we generate past.
   if (Array.isArray(schema.oneOf) && !hasOwnProperties(schema)) {
-    return fc.oneof(...schema.oneOf.map((s) => schemaToArbitrary(s as JsonSchema)));
+    return fc.oneof(...schema.oneOf.map(s => schemaToArbitrary(s as JsonSchema)));
   }
   if (Array.isArray(schema.anyOf) && !hasOwnProperties(schema)) {
-    return fc.oneof(...schema.anyOf.map((s) => schemaToArbitrary(s as JsonSchema)));
+    return fc.oneof(...schema.anyOf.map(s => schemaToArbitrary(s as JsonSchema)));
   }
   // `allOf` is usually conditional (if/then/else) in AdCP schemas; the base
   // shape on the outer schema is the right generator. Ignoring the `if`
@@ -87,8 +87,8 @@ function stringArb(schema: JsonSchema): fc.Arbitrary<string> {
   }
   if (format === 'email') return fc.emailAddress();
   if (format === 'uuid') return fc.uuid();
-  if (format === 'date-time') return boundedDate().map((d) => d.toISOString());
-  if (format === 'date') return boundedDate().map((d) => d.toISOString().slice(0, 10));
+  if (format === 'date-time') return boundedDate().map(d => d.toISOString());
+  if (format === 'date') return boundedDate().map(d => d.toISOString().slice(0, 10));
 
   if (pattern) {
     try {
@@ -121,7 +121,7 @@ function arrayArb(schema: JsonSchema): fc.Arbitrary<unknown[]> {
     return fc.uniqueArray(schemaToArbitrary(items), {
       minLength: minItems,
       maxLength: maxItems,
-      selector: (x) => JSON.stringify(x),
+      selector: x => JSON.stringify(x),
     });
   }
   return fc.array(schemaToArbitrary(items), { minLength: minItems, maxLength: maxItems });
@@ -138,20 +138,20 @@ function objectArb(schema: JsonSchema): fc.Arbitrary<Record<string, unknown>> {
   const anyOfRequired = collectAnyOfRequired(schema);
   const propertySpec = buildPropertyRecordSpec(shape);
   const declared = new Set(Object.keys(propertySpec));
-  const baseRequired = Array.from(shape.required).filter((k) => declared.has(k));
+  const baseRequired = Array.from(shape.required).filter(k => declared.has(k));
   const dependencies = readDependencies(schema, declared);
 
   const base =
     anyOfRequired.length === 0
       ? fc.record(propertySpec, { requiredKeys: baseRequired })
-      : fc.nat(anyOfRequired.length - 1).chain((idx) => {
+      : fc.nat(anyOfRequired.length - 1).chain(idx => {
           const branch = anyOfRequired[idx]!;
-          const requiredKeys = Array.from(new Set([...baseRequired, ...branch.filter((k) => declared.has(k))]));
+          const requiredKeys = Array.from(new Set([...baseRequired, ...branch.filter(k => declared.has(k))]));
           return fc.record(propertySpec, { requiredKeys });
         });
 
   if (dependencies.length === 0) return base;
-  return base.map((value) => enforceDependencies(value, dependencies));
+  return base.map(value => enforceDependencies(value, dependencies));
 }
 
 function readDependencies(schema: JsonSchema, declared: Set<string>): Array<[string, string[]]> {
@@ -160,7 +160,7 @@ function readDependencies(schema: JsonSchema, declared: Set<string>): Array<[str
   const out: Array<[string, string[]]> = [];
   for (const [key, deps] of Object.entries(raw as Record<string, unknown>)) {
     if (Array.isArray(deps) && declared.has(key)) {
-      out.push([key, deps.filter((d) => typeof d === 'string' && declared.has(d as string)) as string[]]);
+      out.push([key, deps.filter(d => typeof d === 'string' && declared.has(d as string)) as string[]]);
     }
   }
   return out;
@@ -173,7 +173,7 @@ function enforceDependencies(
   let current = value;
   for (const [key, deps] of dependencies) {
     if (!(key in current)) continue;
-    const missing = deps.filter((d) => !(d in current));
+    const missing = deps.filter(d => !(d in current));
     if (missing.length === 0) continue;
     // Drop the trigger key rather than fabricate values — keeping the sample
     // schema-valid costs us that property but preserves determinism.
@@ -190,7 +190,7 @@ function readObjectShape(schema: JsonSchema): ObjectShape {
   const additionalProperties =
     typeof schema.additionalProperties === 'boolean'
       ? schema.additionalProperties
-      : (schema.additionalProperties as JsonSchema | undefined) ?? true;
+      : ((schema.additionalProperties as JsonSchema | undefined) ?? true);
   return { properties, required, additionalProperties };
 }
 
@@ -198,7 +198,7 @@ function collectAnyOfRequired(schema: JsonSchema): string[][] {
   if (!Array.isArray(schema.anyOf)) return [];
   const out: string[][] = [];
   for (const branch of schema.anyOf as JsonSchema[]) {
-    if (branch && Array.isArray(branch.required) && Object.keys(branch).every((k) => k === 'required' || k === 'type')) {
+    if (branch && Array.isArray(branch.required) && Object.keys(branch).every(k => k === 'required' || k === 'type')) {
       out.push(branch.required as string[]);
     }
   }

@@ -136,7 +136,7 @@ function buildLeakHaystack(result: TaskResult<unknown>): string {
     (result as { correlationId?: unknown }).correlationId,
     (result as { metadata?: unknown }).metadata,
   ];
-  return parts.map((p) => (p === undefined ? '' : safeStringify(p))).join(' ');
+  return parts.map(p => (p === undefined ? '' : safeStringify(p))).join(' ');
 }
 
 function checkNoAuthLeak(result: TaskResult<unknown>, authToken: string | undefined, failures: string[]): void {

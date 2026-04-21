@@ -44,7 +44,7 @@ describe('conformance: schemaToArbitrary', () => {
       const validate = makeAjv().compile(schema);
       const arb = schemaToArbitrary(schema);
       const samples = fc.sample(arb, { numRuns: 100, seed: 42 });
-      const invalid = samples.filter((s) => !validate(s));
+      const invalid = samples.filter(s => !validate(s));
       const validity = (samples.length - invalid.length) / samples.length;
       assert.ok(validity >= 0.9, `${tool}: validity ${validity.toFixed(2)} below 0.9`);
     });

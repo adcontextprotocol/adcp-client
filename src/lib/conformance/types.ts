@@ -73,11 +73,7 @@ export interface ConformanceFailure {
   invariantFailures: string[];
 }
 
-export type SkipReason =
-  | 'missing_schemas'
-  | 'unresolvable_schema'
-  | 'feature_unsupported'
-  | 'runner_not_implemented';
+export type SkipReason = 'missing_schemas' | 'unresolvable_schema' | 'feature_unsupported' | 'runner_not_implemented';
 
 export interface ConformanceToolStats {
   /** Fresh sample count. Shrinking replays are excluded. */
