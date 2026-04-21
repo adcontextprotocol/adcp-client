@@ -99,11 +99,53 @@ npx @adcp/client fuzz http://localhost:3001/mcp \
 # Auto-seed + Tier 3 update-tool fuzzing (mutates agent state — SANDBOX ONLY)
 npx @adcp/client fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 
+# Uniform-error-response invariant in full cross-tenant mode
+npx @adcp/client fuzz http://localhost:3001/mcp \
+  --auto-seed \
+  --auth-token            $TENANT_A_TOKEN \
+  --auth-token-cross-tenant $TENANT_B_TOKEN
+
 # Inspect the tool list + tier classification
 npx @adcp/client fuzz --list-tools
 ```
 
 See [`docs/guides/CONFORMANCE.md`](./CONFORMANCE.md) for the fixture map, tier-by-tier tool list, and failure interpretation.
+
+#### Uniform-error-response invariant (paired probe)
+
+`adcp fuzz` also runs a paired-probe invariant per AdCP spec § error-handling — the MUST that "the id exists but the caller lacks access" and "the id does not exist" produce byte-equivalent responses across every observable channel. Distinguishing the two leaks cross-tenant existence information.
+
+Two modes, picked automatically:
+
+- **Baseline** (default — single token): two fresh UUIDs probed at the same tool. Catches id-echo in error bodies, header divergence outside the narrow allowlist, MCP `isError` / A2A `task.status.state` divergence, and gross latency delta. Runs with zero extra config.
+- **Cross-tenant** (two tokens): seeds a resource as tenant A (via `--auto-seed` or explicit `--fixture`), then probes as tenant B against tenant A's seeded id plus a fresh UUID. Catches everything baseline catches plus the cross-tenant existence leak itself. Triggered by `--auth-token-cross-tenant`.
+
+What the comparator enforces:
+
+- `error.code`, `error.message`, `error.field`, `error.details` identical
+- HTTP status identical
+- A2A `task.status.state` / MCP `isError` identical
+- Response headers identical — **closed allowlist** of headers that MAY differ: `Date`, `Server`, `X-Request-Id`, `X-Correlation-Id`, `X-Trace-Id`, `Traceparent`, `Tracestate`. Everything else (`ETag`, `Cache-Control`, any `X-RateLimit-*`, CDN-tag headers, etc.) MUST match.
+
+What to fix when it fails:
+
+- **`error.code diverges`** — you're returning `PERMISSION_DENIED` (or similar) when the caller lacks access but `REFERENCE_NOT_FOUND` when the id doesn't exist. Collapse to one code — return `REFERENCE_NOT_FOUND` on both paths regardless of whether the id resolved before the access check.
+- **`error.details diverges`** — you're echoing the probed id back in `details` (e.g., `details.looked_up = <uuid>`). Drop it or set it to a fixed token like `details.id_class = 'unresolvable'`.
+- **`header "etag" diverges` / `header "cache-control" diverges`** — your cache layer is keyed on resolution success. Disable caching on the error path, or ensure the response envelope is constructed identically regardless of resolution state.
+- **`MCP isError diverges`** — one path returns `isError: true`, the other doesn't. Both paths are errors; both MUST set `isError`.
+
+**Tool coverage today**: `get_property_list`, `get_content_standards`, `get_media_buy_delivery`. The invariant runs whenever one of these appears in the fuzz tool set (the default). Extending to more referential tools is additive — see `src/lib/conformance/invariants/uniformError.ts` `TOOL_ID_CONFIG`.
+
+##### Preparing for cross-tenant testing
+
+To exercise the full invariant, stand up two test accounts against your agent before running fuzz:
+
+1. Provision two isolated tenants (call them A and B). They MUST NOT share any resources beyond what the seller platform itself makes globally visible.
+2. Obtain bearer tokens for each. Export as `ADCP_AUTH_TOKEN` (tenant A) and `ADCP_AUTH_TOKEN_CROSS_TENANT` (tenant B), or pass via `--auth-token` / `--auth-token-cross-tenant`.
+3. Grant tenant A the minimum permissions needed to create the resources the seeder creates: property lists, content standards, media buys, creatives. Tenant B does not need create permissions — it only reads.
+4. Confirm tenant B can authenticate against the agent (e.g., run `adcp --auth-token $TENANT_B_TOKEN https://your-agent/mcp get_adcp_capabilities '{}'`).
+
+A single-tenant run still produces useful signal — baseline catches a significant subset of leaks, and the CLI flags cross-tenant mode as not exercised. Configure two tenants in your compliance CI so this check runs at full strength.
 
 ### Request signing — `adcp grade request-signing`
 

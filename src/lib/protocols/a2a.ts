@@ -12,6 +12,7 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { wrapFetchWithCapture } from './rawResponseCapture';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
@@ -185,7 +186,7 @@ function buildFetchImpl(authToken: string | undefined) {
     return response;
   };
 
-  if (!signingContext) return baseFetch;
+  if (!signingContext) return wrapFetchWithCapture(baseFetch);
 
   // The signing wrapper assembles headers into the signature base. We invoke
   // it first so the signer sees the caller-supplied headers; baseFetch then
@@ -197,7 +198,7 @@ function buildFetchImpl(authToken: string | undefined) {
     signing: signingContext.signing,
     getCapability: signingContext.getCapability,
   });
-  return signingFetch;
+  return wrapFetchWithCapture(signingFetch as typeof fetch);
 }
 
 /**

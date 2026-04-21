@@ -15,6 +15,7 @@ import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { wrapFetchWithCapture } from './rawResponseCapture';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -286,16 +287,16 @@ async function connectMCPWithFallbackImpl(
   label = 'connection'
 ): Promise<MCPClient> {
   const signingContext = signingContextStorage.getStore();
-  const signingFetch = signingContext
-    ? buildAgentSigningFetch({
+  const baseFetch: typeof fetch = signingContext
+    ? (buildAgentSigningFetch({
         upstream: (input, init) => fetch(input as any, init),
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
-      })
-    : undefined;
+      }) as typeof fetch)
+    : (input, init) => fetch(input as any, init);
   const transportOptions: StreamableHTTPClientTransportOptions = {
     requestInit: { headers: authHeaders },
-    ...(signingFetch ? { fetch: signingFetch as typeof fetch } : {}),
+    fetch: wrapFetchWithCapture(baseFetch),
   };
   let failedClient: MCPClient | undefined;
 
@@ -392,7 +393,7 @@ async function connectMCPWithFallbackImpl(
     await client.connect(
       new SSEClientTransport(url, {
         requestInit: { headers: authHeaders },
-        ...(signingFetch ? { fetch: signingFetch as typeof fetch } : {}),
+        fetch: wrapFetchWithCapture(baseFetch),
       })
     );
     debugLogs.push({
@@ -611,13 +612,14 @@ export async function connectMCP(options: {
   // RFC 9421 signing — wrap the transport's fetch so the signer sees the final
   // headers the SDK assembled (including any OAuth-issued Authorization) and
   // decides per outbound request whether to sign.
-  if (signingContext) {
-    transportOptions.fetch = buildAgentSigningFetch({
-      upstream: (input, init) => fetch(input as string | URL, init),
-      signing: signingContext.signing,
-      getCapability: signingContext.getCapability,
-    }) as typeof fetch;
-  }
+  const signedFetch: typeof fetch = signingContext
+    ? (buildAgentSigningFetch({
+        upstream: (input, init) => fetch(input as string | URL, init),
+        signing: signingContext.signing,
+        getCapability: signingContext.getCapability,
+      }) as typeof fetch)
+    : (input, init) => fetch(input as string | URL, init);
+  transportOptions.fetch = wrapFetchWithCapture(signedFetch);
 
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);
 
