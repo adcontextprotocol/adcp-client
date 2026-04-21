@@ -78,10 +78,20 @@ teardown; seeded rows stay until the agent's own lifecycle reclaims
 them.
 
 **Reproduction note**: when a Tier-3 failure is reported, the
-reproduction hint echoes `--auto-seed` rather than the captured IDs.
-Seeded IDs are agent-generated and differ per run; replaying with the
-same `--seed --tools T --auto-seed` triggers a fresh seed with the same
-fast-check arbitrary walk.
+reproduction hint echoes `--auto-seed`. Seeded IDs are agent-generated
+and differ per run — so most of the time a fresh seed + the same
+`--seed --tools T --auto-seed` reproduces. If the failure was shape-
+specific to the original ID (e.g., fast-check's generator path changed
+because the pool changed), the report prints a `pin: --fixture ...`
+line with the IDs captured at failure time so you can replay against
+the exact pool.
+
+**Brand-allowlist gotcha**: the `create_media_buy` seeder uses
+`brand.domain: 'conformance.example'` as a placeholder. Sellers that
+enforce brand allowlists will reject this; the pipeline degrades to a
+warning and `media_buy_ids` stays empty. Supply your own media-buy IDs
+via `--fixture media_buy_ids=...` if you need Tier-3 coverage on such
+an agent.
 
 ## What's fuzzed
 

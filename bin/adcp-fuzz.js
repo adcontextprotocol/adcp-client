@@ -258,6 +258,14 @@ function printHumanReport(report) {
       out.push('');
       out.push(`  [${f.tool}]  seed=${f.seed}  shrunk=${f.shrunk}`);
       out.push(`    reproduce: ${reproduceCommand(report, f)}`);
+      if (report.autoSeeded) {
+        // Seeded IDs are agent-generated and will differ on re-seed, which
+        // can push fast-check down a different generator path and miss the
+        // original counterexample. Emit the IDs captured at failure time
+        // so the user can pin them explicitly if auto re-seed doesn't repro.
+        const pinFlags = fixturesAsFlags(report.fixturesUsed);
+        if (pinFlags) out.push(`    (if re-seed doesn't repro, pin: ${pinFlags})`);
+      }
       for (const inv of f.invariantFailures) out.push(`    · ${inv}`);
       const inputStr = JSON.stringify(f.input);
       if (inputStr) out.push(`    input: ${truncate(inputStr, 400)}`);
@@ -303,6 +311,16 @@ function reproduceCommand(report, failure) {
 
 function quote(s) {
   return /[\s"'$`]/.test(s) ? JSON.stringify(s) : s;
+}
+
+function fixturesAsFlags(fixtures) {
+  const flags = [];
+  for (const [name, values] of Object.entries(fixtures ?? {})) {
+    if (Array.isArray(values) && values.length > 0) {
+      flags.push(`--fixture ${name}=${values.join(',')}`);
+    }
+  }
+  return flags.length > 0 ? flags.join(' ') : null;
 }
 
 function hasFixtureFor(tool, fixturesUsed) {

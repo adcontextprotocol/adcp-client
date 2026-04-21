@@ -30,6 +30,10 @@ export interface SeedWarning {
   reason: string;
 }
 
+// Cosmetic tag for human-readable names/labels only. NOT used for
+// idempotency_key — that's minted by `generateIdempotencyKey()`. Two
+// seeders racing with the same random suffix would produce two distinct
+// entities with identical names, which is fine for a seeder.
 const UNIQUE_TAG = (): string => 'cf_seed_' + Math.random().toString(36).slice(2, 10);
 
 /**

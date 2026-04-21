@@ -131,11 +131,19 @@ export async function runConformance(
  * Merge seeded fixtures with explicit caller-supplied ones. Explicit
  * pools fully replace the seeded pool for that key — they don't
  * concatenate — because callers with their own test tenants typically
- * want only their IDs, not the seeder's.
+ * want only their IDs, not the seeder's. Empty explicit pools fall
+ * through to the seeded value rather than wiping it; callers building
+ * fixtures from a dynamic source occasionally pass `[]` by accident.
  */
 function mergeFixtures(seeded: ConformanceFixtures, explicit: ConformanceFixtures | undefined): ConformanceFixtures {
   if (!explicit || Object.keys(explicit).length === 0) return seeded;
-  return { ...seeded, ...explicit };
+  const merged: ConformanceFixtures = { ...seeded };
+  for (const [key, pool] of Object.entries(explicit)) {
+    if (pool && pool.length > 0) {
+      (merged as Record<string, readonly string[]>)[key] = pool;
+    }
+  }
+  return merged;
 }
 
 function hasUsableFixtures(fixtures: ConformanceFixtures): boolean {

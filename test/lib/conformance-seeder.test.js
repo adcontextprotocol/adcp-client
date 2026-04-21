@@ -199,6 +199,35 @@ describe('conformance: runConformance autoSeed', () => {
     assert.deepEqual(report.fixturesUsed.standards_ids, ['cs_SEEDED']);
   });
 
+  test('empty explicit fixture array does not wipe the seeded pool', async () => {
+    // Regression: an early `{...seeded, ...explicit}` spread let an empty
+    // array passed in options.fixtures silently replace a populated seeded
+    // pool. Now empty arrays fall through.
+    const { server, port } = await startAgent({
+      governance: {
+        createPropertyList: async () => ({
+          list: { list_id: 'pl_SEEDED_OK', name: 's' },
+          auth_token: 'tok',
+        }),
+      },
+    });
+    agents.push({ server });
+
+    const report = await runConformance(`http://localhost:${port}/mcp`, {
+      seed: 5,
+      tools: ['list_content_standards'], // any non-update tool
+      turnBudget: 1,
+      protocol: 'mcp',
+      autoSeed: true,
+      // User builds fixtures dynamically and ends up with an empty array —
+      // should NOT wipe the seeded list_ids pool.
+      fixtures: { list_ids: [], creative_ids: ['cre_extra'] },
+    });
+
+    assert.deepEqual(report.fixturesUsed.list_ids, ['pl_SEEDED_OK'], 'empty explicit array did not wipe seeded');
+    assert.deepEqual(report.fixturesUsed.creative_ids, ['cre_extra'], 'non-empty explicit still wins');
+  });
+
   test('autoSeed warnings surface on the report when a seeder fails', async () => {
     const { server, port } = await startAgent({
       governance: {
