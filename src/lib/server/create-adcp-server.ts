@@ -1077,10 +1077,12 @@ function isThrownAdcpError(value: unknown): value is McpToolResponse {
   if (!sc || typeof sc !== 'object') return false;
   const env = (sc as { adcp_error?: unknown }).adcp_error;
   if (!env || typeof env !== 'object') return false;
+  // `adcpError()` guarantees both `code` and `message` as strings — assert
+  // both so a malformed envelope throw doesn't produce a half-formed
+  // response. Also rules out MCP SDK `McpError` (numeric `code`) and any
+  // other thrown object with a coincidentally-shaped sub-tree.
   if (typeof (env as { code?: unknown }).code !== 'string') return false;
-  // `adcpError()` emits all three transport layers; require them to avoid
-  // accidentally unwrapping non-envelope throws that happen to carry a
-  // `structuredContent.adcp_error.code` field.
+  if (typeof (env as { message?: unknown }).message !== 'string') return false;
   return Array.isArray((value as { content?: unknown }).content) && (value as { isError?: unknown }).isError === true;
 }
 
@@ -1955,11 +1957,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // wrong; unwrapping at the dispatcher closes the class of bugs
           // instead of relying on every skill to show `return` over `throw`.
           if (isThrownAdcpError(err)) {
-            const code = (err.structuredContent as { adcp_error: { code: string } }).adcp_error.code;
+            const env = (err.structuredContent as { adcp_error: { code: string; message: string } }).adcp_error;
+            // Log message + stack so forensic review sees what was thrown
+            // (not just the code). The thrown envelope is a plain object so
+            // `.stack` is typically absent, but authors sometimes subclass
+            // `Error` and attach envelope fields; capture it defensively.
             logger.warn('Handler threw an adcpError envelope — prefer `return` over `throw` for typed errors', {
               tool: toolName,
               handler: handlerKey,
-              code,
+              code: env.code,
+              message: env.message,
+              stack: err instanceof Error ? err.stack : undefined,
             });
             return finalize(err);
           }
