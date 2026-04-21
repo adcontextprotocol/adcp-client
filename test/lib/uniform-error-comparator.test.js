@@ -129,10 +129,7 @@ describe('uniformErrorComparator', () => {
 
   test('Retry-After divergence → fail (must match; 429-on-one-path-only is a leak)', () => {
     const body = envelope('REFERENCE_NOT_FOUND');
-    const r = compareProbes(
-      capture({ body, headers: { 'retry-after': '30' } }),
-      capture({ body, headers: {} })
-    );
+    const r = compareProbes(capture({ body, headers: { 'retry-after': '30' } }), capture({ body, headers: {} }));
     assert.equal(r.equivalent, false);
     assert.ok(r.differences.some(d => d.includes('"retry-after"')));
   });
