@@ -57,6 +57,21 @@ An agent that accepts unauthenticated requests is non-compliant — the universa
 
 Even if you don't claim `signed-requests`, a buyer may send `Signature-Input` / `Signature` headers. Your MCP transport must pass the request through without rejecting it. If you do claim the specialism, verify per [§ signed-requests](#specialism-signed-requests) below.
 
+### Resolve-then-authorize — uniform errors for not-found / not-yours
+
+AdCP spec § error-handling MUSTs that you return **byte-equivalent responses** for "the id exists but the caller lacks access" vs "the id does not exist." Distinguishing the two leaks cross-tenant existence information — an attacker who learns that `mb_0x1234` returns `PERMISSION_DENIED` while `mb_0xabcd` returns `REFERENCE_NOT_FOUND` can enumerate every live id across every tenant you host.
+
+The rule applies to every observable channel: `error.code` / `message` / `field` / `details`, HTTP status, A2A `task.status.state`, MCP `isError`, response headers (`ETag`, `Cache-Control`, rate-limit, CDN tags), webhook/audit dispatch, logs with tenant correlation, same work on both paths.
+
+**How to get it right:**
+
+- Both paths return `REFERENCE_NOT_FOUND` (or the domain-specific `*_NOT_FOUND` code). Never `PERMISSION_DENIED` or `FORBIDDEN` on an id lookup.
+- Don't echo the probed id in `error.details` — or echo it in both paths identically.
+- Route both paths through the same response constructor so headers (including `ETag`, `Cache-Control`) are set identically.
+- Do the same work on both paths: don't short-circuit on "id format invalid" with a faster path — an attacker will measure latency and notice.
+
+`adcp fuzz` runs a paired-probe invariant that enforces this automatically. Pass two test tenants via `--auth-token` + `--auth-token-cross-tenant` for full coverage (see [VALIDATE-YOUR-AGENT.md § Uniform-error-response invariant](../../docs/guides/VALIDATE-YOUR-AGENT.md#uniform-error-response-invariant-paired-probe)). The invariant fails loudly with a byte-level diff pointing at the offending channel.
+
 <a name="composing-oauth-signing-and-idempotency"></a>
 ### Composing OAuth, signing, and idempotency
 

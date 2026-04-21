@@ -45,6 +45,7 @@ Every production governance agent — regardless of specialism — must wire the
 - **`idempotency_key`** on every mutating request (`sync_plans`, `create_property_list`/`update_property_list`/`delete_property_list`, `create_collection_list`/`update_collection_list`/`delete_collection_list`, `create_content_standards`/`update_content_standards`, `calibrate_content`). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
 - **Authentication** via `serve({ authenticate: verifyApiKey(...)/verifyBearer(...) })` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: don't reject requests that carry `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
+- **Resolve-then-authorize** on id lookups (`get_property_list`, `get_content_standards`, `get_collection_list`): return byte-equivalent errors whether the id is cross-tenant or nonexistent — always `REFERENCE_NOT_FOUND`, never `PERMISSION_DENIED`. `adcp fuzz` runs a paired-probe invariant that enforces this; stand up two test tenants and pass `--auth-token` + `--auth-token-cross-tenant` for full coverage. See `skills/build-seller-agent/SKILL.md` §Resolve-then-authorize for the full rules.
 
 ## Before Writing Code
 
