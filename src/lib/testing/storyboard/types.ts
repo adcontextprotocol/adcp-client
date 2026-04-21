@@ -276,9 +276,10 @@ export interface RefsResolveSet {
 }
 
 /**
- * Scope filter for `refs_resolve`. Only source refs whose `key` equals
- * (after `$agent_url` substitution + `normalizeAgentUrl` normalization)
- * are in scope. Out-of-scope refs are graded by `on_out_of_scope`.
+ * Scope filter for `refs_resolve`. Only source refs whose `key` matches
+ * `equals` (after `$agent_url` substitution and, for URL-ending keys,
+ * transport-suffix-stripping canonicalization) are in scope. Out-of-scope
+ * refs are graded by `on_out_of_scope`.
  */
 export interface RefsResolveScope {
   key: string;

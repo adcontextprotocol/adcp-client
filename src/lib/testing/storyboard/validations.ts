@@ -685,16 +685,68 @@ function validateOn401RequireHeader(validation: StoryboardValidation, hr: HttpPr
 // resource_equals_agent_url
 // ────────────────────────────────────────────────────────────
 
+/**
+ * Normalize a URL for RFC 9728 resource identity checks:
+ * lowercases scheme/host, strips userinfo, query, and fragment, and
+ * collapses trailing slashes while preserving the path. RFC 9728
+ * `resource` identifies the agent at its full endpoint, so paths are
+ * significant here — use `canonicalizeAgentUrlForScope` for `refs_resolve`
+ * scope comparisons where paths must be dropped.
+ */
 function normalizeAgentUrl(url: string): string {
   try {
     const u = new URL(url);
     u.hash = '';
     u.search = '';
+    u.username = '';
+    u.password = '';
     // Drop trailing slash but keep the root "/".
     if (u.pathname.length > 1 && u.pathname.endsWith('/')) {
       u.pathname = u.pathname.slice(0, -1);
     }
     return `${u.protocol.toLowerCase()}//${u.host.toLowerCase()}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Canonical form of an agent URL for `refs_resolve` scope comparisons.
+ *
+ * AdCP's `agent_url` identifies the agent — which may live under a subpath
+ * like `https://publisher.com/.well-known/adcp/sales` (see core/format-id.json).
+ * Path is therefore significant and MUST be preserved; collapsing to origin
+ * would false-positive sibling agents on shared hosts.
+ *
+ * What must be stripped is the transport suffix the runner appends to reach
+ * the protocol endpoint (`/mcp`, `/a2a`, `/sse`) and the well-known agent-card
+ * path, so the runner's target URL canonicalizes to the same value the agent
+ * advertises in its refs. Mirrors `SingleAgentClient.computeBaseUrl` but as a
+ * pure string operation suitable for validation without an agent instance.
+ *
+ * Also: lowercase scheme/host, drop default ports, strip userinfo, query,
+ * fragment — normal RFC 3986 §6.2 canonicalization. Closes adcp-client#710.
+ */
+const TRANSPORT_SUFFIX_RE = /\/(?:mcp|a2a|sse)\/?$/i;
+const AGENT_CARD_SUFFIX_RE = /\/\.well-known\/agent(?:-card)?\.json$/i;
+function canonicalizeAgentUrlForScope(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    u.search = '';
+    u.username = '';
+    u.password = '';
+    let path = u.pathname;
+    path = path.replace(AGENT_CARD_SUFFIX_RE, '');
+    path = path.replace(TRANSPORT_SUFFIX_RE, '');
+    // A bare `/` and the empty string denote the same origin-relative root;
+    // collapse them so `https://host` and `https://host/` canonicalize equally.
+    if (path === '/' || path === '') path = '';
+    else if (path.endsWith('/')) path = path.slice(0, -1);
+    const defaultPort = u.protocol === 'https:' ? '443' : u.protocol === 'http:' ? '80' : '';
+    const host = u.hostname.toLowerCase();
+    const port = u.port && u.port !== defaultPort ? `:${u.port}` : '';
+    return `${u.protocol.toLowerCase()}//${host}${port}${path}`;
   } catch {
     return url;
   }
@@ -829,12 +881,25 @@ function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationCo
   const sourceRefs = sourceRaw.filter(isRefObject);
   const targetRefs = targetRaw.filter(isRefObject);
 
-  const scalarObservations: Array<{ kind: string; side: 'source' | 'target'; count: number }> = [];
+  const metaObservations: Array<Record<string, unknown>> = [];
   if (sourceRaw.length > 0 && sourceRefs.length === 0) {
-    scalarObservations.push({ kind: 'non_object_values_filtered', side: 'source', count: sourceRaw.length });
+    metaObservations.push({ kind: 'non_object_values_filtered', side: 'source', count: sourceRaw.length });
   }
   if (targetRaw.length > 0 && targetRefs.length === 0) {
-    scalarObservations.push({ kind: 'non_object_values_filtered', side: 'target', count: targetRaw.length });
+    metaObservations.push({ kind: 'non_object_values_filtered', side: 'target', count: targetRaw.length });
+  }
+
+  // adcp-client#712: when the current-step target response carries
+  // pagination metadata with more pages available, the target set is
+  // incomplete and missing refs may legitimately live on later pages.
+  // Surface a meta-observation AND demote unresolved refs to
+  // observations so partial-page reads don't false-fail the check.
+  // The stricter fix (spec Option A: "compliance mode returns everything
+  // referenced by products") needs an AdCP spec change — until that
+  // lands, the runner must not penalize conformant paginating sellers.
+  const targetPaginated = target.from === 'current_step' && hasMorePages(targetRoot);
+  if (targetPaginated) {
+    metaObservations.push({ kind: 'target_paginated', side: 'target' });
   }
 
   const scope = validation.scope;
@@ -858,10 +923,30 @@ function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationCo
     }
   }
 
-  const missing = dedupRefs(
+  // adcp-client#711: catch the silent-no-op case where a scope filter
+  // excludes 100% of source refs. Independent of whether the partition
+  // is "correct" — if every ref falls out of scope, the check enforces
+  // nothing and the grader deserves to see that structural smell.
+  // Suppressed under `on_out_of_scope: 'ignore'` because that mode
+  // explicitly opts out of scope-related warnings.
+  if (scope && outOfScopeMode !== 'ignore' && sourceRefs.length > 0 && inScope.length === 0) {
+    metaObservations.push({
+      kind: 'scope_excluded_all_refs',
+      count: sourceRefs.length,
+      scope_key: scope.key,
+    });
+  }
+
+  const unresolved = dedupRefs(
     inScope.filter(s => !targetRefs.some(t => refsMatch(s, t, matchKeys))),
     matchKeys
   );
+
+  // When the target was paginated and refs are unresolved, demote those
+  // refs from `missing` to `unresolved_with_pagination` observations so a
+  // conformant paginating seller passes. The meta-observation still fires.
+  const missing = targetPaginated ? [] : unresolved;
+  const paginatedUnresolved = targetPaginated ? unresolved : [];
 
   // `fail` mode promotes out-of-scope refs into the missing set so compliance
   // reports name them the same way they name truly broken refs.
@@ -870,10 +955,19 @@ function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationCo
 
   const warnObservations =
     outOfScopeMode === 'warn' && outOfScope.length > 0
-      ? dedupRefs(outOfScope, matchKeys).map(ref => ({ kind: 'out_of_scope_ref', ref: projectRef(ref, matchKeys) }))
+      ? dedupRefs(outOfScope, matchKeys).map(ref => ({
+          kind: 'out_of_scope_ref',
+          ref: projectRefForReport(ref, matchKeys),
+        }))
       : [];
-  const observations =
-    warnObservations.length + scalarObservations.length > 0 ? [...warnObservations, ...scalarObservations] : undefined;
+  const paginatedObservations = paginatedUnresolved.map(ref => ({
+    kind: 'unresolved_with_pagination',
+    ref: projectRefForReport(ref, matchKeys),
+  }));
+  // Meta-observations precede per-ref observations so the array cap never
+  // drops the grader-signal primitives (scope_excluded_all_refs,
+  // target_paginated) in favor of redundant out-of-scope entries.
+  const observations = capObservations([...metaObservations, ...paginatedObservations, ...warnObservations]);
 
   if (allMissing.length === 0) {
     return {
@@ -886,7 +980,7 @@ function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationCo
 
   const preview = allMissing
     .slice(0, 3)
-    .map(r => JSON.stringify(projectRef(r, matchKeys)))
+    .map(r => JSON.stringify(projectRefForReport(r, matchKeys)))
     .join(', ');
   const errorMsg =
     allMissing.length > 3
@@ -902,13 +996,25 @@ function validateRefsResolve(validation: StoryboardValidation, ctx: ValidationCo
     json_pointer: null,
     expected: `every source ref resolves to a target ref matched on [${matchKeys.join(', ')}]`,
     actual: {
-      missing: allMissing.map(r => projectRef(r, matchKeys)),
+      missing: allMissing.map(r => projectRefForReport(r, matchKeys)),
       ...(failOutOfScope.length > 0 && {
-        out_of_scope_failed: failOutOfScope.map(r => projectRef(r, matchKeys)),
+        out_of_scope_failed: failOutOfScope.map(r => projectRefForReport(r, matchKeys)),
       }),
     },
     ...(observations && { observations }),
   };
+}
+
+/**
+ * Detect whether the response at `root` advertises additional pages.
+ * Accepts the AdCP-standard `pagination.has_more` flag; conservative
+ * otherwise (false on non-objects, missing fields, or unparseable shapes).
+ */
+function hasMorePages(root: unknown): boolean {
+  if (!root || typeof root !== 'object' || Array.isArray(root)) return false;
+  const pagination = (root as Record<string, unknown>).pagination;
+  if (!pagination || typeof pagination !== 'object' || Array.isArray(pagination)) return false;
+  return (pagination as Record<string, unknown>).has_more === true;
 }
 
 function resolveRefsRoot(from: 'current_step' | 'context', ctx: ValidationContext): unknown {
@@ -920,11 +1026,11 @@ function resolveRefsRoot(from: 'current_step' | 'context', ctx: ValidationContex
 
 function resolveScopeEquals(equals: string, key: string, agentUrl: string): string {
   const raw = equals === '$agent_url' ? agentUrl : equals;
-  return key.toLowerCase().endsWith('url') ? normalizeAgentUrl(raw) : raw;
+  return key.toLowerCase().endsWith('url') ? canonicalizeAgentUrlForScope(raw) : raw;
 }
 
 function normalizeIfUrlKey(value: unknown, key: string): unknown {
-  return typeof value === 'string' && key.toLowerCase().endsWith('url') ? normalizeAgentUrl(value) : value;
+  return typeof value === 'string' && key.toLowerCase().endsWith('url') ? canonicalizeAgentUrlForScope(value) : value;
 }
 
 function isRefObject(value: unknown): value is Record<string, unknown> {
@@ -933,6 +1039,11 @@ function isRefObject(value: unknown): value is Record<string, unknown> {
 
 function refsMatch(a: Record<string, unknown>, b: Record<string, unknown>, keys: string[]): boolean {
   for (const key of keys) {
+    // Own-property only: a storyboard author supplying `match_keys: ['constructor']`
+    // must not match every object via prototype chain.
+    if (!Object.prototype.hasOwnProperty.call(a, key) || !Object.prototype.hasOwnProperty.call(b, key)) {
+      return false;
+    }
     const av = a[key];
     const bv = b[key];
     // Missing match-key on either side is NOT a match — agents that omit a
@@ -951,9 +1062,88 @@ function refsMatch(a: Record<string, unknown>, b: Record<string, unknown>, keys:
 function projectRef(ref: Record<string, unknown>, keys: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of keys) {
-    if (key in ref) out[key] = ref[key];
+    if (Object.prototype.hasOwnProperty.call(ref, key)) out[key] = ref[key];
   }
   return out;
+}
+
+// Observation hygiene caps (adcp-client#714). Compliance reports may be
+// published or forwarded to third parties, so every ref field emitted in
+// observations / actual.missing is length-bounded and URL fields have
+// credentials scrubbed before they leave the runner.
+const REF_FIELD_MAX_LEN = 512;
+const MAX_OBSERVATIONS = 50;
+
+/**
+ * Projection of a ref intended for grader-visible output (observations,
+ * `actual.missing`). Strips userinfo from URL fields, caps string length,
+ * and passes non-string values through untouched. Kept distinct from the
+ * internal `projectRef` because dedup relies on stable JSON projection —
+ * truncating strings would false-collapse refs that differ only in their
+ * truncated suffix.
+ */
+function projectRefForReport(ref: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(ref, key)) continue;
+    const v = ref[key];
+    if (typeof v === 'string') {
+      out[key] = sanitizeFieldString(v, key.toLowerCase().endsWith('url'));
+    } else {
+      out[key] = v;
+    }
+  }
+  return out;
+}
+
+// Regex fallback that scrubs `scheme://user:pass@host` credential shapes
+// in free-text fields — covers cases where `new URL()` can't parse the value
+// (partial URL, extra prose, trailing whitespace) but a user:pass@ substring
+// still leaks credentials to grader reports.
+const CREDENTIAL_SHAPE_RE = /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/\s@]+@/g;
+
+function sanitizeFieldString(value: string, isUrlField: boolean): string {
+  // Truncate first so a multi-MB hostile string doesn't force URL parsing
+  // over the whole payload. Truncation uses code points so surrogate pairs
+  // aren't cleaved into invalid UTF-16 strings.
+  let out = value;
+  if (out.length > REF_FIELD_MAX_LEN) {
+    out =
+      Array.from(out)
+        .slice(0, REF_FIELD_MAX_LEN - 1)
+        .join('') + '…';
+  }
+  if (isUrlField) {
+    try {
+      const u = new URL(out);
+      // Reject dangerous schemes in URL-keyed fields: downstream compliance
+      // UIs that render `agent_url` as a clickable link otherwise inherit
+      // `javascript:` / `data:` / `file:` as a stored-XSS vector.
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+        return `<non-http scheme: ${u.protocol.replace(/[^a-z+.-]/gi, '')}>`;
+      }
+      if (u.username || u.password) {
+        u.username = '';
+        u.password = '';
+        out = u.toString();
+      }
+    } catch {
+      // Not a parseable URL — fall through to the regex scrub below.
+    }
+  }
+  // Belt-and-suspenders: strip any remaining `scheme://user:pass@` shapes,
+  // whether or not the field is URL-keyed. A hostile agent may plant
+  // credential-shaped substrings inside an `id` or a non-URL ref field.
+  out = out.replace(CREDENTIAL_SHAPE_RE, '$1');
+  return out;
+}
+
+function capObservations(observations: Array<Record<string, unknown>>): Array<Record<string, unknown>> | undefined {
+  if (observations.length === 0) return undefined;
+  if (observations.length <= MAX_OBSERVATIONS) return observations;
+  const kept = observations.slice(0, MAX_OBSERVATIONS - 1);
+  kept.push({ kind: 'observations_truncated', dropped: observations.length - kept.length });
+  return kept;
 }
 
 /**
