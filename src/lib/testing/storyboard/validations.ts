@@ -1108,7 +1108,10 @@ function sanitizeFieldString(value: string, isUrlField: boolean): string {
   // aren't cleaved into invalid UTF-16 strings.
   let out = value;
   if (out.length > REF_FIELD_MAX_LEN) {
-    out = Array.from(out).slice(0, REF_FIELD_MAX_LEN - 1).join('') + '…';
+    out =
+      Array.from(out)
+        .slice(0, REF_FIELD_MAX_LEN - 1)
+        .join('') + '…';
   }
   if (isUrlField) {
     try {

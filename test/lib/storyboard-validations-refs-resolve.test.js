@@ -763,10 +763,7 @@ describe('validateRefsResolve', () => {
     const firstRef = kinds.indexOf('out_of_scope_ref');
     assert.ok(pagIdx !== -1, 'target_paginated must be preserved');
     assert.ok(scopeIdx !== -1, 'scope_excluded_all_refs must be preserved');
-    assert.ok(
-      pagIdx < firstRef && scopeIdx < firstRef,
-      'meta-observations must precede per-ref observations'
-    );
+    assert.ok(pagIdx < firstRef && scopeIdx < firstRef, 'meta-observations must precede per-ref observations');
   });
 
   // ──────────────────────────────────────────────────────────

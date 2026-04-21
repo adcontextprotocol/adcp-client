@@ -111,8 +111,10 @@ import { toStructuredContent } from './responses';
 
 /** Scenario names advertised via `list_scenarios` (force_* and simulate_*).
  * Seed scenarios are NOT advertised — the spec treats them as universal
- * request-time capabilities, not a discoverable subset. */
-export type ControllerScenario = ListScenariosSuccess['scenarios'][number];
+ * request-time capabilities, not a discoverable subset. The upstream
+ * `ListScenariosSuccess['scenarios']` union includes seeds (open-for-
+ * extension), so we explicitly subtract them here. */
+export type ControllerScenario = Exclude<ListScenariosSuccess['scenarios'][number], SeedScenario>;
 
 /** Scenario names accepted in `scenario` requests but not advertised via
  * `list_scenarios`. Sellers opt in by implementing the matching store method. */
