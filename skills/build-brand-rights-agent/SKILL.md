@@ -116,7 +116,7 @@ Required: `brand_id`, `house`, `names` (array of locale-keyed objects).
 
 Each right requires `rights_id`, `brand_id`, `name`, `available_uses`, `pricing_options`.
 
-The `right-use` enum at `/schemas/latest/enums/right-use.json` is: `likeness | voice | name | endorsement | motion_capture | signature | catchphrase | sync | background_music | editorial | commercial`. Note that the storyboard yaml sometimes sends `ai_generated_image` — that token is not in the current enum and any request carrying it will fail SDK validation. Use spec-valid values in your `available_uses` until upstream reconciles (adcontextprotocol/adcp#2418).
+The `right-use` enum at `/schemas/latest/enums/right-use.json` is: `likeness | voice | name | endorsement | motion_capture | signature | catchphrase | sync | background_music | editorial | commercial | ai_generated_image | image_generation`.
 
 ```typescript
 {
@@ -183,42 +183,19 @@ Three success variants plus an error variant. The most common is `acquired`. Thr
 { rights_id, status: 'rejected', brand_id, reason, suggestions? }
 ```
 
-**Creative approval (webhook you host).** Your `acquire_rights` response returns an `approval_webhook` — a `push-notification-config` pointing at an HTTP endpoint *your agent hosts*. The buyer POSTs a `creative-approval-request` there when a generated creative needs review; you return a `creative-approval-response`.
+**Creative approval.** The `approval_webhook` in your `acquire_rights` response is a URL **your agent hosts** — the buyer POSTs `creative-approval-request` there when a generated creative needs review. Payload shapes (`creative-approval-request`/`creative-approval-response`) are spec-tracked but not yet schema-published (adcontextprotocol/adcp#2253); accept at minimum the creative reference and a `rights_grant_id`, return a decision.
+
+**Revocation webhook.** The `acquire_rights` *request* carries a required `revocation_webhook`. Persist it against the grant. When you need to revoke (credential rotation, terms violation, brand takedown), use `ctx.emitWebhook` — don't hand-roll `fetch`. See [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks for the full wiring; minimal call:
 
 ```typescript
-// In your acquire_rights response
-{
-  // ...other fields
-  approval_webhook: {
-    url: 'https://brand.example/webhooks/creative-approval',
-    authentication: {
-      schemes: ['Bearer'],
-      credentials: '<token the buyer sends as Authorization header>',
-    },
-  },
-}
-```
-
-**Payload shapes (spec-tracked, not yet published):** the spec names these `creative-approval-request` and `creative-approval-response` but has not published the JSON schemas (tracked in https://github.com/adcontextprotocol/adcp/issues/2253). Design your endpoint to accept the creative reference (at minimum `rights_grant_id` and the creative being reviewed) and return a decision. Don't ship a concrete shape against this skill until schemas land — your handler contract may need to change.
-
-**Revocation webhook (buyer side).** The `acquire_rights` *request* includes a required `revocation_webhook`. Store it against the rights grant. If you ever need to revoke the grant (credential rotation, terms violation, brand takedown), emit a `revocation-notification` to that URL.
-
-**Use `ctx.emitWebhook`, not raw `fetch`.** The SDK ships `createAdcpServer({ webhooks: { signerKey } })` which populates `ctx.emitWebhook` on every handler — it signs per RFC 9421, reuses `idempotency_key` byte-for-byte across retries, and handles the "don't retry on signature failures" terminal behavior automatically. Full pattern in [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks.
-
-```typescript
-// On revocation:
-await ctx.emitWebhook({
+await ctx.emitWebhook!({
   url: storedGrant.revocation_webhook.url,
-  payload: {
-    rights_id: storedGrant.rights_id,
-    reason: 'credential_rotation',
-    effective_at: new Date().toISOString(),
-  },
-  operation_id: `revoke_rights.${storedGrant.rights_id}`,   // stable across retries — NOT a fresh UUID per attempt
+  payload: { rights_id: storedGrant.rights_id, reason: 'credential_rotation', effective_at: new Date().toISOString() },
+  operation_id: `revoke_rights.${storedGrant.rights_id}`,   // stable across retries, NOT a fresh UUID
 });
 ```
 
-The `revocation-notification` payload shape is not yet published in a JSON schema (tracked at adcontextprotocol/adcp#2253). Include at minimum the `rights_id`, a reason, and an `effective_at` timestamp. 3.0 GA renamed this payload's `notification_id` field to `idempotency_key` — the emitter populates it for you when `operation_id` is set.
+3.0 GA renamed `RevocationNotification.notification_id` → `idempotency_key` — the emitter populates it for you when `operation_id` is set.
 
 ### Context and Ext Passthrough
 
@@ -382,58 +359,24 @@ serve(() =>
 
 The skill contains everything you need. Do not read additional docs before writing code.
 
-## Idempotency
+## Idempotency & Auth
 
-AdCP v3 requires an `idempotency_key` on every mutating request — for brand rights agents that's `acquire_rights` only (`get_brand_identity` and `get_rights` are read-only and exempt). Acquiring rights issues credentials and may trigger billing, so replay safety is non-negotiable. Idempotency is already wired in the Implementation example above. The framework then handles:
+For brand-rights only `acquire_rights` is mutating (`get_brand_identity` and `get_rights` are reads). Wire `createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86400 })` into `createAdcpServer({ idempotency })` once — framework handles `INVALID_REQUEST` / `IDEMPOTENCY_CONFLICT` / `IDEMPOTENCY_EXPIRED` / replay-with-`replayed:true` / atomic-claim. See [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Idempotency for the full framework contract.
 
-- Missing/malformed key → `INVALID_REQUEST` (spec pattern `^[A-Za-z0-9_.:-]{16,255}$`)
-- JCS-canonicalized payload hashing with same-key-different-payload → `IDEMPOTENCY_CONFLICT` (no payload leaked in the error body)
-- Past-TTL replay → `IDEMPOTENCY_EXPIRED` (±60s clock-skew tolerance)
-- Cache hits replay the cached envelope with `replayed: true` injected
-- `adcp.idempotency.replay_ttl_seconds` auto-declared on `get_adcp_capabilities`
-- Only successful responses cache — a failed acquisition re-executes on retry without issuing duplicate grants
-- Atomic claim so concurrent retries with the same key don't all race to mint grants
-
-Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal`). `ttlSeconds` must be 3600–604800 — out of range throws at construction.
-
-## Protecting your agent
-
-**An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
+Authentication is mandatory (otherwise `security_baseline` fails). Minimum viable:
 
 ```typescript
-import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+import { serve } from '@adcp/client';
+import { verifyApiKey } from '@adcp/client/server';
 
-// API key — simplest, good for B2B integrations
 serve(createAgent, {
   authenticate: verifyApiKey({
-    verify: async (token) => {
-      const row = await db.api_keys.findUnique({ where: { token } });
-      return row ? { principal: row.account_id } : null;
-    },
+    keys: { 'compliance-runner': { principal: 'compliance-runner' } },   // replace with db-backed lookup in prod
   }),
-});
-
-// OAuth — best when buyers authenticate as themselves
-const AGENT_URL = 'https://my-agent.example.com/mcp';
-serve(createAgent, {
-  publicUrl: AGENT_URL, // canonical RFC 8707 audience — also served as `resource` in protected-resource metadata
-  authenticate: verifyBearer({
-    jwksUri: 'https://auth.example.com/.well-known/jwks.json',
-    issuer: 'https://auth.example.com',
-    audience: AGENT_URL, // MUST equal publicUrl
-  }),
-  protectedResource: { authorization_servers: ['https://auth.example.com'] },
-});
-
-// Both
-serve(createAgent, {
-  publicUrl: AGENT_URL,
-  authenticate: anyOf(verifyApiKey({ verify: lookupKey }), verifyBearer({ jwksUri, issuer, audience: AGENT_URL })),
-  protectedResource: { authorization_servers: [issuer] },
 });
 ```
 
-The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
+For OAuth, `anyOf(verifyApiKey, verifyBearer)` composition, or `publicUrl` + `protectedResource` see [seller skill § Protecting your agent](../build-seller-agent/SKILL.md#protecting-your-agent).
 
 ## Validation
 
