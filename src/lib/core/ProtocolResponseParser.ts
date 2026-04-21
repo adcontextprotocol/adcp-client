@@ -274,11 +274,7 @@ export class ProtocolResponseParser {
         const taskKindId = firstSafeSessionId(response.result.id);
         if (taskKindId) return taskKindId;
       }
-      const fromResult = firstSafeSessionId(
-        response.result.taskId,
-        response.result.id,
-        response.result.task_id
-      );
+      const fromResult = firstSafeSessionId(response.result.taskId, response.result.id, response.result.task_id);
       if (fromResult) return fromResult;
     }
     const fromEnvelope = firstSafeSessionId(response.taskId);

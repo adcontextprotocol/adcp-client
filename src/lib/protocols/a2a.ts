@@ -238,7 +238,16 @@ export async function callA2ATool(
       };
       return signingContextStorage.run(signingContext, () =>
         callContextStorage.run(context, () =>
-          callA2AToolImpl(agentUrl, toolName, parameters, authToken, debugLogs, pushNotificationConfig, context, session)
+          callA2AToolImpl(
+            agentUrl,
+            toolName,
+            parameters,
+            authToken,
+            debugLogs,
+            pushNotificationConfig,
+            context,
+            session
+          )
         )
       );
     }

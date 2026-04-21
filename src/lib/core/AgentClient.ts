@@ -189,8 +189,7 @@ export class AgentClient {
    * it either resumes the wrong task or confuses the server.
    */
   private withSession(options?: TaskOptions): TaskOptions {
-    const explicitSwitch =
-      options?.contextId !== undefined && options.contextId !== this.currentContextId;
+    const explicitSwitch = options?.contextId !== undefined && options.contextId !== this.currentContextId;
     return {
       ...options,
       contextId: options?.contextId ?? this.currentContextId,

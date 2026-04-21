@@ -27,18 +27,16 @@ function installA2AStub() {
   const stubClient = {
     sendMessage: async payload => {
       captured.push(payload);
-      const next =
-        queue.shift() ??
-        {
-          jsonrpc: '2.0',
-          id: 'test-id',
-          result: {
-            kind: 'task',
-            id: 'task-default',
-            contextId: 'ctx-default',
-            status: { state: 'completed', timestamp: new Date().toISOString() },
-          },
-        };
+      const next = queue.shift() ?? {
+        jsonrpc: '2.0',
+        id: 'test-id',
+        result: {
+          kind: 'task',
+          id: 'task-default',
+          contextId: 'ctx-default',
+          status: { state: 'completed', timestamp: new Date().toISOString() },
+        },
+      };
       return next;
     },
   };
