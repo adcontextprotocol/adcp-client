@@ -47,6 +47,32 @@ function postProcessUndefinedImports(content: string): string {
 }
 
 /**
+ * Large union schemas exceed TypeScript's serialization limit (TS7056) when their inferred
+ * type has to be written into a .d.ts file. The fix is to give them an explicit `z.ZodType`
+ * annotation so TypeScript stops trying to serialize the inferred shape.
+ *
+ * ts-to-zod doesn't know which schemas will trip TS7056, so we patch the known offenders
+ * after generation. If a new schema hits TS7056 in the future, add it to this list rather
+ * than scattering annotations across the codebase.
+ */
+const TS7056_SCHEMAS = ['AdCPAsyncResponseDataSchema', 'MCPWebhookPayloadSchema'];
+
+function postProcessTS7056Annotations(content: string): string {
+  let result = content;
+  for (const name of TS7056_SCHEMAS) {
+    const pattern = new RegExp(`export const ${name} = `);
+    if (!pattern.test(result)) {
+      throw new Error(
+        `postProcessTS7056Annotations: expected to find "export const ${name} = " in generated output. ` +
+          'The schema may have been renamed or removed — update TS7056_SCHEMAS.'
+      );
+    }
+    result = result.replace(pattern, `export const ${name}: z.ZodType = `);
+  }
+  return result;
+}
+
+/**
  * Post-process generated Zod schemas to loosen explicit type annotations on lazy schemas.
  *
  * ts-to-zod generates `export const XSchema: z.ZodSchema<X> = z.lazy(() => ...)` for
@@ -543,6 +569,9 @@ async function generateZodSchemas() {
     // z.unknown() already accepts undefined at runtime, so this is semantically identical.
     // Without this fix, 73+ schemas fail MCP SDK's tools/list JSON Schema conversion.
     zodSchemas = postProcessUndefinedUnions(zodSchemas);
+
+    // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
+    zodSchemas = postProcessTS7056Annotations(zodSchemas);
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types

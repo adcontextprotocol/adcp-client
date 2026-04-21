@@ -49,8 +49,15 @@ fi
 
 # Run commitlint using the project's local installation
 if [ -n "$NPX_CMD" ]; then
-  # Change to the project directory to ensure we use local node_modules
-  cd "$(dirname "$0")/../.." || exit 1
+  # cd to the actual working tree — hooks live at .git/hooks in a normal clone
+  # but at .git/worktrees/<name>/hooks in a git worktree, so \`dirname \$0\`/../..
+  # resolves to different places. git rev-parse --show-toplevel is always correct.
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$REPO_ROOT" ]; then
+    echo "❌ Could not determine repository root"
+    exit 1
+  fi
+  cd "$REPO_ROOT" || exit 1
 
   echo "$COMMIT_MSG" | $NPX_CMD commitlint --config commitlint.config.js
   COMMITLINT_EXIT=$?
@@ -151,10 +158,15 @@ function installHooks() {
   // Install commit-msg hook
   if (fs.existsSync(commitMsgPath)) {
     const existingContent = fs.readFileSync(commitMsgPath, 'utf8');
-    if (!existingContent.includes('commitlint')) {
+    // Upgrade if hook is missing commitlint entirely, or is the old version that
+    // cd's via `dirname $0/../..` (broken in git worktrees).
+    const needsUpgrade =
+      !existingContent.includes('commitlint') || !existingContent.includes('git rev-parse --show-toplevel');
+    if (needsUpgrade) {
       fs.writeFileSync(commitMsgPath, commitMsgHook);
       fs.chmodSync(commitMsgPath, 0o755);
       installed++;
+      log('  ✨ Updated commit-msg hook (worktree-safe)', 'green');
     }
   } else {
     fs.writeFileSync(commitMsgPath, commitMsgHook);
