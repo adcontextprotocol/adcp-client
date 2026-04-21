@@ -116,8 +116,12 @@ function handleJsonRpc(req, res, shape) {
 
 function extractBearer(header) {
   if (typeof header !== 'string') return undefined;
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  return match ? match[1] : undefined;
+  // Case-insensitive "Bearer " prefix + single space, then the token. Avoids
+  // backtracking that CodeQL's js/polynomial-redos flags on /^Bearer\s+(.+)/i.
+  if (header.length < 8) return undefined;
+  if (header.slice(0, 7).toLowerCase() !== 'bearer ') return undefined;
+  const token = header.slice(7);
+  return token.length > 0 ? token : undefined;
 }
 
 function dispatchSkill(rpc, token, shape) {
