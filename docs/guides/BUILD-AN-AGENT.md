@@ -396,7 +396,7 @@ npx @adcp/client http://localhost:3001/mcp get_signals '{}' --json
 npx @adcp/client storyboard run http://localhost:3001/mcp
 ```
 
-This runs a standard validation suite against your agent to check AdCP compliance.
+This runs a standard validation suite against your agent to check AdCP compliance. For the full validation picture — storyboard runner, property-based fuzzing (`adcp fuzz`), multi-instance testing, webhook conformance, request-signing, schema-driven validation, and the skill→agent→grader dogfood harness — see [**VALIDATE-YOUR-AGENT.md**](./VALIDATE-YOUR-AGENT.md).
 
 ## Complete Example
 
