@@ -13,6 +13,7 @@ const {
   rawMcpProbe,
 } = require('../../dist/lib/testing/storyboard/probes');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
+const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
 const { comply } = require('../../dist/lib/testing/compliance/comply');
 const {
   validateTestKit,
@@ -645,6 +646,241 @@ describe('storyboard runner: auth-override dispatch', () => {
       );
     } finally {
       server.close();
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// security_baseline: unconditional PRM enforcement (adcp-client#677)
+//
+// When RFC 9728 PRM returns 404, the agent is honestly not advertising
+// OAuth — oauth_discovery cascade-skips cleanly. When PRM returns 200,
+// the OAuth validations are HARD — a broken `resource` field fails the
+// storyboard even when the API-key path would otherwise carry it. This
+// closes the spoofing path where an agent could pass security_baseline
+// by declaring an API key while serving broken OAuth metadata.
+// ────────────────────────────────────────────────────────────
+
+describe('security_baseline: unconditional PRM enforcement (#677)', () => {
+  const SECURITY_YAML = path.join(
+    __dirname,
+    '..',
+    '..',
+    'compliance',
+    'cache',
+    'latest',
+    'universal',
+    'security.yaml'
+  );
+
+  function loadSecurityBaseline() {
+    return loadStoryboardFile(SECURITY_YAML);
+  }
+
+  // Build a mock agent that serves an MCP endpoint at /mcp plus configurable
+  // well-known metadata endpoints. `prm` and `authServer` are each one of:
+  //   - undefined / null / 404 → served as HTTP 404
+  //   - a function (agentUrl) => payload — evaluated per request so tests
+  //     can bake the live port into the PRM `resource` field
+  //   - a plain object — served as HTTP 200 with JSON body
+  //   - a `{ status, body }` tuple — explicit status with JSON body
+  function createAuthTestAgent({ prm, authServer, validApiKey = 'sk_test' } = {}) {
+    let agentUrl = null;
+    const resolveConfig = (conf) => (typeof conf === 'function' ? conf(agentUrl) : conf);
+    const writeMetadata = (res, cfg) => {
+      if (cfg === 404 || cfg == null) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const hasStatus = typeof cfg === 'object' && 'status' in cfg && 'body' in cfg;
+      const body = hasStatus ? cfg.body : cfg;
+      const status = hasStatus ? cfg.status : 200;
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(typeof body === 'string' ? body : JSON.stringify(body));
+    };
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (req.method === 'GET' && url.pathname.startsWith('/.well-known/oauth-protected-resource')) {
+        return writeMetadata(res, resolveConfig(prm));
+      }
+      if (req.method === 'GET' && url.pathname === '/.well-known/oauth-authorization-server') {
+        return writeMetadata(res, resolveConfig(authServer));
+      }
+      if (req.method === 'POST' && url.pathname === '/mcp') {
+        const auth = req.headers.authorization ?? '';
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const context = body.params?.arguments?.context ?? {};
+        const reply = (status, payload, headers = {}) => {
+          res.writeHead(status, { 'content-type': 'application/json', ...headers });
+          res.end(JSON.stringify(payload));
+        };
+        if (!auth) {
+          return reply(
+            401,
+            { jsonrpc: '2.0', id: body.id, error: { code: -32001, message: 'auth required' } },
+            { 'www-authenticate': 'Bearer realm="test"' }
+          );
+        }
+        if (auth === `Bearer ${validApiKey}`) {
+          return reply(200, {
+            jsonrpc: '2.0',
+            id: body.id,
+            result: { structuredContent: { creatives: [], context } },
+          });
+        }
+        return reply(
+          401,
+          { jsonrpc: '2.0', id: body.id, error: { code: -32001, message: 'invalid token' } },
+          { 'www-authenticate': 'Bearer realm="test", error="invalid_token"' }
+        );
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    return {
+      server,
+      listen: () =>
+        new Promise(resolve => {
+          server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address();
+            agentUrl = `http://127.0.0.1:${port}/mcp`;
+            resolve(agentUrl);
+          });
+        }),
+      close: () => new Promise(resolve => server.close(() => resolve())),
+    };
+  }
+
+  function runOpts(testKit) {
+    return {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ['list_creatives'],
+      _profile: { name: 'T', tools: ['list_creatives'] },
+      _client: {
+        getAgentInfo: async () => ({ name: 'T', tools: [{ name: 'list_creatives' }] }),
+      },
+      test_kit: testKit,
+    };
+  }
+
+  const API_KEY_KIT = { auth: { api_key: 'sk_test', probe_task: 'list_creatives' } };
+  const NO_KEY_KIT = { auth: { probe_task: 'list_creatives' } };
+
+  // Reusable PRM/auth-server builders that reflect the live agent URL so
+  // `resource_equals_agent_url` can match.
+  const correctPrm = (agentUrl) => ({
+    resource: agentUrl,
+    authorization_servers: [new URL(agentUrl).origin],
+    bearer_methods_supported: ['header'],
+  });
+  const correctAuthServer = (agentUrl) => ({
+    issuer: new URL(agentUrl).origin,
+    token_endpoint: `${new URL(agentUrl).origin}/oauth/token`,
+    grant_types_supported: ['authorization_code'],
+  });
+
+  it('PRM 404 + api_key declared → oauth_discovery cascade-skipped, storyboard passes', async () => {
+    const agent = createAuthTestAgent({ prm: 404 });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), runOpts(API_KEY_KIT));
+      assert.strictEqual(result.overall_passed, true, 'storyboard passes via api_key path');
+
+      const oauthPhase = result.phases.find(p => p.phase_id === 'oauth_discovery');
+      assert.ok(oauthPhase, 'oauth_discovery phase present');
+      assert.strictEqual(oauthPhase.passed, true, 'oauth_discovery vacuously passed (all steps skipped)');
+      for (const s of oauthPhase.steps) {
+        assert.strictEqual(s.skipped, true, `${s.step_id} should be skipped`);
+        assert.strictEqual(s.skip_reason, 'oauth_not_advertised');
+        assert.strictEqual(s.skip.reason, 'not_applicable');
+      }
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it('PRM 404 + no api_key → storyboard fails (no mechanism verified)', async () => {
+    const agent = createAuthTestAgent({ prm: 404 });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), runOpts(NO_KEY_KIT));
+      assert.strictEqual(result.overall_passed, false, 'no mechanism verified → storyboard fails');
+      const mechPhase = result.phases.find(p => p.phase_id === 'mechanism_required');
+      assert.strictEqual(mechPhase.passed, false, 'mechanism_required phase fails');
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it('PRM 200 with correct resource + api_key → both paths contribute, storyboard passes', async () => {
+    const agent = createAuthTestAgent({ prm: correctPrm, authServer: correctAuthServer });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), runOpts(API_KEY_KIT));
+      assert.strictEqual(result.overall_passed, true, `expected overall pass, phases: ${JSON.stringify(result.phases, null, 2)}`);
+      const oauthPhase = result.phases.find(p => p.phase_id === 'oauth_discovery');
+      assert.strictEqual(oauthPhase.passed, true, 'oauth_discovery phase passes');
+      const apiKeyPhase = result.phases.find(p => p.phase_id === 'api_key_path');
+      assert.strictEqual(apiKeyPhase.passed, true, 'api_key_path phase passes');
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it('PRM 200 with WRONG resource + api_key → storyboard FAILS (spoofing catch)', async () => {
+    // The whole point of #677: a broken PRM must fail even when the API-key
+    // path passes. Advertise a bogus resource URL that does not match the
+    // agent being probed.
+    const agent = createAuthTestAgent({
+      prm: () => ({
+        resource: 'https://different-agent.example.com/mcp',
+        authorization_servers: ['https://auth.example.com'],
+      }),
+      authServer: correctAuthServer,
+    });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), runOpts(API_KEY_KIT));
+      assert.strictEqual(
+        result.overall_passed,
+        false,
+        'storyboard must fail — agent advertises OAuth but PRM.resource is wrong'
+      );
+      assert.ok(result.failed_count > 0, `expected failed_count > 0, got ${result.failed_count}`);
+
+      const oauthPhase = result.phases.find(p => p.phase_id === 'oauth_discovery');
+      assert.strictEqual(oauthPhase.passed, false, 'oauth_discovery phase fails');
+      const prmStep = oauthPhase.steps.find(s => s.step_id === 'probe_protected_resource');
+      assert.strictEqual(prmStep.passed, false, 'PRM probe step fails resource_equals_agent_url');
+      const resourceCheck = prmStep.validations.find(v => v.check === 'resource_equals_agent_url');
+      assert.ok(resourceCheck && resourceCheck.passed === false, 'resource_equals_agent_url validation failed');
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it('PRM 200 correct + auth-server 404 + api_key → storyboard fails', async () => {
+    // Agent advertises OAuth and PRM is internally consistent, but the
+    // referenced authorization server metadata endpoint is missing. This
+    // still breaks the OAuth client path, so it must fail under the new
+    // rule even with api_key_path passing.
+    const agent = createAuthTestAgent({ prm: correctPrm, authServer: 404 });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), runOpts(API_KEY_KIT));
+      assert.strictEqual(
+        result.overall_passed,
+        false,
+        'storyboard must fail — OAuth is advertised but auth-server metadata is missing'
+      );
+      const oauthPhase = result.phases.find(p => p.phase_id === 'oauth_discovery');
+      assert.strictEqual(oauthPhase.passed, false, 'oauth_discovery phase fails');
+    } finally {
+      await agent.close();
     }
   });
 });
