@@ -982,8 +982,23 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 - Hashes the request payload with RFC 8785 JCS. The emitted error codes and their semantics are in the table at [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency).
 - Injects `replayed: true` on `result.structuredContent.replayed` when returning a cached response; fresh executions omit the field.
 - Auto-declares `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`.
-- Only caches successful responses — errors re-execute on retry so transient failures don't lock into the cache.
+- Only caches successful responses — errors re-execute on retry so transient failures don't lock into the cache. This applies to every `recovery` class including `terminal`: the AdCP terminal catalog (`ACCOUNT_SUSPENDED`, `BUDGET_EXHAUSTED`, `ACCOUNT_PAYMENT_REQUIRED`, `ACCOUNT_SETUP_REQUIRED`) is mostly state-dependent, and caching would return stale errors after the buyer remediates. Only `UNSUPPORTED_FEATURE` and `ACCOUNT_NOT_FOUND` are truly immutable, and re-executing them is cheap.
 - Atomic claim on `check()` so concurrent retries with a fresh key don't all race to execute side effects.
+
+**Handler contract: mutate last.** The framework releases the idempotency claim on ANY error path — `return adcpError(...)`, `throw adcpError(...)` (auto-unwrapped by the dispatcher), and uncaught exceptions all release. A handler that writes state then errors will double-write on retry:
+
+```typescript
+// BROKEN: write happens, error releases claim, retry re-writes
+await db.insert(mediaBuy);
+if (!budgetApproved) return adcpError('BUDGET_EXHAUSTED', { ... });  // claim released, insert already persisted
+
+// CORRECT: validate first, write last
+if (!budgetApproved) return adcpError('BUDGET_EXHAUSTED', { ... });  // no write yet, safe to release
+await db.insert(mediaBuy);
+return mediaBuyResponse({ ... });
+```
+
+If the validation can only run after a partial write (rare), make the write itself idempotent — natural-key upsert or the `ctx.store.get` → merge pattern — so re-execution converges on the same state.
 
 **Scoping**: the principal comes from `resolveSessionKey` (or override with `resolveIdempotencyPrincipal(ctx, params, toolName)` for per-tool custom scopes). Two callers with the same principal share a cache namespace; different principals are isolated.
 
