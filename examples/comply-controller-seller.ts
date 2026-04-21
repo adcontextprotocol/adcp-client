@@ -69,11 +69,7 @@ const CREATIVE_TRANSITIONS: Record<CreativeStatus, CreativeStatus[]> = {
 function assertCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
   const allowed = CREATIVE_TRANSITIONS[from] ?? [];
   if (!allowed.includes(to)) {
-    throw new TestControllerError(
-      'INVALID_TRANSITION',
-      `Creative cannot move from ${from} to ${to}`,
-      from
-    );
+    throw new TestControllerError('INVALID_TRANSITION', `Creative cannot move from ${from} to ${to}`, from);
   }
 }
 

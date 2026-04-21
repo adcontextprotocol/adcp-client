@@ -290,9 +290,7 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
 
   if (force?.creative_status) {
     store.forceCreativeStatus = (creativeId, status, rejection_reason) =>
-      Promise.resolve(
-        force.creative_status!({ creative_id: creativeId, status, rejection_reason }, ctx)
-      );
+      Promise.resolve(force.creative_status!({ creative_id: creativeId, status, rejection_reason }, ctx));
   }
   if (force?.account_status) {
     store.forceAccountStatus = (accountId, status) =>
@@ -300,15 +298,11 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   }
   if (force?.media_buy_status) {
     store.forceMediaBuyStatus = (mediaBuyId, status, rejection_reason) =>
-      Promise.resolve(
-        force.media_buy_status!({ media_buy_id: mediaBuyId, status, rejection_reason }, ctx)
-      );
+      Promise.resolve(force.media_buy_status!({ media_buy_id: mediaBuyId, status, rejection_reason }, ctx));
   }
   if (force?.session_status) {
     store.forceSessionStatus = (sessionId, status, termination_reason) =>
-      Promise.resolve(
-        force.session_status!({ session_id: sessionId, status, termination_reason }, ctx)
-      );
+      Promise.resolve(force.session_status!({ session_id: sessionId, status, termination_reason }, ctx));
   }
 
   if (simulate?.delivery) {
@@ -374,11 +368,7 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
     const ctx: ComplyControllerContext = { input };
     const store = buildStore(config, ctx);
 
-    return handleTestControllerRequest(
-      { scenarios: factoryScenarios, createStore: () => store },
-      input,
-      { seedCache }
-    );
+    return handleTestControllerRequest({ scenarios: factoryScenarios, createStore: () => store }, input, { seedCache });
   }
 
   async function handle(input: Record<string, unknown>) {

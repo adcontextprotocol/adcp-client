@@ -152,11 +152,7 @@ export {
   SEED_SCENARIOS,
   createSeedFixtureCache,
 } from '../server/test-controller';
-export type {
-  ControllerScenario,
-  SeedFixtureCache,
-  SeedScenario,
-} from '../server/test-controller';
+export type { ControllerScenario, SeedFixtureCache, SeedScenario } from '../server/test-controller';
 
 // Storyboard-driven testing
 export {

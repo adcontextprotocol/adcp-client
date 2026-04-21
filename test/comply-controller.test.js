@@ -1,10 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const {
-  createComplyController,
-  TestControllerError,
-  createSeedFixtureCache,
-} = require('../dist/lib/testing');
+const { createComplyController, TestControllerError, createSeedFixtureCache } = require('../dist/lib/testing');
 
 describe('createComplyController — list_scenarios', () => {
   it('advertises only the adapters that are registered (force/simulate, not seeds)', async () => {

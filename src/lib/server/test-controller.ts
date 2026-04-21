@@ -116,12 +116,7 @@ export type ControllerScenario = ListScenariosSuccess['scenarios'][number];
 
 /** Scenario names accepted in `scenario` requests but not advertised via
  * `list_scenarios`. Sellers opt in by implementing the matching store method. */
-export type SeedScenario =
-  | 'seed_product'
-  | 'seed_pricing_option'
-  | 'seed_creative'
-  | 'seed_plan'
-  | 'seed_media_buy';
+export type SeedScenario = 'seed_product' | 'seed_pricing_option' | 'seed_creative' | 'seed_plan' | 'seed_media_buy';
 
 /**
  * Scenario name constants for force_* and simulate_* (the advertised set).
@@ -464,7 +459,10 @@ async function dispatchSeed(
   // Validate fixture is a plain object (not null, array, or primitive) before
   // casting — the adapter signature promises Record<string, unknown>.
   const rawFixture = params?.fixture;
-  if (rawFixture !== undefined && (typeof rawFixture !== 'object' || Array.isArray(rawFixture) || rawFixture === null)) {
+  if (
+    rawFixture !== undefined &&
+    (typeof rawFixture !== 'object' || Array.isArray(rawFixture) || rawFixture === null)
+  ) {
     return controllerError(
       'INVALID_PARAMS',
       `${scenario} requires params.fixture to be an object (got ${Array.isArray(rawFixture) ? 'array' : typeof rawFixture})`
@@ -762,7 +760,8 @@ function summarize(data: ComplyTestControllerResponse): string {
   if ('scenarios' in data) return `Supported scenarios: ${data.scenarios.join(', ')}`;
   if ('previous_state' in data) {
     if (data.previous_state === 'none' && data.current_state === 'seeded') return 'Fixture seeded';
-    if (data.previous_state === 'existing' && data.current_state === 'existing') return 'Fixture re-seeded (equivalent)';
+    if (data.previous_state === 'existing' && data.current_state === 'existing')
+      return 'Fixture re-seeded (equivalent)';
     return `Transitioned from ${data.previous_state} to ${data.current_state}`;
   }
   return `Simulation complete: ${JSON.stringify(data.simulated)}`;
