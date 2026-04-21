@@ -161,8 +161,7 @@ function installHooks() {
     // Upgrade if hook is missing commitlint entirely, or is the old version that
     // cd's via `dirname $0/../..` (broken in git worktrees).
     const needsUpgrade =
-      !existingContent.includes('commitlint') ||
-      !existingContent.includes('git rev-parse --show-toplevel');
+      !existingContent.includes('commitlint') || !existingContent.includes('git rev-parse --show-toplevel');
     if (needsUpgrade) {
       fs.writeFileSync(commitMsgPath, commitMsgHook);
       fs.chmodSync(commitMsgPath, 0o755);
