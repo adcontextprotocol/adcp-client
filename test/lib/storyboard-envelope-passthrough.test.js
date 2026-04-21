@@ -167,4 +167,145 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
       server.close();
     }
   });
+
+  it('still forwards push_notification_config on the non-builder path (acquire_rights) so no future "simplification" of the merge block breaks one path undetected', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+      res.end('{}');
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'envelope_passthrough_no_builder_sb',
+        version: '1.0.0',
+        title: 'No-builder path pass-through',
+        category: 'compliance',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'acquire',
+            steps: [
+              {
+                id: 'acquire',
+                title: 'task without a builder: sample_request is spread wholesale, push_notification_config rides along',
+                task: 'acquire_rights',
+                auth: 'none',
+                sample_request: {
+                  campaign: { id: 'c1' },
+                  push_notification_config: {
+                    url: 'https://buyer.example/webhooks/acquire_rights',
+                    authentication: { schemes: ['HMAC-SHA256'], credentials: 'test-secret-min-32-characters-required' },
+                  },
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['acquire_rights'],
+        _profile: { name: 'Test', tools: ['acquire_rights'] },
+        _client: {
+          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'acquire_rights' }] }),
+        },
+      });
+
+      assert.strictEqual(seen.length, 1);
+      assert.strictEqual(
+        seen[0].args.push_notification_config?.url,
+        'https://buyer.example/webhooks/acquire_rights',
+        'non-builder path must still forward push_notification_config'
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('does not let sample_request overwrite a push_notification_config already on the request (e.g. supplied via options.request) — the `=== undefined` guard is load-bearing', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+      res.end('{}');
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'envelope_passthrough_options_request_sb',
+        version: '1.0.0',
+        title: 'options.request wins over sample_request',
+        category: 'compliance',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'acquire',
+            steps: [
+              {
+                id: 'acquire',
+                title: 'caller-provided request wins; sample_request.push_notification_config must not overwrite',
+                task: 'acquire_rights',
+                auth: 'none',
+                sample_request: {
+                  campaign: { id: 'c1' },
+                  push_notification_config: {
+                    url: 'https://buyer.example/FROM_SAMPLE_REQUEST',
+                    authentication: { schemes: ['HMAC-SHA256'], credentials: 'test-secret-min-32-characters-required' },
+                  },
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      // `options.request` short-circuits sample_request merging at runner.ts:1023-1024.
+      // The request body becomes exactly what the caller sent — sample_request is ignored.
+      await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['acquire_rights'],
+        request: {
+          campaign: { id: 'c-override' },
+          push_notification_config: {
+            url: 'https://buyer.example/FROM_CALLER',
+            authentication: { schemes: ['HMAC-SHA256'], credentials: 'test-secret-min-32-characters-required' },
+          },
+        },
+        _profile: { name: 'Test', tools: ['acquire_rights'] },
+        _client: {
+          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'acquire_rights' }] }),
+        },
+      });
+
+      assert.strictEqual(seen.length, 1);
+      assert.strictEqual(
+        seen[0].args.push_notification_config?.url,
+        'https://buyer.example/FROM_CALLER',
+        'caller-provided push_notification_config must win — sample_request only fills missing fields'
+      );
+    } finally {
+      server.close();
+    }
+  });
 });
