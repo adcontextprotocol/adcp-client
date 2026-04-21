@@ -43,9 +43,12 @@ async function runVector(vector) {
   // Replay entries are scoped by `(keyid, @target-uri)` (adcp#2460). Vector
   // harness-state preloads inherit the scope from the vector's request URL
   // — that's the endpoint the verifier will canonicalize when committing.
-  const scope = canonicalTargetUri(vector.request.url);
+  // Deferred until a preload is actually needed so URL-authority rejection
+  // vectors (e.g. 026) exercise the verifier's own canonicalization path
+  // rather than throwing in harness setup.
   const state = vector.test_harness_state ?? {};
   if (state.replay_cache_entries) {
+    const scope = canonicalTargetUri(vector.request.url);
     for (const entry of state.replay_cache_entries) {
       replayStore.preload(entry.keyid, scope, entry.nonce, entry.ttl_seconds, now);
     }
@@ -96,38 +99,15 @@ describe('RFC 9421 verifier: positive conformance vectors (adcp#2323)', () => {
   }
 });
 
-// Vectors 021-027 exercise new verifier behaviors (duplicate Signature-Input
-// labels, multi-valued content-type / content-digest, unquoted string params,
-// JWK alg/crv consistency, non-ASCII @authority, webhook-registration
-// authentication without signing) that the verifier hasn't been extended to
-// cover yet. Tracked as a follow-up to PR #631; skip in the conformance suite
-// until the verifier work lands.
-const NEGATIVE_VECTORS_UNIMPLEMENTED = new Set([
-  '021-duplicate-signature-input-label.json',
-  '022-multi-valued-content-type.json',
-  '023-multi-valued-content-digest.json',
-  '024-unquoted-string-param.json',
-  '025-jwk-alg-crv-mismatch.json',
-  '026-non-ascii-host.json',
-  // 027: webhook-authentication-triggers-signing rule (body inspection for
-  // push_notification_config.authentication). Verifier doesn't inspect
-  // request bodies yet; tracked separately.
-  '027-webhook-registration-authentication-unsigned.json',
-]);
-
 describe('RFC 9421 verifier: negative conformance vectors (adcp#2323)', () => {
   const dir = path.join(ROOT, 'negative');
   for (const file of readdirSync(dir).sort()) {
     const vector = JSON.parse(readFileSync(path.join(dir, file), 'utf8'));
-    test(
-      `${file} → ${vector.expected_outcome.error_code}`,
-      { skip: NEGATIVE_VECTORS_UNIMPLEMENTED.has(file) },
-      async () => {
-        const actual = await runVector(vector);
-        assert.strictEqual(actual.success, false);
-        assert.strictEqual(actual.error_code, vector.expected_outcome.error_code);
-      }
-    );
+    test(`${file} → ${vector.expected_outcome.error_code}`, async () => {
+      const actual = await runVector(vector);
+      assert.strictEqual(actual.success, false);
+      assert.strictEqual(actual.error_code, vector.expected_outcome.error_code);
+    });
   }
 });
 
