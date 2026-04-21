@@ -845,22 +845,35 @@ export interface AdcpServerConfig<TAccount = unknown> {
   signedRequests?: SignedRequestsConfig;
 
   /**
-   * Opt-in schema-driven validation of requests and responses against the
-   * bundled AdCP JSON schemas. When enabled, the dispatcher rejects bad
-   * requests with `VALIDATION_ERROR` before the handler runs and catches
-   * drift in handler-returned responses before they leave the server.
+   * Schema-driven validation of requests and responses against the bundled
+   * AdCP JSON schemas. When enabled, the dispatcher rejects bad requests
+   * with `VALIDATION_ERROR` before the handler runs and catches drift in
+   * handler-returned responses before they leave the server.
    *
-   * Defaults to off — enabling it costs one AJV compile per tool on cold
-   * start and one validator invocation per call. Recommended in dev/test;
-   * optional in production depending on tolerance for extra CPU.
+   * Defaults:
+   *   - When `NODE_ENV === 'production'` → both sides `'off'` (zero overhead
+   *     in prod; trust the handler after its test suite has exercised it).
+   *   - Otherwise (dev, test, CI) → `responses: 'warn'`, `requests: 'off'`.
+   *     The default warn on responses catches the "handler returned a sparse
+   *     object that fails the wire schema" class of bug at development time
+   *     with a clear field path, instead of letting it surface downstream as
+   *     a cryptic `SERVICE_UNAVAILABLE` or `oneOf` discriminator failure.
+   *
+   * Pass an explicit `validation: { requests: 'off', responses: 'off' }` to
+   * override the dev-mode default. Set `responses: 'strict'` in CI if you
+   * want drift to fail loudly rather than warn.
    *
    * Per-side modes:
    *   - `requests: 'strict'` — reject malformed requests with VALIDATION_ERROR.
    *     `'warn'` — log a warning, allow the handler to run.
-   *     `'off'` (default) — skip.
+   *     `'off'` — skip.
    *   - `responses: 'strict'` — handler-returned drift throws (dev/test canary).
    *     `'warn'` — log a warning, return the response unchanged.
-   *     `'off'` (default) — skip.
+   *     `'off'` — skip.
+   *
+   * Cost: one AJV compile per tool on cold start, one validator invocation
+   * per call. The dev-mode default trades that for field-level diagnostics
+   * when handlers drift from the wire contract.
    */
   validation?: {
     requests?: import('../validation/client-hooks').ValidationMode;
@@ -1505,8 +1518,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     validation: validationConfig,
   } = config;
 
+  // Dev/test/CI default: warn on response drift. Production default: off.
+  // Explicit `validation: { requests, responses }` on the config always wins.
+  // Using `process.env.NODE_ENV` matches the convention every other SDK
+  // consumer already tunes (Express, React, etc.); containers/CI that want
+  // prod-like behavior set NODE_ENV=production before start.
+  const isProduction = process.env.NODE_ENV === 'production';
   const requestValidationMode = validationConfig?.requests ?? 'off';
-  const responseValidationMode = validationConfig?.responses ?? 'off';
+  const responseValidationMode = validationConfig?.responses ?? (isProduction ? 'off' : 'warn');
 
   // Enforce lock-step between the `signed-requests` specialism claim and the
   // verifier config for the auto-wiring path. When `signedRequests` is set
