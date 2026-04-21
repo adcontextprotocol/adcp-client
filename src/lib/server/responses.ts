@@ -48,7 +48,17 @@ import type {
   GetSignalsResponse,
   ActivateSignalSuccess,
   ListAccountsResponse,
+  ReportUsageRequest,
+  ReportUsageResponse,
+  SyncAccountsResponse,
+  SyncGovernanceResponse,
 } from '../types/tools.generated';
+import type {
+  AcquireRightsResponse,
+  AcquireRightsAcquired,
+  AcquireRightsPendingApproval,
+  AcquireRightsRejected,
+} from '../types/core.generated';
 
 /**
  * MCP-compatible tool response shape.
@@ -395,3 +405,121 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
     structuredContent: data,
   };
 }
+
+/**
+ * Build an `acquire_rights` response. Thin envelope wrapper — enforces the
+ * discriminated union on `status` at the type level, wraps the domain object
+ * in `content` + `structuredContent`, nothing else. Schema-level constraints
+ * (credential length, schemes cardinality, required-field presence) belong
+ * in wire-level Zod validation, not here.
+ *
+ * Enable dev-time enforcement via
+ * `createAdcpServer({ validation: { responses: 'strict' } })` until it
+ * becomes the default.
+ */
+export function acquireRightsResponse(data: AcquireRightsResponse, summary?: string): McpToolResponse {
+  const defaultSummary =
+    'errors' in data
+      ? 'Rights acquisition error'
+      : data.status === 'acquired'
+        ? `Rights ${data.rights_id} acquired`
+        : data.status === 'rejected'
+          ? `Rights ${data.rights_id} rejected`
+          : `Rights ${data.rights_id} pending approval`;
+  return {
+    content: [{ type: 'text', text: summary ?? defaultSummary }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Per-variant constructor — builds an `AcquireRightsAcquired` success response
+ * and wraps it. Cleaner autocomplete than `acquireRightsResponse({ status: 'acquired', ... })`
+ * because a coding agent typing `acquireRightsAcqu…` gets the required-fields
+ * shape directly without reading a 4-variant union.
+ */
+export function acquireRightsAcquired(data: Omit<AcquireRightsAcquired, 'status'>, summary?: string): McpToolResponse {
+  return acquireRightsResponse({ ...data, status: 'acquired' } as AcquireRightsAcquired, summary);
+}
+
+/** Per-variant constructor for the `pending_approval` branch. */
+export function acquireRightsPendingApproval(
+  data: Omit<AcquireRightsPendingApproval, 'status'>,
+  summary?: string
+): McpToolResponse {
+  return acquireRightsResponse({ ...data, status: 'pending_approval' } as AcquireRightsPendingApproval, summary);
+}
+
+/** Per-variant constructor for the `rejected` branch. */
+export function acquireRightsRejected(data: Omit<AcquireRightsRejected, 'status'>, summary?: string): McpToolResponse {
+  return acquireRightsResponse({ ...data, status: 'rejected' } as AcquireRightsRejected, summary);
+}
+
+/**
+ * Build a `sync_accounts` response. Thin envelope wrapper accepting the full
+ * `SyncAccountsResponse` union; error payloads pass through.
+ */
+export function syncAccountsResponse(data: SyncAccountsResponse, summary?: string): McpToolResponse {
+  const defaultSummary =
+    'errors' in data
+      ? 'Account sync error'
+      : `Synced ${data.accounts?.length ?? 0} account${data.accounts?.length === 1 ? '' : 's'}`;
+  return {
+    content: [{ type: 'text', text: summary ?? defaultSummary }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a sync_governance response. The spec permits two top-level shapes
+ * (success / error); the type union enforces discrimination on `status`.
+ */
+export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: string): McpToolResponse {
+  return {
+    content: [{ type: 'text', text: summary ?? 'Governance registration synced' }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a `report_usage` response. Thin envelope wrapper. Schema-level
+ * `accepted` requiredness is enforced at the type level (via
+ * `ReportUsageResponse.accepted: number`) and at wire-level validation;
+ * this builder does not re-assert it.
+ *
+ * @example
+ * ```typescript
+ * // Explicit:
+ * reportUsage: async (params) =>
+ *   reportUsageResponse({ accepted: 8, errors: [{ usage_index: 2, message: 'invalid' }] })
+ *
+ * // Ack every usage[] row with optional errors (shortcut):
+ * reportUsage: async (params) => reportUsageResponse.acceptAll(params)
+ * ```
+ */
+export function reportUsageResponse(data: ReportUsageResponse, summary?: string): McpToolResponse {
+  return {
+    content: [
+      { type: 'text', text: summary ?? `Accepted ${data.accepted} usage record${data.accepted === 1 ? '' : 's'}` },
+    ],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Shortcut for the common case: accept all rows in the request, optionally
+ * minus any `errors[]` the caller computed. Sets
+ * `accepted = (request.usage?.length ?? 0) - errors.length`.
+ *
+ * Use with honest errors — passing no `errors` when rows failed validation
+ * is lying to buyers and the audit trail.
+ */
+reportUsageResponse.acceptAll = function acceptAll(
+  request: ReportUsageRequest,
+  opts?: { errors?: ReportUsageResponse['errors']; summary?: string }
+): McpToolResponse {
+  const total = request.usage?.length ?? 0;
+  const errors = opts?.errors ?? [];
+  const accepted = Math.max(0, total - errors.length);
+  return reportUsageResponse({ accepted, ...(errors.length > 0 ? { errors } : {}) }, opts?.summary);
+};

@@ -20,6 +20,13 @@ export {
   getSignalsResponse,
   activateSignalResponse,
   cancelMediaBuyResponse,
+  acquireRightsResponse,
+  acquireRightsAcquired,
+  acquireRightsPendingApproval,
+  acquireRightsRejected,
+  syncAccountsResponse,
+  syncGovernanceResponse,
+  reportUsageResponse,
   toStructuredContent,
 } from './responses';
 export type { McpToolResponse } from './responses';
