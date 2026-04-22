@@ -10,7 +10,7 @@
  *
  * function createAgent({ taskStore }) {
  *   const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
- *   server.tool('get_signals', 'Discover audiences.', schema, handler);
+ *   server.registerTool('get_signals', { description: 'Discover audiences.', inputSchema: schema }, handler);
  *   return server;
  * }
  *

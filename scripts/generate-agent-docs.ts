@@ -489,9 +489,11 @@ function generateLlmsTxt(
   ln();
   ln(`function createAgent({ taskStore }) {`);
   ln(`  const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });`);
-  ln(`  server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {`);
-  ln(`    return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');`);
-  ln(`  });`);
+  ln(`  server.registerTool(`);
+  ln(`    'get_signals',`);
+  ln(`    { description: 'Discover segments.', inputSchema: GetSignalsRequestSchema.shape },`);
+  ln(`    async (args) => taskToolResponse({ signals: [...], sandbox: true }, 'Found segments')`);
+  ln(`  );`);
   ln(`  return server;`);
   ln(`}`);
   ln();

@@ -181,8 +181,10 @@ export class SISessionManager implements ISISessionManager {
 
     this.sessions.set(sessionId, session);
 
-    // Generate initial response
-    const initialResponse = await this.generateInitialResponse(session, request.context);
+    // Generate initial response. `intent` is the natural-language handoff
+    // (AdCP 3.0 GA renamed the former string-valued `context` to `intent`;
+    // `context` now carries the protocol envelope object).
+    const initialResponse = await this.generateInitialResponse(session, request.intent);
 
     return {
       session_id: sessionId,
@@ -368,10 +370,13 @@ export class SISessionManager implements ISISessionManager {
   /**
    * Generate initial response when session is created.
    * Override to implement actual greeting/welcome logic.
+   *
+   * `intent` is the natural-language handoff from the host (AdCP 3.0 GA
+   * renamed the former string-valued `context` field to `intent`).
    */
   protected async generateInitialResponse(
     session: SISession,
-    context: unknown
+    intent: string
   ): Promise<{ message?: string; ui_elements?: any[] }> {
     // Stub returns a generic greeting
     return {
@@ -429,20 +434,20 @@ export class AISISessionManager extends SISessionManager {
 
   protected async generateInitialResponse(
     session: SISession,
-    context: unknown
+    intent: string
   ): Promise<{ message?: string; ui_elements?: any[] }> {
     if (!this.isSupported()) {
-      return super.generateInitialResponse(session, context);
+      return super.generateInitialResponse(session, intent);
     }
 
     // In a real implementation, this would:
-    // 1. Parse the context to understand user intent
+    // 1. Parse the intent to understand what the user needs
     // 2. Call AI service to generate personalized greeting
     // 3. Optionally include product recommendations
     return {
       message:
         this.brandConfig?.welcomeMessage ||
-        `Welcome to ${this.brandConfig?.brandName}! I see you're interested in ${context}. How can I help?`,
+        `Welcome to ${this.brandConfig?.brandName}! I see you're interested in ${intent}. How can I help?`,
     };
   }
 }

@@ -37,7 +37,7 @@ describe('serve() task store sharing', () => {
   test('sync tool works across stateless HTTP requests', async () => {
     const factory = ({ taskStore }) => {
       const server = createTaskCapableServer('Test Agent', '1.0.0', { taskStore });
-      server.tool('get_products', { query: z.string().optional() }, async () => {
+      server.registerTool('get_products', { inputSchema: { query: z.string().optional() } }, async () => {
         return taskToolResponse({ products: [{ id: 'p1', name: 'Banner' }] }, 'Found 1 product');
       });
       return server;
@@ -142,7 +142,7 @@ describe('serve() task store sharing', () => {
     const factory = ({ taskStore }) => {
       factoryReceivedStore = taskStore;
       const server = createTaskCapableServer('Custom Store Agent', '1.0.0', { taskStore });
-      server.tool('ping', {}, async () => taskToolResponse({ pong: true }));
+      server.registerTool('ping', { inputSchema: {} }, async () => taskToolResponse({ pong: true }));
       return server;
     };
 
@@ -171,7 +171,7 @@ describe('serve() task store sharing', () => {
     const factory = ({ taskStore }) => {
       stores.push(taskStore);
       const server = createTaskCapableServer('Shared Store', '1.0.0', { taskStore });
-      server.tool('ping', {}, async () => taskToolResponse({ ok: true }));
+      server.registerTool('ping', { inputSchema: {} }, async () => taskToolResponse({ ok: true }));
       return server;
     };
 
@@ -280,7 +280,7 @@ describe('serve() task store sharing', () => {
     const factory = () => {
       callCount++;
       const server = createTaskCapableServer('Legacy', '1.0.0');
-      server.tool('ping', {}, async () => taskToolResponse({ ok: true }));
+      server.registerTool('ping', { inputSchema: {} }, async () => taskToolResponse({ ok: true }));
       return server;
     };
 

@@ -75,7 +75,7 @@ async function startMcpStubWithBearerGate(initialAcceptedTokens) {
 
   const createServer = entry => {
     const mcp = new McpServer({ name: 'cc-stub', version: '1.0.0' });
-    mcp.tool('ping', {}, async () => {
+    mcp.registerTool('ping', { inputSchema: {} }, async () => {
       entry.toolName = 'ping';
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
     });

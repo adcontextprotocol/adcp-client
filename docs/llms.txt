@@ -19,9 +19,11 @@ import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSche
 
 function createAgent({ taskStore }) {
   const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
-  server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {
-    return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');
-  });
+  server.registerTool(
+    'get_signals',
+    { description: 'Discover segments.', inputSchema: GetSignalsRequestSchema.shape },
+    async (args) => taskToolResponse({ signals: [...], sandbox: true }, 'Found segments')
+  );
   return server;
 }
 

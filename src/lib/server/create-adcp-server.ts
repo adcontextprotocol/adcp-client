@@ -69,6 +69,19 @@ import {
 
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 
+// NOTE on `outputSchema`: the MCP SDK's client-side `callTool` validates
+// `result.structuredContent` against the registered `outputSchema`
+// whenever structuredContent is present — regardless of `isError`. See
+// `node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js` line
+// 504. AdCP's `adcpError()` envelope carries
+// `structuredContent: { adcp_error: {...} }` with `isError: true`, which
+// would fail every client-side outputSchema check (the error shape
+// doesn't match the success schema). Until the SDK gates that client
+// check on `!isError` too, we do not declare `outputSchema` on
+// framework-registered tools — response drift is caught by the
+// dispatcher's AJV validator (#727) instead, and custom tools opt in
+// explicitly via `customTools[*].outputSchema`.
+
 function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
   // `clearAll` is optional on `IdempotencyStore` — only present when the
   // configured backend opts in (memory backend does; pg backend does not).
@@ -704,7 +717,23 @@ export interface AdcpCustomToolConfig<
   title?: string;
   /** Zod raw shape or schema for argument validation. */
   inputSchema?: InputArgs;
-  /** Zod raw shape or schema for the declared response payload. */
+  /**
+   * Zod raw shape or schema for the declared response payload.
+   *
+   * Forwarded verbatim to `registerTool`. The MCP SDK validates every
+   * non-error response's `structuredContent` against this schema on the
+   * server AND on the buyer's client (the latter fires regardless of
+   * `isError` — see the `NOTE on outputSchema` block earlier in this
+   * file). Framework-registered AdCP tools skip this field for that
+   * reason; custom tools opt in here and own the trade-off.
+   *
+   * Footgun: a too-strict schema (e.g. `z.never()`, or one that
+   * accidentally rejects the caller's own valid shape) turns the tool
+   * into a silent client-side validation error for every buyer. The
+   * seller sees a successful response go out; the buyer receives an
+   * `Output validation error`. Test against a real buyer call before
+   * relying on this.
+   */
   outputSchema?: OutputArgs;
   /** Tool annotations (readOnlyHint / destructiveHint / idempotentHint / openWorldHint). */
   annotations?: ToolAnnotations;
@@ -2034,13 +2063,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         idempotency && registersAsMutating && typeof idempKeyField?.optional === 'function'
           ? { ...(schema.shape as any), idempotency_key: idempKeyField.optional() }
           : schema.shape;
-      server.tool(toolName, toolShape as any, toolHandler);
-      if (meta?.annotations) {
-        const registered = (server as any)._registeredTools[toolName];
-        if (registered?.update) {
-          registered.update({ annotations: meta.annotations });
-        }
-      }
+      server.registerTool(
+        toolName,
+        {
+          inputSchema: toolShape as Parameters<typeof server.registerTool>[1]['inputSchema'],
+          ...(meta?.annotations != null && { annotations: meta.annotations }),
+        },
+        toolHandler as Parameters<typeof server.registerTool>[2]
+      );
 
       registeredToolNames.add(toolName);
     }
@@ -2197,14 +2227,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   }
 
   const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;
-  server.tool('get_adcp_capabilities', capSchema?.shape ?? {}, async (params: any) => {
-    const data = { ...capabilitiesData };
-    const ctx = params?.context;
-    if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {
-      (data as any).context = ctx;
-    }
-    return capabilitiesResponse(data);
-  });
+  server.registerTool(
+    'get_adcp_capabilities',
+    {
+      inputSchema: (capSchema?.shape ?? {}) as Parameters<typeof server.registerTool>[1]['inputSchema'],
+      annotations: { readOnlyHint: true },
+    },
+    (async (params: any) => {
+      const data = { ...capabilitiesData };
+      const ctx = params?.context;
+      if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {
+        (data as any).context = ctx;
+      }
+      return capabilitiesResponse(data);
+    }) as Parameters<typeof server.registerTool>[2]
+  );
 
   const compliance = {
     async reset({

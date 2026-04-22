@@ -228,7 +228,7 @@ export class GovernanceAgentStub {
     const server = new McpServer({ name: 'Governance Agent Stub', version: '1.0.0' });
 
     // --- get_adcp_capabilities ---
-    server.tool('get_adcp_capabilities', {}, async () => {
+    server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
       this.recordCall('get_adcp_capabilities', {});
       return {
         content: [
@@ -244,88 +244,108 @@ export class GovernanceAgentStub {
     });
 
     // --- sync_plans ---
-    server.tool('sync_plans', SyncPlansRequestSchema.shape, async (args: Record<string, unknown>) => {
-      this.recordCall('sync_plans', args);
-      const plans = (args.plans as Array<Record<string, unknown>>) || [];
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              plans: plans.map((p: Record<string, unknown>) => ({
-                plan_id: p.plan_id,
-                status: 'active',
-                version: 1,
-                categories: [{ category_id: 'budget_authority' }, { category_id: 'geo_compliance' }],
-              })),
-            }),
-          },
-        ],
-      };
-    });
+    server.registerTool(
+      'sync_plans',
+      { inputSchema: SyncPlansRequestSchema.shape as Parameters<typeof server.registerTool>[1]['inputSchema'] },
+      (async (args: Record<string, unknown>) => {
+        this.recordCall('sync_plans', args);
+        const plans = (args.plans as Array<Record<string, unknown>>) || [];
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                plans: plans.map((p: Record<string, unknown>) => ({
+                  plan_id: p.plan_id,
+                  status: 'active',
+                  version: 1,
+                  categories: [{ category_id: 'budget_authority' }, { category_id: 'geo_compliance' }],
+                })),
+              }),
+            },
+          ],
+        };
+      }) as Parameters<typeof server.registerTool>[2]
+    );
 
     // --- check_governance ---
-    server.tool('check_governance', CheckGovernanceRequestSchema.shape, async (args: Record<string, unknown>) => {
-      this.recordCall('check_governance', args);
+    server.registerTool(
+      'check_governance',
+      { inputSchema: CheckGovernanceRequestSchema.shape as Parameters<typeof server.registerTool>[1]['inputSchema'] },
+      (async (args: Record<string, unknown>) => {
+        this.recordCall('check_governance', args);
 
-      const planId = args.plan_id as string;
-      const checkId = `chk_stub_${randomUUID().slice(0, 8)}`;
-      const gc = this.generateContext(planId);
+        const planId = args.plan_id as string;
+        const checkId = `chk_stub_${randomUUID().slice(0, 8)}`;
+        const gc = this.generateContext(planId);
 
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              check_id: checkId,
-              status: 'approved',
-              plan_id: planId,
-              explanation: 'Stub governance agent: approved for testing.',
-              governance_context: gc,
-              expires_at: new Date(Date.now() + 3600_000).toISOString(),
-            }),
-          },
-        ],
-      };
-    });
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                check_id: checkId,
+                status: 'approved',
+                plan_id: planId,
+                explanation: 'Stub governance agent: approved for testing.',
+                governance_context: gc,
+                expires_at: new Date(Date.now() + 3600_000).toISOString(),
+              }),
+            },
+          ],
+        };
+      }) as Parameters<typeof server.registerTool>[2]
+    );
 
     // --- report_plan_outcome ---
-    server.tool('report_plan_outcome', ReportPlanOutcomeRequestSchema.shape, async (args: Record<string, unknown>) => {
-      this.recordCall('report_plan_outcome', args);
+    server.registerTool(
+      'report_plan_outcome',
+      {
+        inputSchema: ReportPlanOutcomeRequestSchema.shape as Parameters<typeof server.registerTool>[1]['inputSchema'],
+      },
+      (async (args: Record<string, unknown>) => {
+        this.recordCall('report_plan_outcome', args);
 
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              outcome_id: `out_stub_${randomUUID().slice(0, 8)}`,
-              status: 'accepted',
-            }),
-          },
-        ],
-      };
-    });
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                outcome_id: `out_stub_${randomUUID().slice(0, 8)}`,
+                status: 'accepted',
+              }),
+            },
+          ],
+        };
+      }) as Parameters<typeof server.registerTool>[2]
+    );
 
     // --- get_plan_audit_logs ---
-    server.tool('get_plan_audit_logs', GetPlanAuditLogsRequestSchema.shape, async (args: Record<string, unknown>) => {
-      this.recordCall('get_plan_audit_logs', args);
+    server.registerTool(
+      'get_plan_audit_logs',
+      {
+        inputSchema: GetPlanAuditLogsRequestSchema.shape as Parameters<typeof server.registerTool>[1]['inputSchema'],
+      },
+      (async (args: Record<string, unknown>) => {
+        this.recordCall('get_plan_audit_logs', args);
 
-      const planIds = (args.plan_ids as string[]) || [];
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              plans: planIds.map(id => ({
-                plan_id: id,
-                budget: { total_committed: 0, budget_remaining: 10000 },
-                entries: [],
-              })),
-            }),
-          },
-        ],
-      };
-    });
+        const planIds = (args.plan_ids as string[]) || [];
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                plans: planIds.map(id => ({
+                  plan_id: id,
+                  budget: { total_committed: 0, budget_remaining: 10000 },
+                  entries: [],
+                })),
+              }),
+            },
+          ],
+        };
+      }) as Parameters<typeof server.registerTool>[2]
+    );
 
     return server;
   }

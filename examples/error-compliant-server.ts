@@ -109,7 +109,7 @@ function createAgentServer() {
   const server = createTaskCapableServer('Example AdCP Agent', '1.0.0');
 
   // --- get_adcp_capabilities ---
-  server.tool('get_adcp_capabilities', {}, async () => {
+  server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
     const limited = checkRateLimit();
     if (limited) return limited;
 
@@ -128,7 +128,7 @@ function createAgentServer() {
   });
 
   // --- get_products ---
-  server.tool('get_products', GetProductsRequestSchema.shape, async () => {
+  server.registerTool('get_products', { inputSchema: GetProductsRequestSchema.shape }, async () => {
     const limited = checkRateLimit();
     if (limited) return limited;
 
@@ -136,9 +136,9 @@ function createAgentServer() {
   });
 
   // --- create_media_buy ---
-  server.tool(
+  server.registerTool(
     'create_media_buy',
-    LenientCreateMediaBuyInput.shape,
+    { inputSchema: LenientCreateMediaBuyInput.shape },
     async ({ buyer_ref, start_time, end_time, packages }) => {
       const limited = checkRateLimit();
       if (limited) return limited;
@@ -206,27 +206,31 @@ function createAgentServer() {
   );
 
   // --- get_media_buy_delivery ---
-  server.tool('get_media_buy_delivery', GetMediaBuyDeliveryRequestSchema.shape, async ({ media_buy_ids }) => {
-    const limited = checkRateLimit();
-    if (limited) return limited;
+  server.registerTool(
+    'get_media_buy_delivery',
+    { inputSchema: GetMediaBuyDeliveryRequestSchema.shape },
+    async ({ media_buy_ids }) => {
+      const limited = checkRateLimit();
+      if (limited) return limited;
 
-    const ids = media_buy_ids ?? [];
-    const now = new Date();
-    const yesterday = new Date(now.getTime() - 86400000);
+      const ids = media_buy_ids ?? [];
+      const now = new Date();
+      const yesterday = new Date(now.getTime() - 86400000);
 
-    return deliveryResponse({
-      reporting_period: {
-        start: yesterday.toISOString(),
-        end: now.toISOString(),
-      },
-      media_buy_deliveries: ids.map(id => ({
-        media_buy_id: id,
-        status: 'active' as const,
-        totals: { impressions: 0, spend: 0 },
-        by_package: [],
-      })),
-    });
-  });
+      return deliveryResponse({
+        reporting_period: {
+          start: yesterday.toISOString(),
+          end: now.toISOString(),
+        },
+        media_buy_deliveries: ids.map(id => ({
+          media_buy_id: id,
+          status: 'active' as const,
+          totals: { impressions: 0, spend: 0 },
+          by_package: [],
+        })),
+      });
+    }
+  );
 
   return server;
 }

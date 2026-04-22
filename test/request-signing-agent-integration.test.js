@@ -57,7 +57,7 @@ async function startMcpStub(initialCapability) {
   const createServer = entry => {
     const mcp = new McpServer({ name: 'signing-stub', version: '1.0.0' });
 
-    mcp.tool('get_adcp_capabilities', {}, async () => {
+    mcp.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
       entry.toolName = 'get_adcp_capabilities';
       return {
         content: [
@@ -78,9 +78,9 @@ async function startMcpStub(initialCapability) {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
     };
 
-    mcp.tool('create_media_buy', {}, echoAs('create_media_buy'));
-    mcp.tool('another_op', {}, echoAs('another_op'));
-    mcp.tool('unsigned_op', {}, echoAs('unsigned_op'));
+    mcp.registerTool('create_media_buy', { inputSchema: {} }, echoAs('create_media_buy'));
+    mcp.registerTool('another_op', { inputSchema: {} }, echoAs('another_op'));
+    mcp.registerTool('unsigned_op', { inputSchema: {} }, echoAs('unsigned_op'));
 
     return mcp;
   };

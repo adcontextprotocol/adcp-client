@@ -98,7 +98,7 @@ What happens when a creative is synced:
 | `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. `{width, height}` shorthand fails — wrap in `dimensions`. |
 | `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                         |
 | `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                        |
-| `preview_creative`      | manual (union schema)          | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | Register via `server.tool('preview_creative', PreviewCreativeSingleRequestSchema.shape, handler)` after `createAdcpServer`. `renders[].output_format` is a discriminator.      |
+| `preview_creative`      | manual (union schema)          | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | Register via `server.registerTool('preview_creative', { inputSchema: PreviewCreativeSingleRequestSchema.shape }, handler)` after `createAdcpServer`. `renders[].output_format` is a discriminator. |
 | `build_creative`        | `creative.buildCreative`       | [`#build_creative`](../../docs/llms.txt#build_creative)               | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                 |
 
 Asset values use type-specific shapes, not a generic `asset_type` discriminator:
@@ -134,7 +134,7 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `buildCreativeResponse(data)`                           | Auto-applied response builder (don't call manually)                       |
 | `previewCreativeResponse(data)`                         | Call manually — `preview_creative` is registered outside the domain group |
 | `adcpError(code, { message })`                          | Structured error                                                          |
-| `server.tool(name, Schema.shape, handler)`              | Manual registration — only needed for `preview_creative` (union schema)   |
+| `server.registerTool(name, { inputSchema: Schema.shape }, handler)` | Manual registration — only needed for `preview_creative` (union schema)   |
 | `PreviewCreativeSingleRequestSchema.shape`              | Zod schema for manual `preview_creative` registration                     |
 
 Import: `import { createAdcpServer, serve, adcpError, previewCreativeResponse, PreviewCreativeSingleRequestSchema } from '@adcp/client';`
@@ -286,7 +286,10 @@ serve(() => {
   });
 
   // preview_creative has a union schema — register manually
-  server.tool('preview_creative', PreviewCreativeSingleRequestSchema.shape, async ({ params }) => {
+  server.registerTool(
+    'preview_creative',
+    { inputSchema: PreviewCreativeSingleRequestSchema.shape },
+    async ({ params }) => {
     return previewCreativeResponse({
       response_type: 'single',
       previews: [
@@ -306,7 +309,8 @@ serve(() => {
       ],
       expires_at: new Date(Date.now() + 3600000).toISOString(),
     });
-  });
+    }
+  );
 
   return server;
 });
