@@ -1,5 +1,66 @@
 # Changelog
 
+## 5.9.1
+
+### Patch Changes
+
+- b1497f9: ci: consolidate pipeline and drop redundant jobs
+
+  CI-only change, no runtime/library behaviour affected. Published package contents are unchanged.
+  - `ci.yml`: collapse `test` / `quality` / `security` into a single job. Each was re-running `checkout + setup-node + npm ci`, wasting ~1–2 min of setup per PR. Also removes the `clean && build:lib` re-build in the old quality job and the redundant `build` step (alias of `build:lib`).
+  - `ci.yml`: drop `publish-dry-run`. `release.yml`'s `prepublishOnly` already validates packaging on the actual release PR.
+  - `ci.yml`: drop dead `develop` branch from the push trigger.
+  - `schema-sync.yml`: drop the PR-triggered `validate-schemas` job — `ci.yml` already syncs schemas and diffs generated files on every PR. Scheduled auto-update job preserved.
+  - `commitlint.yml`: use `npm ci` instead of `npm install --save-dev`; the `@commitlint/*` packages are already in `devDependencies`.
+
+- 933eb2d: Two response-layer fixes for agents built from partial skill coverage:
+
+  **`buildCreativeResponse` / `buildCreativeMultiResponse` no longer crash on missing fields.** The default summary previously dereferenced `data.creative_manifest.format_id.id` without guards — handlers that drop `format_id` (required by `creative-manifest.json`) crashed the dispatcher with `Cannot read properties of undefined (reading 'id')`, swallowing the real schema violation behind an opaque `SERVICE_UNAVAILABLE`. Now the summary optional-chains through the field chain and falls back to a generic string, so the response reaches wire-level validation and the buyer sees the actual missing-field error.
+
+  **`replayed: false` is no longer injected on fresh executions.** `protocol-envelope.json` permits the field to be "omitted when the request was executed fresh"; emitting `false` violates strict task response schemas that declare `additionalProperties: false` (`create-property-list-response`, etc.). Fresh responses now drop any prior `replayed` marker; replays still carry `replayed: true`. The existing `test/lib/idempotency-client.test.js` "replayed omitted is surfaced as undefined" test aligns with this shift.
+
+  Surfaced by matrix v10: six `creative_generative` pairs crashed with the dereference, and every `property_lists` pair hit the `additionalProperties` violation.
+
+- 5eb2ae9: fix(testing): `context.no_secret_echo` walks structured `TestOptions.auth`, and `registerAssertion` accepts `{ override: true }`
+  - The default `context.no_secret_echo` assertion in `@adcp/client/testing`
+    previously treated `options.auth` as a string and added the whole
+    discriminated-union object to its secret set. `String.includes(obj)`
+    against `[object Object]` matched nothing, so the assertion was
+    effectively a no-op for every consumer passing structured auth (bearer,
+    basic, oauth, oauth_client_credentials). It now extracts the leaf
+    secrets across every variant:
+    - bearer: `token`
+    - basic: `username`, `password`, and the base64 `user:pass` blob an
+      `Authorization: Basic` header would carry
+    - oauth: `tokens.access_token`, `tokens.refresh_token`,
+      `client.client_secret` (confidential clients)
+    - oauth_client_credentials: `credentials.client_id` and
+      `credentials.client_secret` — resolving `$ENV:VAR` references to their
+      runtime values so echoes of the real secret (not the reference string)
+      are caught — plus `tokens.access_token` / `tokens.refresh_token`
+
+    A minimum-length guard (8 chars) skips substring matching on fixture
+    values that would otherwise collide with benign JSON.
+
+  - `registerAssertion(spec, { override: true })` now replaces an existing
+    registration instead of throwing. Lets consumers swap in a stricter
+    version of an SDK default (e.g. their own `context.no_secret_echo`)
+    without calling `clearAssertionRegistry()` and re-registering every other
+    default. Default behaviour (`{ override: false }` / no options) is
+    unchanged and still throws on duplicate ids.
+
+- afc01f1: Widen two bundled default assertions per security-review feedback on adcontextprotocol/adcp#2769.
+
+  **`idempotency.conflict_no_payload_leak`** — flip the denylist-of-5-fields to an allowlist of 7 envelope keys (`code`, `message`, `status`, `retry_after`, `correlation_id`, `request_id`, `operation_id`). The previous implementation only flagged `payload`, `stored_payload`, `request_body`, `original_request`, `original_response` — a seller inlining `budget`, `start_time`, `product_id`, or `account_id` at the `adcp_error` root slipped past, turning idempotency-key reuse into a read oracle for stolen-key attackers. Allowlisting closes the hole: anything a seller adds beyond the 7 envelope fields now fails the assertion.
+
+  **`context.no_secret_echo`** — scan the full response body recursively (not just `.context`), add a bearer-token literal regex (`/\bbearer\s+[A-Za-z0-9._~+/=-]{10,}/i`), add recursive suspect-property-name match (`authorization`, `api_key`, `apikey`, `bearer`, `x-api-key`), and pick up `options.test_kit.auth.api_key` as a verbatim-secret source. The previous scope (`response.context` only, verbatim `options.auth_token`/`.auth`/`.secrets[]` only) missed the common cases where sellers echo credentials into `error.message`, `audit.incoming_auth`, nested debug fields, or as header-shaped properties. All caller-supplied secrets gate on a minimum length (8 chars) to avoid false positives on placeholder values.
+
+  Both changes are patch-level — the assertion ids, public registration API, and passing-case behavior are unchanged; the narrowing on main was fresh in 5.9 and had no adopters broad enough for the strictening to break in practice.
+
+  `governance.denial_blocks_mutation` is unchanged.
+
+  16 new unit tests cover both widenings: allowlist hits (valid envelope passes), denylist vestigial names still fail, non-allowlisted field leaks (including stable sorted error output), plus bearer literals, verbatim `options.auth_token` echo, `options.secrets[]` echo, `test_kit.auth.api_key` echo, suspect property names at any depth, array walking, short-value false-positive guard, and prose-"bearer" ignore.
+
 ## 5.9.0
 
 ### Minor Changes
