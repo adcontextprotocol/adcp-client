@@ -93,13 +93,14 @@ describe('createAdcpServer validation middleware', () => {
     });
   });
 
-  describe('requests: "off" (default)', () => {
-    test('does not validate when no validation config provided', async () => {
+  describe('requests: "off"', () => {
+    test('does not validate when explicitly disabled', async () => {
       let handlerCalled = false;
       const server = createAdcpServer({
         name: 'test',
         version: '0.0.1',
         stateStore: new InMemoryStateStore(),
+        validation: { requests: 'off' },
         mediaBuy: {
           getProducts: async () => {
             handlerCalled = true;
