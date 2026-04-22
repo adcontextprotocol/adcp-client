@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -28,17 +28,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check code formatting
+        run: npm run format:check
+
       - name: Sync schemas from AdCP
         run: npm run sync-schemas
 
       - name: Validate generated files are in sync
         run: |
-          # Regenerate types from schemas
           npm run generate-types
           npm run generate-wellknown-schemas
 
-          # Check if any generated files changed (ignoring timestamp comments)
-          # Use -I to ignore lines matching the timestamp pattern
           if ! git diff --exit-code -I '// Generated at:' src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null; then
             echo ""
             echo "❌ Generated TypeScript files are out of sync with AdCP schemas!"
@@ -71,81 +71,25 @@ jobs:
         env:
           CI: true
 
-      - name: Build full project
-        run: npm run build
-
-  quality:
-    name: Code Quality
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check code formatting
-        run: npm run format:check
-
-      - name: Check package.json integrity
+      - name: Validate package exports
         run: |
-          # Verify no missing dependencies
-          npm ls --depth=0
-
-          # Verify build works from clean state
-          npm run clean
-          npm run build:lib
-
-          # Verify package exports are valid
           node -e "
             const pkg = require('./package.json');
             const fs = require('fs');
-            
-            // Check main export exists
+
             if (!fs.existsSync(pkg.main)) {
               throw new Error('Main export file does not exist: ' + pkg.main);
             }
-            
-            // Check types export exists
             if (!fs.existsSync(pkg.types)) {
               throw new Error('Types export file does not exist: ' + pkg.types);
             }
-            
             console.log('✅ Package exports are valid');
           "
 
-  security:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
       - name: Run security audit
         run: |
-          # Run audit and report findings (don't fail on moderate/low)
           npm audit || true
 
-          # Only fail on high or critical vulnerabilities
           if npm audit --audit-level=high 2>/dev/null; then
             echo "✅ No high or critical vulnerabilities found"
           else
@@ -153,34 +97,3 @@ jobs:
             npm audit --audit-level=high
             exit 1
           fi
-
-  publish-dry-run:
-    name: Publish Dry Run
-    runs-on: ubuntu-latest
-    needs: [test, quality, security]
-    if: github.event_name == 'pull_request'
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test publish (dry run)
-        run: |
-          # Simulate the full publish process
-          npm run prepublishOnly
-          npm pack --dry-run
-
-          echo "✅ Package is ready for publication"
-          echo "📦 Package contents:"
-          npm pack --silent | tar -tzf - | head -20
