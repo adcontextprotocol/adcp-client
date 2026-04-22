@@ -84,6 +84,8 @@ Upstream tracking for the two schema gaps: https://github.com/adcontextprotocol/
 
 ## Tools and Required Response Shapes
 
+> **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`acquire_rights\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
+
 **`get_brand_identity`** — returns brand identity matching `brand/get-brand-identity-response.json`
 
 Required: `brand_id`, `house`, `names` (array of locale-keyed objects).

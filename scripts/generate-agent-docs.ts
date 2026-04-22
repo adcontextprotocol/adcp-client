@@ -676,18 +676,40 @@ function generateLlmsTxt(
       if (toolDesc) ln(`${toolDesc}.`);
       ln();
 
+      ln(`**Request:**`);
       if (tool.requiredFields.length) {
-        ln(`Required: ${tool.requiredFields.map(f => `\`${f}\``).join(', ')}`);
+        ln(`- Required: ${tool.requiredFields.map(f => `\`${f}\``).join(', ')}`);
       }
       if (tool.optionalFields.length) {
         // Show first 8 optional fields to keep it scannable
         const shown = tool.optionalFields.slice(0, 8);
         const more = tool.optionalFields.length - shown.length;
-        let optLine = `Optional: ${shown.map(f => `\`${f}\``).join(', ')}`;
+        let optLine = `- Optional: ${shown.map(f => `\`${f}\``).join(', ')}`;
         if (more > 0) optLine += `, +${more} more`;
         ln(optLine);
       }
+      if (!tool.requiredFields.length && !tool.optionalFields.length) {
+        ln(`- (no parameters)`);
+      }
       ln();
+
+      // Response contract — most common drift cause is agents dropping a
+      // required response field. Surface the happy-path shape right next to
+      // the request shape so skill authors don't have to leave the file.
+      if (tool.resRequiredFields.length || tool.resOptionalFields.length) {
+        ln(`**Response (success branch):**`);
+        if (tool.resRequiredFields.length) {
+          ln(`- Required: ${tool.resRequiredFields.map(f => `\`${f}\``).join(', ')}`);
+        }
+        if (tool.resOptionalFields.length) {
+          const shown = tool.resOptionalFields.slice(0, 8);
+          const more = tool.resOptionalFields.length - shown.length;
+          let optLine = `- Optional: ${shown.map(f => `\`${f}\``).join(', ')}`;
+          if (more > 0) optLine += `, +${more} more`;
+          ln(optLine);
+        }
+        ln();
+      }
     }
 
     // Deep dive links for this domain

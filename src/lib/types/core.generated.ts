@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-22T03:12:40.417Z
+// Generated at: 2026-04-22T03:02:49.814Z
 
 // MEDIA-BUY SCHEMA
 /**
