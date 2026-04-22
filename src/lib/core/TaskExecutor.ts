@@ -1520,12 +1520,25 @@ export class TaskExecutor {
   private normalizeResponseForValidation(response: any, taskName: string): any {
     if (!response) return response;
 
+    // Strip underscore-prefixed client-side annotations (`_message` is added
+    // by the response unwrapper, others may follow). Schemas with
+    // `additionalProperties: false` (create-property-list-response, etc.)
+    // would otherwise reject every response that reaches the grader's
+    // schema check — the annotation is not part of the wire protocol.
+    const stripped: Record<string, unknown> = {};
+    if (typeof response === 'object' && !Array.isArray(response)) {
+      for (const [k, v] of Object.entries(response)) {
+        if (!k.startsWith('_')) stripped[k] = v;
+      }
+    } else {
+      return taskName === 'get_products' ? normalizeGetProductsResponse(response) : response;
+    }
+
     switch (taskName) {
       case 'get_products':
-        // Normalize v2 pricing options to v3 format
-        return normalizeGetProductsResponse(response);
+        return normalizeGetProductsResponse(stripped);
       default:
-        return response;
+        return stripped;
     }
   }
 

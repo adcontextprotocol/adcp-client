@@ -70,6 +70,11 @@ Does the buyer send performance metrics back for optimization?
 ## Tools and Required Response Shapes
 
 > **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`sync_catalogs\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
+>
+> **Cross-cutting pitfalls matrix runs keep catching:**
+>
+> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['sales-catalog-driven', 'conversion_tracking']`), NOT `[{id, version}]` objects.
+> - `get_media_buy_delivery` response requires **top-level `currency: string`** (ISO 4217).
 
 All standard seller tools apply (see `skills/build-seller-agent/SKILL.md`). The additional tools:
 

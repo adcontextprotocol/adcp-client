@@ -79,6 +79,13 @@ Brands should be registered dynamically through `sync_accounts` — when a buyer
 ## Tools and Required Response Shapes
 
 > **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`build_creative\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
+>
+> **Cross-cutting pitfalls matrix runs keep catching:**
+>
+> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['creative-generative']`), NOT `[{id, version}]` objects.
+> - `build_creative` response is `{ creative_manifest: { format_id, assets } }` — NOT `{ creative_id, status, quality, preview_url }`. Those are `sync_creatives` fields; don't leak them in.
+> - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator (`image`, `video`, `html`, `text`, `url`).
+> - `get_media_buy_delivery` requires **top-level `currency: string`** (ISO 4217).
 
 Everything from the standard seller skill applies. The delta is in `list_creative_formats` and `sync_creatives`.
 
