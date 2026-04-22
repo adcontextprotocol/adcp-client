@@ -325,7 +325,16 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Creative ───────────────────────────────────────────
 
-  list_creative_formats() {
+  list_creative_formats(step, context) {
+    // Mirror the pattern used by peer builders (build_creative, sync_creatives,
+    // etc.): honor hand-authored sample_request so storyboards can exercise
+    // format_ids filters and other query params. Without this, any step that
+    // declares `format_ids: ["..."]` in sample_request hits the wire as an
+    // empty request and the agent returns unfiltered results — failing
+    // round-trip / substitution-observer assertions silently.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {};
   },
 
