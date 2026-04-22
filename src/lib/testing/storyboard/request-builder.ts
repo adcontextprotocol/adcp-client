@@ -758,11 +758,10 @@ export function enrichRequest(
   const enricher = REQUEST_ENRICHERS[step.task];
   const fixture =
     step.sample_request !== undefined
-      ? (injectContext(
-          { ...(step.sample_request as Record<string, unknown>) },
-          context,
-          runnerVars
-        ) as Record<string, unknown>)
+      ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context, runnerVars) as Record<
+          string,
+          unknown
+        >)
       : undefined;
 
   if (!enricher) return fixture ?? {};
