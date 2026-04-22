@@ -126,7 +126,11 @@ function makeMockClient(responder) {
 function successResponse() {
   return {
     success: true,
-    data: { content: [{ type: 'text', text: JSON.stringify({ success: true, previous_state: 'none', current_state: 'seeded' }) }] },
+    data: {
+      content: [
+        { type: 'text', text: JSON.stringify({ success: true, previous_state: 'none', current_state: 'seeded' }) },
+      ],
+    },
   };
 }
 
@@ -211,7 +215,10 @@ describe('runControllerSeeding', () => {
           success: true,
           data: {
             content: [
-              { type: 'text', text: JSON.stringify({ success: false, error: 'INVALID_PARAMS', error_detail: 'bad fixture' }) },
+              {
+                type: 'text',
+                text: JSON.stringify({ success: false, error: 'INVALID_PARAMS', error_detail: 'bad fixture' }),
+              },
             ],
           },
         };

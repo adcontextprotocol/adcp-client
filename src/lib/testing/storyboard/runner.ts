@@ -528,7 +528,9 @@ async function executeStoryboardPass(
   let seedingMissingController = false;
   {
     const seeding =
-      preSeeded !== undefined ? preSeeded.result : await runControllerSeeding(clients[0]!, storyboard, options, context);
+      preSeeded !== undefined
+        ? preSeeded.result
+        : await runControllerSeeding(clients[0]!, storyboard, options, context);
     if (seeding) {
       const attach = preSeeded === undefined || preSeeded.attach;
       if (attach) {
