@@ -1352,7 +1352,8 @@ _Request:_
 ```
 {
   offering_id: string  // required
-  context: string
+  intent: string
+  context: Context
   include_products: boolean
   product_limit: integer
 }
@@ -1380,9 +1381,10 @@ _Response (success branch):_
 _Request:_
 ```
 {
-  context: string  // required
+  intent: string  // required
   identity: Si Identity  // required
   idempotency_key: string  // required
+  context: Context
   media_buy_id: string
   placement: string
   offering_id: string

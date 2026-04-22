@@ -748,7 +748,7 @@ Get offering details, availability, and optionally matching products before sess
 
 **Request:**
 - Required: `offering_id: string`
-- Optional: `context: string`, `include_products: boolean`, `product_limit: integer`
+- Optional: `intent: string`, `context: Context`, `include_products: boolean`, `product_limit: integer`
 
 **Response (success branch):**
 - Required: `available: boolean`
@@ -759,8 +759,8 @@ Get offering details, availability, and optionally matching products before sess
 Host initiates SI session with brand agent - includes context, identity, and capability negotiation.
 
 **Request:**
-- Required: `context: string`, `identity: Si Identity`, `idempotency_key: string`
-- Optional: `media_buy_id: string`, `placement: string`, `offering_id: string`, `supported_capabilities: Si Capabilities`, `offering_token: string`
+- Required: `intent: string`, `identity: Si Identity`, `idempotency_key: string`
+- Optional: `context: Context`, `media_buy_id: string`, `placement: string`, `offering_id: string`, `supported_capabilities: Si Capabilities`, `offering_token: string`
 
 **Response (success branch):**
 - Required: `session_id: string`, `session_status: Si Session Status`

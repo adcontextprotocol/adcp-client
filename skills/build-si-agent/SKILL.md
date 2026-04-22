@@ -47,7 +47,7 @@ How should the agent respond during a session?
 
 ## Tools and Required Response Shapes
 
-> **Canonical field contracts**: every tool's full request + response field list lives at [`docs/llms.txt`](../../docs/llms.txt) under a `#<tool_name>` anchor (e.g. [`#si_initiate_session`](../../docs/llms.txt#si_initiate_session)). Strict response validation (dev default) rejects drift with the exact field path. This skill covers handler patterns, gotchas, and domain-specific examples — not field-by-field contracts.
+> **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`si_initiate_session\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 

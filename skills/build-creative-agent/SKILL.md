@@ -88,18 +88,18 @@ What happens when a creative is synced:
 
 ## Tools and Required Response Shapes
 
-> **Canonical field contracts**: every tool's full request + response field list lives at [`docs/llms.txt`](../../docs/llms.txt) under a `#<tool_name>` anchor (e.g. [`#build_creative`](../../docs/llms.txt#build_creative)). Strict response validation (dev default) rejects drift with the exact field path. This skill covers handler patterns, gotchas, and domain-specific examples — not field-by-field contracts.
+> **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`build_creative\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
 
-Handler bindings (full contracts at [`docs/llms.txt`](../../docs/llms.txt)):
+**Handler bindings — read the Contract column entry before writing each return:**
 
-| Tool                    | Handler                        | Notes                                                                                                                                                                                       |
-| ----------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_adcp_capabilities` | auto-generated                 | Do not register manually.                                                                                                                                                                   |
-| `list_creative_formats` | `creative.listCreativeFormats` | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. `{width, height}` shorthand fails — wrap in `dimensions`.              |
-| `sync_creatives`        | `creative.syncCreatives`       | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                                      |
-| `list_creatives`        | `creative.listCreatives`       | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                                     |
-| `preview_creative`      | manual (union schema)          | Register via `server.tool('preview_creative', PreviewCreativeSingleRequestSchema.shape, handler)` after `createAdcpServer`. `renders[].output_format` is a discriminator (`url` \| `html`). |
-| `build_creative`        | `creative.buildCreative`       | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                              |
+| Tool                    | Handler                        | Contract (field list)                                                 | Gotchas                                                                                                                                                                        |
+| ----------------------- | ------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `get_adcp_capabilities` | auto-generated                 | n/a                                                                   | Do not register manually.                                                                                                                                                      |
+| `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. `{width, height}` shorthand fails — wrap in `dimensions`. |
+| `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                         |
+| `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                        |
+| `preview_creative`      | manual (union schema)          | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | Register via `server.tool('preview_creative', PreviewCreativeSingleRequestSchema.shape, handler)` after `createAdcpServer`. `renders[].output_format` is a discriminator.      |
+| `build_creative`        | `creative.buildCreative`       | [`#build_creative`](../../docs/llms.txt#build_creative)               | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                 |
 
 Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 

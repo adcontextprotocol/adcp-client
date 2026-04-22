@@ -371,7 +371,7 @@ export class SISessionManager implements ISISessionManager {
    */
   protected async generateInitialResponse(
     session: SISession,
-    context: string
+    context: unknown
   ): Promise<{ message?: string; ui_elements?: any[] }> {
     // Stub returns a generic greeting
     return {
@@ -429,7 +429,7 @@ export class AISISessionManager extends SISessionManager {
 
   protected async generateInitialResponse(
     session: SISession,
-    context: string
+    context: unknown
   ): Promise<{ message?: string; ui_elements?: any[] }> {
     if (!this.isSupported()) {
       return super.generateInitialResponse(session, context);

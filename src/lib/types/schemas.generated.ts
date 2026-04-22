@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-21T21:52:55.559Z
+// Generated at: 2026-04-22T02:47:27.524Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2812,7 +2812,8 @@ export const SignalValueTypeSchema = z.union([z.literal("binary"), z.literal("ca
 export const SIGetOfferingRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     offering_id: z.string(),
-    context: z.string().optional(),
+    intent: z.string().optional(),
+    context: ContextObjectSchema.optional(),
     include_products: z.boolean().optional(),
     product_limit: z.number().optional(),
     ext: ExtensionObjectSchema.optional()
@@ -5033,7 +5034,8 @@ export const CheckGovernanceResponseSchema = z.object({
 
 export const SIInitiateSessionRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
-    context: z.string(),
+    intent: z.string(),
+    context: ContextObjectSchema.optional(),
     identity: SIIdentitySchema,
     media_buy_id: z.string().optional(),
     placement: z.string().optional(),
