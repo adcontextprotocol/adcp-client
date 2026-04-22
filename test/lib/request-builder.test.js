@@ -88,16 +88,15 @@ describe('Request Builder', () => {
         query: 'licensed commercial rights for a regional outdoor retail campaign',
         uses: ['commercial', 'endorsement'],
       };
-      const result = buildRequest(
-        step('get_rights', { sample_request: fixture }),
-        {},
-        DEFAULT_OPTIONS,
-      );
+      const result = buildRequest(step('get_rights', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
       assert.strictEqual(result.query, fixture.query);
       assert.deepStrictEqual(result.uses, fixture.uses);
       assert.deepStrictEqual(result.buyer, fixture.buyer);
-      assert.strictEqual(result.brand_id, undefined,
-        'brand_id from caller domain must not leak when sample_request omits it');
+      assert.strictEqual(
+        result.brand_id,
+        undefined,
+        'brand_id from caller domain must not leak when sample_request omits it'
+      );
     });
   });
 
