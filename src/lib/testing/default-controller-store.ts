@@ -57,17 +57,8 @@
  * ```
  */
 
-import type {
-  TestControllerStore,
-  TestControllerStoreFactory,
-  ControllerScenario,
-} from '../server/test-controller';
-import {
-  CONTROLLER_SCENARIOS,
-  SESSION_ENTRY_CAP,
-  TestControllerError,
-  enforceMapCap,
-} from '../server/test-controller';
+import type { TestControllerStore, TestControllerStoreFactory, ControllerScenario } from '../server/test-controller';
+import { CONTROLLER_SCENARIOS, SESSION_ENTRY_CAP, TestControllerError, enforceMapCap } from '../server/test-controller';
 import type { AccountStatus, CreativeStatus, MediaBuyStatus } from '../types/core.generated';
 import type { SimulationSuccess, StateTransitionSuccess } from '../types/tools.generated';
 
@@ -330,11 +321,7 @@ export function createDefaultTestControllerStore<S extends DefaultSessionShape>(
 
     const defaults: TestControllerStore = {
       // ── force_creative_status ─────────────────────────────
-      async forceCreativeStatus(
-        creativeId,
-        status,
-        rejectionReason
-      ): Promise<StateTransitionSuccess> {
+      async forceCreativeStatus(creativeId, status, rejectionReason): Promise<StateTransitionSuccess> {
         const tracked = session.creativeStatuses.get(creativeId);
         const seeded = session.seededCreatives.get(creativeId);
         if (tracked === undefined && seeded === undefined) {
@@ -343,17 +330,11 @@ export function createDefaultTestControllerStore<S extends DefaultSessionShape>(
             `Creative ${creativeId} not found. Seed it first with seed_creative.`
           );
         }
-        const previous =
-          tracked ?? ((seeded?.status as CreativeStatus | undefined) ?? CREATIVE_STATUS_DEFAULT);
+        const previous = tracked ?? (seeded?.status as CreativeStatus | undefined) ?? CREATIVE_STATUS_DEFAULT;
         enforceMapCap(session.creativeStatuses, creativeId, 'creative statuses', cap);
         session.creativeStatuses.set(creativeId, status);
         if (status === 'rejected' && rejectionReason) {
-          enforceMapCap(
-            session.creativeRejectionReasons,
-            creativeId,
-            'creative rejection reasons',
-            cap
-          );
+          enforceMapCap(session.creativeRejectionReasons, creativeId, 'creative rejection reasons', cap);
           session.creativeRejectionReasons.set(creativeId, rejectionReason);
         } else {
           session.creativeRejectionReasons.delete(creativeId);
@@ -374,11 +355,7 @@ export function createDefaultTestControllerStore<S extends DefaultSessionShape>(
       },
 
       // ── force_media_buy_status ────────────────────────────
-      async forceMediaBuyStatus(
-        mediaBuyId,
-        status,
-        rejectionReason
-      ): Promise<StateTransitionSuccess> {
+      async forceMediaBuyStatus(mediaBuyId, status, rejectionReason): Promise<StateTransitionSuccess> {
         const tracked = session.mediaBuyStatuses.get(mediaBuyId);
         const seeded = session.seededMediaBuys.get(mediaBuyId);
         if (tracked === undefined && seeded === undefined) {
@@ -387,17 +364,11 @@ export function createDefaultTestControllerStore<S extends DefaultSessionShape>(
             `Media buy ${mediaBuyId} not found. Seed it first with seed_media_buy.`
           );
         }
-        const previous =
-          tracked ?? ((seeded?.status as MediaBuyStatus | undefined) ?? MEDIA_BUY_STATUS_DEFAULT);
+        const previous = tracked ?? (seeded?.status as MediaBuyStatus | undefined) ?? MEDIA_BUY_STATUS_DEFAULT;
         enforceMapCap(session.mediaBuyStatuses, mediaBuyId, 'media buy statuses', cap);
         session.mediaBuyStatuses.set(mediaBuyId, status);
         if (rejectionReason) {
-          enforceMapCap(
-            session.mediaBuyRejectionReasons,
-            mediaBuyId,
-            'media buy rejection reasons',
-            cap
-          );
+          enforceMapCap(session.mediaBuyRejectionReasons, mediaBuyId, 'media buy rejection reasons', cap);
           session.mediaBuyRejectionReasons.set(mediaBuyId, rejectionReason);
         } else {
           session.mediaBuyRejectionReasons.delete(mediaBuyId);
@@ -407,22 +378,13 @@ export function createDefaultTestControllerStore<S extends DefaultSessionShape>(
       },
 
       // ── force_session_status ──────────────────────────────
-      async forceSessionStatus(
-        sessionId,
-        status,
-        terminationReason
-      ): Promise<StateTransitionSuccess> {
+      async forceSessionStatus(sessionId, status, terminationReason): Promise<StateTransitionSuccess> {
         // SI sessions have no seed; upsert with 'active' default.
         const previous = session.sessionStatuses.get(sessionId) ?? SESSION_STATUS_DEFAULT;
         enforceMapCap(session.sessionStatuses, sessionId, 'session statuses', cap);
         session.sessionStatuses.set(sessionId, status);
         if (terminationReason) {
-          enforceMapCap(
-            session.sessionTerminationReasons,
-            sessionId,
-            'session termination reasons',
-            cap
-          );
+          enforceMapCap(session.sessionTerminationReasons, sessionId, 'session termination reasons', cap);
           session.sessionTerminationReasons.set(sessionId, terminationReason);
         } else {
           session.sessionTerminationReasons.delete(sessionId);

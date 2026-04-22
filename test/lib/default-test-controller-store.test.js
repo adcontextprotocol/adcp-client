@@ -6,9 +6,7 @@ const {
   TestControllerError,
   CONTROLLER_SCENARIOS,
 } = require('../../dist/lib/testing');
-const {
-  handleTestControllerRequest,
-} = require('../../dist/lib/server/test-controller');
+const { handleTestControllerRequest } = require('../../dist/lib/server/test-controller');
 
 // ────────────────────────────────────────────────────────────
 // createDefaultSession
