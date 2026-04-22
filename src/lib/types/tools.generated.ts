@@ -279,11 +279,11 @@ export interface GetProductsRequest {
         /**
          * Product ID from a previous get_products response.
          */
-        id: string;
+        product_id: string;
         /**
-         * 'include': return this product with updated pricing and data. 'omit': exclude this product from the response. 'more_like_this': find additional products similar to this one (the original is also returned).
+         * 'include' (default): return this product with updated pricing and data. 'omit': exclude this product from the response. 'more_like_this': find additional products similar to this one (the original is also returned). Optional — when omitted, the seller treats the entry as action: 'include'.
          */
-        action: 'include' | 'omit' | 'more_like_this';
+        action?: 'include' | 'omit' | 'more_like_this';
         /**
          * What the buyer is asking for on this product. For 'include': specific changes to request (e.g., 'add 16:9 format'). For 'more_like_this': what 'similar' means (e.g., 'same audience but video format'). Ignored when action is 'omit'.
          */
@@ -297,11 +297,11 @@ export interface GetProductsRequest {
         /**
          * Proposal ID from a previous get_products response.
          */
-        id: string;
+        proposal_id: string;
         /**
-         * 'include': return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response. 'finalize': request firm pricing and inventory hold — transitions a draft proposal to committed with an expires_at hold window. May trigger seller-side approval (HITL). The buyer should not set a time_budget for finalize requests — they represent a commitment to wait for the result.
+         * 'include' (default): return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response. 'finalize': request firm pricing and inventory hold — transitions a draft proposal to committed with an expires_at hold window. May trigger seller-side approval (HITL). The buyer should not set a time_budget for finalize requests — they represent a commitment to wait for the result. Optional — when omitted, the seller treats the entry as action: 'include'.
          */
-        action: 'include' | 'omit' | 'finalize';
+        action?: 'include' | 'omit' | 'finalize';
         /**
          * What the buyer is asking for on this proposal (e.g., 'shift more budget toward video', 'reduce total by 10%'). Ignored when action is 'omit'.
          */
@@ -1041,26 +1041,60 @@ export interface GetProductsResponse {
    */
   catalog_applied?: boolean;
   /**
-   * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'.
+   * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment.
    */
-  refinement_applied?: {
-    /**
-     * Echoes the scope from the corresponding refine entry. Allows orchestrators to cross-validate alignment.
-     */
-    scope?: 'request' | 'product' | 'proposal';
-    /**
-     * Echoes the id from the corresponding refine entry (for product and proposal scopes).
-     */
-    id?: string;
-    /**
-     * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-     */
-    status: 'applied' | 'partial' | 'unable';
-    /**
-     * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-     */
-    notes?: string;
-  }[];
+  refinement_applied?: (
+    | {
+        /**
+         * Echoes scope 'request' from the corresponding refine entry.
+         */
+        scope: 'request';
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+    | {
+        /**
+         * Echoes scope 'product' from the corresponding refine entry.
+         */
+        scope: 'product';
+        /**
+         * Echoes product_id from the corresponding refine entry.
+         */
+        product_id: string;
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+    | {
+        /**
+         * Echoes scope 'proposal' from the corresponding refine entry.
+         */
+        scope: 'proposal';
+        /**
+         * Echoes proposal_id from the corresponding refine entry.
+         */
+        proposal_id: string;
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+  )[];
   /**
    * Declares what the seller could not finish within the buyer's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
    */
@@ -3298,7 +3332,34 @@ export type DigitalSourceType =
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
-export type VASTAsset =
+export type VASTAsset = {
+  /**
+   * Discriminator identifying this as a VAST asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'vast';
+  vast_version?: VASTVersion;
+  /**
+   * Whether VPAID (Video Player-Ad Interface Definition) is supported
+   */
+  vpaid_enabled?: boolean;
+  /**
+   * Expected video duration in milliseconds (if known)
+   */
+  duration_ms?: number;
+  /**
+   * Tracking events supported by this VAST tag
+   */
+  tracking_events?: VASTTrackingEvent[];
+  /**
+   * URL to captions file (WebVTT, SRT, etc.)
+   */
+  captions_url?: string;
+  /**
+   * URL to audio description track for visually impaired users
+   */
+  audio_description_url?: string;
+  provenance?: Provenance;
+} & (
   | {
       /**
        * Discriminator indicating VAST is delivered via URL endpoint
@@ -3308,28 +3369,6 @@ export type VASTAsset =
        * URL endpoint that returns VAST XML
        */
       url: string;
-      vast_version?: VASTVersion;
-      /**
-       * Whether VPAID (Video Player-Ad Interface Definition) is supported
-       */
-      vpaid_enabled?: boolean;
-      /**
-       * Expected video duration in milliseconds (if known)
-       */
-      duration_ms?: number;
-      /**
-       * Tracking events supported by this VAST tag
-       */
-      tracking_events?: VASTTrackingEvent[];
-      /**
-       * URL to captions file (WebVTT, SRT, etc.)
-       */
-      captions_url?: string;
-      /**
-       * URL to audio description track for visually impaired users
-       */
-      audio_description_url?: string;
-      provenance?: Provenance;
     }
   | {
       /**
@@ -3340,29 +3379,8 @@ export type VASTAsset =
        * Inline VAST XML content
        */
       content: string;
-      vast_version?: VASTVersion;
-      /**
-       * Whether VPAID (Video Player-Ad Interface Definition) is supported
-       */
-      vpaid_enabled?: boolean;
-      /**
-       * Expected video duration in milliseconds (if known)
-       */
-      duration_ms?: number;
-      /**
-       * Tracking events supported by this VAST tag
-       */
-      tracking_events?: VASTTrackingEvent[];
-      /**
-       * URL to captions file (WebVTT, SRT, etc.)
-       */
-      captions_url?: string;
-      /**
-       * URL to audio description track for visually impaired users
-       */
-      audio_description_url?: string;
-      provenance?: Provenance;
-    };
+    }
+);
 /**
  * VAST specification version
  */
@@ -3426,7 +3444,30 @@ export type WebhookSecurityMethod = 'hmac_sha256' | 'api_key' | 'none';
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
-export type DAASTAsset =
+export type DAASTAsset = {
+  /**
+   * Discriminator identifying this as a DAAST asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'daast';
+  daast_version?: DAASTVersion;
+  /**
+   * Expected audio duration in milliseconds (if known)
+   */
+  duration_ms?: number;
+  /**
+   * Tracking events supported by this DAAST tag
+   */
+  tracking_events?: DAASTTrackingEvent[];
+  /**
+   * Whether companion display ads are included
+   */
+  companion_ads?: boolean;
+  /**
+   * URL to text transcript of the audio content
+   */
+  transcript_url?: string;
+  provenance?: Provenance;
+} & (
   | {
       /**
        * Discriminator indicating DAAST is delivered via URL endpoint
@@ -3436,24 +3477,6 @@ export type DAASTAsset =
        * URL endpoint that returns DAAST XML
        */
       url: string;
-      daast_version?: DAASTVersion;
-      /**
-       * Expected audio duration in milliseconds (if known)
-       */
-      duration_ms?: number;
-      /**
-       * Tracking events supported by this DAAST tag
-       */
-      tracking_events?: DAASTTrackingEvent[];
-      /**
-       * Whether companion display ads are included
-       */
-      companion_ads?: boolean;
-      /**
-       * URL to text transcript of the audio content
-       */
-      transcript_url?: string;
-      provenance?: Provenance;
     }
   | {
       /**
@@ -3464,25 +3487,8 @@ export type DAASTAsset =
        * Inline DAAST XML content
        */
       content: string;
-      daast_version?: DAASTVersion;
-      /**
-       * Expected audio duration in milliseconds (if known)
-       */
-      duration_ms?: number;
-      /**
-       * Tracking events supported by this DAAST tag
-       */
-      tracking_events?: DAASTTrackingEvent[];
-      /**
-       * Whether companion display ads are included
-       */
-      companion_ads?: boolean;
-      /**
-       * URL to text transcript of the audio content
-       */
-      transcript_url?: string;
-      provenance?: Provenance;
-    };
+    }
+);
 /**
  * DAAST specification version
  */
@@ -3521,11 +3527,21 @@ export type MarkdownFlavor = 'commonmark' | 'gfm';
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
-export type BriefAsset = CreativeBrief;
+export type BriefAsset = CreativeBrief & {
+  /**
+   * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'brief';
+};
 /**
  * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
  */
-export type CatalogAsset = Catalog;
+export type CatalogAsset = Catalog & {
+  /**
+   * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'catalog';
+};
 /**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
@@ -4040,7 +4056,7 @@ export interface CreativeAsset {
   name: string;
   format_id: FormatID;
   /**
-   * Assets required by the format, keyed by asset_id
+   * Assets required by the format, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
    */
   assets: {
     /**
@@ -4105,6 +4121,10 @@ export interface CreativeAsset {
  * Image asset with URL and dimensions
  */
 export interface ImageAsset {
+  /**
+   * Discriminator identifying this as an image asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'image';
   /**
    * URL to the image asset
    */
@@ -4260,6 +4280,10 @@ export interface Provenance {
  */
 export interface VideoAsset {
   /**
+   * Discriminator identifying this as a video asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'video';
+  /**
    * URL to the video asset
    */
   url: string;
@@ -4382,6 +4406,10 @@ export interface VideoAsset {
  */
 export interface AudioAsset {
   /**
+   * Discriminator identifying this as an audio asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'audio';
+  /**
    * URL to the audio asset
    */
   url: string;
@@ -4436,6 +4464,10 @@ export interface AudioAsset {
  */
 export interface TextAsset {
   /**
+   * Discriminator identifying this as a text asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'text';
+  /**
    * Text content
    */
   content: string;
@@ -4449,6 +4481,10 @@ export interface TextAsset {
  * URL reference asset
  */
 export interface URLAsset {
+  /**
+   * Discriminator identifying this as a URL asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'url';
   /**
    * URL reference. May be a plain URI or an RFC 6570 URI template carrying AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`). Buyers MUST NOT pre-encode macro braces at sync time; the ad server URL-encodes substituted values at impression time. See docs/creative/universal-macros.mdx.
    */
@@ -4464,6 +4500,10 @@ export interface URLAsset {
  * HTML content asset
  */
 export interface HTMLAsset {
+  /**
+   * Discriminator identifying this as an HTML asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'html';
   /**
    * HTML content
    */
@@ -4500,6 +4540,10 @@ export interface HTMLAsset {
  */
 export interface JavaScriptAsset {
   /**
+   * Discriminator identifying this as a JavaScript asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'javascript';
+  /**
    * JavaScript content
    */
   content: string;
@@ -4531,6 +4575,10 @@ export interface JavaScriptAsset {
  * Webhook for server-side dynamic content rendering (DCO)
  */
 export interface WebhookAsset {
+  /**
+   * Discriminator identifying this as a webhook asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'webhook';
   /**
    * Webhook URL to call for dynamic content
    */
@@ -4570,6 +4618,10 @@ export interface WebhookAsset {
  */
 export interface CSSAsset {
   /**
+   * Discriminator identifying this as a CSS asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'css';
+  /**
    * CSS content
    */
   content: string;
@@ -4583,6 +4635,10 @@ export interface CSSAsset {
  * Markdown-formatted text content following CommonMark specification
  */
 export interface MarkdownAsset {
+  /**
+   * Discriminator identifying this as a markdown asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'markdown';
   /**
    * Markdown content following CommonMark spec with optional GitHub Flavored Markdown extensions
    */
@@ -7486,7 +7542,7 @@ export interface CreativeManifest {
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
-   * IMPORTANT: Full validation requires format context. The format defines what type each asset_id should be. Standalone schema validation only checks structural conformance — each asset must match at least one valid asset type schema.
+   * Each asset value carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
    */
   assets: {
     /**
@@ -8561,7 +8617,7 @@ export interface ListCreativesResponse {
      */
     updated_date: string;
     /**
-     * Assets for this creative, keyed by asset_id
+     * Assets for this creative, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
      */
     assets?: {
       /**
@@ -11260,7 +11316,7 @@ export interface ReportPlanOutcomeRequest {
    */
   adcp_major_version?: number;
   /**
-   * The plan this outcome is for.
+   * The plan this outcome is for. The plan uniquely scopes the account and operator; do not include a separate `account` field — the governance agent resolves account from the plan. Including `account` is rejected by `additionalProperties: false`.
    */
   plan_id: string;
   /**
@@ -11419,7 +11475,7 @@ export type GetPlanAuditLogsRequest = {
    */
   adcp_major_version?: number;
   /**
-   * Plan IDs to retrieve. For a single plan, pass a one-element array.
+   * Plan IDs to retrieve. For a single plan, pass a one-element array. Plans uniquely scope account and operator; do not include a separate `account` field — the governance agent resolves account from each plan. Including `account` is rejected by `additionalProperties: false`.
    */
   plan_ids?: string[];
   /**
@@ -11719,7 +11775,7 @@ export interface CheckGovernanceRequest {
    */
   adcp_major_version?: number;
   /**
-   * Campaign governance plan identifier.
+   * Campaign governance plan identifier. The plan uniquely scopes the account and operator; do not include a separate `account` field — the governance agent resolves account from the plan. Including `account` is rejected by `additionalProperties: false`.
    */
   plan_id: string;
   /**
