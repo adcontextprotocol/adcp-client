@@ -39,6 +39,29 @@ describe('assertion registry', () => {
     assert.throws(() => registerAssertion({ id: 'dup', description: 'second' }), /already registered/);
   });
 
+  test('register with { override: true } replaces an existing registration', () => {
+    const first = { id: 'dup', description: 'first' };
+    const second = { id: 'dup', description: 'second (override)' };
+    registerAssertion(first);
+    assert.strictEqual(getAssertion('dup'), first);
+    assert.doesNotThrow(() => registerAssertion(second, { override: true }));
+    assert.strictEqual(getAssertion('dup'), second);
+  });
+
+  test('register with { override: false } still throws on duplicate', () => {
+    registerAssertion({ id: 'dup', description: 'first' });
+    assert.throws(
+      () => registerAssertion({ id: 'dup', description: 'second' }, { override: false }),
+      /already registered/
+    );
+  });
+
+  test('register with { override: true } on a fresh id registers normally (no prior entry required)', () => {
+    const spec = { id: 'fresh', description: 'first registration of this id' };
+    assert.doesNotThrow(() => registerAssertion(spec, { override: true }));
+    assert.strictEqual(getAssertion('fresh'), spec);
+  });
+
   test('register throws on missing id', () => {
     assert.throws(() => registerAssertion({ description: 'no id' }), /spec\.id is required/);
   });

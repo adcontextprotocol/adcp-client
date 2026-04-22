@@ -71,13 +71,15 @@ registerOnce('context.no_secret_echo', {
   id: 'context.no_secret_echo',
   description: 'Echoed context MUST NOT contain bearer tokens, API keys, or auth header values.',
   onStart: ctx => {
-    // Stash the sensitive values we know about. Options.auth_token is the
-    // primary one; consumers can extend via options.secrets if they want.
+    // Stash the sensitive values we know about. `auth` is the structured
+    // discriminated union from TestOptions — we walk it and extract leaf
+    // strings so `String.includes(obj)` can't silently no-op. Consumers can
+    // extend via `options.secrets` with additional raw strings.
     const secrets = new Set<string>();
-    const optAny = ctx.options as unknown as { auth_token?: string; auth?: string; secrets?: string[] };
-    if (optAny.auth_token) secrets.add(optAny.auth_token);
-    if (optAny.auth) secrets.add(optAny.auth);
-    for (const s of optAny.secrets ?? []) secrets.add(s);
+    const optAny = ctx.options as unknown as { auth_token?: string; auth?: unknown; secrets?: string[] };
+    if (typeof optAny.auth_token === 'string' && optAny.auth_token) secrets.add(optAny.auth_token);
+    for (const s of extractAuthSecrets(optAny.auth)) secrets.add(s);
+    for (const s of optAny.secrets ?? []) if (typeof s === 'string' && s) secrets.add(s);
     ctx.state.secrets = secrets;
   },
   onStep: (ctx, stepResult) => {
@@ -88,7 +90,11 @@ registerOnce('context.no_secret_echo', {
     const dumped = safeStringify(context);
     const description = 'Response context omits caller-supplied secrets';
     for (const secret of secrets) {
-      if (secret && dumped.includes(secret)) {
+      // Minimum length guards against collisions on short fixture values
+      // (e.g. a 2-char `client_id` would match most JSON payloads by accident).
+      // Real bearer / access tokens are ≥ 20 chars in practice; the threshold
+      // keeps false positives out without missing realistic secrets.
+      if (secret.length >= SECRET_MIN_LENGTH && dumped.includes(secret)) {
         return [
           {
             passed: false,
@@ -285,6 +291,106 @@ function extractAdcpError(step: import('./types').StoryboardStepResult): AdcpErr
   const code = (envelope as { code?: unknown }).code;
   if (typeof code !== 'string') return null;
   return { code, details: envelope as Record<string, unknown> };
+}
+
+/**
+ * Minimum secret length before substring matching runs. Anything shorter is
+ * almost certainly a test fixture value that would collide with benign JSON.
+ * Bearer / OAuth access tokens in practice are well above this threshold.
+ */
+const SECRET_MIN_LENGTH = 8;
+
+const ENV_REFERENCE_PREFIX = '$ENV:';
+
+/**
+ * Resolve a possibly `$ENV:VAR`-prefixed credential value to the literal it
+ * references at runtime. Mirrors the auth-layer `resolveSecret` in
+ * `src/lib/auth/oauth/secret-resolver.ts`, but swallows missing / empty
+ * variables instead of throwing — the assertion must never break a
+ * storyboard run just because it can't resolve a ref.
+ *
+ * Returns `undefined` if the value is not an env reference, or if the
+ * referenced variable is unset / empty. Callers should skip `undefined`
+ * results. The literal `$ENV:FOO` string itself is never returned because
+ * it is a reference, not a secret, and cannot appear in an agent response.
+ */
+function resolveEnvReference(value: string): string | undefined {
+  if (!value.startsWith(ENV_REFERENCE_PREFIX)) return undefined;
+  const envVar = value.slice(ENV_REFERENCE_PREFIX.length).trim();
+  if (!envVar) return undefined;
+  const resolved = process.env[envVar];
+  if (!resolved) return undefined;
+  return resolved;
+}
+
+/**
+ * Push a credential-field string onto `out`, resolving `$ENV:VAR` references
+ * to their literal runtime value. Literal values pass through unchanged.
+ * `$ENV:` references only contribute the resolved value — the reference
+ * string itself is not a secret.
+ */
+function pushCredentialValue(out: string[], value: unknown): void {
+  if (typeof value !== 'string' || !value) return;
+  if (value.startsWith(ENV_REFERENCE_PREFIX)) {
+    const resolved = resolveEnvReference(value);
+    if (resolved) out.push(resolved);
+    return;
+  }
+  out.push(value);
+}
+
+/**
+ * Extract every leaf string secret from a structured `TestOptions.auth` value.
+ * Mirrors the four variants in `src/lib/testing/types.ts`:
+ *   - bearer                    → `token`
+ *   - basic                     → `password`, `username`, and the
+ *                                 `base64(user:pass)` an Authorization: Basic
+ *                                 header would carry, so echoes of the full
+ *                                 header or the raw tuple are both caught
+ *   - oauth                     → `tokens.access_token`, `tokens.refresh_token`,
+ *                                 `client.client_secret` (if confidential)
+ *   - oauth_client_credentials  → `credentials.client_secret` and
+ *                                 `credentials.client_id` (both may be
+ *                                 `$ENV:VAR` references, resolved at runtime),
+ *                                 `tokens.access_token`, `tokens.refresh_token`
+ *
+ * Returns an empty list for anything we can't recognise — the goal is a best-
+ * effort extraction, not schema validation.
+ */
+function extractAuthSecrets(auth: unknown): string[] {
+  if (!auth || typeof auth !== 'object') return [];
+  const a = auth as Record<string, unknown>;
+  const out: string[] = [];
+  pushCredentialValue(out, a.token); // bearer
+
+  // basic: echo of the decoded tuple, the username alone, or the full
+  // base64 Authorization header are all plausible leaks.
+  if (typeof a.username === 'string' && a.username && typeof a.password === 'string' && a.password) {
+    out.push(a.username);
+    out.push(a.password);
+    out.push(Buffer.from(`${a.username}:${a.password}`, 'utf8').toString('base64'));
+  } else if (typeof a.password === 'string' && a.password) {
+    out.push(a.password);
+  }
+
+  if (a.tokens && typeof a.tokens === 'object') {
+    const t = a.tokens as Record<string, unknown>;
+    if (typeof t.access_token === 'string' && t.access_token) out.push(t.access_token);
+    if (typeof t.refresh_token === 'string' && t.refresh_token) out.push(t.refresh_token);
+  }
+  if (a.client && typeof a.client === 'object') {
+    const c = a.client as Record<string, unknown>;
+    if (typeof c.client_secret === 'string' && c.client_secret) out.push(c.client_secret);
+  }
+  if (a.credentials && typeof a.credentials === 'object') {
+    const c = a.credentials as Record<string, unknown>;
+    // client_id/client_secret on AgentOAuthClientCredentials may be
+    // `$ENV:VAR` references (see adcp.ts). Resolve so the assertion compares
+    // the real runtime value the AS sees, not the reference string.
+    pushCredentialValue(out, c.client_id);
+    pushCredentialValue(out, c.client_secret);
+  }
+  return out;
 }
 
 function extractResponseContext(step: import('./types').StoryboardStepResult): unknown {
