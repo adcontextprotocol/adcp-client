@@ -241,8 +241,13 @@ export function performanceFeedbackResponse(
  * Build a successful build_creative response (single format).
  */
 export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: string): McpToolResponse {
+  // Optional-chain the default summary — handler responses that drop
+  // `format_id` still reach the wire-level schema validator (which names
+  // the missing field), instead of crashing the dispatcher here with an
+  // opaque `Cannot read properties of undefined (reading 'id')`.
+  const formatId = data.creative_manifest?.format_id?.id;
   return {
-    content: [{ type: 'text', text: summary ?? `Creative built: ${data.creative_manifest.format_id.id}` }],
+    content: [{ type: 'text', text: summary ?? (formatId ? `Creative built: ${formatId}` : 'Creative built') }],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -251,8 +256,9 @@ export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: stri
  * Build a successful build_creative response (multi-format).
  */
 export function buildCreativeMultiResponse(data: BuildCreativeMultiSuccess, summary?: string): McpToolResponse {
+  const count = data.creative_manifests?.length ?? 0;
   return {
-    content: [{ type: 'text', text: summary ?? `Built ${data.creative_manifests.length} creative formats` }],
+    content: [{ type: 'text', text: summary ?? `Built ${count} creative formats` }],
     structuredContent: toStructuredContent(data),
   };
 }

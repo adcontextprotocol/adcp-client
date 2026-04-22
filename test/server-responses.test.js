@@ -252,6 +252,22 @@ describe('buildCreativeResponse', () => {
     });
     assert.strictEqual(result.content[0].text, 'Creative built: banner_300x250');
   });
+
+  it('falls back gracefully when creative_manifest is missing format_id', () => {
+    // Regression: the default summary used to crash with
+    // "Cannot read properties of undefined (reading 'id')" — swallowing
+    // the real schema violation (missing required `format_id` per
+    // `creative-manifest.json`) behind an opaque SERVICE_UNAVAILABLE.
+    const result = buildCreativeResponse({
+      creative_manifest: { renders: [{ role: 'primary', media_type: 'image/png' }] },
+    });
+    assert.strictEqual(result.content[0].text, 'Creative built');
+  });
+
+  it('accepts a fully-missing creative_manifest without crashing', () => {
+    const result = buildCreativeResponse({});
+    assert.strictEqual(result.content[0].text, 'Creative built');
+  });
 });
 
 describe('buildCreativeMultiResponse', () => {
@@ -263,6 +279,11 @@ describe('buildCreativeMultiResponse', () => {
       ],
     });
     assert.strictEqual(result.content[0].text, 'Built 2 creative formats');
+  });
+
+  it('falls back to count=0 when creative_manifests is missing', () => {
+    const result = buildCreativeMultiResponse({});
+    assert.strictEqual(result.content[0].text, 'Built 0 creative formats');
   });
 });
 
