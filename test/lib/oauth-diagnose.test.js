@@ -443,7 +443,7 @@ describe('runAuthDiagnosis: report shape', () => {
     ]);
     assert.strictEqual(report.aliasId, 'test-alias');
     assert.ok(report.generatedAt);
-    assert.strictEqual(report.hypotheses.length, 5);
+    assert.strictEqual(report.hypotheses.length, 6);
   });
 
   test('orders hypotheses: likely first, then possible, then ruled_out/not_observed', async () => {
