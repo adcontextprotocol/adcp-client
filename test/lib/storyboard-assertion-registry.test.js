@@ -458,3 +458,133 @@ describe('runStoryboard: assertion hooks', () => {
     assert.ok(withAssertion.assertions.every(a => a.passed));
   });
 });
+
+describe('runStoryboard: step-level invariants.disable', () => {
+  beforeEach(() => clearAssertionRegistry());
+
+  function buildStoryboardWithStepDisable(stepInvariants, { rootInvariants } = {}) {
+    const sb = buildStoryboard(rootInvariants ? { invariants: rootInvariants } : undefined);
+    sb.phases[0].steps[1].invariants = stepInvariants;
+    return sb;
+  }
+
+  it('skips onStep only for the named assertion on the disabling step', async () => {
+    const stepIds = [];
+    registerAssertion({
+      id: 'obs.per_step',
+      description: 'observes every step',
+      default: true,
+      onStep(_ctx, stepResult) {
+        stepIds.push(stepResult.step_id);
+        return [];
+      },
+    });
+    const { server, url } = await startStubAgent();
+    try {
+      await runStoryboard(
+        url,
+        buildStoryboardWithStepDisable({ disable: ['obs.per_step'] }),
+        runnerOptions
+      );
+    } finally {
+      server.close();
+    }
+    // Step s2 disabled the assertion — s1 must still have fired.
+    assert.deepStrictEqual(stepIds, ['s1']);
+  });
+
+  it('leaves other assertions running on the disabling step', async () => {
+    const observed = [];
+    registerAssertion({
+      id: 'obs.disabled',
+      description: 'observes every step (disabled on s2)',
+      default: true,
+      onStep(_ctx, stepResult) {
+        observed.push(['disabled', stepResult.step_id]);
+        return [];
+      },
+    });
+    registerAssertion({
+      id: 'obs.untouched',
+      description: 'also observes every step (never disabled)',
+      default: true,
+      onStep(_ctx, stepResult) {
+        observed.push(['untouched', stepResult.step_id]);
+        return [];
+      },
+    });
+    const { server, url } = await startStubAgent();
+    try {
+      await runStoryboard(
+        url,
+        buildStoryboardWithStepDisable({ disable: ['obs.disabled'] }),
+        runnerOptions
+      );
+    } finally {
+      server.close();
+    }
+    // The untouched assertion fires on both steps. The disabled one fires on s1 only.
+    assert.deepStrictEqual(observed, [
+      ['disabled', 's1'],
+      ['untouched', 's1'],
+      ['untouched', 's2'],
+    ]);
+  });
+
+  it('throws at run start when a step disables an assertion not in the resolved set', async () => {
+    registerAssertion({ id: 'registered.default', description: '', default: true });
+    const { server, url } = await startStubAgent();
+    try {
+      await assert.rejects(
+        () =>
+          runStoryboard(
+            url,
+            buildStoryboardWithStepDisable({ disable: ['never.registered'] }),
+            runnerOptions
+          ),
+        /Step "s2" invariants\.disable names "never\.registered".*not in the resolved assertion set/s
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('throws at run start when a step disables an id the storyboard already disables run-wide', async () => {
+    registerAssertion({ id: 'will.be.root.disabled', description: '', default: true });
+    const { server, url } = await startStubAgent();
+    try {
+      await assert.rejects(
+        () =>
+          runStoryboard(
+            url,
+            buildStoryboardWithStepDisable(
+              { disable: ['will.be.root.disabled'] },
+              { rootInvariants: { disable: ['will.be.root.disabled'] } }
+            ),
+            runnerOptions
+          ),
+        /already disables it run-wide.*dead code/s
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('throws at run start on unknown step-level field (common typo: `disabled`)', async () => {
+    registerAssertion({ id: 'some.default', description: '', default: true });
+    const { server, url } = await startStubAgent();
+    try {
+      await assert.rejects(
+        () =>
+          runStoryboard(
+            url,
+            buildStoryboardWithStepDisable({ disabled: ['some.default'] }),
+            runnerOptions
+          ),
+        /Step "s2" invariants has unknown field: disabled/
+      );
+    } finally {
+      server.close();
+    }
+  });
+});

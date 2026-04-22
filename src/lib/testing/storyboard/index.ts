@@ -20,6 +20,7 @@ export type {
   Storyboard,
   StoryboardInvariants,
   StoryboardInvariantsObject,
+  StepInvariantsObject,
   StoryboardPhase,
   StoryboardStep,
   StoryboardValidation,

@@ -27,6 +27,7 @@ import type {
   StoryboardInvariants,
   StoryboardRunOptions,
   StoryboardStepResult,
+  StepInvariantsObject,
 } from './types';
 
 // ────────────────────────────────────────────────────────────
@@ -228,6 +229,86 @@ interface NormalisedInvariants {
 // Object form keys. Any other top-level key (common typo: `disabled`) is a
 // silent-no-op trap under the permissive spread, so we catch it at parse-time.
 const INVARIANTS_OBJECT_KEYS: ReadonlySet<string> = new Set(['disable', 'enable']);
+
+// Step-level form accepts only `disable`. Enabling an assertion for one step
+// has no coherent meaning (assertions reason across steps), so `enable` at
+// this scope is a parse-time authoring error.
+const STEP_INVARIANTS_OBJECT_KEYS: ReadonlySet<string> = new Set(['disable']);
+
+/**
+ * Validate every step's `invariants.disable` against the resolved assertion
+ * set for this run, and against the storyboard-level disable. Throws on
+ * unknown fields, unknown ids, and ids that are dead code because they're
+ * already disabled storyboard-wide. Called once at runner start so
+ * authoring mistakes surface before the first step runs.
+ *
+ * Accepts the resolved specs rather than the registry so a step can only
+ * reference assertions that actually run for this storyboard — same
+ * principle as the storyboard-level check.
+ */
+export function validateStepInvariants(
+  storyboard: Storyboard,
+  resolvedAssertions: AssertionSpec[]
+): void {
+  const resolvedIds = new Set(resolvedAssertions.map(spec => spec.id));
+  const storyboardDisable = new Set<string>();
+  if (storyboard.invariants && !Array.isArray(storyboard.invariants)) {
+    for (const id of storyboard.invariants.disable ?? []) storyboardDisable.add(id);
+  }
+
+  const problems: string[] = [];
+  for (const phase of storyboard.phases) {
+    for (const step of phase.steps) {
+      const stepInvariants = step.invariants;
+      if (!stepInvariants) continue;
+      const unknownField = Object.keys(stepInvariants).filter(k => !STEP_INVARIANTS_OBJECT_KEYS.has(k));
+      if (unknownField.length > 0) {
+        problems.push(
+          `Step "${step.id}" invariants has unknown field${unknownField.length > 1 ? 's' : ''}: ${unknownField.join(', ')}. ` +
+            `Supported step-level fields are: ${[...STEP_INVARIANTS_OBJECT_KEYS].sort().join(', ')}.`
+        );
+        continue;
+      }
+      for (const id of stepInvariants.disable ?? []) {
+        // Check the run-wide `disable` first — an id there is filtered out
+        // of the resolved set, so without this the "dead code" case would
+        // fall through to the more generic "not in resolved set" message.
+        if (storyboardDisable.has(id)) {
+          problems.push(
+            `Step "${step.id}" invariants.disable names "${id}", but the storyboard already disables it run-wide. ` +
+              `The step-level directive is dead code — remove one.`
+          );
+          continue;
+        }
+        if (!resolvedIds.has(id)) {
+          const candidates = [...resolvedIds];
+          const suggestion = suggestionClause([id], candidates);
+          problems.push(
+            `Step "${step.id}" invariants.disable names "${id}", which is not in the resolved assertion set for this run. ` +
+              suggestion +
+              `Resolved ids: ${candidates.sort().join(', ') || '(none)'}.`
+          );
+        }
+      }
+    }
+  }
+
+  if (problems.length > 0) throw new Error(problems.join(' '));
+}
+
+/**
+ * Test whether a step's `invariants.disable` names the given assertion id.
+ * Used by the runner to skip calling `onStep` for disabled invariants on
+ * the step — a single choke point that keeps individual assertion code
+ * unaware of the escape hatch.
+ */
+export function stepDisablesAssertion(
+  stepInvariants: StepInvariantsObject | undefined,
+  assertionId: string
+): boolean {
+  if (!stepInvariants?.disable) return false;
+  return stepInvariants.disable.includes(assertionId);
+}
 
 function normaliseInvariants(invariants: StoryboardInvariants | undefined): NormalisedInvariants {
   if (!invariants) return { disable: [], enable: [] };

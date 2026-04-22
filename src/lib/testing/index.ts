@@ -246,6 +246,7 @@ export {
   type Storyboard,
   type StoryboardInvariants,
   type StoryboardInvariantsObject,
+  type StepInvariantsObject,
   type StoryboardPhase,
   type StoryboardStep,
   type StoryboardValidation,
