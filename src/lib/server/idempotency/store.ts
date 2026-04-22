@@ -221,6 +221,41 @@ export interface IdempotencyStore {
    */
   release(params: { principal: string; key: string; extraScope?: string }): Promise<void>;
   /**
+   * Short-TTL cache for an error envelope that the handler is guaranteed
+   * to reproduce on re-execution (currently: strict-mode response
+   * VALIDATION_ERROR driven by handler drift).
+   *
+   * Optional on the interface so custom store implementations aren't
+   * forced to migrate — when absent, the dispatcher falls back to
+   * `release()` (the pre-#758 behavior). Stores backed by
+   * `createIdempotencyStore` always include it.
+   *
+   * Retry-storm guard, not a spec replay. Without it, a drifted handler
+   * under strict validation + a retrying buyer produces unbounded
+   * re-execution (release-on-error lets every retry hit the handler again
+   * with the same drift). Caching for `TRANSIENT_ERROR_TTL_SECONDS` (10s)
+   * short-circuits retries within the buyer's typical backoff window.
+   *
+   * **Operational note — DoS primitive.** A drifted handler reachable by
+   * a hostile buyer is a cache-fill vector: every fresh idempotency_key
+   * writes a new 10s-TTL entry, cheap because the handler fails fast.
+   * Alert on sustained `VALIDATION_ERROR` rates per principal — they
+   * indicate either a broken handler (deploy regression) or a buyer
+   * probing for drift. Steady-state `VALIDATION_ERROR` should be zero.
+   *
+   * **Dev-experience note — TTL opacity.** After deploying a handler fix,
+   * same-key retries within the 10s window still replay the cached error
+   * before the fix takes effect. Iterative handler authors should use a
+   * fresh `idempotency_key` to bypass the cache during development.
+   */
+  saveTransientError?(params: {
+    principal: string;
+    key: string;
+    payloadHash: string;
+    response: unknown;
+    extraScope?: string;
+  }): Promise<void>;
+  /**
    * Capability fragment for `get_adcp_capabilities` — tells buyers the
    * replay window so they can reason about retry safety. Pass to
    * `createAdcpServer` via `capabilities.idempotency`.
@@ -254,6 +289,13 @@ const DEFAULT_CLOCK_SKEW = 60;
  * holding parallel requests hostage for the full replay TTL.
  */
 const IN_FLIGHT_TTL_SECONDS = 120;
+/**
+ * How long a transient-error cache entry lives. Long enough to absorb a
+ * buyer SDK's retry storm (typical exponential backoff takes ~2–3
+ * attempts past 10s), short enough that genuine fixes by the handler
+ * author aren't gated on TTL expiry during iterative development.
+ */
+const TRANSIENT_ERROR_TTL_SECONDS = 10;
 /**
  * Payload hash for in-flight claims. Different from any real hash so a
  * parallel `check()` with the same payload sees the claim as
@@ -328,6 +370,12 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
     async release({ principal, key, extraScope }): Promise<void> {
       const scopedKey = scope(principal, key, extraScope);
       await backend.delete(scopedKey);
+    },
+
+    async saveTransientError({ principal, key, payloadHash, response, extraScope }): Promise<void> {
+      const scopedKey = scope(principal, key, extraScope);
+      const expiresAt = Math.floor(Date.now() / 1000) + TRANSIENT_ERROR_TTL_SECONDS;
+      await backend.put(scopedKey, { payloadHash, response, expiresAt });
     },
 
     capability() {

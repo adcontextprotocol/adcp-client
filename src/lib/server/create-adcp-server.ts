@@ -1853,7 +1853,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // read, but belt-and-suspenders: handler-returned objects
               // can alias pieces of the formatted envelope.
               const cachedFormatted = cloneFormattedResponse(checkResult.response as McpToolResponse);
-              injectReplayed(cachedFormatted, true);
+              // Only stamp `replayed: true` on success envelopes — the
+              // field is defined for successful replays, and transient
+              // error cache entries (VALIDATION_ERROR from strict-mode
+              // drift) are retry-storm guards, not spec replays.
+              if (!isErrorResponse(cachedFormatted)) {
+                injectReplayed(cachedFormatted, true);
+              }
               return finalize(cachedFormatted);
             }
             if (checkResult.kind === 'conflict') {
@@ -1920,22 +1926,42 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const errPayload = buildAdcpValidationErrorPayload(toolName, 'response', outcome.issues, {
                   exposeSchemaPath: exposeErrorDetails,
                 });
+                const errEnvelope = adcpError('VALIDATION_ERROR', errPayload);
                 if (idempotencyCheck && idempotency) {
+                  // Cache the VALIDATION_ERROR briefly so a buyer SDK
+                  // retrying on the same key doesn't trigger unbounded
+                  // re-execution — strict-mode drift is deterministic,
+                  // the next handler call would return the same error.
+                  // Short TTL (10s) absorbs a typical retry burst.
+                  //
+                  // Stores that pre-date #758 may not implement
+                  // `saveTransientError`; fall back to `release` so the
+                  // claim is at least freed for a fresh retry.
                   try {
-                    await idempotency.release({
-                      principal: idempotencyCheck.principal,
-                      key: idempotencyCheck.key,
-                      extraScope: idempotencyCheck.extraScope,
-                    });
+                    if (idempotency.saveTransientError) {
+                      await idempotency.saveTransientError({
+                        principal: idempotencyCheck.principal,
+                        key: idempotencyCheck.key,
+                        payloadHash: idempotencyCheck.payloadHash,
+                        response: errEnvelope,
+                        extraScope: idempotencyCheck.extraScope,
+                      });
+                    } else {
+                      await idempotency.release({
+                        principal: idempotencyCheck.principal,
+                        key: idempotencyCheck.key,
+                        extraScope: idempotencyCheck.extraScope,
+                      });
+                    }
                   } catch (err) {
                     const reason = err instanceof Error ? err.message : String(err);
-                    logger.warn('Idempotency release failed — in-flight claim will expire on TTL', {
+                    logger.warn('Idempotency transient-error cache failed — retry storm may re-execute handler', {
                       tool: toolName,
                       error: reason,
                     });
                   }
                 }
-                return finalize(adcpError('VALIDATION_ERROR', errPayload));
+                return finalize(errEnvelope);
               }
             }
           }

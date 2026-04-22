@@ -353,6 +353,159 @@ describe('createAdcpServer with idempotency', () => {
     assert.equal(winners.length + inFlights.length, 5);
   });
 
+  it('strict-mode VALIDATION_ERROR short-circuits retry storm on same key + payload', async () => {
+    // Regression guard for issue #758: a drifted handler under strict
+    // response validation used to release the idempotency claim and return
+    // VALIDATION_ERROR — letting a retrying buyer re-execute the handler
+    // indefinitely. The transient-error cache holds the first error so
+    // subsequent retries short-circuit instead of re-running side effects.
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    let calls = 0;
+    const server = _createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      validation: { responses: 'strict', requests: 'off' },
+      mediaBuy: {
+        // Drifted response — violates create-media-buy-response schema.
+        createMediaBuy: async () => {
+          calls++;
+          return { media_buy_id: 'mb_1', packages: 'oops' };
+        },
+      },
+    });
+
+    const key = 'replay_storm_abcdefghij';
+    const req = { ...basePayload, idempotency_key: key };
+
+    const first = await callTool(server, 'create_media_buy', req);
+    assert.equal(first.adcp_error?.code, 'VALIDATION_ERROR');
+    assert.equal(calls, 1);
+
+    const second = await callTool(server, 'create_media_buy', req);
+    assert.equal(second.adcp_error?.code, 'VALIDATION_ERROR', 'retry must replay the cached error');
+    assert.equal(calls, 1, 'handler must not re-execute on retry within the transient-error window');
+  });
+
+  it('strict-mode transient-error cache does not mask IDEMPOTENCY_CONFLICT on different payload', async () => {
+    // Scope is (principal, key, payloadHash). A retry with a different
+    // canonical payload still bypasses the cache and hits CONFLICT — the
+    // retry-storm guard must not become a replay oracle for mismatched
+    // payloads.
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    const server = _createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      validation: { responses: 'strict', requests: 'off' },
+      mediaBuy: {
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: 'oops' }),
+      },
+    });
+
+    const key = 'replay_conflict_abcdefgh';
+    const first = await callTool(server, 'create_media_buy', { ...basePayload, idempotency_key: key });
+    assert.equal(first.adcp_error?.code, 'VALIDATION_ERROR');
+
+    const conflict = await callTool(server, 'create_media_buy', {
+      ...basePayload,
+      idempotency_key: key,
+      start_time: '2026-06-01T00:00:00Z',
+    });
+    assert.equal(conflict.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  it('strict-mode parallel retries of a drifted handler see in-flight, not re-execution', async () => {
+    // Concurrency guard: while call A is still inside the handler
+    // producing the drifted response, a parallel call B with the same
+    // key + payload must hit the IN_FLIGHT claim (SERVICE_UNAVAILABLE)
+    // rather than re-entering the handler. Once A completes and writes
+    // the transient-error entry, a subsequent retry hits the cached
+    // VALIDATION_ERROR — not the handler.
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    let calls = 0;
+    let releaseHandler;
+    const handlerGate = new Promise(resolve => {
+      releaseHandler = resolve;
+    });
+    const server = _createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      validation: { responses: 'strict', requests: 'off' },
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls++;
+          await handlerGate;
+          return { media_buy_id: 'mb_1', packages: 'oops' };
+        },
+      },
+    });
+
+    const key = 'replay_concurrent_abcde';
+    const req = { ...basePayload, idempotency_key: key };
+
+    const aPromise = callTool(server, 'create_media_buy', req);
+    await new Promise(r => setImmediate(r));
+    const b = await callTool(server, 'create_media_buy', req);
+
+    assert.equal(b.adcp_error?.code, 'SERVICE_UNAVAILABLE', 'parallel retry must see in-flight, not re-execute');
+    assert.equal(calls, 1, 'handler must not re-execute for parallel retry');
+
+    releaseHandler();
+    const a = await aPromise;
+    assert.equal(a.adcp_error?.code, 'VALIDATION_ERROR');
+    assert.equal(calls, 1);
+
+    const c = await callTool(server, 'create_media_buy', req);
+    assert.equal(c.adcp_error?.code, 'VALIDATION_ERROR', 'post-completion retry replays cached error');
+    assert.equal(calls, 1, 'handler still not re-executed after the in-flight window closes');
+  });
+
+  it('warn-mode response drift still releases the claim (no transient-error cache)', async () => {
+    // Only strict mode can produce a VALIDATION_ERROR from response drift;
+    // warn mode passes the response through and caches it as success.
+    // Ensure we didn't accidentally populate the transient-error cache
+    // on the warn path.
+    const idempotency = createIdempotencyStore({
+      backend: memoryBackend({ sweepIntervalMs: 0 }),
+    });
+    let calls = 0;
+    const server = _createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      validation: { responses: 'warn', requests: 'off' },
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls++;
+          return { media_buy_id: `mb_${calls}`, packages: 'oops' };
+        },
+      },
+    });
+
+    const key = 'warn_mode_abcdefghijkl';
+    const req = { ...basePayload, idempotency_key: key };
+
+    const first = await callTool(server, 'create_media_buy', req);
+    // Drifted response passes through in warn mode — cached as success.
+    assert.ok(!first.adcp_error, 'warn mode must not turn drift into VALIDATION_ERROR');
+
+    const second = await callTool(server, 'create_media_buy', req);
+    assert.equal(calls, 1, 'warn mode caches the success response and replays it');
+    assert.equal(second.replayed, true);
+  });
+
   it('si_send_message is scoped by session_id — same key across sessions does not cross-replay', async () => {
     const idempotency = createIdempotencyStore({
       backend: memoryBackend({ sweepIntervalMs: 0 }),
