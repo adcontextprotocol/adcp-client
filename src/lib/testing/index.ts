@@ -154,6 +154,26 @@ export {
 } from '../server/test-controller';
 export type { ControllerScenario, SeedFixtureCache, SeedScenario } from '../server/test-controller';
 
+// Seed fixture merge helpers (permissive defaults + storyboard overlay).
+export {
+  mergeSeed,
+  overlayById,
+  mergeSeedProduct,
+  mergeSeedPricingOption,
+  mergeSeedCreative,
+  mergeSeedPlan,
+  mergeSeedMediaBuy,
+} from './seed-merge';
+
+// Test-controller bridge: seeded `get_products` augmentation on sandbox requests.
+export {
+  isSandboxRequest,
+  mergeSeededProductsIntoResponse,
+  filterValidSeededProducts,
+  bridgeFromTestControllerStore,
+} from '../server/test-controller-bridge';
+export type { TestControllerBridge, TestControllerBridgeContext } from '../server/test-controller-bridge';
+
 // Default TestControllerStore factory — ships wired defaults for every
 // force_* / simulate_* / seed_* scenario so sellers can bring a session and
 // skip the 300-line boilerplate.

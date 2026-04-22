@@ -810,6 +810,25 @@ function generateLlmsTxt(
     ln();
   }
 
+  // --- Seeding fixtures (seller-side helpers) ---
+  ln(`### Seeding fixtures for compliance (seller-side)`);
+  ln();
+  ln(
+    `Group A storyboards seed fixtures via \`comply_test_controller.seed_product\` (and the other \`seed_*\` scenarios) before calling the spec tool. Two SDK helpers bridge this to \`createAdcpServer\`:`
+  );
+  ln();
+  ln(
+    `- **\`mergeSeedProduct\`** (plus \`mergeSeedPricingOption\`, \`mergeSeedCreative\`, \`mergeSeedPlan\`, \`mergeSeedMediaBuy\`): permissive merge of a sparse storyboard fixture onto the seller's baseline defaults. \`undefined\`/\`null\` keep base; arrays replace by default; well-known id-keyed lists (\`pricing_options\`, \`publisher_properties\`, \`packages\`, \`assets\`, plan \`findings\`) overlay by id so seeding one entry doesn't drop the rest.`
+  );
+  ln(
+    `- **\`bridgeFromTestControllerStore(store, productDefaults)\`**: wires a \`Map<string, unknown>\` seed store into \`get_products\` responses automatically. Sandbox requests merge seeded + handler products (seeded wins collisions); production traffic (no sandbox marker, or a resolved non-sandbox account) skips the bridge.`
+  );
+  ln();
+  ln(
+    `Wire on \`createAdcpServer({ testController: bridgeFromTestControllerStore(store, baseline) })\`. See \`skills/build-seller-agent/SKILL.md\` for the full pattern alongside \`createComplyController\`.`
+  );
+  ln();
+
   // --- Key types ---
   ln(`## Key Types`);
   ln();
