@@ -149,6 +149,7 @@
     "test:protocol-comparison": "node test/utils/comprehensive-protocol-comparison.js",
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
+    "schema-diff": "tsx scripts/schema-diff.ts",
     "generate-types": "tsx scripts/generate-types.ts",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
     "generate-zod-schemas": "tsx scripts/generate-zod-from-ts.ts",

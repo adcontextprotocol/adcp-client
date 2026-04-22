@@ -7,7 +7,9 @@ import {
   existsSync,
   readdirSync,
   statSync,
+  lstatSync,
   rmSync,
+  unlinkSync,
   symlinkSync,
   renameSync,
   copyFileSync,
@@ -95,7 +97,20 @@ function replaceTree(srcDir: string, destDir: string): void {
     throw new Error(`Expected tarball entry ${srcDir} is missing.`);
   }
   if (existsSync(destDir)) {
-    rmSync(destDir, { recursive: true, force: true });
+    // Keep the outgoing tree as a sibling snapshot so `npm run schema-diff` can
+    // compare the incoming sync against the immediately-previous one.
+    const snapshotDir = `${destDir}.previous`;
+    if (existsSync(snapshotDir)) {
+      // If `.previous` is a symlink, unlink only — don't let `rm -rf` follow it
+      // into the target directory.
+      if (lstatSync(snapshotDir).isSymbolicLink()) {
+        unlinkSync(snapshotDir);
+      } else {
+        rmSync(snapshotDir, { recursive: true, force: true });
+      }
+    }
+    renameSync(destDir, snapshotDir);
+    console.log(`📸 Previous tree snapshotted → ${snapshotDir}`);
   }
   mkdirSync(path.dirname(destDir), { recursive: true });
   renameSync(srcDir, destDir);
@@ -263,6 +278,9 @@ async function syncFromTarball(version: string): Promise<boolean> {
 
     console.log(`📁 Schemas:    ${path.join(SCHEMA_CACHE_DIR, version)}`);
     console.log(`📁 Compliance: ${path.join(COMPLIANCE_CACHE_DIR, version)}`);
+    if (existsSync(`${path.join(SCHEMA_CACHE_DIR, version)}.previous`)) {
+      console.log(`💡 Wire-level deltas: npm run schema-diff`);
+    }
     return true;
   } finally {
     rmSync(workDir, { recursive: true, force: true });
