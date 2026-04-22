@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-22T04:09:05.446Z
+// Generated at: 2026-04-22T06:59:39.972Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -11231,6 +11231,10 @@ export interface SyncAudiencesRequest {
  */
 export type SyncAudiencesResponse = SyncAudiencesSuccess | SyncAudiencesError;
 /**
+ * Matching status. Present when action is created, updated, or unchanged; absent when action is deleted or failed.
+ */
+export type AudienceStatus = 'processing' | 'ready' | 'too_small';
+/**
  * Identifier type. Combines hashed PII types (hashed_email, hashed_phone) with universal ID types (rampid, uid2, maid, etc.).
  */
 export type MatchIDType =
@@ -11268,10 +11272,7 @@ export interface SyncAudiencesSuccess {
      * Action taken for this audience. 'status' is present when action is created, updated, or unchanged. 'status' is absent when action is deleted or failed.
      */
     action: 'created' | 'updated' | 'unchanged' | 'deleted' | 'failed';
-    /**
-     * Matching status. Present when action is created, updated, or unchanged; absent when action is deleted or failed. 'processing': platform is still matching members against its user base. 'ready': audience is available for targeting, matched_count is populated. 'too_small': matched audience is below the platform's minimum size — add more members and re-sync.
-     */
-    status?: 'processing' | 'ready' | 'too_small';
+    status?: AudienceStatus;
     /**
      * Number of members submitted in this sync operation (delta, not cumulative). In discovery-only calls (no audiences array), this is 0.
      */
@@ -11940,6 +11941,10 @@ export interface CreatePropertyListResponse {
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -12027,6 +12032,10 @@ export interface DeletePropertyListResponse {
    * ID of the deleted list
    */
   list_id: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -12172,6 +12181,10 @@ export interface UpdatePropertyListRequest {
  */
 export interface UpdatePropertyListResponse {
   list: PropertyList;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
