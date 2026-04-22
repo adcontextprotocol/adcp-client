@@ -1,5 +1,107 @@
 # Changelog
 
+## 5.13.0
+
+### Minor Changes
+
+- be0d60b: Envelope hygiene: colocate the two error-envelope allowlists into a
+  single source of truth, and flip `wrapEnvelope` to a fail-closed default
+  for unregistered error codes.
+
+  Security-review follow-ups from #788 (M3 + M4):
+  - **#800 (M4)**: `ERROR_ENVELOPE_FIELD_ALLOWLIST` (sibling-keys allowlist
+    used by `wrapEnvelope`) and the former `CONFLICT_ALLOWED_ENVELOPE_KEYS`
+    (inside-adcp_error allowlist used by the
+    `idempotency.conflict_no_payload_leak` invariant) now live side-by-side
+    in the new `src/lib/server/envelope-allowlist.ts` module. The latter
+    is renamed to `CONFLICT_ADCP_ERROR_ALLOWLIST` to make the "keys inside
+    the adcp_error block" scope obvious. Both are exported from
+    `@adcp/client/server` so callers with custom error envelopes can
+    inspect / extend the sets.
+  - **#799 (M3)**: `wrapEnvelope` now fails closed on unregistered error
+    codes. A code with no explicit entry in `ERROR_ENVELOPE_FIELD_ALLOWLIST`
+    uses `DEFAULT_ERROR_ENVELOPE_FIELDS` — `context` only — instead of
+    inheriting success-envelope semantics. Sellers that want `replayed`
+    or `operation_id` on a bespoke error code must register it explicitly.
+    The fail-closed posture matches the framework's own internal behavior:
+    `create-adcp-server.ts` error paths only ever echo `context` via
+    `finalize()`; `injectReplayed` is never called on error responses.
+
+  **Who is affected**: consumers calling `wrapEnvelope` with an
+  `adcp_error.code` other than `IDEMPOTENCY_CONFLICT` (the only code
+  registered today) AND relying on `replayed` or `operation_id` to
+  round-trip. On upgrade, those fields silently drop — only `context`
+  echoes. `IDEMPOTENCY_CONFLICT` is unchanged.
+
+  **Upgrade path**: for bespoke error codes that genuinely need
+  `replayed` or `operation_id` on the envelope, build the envelope
+  directly instead of calling `wrapEnvelope`, or open an issue so the
+  code can be added to `ERROR_ENVELOPE_FIELD_ALLOWLIST`. The allowlist
+  is intentionally frozen at the module level — extending it requires a
+  spec-and-SDK conversation, not a local override.
+
+  Breaking change (minor — `wrapEnvelope` was just shipped in 5.11.0):
+  narrow external surface, days-old on npm.
+
+  Closes #799, closes #800.
+
+- e5ef1be: Pin to AdCP 3.0.0 GA.
+
+  `ADCP_VERSION` flips from the rolling `latest` alias to the published
+  `3.0.0` release. Generated types, Zod schemas, compliance storyboards,
+  and `schemas-data/` are now locked to the 3.0.0 registry instead of
+  tracking whatever the registry serves next. `COMPATIBLE_ADCP_VERSIONS`
+  adds `'3.0.0'` alongside the existing `v3` alias and the beta.1 /
+  beta.3 wire-compat entries so mixed-version traffic keeps working.
+
+  Supply-chain: the 3.0.0 tarball is cosign-verified against
+  `adcontextprotocol/adcp`'s release workflow OIDC identity, which is a
+  stricter trust boundary than the checksum-only `latest` alias used
+  before.
+
+  Side effects of the pin:
+  - `validate_property_delivery` response now uses its generated
+    `ValidatePropertyDeliveryResponseSchema` (upstream shipped the
+    registry entry in 3.0.0 GA). The schema requires `list_id`,
+    `summary`, `results`, and `validated_at`; `compliant` is optional.
+    The previous hand-written stub accepted a bare `{compliant}` OR a
+    bare `{errors}` fallback; **the `{errors}` branch is gone** — error
+    responses now flow through the protocol's async error channel
+    rather than the response body. Callers reading `compliant` still
+    work; callers that consumed `.errors` from the response must switch
+    to the standard `TaskResult.adcpError` path.
+  - `compliance/cache/3.0.0/` is populated (cosign-verified) and
+    replaces `compliance/cache/latest/` as the storyboard source.
+
+### Patch Changes
+
+- 22b44c4: Fix `governance.denial_blocks_mutation` to allow expected-denial recovery
+  paths.
+
+  The invariant anchored any governance denial (`GOVERNANCE_DENIED`,
+  `TERMS_REJECTED`, `POLICY_VIOLATION`, etc.) and then flagged any later
+  successful mutation in the same run as a silent bypass. That fired on
+  first-party storyboards whose whole purpose is to test recovery —
+  `media_buy_seller/governance_denied_recovery` (buyer shrinks the buy
+  and retries) and `media_buy_seller/measurement_terms_rejected` (buyer
+  relaxes terms and retries) — because the retry step succeeded against
+  the same plan and tripped the anchor.
+
+  A denial step that the storyboard marks `expect_error: true` is the
+  author explicitly acknowledging the denial. The subsequent mutation is
+  a recovery path, not a silent bypass, so the invariant no longer
+  anchors when the denial step is expected. The silent-bypass signal is
+  preserved for `check_governance` 200s with `status: denied` and for
+  `adcp_error` responses the author did not declare expected.
+
+  When the invariant does fire on a wire-error denial, the failure
+  message now points the author at the `expect_error: true` escape so
+  the next author doesn't have to re-derive it from source. The hint is
+  suppressed on `check_governance` 200 denials where the flag has no
+  effect.
+
+  Closes #811.
+
 ## 5.12.0
 
 ### Minor Changes
