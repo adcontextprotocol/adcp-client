@@ -10,7 +10,7 @@
  * fallback when no builder exists for a task.
  */
 
-import { resolveBrand, resolveAccount, resolveAuthPrincipal } from '../client';
+import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
 import { injectContext } from './context';
@@ -638,8 +638,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
       identity: {
-        consent_granted: true,
-        user: { principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal' },
+        consent_granted: false,
+        anonymous_session_id: `e2e-anon-${Date.now()}`,
       },
       intent: options.si_context ?? 'E2E test session',
       placement: 'e2e-test',
@@ -649,14 +649,20 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  si_send_message(_step, context, _options) {
+  si_send_message(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       session_id: context.session_id ?? 'unknown',
       message: 'Tell me more about this product.',
     };
   },
 
-  si_terminate_session(_step, context, _options) {
+  si_terminate_session(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       session_id: context.session_id ?? 'unknown',
       reason: 'user_exit',
