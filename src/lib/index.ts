@@ -760,6 +760,26 @@ export {
   hasAssets,
 } from './utils/format-assets';
 
+// ====== CREATIVE ASSET BUILDERS ======
+// Typed factories that inject the `asset_type` discriminator.
+// `imageAsset({ url, width, height })` returns a valid `ImageAsset`
+// without repeating `asset_type: 'image'` at every call site.
+// Prefer the named exports; use `Asset.image({...})` when constructing
+// several asset types together (assets-by-role manifests).
+export {
+  Asset,
+  imageAsset,
+  videoAsset,
+  audioAsset,
+  textAsset,
+  urlAsset,
+  htmlAsset,
+  javascriptAsset,
+  cssAsset,
+  markdownAsset,
+  webhookAsset,
+} from './utils/asset-builders';
+
 // ====== V3.0 COMPATIBILITY UTILITIES ======
 // Capabilities detection, version negotiation, and v3 enforcement.
 // See also:

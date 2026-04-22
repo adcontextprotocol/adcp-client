@@ -3,7 +3,7 @@
 // This example shows how to use the new format_id and assets structure for both
 // static and generative creative workflows
 
-import { ADCPMultiAgentClient, type SyncCreativesRequest } from '../src/lib';
+import { ADCPMultiAgentClient, imageAsset, textAsset, urlAsset, type SyncCreativesRequest } from '../src/lib';
 
 async function demonstrateGenerativeCreatives() {
   console.log('🎨 Generative Creative Format Demo');
@@ -36,18 +36,16 @@ async function demonstrateGenerativeCreatives() {
           id: 'display_300x250',
         },
         assets: {
-          image: {
-            asset_type: 'image',
+          image: imageAsset({
             url: 'https://example.com/banner-300x250.jpg',
             width: 300,
             height: 250,
             alt_text: 'Summer sale banner',
-          },
-          click_url: {
-            asset_type: 'url',
+          }),
+          click_url: urlAsset({
             url: 'https://example.com/summer-sale',
             description: 'Landing page for summer sale campaign',
-          },
+          }),
         },
         tags: ['display', 'static', 'summer-sale'],
       },
@@ -71,21 +69,18 @@ async function demonstrateGenerativeCreatives() {
           id: 'display_300x250_generative',
         },
         assets: {
-          brand_context: {
-            asset_type: 'url',
+          brand_context: urlAsset({
             url: 'https://example.com',
             description: 'Brand website for context extraction',
-          },
-          generation_prompt: {
-            asset_type: 'text',
+          }),
+          generation_prompt: textAsset({
             content: 'Create a vibrant summer sale banner highlighting 30% off outdoor furniture',
-          },
-          logo: {
-            asset_type: 'image',
+          }),
+          logo: imageAsset({
             url: 'https://example.com/logo.png',
             width: 100,
             height: 100,
-          },
+          }),
         },
         inputs: [
           {
@@ -125,15 +120,13 @@ async function demonstrateGenerativeCreatives() {
           id: 'display_300x250_generative',
         },
         assets: {
-          brand_context: {
-            asset_type: 'url',
+          brand_context: urlAsset({
             url: 'https://example.com',
             description: 'Brand website for context extraction',
-          },
-          generation_prompt: {
-            asset_type: 'text',
+          }),
+          generation_prompt: textAsset({
             content: 'Create a vibrant summer sale banner highlighting 30% off outdoor furniture',
-          },
+          }),
         },
         approved: true, // Approve the generated preview
       },
@@ -158,16 +151,14 @@ async function demonstrateGenerativeCreatives() {
           id: 'display_300x250_generative',
         },
         assets: {
-          brand_context: {
-            asset_type: 'url',
+          brand_context: urlAsset({
             url: 'https://example.com',
             description: 'Brand website for context extraction',
-          },
-          generation_prompt: {
-            asset_type: 'text',
+          }),
+          generation_prompt: textAsset({
             content:
               'Create a warm, inviting summer sale banner with emphasis on comfort and quality. Show 30% off outdoor furniture with natural colors.',
-          },
+          }),
         },
         approved: false, // Request regeneration with updated prompt
       },
