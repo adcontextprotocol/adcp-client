@@ -222,6 +222,48 @@ describe('Request Builder', () => {
       assert.ok(result.event_sources[0].event_source_id, 'should have event_source_id');
       assert.ok(Array.isArray(result.event_sources[0].event_types), 'should have event_types');
     });
+
+    test('honors step.sample_request so authored event_source_id reaches the wire', () => {
+      // Regression: the fallback generated `test-source-${Date.now()}` and
+      // ignored the authored id. Downstream log_event steps then referenced
+      // the authored id (e.g., "amsterdam_website") and agents returned
+      // EVENT_SOURCE_NOT_FOUND because no such source had been synced.
+      const fixture = {
+        event_sources: [
+          {
+            event_source_id: 'amsterdam_website',
+            name: 'Amsterdam Website',
+            event_types: ['purchase', 'add_to_cart'],
+          },
+        ],
+      };
+      const result = buildRequest(
+        step('sync_event_sources', { sample_request: fixture }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(result.event_sources[0].event_source_id, 'amsterdam_website');
+      assert.ok(result.account, 'account still injected');
+    });
+
+    test('injects context into sample_request', () => {
+      const fixture = {
+        event_sources: [
+          {
+            event_source_id: '$context.event_source_id',
+            name: 'Dynamic Source',
+            event_types: ['purchase'],
+          },
+        ],
+      };
+      const context = { event_source_id: 'resolved-source-id' };
+      const result = buildRequest(
+        step('sync_event_sources', { sample_request: fixture }),
+        context,
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(result.event_sources[0].event_source_id, 'resolved-source-id');
+    });
   });
 
   describe('log_event', () => {

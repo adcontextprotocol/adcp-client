@@ -262,7 +262,15 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  sync_event_sources(_step, context, options) {
+  sync_event_sources(step, context, options) {
+    // Honor hand-authored sample_request so storyboards can register a
+    // specific event_source_id that downstream log_event /
+    // provide_performance_feedback steps reference. Without this, the
+    // generated fallback id is synced while later steps send the authored
+    // id, producing EVENT_SOURCE_NOT_FOUND.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
+    }
     return {
       account: context.account ?? resolveAccount(options),
       event_sources: [
