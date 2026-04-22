@@ -18,6 +18,8 @@ import './default-invariants';
 // Types
 export type {
   Storyboard,
+  StoryboardInvariants,
+  StoryboardInvariantsObject,
   StoryboardPhase,
   StoryboardStep,
   StoryboardValidation,
@@ -43,6 +45,7 @@ export {
   registerAssertion,
   getAssertion,
   listAssertions,
+  listDefaultAssertions,
   clearAssertionRegistry,
   resolveAssertions,
 } from './assertions';

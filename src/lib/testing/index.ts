@@ -195,6 +195,7 @@ export {
   registerAssertion,
   getAssertion,
   listAssertions,
+  listDefaultAssertions,
   clearAssertionRegistry,
   resolveAssertions,
   type AssertionSpec,
@@ -203,6 +204,8 @@ export {
   type RegisterAssertionOptions,
   // Types
   type Storyboard,
+  type StoryboardInvariants,
+  type StoryboardInvariantsObject,
   type StoryboardPhase,
   type StoryboardStep,
   type StoryboardValidation,

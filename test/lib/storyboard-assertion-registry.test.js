@@ -14,6 +14,7 @@ const {
   registerAssertion,
   getAssertion,
   listAssertions,
+  listDefaultAssertions,
   clearAssertionRegistry,
   resolveAssertions,
 } = require('../../dist/lib/testing/storyboard/assertions.js');
@@ -84,9 +85,128 @@ describe('assertion registry', () => {
     assert.throws(() => resolveAssertions(['known.one', 'missing.a', 'missing.b']), /missing\.a, missing\.b/);
   });
 
-  test('resolveAssertions returns [] on undefined or empty', () => {
+  test('resolveAssertions returns [] on undefined or empty when no defaults are registered', () => {
     assert.deepStrictEqual(resolveAssertions(undefined), []);
     assert.deepStrictEqual(resolveAssertions([]), []);
+  });
+});
+
+// Default-on resolution is the big product change here: storyboards that omit
+// `invariants:` entirely used to ship with zero cross-step gating, which made
+// forks and new specialisms silently coverage-free. Default-on flips that so
+// the bundled set runs unless explicitly opted out.
+describe('resolveAssertions: default-on semantics', () => {
+  beforeEach(() => clearAssertionRegistry());
+
+  function registerTwoDefaults() {
+    registerAssertion({ id: 'default.one', description: 'one', default: true });
+    registerAssertion({ id: 'default.two', description: 'two', default: true });
+  }
+
+  test('listDefaultAssertions enumerates only default:true specs', () => {
+    registerAssertion({ id: 'plain', description: 'no default flag' });
+    registerTwoDefaults();
+    assert.deepStrictEqual(listDefaultAssertions().sort(), ['default.one', 'default.two']);
+  });
+
+  test('undefined invariants runs every default-on assertion', () => {
+    registerTwoDefaults();
+    registerAssertion({ id: 'custom.only', description: 'custom, not default' });
+    const resolved = resolveAssertions(undefined).map(s => s.id).sort();
+    assert.deepStrictEqual(resolved, ['default.one', 'default.two']);
+  });
+
+  test('empty object invariants runs every default-on assertion', () => {
+    registerTwoDefaults();
+    const resolved = resolveAssertions({}).map(s => s.id).sort();
+    assert.deepStrictEqual(resolved, ['default.one', 'default.two']);
+  });
+
+  test('legacy array form is additive on top of defaults', () => {
+    registerTwoDefaults();
+    registerAssertion({ id: 'custom.extra', description: 'extra' });
+    const resolved = resolveAssertions(['custom.extra']).map(s => s.id).sort();
+    assert.deepStrictEqual(resolved, ['custom.extra', 'default.one', 'default.two']);
+  });
+
+  test('object form enable is additive on top of defaults', () => {
+    registerTwoDefaults();
+    registerAssertion({ id: 'custom.extra', description: 'extra' });
+    const resolved = resolveAssertions({ enable: ['custom.extra'] }).map(s => s.id).sort();
+    assert.deepStrictEqual(resolved, ['custom.extra', 'default.one', 'default.two']);
+  });
+
+  test('object form disable removes specific defaults', () => {
+    registerTwoDefaults();
+    const resolved = resolveAssertions({ disable: ['default.one'] }).map(s => s.id);
+    assert.deepStrictEqual(resolved, ['default.two']);
+  });
+
+  test('object form disable + enable combine (defaults minus disable plus enable)', () => {
+    registerTwoDefaults();
+    registerAssertion({ id: 'custom.extra', description: 'extra' });
+    const resolved = resolveAssertions({
+      disable: ['default.one'],
+      enable: ['custom.extra'],
+    })
+      .map(s => s.id)
+      .sort();
+    assert.deepStrictEqual(resolved, ['custom.extra', 'default.two']);
+  });
+
+  test('unknown enable id throws and names every missing id', () => {
+    registerTwoDefaults();
+    assert.throws(
+      () => resolveAssertions({ enable: ['missing.a', 'missing.b'] }),
+      /unregistered assertions: missing\.a, missing\.b/
+    );
+  });
+
+  test('unknown disable id throws with "non default-on" guidance and lists known defaults', () => {
+    registerTwoDefaults();
+    registerAssertion({ id: 'not.default', description: 'plain, registered' });
+    assert.throws(
+      () => resolveAssertions({ disable: ['not.default'] }),
+      /invariants\.disable names id.*not\.default.*Known default-on ids: default\.one, default\.two/s
+    );
+  });
+
+  test('disable + enable unknowns surface both errors in one throw', () => {
+    registerTwoDefaults();
+    let caught;
+    try {
+      resolveAssertions({ disable: ['not.registered'], enable: ['also.missing'] });
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'resolveAssertions must throw on any unknown id');
+    assert.match(caught.message, /unregistered assertion: also\.missing/);
+    assert.match(caught.message, /invariants\.disable names id.*not\.registered/);
+  });
+
+  test('unknown object-form top-level key ("disabled" typo) throws instead of silent no-op', () => {
+    registerTwoDefaults();
+    assert.throws(
+      () => resolveAssertions({ disabled: ['default.one'] }),
+      /invariants has unknown field: disabled/
+    );
+  });
+
+  test('disable typo triggers a "Did you mean" suggestion against the default-on set', () => {
+    registerTwoDefaults();
+    assert.throws(
+      () => resolveAssertions({ disable: ['default.onee'] }),
+      /Did you mean "default\.one"\?/
+    );
+  });
+
+  test('unknown enable id names registered ids symmetric to unknown disable', () => {
+    registerTwoDefaults();
+    registerAssertion({ id: 'not.default', description: 'plain, registered' });
+    assert.throws(
+      () => resolveAssertions({ enable: ['missing.x'] }),
+      /Registered ids: default\.one, default\.two, not\.default/
+    );
   });
 });
 

@@ -48,15 +48,54 @@ export interface Storyboard {
   };
   phases: StoryboardPhase[];
   /**
-   * Cross-step assertion ids that apply to this storyboard. Each entry names
-   * an assertion registered via `registerAssertion(...)`; the runner resolves
-   * them at start and fails fast on unknown ids. Per-step checks live inline
-   * on steps — assertions encode specialism- or protocol-wide properties
-   * that must hold across the full run (governance denial never mutates,
-   * idempotency dedup, status monotonicity, context never echoes secrets on
-   * error). See `./assertions.ts` for the registry API.
+   * Cross-step assertions that apply to this storyboard. Every assertion
+   * registered with `default: true` (the bundled set: `status.monotonic`,
+   * `idempotency.conflict_no_payload_leak`, `context.no_secret_echo`,
+   * `governance.denial_blocks_mutation`) runs by default — omit the field
+   * entirely and the full default set applies. Per-step checks live inline
+   * on steps; assertions encode specialism- or protocol-wide properties
+   * that must hold across the full run.
+   *
+   * Three shapes are accepted:
+   *   - `undefined` (or field omitted) — run every default-on assertion.
+   *   - `string[]` — legacy additive form. Defaults still run; any ids in
+   *     the list register on top for storyboards that want extra non-default
+   *     assertions registered by the consumer. Every id MUST resolve.
+   *   - `{ disable?: string[]; enable?: string[] }` — object form. `disable`
+   *     removes default-on assertions by id (typo-guarded: unknown ids throw
+   *     at runner start); `enable` adds non-default assertions registered by
+   *     the consumer on top.
+   *
+   * See `./assertions.ts` for the registry API and `./default-invariants.ts`
+   * for the bundled set.
    */
-  invariants?: string[];
+  invariants?: StoryboardInvariants;
+}
+
+/**
+ * Storyboard-level invariants declaration. `undefined` / array / object
+ * shapes all map onto the same "resolve to AssertionSpec[]" path in
+ * `resolveAssertions(...)`. See `Storyboard.invariants` for the full
+ * semantics (bundled defaults are always applied unless explicitly
+ * disabled via the object form).
+ */
+export type StoryboardInvariants = string[] | StoryboardInvariantsObject;
+
+export interface StoryboardInvariantsObject {
+  /**
+   * Default-on assertion ids to suppress for this storyboard. Each id MUST
+   * match an assertion registered with `default: true` — an unknown or
+   * non-default id is a typo and fails fast at runner start rather than
+   * silently no-opping (which would mask genuine coverage gaps).
+   */
+  disable?: string[];
+  /**
+   * Additional (non-default) assertion ids to enable for this storyboard on
+   * top of the default-on set. Consumers use this to attach custom
+   * assertions they've registered via `registerAssertion(...)`. Every id
+   * MUST resolve; unknown ids fail fast at runner start.
+   */
+  enable?: string[];
 }
 
 export interface StoryboardPhase {
