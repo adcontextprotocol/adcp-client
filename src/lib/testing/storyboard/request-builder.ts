@@ -446,7 +446,10 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Governance ─────────────────────────────────────────
 
-  sync_governance(_step, context, options) {
+  sync_governance(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       accounts: [
         {
@@ -456,7 +459,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
               url: 'https://governance.test.example',
               authentication: {
                 schemes: ['Bearer'],
-                credentials: 'test-governance-token',
+                credentials: 'test-governance-token-padded-to-meet-min-length-32',
               },
               categories: ['budget_authority', 'brand_policy'],
             },
@@ -617,18 +620,20 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Sponsored Intelligence ─────────────────────────────
 
-  si_get_offering(_step, _context, options) {
+  si_get_offering(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       offering_id: options.si_offering_id ?? 'e2e-test-offering',
-      context: options.si_context ?? 'E2E testing - checking SI offering availability',
-      identity: {
-        principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal',
-        device_id: 'e2e-test-device',
-      },
+      intent: options.si_context ?? 'E2E testing - checking SI offering availability',
     };
   },
 
-  si_initiate_session(_step, context, options) {
+  si_initiate_session(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
@@ -636,7 +641,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
         consent_granted: true,
         user: { principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal' },
       },
-      context: options.si_context ?? 'E2E test session',
+      intent: options.si_context ?? 'E2E test session',
       placement: 'e2e-test',
       supported_capabilities: {
         modalities: { conversational: true, rich_media: true },
