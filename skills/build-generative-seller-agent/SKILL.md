@@ -86,7 +86,8 @@ Brands should be registered dynamically through `sync_accounts` — when a buyer
 > - `build_creative` response is `{ creative_manifest: { format_id, assets } }` — NOT `{ creative_id, status, quality, preview_url }`. Those are `sync_creatives` fields; don't leak them in.
 > - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator — use the typed factories (`imageAsset({...})`, `videoAsset({...})`, `htmlAsset({...})`, `urlAsset({...})`) instead of writing the literal; discriminator is injected for you.
 > - `preview_creative` renders have the same pattern: use `urlRender({...})` / `htmlRender({...})` / `bothRender({...})` — they inject `output_format` and enforce the matching `preview_url` / `preview_html` at the type level.
-> - `get_media_buy_delivery` requires **top-level `currency: string`** (ISO 4217).
+> - `get_media_buy_delivery` requires **top-level `currency: string`** (ISO 4217), and each `media_buy_deliveries[i]/by_package[j]` row requires `package_id`, `spend`, `pricing_model`, `rate`, `currency` (billing quintet).
+> - `get_media_buys /media_buys[i]` rows require `media_buy_id`, `status`, `currency`, `total_budget`, `packages`. Persist `currency` + `total_budget` from the `create_media_buy` request so they can be echoed back verbatim.
 
 Everything from the standard seller skill applies. The delta is in `list_creative_formats` and `sync_creatives`.
 

@@ -75,6 +75,8 @@ Does the buyer send performance metrics back for optimization?
 >
 > - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['sales-catalog-driven', 'conversion_tracking']`), NOT `[{id, version}]` objects.
 > - `get_media_buy_delivery` response requires **top-level `currency: string`** (ISO 4217).
+> - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows require `package_id`, `spend`, `pricing_model`, `rate`, `currency`. Mock handlers that return `{package_id, impressions, clicks}` fail validation — include the billing quintet on every package row.
+> - `get_media_buys /media_buys[i]` rows require `media_buy_id`, `status`, `currency`, `total_budget`, `packages`. Persist `currency` + `total_budget` from `create_media_buy` so they can be echoed back verbatim.
 
 All standard seller tools apply (see `skills/build-seller-agent/SKILL.md`). The additional tools:
 
