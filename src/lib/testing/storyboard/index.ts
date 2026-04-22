@@ -113,7 +113,12 @@ export { parsePath, resolvePath, setPath } from './path';
 export { CONTEXT_EXTRACTORS, extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 
 // Request builder
-export { buildRequest, hasRequestBuilder } from './request-builder';
+export {
+  buildRequest,
+  hasRequestBuilder,
+  listRequestBuilders,
+  INLINE_SAMPLE_REQUEST_BUILDERS,
+} from './request-builder';
 
 // Validations
 export { runValidations } from './validations';

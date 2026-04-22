@@ -21,39 +21,91 @@ type RequestBuilder = (
   options: TestOptions
 ) => Record<string, unknown>;
 
+/**
+ * Storyboard contract: if `sample_request` is authored on a step, the runner
+ * MUST pass it through (after context injection) instead of overwriting with
+ * a synthesized payload. Without this, hand-authored ids (event_source_id,
+ * audience_id, catalog_id, plan_id, etc.) are dropped and downstream steps
+ * that reference those ids via $context or direct value fail with
+ * *_NOT_FOUND against strict agents.
+ *
+ * Returns `undefined` when no `sample_request` is authored; callers fall
+ * back to their context-derived payload.
+ *
+ * `withAccount`: inject the resolved account on top of the authored payload.
+ * Used by mutating sync-style tasks (sync_audiences, sync_catalogs,
+ * sync_event_sources, sync_creatives, report_usage, etc.) where the runtime
+ * account is authoritative for cross-step scoping; storyboard yaml often
+ * hardcodes a placeholder account.
+ */
+function delegateSampleRequest(
+  step: StoryboardStep,
+  context: StoryboardContext,
+  options: TestOptions,
+  { withAccount = false }: { withAccount?: boolean } = {}
+): Record<string, unknown> | undefined {
+  if (!step.sample_request) return undefined;
+  const base: Record<string, unknown> = withAccount
+    ? { ...step.sample_request, account: context.account ?? resolveAccount(options) }
+    : { ...step.sample_request };
+  return injectContext(base, context) as Record<string, unknown>;
+}
+
+/**
+ * Tasks whose builder consumes `sample_request` inline (selective fields or
+ * scenario-specific merges) rather than via blanket delegation. The coverage
+ * test enumerates these to ensure every other builder goes through
+ * `delegateSampleRequest` so the storyboard contract is enforced uniformly.
+ *
+ * - `create_media_buy`: merges authored packages[0] with discovered product
+ *   identifiers; replay-safe dates from sample_request.
+ * - `get_products`: only handles `buying_mode: 'refine'` specifically.
+ * - `get_brand_identity`: cascades through multiple fallbacks including
+ *   `sample_request.brand_id`.
+ * - `get_signals` / `activate_signal`: cherry-pick narrow fields
+ *   (signal_ids / destinations) and rely on discovered-context fallbacks
+ *   for the rest.
+ * - `comply_test_controller`: forces `account.sandbox: true` on top of any
+ *   authored payload.
+ */
+export const INLINE_SAMPLE_REQUEST_BUILDERS = new Set<string>([
+  'create_media_buy',
+  'get_products',
+  'get_brand_identity',
+  'get_signals',
+  'activate_signal',
+  'comply_test_controller',
+]);
+
 const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Account & Audience ─────────────────────────────────
 
-  sync_accounts(_step, _context, options) {
-    return {
-      accounts: [
-        {
-          brand: resolveBrand(options),
-          operator: resolveBrand(options).domain,
-          billing: 'operator',
-          payment_terms: 'net_30',
-        },
-      ],
-    };
+  sync_accounts(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        accounts: [
+          {
+            brand: resolveBrand(options),
+            operator: resolveBrand(options).domain,
+            billing: 'operator',
+            payment_terms: 'net_30',
+          },
+        ],
+      }
+    );
   },
 
-  list_accounts(_step, _context, options) {
-    return {
-      brand: resolveBrand(options),
-    };
+  list_accounts(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        brand: resolveBrand(options),
+      }
+    );
   },
 
   sync_audiences(step, context, options) {
-    // Honor hand-authored sample_request so storyboards can register a
-    // specific audience_id that downstream steps reference. Without this,
-    // add-shaped sample_request blocks (authored with audience_id + add[])
-    // fell through to the generated fallback id, and a later delete_audience
-    // or context-substitution step would hit AUDIENCE_NOT_FOUND because the
-    // sync had registered a different id. Matches the pattern used by
-    // sync_event_sources, sync_catalogs, and sync_creatives.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options, { withAccount: true });
+    if (delegated) return delegated;
     return {
       account: context.account ?? resolveAccount(options),
       audiences: [
@@ -81,20 +133,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   get_rights(step, context, options) {
-    // Honor hand-authored sample_request so storyboards can specify
-    // scenario-specific query text, uses, countries, or buyer_brand.
-    // Peer builders (sync_plans, check_governance, list_creative_formats,
-    // create_content_standards, etc.) follow the same pattern.
-    //
-    // Without this, any get_rights step hits the wire with the generic
-    // fallback and a brand_id derived from the caller's domain — which
-    // rights-holder rosters reject as unknown, so rights[0] is undefined,
-    // $context.rights_id doesn't resolve, and downstream acquire_rights
-    // steps fail with rights_not_found instead of the error the
-    // storyboard is actually asserting (e.g., GOVERNANCE_DENIED).
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     const brand = resolveBrand(options);
     return {
       query: 'available rights for advertising',
@@ -193,14 +233,9 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  update_media_buy(step, context, _options) {
-    // If the storyboard provides a sample_request, honor it — these requests
-    // are hand-authored to exercise specific seller behaviors (creative
-    // assignment, targeting overlay swaps, pause/resume/cancel, etc.) and the
-    // builder should not override the intent.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+  update_media_buy(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
 
     const request: Record<string, unknown> = {
       media_buy_id: context.media_buy_id ?? 'unknown',
@@ -224,16 +259,20 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     return request;
   },
 
-  get_media_buys(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+  get_media_buys(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        media_buy_ids: [context.media_buy_id ?? 'unknown'],
+      }
+    );
   },
 
-  get_media_buy_delivery(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+  get_media_buy_delivery(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        media_buy_ids: [context.media_buy_id ?? 'unknown'],
+      }
+    );
   },
 
   // provide_performance_feedback intentionally has no builder — storyboard
@@ -245,14 +284,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Catalogs & Events ─────────────────────────────────
 
   sync_catalogs(step, context, options) {
-    // Prefer the fixture's sample_request — it's the authoritative request
-    // shape for the storyboard step. The fallback's hardcoded feed_format
-    // ('json') is NOT in the spec's 5-literal union and its `type` is
-    // missing entirely, so any agent running the generated Zod schema
-    // rejects the fallback with -32602 on both fields.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options, { withAccount: true });
+    if (delegated) return delegated;
     return {
       account: context.account ?? resolveAccount(options),
       catalogs: [
@@ -267,7 +300,9 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  sync_event_sources(_step, context, options) {
+  sync_event_sources(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options, { withAccount: true });
+    if (delegated) return delegated;
     return {
       account: context.account ?? resolveAccount(options),
       event_sources: [
@@ -280,13 +315,9 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  log_event(step, context, _options) {
-    // Storyboards routinely ship spec-conformant event payloads with
-    // event_time, content_ids, and custom_data siblings that only the
-    // author knows. Honor sample_request when present.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+  log_event(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       event_source_id: context.event_source_id ?? 'test-source',
       events: [
@@ -301,13 +332,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   report_usage(step, context, options) {
-    // Prefer the fixture's sample_request — creative-ad-server and other
-    // specialisms carry per-usage-entry fields (vendor_cost, currency,
-    // pricing_option_id) that the hardcoded fallback here omits, causing
-    // agents running the generated Zod schema to reject every step.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options, { withAccount: true });
+    if (delegated) return delegated;
     const now = new Date();
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     return {
@@ -330,25 +356,13 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Creative ───────────────────────────────────────────
 
-  list_creative_formats(step, context) {
-    // Mirror the pattern used by peer builders (build_creative, sync_creatives,
-    // etc.): honor hand-authored sample_request so storyboards can exercise
-    // format_ids filters and other query params. Without this, any step that
-    // declares `format_ids: ["..."]` in sample_request hits the wire as an
-    // empty request and the agent returns unfiltered results — failing
-    // round-trip / substitution-observer assertions silently.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
-    return {};
+  list_creative_formats(step, context, options) {
+    return delegateSampleRequest(step, context, options) ?? {};
   },
 
   build_creative(step, context, options) {
-    // Hand-authored sample_request can exercise slot-specific briefs, target
-    // format overrides, or multi-format requests — honor it when present.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     const format = selectFormat(context);
     return {
       target_format_id: format?.format_id ?? context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
@@ -359,7 +373,9 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  preview_creative(_step, context, _options) {
+  preview_creative(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     const format = selectFormat(context);
     return {
       request_type: 'single',
@@ -372,11 +388,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   sync_creatives(step, context, options) {
-    // Honor hand-authored sample_request for scenarios that require specific
-    // creative shapes (delete/patch flows, format-scoped uploads, etc).
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options, { withAccount: true });
+    if (delegated) return delegated;
     const formats = (context.formats as Array<Record<string, unknown>> | undefined) ?? [];
     const now = Date.now();
 
@@ -413,10 +426,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  list_creatives(_step, context, options) {
-    return {
-      account: context.account ?? resolveAccount(options),
-    };
+  list_creatives(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options, { withAccount: true }) ?? {
+        account: context.account ?? resolveAccount(options),
+      }
+    );
   },
 
   // ── Signals ────────────────────────────────────────────
@@ -446,16 +461,15 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Capabilities ───────────────────────────────────────
 
-  get_adcp_capabilities() {
-    return {};
+  get_adcp_capabilities(step, context, options) {
+    return delegateSampleRequest(step, context, options) ?? {};
   },
 
   // ── Governance ─────────────────────────────────────────
 
   sync_governance(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       accounts: [
         {
@@ -475,20 +489,21 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  list_content_standards() {
-    return {};
+  list_content_standards(step, context, options) {
+    return delegateSampleRequest(step, context, options) ?? {};
   },
 
-  get_content_standards(_step, context, _options) {
-    return {
-      standards_id: context.content_standards_id ?? 'unknown',
-    };
+  get_content_standards(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        standards_id: context.content_standards_id ?? 'unknown',
+      }
+    );
   },
 
-  calibrate_content(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+  calibrate_content(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       standards_id: context.content_standards_id ?? 'unknown',
       artifact: {
@@ -500,12 +515,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   sync_plans(step, context, options) {
-    // Governance storyboards define scenario-specific plans in sample_request
-    // (e.g., custom_policies for conditions, reallocation_threshold for denied).
-    // Delegate to sample_request when present.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     const now = Date.now();
     const startDate = new Date(now + 24 * 60 * 60 * 1000).toISOString();
     const endDate = new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -524,9 +535,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   check_governance(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       plan_id: context.plan_id ?? 'unknown',
       caller: resolveBrand(options).domain,
@@ -538,16 +548,17 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  get_account_financials(_step, context, options) {
-    return {
-      account: context.account ?? resolveAccount(options),
-    };
+  get_account_financials(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options, { withAccount: true }) ?? {
+        account: context.account ?? resolveAccount(options),
+      }
+    );
   },
 
-  create_content_standards(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+  create_content_standards(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       scope: {
         languages_any: ['en'],
@@ -556,19 +567,17 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  update_content_standards(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
-    return {
-      standards_id: context.content_standards_id ?? 'unknown',
-    };
+  update_content_standards(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        standards_id: context.content_standards_id ?? 'unknown',
+      }
+    );
   },
 
-  validate_content_delivery(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+  validate_content_delivery(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       standards_id: context.content_standards_id ?? 'unknown',
       records: [
@@ -585,9 +594,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   acquire_rights(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       rights_id: context.rights_id ?? 'unknown',
       pricing_option_id: 'standard',
@@ -606,19 +614,17 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  update_rights(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
-    return {
-      rights_id: context.rights_id ?? 'unknown',
-    };
+  update_rights(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        rights_id: context.rights_id ?? 'unknown',
+      }
+    );
   },
 
-  creative_approval(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+  creative_approval(step, context, options) {
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       rights_id: context.rights_id ?? 'unknown',
       creative_id: context.creative_id ?? 'test-creative',
@@ -631,9 +637,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Sponsored Intelligence ─────────────────────────────
 
   si_get_offering(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       offering_id: options.si_offering_id ?? 'e2e-test-offering',
       intent: options.si_context ?? 'E2E testing - checking SI offering availability',
@@ -645,9 +650,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // semantically plausible one so agents that dispatch on intent still
     // behave sensibly; storyboards override via sample_request when
     // testing intent-specific paths.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
+    const delegated = delegateSampleRequest(step, context, options);
+    if (delegated) return delegated;
     return {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
@@ -663,24 +667,22 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  si_send_message(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
-    return {
-      session_id: context.session_id ?? 'unknown',
-      message: 'Tell me more about this product.',
-    };
+  si_send_message(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        session_id: context.session_id ?? 'unknown',
+        message: 'Tell me more about this product.',
+      }
+    );
   },
 
-  si_terminate_session(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
-    return {
-      session_id: context.session_id ?? 'unknown',
-      reason: 'user_exit',
-    };
+  si_terminate_session(step, context, options) {
+    return (
+      delegateSampleRequest(step, context, options) ?? {
+        session_id: context.session_id ?? 'unknown',
+        reason: 'user_exit',
+      }
+    );
   },
 
   // ── Test Controller ────────────────────────────────────
@@ -726,6 +728,15 @@ export function buildRequest(
  */
 export function hasRequestBuilder(taskName: string): boolean {
   return taskName in REQUEST_BUILDERS;
+}
+
+/**
+ * List every task name with a builder. Used by the coverage test to assert
+ * every builder either delegates to `delegateSampleRequest` or is on the
+ * `INLINE_SAMPLE_REQUEST_BUILDERS` allowlist for scenario-specific handling.
+ */
+export function listRequestBuilders(): string[] {
+  return Object.keys(REQUEST_BUILDERS);
 }
 
 // ────────────────────────────────────────────────────────────

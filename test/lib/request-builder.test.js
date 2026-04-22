@@ -8,7 +8,12 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const { buildRequest, hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
+const {
+  buildRequest,
+  hasRequestBuilder,
+  INLINE_SAMPLE_REQUEST_BUILDERS,
+  listRequestBuilders,
+} = require('../../dist/lib/testing/storyboard/request-builder.js');
 
 const DEFAULT_OPTIONS = {
   brand: { domain: 'acmeoutdoor.example' },
@@ -612,6 +617,37 @@ describe('Request Builder', () => {
 
     test('returns false for unknown tasks', () => {
       assert.ok(!hasRequestBuilder('nonexistent_task'));
+    });
+
+    test('every non-allowlisted builder honors step.sample_request', () => {
+      // Contract: if a storyboard authors sample_request, the runner MUST
+      // pass it through instead of overwriting with a synthesized payload.
+      // Builders with scenario-specific logic opt out via
+      // INLINE_SAMPLE_REQUEST_BUILDERS and handle sample_request inline.
+      //
+      // This test guards against future builders silently dropping authored
+      // ids (the #818 / #821 bug class).
+      const SENTINEL = '__adcp_test_sentinel__';
+      const builders = listRequestBuilders();
+      assert.ok(builders.length > 20, 'expected dozens of builders');
+      for (const task of builders) {
+        if (INLINE_SAMPLE_REQUEST_BUILDERS.has(task)) continue;
+        const result = buildRequest(step(task, { sample_request: { [SENTINEL]: 'present' } }), {}, DEFAULT_OPTIONS);
+        assert.strictEqual(
+          result[SENTINEL],
+          'present',
+          `${task} must honor step.sample_request — either delegate via delegateSampleRequest or add it to INLINE_SAMPLE_REQUEST_BUILDERS`
+        );
+      }
+    });
+
+    test('inline-sample-request allowlist only contains builders with scenario-specific logic', () => {
+      // Every name in the allowlist must actually have a builder — catches
+      // typos and dead entries.
+      const builders = new Set(listRequestBuilders());
+      for (const task of INLINE_SAMPLE_REQUEST_BUILDERS) {
+        assert.ok(builders.has(task), `INLINE_SAMPLE_REQUEST_BUILDERS entry "${task}" has no builder`);
+      }
     });
 
     test('returns false for property-list tools so the runner delegates to sample_request', () => {
