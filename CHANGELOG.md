@@ -1,5 +1,146 @@
 # Changelog
 
+## 5.11.0
+
+### Minor Changes
+
+- 740f609: Add typed factory helpers for creative asset construction that inject the `asset_type` discriminator: `imageAsset`, `videoAsset`, `audioAsset`, `textAsset`, `urlAsset`, `htmlAsset`, `javascriptAsset`, `cssAsset`, `markdownAsset`, `webhookAsset`, plus a grouped `Asset` namespace (`Asset.image({...})`) over the same functions.
+
+  Each helper takes the asset shape without `asset_type` and returns an object tagged with the canonical literal — `imageAsset({ url, width, height })` produces `{ url, width, height, asset_type: 'image' }` — eliminating the boilerplate at every construction site. The discriminator is written last in the returned object so a runtime bypass (cast that slips `asset_type` into the input) cannot overwrite it.
+
+  Return type is `Omit<T, 'asset_type'> & { asset_type: '<literal>' }` (intersection) rather than the raw generated interface, so the builders compile regardless of whether the generated TypeScript types currently carry the discriminator — a defensive choice that makes the helpers stable across schema regenerations.
+
+- 828c112: Add `createDefaultTestControllerStore` to `@adcp/client/testing` — a default factory that wires every `force_*`, `simulate_*`, `seed_*` scenario against a generic `DefaultSessionShape`. Sellers provide `loadSession` / `saveSession` and get a conformance-ready `TestControllerStore` without hand-rolling 300+ lines of boilerplate. Supports partial overrides for sellers who need to customize specific handlers.
+- dd04ae9: Add `@adcp/client/express-mcp` middleware that rewrites JSON-only `Accept` headers so they pass the MCP SDK's `StreamableHTTPServerTransport` check when `enableJsonResponse: true`. Local escape hatch pending upstream SDK fix (https://github.com/modelcontextprotocol/typescript-sdk/issues/1944).
+- 4dc4743: Storyboard cross-step invariants are now default-on. Bundled assertions (`status.monotonic`, `idempotency.conflict_no_payload_leak`, `context.no_secret_echo`, `governance.denial_blocks_mutation`) apply to every run unless a storyboard opts out — forks and new specialisms no longer ship with zero cross-step gating silently.
+  - `Storyboard.invariants` now accepts an object form `{ disable?: string[]; enable?: string[] }`. `disable` is the escape hatch that removes a specific default; `enable` adds a consumer-registered (non-default) assertion on top of the baseline. The legacy `invariants: [id, ...]` array form still works and is treated as additive on top of the defaults.
+  - **Behavior change for direct-API callers**: `resolveAssertions(['id'])` now returns `[...defaults, ...named]` instead of exactly the named ids. Callers that relied on the array-only return shape (e.g., snapshotting `resolveAssertions([...]).length`) should switch to `resolveAssertions({ enable: [...], disable: listDefaultAssertions() })` to reproduce the old semantics.
+  - `AssertionSpec` gained an optional `default?: boolean` flag. Consumers registering custom assertions via `registerAssertion(...)` can opt their own specs into the default-on path.
+  - `resolveAssertions(...)` fails fast on unknown ids in `enable` / the legacy array, and on `disable` ids that aren't registered as defaults (typo guard — a silent no-op would mask coverage gaps). Errors name the registered set and emit a `Did you mean "..."?` suggestion when one of the unknown ids is within Levenshtein distance 2 of a known id.
+  - Unknown top-level keys on the object form (e.g. `invariants: { disabled: [...] }` — trailing `d` typo) throw instead of silently normalising to an empty disable set.
+  - New export `listDefaultAssertions()` (re-exported from `@adcp/client/testing`) enumerates the default-on set for tooling / diagnostics.
+
+  `status.monotonic` failure messages now include the legal next states from the anchor status and a link to the canonical enum schema, e.g.
+  `media_buy mb-1: active → pending_creatives (step "create" → step "regress") is not in the lifecycle graph. Legal next states from "active": "canceled", "completed", "paused". See https://adcontextprotocol.org/schemas/latest/enums/media-buy-status.json for the canonical lifecycle.`
+  Terminal states render as `(none — terminal state)` so the message is unambiguous.
+
+- 6a2c2c5: Add typed factory helpers for `preview_creative` render objects: `urlRender`, `htmlRender`, `bothRender`, plus a grouped `Render` namespace. Each helper takes the render payload without `output_format` and returns an object tagged with the canonical discriminator — `urlRender({ render_id, preview_url, role })` produces a valid url-variant render without repeating `output_format: 'url'` at every call site.
+
+  Mirrors the `imageAsset` / `videoAsset` pattern shipped in #771. `PreviewRender` is a oneOf on `output_format` (`url` / `html` / `both`) where the discriminator decides which sibling field becomes required. Matrix runs consistently surfaced renders missing either `output_format` or its required sibling — the helpers make the wrong shape syntactically harder to express because the input type requires the matching `preview_url` / `preview_html` per variant.
+
+  Return type uses `Omit<Variant, 'output_format'> & { output_format: <literal> }` so the builders stay robust across schema regenerations. Discriminator is spread last so a runtime cast cannot overwrite the canonical tag.
+
+  Skill pitfall callouts in `build-creative-agent` and `build-generative-seller-agent` now recommend the render helpers alongside the asset helpers.
+
+- 9d583aa: Extend the bundled `status.monotonic` default assertion to track the audience lifecycle alongside the seven resource types it already guards (adcontextprotocol/adcp#2836). `sync_audiences` responses carry per-audience `status` values (`processing | ready | too_small`) drawn from the newly-named spec enum at `/schemas/enums/audience-status.json`, and the assertion now rejects off-graph transitions across storyboard steps for every observed `audience_id`.
+
+  **Transition graph** — fully bidirectional across the three states, matching the spec's permissive "MAY transition" hedging:
+  - `processing → ready | too_small` on matching completion.
+  - `ready ↔ processing` on re-sync (new members → re-match).
+  - `too_small → processing | ready` on re-sync (more members → re-match, directly back to ready when the re-matched count clears the minimum).
+  - `ready ↔ too_small` as counts cross `minimum_size` across re-syncs.
+
+  **Observations** are drawn from `sync_audiences` responses only — discovery-only calls (request omits the `audiences[]` array) still return `audiences[]`, so the extractor covers both write and read paths under the single task name. No separate `list_audiences` task exists in the spec. Actions `deleted` and `failed` omit `status` entirely on the response envelope; the extractor's id+status guard makes those rows silent (nothing to observe, nothing to check).
+
+  **Resource scoping** is `(audience, audience_id)`, independent from the other tracked resources. Unknown enum values drift-reset the anchor rather than failing — `response_schema` remains the gate for enum conformance.
+
+  8 new unit tests cover the forward flow, the too_small → processing → ready re-sync path, bidirectional `ready ↔ too_small`, `ready → processing` on re-sync, self-edge silent pass, deleted/failed silent pass, per-audience-id scoping, and enum-drift tolerance. The assertion description now enumerates `audience` alongside the other resource types.
+
+  Follow-up: wiring `audience-sync/index.yaml` with `invariants: [status.monotonic]` in the adcp spec repo once this release lands.
+
+- eca55c5: Storyboard runner auto-fires `comply_test_controller` seed scenarios from the `fixtures:` block (adcp-client#778).
+
+  When a storyboard declares `prerequisites.controller_seeding: true` and carries a top-level `fixtures:` block, the runner now issues a `comply_test_controller` call per fixture entry before phase 1:
+  - `fixtures.products[]` → `seed_product`
+  - `fixtures.pricing_options[]` → `seed_pricing_option`
+  - `fixtures.creatives[]` → `seed_creative`
+  - `fixtures.plans[]` → `seed_plan`
+  - `fixtures.media_buys[]` → `seed_media_buy`
+
+  Each entry's id field(s) ride on `params`; every other field is forwarded verbatim as `params.fixture`. The seed pass surfaces as a synthetic `__controller_seeding__` phase in `StoryboardResult.phases[]` so compliance reports distinguish pre-flight setup from per-step buyer behavior.
+
+  **Grading semantics:**
+  - Seed failure cascade-skips remaining phases with **detailed** `skip_reason: 'controller_seeding_failed'` and **canonical** `skip.reason: 'prerequisite_failed'` — respects the runner-output-contract's six canonical skip reasons (`controller_seeding_failed` is a new `RunnerDetailedSkipReason`, not a new canonical value).
+  - Agent not advertising `comply_test_controller` → cascade-skips with canonical `skip.reason: 'missing_test_controller'`, implementing the spec's `fixture_seed_unsupported` not_applicable grade. No wire calls are issued.
+  - Multi-pass mode seeds exactly once at the run level (inside `runMultiPass`) instead of N times inside each pass — avoids inflating `failed_count` / `skipped_count` by N when a fixture breaks.
+
+  **Closes the spec-side/seller-side gap.** The `fixtures:` block (adcontextprotocol/adcp#2585, rolled out in adcontextprotocol/adcp#2743) and the `seed_*` scenarios (adcontextprotocol/adcp#2584, implemented here as `SEED_SCENARIOS` + `createSeedFixtureCache`) shipped without runner glue. Storyboards like `sales_non_guaranteed`, `creative_ad_server`, `governance_delivery_monitor`, `media_buy_governance_escalation`, and `governance_spend_authority` go from red to green against sellers that implement the matching `seed*` adapters.
+
+  **New `StoryboardRunOptions.skip_controller_seeding`.** Opt out of the pre-flight for agents that load fixtures via a non-MCP path (HTTP admin, test bootstrap, inline Node state) — the runner then skips the seed loop even when the storyboard declares it.
+
+  **Types.** `Storyboard.prerequisites.controller_seeding?: boolean`, `Storyboard.fixtures?: StoryboardFixtures`, and `StoryboardFixtures` are now part of the public type. `RunnerDetailedSkipReason` gains `'controller_seeding_failed'` mapped to canonical `'prerequisite_failed'` via `DETAILED_SKIP_TO_CANONICAL`.
+
+- 5ef797e: Sync generated types to AdCP 3.0 GA and consolidate the 4.x → 5.x migration guide.
+
+  **Generated-type changes** (in `src/lib/types/*.generated.ts`, re-exported via `@adcp/client` and `@adcp/client/types`):
+  - **Asset types** (`ImageAsset`, `VideoAsset`, `AudioAsset`, `TextAsset`, `URLAsset`, `HTMLAsset`, `JavaScriptAsset`, `WebhookAsset`, `CSSAsset`, `MarkdownAsset`, `BriefAsset`, `CatalogAsset`, `VASTAsset`, `DAASTAsset`) gain a required `asset_type` literal discriminator (e.g. `asset_type: 'image'`). Handlers that construct asset literals must populate it.
+  - **`GetProductsRequest.refine[]`** — `id` renamed to `product_id` (product scope) / `proposal_id` (proposal scope); `action` is now optional (defaults to `'include'`). New-in-GA surface — beta.3 clients never sent this.
+  - **`GetProductsResponse.refinement_applied[]`** — flat object replaced by a discriminated `oneOf` union on `scope`. Each arm carries `product_id`/`proposal_id` (previously a shared `id`). New-in-GA surface.
+  - **VAST/DAAST** — common fields (`vast_version`, `tracking_events`, `vpaid_enabled`, `duration_ms`, `captions_url`, `audio_description_url`) hoisted from inside each `oneOf` arm to the base object. Wire payloads are unchanged; codegen is cleaner.
+  - **Governance plan requests** (`ReportPlanOutcomeRequest`, `GetPlanAuditLogsRequest`, `CheckGovernanceRequest`) — tightened to reject redundant `account` fields alongside `plan_id`. New-in-GA surface.
+
+  **Wire-level compatibility.** Against the previously-compatible AdCP `3.0.0-beta.3`, the only bidirectional wire breaker is the asset `asset_type` discriminator: a GA client strictly validating an asset payload from a beta.3 server will reject, because beta.3 servers don't emit the discriminator. Set `validation: { requests: 'warn' }` if you need that traffic to flow. Every other change is either TS-only (same JSON on the wire) or new-in-GA surface that beta.3 counterparties never exercise. rc.1 / rc.2 clients sending GA servers the old `refine[].id` shape will be rejected (`additionalProperties: false`) — upgrade the client.
+
+  **If upgrading your handlers:** (1) populate `asset_type` on every asset literal your handlers construct (`"image"`, `"video"`, `"vast"`, `"daast"`, …); (2) rename `refine[].id` → `refine[].product_id` / `refine[].proposal_id` on the scope-matching arm; (3) run `tsc --noEmit` — tightened brand-rights + `DomainHandler` return types will point to every drift site. Full walkthrough in [`docs/migration-4.x-to-5.x.md`](../docs/migration-4.x-to-5.x.md) Part 4.
+
+  **Migration doc consolidated.** `docs/migration-4.30-to-5.2.md` and `docs/migration-5.3-to-5.4.md` are superseded by `docs/migration-4.x-to-5.x.md`, which walks the full 4.x → 5.x train release-by-release and includes a wire-interop matrix near the top.
+
+  **New dev tool: `npm run schema-diff`.** Compares `schemas/cache/latest/` against the snapshot captured on the previous `npm run sync-schemas` run (now written to `schemas/cache/latest.previous/`). Groups wire-level changes by kind (field renames, newly-required fields, `additionalProperties` tightened, `oneOf` arm count changes, enum deltas) so the output surfaces interop concerns without re-reading 700 lines of generated TS. Run with no args for the default before/after pair, or pass two directories: `npm run schema-diff -- <dirA> <dirB>`.
+
+### Patch Changes
+
+- 2cfbb8a: Cycle-A fixes from matrix v12 failure analysis:
+
+  **SDK**: `TaskExecutor.normalizeResponseForValidation` now strips underscore-prefixed client-side annotations (`_message`, future `_*` fields) before running AJV schema validation. These are added by the response unwrapper as text-summary hints; they're not part of the wire protocol. Schemas with `additionalProperties: false` (`create-property-list-response`, `create-collection-list-response`, etc.) would otherwise reject every response reaching the grader's schema check. Fixes 6 v12 failures across governance property-list CRUD.
+
+  **Skills**: added a "Cross-cutting pitfalls matrix runs keep catching" block to each `build-*-agent/SKILL.md` inside the existing imperative callout. Each skill lists the specific patterns Claude drifted on in matrix v12 runs — targeted per tool surface:
+  - `capabilities.specialisms` is `string[]` of enum ids, NOT `[{id, version}]` objects (all 8 skills)
+  - `get_media_buy_delivery` requires top-level `currency: string` (seller, retail-media, generative-seller)
+  - `build_creative` returns `{creative_manifest: {format_id, assets}}`, not sync_creatives-style fields (creative, generative-seller)
+  - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator (creative, generative-seller)
+  - Mutating-tool responses have `additionalProperties: false` — don't add extra fields (governance)
+
+  These live inside the imperative "fetch docs/llms.txt before writing return" callout so they're adjacent to where Claude scans for shape info.
+
+- 5d823e6: Skill pitfalls for Cycle C — seller-side response-row drift surfaced by matrix v14:
+  - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows require the billing quintet: `package_id`, `spend`, `pricing_model`, `rate`, `currency`. Matrix v14 caught 4 failures on mock handlers that returned `{package_id, impressions, clicks}` without the billing fields. Added to seller + retail-media + generative-seller pitfall callouts.
+  - `get_media_buys /media_buys[i]` rows require `media_buy_id`, `status`, `currency`, `total_budget`, `packages`. Matrix v14 caught 2 failures on persist/reconstruct paths. Pitfall callouts now explicitly say: persist `currency` + `total_budget` at `create_media_buy` time, echo verbatim.
+
+  No SDK code change. This closes the last two non-specialism-specific drift classes; residual failures after matrix v15 will be storyboard-specific step expectations (generative quality, governance denial shape).
+
+- 369aea8: Skill pitfalls for Cycle D — two narrow drift classes matrix v15 surfaced after the 3.0 GA schema sync (#773):
+  - `get_media_buy_delivery /reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()` produces the canonical shape), not date-only. GA added strict `format: "date-time"` validation; `'2026-04-21'` now fails. Added to seller, retail-media, generative-seller, and creative-agent skill pitfall callouts.
+  - `videoAsset({...})` now requires `width` and `height` per GA (previously optional on `VideoAsset`). Mocks that passed `{url}` alone fail validation at `/creative_manifest/assets/<name>/width`. Added to creative-agent and generative-seller pitfalls with a concrete pixel-values example.
+
+  No SDK code change. Closes v15's two residual schema-drift classes. Residual failures after this land are storyboard-specific step expectations (generative quality grading, governance denial shape specifics) — the tight-loop per-pair phase.
+
+- 55c7c3b: Storyboard runner: honor `step.sample_request` in `get_rights`
+  request builder.
+
+  Prior behavior hardcoded `query: 'available rights for advertising'`
+  and `uses: ['ai_generated_image']`, and injected `brand_id` from the
+  caller's `brand.domain`. Storyboards declaring scenario-specific
+  query text, uses, or a `buyer_brand` hit the wire with the generic
+  fallback instead, and rights-holder rosters rejected the
+  caller-domain `brand_id` as unknown — so `rights[0]` was undefined,
+  `$context.rights_id` didn't resolve, and downstream `acquire_rights`
+  steps failed with `rights_not_found` instead of the error the
+  storyboard was actually asserting (e.g., `GOVERNANCE_DENIED` in
+  `brand_rights/governance_denied`).
+
+  Mirrors the pattern used by peer builders (`sync_plans`,
+  `check_governance`, `list_creative_formats`,
+  `create_content_standards`, etc.). The generic fallback still runs
+  when no `sample_request` is authored.
+
+  Closes adcp#2846.
+
+- 7fd0948: Fix: response-schema AJV validators now accept envelope fields (`replayed`, `context`, `ext`, and future envelope additions) at the response root on every tool.
+
+  The bundled JSON response schemas for the property-list family (`create_property_list`, `update_property_list`, `delete_property_list`, `get_property_list`, `list_property_lists`, `validate_property_delivery`) ship with `additionalProperties: false` at the root, which rejected `replayed: false` — even though security.mdx specifies `replayed` as a protocol-level envelope field that MAY appear on any response. That left a two-faced contract: the universal-idempotency storyboard requires `replayed: false` on the initial `create_media_buy`, but emitting the same envelope field on property-list tools tripped strict response validation.
+
+  `schema-loader` now flips `additionalProperties: false` to `true` at the response root (and at each direct `oneOf` / `anyOf` / `allOf` branch one level deep) when compiling response validators. Nested body objects stay strict so drift inside a `Product`, `Package`, or list body still fails validation. Request schemas remain strict so outgoing drift fails at the edge. Matches the envelope extensibility the Zod generator already expresses via `.passthrough()`. Fixes #774.
+
 ## 5.10.0
 
 ### Minor Changes

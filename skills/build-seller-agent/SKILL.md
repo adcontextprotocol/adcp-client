@@ -557,6 +557,47 @@ capabilitiesResponse({
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`.
 
+### Seeding fixtures for compliance
+
+Group A storyboards call `comply_test_controller.seed_product` (and `seed_pricing_option`, `seed_creative`, `seed_plan`, `seed_media_buy`) to install a storyboard-specific fixture before hitting the spec tools. Two SDK pieces make this round-trip work without hand-rolling the merge + lookup plumbing.
+
+**1. `mergeSeed*` helpers** — permissive merge over your seller defaults. Storyboard fixtures declare only the fields they want to override; everything else (delivery type, channels, reporting capabilities, ...) comes from your baseline. Arrays replace by default; id-keyed lists (`pricing_options`, `publisher_properties`, `packages`, `assets`, plan `findings`) overlay by their id so seeding one entry doesn't wipe the rest.
+
+```ts
+import { mergeSeedProduct } from '@adcp/client/testing';
+
+const baseline: Partial<Product> = {
+  delivery_type: 'guaranteed',
+  channels: ['display'],
+  reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,
+};
+
+// Storyboard seeds sparse fixture: { product_id: 'prd-1', name: 'Homepage' }
+const merged = mergeSeedProduct(baseline, fixture);
+productRepo.upsert(merged.product_id, merged);
+```
+
+**2. `bridgeFromTestControllerStore`** — wires your seeded `Map` into `get_products` responses automatically. Sandbox requests see seeded + handler products merged (with seeded winning collisions); production traffic (no sandbox marker, or resolved non-sandbox account) skips the bridge entirely.
+
+```ts
+import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/client';
+
+const seedStore = new Map<string, unknown>();
+
+const server = createAdcpServer({
+  mediaBuy: { getProducts: handleGetProducts },
+  testController: bridgeFromTestControllerStore(seedStore, {
+    delivery_type: 'guaranteed',
+    channels: ['display'],
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,
+  }),
+});
+
+// Wire your createComplyController seed.product adapter to populate seedStore.
+```
+
+Your `getSeededProducts` callback — whether you write it by hand or get it via `bridgeFromTestControllerStore` — MUST re-verify that `ctx.account` (or an equivalent scope) is a sandbox account. The framework's sandbox check is a namespace selector, not an authority boundary.
+
 ### Low-level alternative: `registerTestController`
 
 If you need direct store access — e.g., shared enforcement with production code, or a session-keyed store factory — use the flat `registerTestController(server, store)` API. `createComplyController` calls into the same primitives, so picking one or the other is mostly ergonomic preference.

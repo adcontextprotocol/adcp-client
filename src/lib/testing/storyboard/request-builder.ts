@@ -76,11 +76,25 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   get_rights(step, context, options) {
+    // Honor hand-authored sample_request so storyboards can specify
+    // scenario-specific query text, uses, countries, or buyer_brand.
+    // Peer builders (sync_plans, check_governance, list_creative_formats,
+    // create_content_standards, etc.) follow the same pattern.
+    //
+    // Without this, any get_rights step hits the wire with the generic
+    // fallback and a brand_id derived from the caller's domain — which
+    // rights-holder rosters reject as unknown, so rights[0] is undefined,
+    // $context.rights_id doesn't resolve, and downstream acquire_rights
+    // steps fail with rights_not_found instead of the error the
+    // storyboard is actually asserting (e.g., GOVERNANCE_DENIED).
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     const brand = resolveBrand(options);
     return {
       query: 'available rights for advertising',
       uses: ['ai_generated_image'],
-      brand_id: context.brand_id ?? (step.sample_request?.brand_id as string) ?? brand.brand_id ?? brand.domain,
+      brand_id: context.brand_id ?? brand.brand_id ?? brand.domain,
     };
   },
 
@@ -133,14 +147,18 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
     // Merge any hand-authored package fields from sample_request (targeting_overlay,
     // measurement_terms, creative_assignments, performance_standards, etc.) so
-    // scenario-specific behaviors are exercised. Context-derived identifiers
-    // (product_id, pricing_option_id) still win so storyboards share context.
+    // scenario-specific behaviors are exercised. The first package receives
+    // context-derived identifiers (product_id, pricing_option_id) so single-
+    // package storyboards that test against arbitrary sellers still find a
+    // real discovered product. Additional packages pass through as-authored
+    // with context injection only — storyboards that ship multi-package
+    // sample_request blocks author specific product_ids on purpose.
     const samplePackages = (step.sample_request?.packages as Array<Record<string, unknown>> | undefined) ?? [];
     const baseSample = samplePackages[0]
       ? (injectContext({ ...samplePackages[0] }, context) as Record<string, unknown>)
       : {};
 
-    const pkg: Record<string, unknown> = {
+    const firstPkg: Record<string, unknown> = {
       ...baseSample,
       product_id: product?.product_id ?? context.product_id ?? baseSample.product_id ?? 'test-product',
       budget:
@@ -154,15 +172,19 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // Add bid_price for auction-based pricing
     if (pricingOption?.pricing_model === 'auction' || pricingOption?.pricing_model === 'cpm') {
       const floor = Number(pricingOption?.floor_price) || 5;
-      pkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
+      firstPkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
     }
+
+    const additionalPkgs = samplePackages
+      .slice(1)
+      .map(p => injectContext({ ...p }, context) as Record<string, unknown>);
 
     return {
       account: context.account ?? resolveAccount(options),
       brand: resolveBrand(options),
       start_time: startTime,
       end_time: endTime,
-      packages: [pkg],
+      packages: [firstPkg, ...additionalPkgs],
     };
   },
 
@@ -253,15 +275,21 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  log_event(_step, context, _options) {
+  log_event(step, context, _options) {
+    // Storyboards routinely ship spec-conformant event payloads with
+    // event_time, content_ids, and custom_data siblings that only the
+    // author knows. Honor sample_request when present.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       event_source_id: context.event_source_id ?? 'test-source',
       events: [
         {
           event_id: `evt-${Date.now()}`,
           event_type: 'purchase',
-          timestamp: new Date().toISOString(),
-          value: { amount: 49.99, currency: 'USD' },
+          event_time: new Date().toISOString(),
+          custom_data: { value: 49.99, currency: 'USD' },
         },
       ],
     };
@@ -297,7 +325,16 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Creative ───────────────────────────────────────────
 
-  list_creative_formats() {
+  list_creative_formats(step, context) {
+    // Mirror the pattern used by peer builders (build_creative, sync_creatives,
+    // etc.): honor hand-authored sample_request so storyboards can exercise
+    // format_ids filters and other query params. Without this, any step that
+    // declares `format_ids: ["..."]` in sample_request hits the wire as an
+    // empty request and the agent returns unfiltered results — failing
+    // round-trip / substitution-observer assertions silently.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {};
   },
 

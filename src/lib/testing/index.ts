@@ -154,6 +154,46 @@ export {
 } from '../server/test-controller';
 export type { ControllerScenario, SeedFixtureCache, SeedScenario } from '../server/test-controller';
 
+// Seed fixture merge helpers (permissive defaults + storyboard overlay).
+export {
+  mergeSeed,
+  overlayById,
+  mergeSeedProduct,
+  mergeSeedPricingOption,
+  mergeSeedCreative,
+  mergeSeedPlan,
+  mergeSeedMediaBuy,
+} from './seed-merge';
+
+// Test-controller bridge: seeded `get_products` augmentation on sandbox requests.
+export {
+  isSandboxRequest,
+  mergeSeededProductsIntoResponse,
+  filterValidSeededProducts,
+  bridgeFromTestControllerStore,
+} from '../server/test-controller-bridge';
+export type { TestControllerBridge, TestControllerBridgeContext } from '../server/test-controller-bridge';
+
+// Default TestControllerStore factory — ships wired defaults for every
+// force_* / simulate_* / seed_* scenario so sellers can bring a session and
+// skip the 300-line boilerplate.
+export { createDefaultTestControllerStore, createDefaultSession } from './default-controller-store';
+export type {
+  BudgetSpendRecord,
+  CreateDefaultTestControllerStoreOptions,
+  DefaultLoadSessionInput,
+  DefaultSessionShape,
+  DefaultTestControllerStoreResult,
+  DeliverySimulationRecord,
+  SeedFixture,
+  SessionTerminalStatus,
+} from './default-controller-store';
+
+// One-call harness for server-side agents — composes serve() +
+// seedComplianceFixtures + createWebhookReceiver + runStoryboard.
+export { runAgainstLocalAgent } from './local-agent-runner';
+export type { LocalAgentRunResult, RunAgainstLocalAgentOptions } from './local-agent-runner';
+
 // Storyboard-driven testing
 export {
   // Runner
@@ -195,6 +235,7 @@ export {
   registerAssertion,
   getAssertion,
   listAssertions,
+  listDefaultAssertions,
   clearAssertionRegistry,
   resolveAssertions,
   type AssertionSpec,
@@ -203,6 +244,8 @@ export {
   type RegisterAssertionOptions,
   // Types
   type Storyboard,
+  type StoryboardInvariants,
+  type StoryboardInvariantsObject,
   type StoryboardPhase,
   type StoryboardStep,
   type StoryboardValidation,
