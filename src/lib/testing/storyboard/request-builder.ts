@@ -44,9 +44,14 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   sync_audiences(step, context, options) {
-    // Delegate to sample_request for delete/discovery patterns
-    const sampleAudiences = step.sample_request?.audiences as Array<Record<string, unknown>> | undefined;
-    if (sampleAudiences?.[0]?.delete || (step.sample_request && !step.sample_request.audiences)) {
+    // Honor hand-authored sample_request so storyboards can register a
+    // specific audience_id that downstream steps reference. Without this,
+    // add-shaped sample_request blocks (authored with audience_id + add[])
+    // fell through to the generated fallback id, and a later delete_audience
+    // or context-substitution step would hit AUDIENCE_NOT_FOUND because the
+    // sync had registered a different id. Matches the pattern used by
+    // sync_event_sources, sync_catalogs, and sync_creatives.
+    if (step.sample_request) {
       return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
     }
     return {
