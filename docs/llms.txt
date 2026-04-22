@@ -490,7 +490,7 @@ Request parameters for creating a new property list.
 
 **Response (success branch):**
 - Required: `list: Property List`, `auth_token: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `update_property_list`
 
@@ -502,7 +502,7 @@ Request parameters for updating an existing property list.
 
 **Response (success branch):**
 - Required: `list: Property List`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `get_property_list`
 
@@ -537,7 +537,7 @@ Request parameters for deleting a property list.
 
 **Response (success branch):**
 - Required: `deleted: boolean`, `list_id: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `create_collection_list`
 
@@ -549,7 +549,7 @@ Request parameters for creating a new collection list.
 
 **Response (success branch):**
 - Required: `list: Collection List`, `auth_token: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `update_collection_list`
 
@@ -561,7 +561,7 @@ Request parameters for updating an existing collection list.
 
 **Response (success branch):**
 - Required: `list: Collection List`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `get_collection_list`
 
@@ -596,7 +596,7 @@ Request parameters for deleting a collection list.
 
 **Response (success branch):**
 - Required: `deleted: boolean`, `list_id: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `list_content_standards`
 
@@ -702,7 +702,7 @@ Push campaign plans to the governance agent.
 
 **Response (success branch):**
 - Required: `plans: object[]`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `report_plan_outcome`
 
@@ -714,7 +714,7 @@ Report the outcome of an action to the governance agent.
 
 **Response (success branch):**
 - Required: `outcome_id: string`, `status: 'accepted' | 'findings'`
-- Optional: `committed_budget: number`, `findings: object[]`, `plan_summary: object`, `context: Context`
+- Optional: `committed_budget: number`, `findings: object[]`, `plan_summary: object`, `replayed: boolean`, `context: Context`
 
 #### `get_plan_audit_logs`
 
@@ -951,7 +951,7 @@ Flow: `get_adcp_capabilities → get_brand_identity → get_rights → acquire_r
 Flow: `get_adcp_capabilities`
 
 **Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
-Flow: `get_adcp_capabilities → comply_test_controller → sync_accounts → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
+Flow: `get_adcp_capabilities → comply_test_controller → sync_accounts → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
 
 **Idempotency enforcement** — Validates that mutating requests enforce idempotency_key — replays return cached responses, key reuse with a different payload returns IDEMPOTENCY_CONFLICT, and fresh keys create new resources.
 Flow: `get_adcp_capabilities → create_media_buy → expect_webhook → create_media_buy → get_media_buys`
@@ -1076,6 +1076,15 @@ Run compliance tests with `adcp test <agent> <scenario>`. 24 built-in scenarios:
 **Deep dive:** Storyboard YAML definitions live at `https://adcontextprotocol.org/compliance/{version}/` and are mirrored locally in `compliance/cache/{version}/` after `npm run sync-schemas`.
 
 **Fictional entities:** `compliance/cache/{version}/universal/fictional-entities.yaml` defines all fictional companies used in storyboards and training (advertisers, agencies, publishers, data providers). Aligned to the character bible at docs.adcontextprotocol.org/specs/character-bible. All domains use the `.example` TLD. Sandbox brands (advertisers) are resolvable via AgenticAdvertising.org.
+
+### Seeding fixtures for compliance (seller-side)
+
+Group A storyboards seed fixtures via `comply_test_controller.seed_product` (and the other `seed_*` scenarios) before calling the spec tool. Two SDK helpers bridge this to `createAdcpServer`:
+
+- **`mergeSeedProduct`** (plus `mergeSeedPricingOption`, `mergeSeedCreative`, `mergeSeedPlan`, `mergeSeedMediaBuy`): permissive merge of a sparse storyboard fixture onto the seller's baseline defaults. `undefined`/`null` keep base; arrays replace by default; well-known id-keyed lists (`pricing_options`, `publisher_properties`, `packages`, `assets`, plan `findings`) overlay by id so seeding one entry doesn't drop the rest.
+- **`bridgeFromTestControllerStore(store, productDefaults)`**: wires a `Map<string, unknown>` seed store into `get_products` responses automatically. Sandbox requests merge seeded + handler products (seeded wins collisions); production traffic (no sandbox marker, or a resolved non-sandbox account) skips the bridge.
+
+Wire on `createAdcpServer({ testController: bridgeFromTestControllerStore(store, baseline) })`. See `skills/build-seller-agent/SKILL.md` for the full pattern alongside `createComplyController`.
 
 ## Key Types
 

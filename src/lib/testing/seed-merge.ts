@@ -17,10 +17,11 @@
  *   - `seed_plan`           → {@link mergeSeedPlan}
  *   - `seed_media_buy`      → {@link mergeSeedMediaBuy}
  *
- * Every wrapper delegates to the generic {@link mergeSeed} — the merge logic
- * is identical for all five. Typed wrappers exist so callers get autocomplete
- * against the shape they actually care about instead of
- * `Record<string, unknown>`.
+ * The generic {@link mergeSeed} replaces arrays wholesale — safe default
+ * for unknown shapes. Typed wrappers layer **by-id overlay** on top for
+ * well-known id-keyed arrays so sellers can seed a single `pricing_options`
+ * entry and have it overlay the matching base entry without dropping the
+ * rest (see {@link overlayById}).
  *
  * @example
  * ```ts
@@ -81,11 +82,13 @@ function rejectUnsupportedCollection(value: unknown, path: string): void {
  *
  * Merge rules:
  *   - `undefined` or `null` in `seed` → keep the `base` value untouched.
+ *     Every other falsy leaf (`0`, `false`, `""`, `[]`) DOES override base.
  *   - Plain-object values recurse (deep merge per key).
  *   - Arrays REPLACE rather than concat — storyboards that seed arrays
  *     expect to define the full list; concat would silently inflate
  *     `pricing_options`, `publisher_properties`, and similar fields past
- *     what the fixture declared.
+ *     what the fixture declared. Typed wrappers layer per-array by-id
+ *     overlay on top for known id-keyed fields (see {@link overlayById}).
  *   - `Map` / `Set` throw — not expected in seed payloads (see
  *     {@link rejectUnsupportedCollection}).
  *   - Other leaves (strings, numbers, booleans, Dates, class instances)
@@ -119,36 +122,141 @@ export function mergeSeed<T>(base: T, seed: Partial<T> | null | undefined): T {
   return out as T;
 }
 
+/**
+ * Identity predicate for by-id array overlay. Returns a key that uniquely
+ * identifies an item for matching, or `undefined` if the item can't be
+ * identified (in which case the overlay falls through to append).
+ */
+type IdentityFn<T> = (item: T) => string | undefined;
+
+/**
+ * Overlay a seed array onto a base array by a well-known id field.
+ *
+ * Semantics:
+ *   - Seed entries whose identity matches a base entry deep-merge onto
+ *     that base entry (via {@link mergeSeed}).
+ *   - Seed entries with no matching base entry append to the result.
+ *   - Base entries not referenced by any seed entry stay untouched.
+ *   - Seed entries missing an identity (e.g., no `pricing_option_id`)
+ *     append unconditionally — the fallback matches "array replaces" for
+ *     the un-identifiable tail but preserves the matched overlays.
+ *
+ * Neither input is mutated.
+ *
+ * @param base   Base array (may be `undefined`).
+ * @param seed   Seed array (may be `undefined`).
+ * @param identity Returns the id for matching; either a property name or a fn.
+ */
+export function overlayById<T>(
+  base: readonly T[] | undefined,
+  seed: readonly T[] | undefined,
+  identity: IdentityFn<T> | keyof T
+): T[] | undefined {
+  if (seed === undefined) return base ? [...base] : undefined;
+  if (base === undefined || base.length === 0) return [...seed];
+
+  const idOf: IdentityFn<T> =
+    typeof identity === 'function'
+      ? identity
+      : (item: T) => {
+          const v = (item as Record<string, unknown>)[identity as string];
+          return typeof v === 'string' ? v : undefined;
+        };
+
+  const out: T[] = [];
+  const seedById = new Map<string, T>();
+  const seedUnkeyed: T[] = [];
+  const consumed = new Set<string>();
+
+  for (const item of seed) {
+    const id = idOf(item);
+    if (id !== undefined) seedById.set(id, item);
+    else seedUnkeyed.push(item);
+  }
+
+  for (const baseItem of base) {
+    const id = idOf(baseItem);
+    if (id !== undefined && seedById.has(id)) {
+      const seedItem = seedById.get(id)!;
+      consumed.add(id);
+      out.push(mergeSeed(baseItem, seedItem as Partial<T>));
+    } else {
+      out.push(baseItem);
+    }
+  }
+
+  for (const [id, item] of seedById) {
+    if (!consumed.has(id)) out.push(item);
+  }
+  for (const item of seedUnkeyed) out.push(item);
+
+  return out;
+}
+
 // ────────────────────────────────────────────────────────────
 // Typed wrappers — one per seed kind.
 // ────────────────────────────────────────────────────────────
 //
-// Each wrapper is a thin `mergeSeed<T>` call with a named type. Seed
-// fixtures flowing through `comply_test_controller` are typed as
-// `Record<string, unknown>` at the wire layer because the spec lets
-// storyboards declare only the fields a given test cares about. Sellers
-// with a canonical "defaults" shape pass it as `TBase`; the wrapper keeps
-// the output typed as `TBase` so autocomplete still works on the merged
-// object.
+// Each wrapper delegates to `mergeSeed` for the top-level object merge,
+// then layers by-id overlay on known id-keyed arrays so sellers can seed
+// a single entry without replacing the rest.
 
 /**
  * Merge a `seed_product` fixture onto a baseline `Product` (or a partial
- * defaults object). The seed is typed as a permissive partial — storyboards
- * routinely declare a product with only `product_id` and `name`, relying on
- * the seller to fill in delivery_type, channels, pricing_options, etc. from
- * its own defaults.
+ * defaults object).
+ *
+ * **By-id overlay** is applied to:
+ *   - `pricing_options[]` — keyed by `pricing_option_id`. Seeding one
+ *     `{ pricing_option_id: 'premium', rate: 25 }` overlays the matching
+ *     base entry; other base pricing options stay put.
+ *   - `publisher_properties[]` — keyed by `publisher_domain` + `selection_type`
+ *     composite (PublisherPropertySelector is a discriminated union, no
+ *     single id field).
+ *
+ * Other arrays (`channels`, `format_ids`, `placements`, ...) still replace
+ * wholesale per the {@link mergeSeed} default.
  */
 export function mergeSeedProduct<TBase extends Partial<Product> = Partial<Product>>(
   base: TBase,
   seed: Partial<Product> | null | undefined
 ): TBase {
-  return mergeSeed(base, seed as Partial<TBase>);
+  const merged = mergeSeed(base, seed as Partial<TBase>);
+  if (!isPlainObject(merged) || !seed) return merged;
+
+  const seedObj = seed as Partial<Product>;
+  const out = merged as Record<string, unknown>;
+
+  if (Array.isArray(seedObj.pricing_options)) {
+    const overlaid = overlayById(
+      (base as Partial<Product>).pricing_options as readonly PricingOption[] | undefined,
+      seedObj.pricing_options,
+      'pricing_option_id'
+    );
+    if (overlaid !== undefined) out.pricing_options = overlaid;
+  }
+
+  if (Array.isArray(seedObj.publisher_properties)) {
+    const overlaid = overlayById(
+      (base as Partial<Product>).publisher_properties,
+      seedObj.publisher_properties,
+      item => {
+        const domain = (item as { publisher_domain?: unknown }).publisher_domain;
+        const sel = (item as { selection_type?: unknown }).selection_type;
+        if (typeof domain === 'string' && typeof sel === 'string') return `${domain}::${sel}`;
+        return undefined;
+      }
+    );
+    if (overlaid !== undefined) out.publisher_properties = overlaid;
+  }
+
+  return merged;
 }
 
 /**
  * Merge a `seed_pricing_option` fixture onto a baseline pricing option. The
  * spec's `PricingOption` is a discriminated union; the generic signature
- * preserves whichever variant the base declares.
+ * preserves whichever variant the base declares. No nested id-keyed arrays
+ * to overlay — a pricing option is a leaf-ish record.
  */
 export function mergeSeedPricingOption<TBase extends Partial<PricingOption> = Partial<PricingOption>>(
   base: TBase,
@@ -162,35 +270,97 @@ export function mergeSeedPricingOption<TBase extends Partial<PricingOption> = Pa
  * ship a canonical `Creative` type (the spec models creatives as a union of
  * several assignment/manifest shapes), so the base is generic — sellers pass
  * whichever domain shape they store internally.
+ *
+ * **By-id overlay** is applied to `assets[]` when present, keyed by
+ * `asset_id` — matches the creative manifest shape where assets are an
+ * id-keyed list and sellers often seed a single asset override.
  */
 export function mergeSeedCreative<TBase extends Record<string, unknown> = Record<string, unknown>>(
   base: TBase,
   seed: Partial<TBase> | null | undefined
 ): TBase {
-  return mergeSeed(base, seed);
+  const merged = mergeSeed(base, seed);
+  if (!isPlainObject(merged) || !seed) return merged;
+
+  const seedObj = seed as Record<string, unknown>;
+  const baseObj = base as Record<string, unknown>;
+  const out = merged as Record<string, unknown>;
+
+  if (Array.isArray(seedObj.assets)) {
+    const overlaid = overlayById(
+      Array.isArray(baseObj.assets) ? (baseObj.assets as unknown[]) : undefined,
+      seedObj.assets,
+      'asset_id'
+    );
+    if (overlaid !== undefined) out.assets = overlaid;
+  }
+
+  return merged;
 }
 
 /**
  * Merge a `seed_plan` fixture onto a baseline plan. Like creatives, the spec
  * splits plans across several tool-response shapes, so the base type stays
  * generic.
+ *
+ * **By-id overlay** is applied to any of these known id-keyed arrays when
+ * present on the seed:
+ *   - `member_plan_ids[]` — string array, no overlay (replaces).
+ *   - `accounts[]` — string array, no overlay (replaces).
+ *   - `findings[]` — keyed by `policy_id`.
+ *   - `checks[]` — keyed by `check_id` when present.
+ *
+ * Other arrays replace wholesale per {@link mergeSeed}.
  */
 export function mergeSeedPlan<TBase extends Record<string, unknown> = Record<string, unknown>>(
   base: TBase,
   seed: Partial<TBase> | null | undefined
 ): TBase {
-  return mergeSeed(base, seed);
+  const merged = mergeSeed(base, seed);
+  if (!isPlainObject(merged) || !seed) return merged;
+
+  const seedObj = seed as Record<string, unknown>;
+  const baseObj = base as Record<string, unknown>;
+  const out = merged as Record<string, unknown>;
+
+  const overlay = (field: string, idField: string) => {
+    if (!Array.isArray(seedObj[field])) return;
+    const overlaid = overlayById(
+      Array.isArray(baseObj[field]) ? (baseObj[field] as unknown[]) : undefined,
+      seedObj[field] as unknown[],
+      idField as never
+    );
+    if (overlaid !== undefined) out[field] = overlaid;
+  };
+
+  overlay('findings', 'policy_id');
+  overlay('checks', 'check_id');
+
+  return merged;
 }
 
 /**
- * Merge a `seed_media_buy` fixture onto a baseline `MediaBuy`. Storyboards
- * seed media buys with varying richness depending on the track under test
- * (status-transition suites care about `status`; delivery suites set
- * `packages[*].delivery`), so the wrapper preserves the base type.
+ * Merge a `seed_media_buy` fixture onto a baseline `MediaBuy`.
+ *
+ * **By-id overlay** is applied to `packages[]` keyed by `package_id` — the
+ * common storyboard pattern is "seed one package's `delivery` or `status`
+ * without rewriting the whole package list", which a naive array replace
+ * would break.
  */
 export function mergeSeedMediaBuy<TBase extends Partial<MediaBuy> = Partial<MediaBuy>>(
   base: TBase,
   seed: Partial<MediaBuy> | null | undefined
 ): TBase {
-  return mergeSeed(base, seed as Partial<TBase>);
+  const merged = mergeSeed(base, seed as Partial<TBase>);
+  if (!isPlainObject(merged) || !seed) return merged;
+
+  const seedObj = seed as Partial<MediaBuy>;
+  const out = merged as Record<string, unknown>;
+
+  if (Array.isArray(seedObj.packages)) {
+    const overlaid = overlayById((base as Partial<MediaBuy>).packages, seedObj.packages, 'package_id');
+    if (overlaid !== undefined) out.packages = overlaid;
+  }
+
+  return merged;
 }

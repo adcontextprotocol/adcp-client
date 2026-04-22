@@ -157,6 +157,7 @@ export type { ControllerScenario, SeedFixtureCache, SeedScenario } from '../serv
 // Seed fixture merge helpers (permissive defaults + storyboard overlay).
 export {
   mergeSeed,
+  overlayById,
   mergeSeedProduct,
   mergeSeedPricingOption,
   mergeSeedCreative,
@@ -165,7 +166,12 @@ export {
 } from './seed-merge';
 
 // Test-controller bridge: seeded `get_products` augmentation on sandbox requests.
-export { isSandboxRequest, mergeSeededProductsIntoResponse } from '../server/test-controller-bridge';
+export {
+  isSandboxRequest,
+  mergeSeededProductsIntoResponse,
+  filterValidSeededProducts,
+  bridgeFromTestControllerStore,
+} from '../server/test-controller-bridge';
 export type { TestControllerBridge, TestControllerBridgeContext } from '../server/test-controller-bridge';
 
 // Storyboard-driven testing

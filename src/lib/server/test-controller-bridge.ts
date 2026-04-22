@@ -20,6 +20,7 @@
  */
 
 import type { Product, GetProductsResponse } from '../types/tools.generated';
+import { mergeSeedProduct } from '../testing/seed-merge';
 
 /**
  * Context passed to {@link TestControllerBridge.getSeededProducts}.
@@ -39,8 +40,8 @@ export interface TestControllerBridgeContext<TAccount = unknown> {
  * spec-tool pipeline.
  *
  * Set on `AdcpServerConfig.testController`; when absent, behavior is
- * unchanged. Opt-in and additive — seeded products append to the
- * handler's own output rather than replacing it.
+ * unchanged. The bridge is opt-in via the presence of `getSeededProducts`
+ * — omit it to hold seeded state without changing response shape.
  */
 export interface TestControllerBridge<TAccount = unknown> {
   /**
@@ -50,20 +51,13 @@ export interface TestControllerBridge<TAccount = unknown> {
    * `product_id` collision, the seeded entry wins (sellers who seed to
    * override default inventory expect their fixture to take precedence).
    *
-   * Sandbox-gated by the framework — this callback is only invoked when
-   * {@link isSandboxRequest} returns true for the incoming request, so
-   * production traffic cannot reach seeded fixtures.
+   * Scope your implementation to `ctx.account`; the framework's sandbox
+   * check is a namespace selector, not an authority boundary. Your
+   * callback MUST re-verify that `ctx.account` is a sandbox account
+   * before returning fixtures (and the framework additionally skips the
+   * bridge when it has a resolved non-sandbox account, belt-and-suspenders).
    */
   getSeededProducts?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<Product[]> | Product[];
-
-  /**
-   * When `true` (default when `testController` is configured), seeded
-   * products are merged into `get_products` responses on sandbox requests.
-   * Set to `false` to hold seeded state without changing response shape —
-   * useful during incremental rollout or when a seller wants to read
-   * seeded fixtures from their own handler explicitly.
-   */
-  augmentGetProducts?: boolean;
 }
 
 /**
@@ -98,9 +92,11 @@ export function isSandboxRequest(input: Record<string, unknown>): boolean {
  * after deduping by `product_id`. On collision, the seeded entry wins so
  * storyboards that seed to override default inventory see the fixture.
  *
- * Returns a NEW response object — the original is not mutated. The seeded
- * `sandbox: true` flag is stamped on the merged response to signal
- * synthetic provenance to downstream tooling.
+ * Returns a NEW response object — the original is not mutated. The
+ * `sandbox: true` flag is stamped on the merged response unless the
+ * handler explicitly declared `sandbox: false` (which stays authoritative
+ * — a handler that has already decided the request is non-sandbox
+ * shouldn't be overridden by the bridge).
  */
 export function mergeSeededProductsIntoResponse(
   response: GetProductsResponse,
@@ -118,9 +114,94 @@ export function mergeSeededProductsIntoResponse(
   // silently dropping so downstream response validation still catches it.
   const retained = handlerProducts.filter(p => !seededIds.has(p?.product_id));
 
-  return {
+  const merged: GetProductsResponse = {
     ...response,
     products: [...retained, ...seeded],
-    sandbox: true,
+  };
+  if (response.sandbox !== false) {
+    merged.sandbox = true;
+  }
+  return merged;
+}
+
+/**
+ * Validate and normalize a list of seeded products returned from a
+ * {@link TestControllerBridge.getSeededProducts} callback. Invalid entries
+ * are dropped with a warning rather than thrown — a broken test fixture
+ * shouldn't tank the request under test. Valid entries pass through as-is.
+ *
+ * An entry is considered valid when it's a plain object with a string
+ * `product_id`. Entries missing `product_id` would collide on
+ * `undefined === undefined` when deduping, so we drop them early.
+ */
+export function filterValidSeededProducts(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): Product[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededProducts did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+
+  const valid: Product[] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededProducts entry is not an object; dropping', { index });
+      return;
+    }
+    const productId = (entry as { product_id?: unknown }).product_id;
+    if (typeof productId !== 'string' || productId.length === 0) {
+      logger?.warn('testController.getSeededProducts entry missing product_id; dropping', { index });
+      return;
+    }
+    valid.push(entry as Product);
+  });
+  return valid;
+}
+
+/**
+ * Bridge the default test-controller store (a `Map<string, unknown>` that
+ * holds seeded fixtures by `product_id`, populated by `seed_product` scenarios)
+ * to a {@link TestControllerBridge}.
+ *
+ * Each stored fixture is merged onto `productDefaults` via
+ * {@link mergeSeedProduct} — sellers pass their canonical baseline (delivery
+ * type, channels, reporting capabilities, ...) once here, and the permissive
+ * merge fills in whatever the storyboard fixture didn't declare. The bridge
+ * then returns the resulting `Product[]` for the dispatcher to merge into
+ * `get_products` responses.
+ *
+ * Accepts any `Map<string, unknown>` so it composes with session-scoped
+ * stores as well as the default process-wide one.
+ *
+ * @example
+ * ```ts
+ * const store = new Map<string, unknown>();
+ * const server = createAdcpServer({
+ *   testController: bridgeFromTestControllerStore(store, {
+ *     delivery_type: 'guaranteed',
+ *     channels: ['display'],
+ *   }),
+ * });
+ * ```
+ */
+export function bridgeFromTestControllerStore<TAccount = unknown>(
+  store: Map<string, unknown>,
+  productDefaults: Partial<Product> = {}
+): TestControllerBridge<TAccount> {
+  return {
+    getSeededProducts: () => {
+      const out: Product[] = [];
+      for (const [productId, fixture] of store.entries()) {
+        const merged = mergeSeedProduct(productDefaults, {
+          ...(fixture && typeof fixture === 'object' ? (fixture as Partial<Product>) : {}),
+          product_id: productId,
+        });
+        out.push(merged as Product);
+      }
+      return out;
+    },
   };
 }

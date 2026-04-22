@@ -137,21 +137,14 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
     assert.strictEqual(byId['handler-only'], 'Handler Only');
   });
 
-  it('respects augmentGetProducts: false to disable the bridge', async () => {
-    let bridgeCalled = false;
+  it('bridges disable when getSeededProducts is omitted', async () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
         getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
       },
-      testController: {
-        augmentGetProducts: false,
-        getSeededProducts: () => {
-          bridgeCalled = true;
-          return [makeSeededProduct('seed-1')];
-        },
-      },
+      testController: {}, // no getSeededProducts → bridge stays off
     });
     const result = await callGetProducts(server, {
       brief: 'premium',
@@ -163,7 +156,106 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       payload.products.map(p => p.product_id),
       ['handler-1']
     );
-    assert.strictEqual(bridgeCalled, false);
+  });
+
+  it('skips the bridge when resolveAccount resolves to a non-sandbox account', async () => {
+    let bridgeCalled = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      resolveAccount: async () => ({ account_id: 'prod-999', sandbox: false }),
+      mediaBuy: {
+        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+      },
+      testController: {
+        getSeededProducts: () => {
+          bridgeCalled = true;
+          return [makeSeededProduct('seed-1')];
+        },
+      },
+    });
+    // Request-level signal says sandbox; resolved account disagrees. The
+    // belt-and-suspenders cross-check must block the bridge.
+    const result = await callGetProducts(server, {
+      brief: 'premium',
+      buying_mode: 'brief',
+      account: { brand: { domain: 'example.com' }, operator: 'example.com', sandbox: true },
+    });
+    assert.strictEqual(bridgeCalled, false, 'resolved non-sandbox account must block the bridge');
+    assert.deepStrictEqual(
+      result.structuredContent.products.map(p => p.product_id),
+      ['handler-1']
+    );
+  });
+
+  it('drops seeded entries missing product_id and keeps valid ones', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getProducts: async () => ({ products: [] }),
+      },
+      testController: {
+        getSeededProducts: () => [
+          makeSeededProduct('ok-1'),
+          { name: 'no id' }, // dropped
+          makeSeededProduct(''), // dropped (empty string)
+          makeSeededProduct('ok-2'),
+        ],
+      },
+    });
+    const result = await callGetProducts(server, {
+      brief: 'premium',
+      buying_mode: 'brief',
+      context: { sandbox: true },
+    });
+    assert.deepStrictEqual(
+      result.structuredContent.products.map(p => p.product_id),
+      ['ok-1', 'ok-2']
+    );
+  });
+
+  it('skips the bridge when getSeededProducts returns a non-array', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+      },
+      testController: {
+        getSeededProducts: () => 'not-an-array',
+      },
+    });
+    const result = await callGetProducts(server, {
+      brief: 'premium',
+      buying_mode: 'brief',
+      context: { sandbox: true },
+    });
+    assert.deepStrictEqual(
+      result.structuredContent.products.map(p => p.product_id),
+      ['handler-1']
+    );
+  });
+
+  it('preserves handler sandbox: false rather than overwriting to true', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        // Handler declares sandbox: false explicitly. The bridge should not
+        // overwrite it — the `sandbox` flag is authoritative from the handler.
+        getProducts: async () => ({ products: [], sandbox: false }),
+      },
+      testController: {
+        getSeededProducts: () => [makeSeededProduct('seed-1')],
+      },
+    });
+    const result = await callGetProducts(server, {
+      brief: 'premium',
+      buying_mode: 'brief',
+      context: { sandbox: true },
+    });
+    assert.strictEqual(result.structuredContent.sandbox, false);
   });
 
   it('does not call the bridge when handler returned an error envelope', async () => {
@@ -235,5 +327,68 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       payload.products.map(p => p.product_id),
       ['handler-1']
     );
+  });
+});
+
+// Build a fully spec-conformant Product so strict response validation is
+// exercised end-to-end. Covers all 8 required fields (product_id, name,
+// description, publisher_properties, format_ids, delivery_type,
+// pricing_options, reporting_capabilities) plus the required nested
+// fields inside reporting_capabilities.
+function makeStrictProduct(productId, overrides = {}) {
+  return {
+    product_id: productId,
+    name: `Seeded ${productId}`,
+    description: 'Seed fixture for strict validation wiring test',
+    publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
+    format_ids: [{ agent_url: 'https://creatives.adcontextprotocol.org', id: 'display_300x250' }],
+    delivery_type: 'guaranteed',
+    pricing_options: [{ pricing_option_id: 'default', pricing_model: 'cpm', currency: 'USD' }],
+    reporting_capabilities: {
+      available_reporting_frequencies: ['daily'],
+      expected_delay_minutes: 60,
+      timezone: 'UTC',
+      supports_webhooks: false,
+      available_metrics: ['impressions', 'spend'],
+      date_range_support: 'date_range',
+    },
+    ...overrides,
+  };
+}
+
+describe('createAdcpServer — seeded get_products under strict response validation', () => {
+  it('validates clean when seeded products carry all required fields', async () => {
+    const server = _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      // Strict response validation ON — no opt-out.
+      validation: { requests: 'off', responses: 'strict' },
+      mediaBuy: {
+        getProducts: async () => ({ products: [makeStrictProduct('handler-1')] }),
+      },
+      testController: {
+        getSeededProducts: () => [makeStrictProduct('seed-1'), makeStrictProduct('seed-2')],
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          buying_mode: 'brief',
+          account: { brand: { domain: 'example.com' }, operator: 'example.com', sandbox: true },
+        },
+      },
+    });
+    // isError only fires for error envelopes or failed strict validation.
+    assert.notStrictEqual(result.isError, true, 'strict validation should pass');
+    const payload = result.structuredContent;
+    assert.ok(payload.products, 'response has products');
+    assert.deepStrictEqual(
+      payload.products.map(p => p.product_id),
+      ['handler-1', 'seed-1', 'seed-2']
+    );
+    assert.strictEqual(payload.sandbox, true);
   });
 });

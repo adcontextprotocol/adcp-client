@@ -101,6 +101,7 @@ import { createExpressVerifier, type ExpressLike } from '../signing/middleware';
 import {
   isSandboxRequest as isSandboxRequestForSeeding,
   mergeSeededProductsIntoResponse,
+  filterValidSeededProducts,
   type TestControllerBridge,
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
@@ -968,15 +969,29 @@ export interface AdcpServerConfig<TAccount = unknown> {
 
   /**
    * Opt-in bridge between the `comply_test_controller` seed store and the
-   * spec-tool pipeline. When configured and {@link TestControllerBridge.augmentGetProducts}
-   * is not explicitly `false`, seeded products flow into `get_products`
-   * responses on sandbox requests — the Group A compliance storyboards rely
-   * on this end-to-end flow. Production traffic (no sandbox marker) bypasses
-   * the bridge entirely; omit the field in production configs to be explicit
-   * about it.
+   * spec-tool pipeline. When `getSeededProducts` is provided, seeded
+   * products flow into `get_products` responses on sandbox requests — the
+   * Group A compliance storyboards rely on this end-to-end flow.
+   * Production traffic (no sandbox marker, or a resolved non-sandbox
+   * account) bypasses the bridge entirely; omit the field in production
+   * configs to be explicit about it.
    *
    * See `src/lib/server/test-controller-bridge.ts` for the sandbox-marker
    * predicate and the merge contract.
+   *
+   * @example
+   * ```ts
+   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/client';
+   *
+   * const seedStore = new Map<string, unknown>();
+   * const server = createAdcpServer({
+   *   mediaBuy: { getProducts: handleGetProducts },
+   *   testController: bridgeFromTestControllerStore(seedStore, {
+   *     delivery_type: 'guaranteed',
+   *     channels: ['display'],
+   *   }),
+   * });
+   * ```
    */
   testController?: TestControllerBridge<TAccount>;
 }
@@ -1927,22 +1942,32 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // --- Test-controller bridge: augment get_products with seeded fixtures. ---
           // Only runs when the seller opted in via `testController.getSeededProducts`
           // AND the request carries a sandbox marker (account.sandbox === true or
-          // context.sandbox === true). Production traffic skips this block entirely.
+          // context.sandbox === true). When `resolveAccount` returned a concrete
+          // account, we additionally require `ctx.account.sandbox === true` so a
+          // request that happens to include `account.sandbox: true` can't leak
+          // fixtures into a non-sandbox resolved account (belt-and-suspenders).
           // Seeded products append to whatever the handler returned; `product_id`
           // collisions resolve with the seeded entry winning, so storyboards that
           // override default inventory see their fixture.
           if (
             toolName === 'get_products' &&
             testControllerBridge?.getSeededProducts &&
-            testControllerBridge.augmentGetProducts !== false &&
             !isErrorResponse(formatted) &&
-            isSandboxRequestForSeeding(params)
+            isSandboxRequestForSeeding(params) &&
+            // If resolveAccount produced a record, require it to be flagged
+            // sandbox too. If no account was resolved, the request-signal
+            // check above is the only line of defense — keep that contract.
+            (ctx.account === undefined ||
+              (typeof ctx.account === 'object' &&
+                ctx.account !== null &&
+                (ctx.account as { sandbox?: unknown }).sandbox === true))
           ) {
             try {
               const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
               if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
-              const seeded = await testControllerBridge.getSeededProducts(bridgeCtx);
-              if (Array.isArray(seeded) && seeded.length > 0) {
+              const rawSeeded = await testControllerBridge.getSeededProducts(bridgeCtx);
+              const seeded = filterValidSeededProducts(rawSeeded, logger);
+              if (seeded.length > 0) {
                 const sc = formatted.structuredContent as
                   | import('../types/tools.generated').GetProductsResponse
                   | undefined;
