@@ -72,7 +72,13 @@ export type { RunnerVariables } from './context';
 export { WEBHOOK_ASSERTION_TASKS } from './webhook-assertions';
 
 // Runner
-export { runStoryboard, runStoryboardStep, getFirstStepPreview, summarizeStrictValidation } from './runner';
+export {
+  runStoryboard,
+  runStoryboardStep,
+  getFirstStepPreview,
+  summarizeStrictValidation,
+  listStrictOnlyFailures,
+} from './runner';
 
 // Parser (single-file load for spec evolution / targeted testing)
 export { parseStoryboard, loadStoryboardFile } from './loader';

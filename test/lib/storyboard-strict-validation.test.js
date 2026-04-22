@@ -12,7 +12,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations.js');
-const { summarizeStrictValidation } = require('../../dist/lib/testing/storyboard/runner.js');
+const { summarizeStrictValidation, listStrictOnlyFailures } = require('../../dist/lib/testing/storyboard/runner.js');
 
 function ctx(taskName, data, responseSchemaRef) {
   return {
@@ -91,17 +91,18 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
   });
 
   test('no AJV schema registered: strict verdict absent (not a failure)', () => {
-    // Some task schemas live outside the bundled/ tree and aren't compiled
-    // by the AJV loader. The runner must NOT emit a strict verdict in that
-    // case — there's no signal to report. The lenient Zod path still runs.
+    // Schemas outside both `bundled/` and the flat per-domain trees — e.g.
+    // a custom tool the consumer registered through their own storyboard
+    // without shipping a JSON schema — don't get an AJV validator. The
+    // runner must NOT emit a strict verdict in that case; there's no
+    // signal to report. The lenient Zod path is also absent for such
+    // tasks (no Zod schema), so the validation falls through with
+    // passed=false and no strict field.
     const results = runValidations(
       [{ check: 'response_schema', description: 'response conforms' }],
-      ctx('check_governance', { status: 'approved', plan_id: 'plan-1' }, 'governance/check-governance-response.json')
+      ctx('custom_consumer_tool_without_schema', { any: 'payload' }, 'custom/custom-tool-response.json')
     );
     const v = results[0];
-    // Either passes Zod cleanly (no strict emitted) or fails Zod (still no
-    // strict emitted because there's no AJV schema). Either way `strict`
-    // is absent.
     assert.strictEqual(v.strict, undefined, 'no strict verdict when AJV has no schema for this task');
   });
 
@@ -156,11 +157,20 @@ function makeStep(validations) {
 }
 
 describe('summarizeStrictValidation: run-level aggregation', () => {
-  test('returns undefined when no response_schema validation has a strict verdict', () => {
+  test('observable: false when no response_schema validation has a strict verdict', () => {
     // A run that only exercises non-schema checks (field_present, etc.)
-    // emits no strict signal; the summary field must be absent.
+    // emits no strict signal; the summary is still present with
+    // `observable: false` so dashboards can distinguish "unobservable"
+    // from "strict-clean with zero findings".
     const phases = [makePhase([makeStep([{ check: 'field_present', passed: true, description: 'x' }])])];
-    assert.strictEqual(summarizeStrictValidation(phases), undefined);
+    assert.deepStrictEqual(summarizeStrictValidation(phases), {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    });
   });
 
   test('counts a run with all-clean strict verdicts', () => {
@@ -174,13 +184,19 @@ describe('summarizeStrictValidation: run-level aggregation', () => {
         ]),
       ]),
     ];
-    const summary = summarizeStrictValidation(phases);
-    assert.deepStrictEqual(summary, { checked: 2, passed: 2, failed: 0, delta: 0 });
+    assert.deepStrictEqual(summarizeStrictValidation(phases), {
+      observable: true,
+      checked: 2,
+      passed: 2,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    });
   });
 
-  test('counts a strict/lenient delta (lenient-pass, strict-fail)', () => {
+  test('counts strict_only_failures (lenient-pass ∧ strict-fail) — the #820 signal', () => {
     // Canonical #820 case: agent passes Zod but slips past AJV (format or
-    // additionalProperties violation). `delta` counts exactly these.
+    // pattern violation). `strict_only_failures` counts exactly these.
     const phases = [
       makePhase([
         makeStep([
@@ -204,14 +220,20 @@ describe('summarizeStrictValidation: run-level aggregation', () => {
         ]),
       ]),
     ];
-    const summary = summarizeStrictValidation(phases);
-    assert.deepStrictEqual(summary, { checked: 1, passed: 0, failed: 1, delta: 1 });
+    assert.deepStrictEqual(summarizeStrictValidation(phases), {
+      observable: true,
+      checked: 1,
+      passed: 0,
+      failed: 1,
+      strict_only_failures: 1,
+      lenient_also_failed: 0,
+    });
   });
 
-  test('does not count strict-fail as a delta when Zod also rejected', () => {
-    // When the step already failed Zod (passed=false), strict-fail is
-    // not a NEW signal — the lenient path already blocked it. Delta
-    // should be 0; failed still counts.
+  test('lenient_also_failed partitions failed from strict_only_failures', () => {
+    // When the step already failed Zod (passed=false), strict-fail isn't
+    // a new signal — the lenient path already blocked it. Counts against
+    // `lenient_also_failed`, not `strict_only_failures`.
     const phases = [
       makePhase([
         makeStep([
@@ -224,8 +246,14 @@ describe('summarizeStrictValidation: run-level aggregation', () => {
         ]),
       ]),
     ];
-    const summary = summarizeStrictValidation(phases);
-    assert.deepStrictEqual(summary, { checked: 1, passed: 0, failed: 1, delta: 0 });
+    assert.deepStrictEqual(summarizeStrictValidation(phases), {
+      observable: true,
+      checked: 1,
+      passed: 0,
+      failed: 1,
+      strict_only_failures: 0,
+      lenient_also_failed: 1,
+    });
   });
 
   test('ignores checks without a strict verdict (no AJV schema)', () => {
@@ -245,7 +273,82 @@ describe('summarizeStrictValidation: run-level aggregation', () => {
         ]),
       ]),
     ];
-    const summary = summarizeStrictValidation(phases);
-    assert.deepStrictEqual(summary, { checked: 1, passed: 1, failed: 0, delta: 0 });
+    assert.deepStrictEqual(summarizeStrictValidation(phases), {
+      observable: true,
+      checked: 1,
+      passed: 1,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// listStrictOnlyFailures drill-down helper
+// ─────────────────────────────────────────────────────────────
+
+describe('listStrictOnlyFailures: drill-down into the #820 signal', () => {
+  test('returns empty on runs with no strict-only failures', () => {
+    const phases = [
+      makePhase([
+        makeStep([
+          { check: 'response_schema', passed: true, description: 'clean', strict: { valid: true, variant: 'sync' } },
+        ]),
+      ]),
+    ];
+    assert.deepStrictEqual(listStrictOnlyFailures(phases), []);
+  });
+
+  test('flattens every strict-only failure with step / task / variant / issues', () => {
+    const phases = [
+      makePhase([
+        makeStep([
+          {
+            check: 'response_schema',
+            passed: true, // lenient accepted
+            description: 'format violation',
+            strict: {
+              valid: false,
+              variant: 'sync',
+              issues: [
+                {
+                  instance_path: '/caller',
+                  schema_path: '#/properties/caller/format',
+                  keyword: 'format',
+                  message: 'must match format "uri"',
+                },
+              ],
+            },
+          },
+        ]),
+      ]),
+    ];
+    const rows = listStrictOnlyFailures(phases);
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].phase_id, 'p1');
+    assert.strictEqual(rows[0].step_id, 's');
+    assert.strictEqual(rows[0].task, 'list_creative_formats');
+    assert.strictEqual(rows[0].variant, 'sync');
+    assert.strictEqual(rows[0].issues.length, 1);
+    assert.strictEqual(rows[0].issues[0].keyword, 'format');
+  });
+
+  test('excludes lenient-also-failed rows (not strict-only signal)', () => {
+    // A step that failed BOTH Zod and AJV isn't a strict-only failure —
+    // today's suite already blocks it. Don't put it in the drill-down.
+    const phases = [
+      makePhase([
+        makeStep([
+          {
+            check: 'response_schema',
+            passed: false, // lenient also rejected
+            description: 'both reject',
+            strict: { valid: false, variant: 'sync', issues: [] },
+          },
+        ]),
+      ]),
+    ];
+    assert.deepStrictEqual(listStrictOnlyFailures(phases), []);
   });
 });

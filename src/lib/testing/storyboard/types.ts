@@ -965,38 +965,48 @@ export interface StoryboardResult {
    */
   assertions?: AssertionResult[];
   /**
-   * Issue #820 follow-up — strict/lenient `response_schema` delta.
-   * `checked` counts `response_schema` validations that had an AJV schema
-   * available (the strict path); `passed` is how many of those the agent's
-   * response cleared under strict JSON-schema semantics (format enforcement
-   * on ref'd core schemas, required-field checks AJV runs alongside Zod).
-   * `delta` is the count of validations where lenient Zod accepted AND
-   * strict AJV rejected — the agent's risk surface when an upstream
-   * dispatcher turns on strict mode.
-   *
-   * Absent when the run had zero AJV-checkable `response_schema`
-   * validations. Absence means "unobservable" (e.g. the storyboard only
-   * exercised governance / brand-rights tasks whose schemas ship outside
-   * the AJV loader's bundled tree), NOT "strict-clean with zero findings".
-   * Downstream dashboards should distinguish the two states.
+   * Issue #820 follow-up — strict/lenient `response_schema` delta. Always
+   * emitted by the runner; inspect `observable` first to distinguish
+   * "observed zero strict-eligible checks" from "observed N and graded
+   * them". Storyboards dominated by non-`response_schema` validations
+   * (`field_present`, `error_code`, pure `assertion` runs) will have
+   * `observable: false` and zeroed counters.
    */
   strict_validation_summary?: StrictValidationSummary;
 }
 
 export interface StrictValidationSummary {
-  /** Response-schema checks that had an AJV validator compiled (strict-eligible). */
+  /**
+   * True when at least one `response_schema` validation had an AJV
+   * validator compiled (the strict path could actually grade something).
+   * False means "unobservable": the run exercised only tasks whose JSON
+   * schema isn't registered, or only non-`response_schema` validations —
+   * NOT "strict-clean with zero findings". Downstream dashboards and
+   * CI formatters MUST check this before rendering the counts.
+   */
+  observable: boolean;
+  /** Response-schema checks that had an AJV validator compiled. */
   checked: number;
   /** Of `checked`, how many passed strict AJV. */
   passed: number;
   /** Of `checked`, how many failed strict AJV. Equals `checked - passed`. */
   failed: number;
   /**
-   * Count of validations where `passed` (lenient Zod) is true AND strict
-   * AJV rejected the response — the "lenient passes, strict fails" subset
-   * of `failed`. This is the agent's strictness gap: responses the Zod
-   * path waved through that a strict dispatcher would reject.
+   * Count of validations where lenient Zod accepted AND strict AJV
+   * rejected — the "silent failures" the agent ships today that a strict
+   * dispatcher would block. Subset of `failed`. This is the actionable
+   * production-readiness signal for agent developers: a green lenient run
+   * with `strict_only_failures > 0` is a migration trap.
    */
-  delta: number;
+  strict_only_failures: number;
+  /**
+   * Count of validations where BOTH lenient Zod AND strict AJV rejected —
+   * the step already failed under today's semantics, so strict rejection
+   * isn't new signal. Equals `failed - strict_only_failures`. Useful for
+   * dashboards that want to distinguish "already-failing" from
+   * "silently-failing" in the same run.
+   */
+  lenient_also_failed: number;
 }
 
 /**
