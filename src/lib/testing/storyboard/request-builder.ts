@@ -76,11 +76,25 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   get_rights(step, context, options) {
+    // Honor hand-authored sample_request so storyboards can specify
+    // scenario-specific query text, uses, countries, or buyer_brand.
+    // Peer builders (sync_plans, check_governance, list_creative_formats,
+    // create_content_standards, etc.) follow the same pattern.
+    //
+    // Without this, any get_rights step hits the wire with the generic
+    // fallback and a brand_id derived from the caller's domain — which
+    // rights-holder rosters reject as unknown, so rights[0] is undefined,
+    // $context.rights_id doesn't resolve, and downstream acquire_rights
+    // steps fail with rights_not_found instead of the error the
+    // storyboard is actually asserting (e.g., GOVERNANCE_DENIED).
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     const brand = resolveBrand(options);
     return {
       query: 'available rights for advertising',
       uses: ['ai_generated_image'],
-      brand_id: context.brand_id ?? (step.sample_request?.brand_id as string) ?? brand.brand_id ?? brand.domain,
+      brand_id: context.brand_id ?? brand.brand_id ?? brand.domain,
     };
   },
 
