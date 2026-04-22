@@ -388,7 +388,7 @@ describe('default-invariants: context.no_secret_echo', () => {
       const out = runEcho(variant.options, { echoed_secret: variant.secret });
       assert.strictEqual(out.length, 1);
       assert.strictEqual(out[0].passed, false, `expected a leak finding for ${variant.name}`);
-      assert.match(out[0].error, /echoed a caller-supplied secret/);
+      assert.match(out[0].error, /caller-supplied secret/);
     });
 
     test(`stays silent when the ${variant.name} is not echoed`, () => {
@@ -416,10 +416,13 @@ describe('default-invariants: context.no_secret_echo', () => {
     assert.strictEqual(out[0].passed, false);
   });
 
-  test('no auth configured → passes silently (no state bleed)', () => {
+  test('no auth configured → still runs whole-body scan, passes on clean response', () => {
+    // Even with no caller-supplied secrets, the widened assertion scans for
+    // bearer-token literals and suspect property names — that's the point of
+    // the widening. On a benign body it just passes.
     const out = runEcho({}, { echoed: 'anything goes here' });
-    // No secrets to check → empty result (skip the check)
-    assert.strictEqual(out.length, 0);
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0].passed, true);
   });
 
   test('resolves $ENV: reference on oauth_client_credentials.client_secret', () => {
@@ -542,5 +545,160 @@ describe('default-invariants: context.no_secret_echo', () => {
       { token_response: { client_id: 'public-client-id-fixture-1234', audience: 'svc' } }
     );
     assert.strictEqual(out[0].passed, true, 'client_id echo must not flag — it is a public identifier');
+  });
+});
+
+describe('default-invariants: idempotency.conflict_no_payload_leak (widened allowlist)', () => {
+  const spec = getAssertion('idempotency.conflict_no_payload_leak');
+
+  function step(adcpError) {
+    return {
+      step_id: 's1',
+      phase_id: 'p',
+      title: 't',
+      task: 'create_media_buy',
+      passed: false,
+      duration_ms: 0,
+      validations: [],
+      context: {},
+      extraction: { path: 'none' },
+      response: adcpError !== undefined ? { adcp_error: adcpError } : undefined,
+    };
+  }
+
+  test('silent on non-IDEMPOTENCY_CONFLICT error codes', () => {
+    const out = spec.onStep({ state: {} }, step({ code: 'INVALID_REQUEST', message: 'bad' }));
+    assert.deepStrictEqual(out, []);
+  });
+
+  test('passes when the envelope has only allowlisted fields', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'key reused', correlation_id: 'c-1' })
+    );
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0].passed, true);
+  });
+
+  test('flags any non-allowlisted envelope field (the read-oracle leak vector)', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', budget: 5000, start_time: '2026-06-01T00:00:00Z' })
+    );
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /budget/);
+    assert.match(out[0].error, /start_time/);
+  });
+
+  test('flags the specific named leak fields too (belt-and-suspenders)', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', payload: { budget: 5000 } })
+    );
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /payload/);
+  });
+
+  test('lists leaked fields deterministically (sorted) for diagnostic stability', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', z_field: 1, a_field: 2, m_field: 3 })
+    );
+    assert.match(out[0].error, /a_field, m_field, z_field/);
+  });
+});
+
+describe('default-invariants: context.no_secret_echo (widened whole-body scan)', () => {
+  const spec = getAssertion('context.no_secret_echo');
+
+  function ctx(options = {}) {
+    return { storyboard: {}, agentUrl: 'x', options, state: {} };
+  }
+
+  function step(response) {
+    return {
+      step_id: 's1',
+      phase_id: 'p',
+      title: 't',
+      task: 'create_media_buy',
+      passed: true,
+      duration_ms: 0,
+      validations: [],
+      context: {},
+      extraction: { path: 'none' },
+      response,
+    };
+  }
+
+  test('silent on steps with no response body', () => {
+    const c = ctx();
+    spec.onStart(c);
+    assert.deepStrictEqual(spec.onStep(c, step(undefined)), []);
+  });
+
+  test('passes when response carries no credentials / suspect fields', () => {
+    const c = ctx({ auth_token: 'sk-live-verylongsecret' });
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ media_buy_id: 'mb-1', status: 'active' }));
+    assert.strictEqual(out[0].passed, true);
+  });
+
+  test('fails on a bearer-token literal anywhere in the body', () => {
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ debug: 'request had Authorization: Bearer abcdef123456xyz' }));
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /bearer-token literal/);
+  });
+
+  test('fails when response echoes options.auth_token verbatim outside .context', () => {
+    const c = ctx({ auth_token: 'sk-live-verylongsecret' });
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ error: { message: 'auth sk-live-verylongsecret failed' } }));
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /caller-supplied secret/);
+  });
+
+  test('fails when response echoes options.secrets[] verbatim', () => {
+    const c = ctx({ secrets: ['internal-token-abc123XYZ'] });
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ audit: { inbound_auth: 'internal-token-abc123XYZ' } }));
+    assert.strictEqual(out[0].passed, false);
+  });
+
+  test('fails when response echoes test_kit.auth.api_key verbatim', () => {
+    const c = ctx({ test_kit: { auth: { api_key: 'tk-api-key-alpha1' } } });
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ echoed_auth: 'tk-api-key-alpha1' }));
+    assert.strictEqual(out[0].passed, false);
+  });
+
+  test('fails on a suspect property name at any depth', () => {
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ nested: { deeper: { Authorization: 'anything' } } }));
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /suspect property name "Authorization"/);
+  });
+
+  test('walks arrays when hunting leaks', () => {
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ items: [{ ok: 1 }, { notes: 'see Bearer aaaaaaaaaaaaa for details' }] }));
+    assert.strictEqual(out[0].passed, false);
+  });
+
+  test('ignores short option values to avoid placeholder false positives', () => {
+    const c = ctx({ auth_token: 'sk' });
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ note: 'sk is not a secret' }));
+    assert.strictEqual(out[0].passed, true);
+  });
+
+  test('does not flag generic use of the word "bearer" in prose', () => {
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ message: 'the bearer of bad news' }));
+    assert.strictEqual(out[0].passed, true);
   });
 });
