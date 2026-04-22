@@ -37,28 +37,47 @@ export function buildValidationError(
 /**
  * Shape of `adcp_error.details` inside a server-side `VALIDATION_ERROR`
  * envelope. Shipped so buyers can index every pointer programmatically
- * instead of parsing the free-text message.
+ * instead of parsing the free-text message. `schemaPath` is optional
+ * per-issue — the builder drops it by default in production so
+ * `oneOf` branch selection doesn't leak to buyers.
  */
 export interface AdcpValidationErrorDetails {
   tool: string;
   side: 'request' | 'response';
-  issues: ValidationIssue[];
+  issues: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
 }
 
-/** Serialize issues for the server-side `adcpError('VALIDATION_ERROR', ...)` call. */
+/**
+ * Serialize issues for the server-side `adcpError('VALIDATION_ERROR', ...)` call.
+ *
+ * `exposeSchemaPath` controls whether each issue's AJV `schemaPath`
+ * (e.g. `#/oneOf/2/properties/status/enum`) crosses the wire. When
+ * false, schemaPath is stripped from the emitted details.issues[] —
+ * buyers still get `pointer`, `message`, and `keyword`, which is
+ * enough to fix their payload, but the internal branch shape of the
+ * seller's handler isn't leaked. Defaults to the same policy as
+ * `exposeErrorDetails`: on in dev/test, off in production.
+ */
 export function buildAdcpValidationErrorPayload(
   tool: string,
   side: 'request' | 'response',
-  issues: ValidationIssue[]
+  issues: ValidationIssue[],
+  options: { exposeSchemaPath?: boolean } = {}
 ): { message: string; field?: string; details: Record<string, unknown> } {
   const first = issues[0];
   const message =
     first != null
       ? `${tool} ${side} failed schema validation at ${first.pointer}: ${first.message}`
       : `${tool} ${side} failed schema validation`;
+  const emittedIssues = options.exposeSchemaPath
+    ? issues
+    : issues.map(({ schemaPath: _schemaPath, ...rest }) => rest);
   const payload: { message: string; field?: string; details: Record<string, unknown> } = {
     message,
-    details: { tool, side, issues } satisfies AdcpValidationErrorDetails as unknown as Record<string, unknown>,
+    details: { tool, side, issues: emittedIssues } satisfies AdcpValidationErrorDetails as unknown as Record<
+      string,
+      unknown
+    >,
   };
   if (first?.pointer) payload.field = first.pointer;
   return payload;

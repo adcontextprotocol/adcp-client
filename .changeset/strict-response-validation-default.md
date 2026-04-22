@@ -27,6 +27,17 @@ Migration: handler tests that use sparse fixtures (e.g.
 `{ products: [{ product_id: 'p1' }] }`) will start returning
 `VALIDATION_ERROR`. Either fill in the missing required fields to match
 the AdCP schema, or set `validation: { responses: 'off' }` on the test
-server to keep the fixture intentionally minimal.
+server to keep the fixture intentionally minimal. Note that Node's
+test runner does **not** set `NODE_ENV`, so test suites running under
+`node --test` (with `NODE_ENV=undefined`) fall into the dev/test
+bucket and will start validating responses — this is intentional.
+
+Also: the `VALIDATION_ERROR` envelope's `details.issues[].schemaPath`
+is now gated behind `exposeErrorDetails` (same policy as the existing
+`SERVICE_UNAVAILABLE.details.reason` field). Production responses no
+longer leak `#/oneOf/<n>/properties/...` paths that fingerprint the
+handler's internal `oneOf` branch selection — buyers still get
+`pointer`, `message`, and `keyword`, which is sufficient to fix a
+drifted payload.
 
 Closes #727 (A).

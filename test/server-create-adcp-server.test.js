@@ -11,8 +11,15 @@ const { adcpError } = require('../dist/lib/server/errors');
 // validation default turns that drift into VALIDATION_ERROR at the
 // dispatcher. Opt out so this file keeps testing middleware behavior;
 // `test/lib/schema-validation-server.test.js` covers the validator itself.
+//
+// Shallow-merge `validation` so a per-test `validation: { requests: 'strict' }`
+// doesn't silently re-enable response validation; only keys the test
+// explicitly sets win over the file-level opt-out.
 function createAdcpServer(config) {
-  return _createAdcpServer({ validation: { responses: 'off' }, ...config });
+  return _createAdcpServer({
+    ...config,
+    validation: { responses: 'off', ...(config?.validation ?? {}) },
+  });
 }
 
 // ---------------------------------------------------------------------------

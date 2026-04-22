@@ -17,10 +17,16 @@ function waitForListening(server) {
 function startAgent(config) {
   // Seeder tests use deliberately sparse handler fixtures. Opt out of the
   // strict response-validation default so VALIDATION_ERROR envelopes don't
-  // short-circuit the seeder under test.
+  // short-circuit the seeder under test. Shallow-merge so a caller that
+  // explicitly sets one side doesn't accidentally clear the other.
   const s = serve(
     () =>
-      createAdcpServer({ name: 'Seed Test Agent', version: '1.0.0', validation: { responses: 'off' }, ...config }),
+      createAdcpServer({
+        name: 'Seed Test Agent',
+        version: '1.0.0',
+        ...config,
+        validation: { responses: 'off', ...(config?.validation ?? {}) },
+      }),
     { port: 0, onListening: () => {} }
   );
   return waitForListening(s).then(() => ({ server: s, port: s.address().port }));

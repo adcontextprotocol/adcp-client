@@ -868,9 +868,12 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *     discriminator failure.
    *
    * Pass an explicit `validation: { requests: 'off', responses: 'off' }` to
-   * override the dev-mode default. Set `responses: 'warn'` to downgrade
-   * drift to a logger warning (useful while migrating a handler set from
-   * sparse fixtures to spec-compliant responses).
+   * override the dev-mode default. Set `responses: 'warn'` to keep the
+   * logger diagnostic without failing the request — useful while
+   * migrating a handler set from sparse fixtures to spec-compliant
+   * responses. (The logger warning fires in both `'warn'` and `'strict'`
+   * modes; `'strict'` additionally promotes the failure to a
+   * `VALIDATION_ERROR` envelope.)
    *
    * Per-side modes:
    *   - `requests: 'strict'` — reject malformed requests with VALIDATION_ERROR.
@@ -1868,7 +1871,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 variant: outcome.variant,
               });
               if (responseValidationMode === 'strict') {
-                const errPayload = buildAdcpValidationErrorPayload(toolName, 'response', outcome.issues);
+                const errPayload = buildAdcpValidationErrorPayload(
+                  toolName,
+                  'response',
+                  outcome.issues,
+                  { exposeSchemaPath: exposeErrorDetails }
+                );
                 if (idempotencyCheck && idempotency) {
                   try {
                     await idempotency.release({
@@ -1876,8 +1884,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                       key: idempotencyCheck.key,
                       extraScope: idempotencyCheck.extraScope,
                     });
-                  } catch {
-                    // Best-effort release; claim TTL evicts.
+                  } catch (err) {
+                    const reason = err instanceof Error ? err.message : String(err);
+                    logger.warn('Idempotency release failed — in-flight claim will expire on TTL', {
+                      tool: toolName,
+                      error: reason,
+                    });
                   }
                 }
                 return finalize(adcpError('VALIDATION_ERROR', errPayload));

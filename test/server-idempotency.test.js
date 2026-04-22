@@ -6,8 +6,13 @@ const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/id
 
 // Idempotency tests use sparse handler fixtures; opt out of the strict
 // response-validation default so we stay focused on replay/claim behavior.
+// Shallow-merge `validation` so a per-test override on one key doesn't
+// silently re-enable the other side.
 function createAdcpServer(config) {
-  return _createAdcpServer({ validation: { responses: 'off' }, ...config });
+  return _createAdcpServer({
+    ...config,
+    validation: { responses: 'off', ...(config?.validation ?? {}) },
+  });
 }
 
 async function callTool(server, toolName, params) {
