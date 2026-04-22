@@ -246,10 +246,7 @@ const STEP_INVARIANTS_OBJECT_KEYS: ReadonlySet<string> = new Set(['disable']);
  * reference assertions that actually run for this storyboard — same
  * principle as the storyboard-level check.
  */
-export function validateStepInvariants(
-  storyboard: Storyboard,
-  resolvedAssertions: AssertionSpec[]
-): void {
+export function validateStepInvariants(storyboard: Storyboard, resolvedAssertions: AssertionSpec[]): void {
   const resolvedIds = new Set(resolvedAssertions.map(spec => spec.id));
   const storyboardDisable = new Set<string>();
   if (storyboard.invariants && !Array.isArray(storyboard.invariants)) {
@@ -302,10 +299,7 @@ export function validateStepInvariants(
  * the step — a single choke point that keeps individual assertion code
  * unaware of the escape hatch.
  */
-export function stepDisablesAssertion(
-  stepInvariants: StepInvariantsObject | undefined,
-  assertionId: string
-): boolean {
+export function stepDisablesAssertion(stepInvariants: StepInvariantsObject | undefined, assertionId: string): boolean {
   if (!stepInvariants?.disable) return false;
   return stepInvariants.disable.includes(assertionId);
 }

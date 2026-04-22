@@ -481,11 +481,7 @@ describe('runStoryboard: step-level invariants.disable', () => {
     });
     const { server, url } = await startStubAgent();
     try {
-      await runStoryboard(
-        url,
-        buildStoryboardWithStepDisable({ disable: ['obs.per_step'] }),
-        runnerOptions
-      );
+      await runStoryboard(url, buildStoryboardWithStepDisable({ disable: ['obs.per_step'] }), runnerOptions);
     } finally {
       server.close();
     }
@@ -515,11 +511,7 @@ describe('runStoryboard: step-level invariants.disable', () => {
     });
     const { server, url } = await startStubAgent();
     try {
-      await runStoryboard(
-        url,
-        buildStoryboardWithStepDisable({ disable: ['obs.disabled'] }),
-        runnerOptions
-      );
+      await runStoryboard(url, buildStoryboardWithStepDisable({ disable: ['obs.disabled'] }), runnerOptions);
     } finally {
       server.close();
     }
@@ -536,12 +528,7 @@ describe('runStoryboard: step-level invariants.disable', () => {
     const { server, url } = await startStubAgent();
     try {
       await assert.rejects(
-        () =>
-          runStoryboard(
-            url,
-            buildStoryboardWithStepDisable({ disable: ['never.registered'] }),
-            runnerOptions
-          ),
+        () => runStoryboard(url, buildStoryboardWithStepDisable({ disable: ['never.registered'] }), runnerOptions),
         /Step "s2" invariants\.disable names "never\.registered".*not in the resolved assertion set/s
       );
     } finally {
@@ -575,12 +562,7 @@ describe('runStoryboard: step-level invariants.disable', () => {
     const { server, url } = await startStubAgent();
     try {
       await assert.rejects(
-        () =>
-          runStoryboard(
-            url,
-            buildStoryboardWithStepDisable({ disabled: ['some.default'] }),
-            runnerOptions
-          ),
+        () => runStoryboard(url, buildStoryboardWithStepDisable({ disabled: ['some.default'] }), runnerOptions),
         /Step "s2" invariants has unknown field: disabled/
       );
     } finally {
