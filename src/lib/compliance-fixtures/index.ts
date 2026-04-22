@@ -319,6 +319,13 @@ function resolveStateStore(server: AdcpServer): AdcpStateStore {
   );
 }
 
+export {
+  createTestAuthorizationServer,
+  type TestAuthorizationServer,
+  type TestAuthorizationServerOptions,
+  type IssueTokenOptions,
+} from './test-authorization-server';
+
 function isStateStore(value: unknown): value is AdcpStateStore {
   return (
     value != null &&

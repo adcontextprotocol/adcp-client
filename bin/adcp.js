@@ -672,6 +672,18 @@ function parseAgentOptions(args) {
       ? args[invariantsIdx + 1]
       : null;
 
+  const localAgentIdx = args.indexOf('--local-agent');
+  const localAgentValue =
+    localAgentIdx !== -1 && localAgentIdx + 1 < args.length && !args[localAgentIdx + 1].startsWith('--')
+      ? args[localAgentIdx + 1]
+      : null;
+
+  const formatIdx = args.indexOf('--format');
+  const formatValue =
+    formatIdx !== -1 && formatIdx + 1 < args.length && !args[formatIdx + 1].startsWith('--')
+      ? args[formatIdx + 1]
+      : null;
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
   // space-separated value needs explicit exclusion. Use explicit nullish check
@@ -691,11 +703,25 @@ function parseAgentOptions(args) {
     webhookReceiverPortValue,
     webhookReceiverPublicUrlValue,
     invariantsValue,
+    localAgentValue,
+    formatValue,
     fileIndex !== -1 ? file : null,
   ].filter(v => v !== null && v !== undefined);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
-  return { authToken, protocolFlag, brief, file, jsonOutput, debug, dryRun, allowHttp, positionalArgs };
+  return {
+    authToken,
+    protocolFlag,
+    brief,
+    file,
+    jsonOutput,
+    debug,
+    dryRun,
+    allowHttp,
+    positionalArgs,
+    localAgent: localAgentValue,
+    format: formatValue,
+  };
 }
 
 /**
@@ -1058,6 +1084,7 @@ USAGE:
   adcp storyboard show <id> [--json]
   adcp storyboard run <agent> [id|bundle] [options]
   adcp storyboard run <agent> --file <path.yaml> [options]
+  adcp storyboard run --local-agent <module> [id|bundle] [options]
   adcp storyboard step <agent> <storyboard_id> <step_id> [options]
 
 SUBCOMMANDS:
@@ -1118,6 +1145,18 @@ OPTIONS:
                       against the current directory; bare specifiers
                       (@org/invariants) resolve as npm packages. Modules run
                       with full CLI privileges — only load code you trust.
+  --local-agent PATH  Spin up the agent in-process. PATH imports a module
+                      whose default export (or \`createAgent\` named export)
+                      matches \`serve()\`'s factory signature:
+                      \`(ctx) => createAdcpServer({...})\`. The CLI binds
+                      an ephemeral HTTP port, seeds compliance fixtures,
+                      runs storyboards, and tears down — no url/auth flags
+                      required. See docs/guides/VALIDATE-LOCALLY.md for
+                      the full pattern.
+  --format FORMAT     Output format for single-storyboard and --local-agent
+                      runs. One of: table (default), json, junit. junit
+                      emits a JUnit XML report to stdout — each storyboard
+                      becomes a testsuite, each step a testcase.
 
 NOTE: Storyboards are pulled from the compliance cache populated by
       \`npm run sync-schemas\` (fetches /protocol/{version}.tgz).
@@ -1317,7 +1356,15 @@ async function handleStoryboardShow(args) {
 
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
+  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
+
+  // --local-agent <module>: spin the agent up in-process, seed fixtures,
+  // run storyboards, tear down. Collapses the 300-line seller-side
+  // bootstrap into one command. See `runAgainstLocalAgent` in
+  // `@adcp/client/testing`.
+  if (localAgent) {
+    return handleLocalAgentStoryboardRun(localAgent, args, opts);
+  }
 
   // Multi-instance mode: repeated --url flags round-robin steps across N
   // seller URLs. Must share a backing store to pass — catches horizontal
@@ -1330,9 +1377,22 @@ async function handleStoryboardRun(args) {
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];
 
+  // --format junit: emit a JUnit XML report for any non-local run as well,
+  // so CI pipelines fronting remote agents get the same format option.
+  if (format && format === 'junit' && !storyboardId && !filePath) {
+    console.error(
+      'ERROR: --format junit requires a storyboard id, --file, or --local-agent. ' +
+        'The capability-driven assessment emits a different report shape.'
+    );
+    process.exit(2);
+  }
+
   if (!agentArg) {
-    console.error('Usage: adcp storyboard run <agent> [storyboard_id|--file path] [options]');
-    console.error('  Multi-instance: adcp storyboard run --url <url1> --url <url2> <storyboard_id|bundle_id>');
+    console.error(
+      'Usage: adcp storyboard run <agent> [storyboard_id|--file path] [options]\n' +
+        '  Local agent: adcp storyboard run --local-agent <module> [storyboard_id|bundle_id]\n' +
+        '  Multi-instance: adcp storyboard run --url <url1> --url <url2> <storyboard_id|bundle_id>'
+    );
     process.exit(2);
   }
 
@@ -1447,6 +1507,11 @@ async function handleStoryboardRun(args) {
     result = await runStoryboard(agentUrl, storyboard, options);
   } finally {
     if (restoreLogs) restoreLogs();
+  }
+
+  if (format === 'junit') {
+    process.stdout.write(formatStoryboardResultsAsJUnit([result]));
+    process.exit(result.overall_passed ? 0 : 3);
   }
 
   if (jsonOutput) {
@@ -2039,6 +2104,186 @@ function extractRepeatedUrlFlags(args) {
  * storyboards for connection reuse, which is incompatible with per-step URL
  * dispatch. Use a specific storyboard or bundle ID.
  */
+/**
+ * `adcp storyboard run --local-agent <module> [id|bundle]`
+ *
+ * Imports the module, looks for a `createAgent` (default export preferred,
+ * falls back to named `createAgent`), and delegates to
+ * `runAgainstLocalAgent`. The module contract is the same as `serve()`'s
+ * factory: `(ctx) => AdcpServer | McpServer` that closes over a stable
+ * stateStore.
+ *
+ * Relative paths resolve against the CLI's working directory; bare
+ * specifiers resolve as npm packages.
+ */
+async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
+  const { positionalArgs, jsonOutput, format, dryRun, debug } = opts;
+  const storyboardId = positionalArgs[0];
+
+  if (dryRun) {
+    console.error('ERROR: --dry-run is not supported with --local-agent (nothing to preview). Drop --dry-run.');
+    process.exit(2);
+  }
+
+  const specifier =
+    modulePath.startsWith('.') || path.isAbsolute(modulePath)
+      ? pathToFileURL(path.resolve(process.cwd(), modulePath)).href
+      : modulePath;
+
+  let mod;
+  try {
+    mod = await import(specifier);
+  } catch (err) {
+    console.error(`ERROR: --local-agent failed to import "${modulePath}": ${err.message}`);
+    if (debug) console.error(err.stack);
+    process.exit(2);
+  }
+
+  const createAgent = mod.default?.createAgent || mod.default || mod.createAgent;
+  if (typeof createAgent !== 'function') {
+    console.error(
+      `ERROR: --local-agent module "${modulePath}" must export \`createAgent\` (default export or named).\n` +
+        '       Expected signature: (ctx: ServeContext) => AdcpServer | McpServer'
+    );
+    process.exit(2);
+  }
+
+  await loadInvariantModules(args);
+
+  const { runAgainstLocalAgent } = await import('../dist/lib/testing/index.js');
+  const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
+  if (!debug && !jsonOutput) {
+    setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
+  }
+
+  const storyboardsSpec = storyboardId ? [storyboardId] : 'all';
+  const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
+  let result;
+  try {
+    result = await runAgainstLocalAgent({
+      createAgent,
+      storyboards: storyboardsSpec,
+      onStoryboardComplete:
+        jsonOutput || format === 'junit'
+          ? undefined
+          : (sb, i, total) => {
+              const icon = sb.overall_passed ? '✅' : '❌';
+              console.error(
+                `${icon} [${i + 1}/${total}] ${sb.storyboard_title} — ${sb.passed_count} passed, ${sb.failed_count} failed, ${sb.skipped_count} skipped`
+              );
+            },
+    });
+  } catch (err) {
+    if (restoreLogs) restoreLogs();
+    console.error(`\n❌ Local agent run failed: ${err.message}`);
+    if (debug) console.error(err.stack);
+    process.exit(1);
+  } finally {
+    if (restoreLogs) restoreLogs();
+  }
+
+  if (format === 'junit') {
+    process.stdout.write(formatStoryboardResultsAsJUnit(result.results));
+    process.exit(result.overall_passed ? 0 : 3);
+  }
+  if (jsonOutput) {
+    await writeJsonOutput(result);
+    process.exit(result.overall_passed ? 0 : 3);
+  }
+
+  // Human-readable summary
+  console.log(`\nLocal agent run — ${result.results.length} storyboard(s), ${result.total_duration_ms}ms`);
+  console.log(`   Mount: ${result.agent_url}\n`);
+  for (const sb of result.results) {
+    const icon = sb.overall_passed ? '✅' : '❌';
+    console.log(
+      `${icon} ${sb.storyboard_title} (${sb.storyboard_id}) — ${sb.passed_count} passed, ${sb.failed_count} failed, ${sb.skipped_count} skipped`
+    );
+  }
+  if (result.not_applicable.length > 0) {
+    console.log(`\n${result.not_applicable.length} storyboard(s) not applicable (out of scope):`);
+    for (const na of result.not_applicable) {
+      console.log(`  ⏭️  ${na.storyboard_title} — ${na.reason}`);
+    }
+  }
+  const overallIcon = result.overall_passed ? '✅' : '❌';
+  console.log(
+    `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)`
+  );
+  process.exit(result.overall_passed ? 0 : 3);
+}
+
+/**
+ * Emit JUnit XML for a list of `StoryboardResult`. Each storyboard
+ * becomes a `<testsuite>`; each step becomes a `<testcase>` with failures
+ * attached as `<failure>` children. Matches the schema Jenkins, CircleCI,
+ * and GitLab CI all consume without a plugin.
+ */
+function formatStoryboardResultsAsJUnit(results) {
+  const xmlEscape = s =>
+    String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+
+  let totalTests = 0;
+  let totalFailures = 0;
+  let totalSkipped = 0;
+  let totalDuration = 0;
+  const suites = [];
+
+  for (const sb of results) {
+    const suiteCases = [];
+    for (const phase of sb.phases) {
+      for (const step of phase.steps) {
+        totalTests += 1;
+        const name = `${phase.phase_title} › ${step.title}`;
+        const time = ((step.duration_ms || 0) / 1000).toFixed(3);
+        if (step.skipped) {
+          totalSkipped += 1;
+          suiteCases.push(
+            `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
+              `      <skipped message="${xmlEscape(step.skip_reason || 'skipped')}"/>\n` +
+              `    </testcase>`
+          );
+          continue;
+        }
+        if (!step.passed) {
+          totalFailures += 1;
+          const failureDetails = [step.error, ...step.validations.filter(v => !v.passed).map(v => `${v.description}: ${v.error || 'failed'}`)]
+            .filter(Boolean)
+            .join('\n');
+          suiteCases.push(
+            `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
+              `      <failure message="${xmlEscape(step.error || 'validation failed')}" type="StoryboardFailure">${xmlEscape(failureDetails)}</failure>\n` +
+              `    </testcase>`
+          );
+          continue;
+        }
+        suiteCases.push(
+          `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}"/>`
+        );
+      }
+    }
+    totalDuration += sb.total_duration_ms || 0;
+    const suiteTests = sb.phases.reduce((n, p) => n + p.steps.length, 0);
+    suites.push(
+      `  <testsuite name="${xmlEscape(sb.storyboard_title)}" tests="${suiteTests}" failures="${sb.failed_count}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
+        suiteCases.join('\n') +
+        `\n  </testsuite>`
+    );
+  }
+
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<testsuites name="adcp-storyboards" tests="${totalTests}" failures="${totalFailures}" skipped="${totalSkipped}" time="${(totalDuration / 1000).toFixed(3)}">\n` +
+    suites.join('\n') +
+    `\n</testsuites>\n`
+  );
+}
+
 async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
 
