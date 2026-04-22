@@ -1,6 +1,9 @@
 export { adcpError } from './errors';
 export type { AdcpErrorOptions, AdcpErrorPayload, AdcpErrorResponse } from './errors';
 
+export { wrapEnvelope, ERROR_ENVELOPE_FIELD_ALLOWLIST } from './wrap-envelope';
+export type { WrapEnvelopeOptions } from './wrap-envelope';
+
 export {
   capabilitiesResponse,
   productsResponse,

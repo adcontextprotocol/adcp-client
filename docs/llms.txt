@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-04-22
-> Library: @adcp/client v5.10.0
+> Library: @adcp/client v5.11.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -29,6 +29,8 @@ function createAgent({ taskStore }) {
 
 serve(createAgent); // http://localhost:3001/mcp
 ```
+
+Low-level server (bypassing `createAdcpServer`)? Use `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/client/server` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops `replayed`).
 
 ## Quick Start (Client)
 
@@ -826,7 +828,7 @@ Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → li
 **Sales agent with creative capabilities** — Stateful sales agent that accepts pushed creative assets and renders them in its environment.
 Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → preview_creative`
 
-**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy with pricing and billing.
+**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy. Optionally bills through AdCP.
 Flow: `get_adcp_capabilities → list_creatives → list_creative_formats → build_creative → get_creative_delivery → report_usage`
 
 **Creative template and transformation agent** — Stateless creative agent that takes assets in, applies templates, and produces tags or rendered output.
