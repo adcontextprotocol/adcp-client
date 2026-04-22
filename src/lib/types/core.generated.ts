@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-22T02:47:23.306Z
+// Generated at: 2026-04-22T03:02:49.814Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1909,7 +1909,7 @@ export interface TextAsset {
  */
 export interface URLAsset {
   /**
-   * URL reference
+   * URL reference. May be a plain URI or an RFC 6570 URI template carrying AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`). Buyers MUST NOT pre-encode macro braces at sync time; the ad server URL-encodes substituted values at impression time. See docs/creative/universal-macros.mdx.
    */
   url: string;
   url_type?: URLAssetType;
