@@ -74,6 +74,8 @@ For campaign governance, how should the agent decide?
 
 ## Tools and Required Response Shapes
 
+> **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`check_governance\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
+
 ### Campaign Governance
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
