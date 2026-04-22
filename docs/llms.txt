@@ -840,7 +840,7 @@ Flow: `get_adcp_capabilities → list_creative_formats → preview_creative → 
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
 
 **Campaign governance — delivery monitoring with drift detection** — Governance agent monitors delivery, detects budget drift past thresholds, and triggers re-evaluation.
-Flow: `get_adcp_capabilities → sync_plans → check_governance → get_media_buy_delivery → check_governance`
+Flow: `get_adcp_capabilities → sync_plans → check_governance → create_media_buy → get_media_buy_delivery → check_governance`
 
 **Campaign governance — denied** — Governance agent denies a media buy that exceeds the agent's spending authority. No human escalation — the buy is blocked.
 Flow: `get_adcp_capabilities → sync_plans → check_governance`

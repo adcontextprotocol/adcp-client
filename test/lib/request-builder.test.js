@@ -418,6 +418,111 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('sync_governance', () => {
+    test('fallback credentials satisfy schema minLength of 32', () => {
+      // Regression: the hardcoded 'test-governance-token' is 21 chars,
+      // shorter than the schema's minLength: 32, so strict-validation
+      // agents rejected every sync_governance step with -32602.
+      const result = buildRequest(step('sync_governance'), {}, DEFAULT_OPTIONS);
+      const credentials = result.accounts[0].governance_agents[0].authentication.credentials;
+      assert.ok(credentials.length >= 32, `credentials must be >= 32 chars, got ${credentials.length}`);
+    });
+
+    test('honors step.sample_request when present', () => {
+      // Regression: the builder never consulted sample_request, so
+      // governance storyboards authoring `url: $context.governance_agent_url`
+      // silently lost that binding and downstream check_governance steps
+      // asserted against the wrong URL.
+      const fixture = {
+        accounts: [
+          {
+            account: { account_id: 'acct_gov' },
+            governance_agents: [
+              {
+                url: '$context.governance_agent_url',
+                authentication: {
+                  schemes: ['Bearer'],
+                  credentials: 'gov-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const result = buildRequest(
+        step('sync_governance', { sample_request: fixture }),
+        { governance_agent_url: 'https://gov.resolved.example' },
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(
+        result.accounts[0].governance_agents[0].url,
+        'https://gov.resolved.example',
+        '$context placeholder should resolve'
+      );
+    });
+  });
+
+  describe('si_get_offering', () => {
+    test('fallback uses intent for prose and omits non-spec fields', () => {
+      // Regression: the builder passed the prose string as `context`
+      // (which is an object per spec) and included `identity`, which
+      // is not part of si-get-offering-request.json.
+      const result = buildRequest(step('si_get_offering'), {}, DEFAULT_OPTIONS);
+      assert.ok(result.offering_id, 'offering_id required');
+      assert.strictEqual(typeof result.intent, 'string', 'intent carries the prose string');
+      assert.ok(
+        result.context === undefined || typeof result.context === 'object',
+        'context must be an object or omitted, never a string'
+      );
+      assert.strictEqual(result.identity, undefined, 'identity is not in si_get_offering request schema');
+    });
+
+    test('honors step.sample_request when present', () => {
+      const fixture = {
+        offering_id: 'custom-offering',
+        intent: 'Looking for mens size 12 hiking boots',
+        include_products: true,
+      };
+      const result = buildRequest(step('si_get_offering', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.offering_id, 'custom-offering');
+      assert.strictEqual(result.intent, fixture.intent);
+      assert.strictEqual(result.include_products, true);
+    });
+  });
+
+  describe('si_initiate_session', () => {
+    test('fallback uses intent for prose string and anonymous identity', () => {
+      // Regression: the builder put the prose string into `context`
+      // (an object per spec) rather than `intent` (the required field
+      // per si-initiate-session-request.json), and used a non-spec
+      // `{ principal, device_id }` identity shape.
+      const result = buildRequest(step('si_initiate_session'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(typeof result.intent, 'string', 'intent is required and carries the prose handoff');
+      assert.ok(result.identity, 'identity is required');
+      assert.strictEqual(result.identity.consent_granted, false, 'default is anonymous (no PII consent)');
+      assert.ok(
+        typeof result.identity.anonymous_session_id === 'string',
+        'anonymous identity must carry an anonymous_session_id'
+      );
+      assert.ok(
+        result.context === undefined || typeof result.context === 'object',
+        'context must be an object or omitted, never a string'
+      );
+    });
+
+    test('honors step.sample_request when present', () => {
+      const fixture = {
+        intent: 'Help me pick a running shoe',
+        identity: { consent_granted: false, anonymous_session_id: 'anon-123' },
+        placement: 'chatgpt_search',
+      };
+      const result = buildRequest(step('si_initiate_session', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.intent, fixture.intent);
+      assert.deepStrictEqual(result.identity, fixture.identity);
+      assert.strictEqual(result.placement, 'chatgpt_search');
+    });
+  });
+
   describe('hasRequestBuilder', () => {
     test('returns true for tasks with builders', () => {
       const tasks = [
