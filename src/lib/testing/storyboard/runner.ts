@@ -70,6 +70,7 @@ import type {
   StoryboardPhaseResult,
   StoryboardStepResult,
   StoryboardStepPreview,
+  StrictValidationSummary,
   ValidationResult,
 } from './types';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
@@ -818,6 +819,7 @@ async function executeStoryboardPass(
   // order matches execution order.
   if (seedingPhaseResult) phaseResults.unshift(seedingPhaseResult);
   const schemasUsed = collectSchemasUsed(phaseResults);
+  const strictSummary = summarizeStrictValidation(phaseResults);
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
@@ -837,6 +839,7 @@ async function executeStoryboardPass(
     tested_at: new Date().toISOString(),
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
+    ...(strictSummary ? { strict_validation_summary: strictSummary } : {}),
   };
 
   // Close protocol connections when the runner created its own client. The
@@ -961,6 +964,43 @@ function collectSchemasUsed(phases: StoryboardPhaseResult[]): Array<{ schema_id:
     }
   }
   return out;
+}
+
+/**
+ * Walk every response_schema validation and aggregate the strict/lenient
+ * delta. Returns undefined when no AJV schema was available on any check
+ * (nothing to summarize). See issue #820 follow-up.
+ *
+ * `checked` = validations with a `strict` verdict attached.
+ * `passed` / `failed` partition `checked` by `strict.valid`.
+ * `delta` = #(lenient-pass ∧ strict-fail) — the strictness gap the agent
+ * slipped past Zod that strict JSON-schema would have caught.
+ *
+ * Exported so callers post-processing a `StoryboardResult` (dashboards,
+ * CI formatters) can compute the same summary over a subset of phases
+ * without re-running validation.
+ */
+export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): StrictValidationSummary | undefined {
+  let checked = 0;
+  let passed = 0;
+  let delta = 0;
+  for (const phase of phases) {
+    for (const step of phase.steps) {
+      for (const v of step.validations) {
+        if (v.check !== 'response_schema' || v.strict === undefined) continue;
+        checked++;
+        if (v.strict.valid) {
+          passed++;
+        } else if (v.passed) {
+          // Lenient Zod accepted this response; strict AJV rejected it.
+          // That's the agent's strictness gap — the signal #820 wants.
+          delta++;
+        }
+      }
+    }
+  }
+  if (checked === 0) return undefined;
+  return { checked, passed, failed: checked - passed, delta };
 }
 
 // ────────────────────────────────────────────────────────────

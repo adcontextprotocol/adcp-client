@@ -10,6 +10,7 @@
 
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
+import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
 import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
 import type {
@@ -19,6 +20,7 @@ import type {
   SchemaValidationError,
   StoryboardContext,
   StoryboardValidation,
+  StrictValidationVerdict,
   ValidationResult,
 } from './types';
 import { resolvePath, resolvePathAll, toJsonPointer } from './path';
@@ -269,14 +271,23 @@ function validateResponseSchema(
   // unwrapper as a text summary and is not part of the AdCP response schema.
   const { _message, ...dataWithoutMessage } = (taskResult.data ?? {}) as Record<string, unknown>;
   const parseResult = schema.safeParse(dataWithoutMessage);
+
+  // Strict (AJV) verdict runs alongside the lenient Zod check so the run
+  // report surfaces strictness deltas (issue #820 follow-up). The AJV path
+  // enforces `format` keywords and `additionalProperties: false` that Zod's
+  // `passthrough()` omits — a response can pass Zod and fail AJV. The step's
+  // overall pass/fail stays Zod-driven to preserve backwards compatibility.
+  const strict = computeStrictVerdict(taskName, dataWithoutMessage);
+
   if (parseResult.success) {
-    return {
+    const base: ValidationResult = {
       check: 'response_schema',
       passed: true,
       description: validation.description,
       schema_id,
       schema_url,
     };
+    return strict ? { ...base, strict } : base;
   }
 
   const schemaErrors = zodIssuesToSchemaErrors(parseResult.error.issues);
@@ -287,7 +298,7 @@ function validateResponseSchema(
     .map(i => `${i.path.join('.')}: ${i.message}`)
     .join('; ');
 
-  return {
+  const failed: ValidationResult = {
     check: 'response_schema',
     passed: false,
     description: validation.description,
@@ -297,6 +308,38 @@ function validateResponseSchema(
     actual: schemaErrors,
     schema_id,
     schema_url,
+  };
+  return strict ? { ...failed, strict } : failed;
+}
+
+/**
+ * Run the strict AJV validator for `taskName` against the response payload.
+ * Returns undefined when no AJV schema is available (the client can't
+ * observe a strictness delta for tools whose JSON-schema doesn't ship with
+ * the SDK — notably the brand-rights and governance schemas that live
+ * outside the `bundled/` tree the loader walks today).
+ */
+function computeStrictVerdict(taskName: string, payload: Record<string, unknown>): StrictValidationVerdict | undefined {
+  const outcome = validateResponse(taskName, payload);
+  // `variant: 'skipped'` means no AJV validator compiled for this task (no
+  // strictness signal to emit); treat the same as "no AJV schema available".
+  if (outcome.variant === 'skipped') return undefined;
+  if (outcome.valid) {
+    return { valid: true, variant: outcome.variant };
+  }
+  return {
+    valid: false,
+    variant: outcome.variant,
+    issues: outcome.issues.slice(0, 10).map(ajvIssueToSchemaError),
+  };
+}
+
+function ajvIssueToSchemaError(issue: ValidationIssue): SchemaValidationError {
+  return {
+    instance_path: issue.pointer,
+    schema_path: issue.schemaPath,
+    keyword: issue.keyword,
+    message: issue.message,
   };
 }
 

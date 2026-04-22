@@ -829,6 +829,32 @@ export interface ValidationResult {
    * when the check has something to report; absent otherwise.
    */
   observations?: unknown[];
+  /**
+   * Issue #820 follow-up — strict JSON-schema (AJV) verdict for
+   * `response_schema` checks. `passed` remains the lenient Zod outcome
+   * (runner's historical pass/fail semantics); `strict` carries the
+   * AJV-with-formats-and-additionalProperties verdict separately so
+   * agent developers can see the strict/lenient delta without the
+   * runner failing a step that the Zod path accepts. Absent on non-
+   * response_schema checks or when no AJV schema is available.
+   */
+  strict?: StrictValidationVerdict;
+}
+
+/**
+ * Strict (AJV JSON-schema) verdict attached to a response_schema
+ * validation result. Informational — the step's pass/fail is driven by
+ * the lenient Zod path. `valid: false` with `valid_lenient: true`
+ * indicates the strict/lenient delta: the agent's response passes the
+ * generated Zod shape but fails strict JSON-schema (typically a
+ * `format` violation or an `additionalProperties: false` breach).
+ */
+export interface StrictValidationVerdict {
+  valid: boolean;
+  /** Response variant AJV selected, e.g. `"sync"`, `"submitted"`, `"working"`, `"input-required"`. */
+  variant: string;
+  /** Concrete AJV issues (RFC 6901 pointers) when `valid: false`. Absent when valid. */
+  issues?: SchemaValidationError[];
 }
 
 export interface StoryboardStepPreview {
@@ -938,6 +964,39 @@ export interface StoryboardResult {
    * failed.
    */
   assertions?: AssertionResult[];
+  /**
+   * Issue #820 follow-up — strict/lenient `response_schema` delta.
+   * `checked` counts `response_schema` validations that had an AJV schema
+   * available (the strict path); `passed` is how many of those the agent's
+   * response cleared under strict JSON-schema semantics (format enforcement
+   * on ref'd core schemas, required-field checks AJV runs alongside Zod).
+   * `delta` is the count of validations where lenient Zod accepted AND
+   * strict AJV rejected — the agent's risk surface when an upstream
+   * dispatcher turns on strict mode.
+   *
+   * Absent when the run had zero AJV-checkable `response_schema`
+   * validations. Absence means "unobservable" (e.g. the storyboard only
+   * exercised governance / brand-rights tasks whose schemas ship outside
+   * the AJV loader's bundled tree), NOT "strict-clean with zero findings".
+   * Downstream dashboards should distinguish the two states.
+   */
+  strict_validation_summary?: StrictValidationSummary;
+}
+
+export interface StrictValidationSummary {
+  /** Response-schema checks that had an AJV validator compiled (strict-eligible). */
+  checked: number;
+  /** Of `checked`, how many passed strict AJV. */
+  passed: number;
+  /** Of `checked`, how many failed strict AJV. Equals `checked - passed`. */
+  failed: number;
+  /**
+   * Count of validations where `passed` (lenient Zod) is true AND strict
+   * AJV rejected the response — the "lenient passes, strict fails" subset
+   * of `failed`. This is the agent's strictness gap: responses the Zod
+   * path waved through that a strict dispatcher would reject.
+   */
+  delta: number;
 }
 
 /**
