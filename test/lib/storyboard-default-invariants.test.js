@@ -158,6 +158,9 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     assert.match(v.error, /GOVERNANCE_DENIED/);
     assert.match(v.error, /plan_id=plan-a/);
     assert.match(v.error, /media_buy_id=mb-1/);
+    // Wire-error denial: error message should point authors at the
+    // expect_error: true escape so they don't have to file an issue.
+    assert.match(v.error, /expect_error: true/);
   });
 
   test('is plan-scoped — denial on plan A does not block mutation on plan B', () => {
@@ -196,6 +199,10 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     });
     const out = run([step, mutateStep({ planId: 'plan-b' })]);
     assert.match(out[1].output[0].error, /CHECK_GOVERNANCE_DENIED/);
+    // 200-status denials are not wire errors — `expect_error: true` has no
+    // effect on them, so the escape hint must NOT appear (it would send
+    // authors down a dead end).
+    assert.doesNotMatch(out[1].output[0].error, /expect_error: true/);
   });
 
   test('treats rejected media_buy status as NOT acquired', () => {

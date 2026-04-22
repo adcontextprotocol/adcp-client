@@ -288,6 +288,15 @@ registerOnce('governance.denial_blocks_mutation', {
     const anchor = (planId && state.deniedPlans.get(planId)) ?? state.runDenial;
     if (!anchor) return [];
 
+    // The `expect_error: true` escape only applies to wire-error denials
+    // (adcp_error responses). `check_governance` 200 with `status: denied`
+    // is not a wire error, so expect_error semantics don't cover it — don't
+    // misdirect the author to a flag that would have no effect.
+    const escapeHint =
+      anchor.signal === 'CHECK_GOVERNANCE_DENIED'
+        ? ''
+        : ` — if the denial at step "${anchor.stepId}" is an intentional recovery-path setup, mark it \`expect_error: true\` so the invariant does not anchor on it`;
+
     return [
       {
         passed: false,
@@ -298,7 +307,8 @@ registerOnce('governance.denial_blocks_mutation', {
           (planId ? ` for plan_id=${planId}` : ' (run-wide)') +
           `; subsequent step "${stepResult.step_id}" (task=${stepResult.task}) ` +
           `acquired ${acquired.field}=${acquired.id}` +
-          (planId ? ' for the same plan' : ''),
+          (planId ? ' for the same plan' : '') +
+          escapeHint,
       },
     ];
   },

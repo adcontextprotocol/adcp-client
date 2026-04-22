@@ -21,4 +21,10 @@ anchors when the denial step is expected. The silent-bypass signal is
 preserved for `check_governance` 200s with `status: denied` and for
 `adcp_error` responses the author did not declare expected.
 
+When the invariant does fire on a wire-error denial, the failure
+message now points the author at the `expect_error: true` escape so
+the next author doesn't have to re-derive it from source. The hint is
+suppressed on `check_governance` 200 denials where the flag has no
+effect.
+
 Closes #811.
