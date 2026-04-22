@@ -18,6 +18,7 @@ const assert = require('node:assert');
 
 const { buildRequest, hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { TOOL_REQUEST_SCHEMAS } = require('../../dist/lib/utils/tool-request-schemas.js');
+const { MUTATING_TASKS } = require('../../dist/lib/utils/idempotency.js');
 const schemas = require('../../dist/lib/types/schemas.generated.js');
 
 const DEFAULT_OPTIONS = {
@@ -31,26 +32,21 @@ function step(task, overrides = {}) {
 
 // Brand-rights schemas that aren't exposed via TOOL_REQUEST_SCHEMAS (they
 // ship as webhooks, not MCP tools — see create-adcp-server.ts) but still
-// have storyboard request builders.
+// have storyboard request builders. Both are mutating per their generated
+// schemas (idempotency_key required).
 const EXTRA_SCHEMAS = {
   creative_approval: schemas.CreativeApprovalRequestSchema,
   update_rights: schemas.UpdateRightsRequestSchema,
 };
+const EXTRA_MUTATING = new Set(Object.keys(EXTRA_SCHEMAS));
 
 const ALL_SCHEMAS = { ...TOOL_REQUEST_SCHEMAS, ...EXTRA_SCHEMAS };
 
 // Synthetic key that satisfies IDEMPOTENCY_KEY_PATTERN (^[A-Za-z0-9_.:-]{16,255}$).
 const SYNTHETIC_IDEMPOTENCY_KEY = 'roundtrip_test_key_0000000000';
 
-// Detect whether a Zod object's `idempotency_key` field is required. Mirrors
-// the logic in `deriveMutatingTasks()` so the test stays in sync with the
-// schema: if the field exists and isn't ZodOptional/ZodDefault, it's required.
-function requiresIdempotencyKey(schema) {
-  const shape = schema?.shape;
-  const field = shape?.idempotency_key;
-  if (!field) return false;
-  const typeName = field?._def?.typeName;
-  return typeName !== 'ZodOptional' && typeName !== 'ZodDefault';
+function isMutating(task) {
+  return MUTATING_TASKS.has(task) || EXTRA_MUTATING.has(task);
 }
 
 function formatIssues(issues) {
@@ -59,6 +55,52 @@ function formatIssues(issues) {
     .map(i => `  path=${i.path.join('.') || '(root)'} code=${i.code} msg=${i.message}`)
     .join('\n');
 }
+
+// Enumerated list of every builder covered by this invariant. Keeping this
+// explicit — rather than a ">= N" floor — turns "new builder silently skipped"
+// into a real test failure: the iterated keys MUST match this list.
+const EXPECTED_COVERED_TASKS = [
+  'acquire_rights',
+  'activate_signal',
+  'build_creative',
+  'calibrate_content',
+  'check_governance',
+  'comply_test_controller',
+  'create_content_standards',
+  'create_media_buy',
+  'creative_approval',
+  'get_account_financials',
+  'get_adcp_capabilities',
+  'get_brand_identity',
+  'get_content_standards',
+  'get_media_buy_delivery',
+  'get_media_buys',
+  'get_products',
+  'get_rights',
+  'get_signals',
+  'list_accounts',
+  'list_content_standards',
+  'list_creative_formats',
+  'list_creatives',
+  'log_event',
+  'preview_creative',
+  'report_usage',
+  'si_get_offering',
+  'si_initiate_session',
+  'si_send_message',
+  'si_terminate_session',
+  'sync_accounts',
+  'sync_audiences',
+  'sync_catalogs',
+  'sync_creatives',
+  'sync_event_sources',
+  'sync_governance',
+  'sync_plans',
+  'update_content_standards',
+  'update_media_buy',
+  'update_rights',
+  'validate_content_delivery',
+];
 
 describe('Request builder schema round-trip', () => {
   for (const [task, schema] of Object.entries(ALL_SCHEMAS)) {
@@ -70,7 +112,7 @@ describe('Request builder schema round-trip', () => {
       // Runner injects idempotency_key on mutating tasks; the builder never
       // mints one. Stand in for that here so the round-trip reflects what
       // actually goes on the wire.
-      if (requiresIdempotencyKey(schema) && request.idempotency_key === undefined) {
+      if (isMutating(task) && request.idempotency_key === undefined) {
         request.idempotency_key = SYNTHETIC_IDEMPOTENCY_KEY;
       }
 
@@ -84,11 +126,14 @@ describe('Request builder schema round-trip', () => {
     });
   }
 
-  test('at least 30 builders are covered (guard against silent skip)', () => {
-    const covered = Object.keys(ALL_SCHEMAS).filter(t => hasRequestBuilder(t));
-    assert.ok(
-      covered.length >= 30,
-      `expected >= 30 builder+schema pairs, got ${covered.length}: ${covered.join(', ')}`
+  test('covered builders match the enumerated list (guard against silent skip)', () => {
+    const covered = Object.keys(ALL_SCHEMAS)
+      .filter(t => hasRequestBuilder(t))
+      .sort();
+    assert.deepStrictEqual(
+      covered,
+      [...EXPECTED_COVERED_TASKS].sort(),
+      'Covered builder+schema pairs changed. Update EXPECTED_COVERED_TASKS if a new builder was added (or a schema removed).'
     );
   });
 });

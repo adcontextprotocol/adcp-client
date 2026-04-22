@@ -638,6 +638,10 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   si_initiate_session(_step, context, options) {
+    // `intent` is required and represents the user's ask. Default to a
+    // semantically plausible one so agents that dispatch on intent still
+    // behave sensibly; storyboards should override via sample_request when
+    // testing intent-specific paths.
     return {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
@@ -645,7 +649,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
         consent_granted: true,
         user: { principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal' },
       },
-      intent: options.si_context ?? 'E2E test session',
+      intent: options.si_context ?? 'Browse available offerings',
       placement: 'e2e-test',
       supported_capabilities: {
         modalities: { conversational: true, rich_media: true },

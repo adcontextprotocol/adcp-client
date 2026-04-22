@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-04-22
-> Library: @adcp/client v5.10.0
+> Library: @adcp/client v5.11.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -826,7 +826,7 @@ Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → li
 **Sales agent with creative capabilities** — Stateful sales agent that accepts pushed creative assets and renders them in its environment.
 Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → preview_creative`
 
-**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy with pricing and billing.
+**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy. Optionally bills through AdCP.
 Flow: `get_adcp_capabilities → list_creatives → list_creative_formats → build_creative → get_creative_delivery → report_usage`
 
 **Creative template and transformation agent** — Stateless creative agent that takes assets in, applies templates, and produces tags or rendered output.
@@ -838,7 +838,7 @@ Flow: `get_adcp_capabilities → list_creative_formats → preview_creative → 
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
 
 **Campaign governance — delivery monitoring with drift detection** — Governance agent monitors delivery, detects budget drift past thresholds, and triggers re-evaluation.
-Flow: `get_adcp_capabilities → sync_plans → check_governance → get_media_buy_delivery → check_governance`
+Flow: `get_adcp_capabilities → sync_plans → check_governance → create_media_buy → get_media_buy_delivery → check_governance`
 
 **Campaign governance — denied** — Governance agent denies a media buy that exceeds the agent's spending authority. No human escalation — the buy is blocked.
 Flow: `get_adcp_capabilities → sync_plans → check_governance`
