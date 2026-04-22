@@ -80,8 +80,7 @@ export const CONFLICT_ADCP_ERROR_ALLOWLIST: ReadonlySet<string> = Object.freeze(
 function ensureContextEcho(allowlist: Readonly<Record<string, ReadonlySet<string>>>): void {
   if (!DEFAULT_ERROR_ENVELOPE_FIELDS.has('context')) {
     throw new Error(
-      "DEFAULT_ERROR_ENVELOPE_FIELDS must include 'context' so correlation " +
-        'ids can round-trip on error envelopes.'
+      "DEFAULT_ERROR_ENVELOPE_FIELDS must include 'context' so correlation " + 'ids can round-trip on error envelopes.'
     );
   }
   for (const [code, fields] of Object.entries(allowlist)) {
