@@ -88,6 +88,14 @@ export interface AuthorizationRequirements {
   resourceMetadataUrl?: string;
   /** First `authorization_servers[0]` from the protected-resource metadata. */
   authorizationServer?: string;
+  /**
+   * All `authorization_servers` advertised by the PRM, in declaration order.
+   * The walker only probes `[0]` (PRM preference order — see RFC 9728 §3.3);
+   * the full list is exposed so callers can surface multi-issuer deployments
+   * in diagnostics. A length > 1 is uncommon and worth flagging to the
+   * operator — typically a federation partner or a staged migration.
+   */
+  authorizationServers?: string[];
   /** `authorization_endpoint` from the authorization-server metadata (RFC 8414). */
   authorizationEndpoint?: string;
   /** `token_endpoint` from the authorization-server metadata. */
@@ -96,6 +104,15 @@ export interface AuthorizationRequirements {
   registrationEndpoint?: string;
   /** Scopes advertised by the AS (RFC 8414 `scopes_supported`). */
   scopesSupported?: string[];
+  /**
+   * `grant_types_supported` advertised by the AS (RFC 8414). `undefined` when
+   * the AS didn't publish the field — per RFC 8414 that defaults to
+   * `["authorization_code", "implicit"]`. Clients should treat absence as
+   * "unknown, try your grant and see," not as proof the grant is unsupported.
+   */
+  grantTypesSupported?: string[];
+  /** True when the AS metadata came from the OIDC fallback URL rather than RFC 8414. */
+  metadataSource?: 'rfc-8414' | 'openid-configuration';
   /** Scope hinted in the `WWW-Authenticate` challenge's `scope` auth-param. */
   challengeScope?: string;
   /** Raw parsed challenge the agent returned on the 401. */
@@ -255,40 +272,67 @@ export async function discoverAuthorizationRequirements(
       const resource = (prm as { resource?: unknown }).resource;
       const servers = (prm as { authorization_servers?: unknown }).authorization_servers;
       if (typeof resource === 'string') requirements.resource = sanitizeDisplay(resource);
-      if (Array.isArray(servers) && typeof servers[0] === 'string' && isSafeHttpUrl(servers[0])) {
-        requirements.authorizationServer = sanitizeDisplay(servers[0]);
+      if (Array.isArray(servers)) {
+        const validServers = servers
+          .filter((s: unknown): s is string => typeof s === 'string' && isSafeHttpUrl(s))
+          .map(sanitizeDisplay);
+        if (validServers.length > 0) {
+          requirements.authorizationServers = validServers;
+          requirements.authorizationServer = validServers[0];
+        }
       }
     }
   }
 
-  // Walk authorization-server metadata (RFC 8414 §3) using the first issuer.
+  // Walk authorization-server metadata using the first issuer. RFC 8414 §3
+  // first, then OIDC Discovery 1.0 fallback for AS deployments (Keycloak in
+  // OIDC mode, Ping, ADFS) that only publish at
+  // `{issuer}/.well-known/openid-configuration`.
   if (requirements.authorizationServer) {
     const asUrl = buildAuthorizationServerMetadataUrl(requirements.authorizationServer);
+    let md: Record<string, unknown> | undefined;
+    let source: 'rfc-8414' | 'openid-configuration' | undefined;
     if (asUrl) {
-      const as = await fetchJson(asUrl, allowPrivateIpForHop(asUrl), options.timeoutMs);
-      if (as && typeof as === 'object') {
-        const md = as as {
-          authorization_endpoint?: unknown;
-          token_endpoint?: unknown;
-          registration_endpoint?: unknown;
-          scopes_supported?: unknown;
-        };
-        if (typeof md.authorization_endpoint === 'string') {
-          requirements.authorizationEndpoint = sanitizeDisplay(md.authorization_endpoint);
+      const res = await fetchJson(asUrl, allowPrivateIpForHop(asUrl), options.timeoutMs);
+      if (res && typeof res === 'object') {
+        md = res as Record<string, unknown>;
+        source = 'rfc-8414';
+      }
+    }
+    if (!md) {
+      const oidcUrl = buildOidcDiscoveryUrl(requirements.authorizationServer);
+      if (oidcUrl) {
+        const res = await fetchJson(oidcUrl, allowPrivateIpForHop(oidcUrl), options.timeoutMs);
+        if (res && typeof res === 'object') {
+          md = res as Record<string, unknown>;
+          source = 'openid-configuration';
         }
-        if (typeof md.token_endpoint === 'string') {
-          requirements.tokenEndpoint = sanitizeDisplay(md.token_endpoint);
-        }
-        if (typeof md.registration_endpoint === 'string') {
-          requirements.registrationEndpoint = sanitizeDisplay(md.registration_endpoint);
-        }
-        if (Array.isArray(md.scopes_supported)) {
-          const scopes = md.scopes_supported
-            .filter((s: unknown): s is string => typeof s === 'string')
-            .slice(0, MAX_SCOPES)
-            .map(sanitizeDisplay);
-          if (scopes.length > 0) requirements.scopesSupported = scopes;
-        }
+      }
+    }
+    if (md) {
+      requirements.metadataSource = source;
+      if (typeof md.authorization_endpoint === 'string') {
+        requirements.authorizationEndpoint = sanitizeDisplay(md.authorization_endpoint);
+      }
+      if (typeof md.token_endpoint === 'string') {
+        requirements.tokenEndpoint = sanitizeDisplay(md.token_endpoint);
+      }
+      if (typeof md.registration_endpoint === 'string') {
+        requirements.registrationEndpoint = sanitizeDisplay(md.registration_endpoint);
+      }
+      if (Array.isArray(md.scopes_supported)) {
+        const scopes = md.scopes_supported
+          .filter((s: unknown): s is string => typeof s === 'string')
+          .slice(0, MAX_SCOPES)
+          .map(sanitizeDisplay);
+        if (scopes.length > 0) requirements.scopesSupported = scopes;
+      }
+      if (Array.isArray(md.grant_types_supported)) {
+        const grants = md.grant_types_supported
+          .filter((g: unknown): g is string => typeof g === 'string')
+          .slice(0, 32)
+          .map(sanitizeDisplay);
+        if (grants.length > 0) requirements.grantTypesSupported = grants;
       }
     }
   }
@@ -361,6 +405,22 @@ function buildAuthorizationServerMetadataUrl(issuer: string): string | undefined
   const u = new URL(issuer);
   const pathname = u.pathname.endsWith('/') ? u.pathname.slice(0, -1) : u.pathname;
   return `${u.origin}/.well-known/oauth-authorization-server${pathname}`;
+}
+
+/**
+ * OpenID Connect Discovery 1.0 fallback URL. Some authorization servers
+ * (Keycloak in OIDC mode, Ping, ADFS) only publish metadata at
+ * `{issuer}/.well-known/openid-configuration` — path *suffixed*, not
+ * prefixed. The OIDC discovery doc carries `token_endpoint`,
+ * `authorization_endpoint`, and `grant_types_supported` with the same
+ * semantics as RFC 8414, so it's a safe read-through when the RFC 8414
+ * probe misses.
+ */
+function buildOidcDiscoveryUrl(issuer: string): string | undefined {
+  if (!isSafeHttpUrl(issuer)) return undefined;
+  const u = new URL(issuer);
+  const base = u.pathname.endsWith('/') ? `${u.origin}${u.pathname.slice(0, -1)}` : `${u.origin}${u.pathname}`;
+  return `${base}/.well-known/openid-configuration`;
 }
 
 async function fetchJson(url: string, allowPrivateIp: boolean, timeoutMs?: number): Promise<unknown> {

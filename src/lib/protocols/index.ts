@@ -38,6 +38,7 @@ import {
   discoverAuthorizationRequirements,
   NeedsAuthorizationError,
   getAgentStorage,
+  ensureClientCredentialsTokens,
 } from '../auth/oauth';
 import { is401Error } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
@@ -85,6 +86,25 @@ export class ProtocolClient {
       },
       async () => {
         validateAgentUrl(agent.agent_uri);
+
+        // OAuth 2.0 client credentials (RFC 6749 §4.4): re-exchange the
+        // secret for a fresh access token whenever the cached one is within
+        // its expiration skew. Runs before every call so mid-session expiry
+        // can't leave the caller with a stale bearer. No-op if the agent
+        // doesn't declare client credentials. Cheap on warm cache (single
+        // `Date.now()` compare); a single POST to the token endpoint on miss.
+        //
+        // `allowPrivateIp` inherits the trust the caller already placed in
+        // `agent.agent_uri` — if they're making a call to a private-IP agent,
+        // they've authorized this process to talk to private-IP hosts, so
+        // the token endpoint on the same network is reachable too. Public
+        // agent URLs with private-IP token endpoints still require an
+        // explicit opt-in via the library API.
+        if (agent.oauth_client_credentials) {
+          const ccStorage = getAgentStorage(agent);
+          const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+          await ensureClientCredentialsTokens(agent, { storage: ccStorage, allowPrivateIp });
+        }
 
         const authToken = getAuthToken(agent);
 
@@ -137,11 +157,13 @@ export class ProtocolClient {
             ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
             : argsWithVersion;
 
-          // If the agent config carries OAuth tokens, route through the OAuth
-          // provider path so the MCP SDK can refresh on 401 instead of hard-failing.
-          // This path does not cache connections (OAuth token-refresh can't share
-          // a cached transport), so it's slower but correct for OAuth-gated agents.
-          if (agent.oauth_tokens) {
+          // If the agent config carries authorization-code OAuth tokens,
+          // route through the OAuth provider path so the MCP SDK can refresh
+          // on 401 instead of hard-failing. Excludes client-credentials
+          // agents: they have a cached access token but no refresh_token,
+          // and their refresh path is a secret re-exchange (handled above),
+          // not the SDK's refresh_token grant.
+          if (agent.oauth_tokens && !agent.oauth_client_credentials) {
             const storage = getAgentStorage(agent);
             const authProvider = createNonInteractiveOAuthProvider(agent, {
               agentHint: agent.id,
@@ -179,22 +201,77 @@ export class ProtocolClient {
               signingContext ? { signingContext } : undefined
             );
           } catch (err) {
+            // Client-credentials agents: on 401, the AS may have rotated
+            // something out-of-band. Force a fresh exchange and retry once
+            // before surfacing the error. Bounded (single retry) so we don't
+            // loop if the credentials are genuinely wrong.
+            if (agent.oauth_client_credentials && is401Error(err)) {
+              const ccStorage = getAgentStorage(agent);
+              const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+              await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
+              const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
+              try {
+                return await callMCPToolWithTasks(
+                  agent.agent_uri,
+                  toolName,
+                  argsWithWebhook,
+                  retryAuthToken,
+                  debugLogs,
+                  agent.headers,
+                  signingContext ? { signingContext } : undefined
+                );
+              } catch (retryErr) {
+                await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
+                throw retryErr;
+              }
+            }
             await rethrowAsNeedsAuthorization(err, agent.agent_uri);
             throw err;
           }
         } else if (agent.protocol === 'a2a') {
           // For A2A, pass pushNotificationConfig separately (not in skill parameters)
-          return callA2ATool(
-            agent.agent_uri,
-            toolName,
-            argsWithVersion,
-            authToken,
-            debugLogs,
-            pushNotificationConfig,
-            agent.headers,
-            signingContext,
-            session
-          );
+          try {
+            return await callA2ATool(
+              agent.agent_uri,
+              toolName,
+              argsWithVersion,
+              authToken,
+              debugLogs,
+              pushNotificationConfig,
+              agent.headers,
+              signingContext,
+              session
+            );
+          } catch (err) {
+            // Same single-retry-on-401 for client-credentials agents as the
+            // MCP path above. Kept symmetric so A2A CC agents aren't a
+            // second-class experience — including the NeedsAuthorizationError
+            // rewrap on a retry that still 401s.
+            if (agent.oauth_client_credentials && is401Error(err)) {
+              const ccStorage = getAgentStorage(agent);
+              const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+              await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
+              const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
+              try {
+                return await callA2ATool(
+                  agent.agent_uri,
+                  toolName,
+                  argsWithVersion,
+                  retryAuthToken,
+                  debugLogs,
+                  pushNotificationConfig,
+                  agent.headers,
+                  signingContext,
+                  session
+                );
+              } catch (retryErr) {
+                await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
+                throw retryErr;
+              }
+            }
+            await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+            throw err;
+          }
         } else {
           throw new Error(`Unsupported protocol: ${agent.protocol}`);
         }

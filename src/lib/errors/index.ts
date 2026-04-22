@@ -406,12 +406,15 @@ export function is401Error(error: unknown, got401Flag = false): boolean {
     return false;
   }
 
-  // Check for status property (common in HTTP errors)
+  // Check for status property (common in HTTP errors). MCP SDK's
+  // `StreamableHTTPClientTransport` throws errors with the HTTP status on
+  // `.code`, so we check that too.
   const errorObj = error as Record<string, unknown>;
   const status =
     (errorObj as { status?: number })?.status ||
     (errorObj as { response?: { status?: number } })?.response?.status ||
-    (errorObj as { cause?: { status?: number } })?.cause?.status;
+    (errorObj as { cause?: { status?: number } })?.cause?.status ||
+    (errorObj as { code?: unknown })?.code;
   if (status === 401) {
     return true;
   }

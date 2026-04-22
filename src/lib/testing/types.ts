@@ -97,6 +97,10 @@ export interface TestOptions {
    *   The library auto-refreshes on 401. Obtain tokens interactively via
    *   `adcp --save-auth <alias> --oauth`, then pass the saved blob here for
    *   non-interactive reuse.
+   * - `oauth_client_credentials`: RFC 6749 §4.4 machine-to-machine flow.
+   *   The library exchanges the secret for a fresh access token before each
+   *   call (cached while valid). Supply `tokens` to seed the cache; omit to
+   *   exchange on first call.
    */
   auth?:
     | { type: 'bearer'; token: string }
@@ -105,6 +109,11 @@ export interface TestOptions {
         type: 'oauth';
         tokens: import('../types/adcp').AgentOAuthTokens;
         client?: import('../types/adcp').AgentOAuthClient;
+      }
+    | {
+        type: 'oauth_client_credentials';
+        credentials: import('../types/adcp').AgentOAuthClientCredentials;
+        tokens?: import('../types/adcp').AgentOAuthTokens;
       };
   // Brand manifest for creative testing
   brand_manifest?: {

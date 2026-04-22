@@ -25,6 +25,7 @@ interface StoredAgent {
   auth_token?: string;
   oauth_tokens?: AgentConfig['oauth_tokens'];
   oauth_client?: AgentConfig['oauth_client'];
+  oauth_client_credentials?: AgentConfig['oauth_client_credentials'];
   oauth_code_verifier?: string;
 }
 
@@ -120,6 +121,7 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
         auth_token: stored.auth_token,
         oauth_tokens: stored.oauth_tokens,
         oauth_client: stored.oauth_client,
+        oauth_client_credentials: stored.oauth_client_credentials,
         oauth_code_verifier: stored.oauth_code_verifier,
       };
     },
@@ -135,6 +137,9 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
         ...(agent.auth_token !== undefined ? { auth_token: agent.auth_token } : {}),
         ...(agent.oauth_tokens !== undefined ? { oauth_tokens: agent.oauth_tokens } : {}),
         ...(agent.oauth_client !== undefined ? { oauth_client: agent.oauth_client } : {}),
+        ...(agent.oauth_client_credentials !== undefined
+          ? { oauth_client_credentials: agent.oauth_client_credentials }
+          : {}),
         ...(agent.oauth_code_verifier !== undefined ? { oauth_code_verifier: agent.oauth_code_verifier } : {}),
       };
       await writeConfig(config);

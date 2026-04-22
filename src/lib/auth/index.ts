@@ -15,12 +15,24 @@ export function generateUUID(): string {
 }
 
 /**
- * Get authentication token for an agent
+ * Get authentication token for an agent.
  *
- * @param agent - Agent configuration
- * @returns Authentication token string or undefined if not configured
+ * Returns, in order:
+ * 1. The cached client-credentials access token (when the agent declares
+ *    `oauth_client_credentials`). These tokens are refreshed via secret
+ *    re-exchange, not the MCP SDK's `refresh_token` grant, so the bearer
+ *    path is the correct transport — there is no "refresh on 401" hook
+ *    the SDK can use, and the call path pre-refreshes them anyway.
+ * 2. The static `auth_token`.
+ *
+ * Tokens from the authorization-code flow (`oauth_tokens` without
+ * `oauth_client_credentials`) are handled separately by the OAuth provider
+ * path in `ProtocolClient.callTool` and intentionally do NOT surface here.
  */
 export function getAuthToken(agent: AgentConfig): string | undefined {
+  if (agent.oauth_client_credentials && agent.oauth_tokens?.access_token) {
+    return agent.oauth_tokens.access_token;
+  }
   return agent.auth_token;
 }
 
