@@ -10,6 +10,7 @@ import {
   InMemoryStateStore,
   registerTestController,
   TestControllerError,
+  DEFAULT_REPORTING_CAPABILITIES,
 } from '@adcp/client';
 import type { ServeContext, TestControllerStore } from '@adcp/client';
 
@@ -17,43 +18,44 @@ import type { ServeContext, TestControllerStore } from '@adcp/client';
 // Product catalog
 // ---------------------------------------------------------------------------
 
-// Use plain objects instead of Product type — avoids requiring every optional field
 const PRODUCTS = [
   {
     product_id: 'prod-display-300x250',
     name: 'Display Banner 300x250',
     description: 'Standard IAB display banner across premium news sites',
-    publisher_properties: [{ publisher_domain: 'example-news.com', selection_type: 'all' }],
-    channels: ['display'],
+    publisher_properties: [{ publisher_domain: 'example-news.com', selection_type: 'all' as const }],
+    channels: ['display' as const],
     format_ids: [{ agent_url: 'https://creatives.example.com/mcp', id: 'display-300x250' }],
-    delivery_type: 'non_guaranteed',
+    delivery_type: 'non_guaranteed' as const,
     pricing_options: [
       {
         pricing_option_id: 'cpm-display',
-        pricing_model: 'cpm',
+        pricing_model: 'cpm' as const,
         floor_price: 5.0,
         currency: 'USD',
         min_spend_per_package: 500,
       },
     ],
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,
   },
   {
     product_id: 'prod-video-preroll',
     name: 'Pre-Roll Video 15s',
     description: 'Skippable pre-roll on premium video content',
-    publisher_properties: [{ publisher_domain: 'example-news.com', selection_type: 'all' }],
-    channels: ['olv'],
+    publisher_properties: [{ publisher_domain: 'example-news.com', selection_type: 'all' as const }],
+    channels: ['olv' as const],
     format_ids: [{ agent_url: 'https://creatives.example.com/mcp', id: 'video-preroll' }],
-    delivery_type: 'non_guaranteed',
+    delivery_type: 'non_guaranteed' as const,
     pricing_options: [
       {
         pricing_option_id: 'cpm-video',
-        pricing_model: 'cpm',
+        pricing_model: 'cpm' as const,
         floor_price: 12.0,
         currency: 'USD',
         min_spend_per_package: 1000,
       },
     ],
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,
   },
 ];
 
