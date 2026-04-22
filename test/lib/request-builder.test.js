@@ -237,11 +237,7 @@ describe('Request Builder', () => {
           },
         ],
       };
-      const result = buildRequest(
-        step('sync_event_sources', { sample_request: fixture }),
-        {},
-        DEFAULT_OPTIONS
-      );
+      const result = buildRequest(step('sync_event_sources', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
       assert.strictEqual(result.event_sources[0].event_source_id, 'amsterdam_website');
       assert.ok(result.account, 'account still injected');
     });
@@ -257,11 +253,7 @@ describe('Request Builder', () => {
         ],
       };
       const context = { event_source_id: 'resolved-source-id' };
-      const result = buildRequest(
-        step('sync_event_sources', { sample_request: fixture }),
-        context,
-        DEFAULT_OPTIONS
-      );
+      const result = buildRequest(step('sync_event_sources', { sample_request: fixture }), context, DEFAULT_OPTIONS);
       assert.strictEqual(result.event_sources[0].event_source_id, 'resolved-source-id');
     });
   });
