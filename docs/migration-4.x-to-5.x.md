@@ -494,7 +494,14 @@ consumer.
   gain a required `asset_type` literal discriminator** (`"image"`,
   `"vast"`, `"daast"`, etc.). Handlers that emit assets must populate it.
   This is the only wire-level breaker against beta.3 — see the wire
-  interop table at the top of this doc.
+  interop table at the top of this doc. Use the new typed builders from
+  `@adcp/client` to inject the discriminator without the boilerplate:
+  `imageAsset({ url, width, height })` → `{ url, width, height,
+  asset_type: 'image' }`. Helpers are available for every asset type
+  (`imageAsset`, `videoAsset`, `audioAsset`, `textAsset`, `urlAsset`,
+  `htmlAsset`, `javascriptAsset`, `cssAsset`, `markdownAsset`,
+  `webhookAsset`), plus the grouped `Asset` namespace
+  (`Asset.image({...})`) over the same functions.
 - **`GetProductsRequest.refine[]`** — `id` field renamed to `product_id`
   (product scope) or `proposal_id` (proposal scope); `action` is now
   optional (defaults to `'include'`). New-in-GA surface; beta.3 clients
@@ -922,7 +929,7 @@ Parts 1–4 are the migration. Part 5 items are adoption-gated.
 
 ### Part 4 — AdCP 3.0 GA schema tightening + library defaults (5.10)
 
-- [ ] Populate `asset_type` on every asset literal your handlers emit (`"image"`, `"video"`, `"vast"`, `"daast"`, …).
+- [ ] Populate `asset_type` on every asset literal your handlers emit (`"image"`, `"video"`, `"vast"`, `"daast"`, …). Prefer the typed builders — `imageAsset(...)`, `videoAsset(...)`, etc. from `@adcp/client` — over hand-rolled literals; they inject the discriminator as a write-last property so a TS escape-hatch cast can't overwrite it.
 - [ ] Rename `refine[].id` → `refine[].product_id` / `refine[].proposal_id` on the scope-matching arm.
 - [ ] Run `tsc --noEmit`; fix every brand-rights handler whose return type is no longer assignable to the concrete generated types (`AcquireRights*`, `GetRightsSuccess`, `GetBrandIdentitySuccess`).
 - [ ] Expect dev/test response validation to fail on sparse fixtures — fill in required fields or set `validation: { responses: 'off' }` on test servers.
