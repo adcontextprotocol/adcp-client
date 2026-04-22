@@ -18,7 +18,7 @@ describe('MCP Tasks backward compatibility: real servers', () => {
     // Create a legacy server — no taskStore, no tasks capability
     const server = new McpServer({ name: 'Legacy Publisher', version: '1.0.0' });
 
-    server.tool('get_products', { query: z.string().optional() }, async () => {
+    server.registerTool('get_products', { inputSchema: { query: z.string().optional() } }, async () => {
       return {
         content: [{ type: 'text', text: 'Found 2 products' }],
         structuredContent: {
@@ -71,7 +71,7 @@ describe('MCP Tasks backward compatibility: real servers', () => {
     );
 
     // Register a regular (non-task) tool — should still work on tasks server
-    server.tool('get_products', { query: z.string().optional() }, async () => {
+    server.registerTool('get_products', { inputSchema: { query: z.string().optional() } }, async () => {
       return {
         content: [{ type: 'text', text: 'Found 1 product' }],
         structuredContent: {
