@@ -780,6 +780,15 @@ export {
   webhookAsset,
 } from './utils/asset-builders';
 
+// ====== PREVIEW RENDER BUILDERS ======
+// Typed factories that inject the `output_format` discriminator on
+// `PreviewRender` objects. `urlRender({ render_id, preview_url, role })`
+// returns a valid url-variant render without repeating
+// `output_format: 'url'` at every call site. Matrix runs consistently
+// saw this drift: Claude emitted renders that omitted the discriminator
+// or its required sibling field.
+export { Render, urlRender, htmlRender, bothRender } from './utils/render-builders';
+
 // ====== V3.0 COMPATIBILITY UTILITIES ======
 // Capabilities detection, version negotiation, and v3 enforcement.
 // See also:
