@@ -109,11 +109,23 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     };
   }
 
-  function denialStep(planId, code = 'GOVERNANCE_DENIED', { expectError = false } = {}) {
+  // Two helpers split by intent: a "silent" denial is one the storyboard
+  // author did NOT declare expected — the invariant's primary target.
+  // An "expected" denial is `expect_error: true` — a recovery-path setup.
+  function silentDenialStep(planId, code = 'GOVERNANCE_DENIED') {
     return makeStep({
       step_id: 'deny',
       task: 'check_governance',
-      expect_error: expectError,
+      expect_error: false,
+      response: { plan_id: planId, adcp_error: { code, message: 'denied' } },
+    });
+  }
+
+  function expectedDenialStep(planId, code = 'GOVERNANCE_DENIED') {
+    return makeStep({
+      step_id: 'deny_expected',
+      task: 'check_governance',
+      expect_error: true,
       response: { plan_id: planId, adcp_error: { code, message: 'denied' } },
     });
   }
@@ -140,7 +152,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
   });
 
   test('fires when a mutation follows a plan-scoped denial', () => {
-    const out = run([denialStep('plan-a'), mutateStep({ planId: 'plan-a' })]);
+    const out = run([silentDenialStep('plan-a'), mutateStep({ planId: 'plan-a' })]);
     const v = out[1].output[0];
     assert.strictEqual(v.passed, false);
     assert.match(v.error, /GOVERNANCE_DENIED/);
@@ -150,7 +162,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
 
   test('is plan-scoped — denial on plan A does not block mutation on plan B', () => {
     const out = run([
-      denialStep('plan-a'),
+      silentDenialStep('plan-a'),
       mutateStep({ planId: 'plan-b', response: { media_buy_id: 'mb-b', status: 'active' } }),
     ]);
     assert.strictEqual(out[1].output.length, 0);
@@ -158,7 +170,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
 
   test('reads plan_id from the runner-recorded request payload when the response omits it', () => {
     const out = run([
-      denialStep('plan-a'),
+      silentDenialStep('plan-a'),
       mutateStep({ requestPlanId: 'plan-a', response: { media_buy_id: 'mb-new', status: 'active' } }),
     ]);
     assert.strictEqual(out[1].output[0].passed, false);
@@ -171,7 +183,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     // bind this to plan-a; the assertion must stay silent.
     const step = mutateStep({ response: { media_buy_id: 'mb-new', status: 'active' } });
     step.context = { plan_id: 'plan-a' };
-    const out = run([denialStep('plan-a'), step]);
+    const out = run([silentDenialStep('plan-a'), step]);
     assert.strictEqual(out[1].output.length, 0);
   });
 
@@ -188,7 +200,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
 
   test('treats rejected media_buy status as NOT acquired', () => {
     const out = run([
-      denialStep('plan-a'),
+      silentDenialStep('plan-a'),
       makeStep({
         step_id: 'rejected_mb',
         task: 'create_media_buy',
@@ -200,7 +212,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
 
   test('ignores read tasks even if they echo resource ids', () => {
     const out = run([
-      denialStep('plan-a'),
+      silentDenialStep('plan-a'),
       makeStep({
         step_id: 'lookup',
         task: 'get_media_buys',
@@ -212,7 +224,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
 
   test('denial state is sticky — later passing check_governance does not clear it', () => {
     const out = run([
-      denialStep('plan-a'),
+      silentDenialStep('plan-a'),
       makeStep({
         step_id: 'recheck',
         task: 'check_governance',
@@ -226,8 +238,8 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
 
   test('records only the first anchor on a plan', () => {
     const out = run([
-      denialStep('plan-a', 'GOVERNANCE_DENIED'),
-      denialStep('plan-a', 'CAMPAIGN_SUSPENDED'),
+      silentDenialStep('plan-a', 'GOVERNANCE_DENIED'),
+      silentDenialStep('plan-a', 'CAMPAIGN_SUSPENDED'),
       mutateStep({ planId: 'plan-a' }),
     ]);
     const err = out[2].output[0].error;
@@ -267,7 +279,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     'COMPLIANCE_UNSATISFIED',
   ]) {
     test(`triggers on error code ${code}`, () => {
-      const out = run([denialStep('plan-a', code), mutateStep({ planId: 'plan-a' })]);
+      const out = run([silentDenialStep('plan-a', code), mutateStep({ planId: 'plan-a' })]);
       assert.strictEqual(out[1].output[0].passed, false);
       assert.match(out[1].output[0].error, new RegExp(code));
     });
@@ -280,13 +292,13 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
       passed: false,
       response: { plan_id: 'plan-a', adcp_error: { code: 'VALIDATION_ERROR', message: 'bad input' } },
     });
-    const out = run([denialStep('plan-a'), failed]);
+    const out = run([silentDenialStep('plan-a'), failed]);
     assert.strictEqual(out[1].output.length, 0);
   });
 
   test('counts acquire_rights and activate_signal as mutations', () => {
     const acq = run([
-      denialStep('plan-a'),
+      silentDenialStep('plan-a'),
       makeStep({
         step_id: 'acq',
         task: 'acquire_rights',
@@ -295,7 +307,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     ]);
     assert.strictEqual(acq[1].output[0].passed, false);
     const act = run([
-      denialStep('plan-a'),
+      silentDenialStep('plan-a'),
       makeStep({
         step_id: 'act',
         task: 'activate_signal',
@@ -306,29 +318,29 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
   });
 
   test('expected denial (expect_error: true) does not anchor — recovery path is allowed', () => {
-    // Models `media_buy_seller/governance_denied_recovery`: the denial step
-    // declares the error was expected, the retry step corrects the payload
-    // and legitimately mints a media_buy. The invariant must stay silent.
+    // Mirrors `media_buy_seller/governance_denied_recovery` (in
+    // `compliance/cache/latest/protocols/media-buy/scenarios/`): the denial
+    // step declares the error was expected, the retry step corrects the
+    // payload and legitimately mints a media_buy.
     const out = run([
-      denialStep('plan-a', 'GOVERNANCE_DENIED', { expectError: true }),
+      expectedDenialStep('plan-a', 'GOVERNANCE_DENIED'),
       mutateStep({ planId: 'plan-a', response: { media_buy_id: 'mb-recovered', status: 'active' } }),
     ]);
-    assert.strictEqual(out[1].output.length, 0);
+    assert.deepStrictEqual(out[1].output, []);
   });
 
   test('expected TERMS_REJECTED does not anchor either', () => {
-    // Mirror of `media_buy_seller/measurement_terms_rejected`.
+    // Mirrors `media_buy_seller/measurement_terms_rejected`.
     const out = run([
-      denialStep('plan-b', 'TERMS_REJECTED', { expectError: true }),
+      expectedDenialStep('plan-b', 'TERMS_REJECTED'),
       mutateStep({ planId: 'plan-b', response: { media_buy_id: 'mb-relaxed', status: 'pending_start' } }),
     ]);
-    assert.strictEqual(out[1].output.length, 0);
+    assert.deepStrictEqual(out[1].output, []);
   });
 
-  test('expected denial on plan A does not bleed into run-wide anchor', () => {
-    // If an expected denial lacked plan linkage, it must still not anchor
-    // run-wide — otherwise the whole run would be tainted by a single
-    // expected error.
+  test('expected denial without plan linkage does not create a run-wide anchor', () => {
+    // A run-wide denial on an expect_error step would otherwise taint every
+    // subsequent mutation in the run.
     const step = makeStep({
       step_id: 'deny_no_plan',
       task: 'get_products',
@@ -336,7 +348,39 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
       response: { adcp_error: { code: 'POLICY_VIOLATION', message: 'refused' } },
     });
     const out = run([step, mutateStep({ response: { media_buy_id: 'mb-1', status: 'active' } })]);
-    assert.strictEqual(out[1].output.length, 0);
+    assert.deepStrictEqual(out[1].output, []);
+  });
+
+  test('expected denial on a plan does not mask a later silent denial on the same plan', () => {
+    // Regression guard: the expect_error skip must be scoped to the
+    // expected step itself, not to the whole plan. If a later unexpected
+    // denial on the same plan fires, the invariant must still anchor on
+    // it and trip the subsequent mutation.
+    const out = run([
+      expectedDenialStep('plan-a', 'GOVERNANCE_DENIED'),
+      silentDenialStep('plan-a', 'CAMPAIGN_SUSPENDED'),
+      mutateStep({ planId: 'plan-a' }),
+    ]);
+    assert.strictEqual(out[2].output[0].passed, false);
+    assert.match(out[2].output[0].error, /CAMPAIGN_SUSPENDED/);
+  });
+
+  test('expected denial does not mask a later silent run-wide denial', () => {
+    // Plan-scoped expected denial then an unrelated run-wide silent denial
+    // must still anchor run-wide and catch a subsequent acquisition.
+    const runWideDenial = makeStep({
+      step_id: 'deny_run_wide',
+      task: 'get_products',
+      expect_error: false,
+      response: { adcp_error: { code: 'POLICY_VIOLATION', message: 'refused' } },
+    });
+    const out = run([
+      expectedDenialStep('plan-a', 'GOVERNANCE_DENIED'),
+      runWideDenial,
+      mutateStep({ response: { media_buy_id: 'mb-1', status: 'active' } }),
+    ]);
+    assert.strictEqual(out[2].output[0].passed, false);
+    assert.match(out[2].output[0].error, /run-wide/);
   });
 
   test('onStart resets runDenial so stale state does not bleed across runs', () => {
