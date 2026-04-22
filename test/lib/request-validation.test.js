@@ -66,6 +66,7 @@ describe('SingleAgentClient Request Validation', () => {
                 format_id: { agent_url: 'https://test.example', id: 'format1' },
                 assets: {
                   video: {
+                    asset_type: 'video',
                     url: 'https://example.com/video.mp4',
                     width: 1920,
                     height: 1080,
@@ -608,6 +609,7 @@ describe('SingleAgentClient Request Validation', () => {
                 format_id: { agent_url: 'https://test.example', id: 'format1' },
                 assets: {
                   video: {
+                    asset_type: 'video',
                     url: 'https://example.com/video.mp4',
                     width: 1920,
                     height: 1080,

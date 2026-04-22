@@ -138,7 +138,7 @@ describe('conformance: seedFixtures', () => {
           observed.formatIds.push(params.creatives[0].format_id.id);
           observed.assets.push(params.creatives[0].assets);
           return {
-            creatives: [{ creative_id: 'cre_seeded_abc', buyer_ref: params.creatives[0].creative_id }],
+            creatives: [{ creative_id: 'cre_seeded_abc', action: 'created' }],
           };
         },
       },
@@ -152,7 +152,9 @@ describe('conformance: seedFixtures', () => {
 
     assert.deepEqual(result.fixtures.creative_ids, ['cre_seeded_abc']);
     assert.equal(observed.formatIds[0], 'text_line');
-    assert.deepEqual(observed.assets[0], { headline: { content: 'Conformance seed text' } });
+    assert.deepEqual(observed.assets[0], {
+      headline: { asset_type: 'text', content: 'Conformance seed text' },
+    });
     assert.deepEqual(result.warnings, []);
   });
 
