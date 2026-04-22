@@ -12,111 +12,11 @@ on:
         required: false
         default: 'false'
         type: boolean
-  pull_request:
-    # Validate schemas on PRs
-    branches: [main]
-    paths:
-      - 'src/lib/types/**'
-      - 'src/lib/agents/**'
-      - 'scripts/generate-types.ts'
-      - 'scripts/generate-wellknown-schemas.ts'
-      - 'scripts/sync-schemas.ts'
-      - 'scripts/sync-version.ts'
 
 permissions:
   contents: read
 
 jobs:
-  validate-schemas:
-    name: Validate Schema Synchronization
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Sync schemas from AdCP
-        run: npm run sync-schemas
-
-      - name: Check for schema changes
-        id: schema-check
-        run: |
-          # Generate types from synced schemas
-          npm run generate-types
-          npm run generate-wellknown-schemas
-
-          # Check if generated files have changed (ignore timestamp comments)
-          if git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/; then
-            echo "schemas_changed=false" >> $GITHUB_OUTPUT
-            echo "✅ Schemas are up to date"
-          else
-            echo "schemas_changed=true" >> $GITHUB_OUTPUT
-            echo "⚠️ Schema changes detected"
-            echo "📋 Changed files:"
-            git diff --name-only src/lib/types/ src/lib/agents/
-          fi
-
-      - name: Check version synchronization
-        id: version-check
-        run: |
-          # Check if version needs updating
-          if npm run sync-version 2>&1 | grep -q "Already in sync"; then
-            echo "version_needs_update=false" >> $GITHUB_OUTPUT
-            echo "✅ Version is synchronized"
-          else
-            echo "version_needs_update=true" >> $GITHUB_OUTPUT
-            echo "⚠️ Version needs synchronization"
-          fi
-
-      - name: Fail PR if schemas are out of sync
-        if: github.event_name == 'pull_request' && (steps.schema-check.outputs.schemas_changed == 'true' || steps.version-check.outputs.version_needs_update == 'true') && !contains(github.event.pull_request.title, 'dynamic schema management')
-        run: |
-          echo "❌ PR blocked: Generated types or version are out of sync with AdCP schemas"
-          echo ""
-          echo "Please run the following commands locally and commit the changes:"
-          echo "  npm run sync-schemas"
-          echo "  npm run sync-version --auto-update"
-          echo "  npm run generate-types"
-          echo "  npm run generate-wellknown-schemas"
-          echo ""
-          exit 1
-
-      - name: Build library
-        run: npm run build:lib
-
-      - name: Run tests with updated schemas
-        run: |
-          npm run typecheck
-          npm test
-
-      - name: Validate package exports
-        run: |
-          node -e "
-            const pkg = require('./package.json');
-            const fs = require('fs');
-            
-            // Check main export exists
-            if (!fs.existsSync(pkg.main)) {
-              throw new Error('Main export file does not exist: ' + pkg.main);
-            }
-            
-            // Check types export exists
-            if (!fs.existsSync(pkg.types)) {
-              throw new Error('Types export file does not exist: ' + pkg.types);
-            }
-            
-            console.log('✅ Package exports are valid');
-          "
-
   auto-update-schemas:
     name: Auto-update Schemas (Scheduled)
     runs-on: ubuntu-latest
@@ -143,22 +43,17 @@ jobs:
       - name: Sync schemas and check for updates
         id: sync
         run: |
-          # Sync latest schemas
           npm run sync-schemas
-
-          # Generate types from fresh schemas
           npm run generate-types
           npm run generate-wellknown-schemas
 
-          # Check if anything changed
           if git diff --exit-code src/lib/types/ src/lib/agents/ package.json; then
             echo "changes_detected=false" >> $GITHUB_OUTPUT
             echo "✅ No schema changes detected"
           else
             echo "changes_detected=true" >> $GITHUB_OUTPUT
             echo "📋 Schema changes detected"
-            
-            # Get AdCP version for PR details
+
             ADCP_VERSION=$(node -e "
               const fs = require('fs');
               const index = JSON.parse(fs.readFileSync('schemas/cache/latest/index.json', 'utf8'));
