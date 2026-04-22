@@ -13,6 +13,14 @@
  * transport's strict check passes. Headers that already advertise both,
  * or don't advertise JSON, are left alone.
  *
+ * The rewrite touches BOTH `req.headers.accept` AND the matching entries in
+ * `req.rawHeaders`. `StreamableHTTPServerTransport.handleRequest` runs the
+ * incoming `IncomingMessage` through `@hono/node-server`'s
+ * `newHeadersFromIncoming`, which rebuilds the Fetch `Headers` from
+ * `rawHeaders` and ignores `req.headers`. Patching only the parsed map
+ * leaves the transport reading the original unmodified value and the 406
+ * still fires — the pair has to move together.
+ *
  * Mount BEFORE the MCP transport handler:
  *
  * ```ts
@@ -76,9 +84,33 @@ export function mcpAcceptHeaderMiddleware(): McpAcceptHeaderHandler {
     // `text/plain`, or a malformed value), leave the header untouched and
     // let the transport decide.
     if (hasJson && !hasSse) {
-      req.headers.accept = `${JSON_TYPE}, ${SSE_TYPE}`;
+      const rewritten = `${JSON_TYPE}, ${SSE_TYPE}`;
+      req.headers.accept = rewritten;
+      rewriteRawAcceptHeader(req, rewritten);
     }
 
     next();
   };
+}
+
+/**
+ * Rewrite every `Accept` entry in `req.rawHeaders` to `rewritten`.
+ *
+ * `rawHeaders` is a flat `[name, value, name, value, ...]` array where
+ * header names preserve the wire-level casing. The scan is case-insensitive
+ * so `Accept` / `ACCEPT` / `accept` all match. Duplicates (rare, but
+ * allowed by HTTP) are ALL rewritten so a later copy can't shadow the
+ * patched one. If the header is absent we don't append — adding it here
+ * would diverge from the pre-middleware request shape and could surprise
+ * other middleware that reads `rawHeaders` directly.
+ */
+function rewriteRawAcceptHeader(req: IncomingMessage, rewritten: string): void {
+  const raw = (req as { rawHeaders?: unknown }).rawHeaders;
+  if (!Array.isArray(raw)) return;
+  for (let i = 0; i < raw.length - 1; i += 2) {
+    const name = raw[i];
+    if (typeof name === 'string' && name.toLowerCase() === 'accept') {
+      raw[i + 1] = rewritten;
+    }
+  }
 }

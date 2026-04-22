@@ -705,17 +705,28 @@ describe('default-invariants: idempotency.conflict_no_payload_leak (widened allo
     assert.strictEqual(out[0].passed, true);
   });
 
-  test('passes on the exact shape adcpError() emits (code+message+recovery)', () => {
-    // Regression: `adcpError('IDEMPOTENCY_CONFLICT', ...)` adds
-    // `recovery: 'correctable'` from STANDARD_ERROR_CODES. If the
-    // allowlist omits `recovery`, every framework-emitted conflict
-    // false-positives the invariant on its own SDK output.
+  test('passes on the exact shape adcpError() emits (code+message, recovery dropped)', () => {
+    // `adcpError()` consults ADCP_ERROR_FIELD_ALLOWLIST and drops
+    // `recovery` for IDEMPOTENCY_CONFLICT — the classifier is redundant
+    // with `code` and would widen the stolen-key-read surface. The SDK's
+    // own builder output must therefore pass the invariant with just
+    // `code + message` on the wire.
+    const out = spec.onStep({ state: {} }, step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict' }));
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0].passed, true, out[0].error);
+  });
+
+  test('flags recovery when a non-SDK handler emits it (invariant stays strict)', () => {
+    // If a seller hand-rolls an envelope with `recovery` on conflict,
+    // the invariant catches it — option-1 posture from #826: the
+    // allowlist is the contract, the SDK's own builder respects it, and
+    // non-SDK emitters are held to the same bar.
     const out = spec.onStep(
       { state: {} },
       step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', recovery: 'correctable' })
     );
-    assert.strictEqual(out.length, 1);
-    assert.strictEqual(out[0].passed, true, out[0].error);
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /recovery/);
   });
 
   test('flags any non-allowlisted envelope field (the read-oracle leak vector)', () => {

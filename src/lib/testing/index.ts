@@ -171,6 +171,7 @@ export {
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
   bridgeFromTestControllerStore,
+  bridgeFromSessionStore,
 } from '../server/test-controller-bridge';
 export type { TestControllerBridge, TestControllerBridgeContext } from '../server/test-controller-bridge';
 

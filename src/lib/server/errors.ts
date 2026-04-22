@@ -11,6 +11,7 @@ import {
   type StandardErrorCode,
   type ErrorRecovery,
 } from '../types/error-codes';
+import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 
 export interface AdcpErrorOptions {
   message: string;
@@ -24,7 +25,15 @@ export interface AdcpErrorOptions {
 export interface AdcpErrorPayload {
   code: string;
   message: string;
-  recovery: ErrorRecovery;
+  /**
+   * Closed-enum classifier. Populated by `adcpError()` from
+   * `STANDARD_ERROR_CODES[code].recovery` unless the caller provides an
+   * override. Marked optional because per-code inside-`adcp_error`
+   * allowlists (e.g. `IDEMPOTENCY_CONFLICT`) deliberately drop it from the
+   * wire shape — consumers reading a payload parsed off the wire MUST
+   * tolerate `undefined`.
+   */
+  recovery?: ErrorRecovery;
   field?: string;
   suggestion?: string;
   retry_after?: number;
@@ -48,6 +57,14 @@ export interface AdcpErrorResponse {
  * 3. `isError: true` — MCP error signal
  *
  * Recovery is auto-populated from the standard error code table when not provided.
+ *
+ * Before returning, any field NOT allowlisted for the given code in
+ * {@link ADCP_ERROR_FIELD_ALLOWLIST} is dropped — sellers get the builder's
+ * ergonomics for every code AND the strict wire shape for codes that have
+ * a registered allowlist. `IDEMPOTENCY_CONFLICT` is the canonical case:
+ * `recovery`, `field`, `suggestion`, and `details` all silently drop so
+ * the envelope can't become a stolen-key read oracle. Codes without a
+ * registered allowlist pass through unchanged.
  *
  * @example
  * ```typescript
@@ -80,9 +97,30 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
     ...(options.details != null && { details: options.details }),
   };
 
+  const filtered = applyAdcpErrorAllowlist(code, adcp_error);
+
   return {
-    content: [{ type: 'text', text: JSON.stringify({ adcp_error }) }],
+    content: [{ type: 'text', text: JSON.stringify({ adcp_error: filtered }) }],
     isError: true,
-    structuredContent: { adcp_error },
+    structuredContent: { adcp_error: filtered },
   };
+}
+
+/**
+ * Drop every field not in {@link ADCP_ERROR_FIELD_ALLOWLIST} for `code`.
+ * Codes without an entry pass through unchanged — the allowlist is
+ * opt-in per code, not a global filter. The returned object is re-typed
+ * as `AdcpErrorPayload` on the assumption that `code` and `message`
+ * (the only required fields) are in every registered allowlist; that
+ * invariant is re-asserted at runtime by the module-load check in
+ * `envelope-allowlist.ts`.
+ */
+function applyAdcpErrorAllowlist(code: string, payload: AdcpErrorPayload): AdcpErrorPayload {
+  const allowlist = ADCP_ERROR_FIELD_ALLOWLIST[code];
+  if (!allowlist) return payload;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (allowlist.has(key)) out[key] = value;
+  }
+  return out as unknown as AdcpErrorPayload;
 }

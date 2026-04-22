@@ -7,6 +7,7 @@ export type { WrapEnvelopeOptions } from './wrap-envelope';
 export {
   ERROR_ENVELOPE_FIELD_ALLOWLIST,
   DEFAULT_ERROR_ENVELOPE_FIELDS,
+  ADCP_ERROR_FIELD_ALLOWLIST,
   CONFLICT_ADCP_ERROR_ALLOWLIST,
 } from './envelope-allowlist';
 
@@ -209,6 +210,7 @@ export {
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
   bridgeFromTestControllerStore,
+  bridgeFromSessionStore,
 } from './test-controller-bridge';
 export type { TestControllerBridge, TestControllerBridgeContext } from './test-controller-bridge';
 
