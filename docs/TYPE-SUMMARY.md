@@ -837,6 +837,7 @@ _Response (success branch):_
 {
   list: Property List  // required
   auth_token: string  // required
+  replayed: boolean
   context: Context
 }
 ```
@@ -863,6 +864,7 @@ _Response (success branch):_
 ```
 {
   list: Property List  // required
+  replayed: boolean
   context: Context
 }
 ```
@@ -931,6 +933,7 @@ _Response (success branch):_
 {
   deleted: boolean  // required
   list_id: string  // required
+  replayed: boolean
   context: Context
 }
 ```
@@ -956,6 +959,7 @@ _Response (success branch):_
 {
   list: Collection List  // required
   auth_token: string  // required
+  replayed: boolean
   context: Context
 }
 ```
@@ -982,6 +986,7 @@ _Response (success branch):_
 ```
 {
   list: Collection List  // required
+  replayed: boolean
   context: Context
 }
 ```
@@ -1050,6 +1055,7 @@ _Response (success branch):_
 {
   deleted: boolean  // required
   list_id: string  // required
+  replayed: boolean
   context: Context
 }
 ```
@@ -1250,6 +1256,7 @@ _Response (success branch):_
 ```
 {
   plans: object[]  // required
+  replayed: boolean
   context: Context
 }
 ```
@@ -1280,6 +1287,7 @@ _Response (success branch):_
   committed_budget: number
   findings: object[]
   plan_summary: object
+  replayed: boolean
   context: Context
 }
 ```

@@ -9399,6 +9399,10 @@ export interface CreatePropertyListResponse {
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -9497,6 +9501,10 @@ export interface UpdatePropertyListRequest {
  */
 export interface UpdatePropertyListResponse {
   list: PropertyList;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -9633,6 +9641,10 @@ export interface DeletePropertyListResponse {
    * ID of the deleted list
    */
   list_id: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -9820,6 +9832,10 @@ export interface CreateCollectionListResponse {
    * Token that authorizes sellers to fetch this list via get_collection_list. Only returned at creation time — buyers MUST store it in a secret manager. Scoped to this one list_id; MUST NOT be reused across lists. Governance agents MUST issue a distinct token per seller so per-relationship revocation is possible. Tokens MUST NOT be logged, appear in cache keys, or echo in error responses. delete_collection_list MUST revoke the token immediately; compromise-driven revocation MUST also signal cache invalidation to sellers (reduced cache_valid_until or a list-changed webhook). See Security considerations in docs/governance/collection/tasks/collection_lists.
    */
   auth_token: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -9914,6 +9930,10 @@ export interface UpdateCollectionListRequest {
  */
 export interface UpdateCollectionListResponse {
   list: CollectionList;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -10085,6 +10105,10 @@ export interface DeleteCollectionListResponse {
    * ID of the deleted list
    */
   list_id: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -11295,6 +11319,10 @@ export interface SyncPlansResponse {
       reason?: string;
     }[];
   }[];
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -11460,6 +11488,10 @@ export interface ReportPlanOutcomeResponse {
      */
     budget_remaining?: number;
   };
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
