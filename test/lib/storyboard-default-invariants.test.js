@@ -21,22 +21,24 @@ const { getAssertion, resolveAssertions } = require('../../dist/lib/testing/stor
 require('../../dist/lib/testing/storyboard/default-invariants.js');
 
 describe('default-invariants: auto-registration', () => {
-  it('registers the three upstream assertion ids', () => {
+  it('registers the four upstream assertion ids', () => {
     for (const id of [
       'idempotency.conflict_no_payload_leak',
       'context.no_secret_echo',
       'governance.denial_blocks_mutation',
+      'status.monotonic',
     ]) {
       assert.ok(getAssertion(id), `assertion "${id}" must be registered at import time`);
     }
   });
 
-  it('resolveAssertions() on a storyboard referencing all three does not throw', () => {
+  it('resolveAssertions() on a storyboard referencing all four does not throw', () => {
     assert.doesNotThrow(() =>
       resolveAssertions([
         'idempotency.conflict_no_payload_leak',
         'context.no_secret_echo',
         'governance.denial_blocks_mutation',
+        'status.monotonic',
       ])
     );
   });
@@ -700,5 +702,348 @@ describe('default-invariants: context.no_secret_echo (widened whole-body scan)',
     spec.onStart(c);
     const out = spec.onStep(c, step({ message: 'the bearer of bad news' }));
     assert.strictEqual(out[0].passed, true);
+  });
+});
+
+describe('default-invariants: status.monotonic', () => {
+  const spec = getAssertion('status.monotonic');
+
+  function makeCtx() {
+    return { storyboard: {}, agentUrl: 'x', options: {}, state: {} };
+  }
+
+  function step(overrides) {
+    return {
+      step_id: 's1',
+      phase_id: 'p',
+      title: 't',
+      task: 'get_media_buys',
+      passed: true,
+      duration_ms: 0,
+      validations: [],
+      context: {},
+      extraction: { path: 'none' },
+      ...overrides,
+    };
+  }
+
+  function run(steps) {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    return steps.map(s => ({ step: s.step_id, output: spec.onStep(ctx, s) }));
+  }
+
+  function mb(id, status, extra = {}) {
+    return { media_buy_id: id, status, packages: [], ...extra };
+  }
+
+  // ── media_buy ───────────────────────────────────────────────
+
+  test('silent when no status observations appear', () => {
+    const out = run([step({ task: 'get_products', response: { products: [] } })]);
+    assert.deepStrictEqual(out[0].output, []);
+  });
+
+  test('media_buy forward transitions pass', () => {
+    const out = run([
+      step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'pending_creatives') }),
+      step({ step_id: 'read1', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } }),
+      step({ step_id: 'read2', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'paused')] } }),
+      step({ step_id: 'read3', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } }),
+      step({ step_id: 'read4', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'completed')] } }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('media_buy backward transition fails with actionable error', () => {
+    const out = run([
+      step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') }),
+      step({ step_id: 'regress', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'pending_creatives')] } }),
+    ]);
+    const fail = out[1].output[0];
+    assert.strictEqual(fail.passed, false);
+    assert.match(fail.error, /media_buy mb-1/);
+    assert.match(fail.error, /active → pending_creatives/);
+    assert.match(fail.error, /step "create" → step "regress"/);
+  });
+
+  test('media_buy terminal is terminal — no exit transitions allowed', () => {
+    const out = run([
+      step({ step_id: 'done', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'completed')] } }),
+      step({ step_id: 'revive', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } }),
+    ]);
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.match(out[1].output[0].error, /completed → active/);
+  });
+
+  test('scope is per-(resource_type, resource_id) — two media buys independent', () => {
+    const out = run([
+      step({ step_id: 'a-done', task: 'get_media_buys', response: { media_buys: [mb('mb-a', 'completed')] } }),
+      step({ step_id: 'b-active', task: 'create_media_buy', response: mb('mb-b', 'active') }),
+    ]);
+    assert.ok(out[1].output.every(o => o.passed));
+  });
+
+  test('self-edges (replay observing same status) are silent', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'create_media_buy', response: mb('mb-1', 'pending_creatives') }),
+      step({ step_id: 's2', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'pending_creatives')] } }),
+      // Backward check still uses the ORIGINAL step (s1), not s2 — self-edge doesn't advance the anchor.
+      step({
+        step_id: 's3_backward',
+        task: 'get_media_buys',
+        response: { media_buys: [mb('mb-1', 'pending_creatives')] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  // ── skip semantics ──────────────────────────────────────────
+
+  test('errored / expect_error / skipped steps do not record observations', () => {
+    const out = run([
+      step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') }),
+      step({
+        step_id: 'errored_read',
+        task: 'get_media_buys',
+        passed: false,
+        response: { media_buys: [mb('mb-1', 'pending_creatives')] },
+      }),
+      step({
+        step_id: 'expect_err',
+        task: 'get_media_buys',
+        expect_error: true,
+        response: { media_buys: [mb('mb-1', 'pending_creatives')] },
+      }),
+      step({ step_id: 'skipped', task: 'get_media_buys', skipped: true, response: undefined }),
+      // All three intermediates ignored — final read against anchor 'create' (active) must go forward.
+      step({ step_id: 'ok', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'paused')] } }),
+    ]);
+    assert.ok(out[4].output[0].passed);
+  });
+
+  test('adcp_error on response is treated as no observation', () => {
+    const out = run([
+      step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') }),
+      step({
+        step_id: 'err',
+        task: 'get_media_buys',
+        response: { adcp_error: { code: 'INVALID_REQUEST', message: 'bad' } },
+      }),
+      step({ step_id: 'ok', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'paused')] } }),
+    ]);
+    assert.ok(out[2].output[0].passed);
+  });
+
+  // ── creative ────────────────────────────────────────────────
+
+  test('creative asset: rejected → processing → pending_review → approved (re-sync path)', () => {
+    // Per `creative-status.json`: re-sync takes a rejected creative back to
+    // `processing`, which then auto-transitions to `pending_review` before
+    // finally reaching `approved`. No `processing → approved` shortcut.
+    const creativeOf = (id, status) => ({ creative_id: id, status });
+    const out = run([
+      step({
+        step_id: 'sync1',
+        task: 'sync_creatives',
+        response: { creatives: [creativeOf('cr-1', 'rejected')] },
+      }),
+      step({
+        step_id: 'resync',
+        task: 'sync_creatives',
+        response: { creatives: [creativeOf('cr-1', 'processing')] },
+      }),
+      step({
+        step_id: 'queued',
+        task: 'list_creatives',
+        response: { creatives: [creativeOf('cr-1', 'pending_review')] },
+      }),
+      step({
+        step_id: 'review',
+        task: 'list_creatives',
+        response: { creatives: [creativeOf('cr-1', 'approved')] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('creative asset: processing → approved shortcut is NOT allowed', () => {
+    // Per schema prose, `processing` auto-transitions to `pending_review`
+    // or `rejected`, never directly to `approved`. A seller emitting that
+    // shortcut is skipping the review gate.
+    const creativeOf = (id, status) => ({ creative_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'processing')] } }),
+      step({ step_id: 's2', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'approved')] } }),
+    ]);
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.match(out[1].output[0].error, /creative cr-1: processing → approved/);
+  });
+
+  test('creative asset: approved ↔ archived is bidirectional', () => {
+    const creativeOf = (id, status) => ({ creative_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'approved')] } }),
+      step({ step_id: 's2', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'archived')] } }),
+      step({ step_id: 's3', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'approved')] } }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('creative asset: approved → processing is NOT allowed', () => {
+    const creativeOf = (id, status) => ({ creative_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'approved')] } }),
+      step({ step_id: 's2', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'processing')] } }),
+    ]);
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.match(out[1].output[0].error, /creative cr-1: approved → processing/);
+  });
+
+  test('creative asset: pending_review → processing is NOT allowed', () => {
+    // The only path back to `processing` is from `rejected` (re-sync after
+    // fixing issues). `pending_review` itself goes to approved or rejected.
+    const creativeOf = (id, status) => ({ creative_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'pending_review')] } }),
+      step({ step_id: 's2', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'processing')] } }),
+    ]);
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.match(out[1].output[0].error, /creative cr-1: pending_review → processing/);
+  });
+
+  // ── creative_approval (nested under media_buy.packages) ────
+
+  test('creative_approval tracked via nested package arrays', () => {
+    const responseWithApproval = (creativeId, approvalStatus) =>
+      mb('mb-1', 'pending_creatives', {
+        packages: [
+          { package_id: 'pkg-1', creative_approvals: [{ creative_id: creativeId, approval_status: approvalStatus }] },
+        ],
+      });
+    const out = run([
+      step({ step_id: 's1', task: 'create_media_buy', response: responseWithApproval('cr-1', 'pending_review') }),
+      step({
+        step_id: 's2',
+        task: 'get_media_buys',
+        response: { media_buys: [responseWithApproval('cr-1', 'approved')] },
+      }),
+      step({
+        step_id: 's3',
+        task: 'get_media_buys',
+        response: { media_buys: [responseWithApproval('cr-1', 'pending_review')] },
+      }),
+    ]);
+    assert.strictEqual(out[2].output[0].passed, false);
+    assert.match(out[2].output[0].error, /creative_approval cr-1: approved → pending_review/);
+  });
+
+  // ── account ────────────────────────────────────────────────
+
+  test('account: active ↔ suspended is reversible', () => {
+    const accountOf = (id, status) => ({ account_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'sync_accounts', response: { accounts: [accountOf('acc-1', 'active')] } }),
+      step({ step_id: 's2', task: 'list_accounts', response: { accounts: [accountOf('acc-1', 'suspended')] } }),
+      step({ step_id: 's3', task: 'list_accounts', response: { accounts: [accountOf('acc-1', 'active')] } }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('account: closed is terminal', () => {
+    const accountOf = (id, status) => ({ account_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'list_accounts', response: { accounts: [accountOf('acc-1', 'closed')] } }),
+      step({ step_id: 's2', task: 'list_accounts', response: { accounts: [accountOf('acc-1', 'active')] } }),
+    ]);
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.match(out[1].output[0].error, /closed → active/);
+  });
+
+  test('account: suspended → payment_required is allowed (credit lapse during suspension)', () => {
+    const accountOf = (id, status) => ({ account_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'list_accounts', response: { accounts: [accountOf('acc-1', 'suspended')] } }),
+      step({ step_id: 's2', task: 'list_accounts', response: { accounts: [accountOf('acc-1', 'payment_required')] } }),
+    ]);
+    assert.ok(out[1].output[0].passed);
+  });
+
+  // ── si_session ─────────────────────────────────────────────
+
+  test('si_session terminal states cannot re-activate', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'si_initiate_session', response: { session_id: 'sn-1', status: 'active' } }),
+      step({ step_id: 's2', task: 'si_send_message', response: { session_id: 'sn-1', status: 'terminated' } }),
+      step({ step_id: 's3', task: 'si_send_message', response: { session_id: 'sn-1', status: 'active' } }),
+    ]);
+    assert.strictEqual(out[2].output[0].passed, false);
+    assert.match(out[2].output[0].error, /si_session sn-1: terminated → active/);
+  });
+
+  // ── catalog_item ───────────────────────────────────────────
+
+  test('catalog_item: approved ↔ warning is reversible', () => {
+    const itemOf = (id, status) => ({ item_id: id, status });
+    const out = run([
+      step({
+        step_id: 's1',
+        task: 'sync_catalogs',
+        response: { catalogs: [{ catalog_id: 'cat-1', items: [itemOf('it-1', 'approved')] }] },
+      }),
+      step({
+        step_id: 's2',
+        task: 'list_catalogs',
+        response: { catalogs: [{ catalog_id: 'cat-1', items: [itemOf('it-1', 'warning')] }] },
+      }),
+      step({
+        step_id: 's3',
+        task: 'list_catalogs',
+        response: { catalogs: [{ catalog_id: 'cat-1', items: [itemOf('it-1', 'approved')] }] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  // ── proposal ───────────────────────────────────────────────
+
+  test('proposal: committed is terminal', () => {
+    const proposalOf = (id, status) => ({ proposal_id: id, status });
+    const out = run([
+      step({ step_id: 's1', task: 'get_products', response: { proposal: proposalOf('p-1', 'committed') } }),
+      step({ step_id: 's2', task: 'get_products', response: { proposal: proposalOf('p-1', 'draft') } }),
+    ]);
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.match(out[1].output[0].error, /proposal p-1: committed → draft/);
+  });
+
+  // ── unknown / drift tolerance ──────────────────────────────
+
+  test('unknown status value is treated as enum drift (not a fail)', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'create_media_buy', response: mb('mb-1', 'xx_unknown') }),
+      step({ step_id: 's2', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } }),
+    ]);
+    // prev status was unknown — assertion doesn't fail, resets anchor instead.
+    assert.ok(out[1].output.every(o => o.passed));
+  });
+
+  test('duplicate id within a single step with inconsistent statuses flags a transition', () => {
+    // A seller returning two media_buys[] entries with the same id and
+    // different statuses is contradicting itself. The assertion treats the
+    // second as a transition from the first — technically "step X → step X"
+    // in the diagnostic but factually accurate: the response is inconsistent
+    // within itself.
+    const out = run([
+      step({
+        step_id: 'read',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [mb('mb-1', 'active'), mb('mb-1', 'pending_creatives')],
+        },
+      }),
+    ]);
+    assert.strictEqual(out[0].output[0].passed, false);
+    assert.match(out[0].output[0].error, /media_buy mb-1: active → pending_creatives/);
   });
 });

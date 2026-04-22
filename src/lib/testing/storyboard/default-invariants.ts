@@ -24,6 +24,13 @@
  *     `check_governance` returning `status: "denied"`), no subsequent step
  *     in the run may acquire a resource for that plan. Plan-scoped via
  *     `plan_id`; runs without a denial signal are a silent pass.
+ *   - `status.monotonic` — across the steps of a run, no observed resource's
+ *     `status` (or creative `approval_status`) may transition along an edge
+ *     that is not in the spec-published lifecycle graph for its resource
+ *     type. Catches regressions like `active → pending_creatives` that
+ *     per-step validations miss. Scoped by `(resource_type, resource_id)`
+ *     so unrelated resources don't interfere. Tables below cite the spec
+ *     enum schemas in `static/schemas/source/enums/*-status.json`.
  */
 
 import { registerAssertion } from './assertions';
@@ -491,4 +498,386 @@ function extractAuthSecrets(auth: unknown): string[] {
     pushCredentialValue(out, c.client_secret);
   }
   return out;
+}
+
+// ────────────────────────────────────────────────────────────
+// status.monotonic
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Per-resource-type lifecycle transition graphs. Each inner map is
+ * `from → Set<to>`. An observed transition `prev → curr` is legal iff
+ * `TRANSITIONS[type].get(prev)?.has(curr)` (self-edges `prev === curr`
+ * are always legal and skipped). The tables are hand-written from the
+ * spec enum schemas in `static/schemas/source/enums/*-status.json` and
+ * the narrative transitions documented there. When an enum gains a
+ * value this module needs an update alongside the schema change — that's
+ * the right coupling, visible in PR review.
+ *
+ * Bidirectional edges are listed in both directions explicitly (no
+ * auto-mirroring) so one-way edges like `rejected → processing` for
+ * creative assets don't accidentally become reversible.
+ */
+interface TransitionGraph {
+  readonly transitions: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+const MEDIA_BUY_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/media-buy-status.json`. `active ↔ paused`
+  // is reversible (buyer pauses, seller resumes). `completed | rejected |
+  // canceled` are terminal.
+  //
+  // NOTE: `pending_start → rejected` is defensible but not explicit in the
+  // schema prose — rejected is described as "declined by the seller after
+  // creation", which is ambiguous on whether post-start rejection is in
+  // scope. Kept for now; flagged for spec clarification.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['pending_creatives', new Set(['pending_start', 'active', 'paused', 'canceled', 'rejected'])],
+    ['pending_start', new Set(['active', 'paused', 'canceled', 'rejected'])],
+    ['active', new Set(['paused', 'completed', 'canceled'])],
+    ['paused', new Set(['active', 'completed', 'canceled'])],
+    ['completed', new Set()],
+    ['rejected', new Set()],
+    ['canceled', new Set()],
+  ]),
+};
+
+const CREATIVE_ASSET_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/creative-status.json`. The schema is
+  // explicit on which edges exist:
+  //   - processing: "Automatically transitions to pending_review when
+  //     processing completes, or to rejected if processing fails." → no
+  //     direct `processing → approved` edge.
+  //   - pending_review: "Transitions to approved or rejected after review."
+  //     → no `pending_review → processing` edge.
+  //   - rejected: "Buyer can re-submit by calling sync_creatives again,
+  //     which moves the creative back to processing." → the re-sync path.
+  //   - approved ↔ archived is reversible (buyer archives / unarchives).
+  // No terminals — everything can recover via re-sync.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['processing', new Set(['pending_review', 'rejected'])],
+    ['pending_review', new Set(['approved', 'rejected'])],
+    ['approved', new Set(['archived', 'rejected'])],
+    ['archived', new Set(['approved'])],
+    ['rejected', new Set(['processing', 'pending_review'])],
+  ]),
+};
+
+const CREATIVE_APPROVAL_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/creative-approval-status.json`.
+  // Per-assignment approval state on a package. `rejected → pending_review`
+  // is allowed on re-sync.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['pending_review', new Set(['approved', 'rejected'])],
+    ['approved', new Set(['rejected'])],
+    ['rejected', new Set(['pending_review'])],
+  ]),
+};
+
+const ACCOUNT_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/account-status.json`. `active ↔
+  // suspended` and `active ↔ payment_required` are both reversible.
+  // `suspended → payment_required` covers the legitimate case where a
+  // suspended account's credit lapses during the suspension window.
+  // `rejected | closed` are terminal.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['pending_approval', new Set(['active', 'rejected'])],
+    ['active', new Set(['suspended', 'payment_required', 'closed'])],
+    ['suspended', new Set(['active', 'payment_required', 'closed'])],
+    ['payment_required', new Set(['active', 'suspended', 'closed'])],
+    ['rejected', new Set()],
+    ['closed', new Set()],
+  ]),
+};
+
+const SI_SESSION_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/si-session-status.json`.
+  // `complete | terminated` are terminal.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['active', new Set(['pending_handoff', 'complete', 'terminated'])],
+    ['pending_handoff', new Set(['complete', 'terminated'])],
+    ['complete', new Set()],
+    ['terminated', new Set()],
+  ]),
+};
+
+const CATALOG_ITEM_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/catalog-item-status.json`. `approved ↔
+  // warning` is reversible (seller flags a warning, then clears it).
+  // `rejected → pending` is allowed on re-sync. No terminals.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['pending', new Set(['approved', 'rejected', 'warning'])],
+    ['approved', new Set(['warning', 'rejected'])],
+    ['warning', new Set(['approved', 'rejected'])],
+    ['rejected', new Set(['pending'])],
+  ]),
+};
+
+const PROPOSAL_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/proposal-status.json`. One-way.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['draft', new Set(['committed'])],
+    ['committed', new Set()],
+  ]),
+};
+
+/**
+ * Extractor record per resource type. For each response shape we recognize,
+ * describe how to walk the body and emit `(resource_id, status)` pairs.
+ * The runner hands us `stepResult.response` — we look at the shape and
+ * the task name to disambiguate (e.g. `get_media_buys` vs `sync_creatives`).
+ */
+interface StatusObservation {
+  resource_type: string;
+  resource_id: string;
+  status: string;
+  graph: TransitionGraph;
+}
+
+/**
+ * Task-aware extractors. Each knows the response shape for its task family
+ * and walks arrays where present. Unknown tasks produce no observations —
+ * the assertion is silent on tasks it doesn't recognize.
+ */
+function extractStatusObservations(task: string, body: Record<string, unknown>): StatusObservation[] {
+  const obs: StatusObservation[] = [];
+
+  // Media-buy: create/update_media_buy return top-level status + packages
+  // with per-creative approval_status. get_media_buys returns media_buys[].
+  if (task === 'create_media_buy' || task === 'update_media_buy') {
+    pushMediaBuy(obs, body);
+  } else if (task === 'get_media_buys') {
+    for (const mb of asArray(body.media_buys)) {
+      if (isObject(mb)) pushMediaBuy(obs, mb);
+    }
+  }
+
+  // Creative asset lifecycle: sync_creatives and list_creatives.
+  if (task === 'sync_creatives' || task === 'list_creatives') {
+    for (const c of asArray(body.creatives)) {
+      if (isObject(c)) pushCreative(obs, c);
+    }
+  }
+
+  // Account: sync_accounts and list_accounts. Embedded `account` objects on
+  // media-buy responses do not carry a lifecycle status — they're just
+  // references (brand, operator) — so we don't read them here.
+  if (task === 'sync_accounts' || task === 'list_accounts') {
+    for (const a of asArray(body.accounts)) {
+      if (isObject(a)) pushAccount(obs, a);
+    }
+  }
+
+  // SI session: si_initiate_session / si_send_message return top-level
+  // `session_id` + `status`.
+  if (task === 'si_initiate_session' || task === 'si_send_message' || task === 'si_terminate_session') {
+    pushSiSession(obs, body);
+  }
+
+  // Catalog items: sync_catalogs / list_catalogs return `items[]` per catalog.
+  if (task === 'sync_catalogs' || task === 'list_catalogs') {
+    for (const cat of asArray(body.catalogs)) {
+      if (!isObject(cat)) continue;
+      for (const item of asArray(cat.items)) {
+        if (isObject(item)) pushCatalogItem(obs, item);
+      }
+    }
+    for (const item of asArray(body.items)) {
+      if (isObject(item)) pushCatalogItem(obs, item);
+    }
+  }
+
+  // Proposal: get_products may return a `proposal` object when the
+  // caller is refining toward commitment.
+  if (task === 'get_products' && isObject(body.proposal)) {
+    pushProposal(obs, body.proposal);
+  }
+
+  return obs;
+}
+
+function pushMediaBuy(obs: StatusObservation[], record: Record<string, unknown>): void {
+  const id = asString(record.media_buy_id);
+  const status = asString(record.status);
+  if (id && status) {
+    obs.push({
+      resource_type: 'media_buy',
+      resource_id: id,
+      status,
+      graph: MEDIA_BUY_TRANSITIONS,
+    });
+  }
+  // Each media_buy carries packages; each package can list creative_approvals
+  // with per-creative approval_status. Track those against the approval graph.
+  for (const pkg of asArray(record.packages)) {
+    if (!isObject(pkg)) continue;
+    for (const ca of asArray(pkg.creative_approvals)) {
+      if (!isObject(ca)) continue;
+      const cid = asString(ca.creative_id);
+      const astatus = asString(ca.approval_status);
+      if (cid && astatus) {
+        obs.push({
+          resource_type: 'creative_approval',
+          resource_id: cid,
+          status: astatus,
+          graph: CREATIVE_APPROVAL_TRANSITIONS,
+        });
+      }
+    }
+  }
+}
+
+function pushCreative(obs: StatusObservation[], record: Record<string, unknown>): void {
+  const id = asString(record.creative_id);
+  const status = asString(record.status);
+  if (id && status) {
+    obs.push({
+      resource_type: 'creative',
+      resource_id: id,
+      status,
+      graph: CREATIVE_ASSET_TRANSITIONS,
+    });
+  }
+}
+
+function pushAccount(obs: StatusObservation[], record: Record<string, unknown>): void {
+  const id = asString(record.account_id);
+  const status = asString(record.status);
+  if (id && status) {
+    obs.push({
+      resource_type: 'account',
+      resource_id: id,
+      status,
+      graph: ACCOUNT_TRANSITIONS,
+    });
+  }
+}
+
+function pushSiSession(obs: StatusObservation[], record: Record<string, unknown>): void {
+  const id = asString(record.session_id);
+  const status = asString(record.status);
+  if (id && status) {
+    obs.push({
+      resource_type: 'si_session',
+      resource_id: id,
+      status,
+      graph: SI_SESSION_TRANSITIONS,
+    });
+  }
+}
+
+function pushCatalogItem(obs: StatusObservation[], record: Record<string, unknown>): void {
+  // Catalog items are heterogeneous across catalog types. Prefer `item_id`
+  // (spec-canonical on sync/list responses), then domain-specific
+  // `offering_id` (SI) and `sku` (retail), then a generic `id` as last
+  // resort. The fallback chain silently mis-identifies if a seller echoes
+  // a non-canonical id — the resulting history splits per id shape rather
+  // than emitting an error. Acceptable tradeoff given schema churn; enum
+  // drift stays under `response_schema`'s purview.
+  const id = asString(record.item_id) ?? asString(record.offering_id) ?? asString(record.sku) ?? asString(record.id);
+  const status = asString(record.status);
+  if (id && status) {
+    obs.push({
+      resource_type: 'catalog_item',
+      resource_id: id,
+      status,
+      graph: CATALOG_ITEM_TRANSITIONS,
+    });
+  }
+}
+
+function pushProposal(obs: StatusObservation[], record: Record<string, unknown>): void {
+  const id = asString(record.proposal_id);
+  const status = asString(record.status);
+  if (id && status) {
+    obs.push({
+      resource_type: 'proposal',
+      resource_id: id,
+      status,
+      graph: PROPOSAL_TRANSITIONS,
+    });
+  }
+}
+
+interface MonotonicState {
+  stepId: string;
+  status: string;
+}
+
+registerOnce('status.monotonic', {
+  id: 'status.monotonic',
+  description:
+    'Observed resource statuses (media_buy, creative, account, si_session, catalog_item, proposal, creative_approval) MUST only transition along edges in the spec lifecycle graph.',
+  onStart: ctx => {
+    // `${resource_type}:${resource_id}` → last-observed state. Tuple key
+    // disambiguates the unlikely `media_buy_id` / `creative_id` collision.
+    ctx.state.history = new Map<string, MonotonicState>();
+  },
+  onStep: (ctx, stepResult) => {
+    // Skip error / skipped / negative-path steps. An errored read doesn't
+    // observe a new state; `expect_error: true` runs are probing error
+    // codes, not transitions.
+    if (stepResult.skipped) return [];
+    if (stepResult.expect_error) return [];
+    if (!stepResult.passed) return [];
+    const body = (stepResult as unknown as { response?: unknown }).response;
+    if (!body || typeof body !== 'object') return [];
+    if (extractAdcpError(stepResult)) return [];
+
+    const history = ctx.state.history as Map<string, MonotonicState>;
+    const observations = extractStatusObservations(stepResult.task, body as Record<string, unknown>);
+    const description = 'Resource statuses transition only along spec lifecycle edges';
+
+    for (const ob of observations) {
+      const key = `${ob.resource_type}:${ob.resource_id}`;
+      const prev = history.get(key);
+      if (!prev) {
+        history.set(key, { stepId: stepResult.step_id, status: ob.status });
+        continue;
+      }
+      if (prev.status === ob.status) {
+        // No-op observation (replay, re-read of unchanged state). Don't emit,
+        // don't advance the anchor step — the earlier stepId stays useful for
+        // diagnostics if a later backward edge appears.
+        continue;
+      }
+      const allowedTargets = ob.graph.transitions.get(prev.status);
+      if (!allowedTargets) {
+        // Unknown previous status (enum drift or we missed a state in the
+        // table). Don't fail — `response_schema` catches enum violations;
+        // reset the anchor so downstream transitions still get checked.
+        history.set(key, { stepId: stepResult.step_id, status: ob.status });
+        continue;
+      }
+      if (!allowedTargets.has(ob.status)) {
+        return [
+          {
+            passed: false,
+            description,
+            step_id: stepResult.step_id,
+            error:
+              `${ob.resource_type} ${ob.resource_id}: ${prev.status} → ${ob.status} ` +
+              `(step "${prev.stepId}" → step "${stepResult.step_id}") is not in the lifecycle graph.`,
+          },
+        ];
+      }
+      history.set(key, { stepId: stepResult.step_id, status: ob.status });
+    }
+
+    if (observations.length === 0) return [];
+    return [{ passed: true, description, step_id: stepResult.step_id }];
+  },
+});
+
+// Tiny type-safety helpers for the extractors above.
+function isObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
