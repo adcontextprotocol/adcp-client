@@ -522,9 +522,16 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     if (step.sample_request) {
       return injectContext({ ...step.sample_request }, context);
     }
+    // `caller` is `format: uri` per governance/check-governance-request.json
+    // — a bare domain fails strict JSON-schema validation. Prefix with
+    // `https://` so the fallback payload round-trips through the upstream
+    // schema when no sample_request is authored. Scheme-check defends against
+    // a future change to `resolveBrand` that could return a URL instead of a
+    // bare hostname (would otherwise produce `https://https://…`).
+    const brandDomain = resolveBrand(options).domain;
     return {
       plan_id: context.plan_id ?? 'unknown',
-      caller: resolveBrand(options).domain,
+      caller: brandDomain.includes('://') ? brandDomain : `https://${brandDomain}`,
       payload: {
         type: 'media_buy',
         account: context.account ?? resolveAccount(options),
