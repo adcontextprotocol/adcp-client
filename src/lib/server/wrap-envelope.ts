@@ -7,14 +7,24 @@
  * can use this to produce responses that round-trip with the framework's
  * replay, context echo, and async-operation semantics.
  *
- * Error responses (detected via `inner.adcp_error?.code`) may opt into a
- * per-code field allowlist. `IDEMPOTENCY_CONFLICT` ships with an allowlist
- * that permits `context` and `operation_id` and deliberately drops
- * `replayed` — a conflict isn't a replay, and advertising `replayed:true`
- * on an error that was NOT served from cache would mislead the caller.
+ * Error responses (detected via `inner.adcp_error?.code`) are subject to a
+ * per-code field allowlist (`ERROR_ENVELOPE_FIELD_ALLOWLIST` in
+ * `./envelope-allowlist.ts`). `IDEMPOTENCY_CONFLICT` ships with an
+ * allowlist that permits `context` and `operation_id` and deliberately
+ * drops `replayed` — a conflict isn't a replay, and advertising
+ * `replayed:true` on an error that was NOT served from cache would
+ * mislead the caller.
+ *
+ * Unregistered error codes fail-closed to `DEFAULT_ERROR_ENVELOPE_FIELDS`
+ * (`context` only). Sellers that want `replayed` or `operation_id` on a
+ * bespoke error code must register it explicitly.
  *
  * The helper shallow-clones the input and never mutates it.
  */
+
+import { DEFAULT_ERROR_ENVELOPE_FIELDS, ERROR_ENVELOPE_FIELD_ALLOWLIST } from './envelope-allowlist';
+
+export { ERROR_ENVELOPE_FIELD_ALLOWLIST, DEFAULT_ERROR_ENVELOPE_FIELDS } from './envelope-allowlist';
 
 /**
  * Options accepted by {@link wrapEnvelope}.
@@ -64,58 +74,6 @@ export interface WrapEnvelopeOptions {
    */
   errorCode?: string;
 }
-
-/**
- * Per-error-code envelope-field allowlist.
- *
- * A code listed here restricts which envelope fields `wrapEnvelope` will
- * attach on top of the error's inner payload. Fields NOT in the allowlist
- * are silently dropped. A code NOT listed here falls back to the
- * success-envelope behavior (all fields attached when provided).
- *
- * `IDEMPOTENCY_CONFLICT` deliberately excludes `replayed`: the conflict
- * path in `create-adcp-server.ts` builds its error via `finalize()`,
- * which only echoes `context` and never calls `injectReplayed`. The
- * exported allowlist keeps the public helper aligned with that behavior.
- *
- * This is the sibling-field allowlist (keys attached AS SIBLINGS of
- * `adcp_error`). The keys allowed INSIDE the `adcp_error` block itself
- * are governed by `CONFLICT_ALLOWED_ENVELOPE_KEYS` in
- * `src/lib/testing/storyboard/default-invariants.ts` — two separate
- * concerns, keep them in sync if extending.
- *
- * **Invariant**: every allowlist set MUST include `'context'`. The helper
- * enforces this at module load so new error codes can't accidentally drop
- * context echo (which sellers rely on for correlation tracing across both
- * success and error paths). See `ensureContextEcho` below.
- *
- * **Consumer use case**: custom MCP / A2A handlers that emit envelope
- * fields beyond `replayed` / `context` / `operation_id` can read this set
- * to preflight their outputs, or extend it locally via
- * `new Set([...existing, 'my_field'])` (do NOT mutate in place — the
- * exported object is frozen).
- */
-export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
-  IDEMPOTENCY_CONFLICT: new Set(['context', 'operation_id']),
-});
-
-/**
- * Sanity check: every allowlist entry must permit `context` echo. Future
- * error codes can't silently drop context without thinking — missing
- * entries fail at module load, not at runtime request time.
- */
-function ensureContextEcho(allowlist: Readonly<Record<string, ReadonlySet<string>>>): void {
-  for (const [code, fields] of Object.entries(allowlist)) {
-    if (!fields.has('context')) {
-      throw new Error(
-        `ERROR_ENVELOPE_FIELD_ALLOWLIST['${code}'] is missing 'context'. ` +
-          `Every error-code allowlist must include 'context' so correlation ` +
-          `ids can round-trip on error envelopes.`
-      );
-    }
-  }
-}
-ensureContextEcho(ERROR_ENVELOPE_FIELD_ALLOWLIST);
 
 interface AdcpErrorLike {
   adcp_error?: { code?: unknown };
@@ -195,10 +153,13 @@ export function wrapEnvelope<T extends object>(
   };
 
   const errorCode = detectErrorCode(inner, opts.errorCode);
-  const allowlist = errorCode != null ? ERROR_ENVELOPE_FIELD_ALLOWLIST[errorCode] : undefined;
+  // Error responses: registered codes use their explicit allowlist;
+  // unregistered codes fail closed to DEFAULT_ERROR_ENVELOPE_FIELDS
+  // (context only). Success responses (no error code) allow all fields.
+  const allowlist =
+    errorCode != null ? (ERROR_ENVELOPE_FIELD_ALLOWLIST[errorCode] ?? DEFAULT_ERROR_ENVELOPE_FIELDS) : undefined;
 
   const fieldAllowed = (field: string): boolean => {
-    // Unknown error code falls back to success-envelope semantics.
     if (allowlist == null) return true;
     return allowlist.has(field);
   };
