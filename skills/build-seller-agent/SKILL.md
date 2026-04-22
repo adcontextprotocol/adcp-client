@@ -356,6 +356,8 @@ Non-guaranteed buys are always instant confirmation.
 >
 > - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['sales-guaranteed']`), NOT `[{id, version}]` objects.
 > - `get_media_buy_delivery` response requires **top-level `currency: string`** (ISO 4217) — per-row `spend.currency` is NOT enough.
+> - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows are strict: each requires `package_id`, `spend` (number), `pricing_model`, `rate` (number), and `currency`. A mock that returns `{package_id, impressions, clicks}` fails validation — include the billing quintet on every package row.
+> - `get_media_buys /media_buys[i]` rows require **`media_buy_id`, `status`, `currency`, `total_budget`, `packages`**. When you persist a buy in `create_media_buy`, save `currency` and `total_budget` so the `get_media_buys` response can echo them verbatim — reconstructing later drops one of the required fields in ~every Claude build we've tested.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 
