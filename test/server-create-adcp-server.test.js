@@ -265,6 +265,49 @@ describe('createAdcpServer', () => {
         /customTools\["get_adcp_capabilities"\] is not allowed/
       );
     });
+
+    // Framework-registered tools declare `annotations` at register time via
+    // `registerTool`'s config object (not via post-registration `.update()`).
+    // Regression guard for #705 — the deprecated `tool()` overload has no
+    // annotations parameter, so if someone reverts the migration this test
+    // fails loudly instead of silently dropping the hints from `tools/list`.
+    it('registerTool passes annotations through to the SDK tool definition', () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      const tool = registeredTool(server, 'get_products');
+      assert.ok(tool, 'get_products should be registered');
+      assert.strictEqual(tool.annotations?.readOnlyHint, true);
+    });
+
+    // Custom tools declaring an `outputSchema` keep the SDK validation path
+    // on — proves the `registerTool({ ..., outputSchema }, ...)` plumbing
+    // survives the migration. `dispatchTestRequest` bypasses SDK validation
+    // (it invokes the handler directly), so we check the registered tool's
+    // metadata instead of round-tripping through the transport.
+    it('customTools with outputSchema store the schema on the SDK tool definition', () => {
+      const outputSchema = { approved: z.boolean() };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        customTools: {
+          creative_approval: {
+            description: 'Approve or reject a creative.',
+            inputSchema: { creative_id: z.string() },
+            outputSchema,
+            handler: async ({ creative_id }) => ({
+              content: [{ type: 'text', text: `creative ${creative_id}` }],
+              structuredContent: { approved: true },
+            }),
+          },
+        },
+      });
+      const tool = registeredTool(server, 'creative_approval');
+      assert.ok(tool, 'creative_approval should be registered');
+      assert.ok(tool.outputSchema, 'outputSchema must be wired on the registered tool');
+    });
   });
 
   describe('auto-generated capabilities', () => {

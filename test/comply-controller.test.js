@@ -508,8 +508,13 @@ describe('createComplyController — register()', () => {
     const calls = [];
     return {
       calls,
-      tool: (name, description, schema, handler) => {
-        calls.push({ name, description, schemaKeys: Object.keys(schema), handlerType: typeof handler });
+      registerTool: (name, config, handler) => {
+        calls.push({
+          name,
+          description: config?.description,
+          schemaKeys: Object.keys(config?.inputSchema ?? {}),
+          handlerType: typeof handler,
+        });
       },
     };
   };
@@ -526,7 +531,7 @@ describe('createComplyController — register()', () => {
     }
   };
 
-  it('registers the tool on a raw McpServer via server.tool()', () => {
+  it('registers the tool on a raw McpServer via server.registerTool()', () => {
     const fake = makeFakeServer();
     const controller = createComplyController({
       sandboxGate: () => true,

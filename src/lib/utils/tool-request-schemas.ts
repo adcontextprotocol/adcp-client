@@ -1,10 +1,14 @@
 /**
  * Canonical map of AdCP tool names to their Zod request schemas.
  *
- * Use with MCP SDK's server.tool() for type-safe tool registration:
+ * Use with MCP SDK's server.registerTool() for type-safe tool registration:
  *
  *   import { TOOL_REQUEST_SCHEMAS } from '@adcp/client';
- *   server.tool('get_products', TOOL_REQUEST_SCHEMAS.get_products.shape, handler);
+ *   server.registerTool(
+ *     'get_products',
+ *     { inputSchema: TOOL_REQUEST_SCHEMAS.get_products.shape },
+ *     handler
+ *   );
  */
 
 import { z } from 'zod';

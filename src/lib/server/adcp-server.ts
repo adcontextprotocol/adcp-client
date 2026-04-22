@@ -22,7 +22,7 @@
  *
  * To register additional tools or resources, configure them through
  * `createAdcpServer()`'s domain-grouped handler config. The opaque
- * surface intentionally doesn't expose `.tool()` — keeping it off the
+ * surface intentionally doesn't expose `registerTool()` — keeping it off the
  * public API lets the framework own tool registration conventions
  * (idempotency, governance, validation, response shape).
  */

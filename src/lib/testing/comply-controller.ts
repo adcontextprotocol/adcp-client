@@ -227,8 +227,8 @@ export interface ComplyControllerToolDefinition {
 }
 
 export interface ComplyController {
-  /** MCP tool definition — pass to `server.tool(...)` manually, or use
-   * {@link ComplyController.register} to do it for you. */
+  /** MCP tool definition — pass to `server.registerTool(name, { description, inputSchema }, handle)`
+   * manually, or use {@link ComplyController.register} to do it for you. */
   readonly toolDefinition: ComplyControllerToolDefinition;
 
   /** Protocol-level handler. Returns a {@link ComplyTestControllerResponse}
@@ -240,7 +240,7 @@ export interface ComplyController {
   handle(input: Record<string, unknown>): Promise<McpToolResponse & { isError?: true }>;
 
   /** Register the tool on an `AdcpServer` or raw `McpServer`. Equivalent to
-   * calling `server.tool(name, description, inputSchema, handle)`. */
+   * calling `server.registerTool(name, { description, inputSchema }, handle)`. */
   register(server: AdcpServer | McpServer): void;
 }
 
@@ -410,8 +410,13 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
       );
     }
     const mcp = getSdkServer(server as AdcpServer) ?? (server as McpServer);
-    mcp.tool(toolDefinition.name, toolDefinition.description, toolDefinition.inputSchema, async input =>
-      handle(input as Record<string, unknown>)
+    mcp.registerTool(
+      toolDefinition.name,
+      {
+        description: toolDefinition.description,
+        inputSchema: toolDefinition.inputSchema,
+      },
+      (async (input: Record<string, unknown>) => handle(input)) as Parameters<typeof mcp.registerTool>[2]
     );
   }
 

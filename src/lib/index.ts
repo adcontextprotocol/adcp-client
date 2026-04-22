@@ -639,7 +639,7 @@ export * from './types/schemas.generated';
 
 // PreviewCreativeRequestSchema is now a flat z.object() with request_type discriminant.
 // The old variant exports (PreviewCreativeSingleRequestSchema, etc.) are no longer needed —
-// use PreviewCreativeRequestSchema.shape directly with server.tool().
+// use PreviewCreativeRequestSchema.shape directly with server.registerTool().
 
 // ====== AUTHENTICATION ======
 // Auth utilities for custom integrations
@@ -706,7 +706,7 @@ export {
 } from './auth/oauth';
 
 // ====== TOOL SCHEMA MAPS ======
-// Zod schemas keyed by tool name — use with server.tool(name, schema.shape, handler)
+// Zod schemas keyed by tool name — use with server.registerTool(name, { inputSchema: schema.shape }, handler)
 export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';
 export { TOOL_RESPONSE_SCHEMAS } from './utils/response-schemas';
 

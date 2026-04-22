@@ -53,7 +53,7 @@ export interface AdcpErrorResponse {
  * ```typescript
  * import { adcpError } from '@adcp/client';
  *
- * server.tool("get_products", schema, async ({ query }) => {
+ * server.registerTool("get_products", { inputSchema: schema }, async ({ query }) => {
  *   if (!products.length) {
  *     return adcpError('PRODUCT_NOT_FOUND', {
  *       message: 'No products match query',

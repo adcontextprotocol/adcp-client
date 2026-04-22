@@ -77,15 +77,19 @@
  * const sessionContext = new AsyncLocalStorage<{ sessionId: string }>();
  * const store = { async forceAccountStatus() { ... } };
  *
- * server.tool('comply_test_controller', 'Sandbox only.', TOOL_INPUT_SHAPE, async input => {
- *   if (!sandboxEnabled()) {
- *     return toMcpResponse({ success: false, error: 'FORBIDDEN', error_detail: 'Sandbox disabled' });
+ * server.registerTool(
+ *   'comply_test_controller',
+ *   { description: 'Sandbox only.', inputSchema: TOOL_INPUT_SHAPE },
+ *   async input => {
+ *     if (!sandboxEnabled()) {
+ *       return toMcpResponse({ success: false, error: 'FORBIDDEN', error_detail: 'Sandbox disabled' });
+ *     }
+ *     return sessionContext.run({ sessionId: (input.context as { session_id: string }).session_id }, async () => {
+ *       const response = await handleTestControllerRequest(store, input as Record<string, unknown>);
+ *       return toMcpResponse(response);
+ *     });
  *   }
- *   return sessionContext.run({ sessionId: (input.context as { session_id: string }).session_id }, async () => {
- *     const response = await handleTestControllerRequest(store, input as Record<string, unknown>);
- *     return toMcpResponse(response);
- *   });
- * });
+ * );
  * ```
  */
 
@@ -789,8 +793,8 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
 
 /**
  * Canonical Zod input schema for the `comply_test_controller` tool. Pass as
- * the `inputSchema` argument to `server.tool(...)` in custom wrappers so the
- * request shape stays in sync with {@link registerTestController}.
+ * the `inputSchema` argument to `server.registerTool(...)` in custom wrappers
+ * so the request shape stays in sync with {@link registerTestController}.
  *
  * Matches `ComplyTestControllerRequest` from the generated schema: `scenario`
  * (required), `params` (scenario-specific), and the universal `context` / `ext`
@@ -805,10 +809,14 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
  *   ...TOOL_INPUT_SHAPE,
  *   account: z.object({ sandbox: z.boolean() }).passthrough().optional(),
  * };
- * server.tool('comply_test_controller', 'Sandbox only.', MY_SHAPE, async input => {
- *   if (input.account?.sandbox !== true) return toMcpResponse({ ... });
- *   return toMcpResponse(await handleTestControllerRequest(store, input as Record<string, unknown>));
- * });
+ * server.registerTool(
+ *   'comply_test_controller',
+ *   { description: 'Sandbox only.', inputSchema: MY_SHAPE },
+ *   async input => {
+ *     if (input.account?.sandbox !== true) return toMcpResponse({ ... });
+ *     return toMcpResponse(await handleTestControllerRequest(store, input as Record<string, unknown>));
+ *   }
+ * );
  * ```
  *
  * This keeps the default registration protocol-compliant while giving
@@ -848,15 +856,17 @@ export function registerTestController(
   // this server instance. Callers can supply their own cache to scope by
   // session or tenant.
   const seedCache = options?.seedCache ?? createSeedFixtureCache();
-  mcp.tool(
+  mcp.registerTool(
     'comply_test_controller',
-    'Triggers seller-side state transitions for compliance testing. Sandbox only.',
-    TOOL_INPUT_SHAPE,
-    async input => {
-      const response = await handleTestControllerRequest(storeOrFactory, input as Record<string, unknown>, {
+    {
+      description: 'Triggers seller-side state transitions for compliance testing. Sandbox only.',
+      inputSchema: TOOL_INPUT_SHAPE,
+    },
+    (async (input: Record<string, unknown>) => {
+      const response = await handleTestControllerRequest(storeOrFactory, input, {
         seedCache,
       });
       return toMcpResponse(response);
-    }
+    }) as Parameters<typeof mcp.registerTool>[2]
   );
 }

@@ -16,12 +16,16 @@
  *
  * const server = new McpServer({ name: 'My Agent', version: '1.0.0' });
  *
- * server.tool('get_adcp_capabilities', {}, async () =>
- *   capabilitiesResponse({ supported_protocols: ['media_buy'] })
+ * server.registerTool(
+ *   'get_adcp_capabilities',
+ *   { inputSchema: {} },
+ *   async () => capabilitiesResponse({ supported_protocols: ['media_buy'] })
  * );
  *
- * server.tool('get_products', GetProductsRequestSchema.shape, async (params) =>
- *   productsResponse({ products: myProducts })
+ * server.registerTool(
+ *   'get_products',
+ *   { inputSchema: GetProductsRequestSchema.shape },
+ *   async (params) => productsResponse({ products: myProducts })
  * );
  * ```
  */
@@ -371,16 +375,20 @@ export function activateSignalResponse(data: ActivateSignalSuccess, summary?: st
  *
  * @example
  * ```typescript
- * server.tool('update_media_buy', UpdateMediaBuyRequestSchema.shape, async (params) => {
- *   if (params.action === 'cancel') {
- *     return cancelMediaBuyResponse({
- *       media_buy_id: params.media_buy_id,
- *       canceled_by: 'buyer',
- *       revision: currentRevision + 1,
- *     });
+ * server.registerTool(
+ *   'update_media_buy',
+ *   { inputSchema: UpdateMediaBuyRequestSchema.shape },
+ *   async (params) => {
+ *     if (params.action === 'cancel') {
+ *       return cancelMediaBuyResponse({
+ *         media_buy_id: params.media_buy_id,
+ *         canceled_by: 'buyer',
+ *         revision: currentRevision + 1,
+ *       });
+ *     }
+ *     // ... handle other actions
  *   }
- *   // ... handle other actions
- * });
+ * );
  * ```
  */
 export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: string): McpToolResponse {
