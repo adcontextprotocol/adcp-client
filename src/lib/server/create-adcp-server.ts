@@ -717,7 +717,23 @@ export interface AdcpCustomToolConfig<
   title?: string;
   /** Zod raw shape or schema for argument validation. */
   inputSchema?: InputArgs;
-  /** Zod raw shape or schema for the declared response payload. */
+  /**
+   * Zod raw shape or schema for the declared response payload.
+   *
+   * Forwarded verbatim to `registerTool`. The MCP SDK validates every
+   * non-error response's `structuredContent` against this schema on the
+   * server AND on the buyer's client (the latter fires regardless of
+   * `isError` — see the `NOTE on outputSchema` block earlier in this
+   * file). Framework-registered AdCP tools skip this field for that
+   * reason; custom tools opt in here and own the trade-off.
+   *
+   * Footgun: a too-strict schema (e.g. `z.never()`, or one that
+   * accidentally rejects the caller's own valid shape) turns the tool
+   * into a silent client-side validation error for every buyer. The
+   * seller sees a successful response go out; the buyer receives an
+   * `Output validation error`. Test against a real buyer call before
+   * relying on this.
+   */
   outputSchema?: OutputArgs;
   /** Tool annotations (readOnlyHint / destructiveHint / idempotentHint / openWorldHint). */
   annotations?: ToolAnnotations;
