@@ -1,5 +1,261 @@
 # Changelog
 
+## 5.9.0
+
+### Minor Changes
+
+- 6180150: Fix A2A multi-turn session continuity + add `pendingTaskId` retention for HITL flows. Mirrors [adcp-client-python#251](https://github.com/adcontextprotocol/adcp-client-python/pull/251).
+
+  **The bug.** The A2A adapter (`callA2ATool`) never put `contextId` or `taskId` on the Message envelope — every send opened a fresh server-side session regardless of caller state. `AgentClient` compounded the error by storing `result.metadata.taskId` into `currentContextId` on every success, so the field that was supposed to carry the conversation id was actually carrying a per-task correlation id. Multi-turn A2A conversations against sellers that key state off `contextId` (ADK-based agents, session-scoped reasoning, any HITL flow) silently fell back to new-session-every-call.
+
+  **The fix.**
+  - `callA2ATool` takes a new `session` arg and injects `contextId` / `taskId` onto the Message per the @a2a-js/sdk type.
+  - `ProtocolClient.callTool` threads session ids through to the A2A branch (MCP unaffected — no session concept there).
+  - `TaskExecutor` stops aliasing `options.contextId` to the client-minted correlation `taskId`. The local `taskId` is now always a fresh UUID; the caller's `contextId` rides on the wire envelope only.
+  - `TaskResultMetadata` gains `contextId` (server-returned A2A session id) and `serverTaskId` (server-tracked task id), populated from the response by `ProtocolResponseParser.getContextId` / `getTaskId`.
+  - `AgentClient` retains `contextId` across sends (auto-adopted from server responses so ADK-style id rewriting is transparent) and tracks `pendingTaskId` only while the last response was non-terminal (`input-required` / `working` / `submitted` / `auth-required` / `deferred`). Terminal states clear `pendingTaskId` so the next call starts fresh.
+
+  **Public API (AgentClient).**
+
+  ```ts
+  client.getContextId(); // read retained contextId
+  client.getPendingTaskId(); // read pending server taskId (HITL resume)
+  client.resetContext(); // wipe session state
+  client.resetContext(id); // rehydrate persisted contextId across process restart
+  ```
+
+  `setContextId(id)` and `clearContext()` still exist for backwards compatibility (`clearContext` now delegates to `resetContext()`).
+
+  **One AgentClient per conversation.** Sharing an instance across concurrent conversations interleaves session ids (last-write-wins) — create a fresh `AgentClient` or call `resetContext()` per logical conversation. Callers needing resume-across-process-restart should persist `getContextId()` / `getPendingTaskId()` after non-terminal responses and seed them back via `resetContext(id)` + direct `setContextId` on rehydration.
+
+  **Behavior change to note.** `TaskOptions.contextId` no longer overrides the client-minted correlation `taskId` (which was its unintended side effect). Callers who were reading `result.metadata.taskId` expecting to see their caller-supplied `contextId` should now read `result.metadata.contextId`.
+
+- 0e7c1c9: `createAdcpServer`'s dispatcher now auto-unwraps `throw adcpError(...)` into the normal response path. Handlers that `throw` an envelope (instead of `return`-ing it) used to surface as `SERVICE_UNAVAILABLE: Tool X handler threw: [object Object]` — the thrown value is a plain object, not an `Error`, so `err.message` is undefined and `String(err)` yields the `[object Object]` literal. The dispatcher now detects the envelope shape (`{ isError: true, content: [...], structuredContent: { adcp_error: { code } } }`) and returns it directly, preserving the typed code / field / suggestion exactly as if the handler had written `return`.
+
+  Driver: matrix v8 showed this pattern persisting across fresh-Claude builds even when the skill examples use `return`. Fixing it at the dispatcher closes the class of bugs once, instead of hoping every skill-corpus update lands. A `logger.warn` still fires on unwrap so agent authors see they should switch to `return`, but buyers stop paying for the mistake.
+
+  Idempotency claims are released on unwrap (same as any other thrown path) so retries proceed normally. Non-envelope throws (`TypeError`, custom errors, strings, objects without the full envelope shape) still surface as `SERVICE_UNAVAILABLE` with the underlying cause in `details.reason` — the existing handler-throw disclosure from PR #735 is unchanged.
+
+- 8c64d65: Bundle the `governance.denial_blocks_mutation` default assertion and auto-register the existing defaults on any `@adcp/client/testing` import (adcontextprotocol/adcp#2639, #2665 closed as superseded).
+
+  **New default assertion** (`default-invariants.ts`):
+
+  `governance.denial_blocks_mutation` — once a plan receives a denial signal (`GOVERNANCE_DENIED`, `CAMPAIGN_SUSPENDED`, `PERMISSION_DENIED`, `POLICY_VIOLATION`, `TERMS_REJECTED`, `COMPLIANCE_UNSATISFIED`, or `check_governance` returning `status: "denied"`), no subsequent step in the run may acquire a resource for that plan. Plan-scoped via `plan_id` (pulled from response body or the runner's recorded request payload — never stale step context). Sticky within a run: a later successful `check_governance` does not clear the denial. Write-task allowlist excludes `sync_*` batch shapes for now. Silent pass when no denial signal appears.
+
+  **Auto-registration wiring**:
+
+  `storyboard/index.ts` now side-imports `default-invariants` so any consumer of `@adcp/client/testing` picks up all three built-ins (`idempotency.conflict_no_payload_leak`, `context.no_secret_echo`, `governance.denial_blocks_mutation`). Previously only `comply()` triggered registration; direct `runStoryboard` callers against storyboards declaring `invariants: [...]` would throw `unregistered assertion` on resolve. Consumers who want to replace the defaults can `clearAssertionRegistry()` and re-register.
+
+  **Supersedes** #2665 (the sibling `@adcp/compliance-assertions` package proposal): shipping these in-band is the lower-ceremony path and makes storyboards that reference the ids work out of the box against a fresh `@adcp/client` install.
+
+- 7aca3fa: Add typed `CapabilityResolutionError` for `resolveStoryboardsForCapabilities` (and by extension `comply()`). Addresses [#734](https://github.com/adcontextprotocol/adcp-client/issues/734).
+
+  **The problem.** The resolver threw plain `Error` instances for two distinct, actionable agent-config faults — "specialism has no bundle" and "specialism's parent protocol isn't declared in `supported_protocols`". Callers (AAO's compliance heartbeat, `evaluate_agent_quality`, the public `applicable-storyboards` REST endpoint) could only distinguish them by regexing the message, which broke if wording drifted and caused agent-config faults to page observability as system errors.
+
+  **The fix.** Export `CapabilityResolutionError extends ADCPError` with a `code` discriminator and structured fields so callers can branch without parsing messages:
+
+  ```ts
+  import { CapabilityResolutionError } from '@adcp/client/testing';
+
+  try {
+    resolveStoryboardsForCapabilities(caps);
+  } catch (err) {
+    if (err instanceof CapabilityResolutionError) {
+      switch (err.code) {
+        case 'unknown_specialism':
+          // err.specialism
+          break;
+        case 'specialism_parent_protocol_missing':
+          // err.specialism, err.parentProtocol
+          break;
+      }
+    }
+  }
+  ```
+
+  Existing message text is preserved so regex-based callers keep working during the migration. The `unknown_protocol` code is reserved for future use — today an unknown `supported_protocols` entry still logs a `console.warn` and is skipped (fail-open), not thrown.
+
+- 7f27e8f: `createAdcpServer` now defaults `validation.responses` to `'warn'` when `process.env.NODE_ENV !== 'production'`. Previously both sides defaulted to `'off'`, leaving schema drift to surface downstream as cryptic `SERVICE_UNAVAILABLE` or `oneOf` discriminator errors far from where the offending field lives.
+
+  The new default catches handler-returned drift at wire-validation time with a clear field path, in dev/test/CI, where you want the signal. Production behavior is unchanged — set `NODE_ENV=production` and both sides stay `'off'`.
+
+  Override explicitly via `createAdcpServer({ validation: { responses: 'off' | 'warn' | 'strict', requests: ... } })` — an explicit config always wins over the environment-derived default.
+
+  This is the first half of the architecture fix tracked in [#727](https://github.com/adcontextprotocol/adcp-client/issues/727) — validation belongs at the wire layer, not in response builders. Tightening generated TS discriminated unions so `tsc` catches sparse shapes is the remaining half.
+
+  Cost: one AJV compile per tool on cold start + one validator invocation per response in dev. No effect on production.
+
+- 0cc20df: `createAdcpServer`'s `exposeErrorDetails` now defaults to `true` outside `NODE_ENV=production`. Handler throws emit the underlying cause message and handler name in `adcp_error.details` + the human-readable text, so agent authors see `SERVICE_UNAVAILABLE: Tool acquire_rights handler threw: Cannot find module '@adcp/client/foo'` instead of the opaque `encountered an internal error` we used to ship.
+  - Production behavior is unchanged (errors stay redacted for live agents).
+  - Explicit `exposeErrorDetails: false` still wins — production deployments that want the redaction without relying on `NODE_ENV` should keep setting it.
+  - `logger.error('Handler failed', ...)` now includes the full stack (`err.stack`) so server logs point at the exact line that blew up, not just the message.
+
+  Matrix-harness debuggability was the driver: every `SERVICE_UNAVAILABLE` in matrix v5–v7 was an opaque black box that required re-running with `--keep-workspaces` and inspecting Claude-generated code to figure out why a handler threw. With this default, the matrix log shows the fault line on the first run.
+
+- e979d07: Add OAuth 2.0 client credentials (RFC 6749 §4.4) support to the library and CLI for machine-to-machine compliance testing. Addresses [adcontextprotocol/adcp#2677](https://github.com/adcontextprotocol/adcp/issues/2677).
+
+  **The problem.** Sales agents that authenticate via OAuth client credentials couldn't be tested with `@adcp/client` without a user manually exchanging credentials for a token and pasting the bearer in. Tokens expire; CI pipelines need a way to point the library at a token endpoint and let it handle refresh.
+
+  **Library-level auto-refresh.** `ProtocolClient.callTool` now re-exchanges the secret for a fresh access token before every call when `AgentConfig.oauth_client_credentials` is set (cached while valid — single POST on miss, no-op on warm cache). Concurrent callers for the same agent coalesce onto one refresh POST. On a mid-call 401 the client force-refreshes once and retries — covers the case where the AS rotates something out of band. Refreshed tokens persist via any attached `OAuthConfigStorage`.
+
+  **New `auth` type on `TestOptions`.** `createTestClient` / `ADCPMultiAgentClient` accept `{ type: 'oauth_client_credentials', credentials, tokens? }`. Storyboard runs, `adcp fuzz`, `adcp grade`, and any programmatic consumer get auto-refresh for free.
+
+  **CLI flags on `--save-auth`:**
+
+  ```bash
+  # Token endpoint is discovered from the agent URL
+  # (RFC 9728 protected-resource metadata + RFC 8414 AS metadata)
+  adcp --save-auth my-agent https://agent.example.com \
+    --client-id abc123 --client-secret xyz789 \
+    --scope adcp
+
+  # Override discovery if the agent doesn't advertise OAuth metadata
+  adcp --save-auth my-agent https://agent.example.com \
+    --oauth-token-url https://auth.example.com/token \
+    --client-id abc123 --client-secret xyz789
+  ```
+
+  Full subcommand help: `adcp --save-auth --help`.
+
+  **Secret storage.** Literal secrets land in `~/.adcp/config.json` (mode `0600`, directory `0700`). For CI, `--client-id-env` / `--client-secret-env` store a `$ENV:VAR_NAME` reference resolved at token-exchange time — nothing sensitive on disk:
+
+  ```bash
+  adcp --save-auth my-agent https://agent.example.com \
+    --oauth-token-url https://auth.example.com/token \
+    --client-id-env CLIENT_ID --client-secret-env CLIENT_SECRET
+  ```
+
+  Empty env-var values are rejected loudly (catches the common `.env` typo `CLIENT_SECRET=`).
+
+  **Audience binding (RFC 8707).** `AgentOAuthClientCredentials` accepts `resource?: string | string[]` (emitted as repeated `resource` form fields, RFC 8707) and `audience?: string` (the Auth0/Okta/Azure AD vendor parameter). Required for agents behind audience-validating proxies.
+
+  **Security hardening.**
+  - `token_endpoint` must be `https://` — `http://` is rejected with a typed `malformed` error before any request hits the wire. `http://localhost` and `http://127.0.0.1` are allowed for local dev.
+  - Userinfo URLs (`https://user:pass@auth.example.com/token`) are rejected — credentials belong in `client_id` / `client_secret`, not the URL, and leaking them via error messages and log aggregators is easy.
+  - SSRF guard: private-IP / loopback token endpoints are rejected unless the caller opts in with `allowPrivateIp: true`. The CLI opts in (operator-driven); the library trusts whatever the agent URL already trusts. Hosted consumers accepting untrusted configs get the guard for free.
+  - Basic auth encoding follows RFC 6749 §2.3.1 (form-urlencoded: space → `+`, `!'()*` percent-encoded) — not `encodeURIComponent`. Fixes interop with secrets containing those characters.
+  - `error_description` from the authorization server is control-character-stripped and truncated before being surfaced — defends against ANSI / CRLF injection from a hostile AS.
+
+  **`is401Error` now recognizes MCP SDK error shape** (`err.code === 401`). The MCP `StreamableHTTPClientTransport` throws errors with HTTP status on `.code`; the retry path for CC and auth-code flows was silently skipping them. Caught by the new integration test.
+
+  **CLI flags (all on `--save-auth`):**
+  - `--client-id <value>` / `--client-id-env <VAR>` — literal or env reference
+  - `--client-secret <value>` / `--client-secret-env <VAR>` — literal or env reference
+  - `--scope <scope>` — optional OAuth scope
+  - `--oauth-token-url <url>` — optional; discovered from the agent URL via RFC 9728 + RFC 8414 when omitted. Supply explicitly only when the agent does not advertise OAuth metadata.
+  - `--oauth-auth-method basic|body` — credential placement (default: `basic` per RFC 6749 §2.3.1)
+
+  **Programmatic API** under `@adcp/client/auth`:
+  - `exchangeClientCredentials(credentials, options?)` — one-shot token exchange
+  - `ensureClientCredentialsTokens(agent, options?)` — refresh-if-stale helper that updates `agent.oauth_tokens` in place (coalesces concurrent calls) and optionally persists via `OAuthConfigStorage`
+  - `ClientCredentialsExchangeError` — typed error with `kind: 'oauth' | 'malformed' | 'network'`, `oauthError`, `oauthErrorDescription`, `httpStatus`
+  - `MissingEnvSecretError` — typed error with `reason: 'unset' | 'empty'`
+  - `resolveSecret`, `isEnvSecretReference`, `toEnvSecretReference` — secret-resolution utilities
+  - `AgentOAuthClientCredentials` — type for the new `AgentConfig.oauth_client_credentials` field
+
+  The authorization-code flow (`--oauth`) and existing `auth_token` paths are unchanged. `createFileOAuthStorage` persists `oauth_client_credentials` alongside `oauth_tokens` so CLI and programmatic consumers share the same on-disk shape.
+
+- 65740a1: Thin response builders for four tools whose handlers previously had no typed wrapper, plus per-variant constructors for `acquire_rights`:
+  - **`acquireRightsResponse(data)`** — envelope wrapper on the `AcquireRightsResponse` union.
+  - **`acquireRightsAcquired({...})`, `acquireRightsPendingApproval({...})`, `acquireRightsRejected({...})`** — per-variant constructors. A coding agent typing `acquireRightsAcqu…` gets the right variant's required-field shape directly without reading a 4-variant union.
+  - **`syncAccountsResponse(data)`** — envelope wrapper on `SyncAccountsResponse`.
+  - **`syncGovernanceResponse(data)`** — envelope wrapper on `SyncGovernanceResponse`.
+  - **`reportUsageResponse(data)`** with `.acceptAll(request, { errors })` shortcut — the `.acceptAll` form computes `accepted = usage.length - errors.length` so the common "ack all / ack all minus validated failures" cases are one call.
+
+  All four are auto-applied via `createAdcpServer`'s `TOOL_META` — handlers return domain objects and the framework wraps. Also exported from `@adcp/client` and `@adcp/client/server` for manual use.
+
+  **Scope note** (per test-agent-team review): these builders are **only** MCP envelope wrappers — they do not enforce schema constraints like `credentials.minLength: 32`, `authentication.schemes.length === 1`, or `creative_manifest.format_id` object shape. Those belong in wire-level Zod validation (already available as `createAdcpServer({ validation: { responses: 'strict' } })`, tracked for default-on). Validation in builders would be the wrong layer — it only fires for tools whose handlers reach the wrapper, misses manual-tool paths, and encourages per-tool workarounds instead of fixing the generator + validator.
+
+- e68b2fb: Add uniform-error-response fuzz invariant (adcontextprotocol/adcp-client#731). `adcp fuzz` now runs a paired-probe check on referential lookup tools asserting byte-equivalent error responses for "exists but inaccessible" vs "does not exist" — the AdCP spec MUST from error-handling.mdx (landed in adcp#2689, hardened in adcp#2691).
+
+  Two modes:
+  - **Baseline** (default, single token): two fresh UUIDs probed per tool. Catches id-echo, header divergence, MCP `isError` / A2A `task.status.state` divergence. Always runs.
+  - **Cross-tenant** (new `--auth-token-cross-tenant` flag + `ADCP_AUTH_TOKEN_CROSS_TENANT` env var): seeder runs as tenant A, invariant probes as tenant B against the seeded id + a fresh UUID. Catches the full cross-tenant existence-leak surface.
+
+  Comparator enforces identical `error.code` / `message` / `field` / `details`, HTTP status, MCP `isError`, A2A `task.status.state`, and response headers with a closed allowlist (`Date`, `Server`, `Server-Timing`, `Age`, `Via`, `X-Request-Id`, `X-Correlation-Id`, `X-Trace-Id`, `Traceparent`, `Tracestate`, `CF-Ray`, `X-Amz-Cf-Id`, `X-Amz-Request-Id`, `X-Amzn-Trace-Id`). `Content-Length`, `Vary`, `Content-Type`, `ETag`, `Cache-Control`, and rate-limit headers MUST match.
+
+  Tool coverage: `get_property_list`, `get_content_standards`, `get_media_buy_delivery`, `get_creative_delivery`, `tasks_get`. Extending is additive via `TOOL_ID_CONFIG` in `src/lib/conformance/invariants/uniformError.ts`.
+
+  **Public API:**
+  - New option: `RunConformanceOptions.authTokenCrossTenant?: string`
+  - New report field: `ConformanceReport.uniformError: UniformErrorReport[]`
+  - New CLI flag: `--auth-token-cross-tenant <token>`
+
+  **Security:** response headers are redacted at capture time when they name a credential (`Authorization`, `X-Adcp-Auth`, `Cookie`, etc.), and bearer tokens echoed in response bodies are masked — no credential ever lands in a stored report.
+
+  **Docs:** `docs/guides/VALIDATE-YOUR-AGENT.md` has a new "Uniform-error-response invariant (paired probe)" subsection including the preparation checklist for two-tenant testing. `skills/build-seller-agent/SKILL.md` § Protocol-Wide Requirements adds "Resolve-then-authorize" as a universal MUST; `skills/build-governance-agent/SKILL.md` cross-references it.
+
+- fb38c53: **Breaking for raw-string callers:** adapter error code string values changed from lowercase-custom (`'list_not_found'`) to uppercase-snake (`'REFERENCE_NOT_FOUND'`, `'UNSUPPORTED_FEATURE'`, etc.) to comply with the AdCP spec's uppercase-snake convention. Closes #700.
+
+  **Affected constants** (the KEYS are unchanged, only the emitted string VALUES changed):
+  - `PropertyListErrorCodes` (`property-list-adapter.ts`)
+  - `ContentStandardsErrorCodes` (`content-standards-adapter.ts`)
+  - `SIErrorCodes` (`si-session-manager.ts`)
+  - `ProposalErrorCodes` (`proposal-manager.ts`)
+
+  **Unaffected**: code that uses the exported enum constants. `PropertyListErrorCodes.LIST_NOT_FOUND` still resolves — the key is stable, only the emitted value changed.
+
+  **Breaks**: code that pattern-matches raw strings. Multiple `*_NOT_FOUND` keys now collapse to `'REFERENCE_NOT_FOUND'` so string-based switches can no longer distinguish the source domain.
+
+  **Migration**: replace raw-string comparisons with the exported helpers + constants.
+
+  ```ts
+  // Before — silently stops matching after this change
+  if (err.code === 'list_not_found') { … }
+
+  // After — stable across future value changes
+  import { isPropertyListError, PropertyListErrorCodes } from '@adcp/client';
+
+  if (isPropertyListError(err) && err.code === PropertyListErrorCodes.LIST_NOT_FOUND) { … }
+  ```
+
+  **Semver justification**: bumped `minor` rather than `major` because these adapter scaffolds are pre-stable surface intended for implementers extending the stock classes — not yet depended on by downstream shipped products. A repo-wide search found zero raw-string consumers. Value changes in future releases may warrant `major` once implementers are shipping.
+
+  Also emitted by this change: `SIErrorCodes.SESSION_TERMINATED` now emits the message `"Session is not active"` (previously `"Session has already been terminated"`) to match the existing `SESSION_EXPIRED` branch — prevents subclass implementers from accidentally leaking terminal-vs-expired state distinction in multi-tenant deployments.
+
+### Patch Changes
+
+- fb38c53: Drop the `provide_performance_feedback` request builder from the storyboard runner so the spec-conformant `sample_request` from the storyboard drives the payload. The builder emitted non-spec `feedback`/`satisfaction`/`notes` fields that caused conformant sellers to reject the request with `INVALID_REQUEST`. Closes #689.
+- ba8c907: Fix `sync_catalogs` and `report_usage` storyboard request-builders to honor `step.sample_request` when present, and use spec-valid defaults when building a fallback.
+
+  **sync_catalogs** — before this fix, the builder ignored the storyboard's `sample_request` entirely and returned a hardcoded catalog with `feed_format: 'json'` (not in the `FeedFormatSchema` union: `google_merchant_center | facebook_catalog | shopify | linkedin_jobs | custom`) and no `type` field (required by `CatalogSchema`). Every conformance agent running the generated Zod schema rejected the request with `-32602` on both paths. The fallback now uses `type: 'product'` + `feed_format: 'custom'`, and the builder reads `sample_request` first.
+
+  **report_usage** — same pattern: builder ignored `sample_request` and returned per-entry shape `{ creative_id, impressions, spend: { amount, currency } }` which doesn't match `usage-entry.json` (expects top-level `vendor_cost: number` + `currency: string` + `account` on each entry). Agents rejected with `-32602` listing all three missing fields. Fixed by reading `sample_request` first and aligning the fallback to the spec shape.
+
+  Surfaced by the matrix harness — every `sales_catalog_driven` and `creative_ad_server` run showed the same builder-generated -32602 before this patch.
+
+- faef971: Clarify idempotency-on-error semantics in the seller and creative skill docs, driven by the audit in [#744](https://github.com/adcontextprotocol/adcp-client/issues/744).
+
+  **What the audit found.** The dispatcher releases the idempotency claim on every error path — envelope returns, envelope throws, and uncaught exceptions. That's already documented for the "transient failures don't lock into the cache" case, but the handler-author implication wasn't spelled out: a handler that mutates state before erroring will double-write on retry. The surface for this bug widened with [#743](https://github.com/adcontextprotocol/adcp-client/pull/743) (auto-unwrap of thrown envelopes), which blesses `throw adcpError(...)` as a supported path.
+
+  **Why not cache terminals instead.** The AdCP `recovery: terminal` catalog is mostly state-dependent (`ACCOUNT_SUSPENDED`, `BUDGET_EXHAUSTED`, `ACCOUNT_PAYMENT_REQUIRED`, `ACCOUNT_SETUP_REQUIRED` all flip after out-of-band remediation). Caching them would lock buyers into stale errors for the full replay TTL. Only `UNSUPPORTED_FEATURE` and `ACCOUNT_NOT_FOUND` are truly immutable, and re-executing them is cheap.
+
+  **Changes.**
+  - `skills/build-seller-agent/SKILL.md` idempotency section now documents the mutate-last contract, with a worked `budgetApproved` example showing the broken-vs-correct ordering and a note on making partial-write paths converge via natural-key upsert.
+  - `skills/build-creative-agent/SKILL.md` swaps the now-stale "throw surfaces as `SERVICE_UNAVAILABLE`" rationale (invalidated by #743) for the still-true claim-release rationale.
+
+  No runtime behavior changes; docs only. No changes to `compliance/cache/` — storyboards there are machine-synced from the upstream spec repo, so a conformance assertion that locks in error-claim-release semantics is a follow-up for `adcontextprotocol/adcp`.
+
+- 929b6b3: Add `unresolved_hidden_by_pagination` meta-observation to `refs_resolve` when `target_paginated` AND at least one `unresolved_with_pagination` co-occur on the same result. Closes #718.
+
+  Catches the integrity gap introduced by #717: a seller that unconditionally returns `pagination.has_more: true` can hide refs it can't service — the demotion logic passes the check, and graders keying on `refs_resolve.passed` alone miss the structural smell. The new meta-observation names the co-occurrence neutrally (structural descriptor, not an accusation — graders decide intent) so compliance dashboards get an independent grader signal without changing pass/fail semantics. Shape mirrors `scope_excluded_all_refs` (the #711 silent-no-op detector): `{ kind, unresolved_count }` — the per-ref detail already lives in the `unresolved_with_pagination` observations. `unresolved_count` is deduped, so it matches the per-ref observation count.
+
+  Becomes redundant when `adcp#2601`'s "compliance mode returns everything referenced in a single response" rule lands at the spec level.
+
+- e68b2fb: Internal: MCP and A2A protocol adapters can now capture raw HTTP responses (status, headers, body, latency) when `withRawResponseCapture(fn)` is active. Exported from `src/lib/protocols/rawResponseCapture.ts`. Conformance-only infrastructure — the wrapper is a pass-through when no capture slot is set, so regular clients pay only one AsyncLocalStorage lookup per request. Foundation for the uniform-error-response fuzz invariant (issue #731).
+- fb38c53: Extract the protocol transport-suffix regex (`/mcp`, `/a2a`, `/sse`) to a single source in `utils/a2a-discovery` and share it between `SingleAgentClient.computeBaseUrl` and the storyboard `canonicalizeAgentUrlForScope`. Adding a new transport now only requires updating one regex. Closes #719.
+- 0169874: Skill fixes uncovered by matrix v8's handler-throw disclosure (PR #735):
+  - **brand-rights skill** (`acquire_rights` + `sync_accounts` + `sync_governance`): swap `|` → `:` in the composite account-key template literal. `ctx.store.put`'s key pattern is `[A-Za-z0-9_.\-:]` — `|` is rejected and the handler throws on the first sync. Also guard `acquireRights` against missing `account.brand.domain` / `account.operator` before composing the key.
+  - **creative skill** (`list_creatives` + `build_creative`): destructure `ctx.store.list` — it returns `{ items, nextCursor? }`, not a bare array. Previously the examples called `.filter`/`.find` on the envelope object and blew up with `TypeError`, surfaced as `SERVICE_UNAVAILABLE`. Also flip `throw adcpError(...)` to `return adcpError(...)` in `build_creative`; throwing bypasses the envelope path and reports as `SERVICE_UNAVAILABLE` instead of `CREATIVE_NOT_FOUND`.
+  - **governance skill** (`property-lists`): add a `list_property_lists` example showing `const { items } = await ctx.store.list('property_list')`. Matrix v8 builds repeatedly `.map`-ed the raw result; the skill now shows the correct shape in-line.
+
+  No SDK code changes — these are skill-corpus fixes visible to agent builders.
+
+- 53c531e: Storyboard runner now forwards `push_notification_config` from `sample_request` to the outbound request when a programmatic request builder is used (`create_media_buy`, `update_media_buy`, etc.). Previously, only `context`, `ext`, and `idempotency_key` were merged from the hand-authored sample_request on top of the builder output — `push_notification_config` silently fell off the wagon, so every webhook-emission conformance phase (`universal/webhook-emission`, `specialisms/sales-broadcast-tv` window-update webhook, etc.) failed vacuously with the agent under test never receiving the webhook URL. `{{runner.webhook_url:<step_id>}}` substitution is applied to the carried-over config so the runner's ephemeral receiver URL still resolves correctly. Fixes #747.
+- 18fa51b: Extend the uniform-error-response comparator (adcontextprotocol/adcp-client#738) to walk A2A Task and Message shapes when looking for the AdCP error envelope. `extractEnvelope` now finds `adcp_error` nested in `result.artifacts[].parts[].data` (Task reply) or `result.parts[].data` (Message reply); `peelWrappers` reduces A2A Task/Message bodies to their data-part payloads so per-request `task.id` / `contextId` / `artifactId` / `messageId` don't false-positive structural compares on identical success bodies.
+
+  Adds `test/lib/uniform-error-invariant-a2a.test.js` — the A2A-shaped sibling of the existing MCP integration test, running the same five-case matrix (baseline compliant/leak, cross-tenant compliant/leak, baseline fallback) against an in-process A2A seller reached through `@a2a-js/sdk/client`. Closes the gap where only hand-crafted JSON strings exercised the A2A path.
+
 ## 5.8.2
 
 ### Patch Changes
