@@ -25,17 +25,17 @@ A seller agent receives briefs from buyers, returns products with pricing, accep
 
 Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each specialism has a storyboard bundle at `compliance/cache/latest/specialisms/<id>/` that the AAO compliance runner executes. Pick one or more:
 
-| Specialism | Status | Delta from baseline | See |
-|---|---|---|---|
-| `sales-guaranteed` | stable | IO approval is **task-layer**, not MediaBuy-layer. Return a task envelope (MCP Tasks SDK) with `status: 'submitted'` + `task_id` + `message`. Do NOT return `media_buy_id` or `packages` yet — those land on the final artifact when the task completes. There is no `pending_approval` MediaBuy status. | [§ sales-guaranteed](#specialism-sales-guaranteed) |
-| `sales-non-guaranteed` | stable | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
-| `sales-broadcast-tv` | stable | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv) |
-| `sales-streaming-tv` | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products | Baseline only |
-| `sales-social` | stable | Walled-garden: no `get_products`/`create_media_buy`; implement `sync_audiences`, `log_event`, `get_account_financials` instead | [§ sales-social](#specialism-sales-social) |
-| `sales-exchange` | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending | Baseline only |
-| `sales-proposal-mode` | stable | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages` | [§ sales-proposal-mode](#specialism-sales-proposal-mode) |
-| `audience-sync` | stable | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response. | [§ audience-sync](#specialism-audience-sync) |
-| `signed-requests` | preview | RFC 9421 HTTP Signature verification on mutating requests. Advertise `request_signing.supported: true` in capabilities; graded against conformance vectors — positive vectors must produce non-4xx; negative vectors must return `401` with `WWW-Authenticate: Signature error="<code>"` matching the vector's `expected_outcome.error_code` byte-for-byte. | [§ signed-requests](#specialism-signed-requests) |
+| Specialism             | Status  | Delta from baseline                                                                                                                                                                                                                                                                                                                                         | See                                                        |
+| ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `sales-guaranteed`     | stable  | IO approval is **task-layer**, not MediaBuy-layer. Return a task envelope (MCP Tasks SDK) with `status: 'submitted'` + `task_id` + `message`. Do NOT return `media_buy_id` or `packages` yet — those land on the final artifact when the task completes. There is no `pending_approval` MediaBuy status.                                                    | [§ sales-guaranteed](#specialism-sales-guaranteed)         |
+| `sales-non-guaranteed` | stable  | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes                                                                                                                                                                                                                            | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
+| `sales-broadcast-tv`   | stable  | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery                                                                                                                                                                          | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv)     |
+| `sales-streaming-tv`   | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products                                                                                                                                                                                                                                                     | Baseline only                                              |
+| `sales-social`         | stable  | Walled-garden: no `get_products`/`create_media_buy`; implement `sync_audiences`, `log_event`, `get_account_financials` instead                                                                                                                                                                                                                              | [§ sales-social](#specialism-sales-social)                 |
+| `sales-exchange`       | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending                                                                                                                                                                                                                                                    | Baseline only                                              |
+| `sales-proposal-mode`  | stable  | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages`                                                                                                                                                                         | [§ sales-proposal-mode](#specialism-sales-proposal-mode)   |
+| `audience-sync`        | stable  | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response.                                                                                                                                                                 | [§ audience-sync](#specialism-audience-sync)               |
+| `signed-requests`      | preview | RFC 9421 HTTP Signature verification on mutating requests. Advertise `request_signing.supported: true` in capabilities; graded against conformance vectors — positive vectors must produce non-4xx; negative vectors must return `401` with `WWW-Authenticate: Signature error="<code>"` matching the vector's `expected_outcome.error_code` byte-for-byte. | [§ signed-requests](#specialism-signed-requests)           |
 
 **Not in this skill:** `sales-catalog-driven` and `sales-retail-media` (both in `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too, not only retail).
 
@@ -73,6 +73,7 @@ The rule applies to every observable channel: `error.code` / `message` / `field`
 `adcp fuzz` runs a paired-probe invariant that enforces this automatically. Pass two test tenants via `--auth-token` + `--auth-token-cross-tenant` for full coverage (see [VALIDATE-YOUR-AGENT.md § Uniform-error-response invariant](../../docs/guides/VALIDATE-YOUR-AGENT.md#uniform-error-response-invariant-paired-probe)). The invariant fails loudly with a byte-level diff pointing at the offending channel.
 
 <a name="composing-oauth-signing-and-idempotency"></a>
+
 ### Composing OAuth, signing, and idempotency
 
 Each concern above is straightforward in isolation. The pitfalls are at their boundaries. A production seller that claims both `sales-guaranteed` and `signed-requests` and sits behind OAuth wires them through `serve()`'s composition hooks — not external Express middleware.
@@ -134,20 +135,23 @@ serve(createAgent, {
       await verifyRequestSignature(
         { method: req.method!, url: req.url!, headers: req.headers, body: req.rawBody ?? '' },
         {
-          capability, jwks, replayStore, revocationStore,
-          operation: resolveOperation(req),   // your function: extract the AdCP operation name from the request
-        },
+          capability,
+          jwks,
+          replayStore,
+          revocationStore,
+          operation: resolveOperation(req), // your function: extract the AdCP operation name from the request
+        }
       );
     } catch (err) {
       if (err instanceof RequestSignatureError) {
         res.statusCode = 401;
         res.setHeader('WWW-Authenticate', `Signature error="${err.code}"`);
         res.end();
-        return true;  // handled
+        return true; // handled
       }
       throw err;
     }
-    return false;  // continue to MCP dispatch
+    return false; // continue to MCP dispatch
   },
 
   // 3. MCP transport parses JSON and dispatches to createAdcpServer.
@@ -161,13 +165,14 @@ serve(createAgent, {
 createAdcpServer({
   // ...
   // SessionKeyContext has no authInfo — use this for coarse per-account scoping:
-  resolveSessionKey: (ctx) => ctx.account?.id,
+  resolveSessionKey: ctx => ctx.account?.id,
 
   // HandlerContext has authInfo — use this when the idempotency namespace must
   // be scoped to the authenticated principal:
-  resolveIdempotencyPrincipal: (ctx) => {
+  resolveIdempotencyPrincipal: ctx => {
     const clientId = ctx.authInfo?.clientId;
-    if (!clientId) throw new Error('unauthenticated request reached idempotency scope — check authenticate is configured');
+    if (!clientId)
+      throw new Error('unauthenticated request reached idempotency scope — check authenticate is configured');
     // Multi-tenant AS: if the JWT carries a tenant claim, verifyBearer surfaces
     // it in ctx.authInfo.extra. Compose so sub collisions across tenants don't
     // share a replay namespace:
@@ -184,14 +189,17 @@ Composing the verified signing `keyid` in is possible but lives outside the hand
 ```typescript
 // Inside preTransport, after a RequestSignatureError is raised on an authenticated request:
 res.statusCode = 401;
-res.setHeader('WWW-Authenticate', [
-  // If the bearer also failed, the Bearer challenge would have been emitted by `authenticate`
-  // before preTransport ran — you only reach this branch on authenticated-but-bad-signature.
-  `Signature error="${err.code}"`,
-  // If you want to emit both (e.g., you implement your own authenticator that doesn't
-  // short-circuit on missing bearer), the Bearer challenge goes first:
-  // 'Bearer error="invalid_token", resource_metadata="https://seller.example.com/.well-known/oauth-protected-resource"',
-].join(', '));
+res.setHeader(
+  'WWW-Authenticate',
+  [
+    // If the bearer also failed, the Bearer challenge would have been emitted by `authenticate`
+    // before preTransport ran — you only reach this branch on authenticated-but-bad-signature.
+    `Signature error="${err.code}"`,
+    // If you want to emit both (e.g., you implement your own authenticator that doesn't
+    // short-circuit on missing bearer), the Bearer challenge goes first:
+    // 'Bearer error="invalid_token", resource_metadata="https://seller.example.com/.well-known/oauth-protected-resource"',
+  ].join(', ')
+);
 res.end();
 ```
 
@@ -207,13 +215,14 @@ This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` 
 
 **The three idempotency error codes the framework emits:**
 
-| Code | When | Buyer's next step |
-|---|---|---|
+| Code                                     | When                                                                    | Buyer's next step                                                                                  |
+| ---------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `SERVICE_UNAVAILABLE` (`retry_after: 1`) | Parallel call with the same key, still within the 120s in-flight window | Wait the `retry_after` seconds and retry — eventually replays the cached response or hits CONFLICT |
-| `IDEMPOTENCY_CONFLICT` | Same key, different payload hash | Don't retry — buyer has a client bug generating the same key for different requests |
-| `IDEMPOTENCY_EXPIRED` | Key replayed after the TTL (default 24h, configurable 1h–7d) | Mint a new key and retry |
+| `IDEMPOTENCY_CONFLICT`                   | Same key, different payload hash                                        | Don't retry — buyer has a client bug generating the same key for different requests                |
+| `IDEMPOTENCY_EXPIRED`                    | Key replayed after the TTL (default 24h, configurable 1h–7d)            | Mint a new key and retry                                                                           |
 
 <a name="webhooks-async-completion-signed-outbound"></a>
+
 ## Webhooks (async completion, signed outbound)
 
 Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Wire `createAdcpServer({ webhooks: { signerKey } })` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
@@ -225,41 +234,51 @@ import { createAdcpServer, serve } from '@adcp/client';
 // and publish the public half at your `jwks_uri` so buyers can verify without OOB exchange.
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 const { privateKey } = generateKeyPairSync('ed25519');
-const signerJwk = { ...privateKey.export({ format: 'jwk' }), kid: 'seller-webhook-kid-2026', alg: 'EdDSA', adcp_use: 'webhook-signing', key_ops: ['sign'] };
+const signerJwk = {
+  ...privateKey.export({ format: 'jwk' }),
+  kid: 'seller-webhook-kid-2026',
+  alg: 'EdDSA',
+  adcp_use: 'webhook-signing',
+  key_ops: ['sign'],
+};
 
-serve(() => createAdcpServer({
-  name: 'My Seller',
-  version: '1.0.0',
-  webhooks: {
-    signerKey: { keyid: signerJwk.kid, alg: 'ed25519', privateKey: signerJwk },
-    // Optional: retries, idempotencyKeyStore (swap memory → pg for multi-replica)
-  },
-  mediaBuy: {
-    createMediaBuy: async (params, ctx) => {
-      // sales-guaranteed: IO signing completes async. Emit the final result on completion.
-      const taskId = `task_${randomUUID()}`;
-
-      // Capture ctx.emitWebhook into a local BEFORE scheduling — the handler returns
-      // immediately, but the closure outlives the request; ctx may be recycled.
-      const emit = ctx.emitWebhook!;   // non-null: guaranteed populated when webhooks config is set
-
-      queueIoReview(params, async (outcome) => {
-        await emit({
-          url: (params as { push_notification_config?: { url: string } }).push_notification_config!.url,
-          payload: {
-            task: {
-              task_id: taskId,
-              status: outcome.approved ? 'completed' : 'rejected',
-              result: outcome.approved ? { media_buy_id: outcome.media_buy_id, packages: outcome.packages } : undefined,
-            },
-          },
-          operation_id: `create_media_buy.${taskId}`,   // stable across retries — framework reuses same idempotency_key
-        });
-      });
-      return { status: 'submitted', task_id: taskId };   // synchronous response is the task envelope
+serve(() =>
+  createAdcpServer({
+    name: 'My Seller',
+    version: '1.0.0',
+    webhooks: {
+      signerKey: { keyid: signerJwk.kid, alg: 'ed25519', privateKey: signerJwk },
+      // Optional: retries, idempotencyKeyStore (swap memory → pg for multi-replica)
     },
-  },
-}));
+    mediaBuy: {
+      createMediaBuy: async (params, ctx) => {
+        // sales-guaranteed: IO signing completes async. Emit the final result on completion.
+        const taskId = `task_${randomUUID()}`;
+
+        // Capture ctx.emitWebhook into a local BEFORE scheduling — the handler returns
+        // immediately, but the closure outlives the request; ctx may be recycled.
+        const emit = ctx.emitWebhook!; // non-null: guaranteed populated when webhooks config is set
+
+        queueIoReview(params, async outcome => {
+          await emit({
+            url: (params as { push_notification_config?: { url: string } }).push_notification_config!.url,
+            payload: {
+              task: {
+                task_id: taskId,
+                status: outcome.approved ? 'completed' : 'rejected',
+                result: outcome.approved
+                  ? { media_buy_id: outcome.media_buy_id, packages: outcome.packages }
+                  : undefined,
+              },
+            },
+            operation_id: `create_media_buy.${taskId}`, // stable across retries — framework reuses same idempotency_key
+          });
+        });
+        return { status: 'submitted', task_id: taskId }; // synchronous response is the task envelope
+      },
+    },
+  })
+);
 ```
 
 **`ctx.emitWebhook` is typed optional** (`emitWebhook?:`) even when you configure `webhooks` on the server. The framework populates it on every handler once `webhooks.signerKey` is set; use `ctx.emitWebhook!` or a local guard. Strict-mode assert-once-at-boot works too.
@@ -330,6 +349,8 @@ Non-guaranteed buys are always instant confirmation.
 - **None** — creative handled out-of-band. Omit creative tools.
 
 ## Tools and Required Response Shapes
+
+> **Canonical field contracts**: every tool's full request + response field list lives at [`docs/llms.txt`](../../docs/llms.txt) under a `#<tool_name>` anchor (e.g. [`#create_media_buy`](../../docs/llms.txt#create_media_buy)). Strict response validation (dev default) rejects drift with the exact field path. This skill covers handler patterns, gotchas, and domain-specific examples — not field-by-field contracts.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 
@@ -496,19 +517,19 @@ import { createComplyController } from '@adcp/client/testing';
 const controller = createComplyController({
   sandboxGate: input => input.auth?.sandbox === true,
   seed: {
-    product:  (params) => productRepo.upsert(params.product_id, params.fixture),
-    creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
-    plan:     (params) => planRepo.upsert(params.plan_id, params.fixture),
-    media_buy: (params) => mediaBuyRepo.upsert(params.media_buy_id, params.fixture),
+    product: params => productRepo.upsert(params.product_id, params.fixture),
+    creative: params => creativeRepo.upsert(params.creative_id, params.fixture),
+    plan: params => planRepo.upsert(params.plan_id, params.fixture),
+    media_buy: params => mediaBuyRepo.upsert(params.media_buy_id, params.fixture),
   },
   force: {
-    creative_status:  (params) => creativeRepo.transition(params.creative_id, params.status),
-    media_buy_status: (params) => mediaBuyRepo.transition(params.media_buy_id, params.status),
-    account_status:   (params) => accountRepo.setStatus(params.account_id, params.status),
+    creative_status: params => creativeRepo.transition(params.creative_id, params.status),
+    media_buy_status: params => mediaBuyRepo.transition(params.media_buy_id, params.status),
+    account_status: params => accountRepo.setStatus(params.account_id, params.status),
   },
   simulate: {
-    delivery:     (params) => deliveryRepo.simulate(params),
-    budget_spend: (params) => budgetRepo.spendPercentage(params),
+    delivery: params => deliveryRepo.simulate(params),
+    budget_spend: params => budgetRepo.spendPercentage(params),
   },
 });
 
@@ -600,7 +621,6 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 For production test controllers with persisted-session state (Postgres/Redis/JSONB), the per-session factory shape, `enforceMapCap` for bounded session maps, and custom MCP wrappers with `AsyncLocalStorage` or sandbox gating — see [`docs/guides/BUILD-AN-AGENT.md`](../../docs/guides/BUILD-AN-AGENT.md) § createTaskCapableServer.
 
 Key SDK pieces you'll import from `@adcp/client`: `CONTROLLER_SCENARIOS`, `enforceMapCap`, `SESSION_ENTRY_CAP`, `handleTestControllerRequest`, `toMcpResponse`, `TOOL_INPUT_SHAPE`.
-
 
 ## SDK Quick Reference
 
@@ -747,7 +767,8 @@ function createAgent({ taskStore }: ServeContext) {
         // Flatten to top-level fields at create time — storing only `packages[].budget`
         // and reconstructing later fails schema validation in get_media_buys/update_media_buy.
         const currency = params.total_budget?.currency ?? 'USD';
-        const totalBudget = params.total_budget?.amount ?? (params.packages ?? []).reduce((a, p) => a + (p.budget ?? 0), 0);
+        const totalBudget =
+          params.total_budget?.amount ?? (params.packages ?? []).reduce((a, p) => a + (p.budget ?? 0), 0);
         const buy = {
           media_buy_id: `mb_${randomUUID()}`,
           status: 'pending_creatives' as const,
@@ -862,66 +883,63 @@ import {
 import { taskToolResponse, type AdcpStateStore } from '@adcp/client/server';
 import { randomUUID } from 'node:crypto';
 
-serve(() => createAdcpServer({
-  name: 'Regulated Publisher',
-  version: '1.0.0',
-  resolveAccount: async ref => db.findAccount(ref),
-  mediaBuy: {
-    createMediaBuy: async (params, ctx) => {
-      if (!ctx.account) {
-        return adcpError('ACCOUNT_NOT_FOUND', { field: 'account' });
-      }
-      const plan = await ctx.store.get('governance_plans', params.plan_id ?? '');
-      if (!plan) return adcpError('PLAN_NOT_FOUND', { field: 'plan_id' });
+serve(() =>
+  createAdcpServer({
+    name: 'Regulated Publisher',
+    version: '1.0.0',
+    resolveAccount: async ref => db.findAccount(ref),
+    mediaBuy: {
+      createMediaBuy: async (params, ctx) => {
+        if (!ctx.account) {
+          return adcpError('ACCOUNT_NOT_FOUND', { field: 'account' });
+        }
+        const plan = await ctx.store.get('governance_plans', params.plan_id ?? '');
+        if (!plan) return adcpError('PLAN_NOT_FOUND', { field: 'plan_id' });
 
-      // Human-review gate — GDPR Art 22 / EU AI Act Annex III.
-      if (plan.human_review_required === true) {
-        const taskId = `task_${randomUUID()}`;
-        await ctx.store.put('pending_reviews', taskId, {
-          plan_id: params.plan_id,
-          params,
-          enqueued_at: new Date().toISOString(),
-          account_id: ctx.account.id,
-          // Buyer's webhook target for async completion, if they supplied one.
-          webhook_url: params.push_notification_config?.url,
-        });
-        // Route this task_id to your human-review queue (Slack approval,
-        // ops ticket, internal UI — whatever your reviewers use).
-        await humanReviewQueue.enqueue(taskId);
-        // Submitted envelope per CreateMediaBuySubmitted. Do NOT return a
-        // populated MediaBuy here — media_buy_id and packages land on the
-        // completion artifact once a human approves. taskToolResponse bypasses
-        // the default mediaBuyResponse wrap, which would stamp revision /
-        // confirmed_at / valid_actions — fields that don't belong on a task
-        // envelope.
-        return taskToolResponse({ status: 'submitted', task_id: taskId });
-      }
+        // Human-review gate — GDPR Art 22 / EU AI Act Annex III.
+        if (plan.human_review_required === true) {
+          const taskId = `task_${randomUUID()}`;
+          await ctx.store.put('pending_reviews', taskId, {
+            plan_id: params.plan_id,
+            params,
+            enqueued_at: new Date().toISOString(),
+            account_id: ctx.account.id,
+            // Buyer's webhook target for async completion, if they supplied one.
+            webhook_url: params.push_notification_config?.url,
+          });
+          // Route this task_id to your human-review queue (Slack approval,
+          // ops ticket, internal UI — whatever your reviewers use).
+          await humanReviewQueue.enqueue(taskId);
+          // Submitted envelope per CreateMediaBuySubmitted. Do NOT return a
+          // populated MediaBuy here — media_buy_id and packages land on the
+          // completion artifact once a human approves. taskToolResponse bypasses
+          // the default mediaBuyResponse wrap, which would stamp revision /
+          // confirmed_at / valid_actions — fields that don't belong on a task
+          // envelope.
+          return taskToolResponse({ status: 'submitted', task_id: taskId });
+        }
 
-      // Non-regulated path — normal governance check, commit synchronously.
-      if (ctx.account.governanceUrl) {
-        const gov = await checkGovernance({
-          agentUrl: ctx.account.governanceUrl,
-          planId: params.plan_id ?? 'default',
-          caller: 'https://my-publisher.com/mcp',
-          tool: 'create_media_buy',
-          payload: params,
-        });
-        if (!gov.approved) return governanceDeniedError(gov);
-      }
-      return executeBuy(params, ctx.store);
+        // Non-regulated path — normal governance check, commit synchronously.
+        if (ctx.account.governanceUrl) {
+          const gov = await checkGovernance({
+            agentUrl: ctx.account.governanceUrl,
+            planId: params.plan_id ?? 'default',
+            caller: 'https://my-publisher.com/mcp',
+            tool: 'create_media_buy',
+            payload: params,
+          });
+          if (!gov.approved) return governanceDeniedError(gov);
+        }
+        return executeBuy(params, ctx.store);
+      },
     },
-  },
-}));
+  })
+);
 
 // Called by the human-review UI when a reviewer signs off. Lives outside any
 // request handler, so it takes its own AdcpStateStore — the same instance you
 // passed to createAdcpServer via `stateStore`. No ctx in scope here.
-async function onHumanApproval(
-  store: AdcpStateStore,
-  taskId: string,
-  approver: string,
-  reason: string
-): Promise<void> {
+async function onHumanApproval(store: AdcpStateStore, taskId: string, approver: string, reason: string): Promise<void> {
   const pending = await store.get('pending_reviews', taskId);
   if (!pending) throw new Error(`No pending review with id ${taskId}`);
 
@@ -956,12 +974,12 @@ async function onHumanApproval(
 
 ### Decision table
 
-| Plan shape                                                                  | `human_review_required` | Who approves         | Artifact required                           |
-| --------------------------------------------------------------------------- | ----------------------- | -------------------- | ------------------------------------------- |
-| General consumer CPG, travel, retail                                        | `false` (or absent)     | Automated governance | `governance_context` echoed through lifecycle |
-| Employment, credit, housing, insurance, education (Annex III high-risk)     | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
-| Fair-housing, fair-lending, fair-employment, pharmaceutical (US regulated)  | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
-| Explicit `policy_ids: ['eu_ai_act_annex_iii']`                              | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
+| Plan shape                                                                 | `human_review_required` | Who approves         | Artifact required                               |
+| -------------------------------------------------------------------------- | ----------------------- | -------------------- | ----------------------------------------------- |
+| General consumer CPG, travel, retail                                       | `false` (or absent)     | Automated governance | `governance_context` echoed through lifecycle   |
+| Employment, credit, housing, insurance, education (Annex III high-risk)    | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
+| Fair-housing, fair-lending, fair-employment, pharmaceutical (US regulated) | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
+| Explicit `policy_ids: ['eu_ai_act_annex_iii']`                             | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
 
 `REGULATED_HUMAN_REVIEW_CATEGORIES` (exported from `@adcp/client`) is the client-side minimum: `['fair_housing', 'fair_lending', 'fair_employment', 'pharmaceutical_advertising']`. `ANNEX_III_POLICY_IDS` is `['eu_ai_act_annex_iii']`. Governance agents resolve synonyms and per-publisher extensions server-side; these constants exist so pre-submit validation doesn't round-trip. Extend with your own vertical list if needed.
 
@@ -972,6 +990,7 @@ async function onHumanApproval(
 - Thread `governance_context` through `create_media_buy` → `update_media_buy` → delivery / lifecycle events. Dropping it breaks the audit chain — downstream governance checks need the opaque token to reconcile decisions.
 
 <a name="idempotency"></a>
+
 ## Idempotency
 
 AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, that's `create_media_buy`, `update_media_buy`, `sync_creatives`, and any `sync_*` tools you implement. Idempotency is wired in the Implementation example above — this section explains what the framework does for you and the subtleties to know.
@@ -1018,6 +1037,7 @@ The quick-start uses `memoryBackend()` + `InMemoryStateStore` — both reset on 
 Auth is not wired in the example — see [§ Protecting your agent](#protecting-your-agent) below.
 
 <a name="protecting-your-agent"></a>
+
 ## Protecting your agent
 
 **An AdCP agent that accepts unauthenticated requests is non-compliant.** The compliance runner enforces this via the `security_baseline` storyboard (every agent regardless of specialism). You MUST pick at least one of:
@@ -1156,35 +1176,35 @@ Common failure decoder:
 
 ## Common Mistakes
 
-| Mistake                                                    | Fix                                                                                                                                                                              |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServer` — handles schemas, response builders, capabilities                                                                                                        |
-| Using module-level Maps for state                          | Use `ctx.store` — persists across HTTP requests, swappable for postgres                                                                                                          |
-| Return raw JSON without response builders                  | `createAdcpServer` auto-applies response builders — just return the data                                                                                                         |
-| Missing `brand`/`operator` in sync_accounts response       | Echo them back from the request — they're required                                                                                                                               |
-| sync_governance returns wrong shape                        | Must include `status: 'synced'` and `governance_agents` array                                                                                                                    |
-| `sandbox: false` on mock data                              | Buyers may treat mock data as real                                                                                                                                               |
-| Returns raw JSON for validation failures                   | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure                                                                                |
-| IO-signing setup URL at top level of media buy response    | Nest it in `account.setup`: `{ account: { setup: { url, message } } }`. Response builders reject a top-level `setup` at runtime.                                                 |
+| Mistake                                                    | Fix                                                                                                                                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServer` — handles schemas, response builders, capabilities                                                                                                             |
+| Using module-level Maps for state                          | Use `ctx.store` — persists across HTTP requests, swappable for postgres                                                                                                               |
+| Return raw JSON without response builders                  | `createAdcpServer` auto-applies response builders — just return the data                                                                                                              |
+| Missing `brand`/`operator` in sync_accounts response       | Echo them back from the request — they're required                                                                                                                                    |
+| sync_governance returns wrong shape                        | Must include `status: 'synced'` and `governance_agents` array                                                                                                                         |
+| `sandbox: false` on mock data                              | Buyers may treat mock data as real                                                                                                                                                    |
+| Returns raw JSON for validation failures                   | Use `adcpError('INVALID_REQUEST', { message })` — storyboards validate the `adcp_error` structure                                                                                     |
+| IO-signing setup URL at top level of media buy response    | Nest it in `account.setup`: `{ account: { setup: { url, message } } }`. Response builders reject a top-level `setup` at runtime.                                                      |
 | Bypassing response builders and forgetting `valid_actions` | `mediaBuyResponse` and `updateMediaBuyResponse` auto-populate `valid_actions` from `status` — use them. For `get_media_buys`, populate each buy with `validActionsForStatus(status)`. |
-| Missing `publisher_properties` or `format_ids` on Product  | Both are required — see product example in `get_products` section                                                                                                                |
-| format_ids in products don't match list_creative_formats   | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements                         |
-| Missing `@types/node` in devDependencies                   | `process.env` doesn't resolve without it — see Setup section                                                                                                                     |
-| Dropping `context` from responses                          | Echo `args.context` back unchanged in every response — buyers use it for correlation                                                                                             |
-| `channels` typed as `string[]` instead of `MediaChannel[]` | Use `as const` on channel arrays: `channels: ['display', 'olv'] as const`. TypeScript infers `string[]` from array literals, but the SDK requires the `MediaChannel` union type. |
+| Missing `publisher_properties` or `format_ids` on Product  | Both are required — see product example in `get_products` section                                                                                                                     |
+| format_ids in products don't match list_creative_formats   | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements                              |
+| Missing `@types/node` in devDependencies                   | `process.env` doesn't resolve without it — see Setup section                                                                                                                          |
+| Dropping `context` from responses                          | Echo `args.context` back unchanged in every response — buyers use it for correlation                                                                                                  |
+| `channels` typed as `string[]` instead of `MediaChannel[]` | Use `as const` on channel arrays: `channels: ['display', 'olv'] as const`. TypeScript infers `string[]` from array literals, but the SDK requires the `MediaChannel` union type.      |
 
 ### Translating storyboard runner output
 
 When `adcp storyboard run <url> <storyboard> --json` reports a failure, the `details` / `error` strings fall into these categories:
 
-| Storyboard signal                                   | What it means                                                               | Fix                                                                                                       |
-| --------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `✗ Response matches <tool>-response.json schema`    | Your return shape doesn't match the spec response schema                    | Return fields the schema requires; don't add top-level fields the schema rejects                          |
-| `✗ field_present` (path: …)                         | Required field missing or at the wrong path                                 | Check the spec's `*-response.json` for the field; common miss: `context.correlation_id` not echoed back   |
-| `✗ field_value` expected X got Y                    | Value mismatch on a specific path                                           | Most often `context.correlation_id` drift or a status enum value that's stale                             |
-| `mcp_error -32602: Input validation error`          | SDK Zod schema rejected the **incoming** request — your handler never ran   | Drift between the SDK schema and the storyboard yaml. File upstream if the storyboard is authoritative    |
-| `Agent did not advertise tool "X"` (as a warning)   | Storyboard expects a tool you haven't registered                            | Register the tool; if it lives in another agent (e.g., governance tools from a seller), ignore the warning |
-| Missing `idempotency_key` → handler never runs      | Mutating request without an idempotency key                                 | SDK rejects at the idempotency layer. File runner bug if the storyboard yaml's `sample_request` omits it  |
+| Storyboard signal                                 | What it means                                                             | Fix                                                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `✗ Response matches <tool>-response.json schema`  | Your return shape doesn't match the spec response schema                  | Return fields the schema requires; don't add top-level fields the schema rejects                           |
+| `✗ field_present` (path: …)                       | Required field missing or at the wrong path                               | Check the spec's `*-response.json` for the field; common miss: `context.correlation_id` not echoed back    |
+| `✗ field_value` expected X got Y                  | Value mismatch on a specific path                                         | Most often `context.correlation_id` drift or a status enum value that's stale                              |
+| `mcp_error -32602: Input validation error`        | SDK Zod schema rejected the **incoming** request — your handler never ran | Drift between the SDK schema and the storyboard yaml. File upstream if the storyboard is authoritative     |
+| `Agent did not advertise tool "X"` (as a warning) | Storyboard expects a tool you haven't registered                          | Register the tool; if it lives in another agent (e.g., governance tools from a seller), ignore the warning |
+| Missing `idempotency_key` → handler never runs    | Mutating request without an idempotency key                               | SDK rejects at the idempotency layer. File runner bug if the storyboard yaml's `sample_request` omits it   |
 
 ## Specialism Details
 
@@ -1192,11 +1212,11 @@ When `adcp storyboard run <url> <storyboard> --json` reports a failure, the `det
 
 Storyboard: `sales_guaranteed`. `create_media_buy` has **three return shapes**. Route on request signals FIRST — the specialism's name is about IO signing, but the baseline `media_buy_seller` storyboard exercises all three in sequence.
 
-| Request signal | Return | Why |
-|---|---|---|
-| IO signing required before the MediaBuy exists | **Task envelope**: `{ status: 'submitted', task_id, message? }` — NO `media_buy_id`, NO `packages` | The MediaBuy doesn't exist yet; humans must sign first. |
-| Packages have no `creative_assignments` (creatives to come) | **MediaBuy**: `{ status: 'pending_creatives', media_buy_id, packages, valid_actions: ['sync_creatives'] }` | The MediaBuy exists and is reserved; it just can't serve until creatives arrive. Respond synchronously. |
-| Packages include `creative_assignments` AND buy is instant-confirmable | **MediaBuy**: `{ status: 'active', media_buy_id, packages, confirmed_at, valid_actions: ['get_delivery','pause',...] }` | Fully materialized. |
+| Request signal                                                         | Return                                                                                                                  | Why                                                                                                     |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| IO signing required before the MediaBuy exists                         | **Task envelope**: `{ status: 'submitted', task_id, message? }` — NO `media_buy_id`, NO `packages`                      | The MediaBuy doesn't exist yet; humans must sign first.                                                 |
+| Packages have no `creative_assignments` (creatives to come)            | **MediaBuy**: `{ status: 'pending_creatives', media_buy_id, packages, valid_actions: ['sync_creatives'] }`              | The MediaBuy exists and is reserved; it just can't serve until creatives arrive. Respond synchronously. |
+| Packages include `creative_assignments` AND buy is instant-confirmable | **MediaBuy**: `{ status: 'active', media_buy_id, packages, confirmed_at, valid_actions: ['get_delivery','pause',...] }` | Fully materialized.                                                                                     |
 
 **Default routing logic:**
 
@@ -1242,7 +1262,7 @@ import { taskToolResponse } from '@adcp/client/server';
 
 return taskToolResponse(
   { status: 'submitted', task_id: taskId, message: 'Awaiting IO signature; typical turnaround 2-4 hours' },
-  'IO signature pending',
+  'IO signature pending'
 );
 ```
 
@@ -1308,16 +1328,18 @@ Storyboard: `media_buy_broadcast_seller`. Broadcast has four protocol surfaces n
 **Measurement terms** — per-package on the request:
 
 ```typescript
-packages: [{
-  product_id: 'primetime_30s_mf',
-  measurement_terms: {
-    billing_measurement: {
-      vendor: { domain: 'videoamp.com' },
-      measurement_window: 'c7',
-      max_variance_percent: 10,
+packages: [
+  {
+    product_id: 'primetime_30s_mf',
+    measurement_terms: {
+      billing_measurement: {
+        vendor: { domain: 'videoamp.com' },
+        measurement_window: 'c7',
+        max_variance_percent: 10,
+      },
     },
   },
-}]
+];
 ```
 
 Echo `measurement_terms` on the response's package entries — the buyer uses `c7` as the guarantee basis for reconciliation.
@@ -1378,18 +1400,20 @@ Storyboard: `media_buy_proposal_mode`. The acceptance path inverts the baseline 
 ```typescript
 return {
   products: PRODUCTS,
-  proposals: [{
-    proposal_id: 'balanced_reach_q2',
-    name: 'Balanced Reach Plan',
-    rationale: 'CTV for premium reach, OLV for sports frequency, display for always-on context.',
-    total_budget: { amount: 50000, currency: 'USD' },
-    budget_allocations: [
-      { product_id: 'ctv_outdoor_lifestyle', pricing_option_id: 'ctv_cpm', amount: 25000, currency: 'USD' },
-      { product_id: 'olv_sports', pricing_option_id: 'olv_cpm', amount: 15000, currency: 'USD' },
-      { product_id: 'display_endemic', pricing_option_id: 'display_cpm', amount: 10000, currency: 'USD' },
-    ],
-    forecast: { impressions: 3_500_000, reach: 1_200_000, frequency: 2.9 },
-  }],
+  proposals: [
+    {
+      proposal_id: 'balanced_reach_q2',
+      name: 'Balanced Reach Plan',
+      rationale: 'CTV for premium reach, OLV for sports frequency, display for always-on context.',
+      total_budget: { amount: 50000, currency: 'USD' },
+      budget_allocations: [
+        { product_id: 'ctv_outdoor_lifestyle', pricing_option_id: 'ctv_cpm', amount: 25000, currency: 'USD' },
+        { product_id: 'olv_sports', pricing_option_id: 'olv_cpm', amount: 15000, currency: 'USD' },
+        { product_id: 'display_endemic', pricing_option_id: 'display_cpm', amount: 10000, currency: 'USD' },
+      ],
+      forecast: { impressions: 3_500_000, reach: 1_200_000, frequency: 2.9 },
+    },
+  ],
   sandbox: true,
 };
 ```
@@ -1520,11 +1544,7 @@ createAdcpServer({
 ```
 
 ```typescript
-import {
-  InMemoryRevocationStore,
-  StaticJwksResolver,
-  type VerifierCapability,
-} from '@adcp/client/signing/server';
+import { InMemoryRevocationStore, StaticJwksResolver, type VerifierCapability } from '@adcp/client/signing/server';
 
 // Policy that ships in your get_adcp_capabilities response under capabilities.request_signing:
 const capability: VerifierCapability = {
@@ -1536,9 +1556,9 @@ const capability: VerifierCapability = {
 
 // JWKS takes an array of JWKs; each must carry its own `kid`:
 const jwks = new StaticJwksResolver([
-  { kid: 'test-ed25519-2026', kty: 'OKP', crv: 'Ed25519', /* x from test-vectors/request-signing/keys.json */ },
-  { kid: 'test-es256-2026',   kty: 'EC', crv: 'P-256',    /* x, y */ },
-  { kid: 'test-revoked-2026', kty: 'OKP', crv: 'Ed25519', /* x — present so parsing succeeds, revoked below */ },
+  { kid: 'test-ed25519-2026', kty: 'OKP', crv: 'Ed25519' /* x from test-vectors/request-signing/keys.json */ },
+  { kid: 'test-es256-2026', kty: 'EC', crv: 'P-256' /* x, y */ },
+  { kid: 'test-revoked-2026', kty: 'OKP', crv: 'Ed25519' /* x — present so parsing succeeds, revoked below */ },
 ]);
 
 // Vector 017 requires `test-revoked-2026` to be pre-revoked before the runner sends its signed request.

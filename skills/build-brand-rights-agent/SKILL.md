@@ -84,6 +84,8 @@ Upstream tracking for the two schema gaps: https://github.com/adcontextprotocol/
 
 ## Tools and Required Response Shapes
 
+> **Canonical field contracts**: every tool's full request + response field list lives at [`docs/llms.txt`](../../docs/llms.txt) under a `#<tool_name>` anchor (e.g. [`#acquire_rights`](../../docs/llms.txt#acquire_rights)). Strict response validation (dev default) rejects drift with the exact field path. This skill covers handler patterns, gotchas, and domain-specific examples — not field-by-field contracts.
+
 **`get_brand_identity`** — returns brand identity matching `brand/get-brand-identity-response.json`
 
 Required: `brand_id`, `house`, `names` (array of locale-keyed objects).

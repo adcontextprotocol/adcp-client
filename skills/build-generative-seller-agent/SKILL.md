@@ -27,11 +27,11 @@ A generative seller that sells programmatic inventory MUST also accept standard 
 
 A generative seller inherits every sales specialism it supports (usually `sales-non-guaranteed`, optionally `sales-catalog-driven`) **plus** `creative-generative`. Declare all three in your `get_adcp_capabilities` response so buyers can filter correctly.
 
-| Specialism | Status | Delta |
-|---|---|---|
-| `creative-generative` | stable | Generate creatives from `message` + `brand.domain`; honor `quality: draft\|production`; support refinement. See the `build-creative-agent` skill's `§ creative-generative` section for the full `build_creative` contract. |
-| `sales-non-guaranteed` | stable | Standard seller baseline with `bid_price` and `update_media_buy`. See `build-seller-agent` `§ sales-non-guaranteed`. |
-| `sales-catalog-driven` | stable (optional) | If you ingest catalogs for dynamic creative generation, see `build-retail-media-agent`. |
+| Specialism             | Status            | Delta                                                                                                                                                                                                                      |
+| ---------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `creative-generative`  | stable            | Generate creatives from `message` + `brand.domain`; honor `quality: draft\|production`; support refinement. See the `build-creative-agent` skill's `§ creative-generative` section for the full `build_creative` contract. |
+| `sales-non-guaranteed` | stable            | Standard seller baseline with `bid_price` and `update_media_buy`. See `build-seller-agent` `§ sales-non-guaranteed`.                                                                                                       |
+| `sales-catalog-driven` | stable (optional) | If you ingest catalogs for dynamic creative generation, see `build-retail-media-agent`.                                                                                                                                    |
 
 ## Protocol-Wide Requirements
 
@@ -77,6 +77,8 @@ The buyer's brand domain should be resolvable. If the brand domain is invalid, r
 Brands should be registered dynamically through `sync_accounts` — when a buyer syncs an account with a `brand.domain`, treat that domain as resolvable. Do not hardcode a brand allowlist. Storyboards use fictional brand domains with the `.example` TLD (e.g., `acmeoutdoor.example`) from `storyboards/fictional-entities.yaml`, so a hardcoded list will fail validation.
 
 ## Tools and Required Response Shapes
+
+> **Canonical field contracts**: every tool's full request + response field list lives at [`docs/llms.txt`](../../docs/llms.txt) under a `#<tool_name>` anchor (e.g. [`#build_creative`](../../docs/llms.txt#build_creative)). Strict response validation (dev default) rejects drift with the exact field path. This skill covers handler patterns, gotchas, and domain-specific examples — not field-by-field contracts.
 
 Everything from the standard seller skill applies. The delta is in `list_creative_formats` and `sync_creatives`.
 
@@ -261,13 +263,13 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 ## SDK Quick Reference
 
-| SDK piece                                               | Usage                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------- |
-| `createAdcpServer(config)`                              | Create server with domain-grouped handlers, auto-generated capabilities |
-| `serve(() => createAdcpServer(config))`                 | Start HTTP server on `:3001/mcp`                                    |
-| `ctx.store`                                             | State persistence — `get/put/patch/delete/list` domain objects      |
-| `adcpError(code, { message })`                          | Structured error                                                    |
-| `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |
+| SDK piece                               | Usage                                                                   |
+| --------------------------------------- | ----------------------------------------------------------------------- |
+| `createAdcpServer(config)`              | Create server with domain-grouped handlers, auto-generated capabilities |
+| `serve(() => createAdcpServer(config))` | Start HTTP server on `:3001/mcp`                                        |
+| `ctx.store`                             | State persistence — `get/put/patch/delete/list` domain objects          |
+| `adcpError(code, { message })`          | Structured error                                                        |
+| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing                  |
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `syncCreativesResponse`, etc.) are auto-applied by the framework. Handlers return raw data objects — the framework wraps them.
 
@@ -320,54 +322,57 @@ import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 // non-deterministic, so caching successful responses per key is critical:
 // a buyer retry must replay the same ad, not re-burn model tokens.
 const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),         // pgBackend(pool) for production
-  ttlSeconds: 86400,                // 24 hours (spec bounds: 1h–7d)
+  backend: memoryBackend(), // pgBackend(pool) for production
+  ttlSeconds: 86400, // 24 hours (spec bounds: 1h–7d)
 });
 
-serve(() => createAdcpServer({
-  name: 'My Generative Seller',
-  version: '1.0.0',
-  idempotency,
+serve(() =>
+  createAdcpServer({
+    name: 'My Generative Seller',
+    version: '1.0.0',
+    idempotency,
 
-  // Principal scoping. MUST never return undefined — or every mutating
-  // request rejects as SERVICE_UNAVAILABLE.
-  resolveSessionKey: () => 'default-principal',
+    // Principal scoping. MUST never return undefined — or every mutating
+    // request rejects as SERVICE_UNAVAILABLE.
+    resolveSessionKey: () => 'default-principal',
 
-  mediaBuy: {
-    getProducts: async (params, ctx) => ({ products: PRODUCTS, sandbox: true }),
-    createMediaBuy: async (params, ctx) => {
-      const buy = {
-        media_buy_id: `mb_${randomUUID()}`,
-        status: 'pending_creatives' as const,
-        packages: params.packages?.map(p => ({
-          package_id: `pkg_${randomUUID()}`,
-          product_id: p.product_id,
-          pricing_option_id: p.pricing_option_id,
-          budget: p.budget,
-        })) ?? [],
-      };
-      await ctx.store.put('media_buys', buy.media_buy_id, buy);
-      return buy;
+    mediaBuy: {
+      getProducts: async (params, ctx) => ({ products: PRODUCTS, sandbox: true }),
+      createMediaBuy: async (params, ctx) => {
+        const buy = {
+          media_buy_id: `mb_${randomUUID()}`,
+          status: 'pending_creatives' as const,
+          packages:
+            params.packages?.map(p => ({
+              package_id: `pkg_${randomUUID()}`,
+              product_id: p.product_id,
+              pricing_option_id: p.pricing_option_id,
+              budget: p.budget,
+            })) ?? [],
+        };
+        await ctx.store.put('media_buys', buy.media_buy_id, buy);
+        return buy;
+      },
+      // ... updateMediaBuy, getMediaBuys, getMediaBuyDelivery
     },
-    // ... updateMediaBuy, getMediaBuys, getMediaBuyDelivery
-  },
 
-  creative: {
-    listCreativeFormats: async () => ({ formats: FORMATS }),
-    syncCreatives: async (params, ctx) => {
-      // Generative formats take a `brief`; standard formats carry assets.
-      // Check the format_id to decide processing. Framework idempotency
-      // ensures a retry of the same (key, payload) replays the prior
-      // response instead of re-running generation.
-      const results = params.creatives.map(c => ({
-        creative_id: c.creative_id ?? `cr_${randomUUID()}`,
-        action: 'created' as const,
-      }));
-      return { creatives: results };
+    creative: {
+      listCreativeFormats: async () => ({ formats: FORMATS }),
+      syncCreatives: async (params, ctx) => {
+        // Generative formats take a `brief`; standard formats carry assets.
+        // Check the format_id to decide processing. Framework idempotency
+        // ensures a retry of the same (key, payload) replays the prior
+        // response instead of re-running generation.
+        const results = params.creatives.map(c => ({
+          creative_id: c.creative_id ?? `cr_${randomUUID()}`,
+          action: 'created' as const,
+        }));
+        return { creatives: results };
+      },
+      // ... buildCreative, listCreatives, getCreativeDelivery
     },
-    // ... buildCreative, listCreatives, getCreativeDelivery
-  },
-}));
+  })
+);
 ```
 
 The skill contains everything you need. Do not read additional docs before writing code.
@@ -405,7 +410,7 @@ import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
   authenticate: verifyApiKey({
-    verify: async (token) => {
+    verify: async token => {
       const row = await db.api_keys.findUnique({ where: { token } });
       return row ? { principal: row.account_id } : null;
     },
@@ -432,8 +437,7 @@ serve(createAgent, {
 });
 ```
 
-The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS*/EdDSA) to prevent algorithm-confusion attacks.
-
+The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on failure, and serves `/.well-known/oauth-protected-resource<mountPath>` with `publicUrl` as the `resource` field so buyers get tokens bound to the right audience. The default JWT allowlist is asymmetric-only (RS*/ES*/PS\*/EdDSA) to prevent algorithm-confusion attacks.
 
 ## Validate Locally
 
@@ -458,6 +462,7 @@ npx @adcp/client fuzz http://localhost:3001/mcp \
 ```
 
 Common failure decoder:
+
 - `response_schema` → response doesn't match Zod schema
 - `field_present` → required field missing (often `creative_manifest` on generated output)
 - `mcp_error` → check tool registration; generative formats must be in `list_creative_formats`
@@ -466,16 +471,16 @@ Common failure decoder:
 
 ## Common Mistakes
 
-| Mistake                                       | Fix                                                   |
-| --------------------------------------------- | ----------------------------------------------------- |
-| Only generative formats, no standard IAB      | Programmatic sellers must accept pre-built assets too |
-| Ignore brand domain on brief sync             | Validate brand, reject if unresolvable                |
-| Same handler for brief and standard creatives | Check format_id to decide processing path             |
-| format_ids in products don't match list_creative_formats  | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements |
-| Manually registering `get_adcp_capabilities`  | Auto-generated by `createAdcpServer` — do not register it |
-| Using `server.tool()` instead of domain groups | Use `createAdcpServer({ mediaBuy: {...}, creative: {...} })` |
-| `sandbox: false` on mock data                 | Buyers may treat mock data as real                    |
-| Dropping `context` from responses              | Echo `args.context` back unchanged in every response — buyers use it for correlation |
+| Mistake                                                  | Fix                                                                                                                                                      |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Only generative formats, no standard IAB                 | Programmatic sellers must accept pre-built assets too                                                                                                    |
+| Ignore brand domain on brief sync                        | Validate brand, reject if unresolvable                                                                                                                   |
+| Same handler for brief and standard creatives            | Check format_id to decide processing path                                                                                                                |
+| format_ids in products don't match list_creative_formats | Buyers echo format_ids from products into sync_creatives — if your validation rejects your own format_ids, the buyer can't fulfill creative requirements |
+| Manually registering `get_adcp_capabilities`             | Auto-generated by `createAdcpServer` — do not register it                                                                                                |
+| Using `server.tool()` instead of domain groups           | Use `createAdcpServer({ mediaBuy: {...}, creative: {...} })`                                                                                             |
+| `sandbox: false` on mock data                            | Buyers may treat mock data as real                                                                                                                       |
+| Dropping `context` from responses                        | Echo `args.context` back unchanged in every response — buyers use it for correlation                                                                     |
 
 ## Reference
 

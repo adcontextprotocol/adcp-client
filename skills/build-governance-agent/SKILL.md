@@ -74,6 +74,8 @@ For campaign governance, how should the agent decide?
 
 ## Tools and Required Response Shapes
 
+> **Canonical field contracts**: every tool's full request + response field list lives at [`docs/llms.txt`](../../docs/llms.txt) under a `#<tool_name>` anchor (e.g. [`#check_governance`](../../docs/llms.txt#check_governance)). Strict response validation (dev default) rejects drift with the exact field path. This skill covers handler patterns, gotchas, and domain-specific examples — not field-by-field contracts.
+
 ### Campaign Governance
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
