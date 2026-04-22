@@ -115,10 +115,35 @@ Your agent's `verifyBearer({ jwksUri })` can then verify fixture-minted tokens w
 
 Use capability-based resolution in CI — it mirrors what the live runner does against your production agent, so a pass locally means a pass against AdCP Verified.
 
+## Per-storyboard overrides
+
+Most runs want one agent URL and one `runStoryboardOptions` for every storyboard. Two cases need to vary per storyboard:
+
+- One storyboard targets a different route than the rest — the canonical example is `signed_requests` hitting a stricter `/mcp-strict` mount while everything else stays on `/mcp`.
+- Different storyboards declare different `test_kit` or brand (a test-kit YAML file carries the brand domain the runner stamps on the request).
+
+Supply `resolvePerStoryboard`:
+
+```ts
+const result = await runAgainstLocalAgent({
+  createAgent: () => createAdcpServer({ ..., stateStore }),
+  resolvePerStoryboard: (sb, defaultAgentUrl) => {
+    if (sb.id === 'signed_requests') {
+      return { agentUrl: defaultAgentUrl.replace(/\/mcp$/, '/mcp-strict') };
+    }
+    const kit = loadTestKit(sb); // your YAML loader
+    if (!kit) return undefined;
+    return { brand: brandFromKit(kit), test_kit: testKitFromKit(kit) };
+  },
+});
+```
+
+Return `undefined` to keep the defaults. `agentUrl` replaces the default; every other field is shallow-merged on top of the run-level `runStoryboardOptions`. `webhook_receiver` is helper-owned — the top-level `webhookReceiver` option still wins. The callback may be async if you need to load YAML or mint a scoped token per storyboard.
+
 ## What this doesn't do
 
 - **Start tunnels.** For grading a remote agent from your laptop, use the CLI with `--webhook-receiver-auto-tunnel`, which spawns ngrok/cloudflared. `runAgainstLocalAgent` is loopback-only by design.
-- **Mint tokens per-storyboard.** The `onListening` hook fires once. If a flow needs a scoped or rotated token, issue it inside `runStoryboardOptions.auth.token` as a function the runner calls per-step.
+- **Auto-mint tokens per-storyboard.** The `onListening` hook fires once. If a flow needs a scoped or rotated token, either issue it inside `runStoryboardOptions.auth.token` as a function the runner calls per-step, or return a per-storyboard `auth` from `resolvePerStoryboard`.
 - **Replace `adcp fuzz`.** Storyboards walk happy paths. Edge-case rejection is still fuzz's job. See [`VALIDATE-YOUR-AGENT.md`](./VALIDATE-YOUR-AGENT.md) for the full validation menu.
 
 ## Debugging a failing run

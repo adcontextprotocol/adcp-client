@@ -192,7 +192,11 @@ export type {
 // One-call harness for server-side agents — composes serve() +
 // seedComplianceFixtures + createWebhookReceiver + runStoryboard.
 export { runAgainstLocalAgent } from './local-agent-runner';
-export type { LocalAgentRunResult, RunAgainstLocalAgentOptions } from './local-agent-runner';
+export type {
+  LocalAgentRunResult,
+  PerStoryboardOverride,
+  RunAgainstLocalAgentOptions,
+} from './local-agent-runner';
 
 // Storyboard-driven testing
 export {

@@ -122,6 +122,33 @@ export interface RunAgainstLocalAgentOptions {
    */
   runStoryboardOptions?: Omit<StoryboardRunOptions, 'webhook_receiver'>;
 
+  /**
+   * Produce per-storyboard overrides, called once per storyboard right
+   * before `runStoryboard`. Return `undefined` (or an empty object) to use
+   * the defaults; otherwise:
+   *
+   *   - `agentUrl` — redirect this storyboard to a different URL than the
+   *     ephemeral `http://127.0.0.1:<port>/mcp` the helper bound. Useful
+   *     when one storyboard needs to hit a stricter sibling route (e.g.
+   *     `/mcp-strict` for the `signed_requests` storyboard) while the rest
+   *     stay on the sandbox mount.
+   *   - every other `StoryboardRunOptions` field is shallow-merged on top
+   *     of the run-level `runStoryboardOptions`. Common uses: per-
+   *     storyboard `test_kit`, `brand`, or `contracts` that vary with the
+   *     storyboard under test. `webhook_receiver` is owned by the helper's
+   *     `webhookReceiver` field and is typed out of the override shape —
+   *     the helper re-applies it after the merge so overrides can't stomp
+   *     the loopback mock.
+   *
+   * Returning a `Promise` is supported so callers can do async work per
+   * storyboard (load a test-kit YAML, mint a scoped token, fetch brand
+   * metadata). The helper awaits before issuing `runStoryboard`.
+   */
+  resolvePerStoryboard?: (
+    storyboard: Storyboard,
+    defaultAgentUrl: string
+  ) => PerStoryboardOverride | undefined | Promise<PerStoryboardOverride | undefined>;
+
   /** Compliance cache overrides. */
   compliance?: ResolveOptions;
 
@@ -145,6 +172,20 @@ export interface RunAgainstLocalAgentOptions {
    */
   bail?: boolean;
 }
+
+/**
+ * Per-storyboard override returned by {@link RunAgainstLocalAgentOptions.resolvePerStoryboard}.
+ *
+ * `agentUrl` redirects the storyboard to a different URL. Every other
+ * `StoryboardRunOptions` field is shallow-merged on top of the run-level
+ * defaults. `webhook_receiver` is intentionally omitted — the helper owns
+ * that field via its `webhookReceiver` option and re-applies it after the
+ * merge.
+ */
+export type PerStoryboardOverride = { agentUrl?: string } & Omit<
+  Partial<StoryboardRunOptions>,
+  'webhook_receiver'
+>;
 
 export interface LocalAgentRunResult {
   /** True iff every storyboard passed (steps + assertions). */
@@ -227,14 +268,23 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
     let skipped = 0;
 
     const webhookConfig = resolveWebhookReceiver(options.webhookReceiver);
-    const baseRunOptions: StoryboardRunOptions = {
+    const baseRunOptions: Omit<StoryboardRunOptions, 'webhook_receiver'> = {
       ...(options.runStoryboardOptions ?? {}),
-      ...(webhookConfig ? { webhook_receiver: webhookConfig } : {}),
     };
 
     for (let i = 0; i < toRun.storyboards.length; i++) {
       const sb = toRun.storyboards[i]!;
-      const result = await runStoryboard(agentUrl, sb, baseRunOptions);
+      const override = (await options.resolvePerStoryboard?.(sb, agentUrl)) ?? undefined;
+      const { agentUrl: overrideUrl, ...overrideRunOptions } = override ?? {};
+      const storyboardUrl = overrideUrl ?? agentUrl;
+      // webhook_receiver is helper-owned — re-applied after the merge so
+      // overrides can't replace the loopback mock the helper promised.
+      const storyboardOptions: StoryboardRunOptions = {
+        ...baseRunOptions,
+        ...overrideRunOptions,
+        ...(webhookConfig ? { webhook_receiver: webhookConfig } : {}),
+      };
+      const result = await runStoryboard(storyboardUrl, sb, storyboardOptions);
       results.push(result);
       passed += result.passed_count;
       failed += result.failed_count;
