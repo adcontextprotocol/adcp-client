@@ -888,13 +888,16 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * Defaults:
    *   - When `NODE_ENV === 'production'` → both sides `'off'` (zero overhead
    *     in prod; trust the handler after its test suite has exercised it).
-   *   - Otherwise (dev, test, CI) → `responses: 'strict'`, `requests: 'off'`.
-   *     The strict default on responses turns handler-returned drift into a
+   *   - Otherwise (dev, test, CI) → `responses: 'strict'`, `requests: 'warn'`.
+   *     Strict on responses turns handler-returned drift into a
    *     `VALIDATION_ERROR` with the offending field path — surfaces the
    *     "handler returned a sparse object that fails the wire schema" class
    *     of bug at development time instead of letting it ship and surface
    *     downstream as a cryptic `SERVICE_UNAVAILABLE` or `oneOf`
-   *     discriminator failure.
+   *     discriminator failure. Warn on requests logs incoming payloads that
+   *     don't match the bundled AdCP schema but still dispatches, so
+   *     upstream schema tightenings show up as diagnostics without breaking
+   *     clients that haven't caught up.
    *
    * Pass an explicit `validation: { requests: 'off', responses: 'off' }` to
    * override the dev-mode default. Set `responses: 'warn'` to keep the
@@ -1589,15 +1592,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     validation: validationConfig,
   } = config;
 
-  // Dev/test/CI default: strict response validation — drift fails with
-  // VALIDATION_ERROR and the offending field path. Production default: off
-  // (zero overhead; trust the handler after its test suite has exercised
-  // it). Explicit `validation: { requests, responses }` on the config
-  // always wins. Using `process.env.NODE_ENV` matches the convention every
-  // other SDK consumer already tunes (Express, React, etc.); containers/CI
-  // that want prod-like behavior set NODE_ENV=production before start.
+  // Asymmetric defaults, gated on `process.env.NODE_ENV`:
+  //   - Production → both sides `'off'` (zero AJV overhead; trust the
+  //     handler after its test suite has exercised it).
+  //   - Dev/test/CI → `requests: 'warn'` (log incoming payloads that don't
+  //     match the bundled AdCP schema but still dispatch, so upstream
+  //     schema tightenings surface as diagnostics rather than hard
+  //     breakage); `responses: 'strict'` (handler drift fails with
+  //     VALIDATION_ERROR and the offending field path — catches
+  //     sparse-response bugs at development time).
+  // Explicit `validation: { requests, responses }` on the config always
+  // wins. `process.env.NODE_ENV` matches the convention every other SDK
+  // consumer already tunes (Express, React, etc.); containers/CI that
+  // want prod-like behavior set NODE_ENV=production before start.
   const isProduction = process.env.NODE_ENV === 'production';
-  const requestValidationMode = validationConfig?.requests ?? 'off';
+  const requestValidationMode = validationConfig?.requests ?? (isProduction ? 'off' : 'warn');
   const responseValidationMode = validationConfig?.responses ?? (isProduction ? 'off' : 'strict');
 
   // Enforce lock-step between the `signed-requests` specialism claim and the
