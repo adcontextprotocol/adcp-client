@@ -657,6 +657,7 @@ const AUDIENCE_TRANSITIONS: TransitionGraph = {
     ['ready', new Set(['processing', 'too_small'])],
     ['too_small', new Set(['processing', 'ready'])],
   ]),
+  enumFile: 'audience-status.json',
 };
 
 /**
