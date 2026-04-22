@@ -35,6 +35,21 @@ import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
+import { CONTROLLER_SEEDING_PHASE_ID, runControllerSeeding, type ControllerSeedingResult } from './seeding';
+
+/**
+ * Pre-computed controller-seeding outcome passed into `executeStoryboardPass`.
+ * Populated by `runMultiPass` so seeding fires once at the run level instead
+ * of once per pass (which would inflate `failed_count`/`skipped_count` when
+ * the aggregator sums per-pass counts). `attach: true` on the first pass so
+ * the synthetic `__controller_seeding__` phase appears in `phaseResults`
+ * exactly once; subsequent passes inherit `allPassed` for cascade-skip
+ * semantics but don't double-attach.
+ */
+interface PreSeededInput {
+  result: ControllerSeedingResult | null;
+  attach: boolean;
+}
 import type {
   AssertionResult,
   BranchSetSpec,
@@ -76,6 +91,9 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   peer_branch_taken: 'Skipped: a peer branch in the same any_of branch set already contributed the aggregation flag.',
 };
 
+const CONTROLLER_SEEDING_FAILED_DETAIL =
+  'Skipped: pre-flight comply_test_controller seeding failed; the agent was not populated with the storyboard fixtures the remaining phases depend on.';
+
 const OAUTH_NOT_ADVERTISED_DETAIL =
   'Skipped: agent does not advertise OAuth — /.well-known/oauth-protected-resource returned 404 (RFC 9728 §3). API-key path must carry auth_mechanism_verified for this storyboard to pass.';
 
@@ -86,6 +104,7 @@ const OAUTH_NOT_ADVERTISED_DETAIL =
  */
 const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> = {
   oauth_not_advertised: OAUTH_NOT_ADVERTISED_DETAIL,
+  controller_seeding_failed: CONTROLLER_SEEDING_FAILED_DETAIL,
 };
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
@@ -356,7 +375,8 @@ async function executeStoryboardPass(
   agentUrls: string[],
   storyboard: Storyboard,
   options: StoryboardRunOptions,
-  dispatchOffset: number
+  dispatchOffset: number,
+  preSeeded?: PreSeededInput
 ): Promise<StoryboardResult> {
   const start = Date.now();
   const isMultiInstance = agentUrls.length > 1;
@@ -479,6 +499,52 @@ async function executeStoryboardPass(
     skippedCount++;
   }
 
+  // Pre-flight controller seeding (adcp-client#778). When the storyboard
+  // declares `prerequisites.controller_seeding: true` and carries a
+  // `fixtures:` block, fire the corresponding `seed_*` scenarios on
+  // `comply_test_controller` so the seller's catalog / ledger holds every
+  // fixture id the downstream phases reference. On any seed failure we
+  // cascade-skip the remaining phases with `controller_seeding_failed` so
+  // the report shows "setup broke" instead of a thicket of per-step
+  // PRODUCT_NOT_FOUND / VALIDATION_ERROR failures. Runs against the first
+  // client only: in multi-instance mode the seller is expected to share
+  // state across replicas (that is what multi-instance tests exist to
+  // verify). Sellers that hold per-replica state must opt out via
+  // `skip_controller_seeding`.
+  //
+  // The seeding phase is held in a sidecar rather than pushed into
+  // `phaseResults` up-front so every downstream consumer that indexes
+  // `phaseResults[i]` against `storyboard.phases[i]` (branch-set grading,
+  // `requiredPhasesPassed`) keeps working. It is spliced to the front of
+  // `phaseResults` at the end so the report reads top-to-bottom in the
+  // order the runner actually executed things.
+  //
+  // Multi-pass mode populates `preSeeded` so seeding fires exactly once
+  // across all passes — see `runMultiPass`. Without the sidecar, every
+  // pass would re-seed and the aggregator's cross-pass sum would inflate
+  // `failed_count`/`skipped_count` by N when a single fixture broke.
+  let seedingPhaseResult: StoryboardPhaseResult | null = null;
+  let seedingFailed = false;
+  let seedingMissingController = false;
+  {
+    const seeding =
+      preSeeded !== undefined ? preSeeded.result : await runControllerSeeding(clients[0]!, storyboard, options, context);
+    if (seeding) {
+      const attach = preSeeded === undefined || preSeeded.attach;
+      if (attach) {
+        seedingPhaseResult = seeding.phase;
+        passedCount += seeding.passedCount;
+        failedCount += seeding.failedCount;
+        if (seeding.missingController) skippedCount += seeding.phase.steps.length;
+      }
+      if (seeding.missingController) {
+        seedingMissingController = true;
+      } else if (!seeding.allPassed) {
+        seedingFailed = true;
+      }
+    }
+  }
+
   for (const phase of storyboard.phases) {
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
@@ -502,6 +568,50 @@ async function executeStoryboardPass(
         steps: [],
         duration_ms: 0,
       });
+      continue;
+    }
+
+    // Seeding-cascade skip: either the pre-flight seed phase failed (setup
+    // break) or the agent doesn't advertise `comply_test_controller`
+    // (coverage gap). Both paths emit skipped steps; the reasons differ so
+    // compliance reports distinguish "agent misconfigured" from "agent not
+    // graded against this storyboard". `controller_seeding_failed` is a
+    // detailed reason mapped to canonical `prerequisite_failed`;
+    // `missing_test_controller` is canonical on its own. Emits full step
+    // rows (not an empty phase) so implementors see exactly which
+    // buyer-side operations were elided.
+    if (seedingMissingController || seedingFailed) {
+      const cascadeSkip: Pick<StoryboardStepResult, 'skip_reason' | 'skip'> = seedingMissingController
+        ? {
+            skip_reason: 'missing_test_controller',
+            skip: { reason: 'missing_test_controller', detail: SKIP_DETAILS.missing_test_controller },
+          }
+        : {
+            skip_reason: 'controller_seeding_failed',
+            skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+          };
+      const cascadeSteps: StoryboardStepResult[] = phase.steps.map(step => ({
+        storyboard_id: storyboard.id,
+        step_id: step.id,
+        phase_id: phase.id,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        ...cascadeSkip,
+        duration_ms: 0,
+        validations: [],
+        context,
+        extraction: { path: 'none' },
+      }));
+      phaseResults.push({
+        phase_id: phase.id,
+        phase_title: phase.title,
+        passed: true,
+        steps: cascadeSteps,
+        duration_ms: 0,
+      });
+      skippedCount += cascadeSteps.length;
       continue;
     }
 
@@ -701,6 +811,10 @@ async function executeStoryboardPass(
     if (!phaseDef || phaseDef.optional || !p.passed) return false;
     return p.steps.some(s => !s.skipped && s.passed);
   });
+  // Prepend the pre-flight seeding phase now that every consumer that
+  // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
+  // order matches execution order.
+  if (seedingPhaseResult) phaseResults.unshift(seedingPhaseResult);
   const schemasUsed = collectSchemasUsed(phaseResults);
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
@@ -764,10 +878,22 @@ async function runMultiPass(
   options: StoryboardRunOptions
 ): Promise<StoryboardResult> {
   const start = Date.now();
+
+  // Run pre-flight controller seeding ONCE at the run level (adcp-client#778)
+  // so the aggregator doesn't sum N redundant seed batches into
+  // `failed_count` / `skipped_count`. Every pass inherits the same outcome;
+  // only the first pass attaches the synthetic `__controller_seeding__`
+  // phase to its `phaseResults`, so the aggregated top-level counts reflect
+  // a single seeding pass across the whole run.
+  const preSeedClients = agentUrls.map(url => getOrCreateClient(url, options));
+  const preSeedContext: StoryboardContext = { ...options.context };
+  const preSeededResult = await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
+
   const passes: StoryboardPassResult[] = [];
   const passResults: StoryboardResult[] = [];
   for (let passIdx = 0; passIdx < agentUrls.length; passIdx++) {
-    const result = await executeStoryboardPass(agentUrls, storyboard, options, passIdx);
+    const passSeeded: PreSeededInput = { result: preSeededResult, attach: passIdx === 0 };
+    const result = await executeStoryboardPass(agentUrls, storyboard, options, passIdx, passSeeded);
     passResults.push(result);
     passes.push({
       pass_index: passIdx + 1,
