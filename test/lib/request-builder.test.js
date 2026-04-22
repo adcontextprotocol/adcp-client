@@ -149,6 +149,70 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('sync_audiences', () => {
+    test('generated fallback works with no sample_request', () => {
+      const result = buildRequest(step('sync_audiences'), {}, DEFAULT_OPTIONS);
+      assert.ok(result.account, 'account injected');
+      assert.ok(Array.isArray(result.audiences), 'audiences array present');
+      assert.ok(result.audiences[0].audience_id, 'generated audience_id');
+    });
+
+    test('honors step.sample_request on add-shaped payloads so authored audience_id reaches the wire', () => {
+      // Regression: the builder previously only delegated to sample_request
+      // for delete/discovery shapes. Add-shaped payloads fell through to the
+      // fallback, which overwrote the authored audience_id with a generated
+      // one. Downstream delete_audience / $context.audience_id references
+      // then hit AUDIENCE_NOT_FOUND because sync had registered a different
+      // id (observed in compliance/cache/latest/specialisms/audience-sync
+      // between create_audience and delete_audience).
+      const fixture = {
+        audiences: [
+          {
+            audience_id: 'adcp-test-audience-001',
+            name: 'AdCP test audience',
+            add: [
+              {
+                external_id: 'adcp-user-0001',
+                hashed_email: 'a000000000000000000000000000000000000000000000000000000000000000',
+              },
+            ],
+          },
+        ],
+      };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.audiences.length, 1, 'fallback entry must not be appended');
+      assert.strictEqual(result.audiences[0].audience_id, 'adcp-test-audience-001');
+      assert.strictEqual(result.audiences[0].name, 'AdCP test audience', 'authored name must survive');
+      assert.strictEqual(result.audiences[0].add[0].external_id, 'adcp-user-0001', 'authored identifiers must survive');
+      assert.ok(result.account, 'account still injected');
+    });
+
+    test('honors step.sample_request on delete-shaped payloads', () => {
+      const fixture = {
+        audiences: [{ audience_id: 'adcp-test-audience-001', delete: true }],
+      };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.audiences[0].audience_id, 'adcp-test-audience-001');
+      assert.strictEqual(result.audiences[0].delete, true);
+    });
+
+    test('honors discovery (no audiences array) sample_request', () => {
+      const fixture = { context: { correlation_id: 'audience_sync--discover_audiences' } };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.context.correlation_id, 'audience_sync--discover_audiences');
+      assert.strictEqual(result.audiences, undefined, 'discovery call must not synthesize audiences');
+    });
+
+    test('injects context into sample_request', () => {
+      const fixture = {
+        audiences: [{ audience_id: '$context.audience_id', name: 'Dynamic', add: [{ external_id: 'u1' }] }],
+      };
+      const context = { audience_id: 'resolved-audience-id' };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.audiences[0].audience_id, 'resolved-audience-id');
+    });
+  });
+
   describe('sync_catalogs', () => {
     test('builds valid catalog request', () => {
       const result = buildRequest(step('sync_catalogs'), {}, DEFAULT_OPTIONS);
