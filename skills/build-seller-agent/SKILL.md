@@ -351,6 +351,11 @@ Non-guaranteed buys are always instant confirmation.
 ## Tools and Required Response Shapes
 
 > **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`create_media_buy\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
+>
+> **Cross-cutting pitfalls matrix runs keep catching:**
+>
+> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['sales-guaranteed']`), NOT `[{id, version}]` objects.
+> - `get_media_buy_delivery` response requires **top-level `currency: string`** (ISO 4217) — per-row `spend.currency` is NOT enough.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 
