@@ -30,6 +30,8 @@ function createAgent({ taskStore }) {
 serve(createAgent); // http://localhost:3001/mcp
 ```
 
+Low-level server (bypassing `createAdcpServer`)? Use `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/client/server` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops `replayed`).
+
 ## Quick Start (Client)
 
 ```typescript

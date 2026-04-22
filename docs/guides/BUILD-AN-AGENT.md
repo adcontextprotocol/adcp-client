@@ -245,6 +245,26 @@ When using `createTaskCapableServer` directly, you are responsible for:
 - Implementing `get_adcp_capabilities` manually
 - Error handling in each tool handler
 
+#### Envelope fields — `wrapEnvelope`
+
+Attach `replayed`, `context`, and `operation_id` onto your inner response without reimplementing the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops `replayed`, keeps `context`):
+
+```typescript
+import { wrapEnvelope } from '@adcp/client/server';
+
+const inner = await createMediaBuy(request.params);
+return wrapEnvelope(inner, { replayed: false, context: request.context });
+```
+
+On error, pass the AdCP error envelope as `inner` — the helper reads `adcp_error.code` and applies the allowlist:
+
+```typescript
+return wrapEnvelope(
+  { adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message, recovery: 'terminal' } },
+  { context: request.context }
+);
+```
+
 ### Response Builders
 
 With `createAdcpServer`, response builders are applied automatically — return raw data and the framework wraps it. If you need manual control (e.g., with `createTaskCapableServer`), builders are available:

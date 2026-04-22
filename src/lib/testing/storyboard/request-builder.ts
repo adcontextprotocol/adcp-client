@@ -10,7 +10,7 @@
  * fallback when no builder exists for a task.
  */
 
-import { resolveBrand, resolveAccount, resolveAuthPrincipal } from '../client';
+import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
 import { injectContext } from './context';
@@ -447,7 +447,10 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Governance ─────────────────────────────────────────
 
-  sync_governance(_step, context, options) {
+  sync_governance(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       accounts: [
         {
@@ -457,7 +460,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
               url: 'https://governance.test.example',
               authentication: {
                 schemes: ['Bearer'],
-                credentials: 'test-governance-token',
+                credentials: 'test-governance-token-padded-to-meet-min-length-32',
               },
               categories: ['budget_authority', 'brand_policy'],
             },
@@ -622,32 +625,30 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Sponsored Intelligence ─────────────────────────────
 
-  si_get_offering(_step, _context, options) {
-    // `si_context` is the test-runner's conversational-context string. The wire
-    // schema's `context` field is an AdCP ContextObject, so route the string
-    // through `intent` (the schema's string-typed field) and leave wire-level
-    // `context` for downstream callers that want to set it explicitly.
+  si_get_offering(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       offering_id: options.si_offering_id ?? 'e2e-test-offering',
       intent: options.si_context ?? 'E2E testing - checking SI offering availability',
-      identity: {
-        principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal',
-        device_id: 'e2e-test-device',
-      },
     };
   },
 
-  si_initiate_session(_step, context, options) {
+  si_initiate_session(step, context, options) {
     // `intent` is required and represents the user's ask. Default to a
     // semantically plausible one so agents that dispatch on intent still
-    // behave sensibly; storyboards should override via sample_request when
+    // behave sensibly; storyboards override via sample_request when
     // testing intent-specific paths.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
       identity: {
-        consent_granted: true,
-        user: { principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal' },
+        consent_granted: false,
+        anonymous_session_id: `e2e-anon-${Date.now()}`,
       },
       intent: options.si_context ?? 'Browse available offerings',
       placement: 'e2e-test',
@@ -657,14 +658,20 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  si_send_message(_step, context, _options) {
+  si_send_message(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       session_id: context.session_id ?? 'unknown',
       message: 'Tell me more about this product.',
     };
   },
 
-  si_terminate_session(_step, context, _options) {
+  si_terminate_session(step, context, _options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       session_id: context.session_id ?? 'unknown',
       reason: 'user_exit',
