@@ -1,5 +1,216 @@
 # Changelog
 
+## 5.10.0
+
+### Minor Changes
+
+- 8f9260b: feat(server): request validation defaults to `'warn'` outside production
+
+  `createAdcpServer({ validation: { requests } })` previously defaulted to
+  `'off'` everywhere. It now defaults to `'warn'` when
+  `NODE_ENV !== 'production'`, mirroring the asymmetric default already in
+  place for `responses` (`'strict'` in dev/test, `'off'` in production).
+
+  Production behaviour is unchanged: the default stays `'off'` when
+  `NODE_ENV === 'production'`, so prod request paths pay no AJV cost.
+
+  What operators will see: in dev/test/CI, each incoming request that
+  doesn't match the bundled AdCP request schema logs a single
+  `Schema validation warning (request)` line through the configured
+  logger, with the tool name and the field pointer. Nothing is rejected —
+  the request still flows to the handler exactly as before. Node's test
+  runner does not set `NODE_ENV`, so suites running under `node --test`
+  fall into the dev/test bucket and will start emitting these warnings.
+
+  How to opt out: pass `validation: { requests: 'off' }` on the server
+  config, or set `NODE_ENV=production` for the process.
+
+  Why: keeps request and response defaults symmetric, and prepares seller
+  operators for upstream AdCP schema tightenings (e.g. adcp#2795, which
+  introduces a required `asset_type` discriminator — buyer agents still
+  on RC3 fixtures will lack it). Surfacing those drifts as warnings
+  during development beats discovering them in a downstream consumer's
+  `VALIDATION_ERROR` after deploy.
+
+  Related: #694 (original intent for `requests: 'warn'`) and #727 A
+  (response-side default precedent).
+
+- 86a0fde: Register the fourth default cross-step assertion `status.monotonic` (adcontextprotocol/adcp#2664). Resource statuses observed across storyboard steps MUST transition only along edges in the spec-published lifecycle graph for their resource type. Catches regressions like `active → pending_creatives` on a media_buy, or `approved → processing` on a creative asset, that per-step validations cannot detect.
+
+  **Tracked lifecycles** (one transition table per resource type, hardcoded against the enum schemas in `static/schemas/source/enums/*-status.json` in the spec repo, with bidirectional edges listed explicitly):
+  - `media_buy` — forward flow `pending_creatives → pending_start → active`, `active ↔ paused` reversible, terminals `completed | rejected | canceled`.
+  - `creative` (asset lifecycle) — forward flow `processing → pending_review → approved | rejected`, `approved ↔ archived` reversible, `rejected → processing | pending_review` allowed on re-sync, no terminals.
+  - `creative_approval` — per-assignment on a package, forward `pending_review → approved | rejected`, `rejected → pending_review` allowed on re-sync.
+  - `account` — `active ↔ suspended` and `active ↔ payment_required` reversible, terminals `rejected | closed`.
+  - `si_session` — forward `active → pending_handoff → complete | terminated`, terminals `complete | terminated`.
+  - `catalog_item` — forward `pending → approved | rejected | warning`, `approved ↔ warning` reversible, `rejected → pending` allowed on re-sync.
+  - `proposal` — one-way `draft → committed`.
+
+  **Observations** are drawn from task-aware extractors on `stepResult.response`: `create_media_buy` / `update_media_buy` / `get_media_buys`, `sync_creatives` / `list_creatives`, nested `.packages[].creative_approvals[]`, `sync_accounts` / `list_accounts`, `si_initiate_session` / `si_send_message` / `si_terminate_session`, `sync_catalogs` / `list_catalogs` (per-item), `get_products` (when the response carries a `proposal`). Unknown tasks produce no observations.
+
+  **State** is scoped `(resource_type, resource_id)` so independent resources don't interfere. Self-edges (same status re-read) are silent pass. Skipped / errored / `expect_error: true` steps don't record observations. Unknown enum values (drift) reset the anchor without failing — `response_schema` catches enum violations.
+
+  Failure output names the resource, the illegal transition, and the two step ids: `media_buy mb-1: active → pending_creatives (step "create" → step "regress") is not in the lifecycle graph.` Consumers who need a stricter variant can `registerAssertion(spec, { override: true })`.
+
+  18 new unit tests cover forward flows, terminal enforcement, bidirectional edges, skip semantics, (resource_type, resource_id) scoping, nested creative_approval arrays, adcp_error-gated observations, enum-drift tolerance.
+
+- 573a176: Improve OAuth ergonomics for `adcp storyboard run`.
+  - **Fix classification**: capability-discovery failures whose error message says `"requires OAuth authorization"` (the wording `NeedsAuthorizationError` emits) now classify as `auth_required` with the `Save credentials: adcp --save-auth <alias> <url> --oauth` remediation hint, instead of falling through to `overall_status: 'unreachable'` with no actionable advice. The keyword list in `detectAuthRejection` now matches `"authorization"` and `"oauth"` in addition to `401/unauthorized/authentication/jws/jwt/signature verification`.
+  - **Surface the hint earlier**: the OAuth remediation observation now fires whenever the error text looks OAuth-shaped, not only when `discoverOAuthMetadata` successfully walks the well-known chain — an agent that 401s before its OAuth metadata is resolvable still gets a useful hint.
+  - **Inline OAuth flow**: `adcp storyboard run <alias> --oauth` now opens the browser to complete PKCE when the saved alias has no valid tokens, then proceeds with the run. Matches the existing `adcp <alias> get_adcp_capabilities --oauth` behavior so the two-step dance (`--save-auth --oauth` then `storyboard run`) is no longer required. Raw URLs still need `--save-auth` first; MCP only.
+
+  Docs: `docs/CLI.md` and `docs/guides/VALIDATE-YOUR-AGENT.md` document both flows and add a troubleshooting row for the `Agent requires OAuth` failure.
+
+- 86ccc99: feat(server): response validation defaults to `'strict'` outside production
+
+  `createAdcpServer({ validation: { responses } })` previously defaulted to
+  `'warn'` when `NODE_ENV !== 'production'`. It now defaults to `'strict'`
+  in dev/test/CI so handler-returned schema drift fails with
+  `VALIDATION_ERROR` (with the offending field path in `details.issues`)
+  instead of logging a warning the caller can silently ignore.
+
+  Production behaviour is unchanged: the default stays `'off'` when
+  `NODE_ENV === 'production'`, so prod request paths pay no validation
+  cost. Pass `validation: { responses: 'warn' }` to restore the previous
+  dev-mode behaviour; `validation: { responses: 'off' }` opts out
+  entirely.
+
+  Why: the `compliance:skill-matrix` harness has repeatedly surfaced
+  `SERVICE_UNAVAILABLE` from agents whose responses fail the wire schema.
+  The dispatcher's response validator catches this drift with a clear
+  field pointer, one layer that every tool inherits automatically. Making
+  that the default catches it during handler development rather than in a
+  downstream consumer.
+
+  Migration: handler tests that use sparse fixtures (e.g.
+  `{ products: [{ product_id: 'p1' }] }`) will start returning
+  `VALIDATION_ERROR`. Either fill in the missing required fields to match
+  the AdCP schema, or set `validation: { responses: 'off' }` on the test
+  server to keep the fixture intentionally minimal. Note that Node's
+  test runner does **not** set `NODE_ENV`, so test suites running under
+  `node --test` (with `NODE_ENV=undefined`) fall into the dev/test
+  bucket and will start validating responses — this is intentional.
+
+  Also: the `VALIDATION_ERROR` envelope's `details.issues[].schemaPath`
+  is now gated behind `exposeErrorDetails` (same policy as the existing
+  `SERVICE_UNAVAILABLE.details.reason` field). Production responses no
+  longer leak `#/oneOf/<n>/properties/...` paths that fingerprint the
+  handler's internal `oneOf` branch selection — buyers still get
+  `pointer`, `message`, and `keyword`, which is sufficient to fix a
+  drifted payload.
+
+  Closes #727 (A).
+
+- f64007c: fix(server): tighten handler return types so schema drift fails `tsc`
+
+  Two related tightenings close #727 (B).
+
+  **1. `AdcpToolMap` brand rights results.** `acquire_rights`,
+  `get_rights`, and `get_brand_identity` had `result: Record<string,
+unknown>` — a stale scaffold from before the response types were
+  code-generated. Replaced with the proper generated types:
+  - `acquire_rights` → `AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected`
+  - `get_rights` → `GetRightsSuccess`
+  - `get_brand_identity` → `GetBrandIdentitySuccess`
+
+  **2. `DomainHandler` return type.** The handler return union
+  previously included `| Record<string, unknown>` as a general escape
+  hatch, so any handler could return any shape. Sparse returns like
+  `{ rights_id, status: 'acquired' }` passed `tsc` and only failed at
+  wire-level validation. Handler return type is now just
+  `AdcpToolMap[K]['result'] | McpToolResponse`, so drift fails at
+  compile time. `adcpError(...)` still works — it returns
+  `McpToolResponse`.
+
+  **Migration.** If a handler returns a plain object literal without
+  spelling out the full success shape, `tsc` will now flag the drift
+  with an error like:
+
+  ```
+  Type '{ products: [{ product_id: 'p1' }] }' is not assignable to type
+  'McpToolResponse | GetProductsResponse'.
+    Property 'reporting_capabilities' is missing in type
+    '{ product_id: 'p1' }' but required in type 'Product'.
+  ```
+
+  Two ways to fix:
+  - Fill in the missing required fields to match the AdCP schema (what
+    the wire-level validator would have demanded anyway). Use
+    `DEFAULT_REPORTING_CAPABILITIES` for `Product.reporting_capabilities`
+    if you don't have seller-specific reporting policy yet.
+  - If you genuinely need a loose return (e.g. a test fixture), wrap
+    with a response builder — `productsResponse({ ... })`,
+    `acquireRightsResponse({ ... })`, etc. The builders accept typed
+    inputs so the drift surfaces there instead of silently passing
+    through.
+
+  **Reference agents.** `test-agents/seller-agent.ts` now uses
+  `DEFAULT_REPORTING_CAPABILITIES` on each product (the old code had
+  a "Use plain objects instead of Product type" comment whose premise
+  was wrong — `reporting_capabilities` is required, not optional).
+  `test-agents/seller-agent-signed-mcp.ts` had a latent bug:
+  `createMediaBuy` was reading `pkg.package_id` from the request, but
+  `PackageRequest` has no such field — buyers send `buyer_ref` and
+  the seller mints `package_id` per spec. The handler now mints
+  `crypto.randomUUID()` like a real seller would.
+
+### Patch Changes
+
+- 275fa70: `docs/llms.txt` now includes per-tool response contracts. Each tool section gets a `**Response (success branch):**` block listing the required + optional fields drawn from the bundled JSON schemas — same format the existing request block uses.
+
+  Closes the drift path we kept seeing in matrix runs: agents dropped required response fields (missing `format_id` on `creative_manifest`, plural-variant hallucinations like `creative_deliveries` for `creatives`, missing top-level `currency`) because the skill examples documented the intent but the full per-field contract lived in the generated schemas and was never surfaced in the llms.txt index Claude actually reads when building. The contract is now one anchored section away: `docs/llms.txt#build_creative`, `docs/llms.txt#get_creative_delivery`, etc. — same convention as the llms.txt pattern other projects use.
+
+  No SDK code change; llms.txt is regenerated via `npm run generate-agent-docs`.
+
+- 6ae3169: chore(server): migrate McpServer.tool() → registerTool() repo-wide (#705)
+
+  Replaces every use of the MCP SDK's deprecated `McpServer.tool(...)`
+  overload with the supported `registerTool(name, config, handler)` form.
+  Behavior is unchanged; `tools/list` output is identical aside from a
+  cleaner path to the same metadata.
+
+  **What moved**
+  - `src/lib/server/create-adcp-server.ts` — the AdcpToolMap registration
+    loop and `get_adcp_capabilities` now use `registerTool`, with
+    `annotations` declared at register time instead of via a post-hoc
+    `.update()` call.
+  - `src/lib/server/test-controller.ts`, `src/lib/testing/comply-controller.ts`
+    — `comply_test_controller` registration.
+  - `src/lib/testing/stubs/governance-agent-stub.ts` — all five tools
+    (`get_adcp_capabilities`, `sync_plans`, `check_governance`,
+    `report_plan_outcome`, `get_plan_audit_logs`).
+  - `examples/error-compliant-server.ts` — the canonical seller template.
+  - JSDoc, prose, and README-ish comments updated to the new form.
+
+  **`outputSchema` deliberately not wired on framework tools**
+
+  The MCP SDK's _client-side_ `callTool` validates `structuredContent`
+  against the declared `outputSchema` whenever structuredContent is
+  present — regardless of `isError`
+  (`@modelcontextprotocol/sdk/dist/esm/client/index.js:504`). AdCP's
+  `adcpError()` envelope carries `structuredContent: { adcp_error: {...} }`
+  alongside `isError: true`, which would fail every client-side outputSchema
+  check (the error shape doesn't match the success schema). Until the SDK
+  gates that client-side check on `!isError` (the server-side validator
+  already does), framework-registered tools are migrated _without_
+  `outputSchema`. Response drift is caught by the dispatcher's AJV
+  validator (#727) instead, and `customTools` may opt in explicitly via
+  `customTools[*].outputSchema` — validated by a new regression test.
+
+  Closes #705.
+
+- 275fa70: Skill files now point Claude at `docs/llms.txt#<tool>` for per-tool field contracts instead of duplicating them inline.
+
+  **Callout wording is imperative, not descriptive** (per prompt-engineering review): _"Before writing any handler's return statement, fetch `docs/llms.txt` and grep for `#### \`<tool_name>\``..."_ Replaces the earlier passive "contracts live at X" phrasing that relied on Claude optionally following the pointer. Safety-net sentence reframed as permission ("write the obvious thing and trust the contract") rather than threat.
+
+  **Grep instructions match how agents actually find sections**: Markdown anchors resolve on GitHub but Claude reading the raw file searches for `#### \`tool_name\``. The callout names that pattern directly.
+
+  **build-creative-agent slim** collapses verbose response-shape blocks into a 4-column handler-binding table: `Tool | Handler | Contract | Gotchas`. The Contract column carries a direct anchor link per tool so Claude is likelier to click the one adjacent to the row it's reading than a general pointer three lines up. Asset-shape bullets stay inline (most-drifted fields historically). Net -94 lines on that skill.
+
+  **Other 7 skills get the pointer callout only** — structural slims deferred until matrix v12 signal is in. Two variables (pointer + slim) on one skill lets us disambiguate outcomes.
+
+  Lands on top of strict validation default in dev (#727/#757) and the llms.txt response-contract generator (#761). Together: llms.txt is canonical, skills are narrative + gotchas, strict validation catches residual drift at call site.
+
 ## 5.9.1
 
 ### Patch Changes
