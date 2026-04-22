@@ -210,7 +210,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     } else {
       request.packages = [
         {
-          package_id: context.package_id,
+          package_id: (context.package_id as string | undefined) ?? 'unknown',
           budget: 2000,
         },
       ];
@@ -392,6 +392,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
               format_id: context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
               assets: {
                 primary: {
+                  asset_type: 'image',
                   url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
                   width: 1200,
                   height: 628,
@@ -432,9 +433,9 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
         (signal?.pricing_options as Array<Record<string, unknown>> | undefined)?.[0]?.pricing_option_id ??
         context.pricing_option_id,
     };
-    if (destinations) {
-      request.destinations = (injectContext({ destinations }, context) as Record<string, unknown>).destinations;
-    }
+    request.destinations = destinations
+      ? (injectContext({ destinations }, context) as Record<string, unknown>).destinations
+      : [{ type: 'agent', agent_url: 'https://test.example/signals' }];
     return request;
   },
 
@@ -488,7 +489,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       artifact: {
         property_rid: 'test-publisher.example',
         artifact_id: context.creative_id ?? 'test-creative',
-        assets: {},
+        assets: [],
       },
     };
   },
@@ -543,8 +544,10 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       return injectContext({ ...step.sample_request }, context);
     }
     return {
-      name: 'E2E Test Content Standards',
-      rules: [{ category: 'brand_safety', description: 'No violent imagery', severity: 'must' }],
+      scope: {
+        languages_any: ['en'],
+        description: 'E2E Test Content Standards',
+      },
     };
   },
 
@@ -554,7 +557,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     }
     return {
       standards_id: context.content_standards_id ?? 'unknown',
-      add_rules: [{ category: 'quality', description: 'High resolution assets', severity: 'should' }],
     };
   },
 
@@ -570,7 +572,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
           artifact: {
             property_rid: 'test-publisher.example',
             artifact_id: context.creative_id ?? 'test-creative',
-            assets: {},
+            assets: [],
           },
         },
       ],
@@ -604,7 +606,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       return injectContext({ ...step.sample_request }, context);
     }
     return {
-      rights_grant_id: context.rights_grant_id ?? 'unknown',
+      rights_id: context.rights_id ?? 'unknown',
     };
   },
 
@@ -613,8 +615,11 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       return injectContext({ ...step.sample_request }, context);
     }
     return {
-      rights_grant_id: context.rights_grant_id ?? 'unknown',
-      creative: { creative_id: context.creative_id ?? 'test-creative' },
+      rights_id: context.rights_id ?? 'unknown',
+      creative_id: context.creative_id ?? 'test-creative',
+      creative_url:
+        (context.creative_url as string | undefined) ??
+        'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
     };
   },
 
@@ -631,6 +636,10 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   si_initiate_session(step, context, options) {
+    // `intent` is required and represents the user's ask. Default to a
+    // semantically plausible one so agents that dispatch on intent still
+    // behave sensibly; storyboards override via sample_request when
+    // testing intent-specific paths.
     if (step.sample_request) {
       return injectContext({ ...step.sample_request }, context);
     }
@@ -641,7 +650,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
         consent_granted: false,
         anonymous_session_id: `e2e-anon-${Date.now()}`,
       },
-      intent: options.si_context ?? 'E2E test session',
+      intent: options.si_context ?? 'Browse available offerings',
       placement: 'e2e-test',
       supported_capabilities: {
         modalities: { conversational: true, rich_media: true },
@@ -764,9 +773,12 @@ function buildAssetsForFormat(format: Record<string, unknown>): Record<string, u
   if (type === 'video' || name.includes('video') || name.includes('vast')) {
     return {
       video: {
+        asset_type: 'video',
         url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/trail-pro-30s.mp4',
-        duration: 30,
-        format: 'video/mp4',
+        width: 1920,
+        height: 1080,
+        duration_ms: 30000,
+        container_format: 'video/mp4',
       },
     };
   }
@@ -774,12 +786,14 @@ function buildAssetsForFormat(format: Record<string, unknown>): Record<string, u
   if (type === 'native' || name.includes('native')) {
     return {
       image: {
+        asset_type: 'image',
         url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
         width: 1200,
         height: 628,
         format: 'image/jpeg',
       },
       headline: {
+        asset_type: 'text',
         content: 'Trail Pro 3000 — Built for the Summit',
       },
     };
@@ -788,6 +802,7 @@ function buildAssetsForFormat(format: Record<string, unknown>): Record<string, u
   // Default: display image
   return {
     primary: {
+      asset_type: 'image',
       url: 'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
       width: 1200,
       height: 628,

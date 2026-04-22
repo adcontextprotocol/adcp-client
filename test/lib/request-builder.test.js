@@ -387,9 +387,12 @@ describe('Request Builder', () => {
       ]);
     });
 
-    test('omits destinations when sample_request has none', () => {
+    test('defaults destinations to a placeholder agent when sample_request omits them', () => {
+      // ActivateSignalRequest requires `destinations`, so the fallback must
+      // supply one to round-trip through the schema.
       const result = buildRequest(step('activate_signal'), {}, DEFAULT_OPTIONS);
-      assert.strictEqual(result.destinations, undefined);
+      assert.ok(Array.isArray(result.destinations) && result.destinations.length > 0);
+      assert.strictEqual(result.destinations[0].type, 'agent');
     });
 
     test('uses signal from context', () => {
