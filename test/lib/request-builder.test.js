@@ -125,27 +125,89 @@ describe('Request Builder', () => {
       assert.strictEqual(result.brand_id, 'acmeoutdoor.example');
     });
 
-    test('honors step.sample_request when present', () => {
-      // Regression: the builder previously ignored sample_request for
-      // everything except brand_id, so a storyboard declaring specific
-      // query text / uses / countries hit the wire with the generic
-      // fallback. That silently broke scenarios like
-      // brand_rights/governance_denied where the buyer query matters
-      // for the rights-holder roster to return a non-empty list.
+    test('honors step.sample_request when present (fixture wins top-level conflicts)', () => {
+      // Under #820 (fixture-authoritative), every field the author specified
+      // in sample_request takes precedence over the enricher's fabrication.
+      // Fields the author omitted (brand_id here) are gap-filled by the
+      // enricher from resolveBrand(options) — the harness's run-scoped
+      // brand. Storyboards that specifically require brand_id to NOT be
+      // sent must omit it from the fixture and opt out of the enricher
+      // (not possible today without authoring an explicit null, tracked
+      // as a possible #820+ follow-up).
       const fixture = {
         buyer: { domain: 'pinnacle-agency.example' },
         query: 'licensed commercial rights for a regional outdoor retail campaign',
         uses: ['commercial', 'endorsement'],
       };
       const result = buildRequest(step('get_rights', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
-      assert.strictEqual(result.query, fixture.query);
-      assert.deepStrictEqual(result.uses, fixture.uses);
-      assert.deepStrictEqual(result.buyer, fixture.buyer);
-      assert.strictEqual(
-        result.brand_id,
-        undefined,
-        'brand_id from caller domain must not leak when sample_request omits it'
-      );
+      assert.strictEqual(result.query, fixture.query, 'fixture query wins');
+      assert.deepStrictEqual(result.uses, fixture.uses, 'fixture uses wins');
+      assert.deepStrictEqual(result.buyer, fixture.buyer, 'fixture buyer preserved');
+      assert.strictEqual(result.brand_id, 'acmeoutdoor.example', 'brand_id gap-filled from options.brand');
+    });
+  });
+
+  describe('sync_audiences', () => {
+    test('generated fallback works with no sample_request', () => {
+      const result = buildRequest(step('sync_audiences'), {}, DEFAULT_OPTIONS);
+      assert.ok(result.account, 'account injected');
+      assert.ok(Array.isArray(result.audiences), 'audiences array present');
+      assert.ok(result.audiences[0].audience_id, 'generated audience_id');
+    });
+
+    test('honors step.sample_request on add-shaped payloads so authored audience_id reaches the wire', () => {
+      // Regression: the builder previously only delegated to sample_request
+      // for delete/discovery shapes. Add-shaped payloads fell through to the
+      // fallback, which overwrote the authored audience_id with a generated
+      // one. Downstream delete_audience / $context.audience_id references
+      // then hit AUDIENCE_NOT_FOUND because sync had registered a different
+      // id (observed in compliance/cache/latest/specialisms/audience-sync
+      // between create_audience and delete_audience).
+      const fixture = {
+        audiences: [
+          {
+            audience_id: 'adcp-test-audience-001',
+            name: 'AdCP test audience',
+            add: [
+              {
+                external_id: 'adcp-user-0001',
+                hashed_email: 'a000000000000000000000000000000000000000000000000000000000000000',
+              },
+            ],
+          },
+        ],
+      };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.audiences.length, 1, 'fallback entry must not be appended');
+      assert.strictEqual(result.audiences[0].audience_id, 'adcp-test-audience-001');
+      assert.strictEqual(result.audiences[0].name, 'AdCP test audience', 'authored name must survive');
+      assert.strictEqual(result.audiences[0].add[0].external_id, 'adcp-user-0001', 'authored identifiers must survive');
+      assert.ok(result.account, 'account still injected');
+    });
+
+    test('honors step.sample_request on delete-shaped payloads', () => {
+      const fixture = {
+        audiences: [{ audience_id: 'adcp-test-audience-001', delete: true }],
+      };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.audiences[0].audience_id, 'adcp-test-audience-001');
+      assert.strictEqual(result.audiences[0].delete, true);
+    });
+
+    test('honors discovery (no audiences array) sample_request', () => {
+      const fixture = { context: { correlation_id: 'audience_sync--discover_audiences' } };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.context.correlation_id, 'audience_sync--discover_audiences');
+      assert.strictEqual(result.audiences, undefined, 'discovery call must not synthesize audiences');
+    });
+
+    test('injects context into sample_request', () => {
+      const fixture = {
+        audiences: [{ audience_id: '$context.audience_id', name: 'Dynamic', add: [{ external_id: 'u1' }] }],
+      };
+      const context = { audience_id: 'resolved-audience-id' };
+      const result = buildRequest(step('sync_audiences', { sample_request: fixture }), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.audiences[0].audience_id, 'resolved-audience-id');
     });
   });
 
@@ -335,7 +397,12 @@ describe('Request Builder', () => {
       assert.strictEqual(result.signal_spec, undefined);
     });
 
-    test('brief takes priority over signal_ids', () => {
+    test('fixture signal_ids coexist with options.brief (both present; author-authored fields preserved)', () => {
+      // Under #820 (fixture-authoritative), the author's signal_ids are
+      // preserved; the enricher's `signal_spec` derived from `options.brief`
+      // is additive. `anyOf: [signal_spec, signal_ids]` accepts either or
+      // both, so the downstream agent receives a richer query (authored
+      // exact signal_ids plus the caller's natural-language brief).
       const s = step('get_signals', {
         sample_request: {
           signal_ids: [{ source: 'catalog', data_provider_domain: 'x.example', id: 'seg1' }],
@@ -343,13 +410,23 @@ describe('Request Builder', () => {
       });
       const options = { ...DEFAULT_OPTIONS, brief: 'override brief' };
       const result = buildRequest(s, {}, options);
-      assert.strictEqual(result.signal_spec, 'override brief');
-      assert.strictEqual(result.signal_ids, undefined);
+      assert.strictEqual(result.signal_spec, 'override brief', 'enricher gap-fills signal_spec from options.brief');
+      assert.deepStrictEqual(
+        result.signal_ids,
+        [{ source: 'catalog', data_provider_domain: 'x.example', id: 'seg1' }],
+        'fixture signal_ids are preserved (author wins)'
+      );
     });
 
-    test('returns empty object when no brief and no signal_ids', () => {
+    test('falls back to a minimal discovery signal_spec when no brief and no signal_ids', () => {
+      // The get-signals-request schema requires anyOf [signal_spec, signal_ids];
+      // an empty object fails strict JSON-schema validation. With no brief
+      // and no authored signal_ids, emit a synthetic signal_spec so the
+      // request stays schema-conforming.
       const result = buildRequest(step('get_signals'), {}, DEFAULT_OPTIONS);
-      assert.deepStrictEqual(result, {});
+      assert.strictEqual(typeof result.signal_spec, 'string');
+      assert.ok(result.signal_spec.length > 0);
+      assert.strictEqual(result.signal_ids, undefined);
     });
 
     test('injects context placeholders in signal_ids', () => {

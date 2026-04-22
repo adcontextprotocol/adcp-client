@@ -19,7 +19,7 @@ import {
   type RunnerVariables,
 } from './context';
 import { runValidations, type ValidationContext } from './validations';
-import { buildRequest, hasRequestBuilder } from './request-builder';
+import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
 import {
@@ -1142,51 +1142,19 @@ async function executeStep(
     };
   }
 
-  // Build request — priority:
+  // Build request — priority (issue #820, fixture-authoritative):
   // 1. User-provided --request override
-  // 2. For expect_error steps: use sample_request directly (preserves intentionally invalid input)
-  // 3. Request builder (builds from context + options, like hand-written scenarios)
-  // 4. sample_request from YAML with context injection (fallback)
+  // 2. For expect_error steps: sample_request directly (preserves intentionally invalid input)
+  // 3. enrichRequest — fixture is the base, enricher fills gaps (fixture wins conflicts)
+  // 4. sample_request with context injection when no enricher is registered
+  // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
   let request: Record<string, unknown>;
   if (options.request) {
     request = { ...options.request };
   } else if (step.expect_error && step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
-  } else if (hasRequestBuilder(effectiveStep.task)) {
-    request = buildRequest(effectiveStep, context, options);
-    // Merge pass-through envelope fields from sample_request — builders
-    // don't include these, but storyboards define them for compliance
-    // testing. `context` and `ext` are opaque pass-through. `idempotency_key`
-    // must be forwarded so compliance storyboards can test replay semantics:
-    // the same `$generate:uuid_v4#<alias>` across two steps resolves to the
-    // same UUID, and the server sees both calls with that UUID (no auto-
-    // generated UUID overriding it at the client layer).
-    if (step.sample_request) {
-      if (step.sample_request.context !== undefined && request.context === undefined) {
-        request.context = injectContext({ context: step.sample_request.context }, context, runState.runnerVars).context;
-      }
-      if (step.sample_request.ext !== undefined && request.ext === undefined) {
-        request.ext = step.sample_request.ext;
-      }
-      if (
-        step.sample_request.push_notification_config !== undefined &&
-        request.push_notification_config === undefined
-      ) {
-        request.push_notification_config = injectContext(
-          { push_notification_config: step.sample_request.push_notification_config },
-          context,
-          runState.runnerVars
-        ).push_notification_config;
-      }
-      if (step.sample_request.idempotency_key !== undefined && request.idempotency_key === undefined) {
-        const resolved = injectContext(
-          { idempotency_key: step.sample_request.idempotency_key },
-          context,
-          runState.runnerVars
-        ).idempotency_key;
-        if (typeof resolved === 'string') request.idempotency_key = resolved;
-      }
-    }
+  } else if (hasRequestEnricher(effectiveStep.task)) {
+    request = enrichRequest(effectiveStep, context, options, runState.runnerVars);
   } else if (step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else {

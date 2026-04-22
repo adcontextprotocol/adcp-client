@@ -9,6 +9,7 @@
 import { readFileSync } from 'fs';
 import { parse } from 'yaml';
 import type { Storyboard } from './types';
+import { MUTATING_TASKS } from '../../utils/idempotency';
 
 /**
  * Supported `branch_set.semantics` values. Extend when AdCP adds `all_of`,
@@ -62,8 +63,42 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     if (!phase.steps) continue;
     for (const step of phase.steps) {
       resolveContributesShorthand(storyboard.id, phase, step);
+      validateFixtureForMutatingStep(storyboard.id, phase, step);
     }
   }
+}
+
+/**
+ * Issue #820: mutating tasks (per {@link MUTATING_TASKS}) must have a
+ * `sample_request` authored. The fixture is authoritative at run time —
+ * there's no sane default payload for a write, and silently fabricating
+ * one was the bug factory that produced #780 / #792 / #793 / #802 / #805.
+ *
+ * Error messages point at the task name, the step id, the storyboard, and
+ * suggest the concrete author action.
+ *
+ * Opt-out: steps with `expect_error: true` that deliberately exercise
+ * missing-fixture / malformed-payload seller behavior skip this check —
+ * the author is signaling the payload is the test condition.
+ *
+ * Synthesized phases (`request-signing/synthesize.ts`, controller seeding)
+ * start with `phase.steps = []` in YAML and the loader doesn't see the
+ * runtime-generated steps, so those paths are not affected.
+ */
+function validateFixtureForMutatingStep(
+  storyboardId: string,
+  phase: Storyboard['phases'][number],
+  step: Storyboard['phases'][number]['steps'][number]
+): void {
+  if (!MUTATING_TASKS.has(step.task)) return;
+  if (step.sample_request !== undefined) return;
+  if (step.expect_error === true) return;
+  throw new Error(
+    `[${storyboardId}] phase '${phase.id}' step '${step.id}' (task=${step.task}): ` +
+      `mutating tasks require a sample_request fixture — the runner no longer fabricates ` +
+      `write payloads. Author sample_request in the step or, for intentionally malformed ` +
+      `payloads, set expect_error: true.`
+  );
 }
 
 function validateBranchSet(storyboardId: string, phase: Storyboard['phases'][number]): void {
