@@ -195,6 +195,9 @@ export type {
 
 export { DEFAULT_REPORTING_CAPABILITIES } from './product-defaults';
 
+export { isSandboxRequest, mergeSeededProductsIntoResponse } from './test-controller-bridge';
+export type { TestControllerBridge, TestControllerBridgeContext } from './test-controller-bridge';
+
 export {
   createIdempotencyStore,
   memoryBackend,

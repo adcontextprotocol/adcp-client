@@ -98,6 +98,12 @@ import {
   type WebhookEmitterOptions,
 } from './webhook-emitter';
 import { createExpressVerifier, type ExpressLike } from '../signing/middleware';
+import {
+  isSandboxRequest as isSandboxRequestForSeeding,
+  mergeSeededProductsIntoResponse,
+  type TestControllerBridge,
+  type TestControllerBridgeContext,
+} from './test-controller-bridge';
 import type { JwksResolver } from '../signing/jwks';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
@@ -959,6 +965,20 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * construction time — the spec handler wins by convention.
    */
   customTools?: Record<string, AdcpCustomToolConfig<any, any>>;
+
+  /**
+   * Opt-in bridge between the `comply_test_controller` seed store and the
+   * spec-tool pipeline. When configured and {@link TestControllerBridge.augmentGetProducts}
+   * is not explicitly `false`, seeded products flow into `get_products`
+   * responses on sandbox requests — the Group A compliance storyboards rely
+   * on this end-to-end flow. Production traffic (no sandbox marker) bypasses
+   * the bridge entirely; omit the field in production configs to be explicit
+   * about it.
+   *
+   * See `src/lib/server/test-controller-bridge.ts` for the sandbox-marker
+   * predicate and the merge contract.
+   */
+  testController?: TestControllerBridge<TAccount>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1598,6 +1618,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     webhooks,
     signedRequests,
     validation: validationConfig,
+    testController: testControllerBridge,
   } = config;
 
   // Asymmetric defaults, gated on `process.env.NODE_ENV`:
@@ -1901,7 +1922,46 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Handler ---
         try {
           const result = await handler(params, ctx);
-          const formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
+          let formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
+
+          // --- Test-controller bridge: augment get_products with seeded fixtures. ---
+          // Only runs when the seller opted in via `testController.getSeededProducts`
+          // AND the request carries a sandbox marker (account.sandbox === true or
+          // context.sandbox === true). Production traffic skips this block entirely.
+          // Seeded products append to whatever the handler returned; `product_id`
+          // collisions resolve with the seeded entry winning, so storyboards that
+          // override default inventory see their fixture.
+          if (
+            toolName === 'get_products' &&
+            testControllerBridge?.getSeededProducts &&
+            testControllerBridge.augmentGetProducts !== false &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params)
+          ) {
+            try {
+              const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+              if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+              const seeded = await testControllerBridge.getSeededProducts(bridgeCtx);
+              if (Array.isArray(seeded) && seeded.length > 0) {
+                const sc = formatted.structuredContent as
+                  | import('../types/tools.generated').GetProductsResponse
+                  | undefined;
+                if (sc && typeof sc === 'object') {
+                  const merged = mergeSeededProductsIntoResponse(sc, seeded);
+                  formatted = wrap(merged);
+                }
+              }
+            } catch (err) {
+              // Bridge failures are sandbox-only by construction, so logging +
+              // returning the handler's response is the right default — a broken
+              // test fixture shouldn't tank the request under test.
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.warn('testController.getSeededProducts failed; returning handler response unchanged', {
+                tool: toolName,
+                error: reason,
+              });
+            }
+          }
 
           // --- Response schema validation (opt-in) ---
           // Runs on the structured payload the handler produced. Errors

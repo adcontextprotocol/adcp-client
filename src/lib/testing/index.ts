@@ -154,6 +154,20 @@ export {
 } from '../server/test-controller';
 export type { ControllerScenario, SeedFixtureCache, SeedScenario } from '../server/test-controller';
 
+// Seed fixture merge helpers (permissive defaults + storyboard overlay).
+export {
+  mergeSeed,
+  mergeSeedProduct,
+  mergeSeedPricingOption,
+  mergeSeedCreative,
+  mergeSeedPlan,
+  mergeSeedMediaBuy,
+} from './seed-merge';
+
+// Test-controller bridge: seeded `get_products` augmentation on sandbox requests.
+export { isSandboxRequest, mergeSeededProductsIntoResponse } from '../server/test-controller-bridge';
+export type { TestControllerBridge, TestControllerBridgeContext } from '../server/test-controller-bridge';
+
 // Storyboard-driven testing
 export {
   // Runner
