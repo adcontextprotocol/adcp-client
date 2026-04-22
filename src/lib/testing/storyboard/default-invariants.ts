@@ -267,6 +267,12 @@ registerOnce('governance.denial_blocks_mutation', {
     // Denial observation is never itself a failure — record and return.
     const denial = detectGovernanceDenial(stepResult);
     if (denial) {
+      // A step marked `expect_error: true` is the storyboard author explicitly
+      // acknowledging the denial. Subsequent mutations in the same run are a
+      // recovery path, not a silent bypass — don't anchor. The invariant still
+      // catches silent denials (check_governance 200 `status: denied`, or
+      // adcp_error responses the author did not expect).
+      if (stepResult.expect_error) return [];
       const anchor: GovernanceDenialAnchor = { stepId: stepResult.step_id, signal: denial };
       if (planId) {
         if (!state.deniedPlans.has(planId)) state.deniedPlans.set(planId, anchor);
@@ -282,6 +288,15 @@ registerOnce('governance.denial_blocks_mutation', {
     const anchor = (planId && state.deniedPlans.get(planId)) ?? state.runDenial;
     if (!anchor) return [];
 
+    // The `expect_error: true` escape only applies to wire-error denials
+    // (adcp_error responses). `check_governance` 200 with `status: denied`
+    // is not a wire error, so expect_error semantics don't cover it — don't
+    // misdirect the author to a flag that would have no effect.
+    const escapeHint =
+      anchor.signal === 'CHECK_GOVERNANCE_DENIED'
+        ? ''
+        : ` — if the denial at step "${anchor.stepId}" is an intentional recovery-path setup, mark it \`expect_error: true\` so the invariant does not anchor on it`;
+
     return [
       {
         passed: false,
@@ -292,7 +307,8 @@ registerOnce('governance.denial_blocks_mutation', {
           (planId ? ` for plan_id=${planId}` : ' (run-wide)') +
           `; subsequent step "${stepResult.step_id}" (task=${stepResult.task}) ` +
           `acquired ${acquired.field}=${acquired.id}` +
-          (planId ? ' for the same plan' : ''),
+          (planId ? ' for the same plan' : '') +
+          escapeHint,
       },
     ];
   },
