@@ -464,6 +464,12 @@ function rankHypotheses(input: RankInput): Hypothesis[] {
   // H6: Agent endpoint doesn't validate audience (accepts token but ignores it)
   out.push(rankH6(input.agentUrl, input.currentDecoded, toolStep));
 
+  // H7: Authorization server supports Dynamic Client Registration (RFC 7591)
+  // for client_credentials — informational, helps operators decide whether
+  // a throwaway M2M client is viable for compliance runs.
+  const asStep = input.steps.find(s => s.name === 'probe_authorization_server_metadata');
+  out.push(rankH7(asStep));
+
   // Order: likely > possible > ruled_out > not_observed
   const order: Record<HypothesisVerdict, number> = {
     likely: 0,
@@ -689,6 +695,59 @@ function rankH6(agentUrl: string, currentDecoded: DecodedAccessToken | null, too
     `Token aud: ${safeStringify(audResult.actualAudience ?? '(missing)')}`,
     `Agent URL: ${agentUrl}`,
     'Fix: have the agent reject tokens whose `aud` does not include its own resource URL (RFC 9068).',
+  ];
+  return base;
+}
+
+/**
+ * H7 — DCR readiness for client_credentials. Pure capability probe; no
+ * attempt to actually register. Flagged `possible` when both a
+ * `registration_endpoint` and `client_credentials` in `grant_types_supported`
+ * are advertised, so an operator deciding whether to script a throwaway M2M
+ * client has a signal. `ruled_out` when one or both are missing.
+ */
+function rankH7(asStep?: DiagnosisStep): Hypothesis {
+  const base: Hypothesis = {
+    id: 'H7',
+    title: 'Authorization server supports Dynamic Client Registration for client_credentials',
+    summary: '',
+    verdict: 'not_observed',
+    evidence: [],
+  };
+  if (!asStep?.http || asStep.http.status !== 200 || !asStep.http.body || typeof asStep.http.body !== 'object') {
+    base.summary = 'Authorization server metadata not observed';
+    return base;
+  }
+  const md = asStep.http.body as { registration_endpoint?: unknown; grant_types_supported?: unknown };
+  const registrationEndpoint = typeof md.registration_endpoint === 'string' ? md.registration_endpoint : undefined;
+  const grants = Array.isArray(md.grant_types_supported)
+    ? md.grant_types_supported.filter((g: unknown): g is string => typeof g === 'string')
+    : undefined;
+  const supportsCc = grants ? grants.includes('client_credentials') : undefined;
+  if (!registrationEndpoint) {
+    base.verdict = 'ruled_out';
+    base.summary = 'No registration_endpoint advertised — DCR not available';
+    base.evidence = ['AS metadata has no registration_endpoint field'];
+    return base;
+  }
+  if (supportsCc === false) {
+    base.verdict = 'ruled_out';
+    base.summary = 'registration_endpoint present but client_credentials not in grant_types_supported';
+    base.evidence = [
+      `registration_endpoint: ${registrationEndpoint}`,
+      `grant_types_supported: [${(grants ?? []).join(', ')}]`,
+    ];
+    return base;
+  }
+  base.verdict = 'possible';
+  base.summary =
+    supportsCc === true
+      ? 'AS advertises DCR and client_credentials — a throwaway M2M client may be creatable'
+      : 'AS advertises DCR (grant_types_supported absent, RFC 8414 default may not include client_credentials)';
+  base.evidence = [
+    `registration_endpoint: ${registrationEndpoint}`,
+    `grant_types_supported: [${(grants ?? []).join(', ') || '(absent)'}]`,
+    'Note: many production ASes gate DCR behind an initial-access token; success is not guaranteed.',
   ];
   return base;
 }

@@ -45,6 +45,7 @@ const {
   ClientCredentialsExchangeError,
   MissingEnvSecretError,
   toEnvSecretReference,
+  discoverAuthorizationRequirements,
 } = require('../dist/lib/auth/oauth/index.js');
 
 // Test scenarios available
@@ -862,7 +863,7 @@ AGENT MANAGEMENT:
                                 OAuth (M2M):     --client-id <id> | --client-id-env <VAR>
                                                  --client-secret <s> | --client-secret-env <VAR>
                                                  [--scope <scope>] [--oauth-auth-method basic|body]
-                                                 [--oauth-token-url <url>]  (else discovered)
+                                                 [--oauth-token-url <url>]  (optional; auto-discovered)
   --list-agents               List saved agents
   --remove-agent <alias>      Remove saved agent
   --show-config               Show config location
@@ -2882,6 +2883,17 @@ EXAMPLES:
     --oauth-token-url https://auth.example.com/oauth/token \\
     --client-id abc123 --client-secret xyz789
 
+OTHER FLAGS:
+  --dry-run                   Print the resolved plan (discovered token
+                              endpoint, scope, secret source) and exit
+                              without exchanging tokens or writing the
+                              config. Client-credentials only.
+
+EXIT CODES:
+  0  success
+  1  runtime failure (discovery, exchange, network)
+  2  usage / validation error
+
 Secret storage: ~/.adcp/config.json is written with mode 0600. Treat it as
 credential material — never sync or commit.
 `);
@@ -2901,7 +2913,7 @@ credential material — never sync or commit.
       '--scope',
       '--oauth-auth-method',
     ]);
-    const booleanFlags = new Set(['--no-auth', '--oauth']);
+    const booleanFlags = new Set(['--no-auth', '--oauth', '--dry-run']);
     const parsedFlags = {};
     const positional = [];
     {
@@ -2927,6 +2939,7 @@ credential material — never sync or commit.
     const providedAuthToken = parsedFlags['--auth'] ?? null;
     const noAuthFlag = parsedFlags['--no-auth'] === true;
     const oauthFlag = parsedFlags['--oauth'] === true;
+    const dryRunFlag = parsedFlags['--dry-run'] === true;
     const oauthEndpoint = parsedFlags['--oauth-token-url'] ?? null;
     const clientId = parsedFlags['--client-id'] ?? null;
     const clientIdEnv = parsedFlags['--client-id-env'] ?? null;
@@ -3009,31 +3022,73 @@ credential material — never sync or commit.
         process.exit(2);
       }
 
+      // Arg-shape validation first — these are pure flag checks, no reason
+      // to do network discovery before we know the inputs even compose.
+      if (clientId !== null && clientIdEnv !== null) {
+        console.error('ERROR: Cannot combine --client-id and --client-id-env — pick one\n');
+        process.exit(2);
+      }
+      if (clientSecret !== null && clientSecretEnv !== null) {
+        console.error('ERROR: Cannot combine --client-secret and --client-secret-env — pick one\n');
+        process.exit(2);
+      }
+      if (clientId === null && clientIdEnv === null) {
+        console.error('ERROR: --client-id or --client-id-env is required for client credentials\n');
+        process.exit(2);
+      }
+      if (clientSecret === null && clientSecretEnv === null) {
+        console.error('ERROR: --client-secret or --client-secret-env is required for client credentials\n');
+        process.exit(2);
+      }
+
       // Discover the token endpoint from the agent if --oauth-token-url was
-      // omitted. Walks the RFC 9728 protected-resource metadata and RFC 8414
-      // authorization-server metadata chain — the same probe that powers
-      // `adcp diagnose-auth`. `allowPrivateIp: true` matches the CLI's
-      // operator-driven trust model (the operator typed this URL).
+      // omitted. Walks the RFC 9728 protected-resource metadata, RFC 8414
+      // authorization-server metadata, and OIDC Discovery 1.0 fallback
+      // (same probe that powers `adcp diagnose-auth`). `allowPrivateIp:
+      // true` matches the CLI's operator-driven trust model (the operator
+      // typed this URL).
       let resolvedOauthEndpoint = oauthEndpoint;
+      let discoveredRequirements = null;
       if (!resolvedOauthEndpoint) {
         console.log(`\n🔍 Discovering OAuth token endpoint from ${url}...`);
-        const { discoverAuthorizationRequirements } = require('../dist/lib/auth/oauth/index.js');
+        console.log('   Probing /.well-known/oauth-protected-resource → authorization-server metadata');
         try {
-          const req = await discoverAuthorizationRequirements(url, { allowPrivateIp: true });
-          if (req && req.tokenEndpoint) {
-            resolvedOauthEndpoint = req.tokenEndpoint;
+          discoveredRequirements = await discoverAuthorizationRequirements(url, { allowPrivateIp: true });
+          if (discoveredRequirements && discoveredRequirements.tokenEndpoint) {
+            resolvedOauthEndpoint = discoveredRequirements.tokenEndpoint;
             console.log(`   Found token endpoint: ${resolvedOauthEndpoint}`);
-            if (req.authorizationServer) console.log(`   Authorization server: ${req.authorizationServer}`);
+            if (discoveredRequirements.authorizationServer) {
+              console.log(`   Authorization server: ${discoveredRequirements.authorizationServer}`);
+            }
+            // PRM is allowed to list multiple authorization_servers. We take
+            // [0] per RFC 9728 §3.3 preference ordering — warn the operator
+            // when there's more than one so a silently-wrong tenant surfaces
+            // during debugging rather than at runtime.
+            if (
+              Array.isArray(discoveredRequirements.authorizationServers) &&
+              discoveredRequirements.authorizationServers.length > 1
+            ) {
+              console.log(
+                `   ⚠️  Multiple authorization_servers advertised (${discoveredRequirements.authorizationServers.length}); using the first: ${discoveredRequirements.authorizationServers[0]}`
+              );
+              for (const alt of discoveredRequirements.authorizationServers.slice(1)) {
+                console.log(`        also: ${alt}`);
+              }
+            }
+            if (discoveredRequirements.metadataSource === 'openid-configuration') {
+              console.log('   (metadata via OpenID Connect Discovery fallback)');
+            }
           } else {
             console.error('\n❌ Could not discover an OAuth token endpoint from the agent.\n');
-            console.error('   The agent did not advertise RFC 9728 protected-resource metadata,');
-            console.error('   or its authorization server metadata did not include a token_endpoint.\n');
-            console.error('   Pass --oauth-token-url <url> explicitly.\n');
+            console.error('   The agent did not advertise RFC 9728 protected-resource metadata, or');
+            console.error('   its authorization server metadata did not include a token_endpoint.\n');
+            console.error(`   Run 'adcp diagnose-auth ${url}' to see exactly what the agent advertises.`);
+            console.error('   Or pass --oauth-token-url <url> explicitly.\n');
             process.exit(1);
           }
         } catch (err) {
-          console.error(`\n❌ Token-endpoint discovery failed: ${err.message}\n`);
-          console.error('   Pass --oauth-token-url <url> explicitly.\n');
+          console.error(`\n❌ Token-endpoint discovery failed while probing the agent: ${err.message}\n`);
+          console.error(`   Run 'adcp diagnose-auth ${url}' for details, or pass --oauth-token-url explicitly.\n`);
           process.exit(1);
         }
       }
@@ -3064,21 +3119,23 @@ credential material — never sync or commit.
           process.exit(2);
         }
       }
-      if (clientId !== null && clientIdEnv !== null) {
-        console.error('ERROR: Cannot combine --client-id and --client-id-env — pick one\n');
-        process.exit(2);
-      }
-      if (clientSecret !== null && clientSecretEnv !== null) {
-        console.error('ERROR: Cannot combine --client-secret and --client-secret-env — pick one\n');
-        process.exit(2);
-      }
-      if (clientId === null && clientIdEnv === null) {
-        console.error('ERROR: --client-id or --client-id-env is required for client credentials\n');
-        process.exit(2);
-      }
-      if (clientSecret === null && clientSecretEnv === null) {
-        console.error('ERROR: --client-secret or --client-secret-env is required for client credentials\n');
-        process.exit(2);
+
+      // Pre-check grant_types_supported when the AS published it. RFC 8414
+      // says the field is optional (default: ["authorization_code",
+      // "implicit"]), so absence is "unknown, try your grant"; presence
+      // without `client_credentials` is a hard no and worth bailing on
+      // before we leak the secret to an AS that can't use it.
+      if (
+        discoveredRequirements &&
+        Array.isArray(discoveredRequirements.grantTypesSupported) &&
+        !discoveredRequirements.grantTypesSupported.includes('client_credentials')
+      ) {
+        console.error('\n❌ The discovered authorization server does not support the client_credentials grant.');
+        console.error(
+          `   grant_types_supported = [${discoveredRequirements.grantTypesSupported.join(', ')}] at ${discoveredRequirements.authorizationServer}`
+        );
+        console.error('   Register a CC-capable client with the AS, or pass --oauth-token-url to override.\n');
+        process.exit(1);
       }
 
       const credentials = {
@@ -3090,12 +3147,27 @@ credential material — never sync or commit.
       };
 
       console.log(`\n🔐 Setting up OAuth client credentials for '${alias}'...`);
+      if (oauthFlag) {
+        // Accept --oauth alongside credentials but tell the user it's a
+        // no-op — credentials already imply M2M. Leaving it silent would be
+        // a did-my-flag-do-anything moment.
+        console.log('   Note: --oauth is redundant with client credentials and was ignored.');
+      }
       console.log(`Agent URL:     ${url}`);
       console.log(`Token URL:     ${resolvedOauthEndpoint}${oauthEndpoint ? '' : ' (discovered)'}`);
+      if (discoveredRequirements && discoveredRequirements.authorizationServer && !oauthEndpoint) {
+        console.log(`AS:            ${discoveredRequirements.authorizationServer}`);
+      }
       console.log(`Scope:         ${scope || '(none)'}`);
       console.log(
         `Secret source: ${clientSecretEnv !== null ? `env var $${clientSecretEnv}` : 'literal (stored in config)'}\n`
       );
+
+      if (dryRunFlag) {
+        console.log('🧪 Dry run — would save the agent with the above config.');
+        console.log('   No token exchange, no config file write. Rerun without --dry-run to persist.\n');
+        process.exit(0);
+      }
 
       let tokens;
       try {
@@ -3172,6 +3244,26 @@ credential material — never sync or commit.
       if (detectedProtocol && detectedProtocol !== 'mcp') {
         console.error('ERROR: OAuth is only supported for MCP protocol\n');
         process.exit(2);
+      }
+
+      // Inverse of the client-credentials `grant_types_supported` pre-check:
+      // bail early if the AS the agent points at can't actually do the
+      // browser flow. Don't gate when `grant_types_supported` is absent
+      // (RFC 8414 default is ['authorization_code', 'implicit'], so absence
+      // is still consistent with browser flow).
+      try {
+        const req = await discoverAuthorizationRequirements(url, { allowPrivateIp: true });
+        if (req && Array.isArray(req.grantTypesSupported) && !req.grantTypesSupported.includes('authorization_code')) {
+          console.error('\n❌ The discovered authorization server does not support the authorization_code grant.');
+          console.error(
+            `   grant_types_supported = [${req.grantTypesSupported.join(', ')}] at ${req.authorizationServer}`
+          );
+          console.error('   Use client credentials instead: --client-id <id> --client-secret <secret>\n');
+          process.exit(1);
+        }
+      } catch {
+        // Discovery is best-effort for this pre-check — if it fails, let the
+        // MCP SDK's OAuth provider surface the real error at connect time.
       }
 
       console.log(`\n🔐 Setting up OAuth for '${alias}'...`);

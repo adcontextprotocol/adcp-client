@@ -341,8 +341,59 @@ describe('CC integration: token endpoint discovery (RFC 9728 + RFC 8414)', () =>
       assert.ok(req, 'discovery returned a requirements record');
       assert.strictEqual(req.tokenEndpoint, tokenServer.url, 'discovered token endpoint matches the AS metadata');
       assert.ok(req.authorizationServer, 'authorization server was resolved');
+      assert.ok(Array.isArray(req.authorizationServers) && req.authorizationServers.length === 1);
+      assert.ok(req.grantTypesSupported.includes('client_credentials'));
+      assert.strictEqual(req.metadataSource, 'rfc-8414');
     } finally {
       await agentServer.stop();
+      await tokenServer.stop();
+    }
+  });
+
+  test('discoverAuthorizationRequirements falls back to /.well-known/openid-configuration', async () => {
+    // Agent whose AS only publishes at the OIDC path (Keycloak/Ping/ADFS shape).
+    const tokenServer = await startTokenServer();
+    const server = http.createServer((req, res) => {
+      const base = `http://${req.headers.host}`;
+      if (req.url.endsWith('/.well-known/oauth-protected-resource')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ resource: base, authorization_servers: [base] }));
+        return;
+      }
+      if (req.url.endsWith('/.well-known/oauth-authorization-server')) {
+        res.writeHead(404);
+        res.end('not found');
+        return;
+      }
+      if (req.url.endsWith('/.well-known/openid-configuration')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            issuer: base,
+            authorization_endpoint: `${base}/oauth/authorize`,
+            token_endpoint: tokenServer.url,
+            grant_types_supported: ['client_credentials', 'authorization_code'],
+          })
+        );
+        return;
+      }
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const addr = server.address();
+    const agentUrl = `http://127.0.0.1:${addr.port}/mcp`;
+    try {
+      const req = await discoverAuthorizationRequirements(agentUrl, { allowPrivateIp: true });
+      assert.ok(req, 'discovery returned a requirements record');
+      assert.strictEqual(req.tokenEndpoint, tokenServer.url);
+      assert.strictEqual(req.metadataSource, 'openid-configuration');
+    } finally {
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+      await new Promise(resolve => server.close(() => resolve()));
       await tokenServer.stop();
     }
   });
