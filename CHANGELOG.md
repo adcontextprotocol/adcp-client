@@ -1,5 +1,111 @@
 # Changelog
 
+## 5.12.0
+
+### Minor Changes
+
+- 054d37a: Expose `wrapEnvelope` from `@adcp/client/server` — a public helper for attaching AdCP envelope fields (`replayed`, `context`, `operation_id`) to handler responses, with error-code-specific field allowlists (e.g., IDEMPOTENCY_CONFLICT drops `replayed`). Promoted for sellers that wire their own MCP / A2A handlers without the framework.
+
+  Parity with the framework's internal `injectContextIntoResponse`: `opts.context` is NOT attached when the inner payload already carries a `context` the handler placed itself (handler wins). The per-error-code allowlist now lists `context` explicitly rather than short-circuiting — a module-load invariant asserts every allowlist entry includes `context` so future error codes can't silently drop correlation echo. Return type widened to surface the envelope fields (`replayed?`, `context?`, `operation_id?`) for caller autocomplete.
+
+- 8d86be7: Add `runAgainstLocalAgent` to `@adcp/client/testing` — a one-call compliance harness that composes `createAdcpServer` + `serve` + `seedComplianceFixtures` + the webhook receiver + the storyboard runner. Sellers iterating on their handlers no longer need to hand-roll the 300-line bootstrap (ephemeral port, fixtures, webhook receiver, loop, teardown) from `adcp`'s `server/tests/manual/run-storyboards.ts`.
+
+  **Programmatic surface.** `@adcp/client/testing` now exports `runAgainstLocalAgent({ createAgent, storyboards, fixtures?, webhookReceiver?, authorizationServer?, runStoryboardOptions?, onListening?, onStoryboardComplete?, bail? })`. The caller's `createAgent` must close over a stable `stateStore` so seeds persist across the factory calls `serve()` makes per request. `storyboards` accepts `'all'` (every storyboard in the cache), `AgentCapabilities` (the same resolution the live assessment runner does), `string[]` (storyboard or bundle ids), or `Storyboard[]`.
+
+  **CLI surface.** `adcp storyboard run --local-agent <module> [id|bundle]` is a thin wrapper over the programmatic helper. The module must export `createAgent` as default or named. `--format junit` emits a JUnit XML report on stdout for single-storyboard and `--local-agent` runs — each storyboard becomes a `<testsuite>`, each step a `<testcase>`.
+
+  **Test authorization server.** `@adcp/client/compliance-fixtures` now exports `createTestAuthorizationServer({ subjects?, issuer?, algorithm? })` — an in-process OAuth 2.0 AS that serves RFC 8414 metadata, JWKS, and a client-credentials token endpoint. Pairs with `runAgainstLocalAgent({ authorizationServer: true })` to grade `security_baseline`, `signed-requests`, and other auth-requiring storyboards locally without reaching an external IdP. RS256 by default (ES256 available); HS\* is refused to match `verifyBearer`'s asymmetric-only allowlist.
+
+  **New guide.** `docs/guides/VALIDATE-LOCALLY.md` walks the ten-line pattern, the stable-stateStore rule, the CLI equivalent, and the auth-server integration.
+
+  Closes adcp-client#786.
+
+- 39e661f: Add seed fixture merge helpers and a `get_products` test-controller bridge so Group A compliance storyboards can seed fixtures end-to-end without seller boilerplate.
+
+  **Seed merge helpers** (`@adcp/client/testing`):
+  - Generic `mergeSeed<T>(base, seed)` — permissive merge: `undefined`/`null` in seed preserves base; every other leaf (including `0`, `false`, `""`, `[]`) overrides. Arrays replace by default; `Map`/`Set` throw.
+  - Typed per-kind wrappers (`mergeSeedProduct`, `mergeSeedPricingOption`, `mergeSeedCreative`, `mergeSeedPlan`, `mergeSeedMediaBuy`) layer **by-id overlay** on well-known id-keyed arrays so seeding a single entry doesn't drop the rest: `pricing_options[]` by `pricing_option_id`, `publisher_properties[]` by `(publisher_domain, selection_type)`, `packages[]` by `package_id`, creative `assets[]` by `asset_id`, plan `findings[]` by `policy_id`, plan `checks[]` by `check_id`.
+  - Shared `overlayById(base, seed, identity)` helper so sellers can apply the same overlay rule to domain-specific fields.
+
+  **`get_products` bridge** (`@adcp/client`):
+  - `createAdcpServer({ testController: { getSeededProducts } })` — seeded products append to handler output on sandbox requests (`account.sandbox === true`, `context.sandbox === true`, and — when `resolveAccount` returns an account — `ctx.account.sandbox === true`). Production traffic or a resolved non-sandbox account skips the bridge entirely. `product_id` collisions resolve with the seeded entry winning. Returns that are non-arrays or entries missing `product_id` are logged and dropped rather than thrown. Handler-declared `sandbox: false` stays authoritative (the bridge does not overwrite it).
+  - `bridgeFromTestControllerStore(store, productDefaults)` — one-liner that wraps any `Map<string, unknown>` seed store into a `TestControllerBridge`; each stored fixture is merged onto `productDefaults` via `mergeSeedProduct`.
+  - Opt-in via presence of `getSeededProducts`; the previous `augmentGetProducts` flag is dropped (one-rule opt-in).
+
+### Patch Changes
+
+- f86afe4: Storyboard runner: honor `step.sample_request` in
+  `list_creative_formats` request builder.
+
+  Prior behavior hardcoded `list_creative_formats() { return {}; }`, so
+  any storyboard step declaring `format_ids: ["..."]` (or any other
+  query param) in its sample_request hit the wire as an empty request.
+  The agent returned unfiltered results and downstream round-trip /
+  substitution-observer assertions failed silently (the agent looked
+  non-conformant, but the filter had never been sent).
+
+  Mirrors the pattern used by peer builders (`build_creative`,
+  `sync_creatives`, etc.). No other API change.
+
+  Closes #780.
+
+- b8b7fb2: Storyboard runner: fix spec-violating shapes and `sample_request`
+  precedence across the SI + governance request builders. All affected
+  builders now honor `step.sample_request` first (matching peer builders),
+  and their synthetic fallbacks conform to the generated Zod schemas so
+  framework-dispatch agents running strict validation at the MCP boundary
+  no longer reject them with `-32602 invalid_type`.
+  - `si_get_offering`: drop the string `context` and the out-of-schema
+    `identity`; emit the prose string as optional `intent` (per
+    `si-get-offering-request.json`, `context` is a ref to an object).
+  - `si_initiate_session`: move prose from `context` (which must be an
+    object) to required `intent`; default the identity fallback to the
+    realistic anonymous handoff shape (`consent_granted: false` +
+    `anonymous_session_id`) instead of `consent_granted: true` with an
+    empty consented user — spec-legal either way, but the anonymous shape
+    is what a host that hasn't obtained PII consent actually sends.
+  - `si_send_message` / `si_terminate_session`: honor `sample_request` so
+    storyboards can drive `action_response`, `handoff_transaction`,
+    `termination_context`, and non-default `reason` paths without the
+    fallback stomping the scenario.
+  - `sync_governance`: lengthen default `authentication.credentials` to
+    meet `minLength: 32`, and honor `sample_request` so fixtures like
+    `signal-marketplace/scenarios/governance_denied.yaml` that author
+    `url: $context.governance_agent_url` flow through.
+
+  Closes #802.
+
+- 8d58987: Fix unbounded re-execution when a buyer SDK retries a mutating request against a handler whose response fails strict-mode validation (issue #758).
+
+  Under the strict response-validation default, a drifted handler produced a `VALIDATION_ERROR` and released its idempotency claim on the way out, so the next retry re-entered the handler with the same drift — looping as fast as the buyer's retry budget allowed. The dispatcher now caches the `VALIDATION_ERROR` envelope under the same `(principal, key, payloadHash)` tuple for 10 seconds; retries on the same key short-circuit to the cached error instead of re-running side effects, and the cache clears itself before a handler fix would be gated on TTL expiry.
+
+  A retry with a different canonical payload still produces `IDEMPOTENCY_CONFLICT` (the cache scopes on payload hash, same as the success cache), and a buyer that generates a fresh idempotency key per retry is not short-circuited — both behaviors are intentional. Same-key retry storms are the dominant failure mode; fresh-key loops already have the buyer's backoff as the correct control point.
+
+  New `IdempotencyStore.saveTransientError(...)` method is optional on the interface — custom store implementations that want retry-storm protection can implement it; omitting it preserves the prior release-on-error behavior. Stores built via `createIdempotencyStore` pick it up automatically.
+
+  **Operational note.** A drifted handler reachable by a hostile buyer is a cache-fill vector (every fresh key writes a 10s entry). Alert on sustained `VALIDATION_ERROR` rates per principal — steady-state should be zero.
+
+- c6bced1: Testing: schema-driven round-trip invariant for every storyboard request builder, plus fallback fixes so each builder's fallback round-trips through the generated Zod schema.
+
+  Adds `test/lib/request-builder-schema-roundtrip.test.js` that iterates every task in `TOOL_REQUEST_SCHEMAS` (plus `creative_approval` and `update_rights`) and asserts the fallback request — empty context, empty `sample_request`, synthetic `idempotency_key` where required — parses cleanly against the matching schema from `src/lib/types/schemas.generated.ts`. New builders are picked up automatically.
+
+  Running the invariant surfaced eight pre-existing fallbacks that had drifted out of spec. Fixed:
+  - `update_media_buy` packages fallback now sets `package_id`.
+  - `update_rights` / `creative_approval` fallbacks use `rights_id` (the spec field) instead of `rights_grant_id`; `creative_approval` now emits `creative_url` + `creative_id`.
+  - `sync_creatives` fallback assets carry the required `asset_type` discriminator (`image` / `video` / `text`). `buildAssetsForFormat` uses spec-correct video fields (`duration_ms`, `container_format`, `width`, `height`).
+  - `calibrate_content` / `validate_content_delivery` artifacts use `assets: []` (the schema is an array of typed assets, not an object map).
+  - `activate_signal` defaults `destinations` to a placeholder agent entry so the fallback path satisfies the schema's required array.
+  - `create_content_standards` / `update_content_standards` fallbacks align with the current `scope` + `policies` shape (old schema used `name` + `rules`).
+  - `si_get_offering` / `si_initiate_session` pass `options.si_context` through the schema's `intent` (string) field instead of the wire-level `context` slot that the spec types as `ContextObject`; `si_initiate_session` now emits the required `intent`.
+
+  Closes #803.
+
+- 5e52efa: Fix storyboard `REQUEST_BUILDERS` for `log_event` and `create_media_buy` so they emit spec-conformant payloads and honor hand-authored `step.sample_request` — framework-dispatch agents running zod at the MCP boundary previously rejected these with `-32602 invalid_type` (#793).
+  - **`log_event`** now honors `step.sample_request` when present (same convention as `sync_catalogs`, `update_media_buy`, `report_usage`). The synthetic fallback emits `event_time` (was `timestamp`) and places `value` + `currency` under `custom_data` (was nested `value: { amount, currency }`). Unblocks `sales_catalog_driven` and `sales_social` storyboards whose authored events carried `event_time`, `content_ids`, and spec-shaped siblings that the builder was discarding.
+  - **`create_media_buy`** now emits every authored package instead of dropping `packages[1+]`. The first package still receives context-derived `product_id` / `pricing_option_id` overrides (so single-package storyboards against arbitrary sellers keep working); additional packages pass through with context injection only, preserving per-package `product_id`, `bid_price`, `pricing_option_id`, and `creative_assignments`. Unblocks multi-package storyboards (e.g. `sales_non_guaranteed`) where `context_outputs` captured `packages[1].package_id` as `second_package_id` — the next step was being skipped with "unresolved context variables from prior steps".
+
+  Surfaced while diagnosing adcontextprotocol/adcp#2872.
+
 ## 5.11.0
 
 ### Minor Changes
