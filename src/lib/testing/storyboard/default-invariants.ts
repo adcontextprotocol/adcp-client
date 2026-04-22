@@ -33,6 +33,7 @@
  *     enum schemas in `static/schemas/source/enums/*-status.json`.
  */
 
+import { ADCP_VERSION } from '../../version';
 import { registerAssertion } from './assertions';
 
 // Register only once per process. `registerAssertion` throws on duplicates —
@@ -68,6 +69,7 @@ const CONFLICT_ALLOWED_ENVELOPE_KEYS = new Set([
 
 registerOnce('idempotency.conflict_no_payload_leak', {
   id: 'idempotency.conflict_no_payload_leak',
+  default: true,
   description:
     'IDEMPOTENCY_CONFLICT errors MUST NOT echo the prior request payload or response (stolen-key read oracle).',
   onStep: (_ctx, stepResult) => {
@@ -130,6 +132,7 @@ const SECRET_MIN_LENGTH = 16;
 
 registerOnce('context.no_secret_echo', {
   id: 'context.no_secret_echo',
+  default: true,
   description: 'Response bodies MUST NOT echo bearer tokens, API keys, or auth header values back to the caller.',
   onStart: ctx => {
     // Stash caller-supplied secrets worth hunting verbatim. `auth` is the
@@ -267,6 +270,7 @@ interface GovernanceDenialAnchor {
 
 registerOnce('governance.denial_blocks_mutation', {
   id: 'governance.denial_blocks_mutation',
+  default: true,
   description:
     'Once a governance signal denies a plan, no subsequent step in the run may acquire a resource for that plan.',
   onStart: ctx => {
@@ -520,6 +524,19 @@ function extractAuthSecrets(auth: unknown): string[] {
  */
 interface TransitionGraph {
   readonly transitions: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Filename of the canonical enum schema this graph mirrors, relative to
+   * `/schemas/<adcp-version>/enums/`. Used to render a deep-link in the
+   * assertion failure message so implementors can jump straight to the
+   * spec's lifecycle doc instead of grep-searching for it.
+   */
+  readonly enumFile: string;
+}
+
+const SCHEMA_URL_BASE = 'https://adcontextprotocol.org';
+
+function buildEnumSchemaUrl(enumFile: string): string {
+  return `${SCHEMA_URL_BASE}/schemas/${ADCP_VERSION}/enums/${enumFile}`;
 }
 
 const MEDIA_BUY_TRANSITIONS: TransitionGraph = {
@@ -540,6 +557,7 @@ const MEDIA_BUY_TRANSITIONS: TransitionGraph = {
     ['rejected', new Set()],
     ['canceled', new Set()],
   ]),
+  enumFile: 'media-buy-status.json',
 };
 
 const CREATIVE_ASSET_TRANSITIONS: TransitionGraph = {
@@ -561,6 +579,7 @@ const CREATIVE_ASSET_TRANSITIONS: TransitionGraph = {
     ['archived', new Set(['approved'])],
     ['rejected', new Set(['processing', 'pending_review'])],
   ]),
+  enumFile: 'creative-status.json',
 };
 
 const CREATIVE_APPROVAL_TRANSITIONS: TransitionGraph = {
@@ -572,6 +591,7 @@ const CREATIVE_APPROVAL_TRANSITIONS: TransitionGraph = {
     ['approved', new Set(['rejected'])],
     ['rejected', new Set(['pending_review'])],
   ]),
+  enumFile: 'creative-approval-status.json',
 };
 
 const ACCOUNT_TRANSITIONS: TransitionGraph = {
@@ -588,6 +608,7 @@ const ACCOUNT_TRANSITIONS: TransitionGraph = {
     ['rejected', new Set()],
     ['closed', new Set()],
   ]),
+  enumFile: 'account-status.json',
 };
 
 const SI_SESSION_TRANSITIONS: TransitionGraph = {
@@ -599,6 +620,7 @@ const SI_SESSION_TRANSITIONS: TransitionGraph = {
     ['complete', new Set()],
     ['terminated', new Set()],
   ]),
+  enumFile: 'si-session-status.json',
 };
 
 const CATALOG_ITEM_TRANSITIONS: TransitionGraph = {
@@ -611,6 +633,7 @@ const CATALOG_ITEM_TRANSITIONS: TransitionGraph = {
     ['warning', new Set(['approved', 'rejected'])],
     ['rejected', new Set(['pending'])],
   ]),
+  enumFile: 'catalog-item-status.json',
 };
 
 const PROPOSAL_TRANSITIONS: TransitionGraph = {
@@ -619,6 +642,7 @@ const PROPOSAL_TRANSITIONS: TransitionGraph = {
     ['draft', new Set(['committed'])],
     ['committed', new Set()],
   ]),
+  enumFile: 'proposal-status.json',
 };
 
 const AUDIENCE_TRANSITIONS: TransitionGraph = {
@@ -633,6 +657,7 @@ const AUDIENCE_TRANSITIONS: TransitionGraph = {
     ['ready', new Set(['processing', 'too_small'])],
     ['too_small', new Set(['processing', 'ready'])],
   ]),
+  enumFile: 'audience-status.json',
 };
 
 /**
@@ -845,6 +870,7 @@ interface MonotonicState {
 
 registerOnce('status.monotonic', {
   id: 'status.monotonic',
+  default: true,
   description:
     'Observed resource statuses (media_buy, creative, account, si_session, catalog_item, proposal, creative_approval, audience) MUST only transition along edges in the spec lifecycle graph.',
   onStart: ctx => {
@@ -889,6 +915,15 @@ registerOnce('status.monotonic', {
         continue;
       }
       if (!allowedTargets.has(ob.status)) {
+        // Surface the legal next states + a canonical enum URL so implementors
+        // can self-diagnose without grepping the SDK source for the
+        // lifecycle table. `allowedTargets` is empty for terminal states
+        // (completed / rejected / canceled / etc.) — call that out explicitly
+        // rather than rendering an empty list that reads as "any target is
+        // fine, just not this one".
+        const legalTargets = [...allowedTargets].sort();
+        const legalDescription =
+          legalTargets.length > 0 ? legalTargets.map(t => `"${t}"`).join(', ') : '(none — terminal state)';
         return [
           {
             passed: false,
@@ -896,7 +931,9 @@ registerOnce('status.monotonic', {
             step_id: stepResult.step_id,
             error:
               `${ob.resource_type} ${ob.resource_id}: ${prev.status} → ${ob.status} ` +
-              `(step "${prev.stepId}" → step "${stepResult.step_id}") is not in the lifecycle graph.`,
+              `(step "${prev.stepId}" → step "${stepResult.step_id}") is not in the lifecycle graph. ` +
+              `Legal next states from "${prev.status}": ${legalDescription}. ` +
+              `See ${buildEnumSchemaUrl(ob.graph.enumFile)} for the canonical lifecycle.`,
           },
         ];
       }
