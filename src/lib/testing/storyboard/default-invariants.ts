@@ -267,6 +267,12 @@ registerOnce('governance.denial_blocks_mutation', {
     // Denial observation is never itself a failure — record and return.
     const denial = detectGovernanceDenial(stepResult);
     if (denial) {
+      // A step marked `expect_error: true` is the storyboard author explicitly
+      // acknowledging the denial. Subsequent mutations in the same run are a
+      // recovery path, not a silent bypass — don't anchor. The invariant still
+      // catches silent denials (check_governance 200 `status: denied`, or
+      // adcp_error responses the author did not expect).
+      if (stepResult.expect_error) return [];
       const anchor: GovernanceDenialAnchor = { stepId: stepResult.step_id, signal: denial };
       if (planId) {
         if (!state.deniedPlans.has(planId)) state.deniedPlans.set(planId, anchor);

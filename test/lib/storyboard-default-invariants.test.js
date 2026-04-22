@@ -109,11 +109,11 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     };
   }
 
-  function denialStep(planId, code = 'GOVERNANCE_DENIED') {
+  function denialStep(planId, code = 'GOVERNANCE_DENIED', { expectError = false } = {}) {
     return makeStep({
       step_id: 'deny',
       task: 'check_governance',
-      expect_error: true,
+      expect_error: expectError,
       response: { plan_id: planId, adcp_error: { code, message: 'denied' } },
     });
   }
@@ -250,7 +250,7 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     const step = makeStep({
       step_id: 'deny_no_plan',
       task: 'get_products',
-      expect_error: true,
+      expect_error: false,
       response: { adcp_error: { code: 'POLICY_VIOLATION', message: 'refused' } },
     });
     const out = run([step, mutateStep({ response: { media_buy_id: 'mb-1', status: 'active' } })]);
@@ -303,6 +303,40 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
       }),
     ]);
     assert.strictEqual(act[1].output[0].passed, false);
+  });
+
+  test('expected denial (expect_error: true) does not anchor — recovery path is allowed', () => {
+    // Models `media_buy_seller/governance_denied_recovery`: the denial step
+    // declares the error was expected, the retry step corrects the payload
+    // and legitimately mints a media_buy. The invariant must stay silent.
+    const out = run([
+      denialStep('plan-a', 'GOVERNANCE_DENIED', { expectError: true }),
+      mutateStep({ planId: 'plan-a', response: { media_buy_id: 'mb-recovered', status: 'active' } }),
+    ]);
+    assert.strictEqual(out[1].output.length, 0);
+  });
+
+  test('expected TERMS_REJECTED does not anchor either', () => {
+    // Mirror of `media_buy_seller/measurement_terms_rejected`.
+    const out = run([
+      denialStep('plan-b', 'TERMS_REJECTED', { expectError: true }),
+      mutateStep({ planId: 'plan-b', response: { media_buy_id: 'mb-relaxed', status: 'pending_start' } }),
+    ]);
+    assert.strictEqual(out[1].output.length, 0);
+  });
+
+  test('expected denial on plan A does not bleed into run-wide anchor', () => {
+    // If an expected denial lacked plan linkage, it must still not anchor
+    // run-wide — otherwise the whole run would be tainted by a single
+    // expected error.
+    const step = makeStep({
+      step_id: 'deny_no_plan',
+      task: 'get_products',
+      expect_error: true,
+      response: { adcp_error: { code: 'POLICY_VIOLATION', message: 'refused' } },
+    });
+    const out = run([step, mutateStep({ response: { media_buy_id: 'mb-1', status: 'active' } })]);
+    assert.strictEqual(out[1].output.length, 0);
   });
 
   test('onStart resets runDenial so stale state does not bleed across runs', () => {
