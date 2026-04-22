@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-22T06:09:16.717Z
+// Generated at: 2026-04-22T07:34:38.820Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2684,6 +2684,7 @@ export const DeletePropertyListRequestSchema = z.object({
 export const DeletePropertyListResponseSchema = z.object({
     deleted: z.boolean(),
     list_id: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4655,6 +4656,7 @@ export const PropertyListSchema = z.object({
 
 export const UpdatePropertyListResponseSchema = z.object({
     list: PropertyListSchema,
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4722,6 +4724,7 @@ export const UpdateCollectionListRequestSchema = z.object({
 
 export const UpdateCollectionListResponseSchema = z.object({
     list: CollectionListSchema,
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4792,6 +4795,7 @@ export const DeleteCollectionListRequestSchema = z.object({
 export const DeleteCollectionListResponseSchema = z.object({
     deleted: z.boolean(),
     list_id: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4903,6 +4907,7 @@ export const SyncPlansResponseSchema = z.object({
             reason: z.string().optional()
         }).passthrough()).optional()
     }).passthrough()),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4957,6 +4962,7 @@ export const ReportPlanOutcomeResponseSchema = z.object({
         total_committed: z.number().optional(),
         budget_remaining: z.number().optional()
     }).passthrough().optional(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -6021,6 +6027,7 @@ export const CreativeAsset1Schema = z.object({
 export const CreatePropertyListResponseSchema = z.object({
     list: PropertyListSchema,
     auth_token: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -6244,6 +6251,7 @@ export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema
 export const CreateCollectionListResponseSchema = z.object({
     list: CollectionListSchema,
     auth_token: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();

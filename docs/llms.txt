@@ -30,6 +30,8 @@ function createAgent({ taskStore }) {
 serve(createAgent); // http://localhost:3001/mcp
 ```
 
+Low-level server (bypassing `createAdcpServer`)? Use `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/client/server` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops `replayed`).
+
 ## Quick Start (Client)
 
 ```typescript
@@ -490,7 +492,7 @@ Request parameters for creating a new property list.
 
 **Response (success branch):**
 - Required: `list: Property List`, `auth_token: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `update_property_list`
 
@@ -502,7 +504,7 @@ Request parameters for updating an existing property list.
 
 **Response (success branch):**
 - Required: `list: Property List`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `get_property_list`
 
@@ -537,7 +539,7 @@ Request parameters for deleting a property list.
 
 **Response (success branch):**
 - Required: `deleted: boolean`, `list_id: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `create_collection_list`
 
@@ -549,7 +551,7 @@ Request parameters for creating a new collection list.
 
 **Response (success branch):**
 - Required: `list: Collection List`, `auth_token: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `update_collection_list`
 
@@ -561,7 +563,7 @@ Request parameters for updating an existing collection list.
 
 **Response (success branch):**
 - Required: `list: Collection List`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `get_collection_list`
 
@@ -596,7 +598,7 @@ Request parameters for deleting a collection list.
 
 **Response (success branch):**
 - Required: `deleted: boolean`, `list_id: string`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `list_content_standards`
 
@@ -702,7 +704,7 @@ Push campaign plans to the governance agent.
 
 **Response (success branch):**
 - Required: `plans: object[]`
-- Optional: `context: Context`
+- Optional: `replayed: boolean`, `context: Context`
 
 #### `report_plan_outcome`
 
@@ -714,7 +716,7 @@ Report the outcome of an action to the governance agent.
 
 **Response (success branch):**
 - Required: `outcome_id: string`, `status: 'accepted' | 'findings'`
-- Optional: `committed_budget: number`, `findings: object[]`, `plan_summary: object`, `context: Context`
+- Optional: `committed_budget: number`, `findings: object[]`, `plan_summary: object`, `replayed: boolean`, `context: Context`
 
 #### `get_plan_audit_logs`
 
@@ -951,7 +953,7 @@ Flow: `get_adcp_capabilities → get_brand_identity → get_rights → acquire_r
 Flow: `get_adcp_capabilities`
 
 **Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
-Flow: `get_adcp_capabilities → comply_test_controller → sync_accounts → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
+Flow: `get_adcp_capabilities → comply_test_controller → sync_accounts → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
 
 **Idempotency enforcement** — Validates that mutating requests enforce idempotency_key — replays return cached responses, key reuse with a different payload returns IDEMPOTENCY_CONFLICT, and fresh keys create new resources.
 Flow: `get_adcp_capabilities → create_media_buy → expect_webhook → create_media_buy → get_media_buys`

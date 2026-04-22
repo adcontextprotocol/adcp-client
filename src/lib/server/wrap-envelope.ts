@@ -35,11 +35,17 @@ export interface WrapEnvelopeOptions {
   replayed?: boolean;
 
   /**
-   * Echo-back context block. Always allowed on both success and error
-   * envelopes. Non-object values (string, null, array) are ignored to
+   * Echo-back context block. `context` must be a plain object. String,
+   * `null`, array, and other non-object values are silently dropped to
    * match the framework's `injectContextIntoResponse` behavior — SI tools
-   * override request `context` to a string, and echoing a string into the
-   * response envelope would violate response-schema validation.
+   * (`si_get_offering`, `si_initiate_session`) legitimately override the
+   * request `context` to a domain-specific string that must NOT echo into
+   * the response envelope, because the response schema requires the
+   * protocol echo object there. Pass an object explicitly if you want the
+   * field to appear on the envelope.
+   *
+   * Subject to the per-error-code allowlist when `inner` carries an
+   * `adcp_error.code`. Every shipped allowlist includes `context`.
    */
   context?: unknown;
 
@@ -75,13 +81,41 @@ export interface WrapEnvelopeOptions {
  * This is the sibling-field allowlist (keys attached AS SIBLINGS of
  * `adcp_error`). The keys allowed INSIDE the `adcp_error` block itself
  * are governed by `CONFLICT_ALLOWED_ENVELOPE_KEYS` in
- * `src/lib/testing/storyboard/default-invariants.ts`.
+ * `src/lib/testing/storyboard/default-invariants.ts` — two separate
+ * concerns, keep them in sync if extending.
+ *
+ * **Invariant**: every allowlist set MUST include `'context'`. The helper
+ * enforces this at module load so new error codes can't accidentally drop
+ * context echo (which sellers rely on for correlation tracing across both
+ * success and error paths). See `ensureContextEcho` below.
+ *
+ * **Consumer use case**: custom MCP / A2A handlers that emit envelope
+ * fields beyond `replayed` / `context` / `operation_id` can read this set
+ * to preflight their outputs, or extend it locally via
+ * `new Set([...existing, 'my_field'])` (do NOT mutate in place — the
+ * exported object is frozen).
  */
-export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<
-  Record<string, ReadonlySet<string>>
-> = Object.freeze({
+export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
   IDEMPOTENCY_CONFLICT: new Set(['context', 'operation_id']),
 });
+
+/**
+ * Sanity check: every allowlist entry must permit `context` echo. Future
+ * error codes can't silently drop context without thinking — missing
+ * entries fail at module load, not at runtime request time.
+ */
+function ensureContextEcho(allowlist: Readonly<Record<string, ReadonlySet<string>>>): void {
+  for (const [code, fields] of Object.entries(allowlist)) {
+    if (!fields.has('context')) {
+      throw new Error(
+        `ERROR_ENVELOPE_FIELD_ALLOWLIST['${code}'] is missing 'context'. ` +
+          `Every error-code allowlist must include 'context' so correlation ` +
+          `ids can round-trip on error envelopes.`
+      );
+    }
+  }
+}
+ensureContextEcho(ERROR_ENVELOPE_FIELD_ALLOWLIST);
 
 interface AdcpErrorLike {
   adcp_error?: { code?: unknown };
@@ -106,6 +140,34 @@ function isEchoableContext(value: unknown): boolean {
  *   is the AdCP error envelope (`{ adcp_error: { code, message, ... } }`).
  * @param opts Envelope fields to attach. See {@link WrapEnvelopeOptions}.
  *
+ * @example Seller handler — success + IDEMPOTENCY_CONFLICT error paths
+ * ```ts
+ * import { wrapEnvelope } from '@adcp/client/server';
+ *
+ * async function handleCreateMediaBuy(request) {
+ *   try {
+ *     const inner = await buyService.create(request.params);
+ *     // Fresh-path success: emit replayed:false so storyboards can assert
+ *     // the absence of a replay, and echo request.context for tracing.
+ *     return wrapEnvelope(inner, {
+ *       replayed: false,
+ *       context: request.context,
+ *       operationId: inner.operation_id,
+ *     });
+ *   } catch (err) {
+ *     if (err.code === 'IDEMPOTENCY_CONFLICT') {
+ *       // Conflict is NOT a replay — replayed is dropped by the allowlist,
+ *       // but context still echoes for correlation tracing.
+ *       return wrapEnvelope(
+ *         { adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message: err.message, recovery: 'terminal' } },
+ *         { context: request.context }
+ *       );
+ *     }
+ *     throw err;
+ *   }
+ * }
+ * ```
+ *
  * @example Success path
  * ```ts
  * const response = wrapEnvelope(
@@ -127,18 +189,15 @@ function isEchoableContext(value: unknown): boolean {
 export function wrapEnvelope<T extends object>(
   inner: T,
   opts: WrapEnvelopeOptions
-): T {
+): T & { replayed?: boolean; context?: object; operation_id?: string } {
   const clone: Record<string, unknown> = {
     ...(inner as Record<string, unknown>),
   };
 
   const errorCode = detectErrorCode(inner, opts.errorCode);
-  const allowlist =
-    errorCode != null ? ERROR_ENVELOPE_FIELD_ALLOWLIST[errorCode] : undefined;
+  const allowlist = errorCode != null ? ERROR_ENVELOPE_FIELD_ALLOWLIST[errorCode] : undefined;
 
   const fieldAllowed = (field: string): boolean => {
-    // `context` is always allowed (success + error).
-    if (field === 'context') return true;
     // Unknown error code falls back to success-envelope semantics.
     if (allowlist == null) return true;
     return allowlist.has(field);
@@ -148,7 +207,11 @@ export function wrapEnvelope<T extends object>(
     clone.replayed = opts.replayed;
   }
 
-  if ('context' in opts && isEchoableContext(opts.context)) {
+  // Context parity with `injectContextIntoResponse`: only attach when the
+  // inner payload doesn't already carry a context the handler placed
+  // itself. And honor the per-error-code allowlist — `context` is
+  // listed explicitly in every shipped entry.
+  if ('context' in opts && isEchoableContext(opts.context) && !('context' in clone) && fieldAllowed('context')) {
     clone.context = opts.context;
   }
 
@@ -156,5 +219,9 @@ export function wrapEnvelope<T extends object>(
     clone.operation_id = opts.operationId;
   }
 
-  return clone as T;
+  return clone as T & {
+    replayed?: boolean;
+    context?: object;
+    operation_id?: string;
+  };
 }

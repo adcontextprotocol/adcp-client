@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-22T06:08:27.815Z
+// Generated at: 2026-04-22T07:34:33.779Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -11941,6 +11941,10 @@ export interface CreatePropertyListResponse {
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -12028,6 +12032,10 @@ export interface DeletePropertyListResponse {
    * ID of the deleted list
    */
   list_id: string;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -12173,6 +12181,10 @@ export interface UpdatePropertyListRequest {
  */
 export interface UpdatePropertyListResponse {
   list: PropertyList;
+  /**
+   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   */
+  replayed?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }

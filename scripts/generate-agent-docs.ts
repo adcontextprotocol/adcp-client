@@ -500,6 +500,10 @@ function generateLlmsTxt(
   ln(`serve(createAgent); // http://localhost:3001/mcp`);
   ln('```');
   ln();
+  ln(
+    `Low-level server (bypassing \`createAdcpServer\`)? Use \`wrapEnvelope(inner, { replayed, context, operationId })\` from \`@adcp/client/server\` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops \`replayed\`).`
+  );
+  ln();
 
   // --- Quick start ---
   ln(`## Quick Start (Client)`);

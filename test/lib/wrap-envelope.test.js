@@ -11,10 +11,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  wrapEnvelope,
-  ERROR_ENVELOPE_FIELD_ALLOWLIST,
-} = require('../../dist/lib/server/index.js');
+const { wrapEnvelope, ERROR_ENVELOPE_FIELD_ALLOWLIST } = require('../../dist/lib/server/index.js');
 
 describe('wrapEnvelope: success envelopes', () => {
   it('attaches replayed:true when explicitly set', () => {
@@ -46,10 +43,7 @@ describe('wrapEnvelope: success envelopes', () => {
   });
 
   it('emits operation_id in snake_case', () => {
-    const out = wrapEnvelope(
-      { media_buy_id: 'mb_1' },
-      { operationId: 'op_xyz' }
-    );
+    const out = wrapEnvelope({ media_buy_id: 'mb_1' }, { operationId: 'op_xyz' });
     assert.equal(out.operation_id, 'op_xyz');
     assert.ok(!('operationId' in out), 'camelCase key must not leak through');
   });
@@ -84,6 +78,19 @@ describe('wrapEnvelope: success envelopes', () => {
 
     const arrOut = wrapEnvelope({ k: 'v' }, { context: ['a', 'b'] });
     assert.ok(!('context' in arrOut));
+  });
+
+  it('preserves handler-provided context (parity with injectContextIntoResponse)', () => {
+    // Mirror of `injectContextIntoResponse` guard: if the handler already
+    // placed a context on the inner payload, opts.context must NOT
+    // clobber it. Correlation-id tracing works as long as something
+    // ends up on the envelope; the handler's value wins over the opts
+    // fallback.
+    const handlerContext = { correlation_id: 'from-handler' };
+    const optsContext = { correlation_id: 'from-opts' };
+    const out = wrapEnvelope({ media_buy_id: 'mb_1', context: handlerContext }, { context: optsContext });
+    assert.equal(out.context, handlerContext);
+    assert.notEqual(out.context, optsContext);
   });
 });
 
@@ -210,5 +217,15 @@ describe('ERROR_ENVELOPE_FIELD_ALLOWLIST: exported shape', () => {
     assert.ok(set.has('operation_id'));
     assert.ok(!set.has('replayed'), 'replayed must NOT be in the allowlist');
     assert.equal(set.size, 2);
+  });
+
+  it('every allowlist entry includes context (sanity invariant)', () => {
+    // Future error codes can't silently drop context echo — correlation
+    // tracing breaks if an error path stops echoing it. The module-load
+    // `ensureContextEcho` check enforces this; the test asserts the
+    // invariant at the shipped surface too.
+    for (const [code, fields] of Object.entries(ERROR_ENVELOPE_FIELD_ALLOWLIST)) {
+      assert.ok(fields.has('context'), `ERROR_ENVELOPE_FIELD_ALLOWLIST['${code}'] must include 'context'`);
+    }
   });
 });
