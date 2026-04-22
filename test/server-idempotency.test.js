@@ -1,8 +1,14 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
+const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
+
+// Idempotency tests use sparse handler fixtures; opt out of the strict
+// response-validation default so we stay focused on replay/claim behavior.
+function createAdcpServer(config) {
+  return _createAdcpServer({ validation: { responses: 'off' }, ...config });
+}
 
 async function callTool(server, toolName, params) {
   const raw = await server.dispatchTestRequest({
