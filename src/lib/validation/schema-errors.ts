@@ -69,9 +69,7 @@ export function buildAdcpValidationErrorPayload(
     first != null
       ? `${tool} ${side} failed schema validation at ${first.pointer}: ${first.message}`
       : `${tool} ${side} failed schema validation`;
-  const emittedIssues = options.exposeSchemaPath
-    ? issues
-    : issues.map(({ schemaPath: _schemaPath, ...rest }) => rest);
+  const emittedIssues = options.exposeSchemaPath ? issues : issues.map(({ schemaPath: _schemaPath, ...rest }) => rest);
   const payload: { message: string; field?: string; details: Record<string, unknown> } = {
     message,
     details: { tool, side, issues: emittedIssues } satisfies AdcpValidationErrorDetails as unknown as Record<

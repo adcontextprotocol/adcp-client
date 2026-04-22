@@ -1871,12 +1871,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 variant: outcome.variant,
               });
               if (responseValidationMode === 'strict') {
-                const errPayload = buildAdcpValidationErrorPayload(
-                  toolName,
-                  'response',
-                  outcome.issues,
-                  { exposeSchemaPath: exposeErrorDetails }
-                );
+                const errPayload = buildAdcpValidationErrorPayload(toolName, 'response', outcome.issues, {
+                  exposeSchemaPath: exposeErrorDetails,
+                });
                 if (idempotencyCheck && idempotency) {
                   try {
                     await idempotency.release({
