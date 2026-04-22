@@ -93,7 +93,8 @@ What happens when a creative is synced:
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
 > - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['creative-ad-server']`), NOT `[{id, version}]` objects.
-> - `build_creative` response is `{ creative_manifest: { format_id, assets } }`. Each asset in `creative_manifest.assets` requires an `asset_type` discriminator — `{ serving_tag: { content: '<vast>...' } }` without `asset_type` fails validation.
+> - `build_creative` response is `{ creative_manifest: { format_id, assets } }`. Each asset in `creative_manifest.assets` requires an `asset_type` discriminator — use the typed factories (`imageAsset({...})`, `videoAsset({...})`, `htmlAsset({...})`, `urlAsset({...})`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
+> - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
 > - `get_creative_delivery` requires **top-level `currency: string`** (ISO 4217), in addition to any per-row spend fields.
 
 **Handler bindings — read the Contract column entry before writing each return:**
