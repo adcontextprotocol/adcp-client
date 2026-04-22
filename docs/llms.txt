@@ -815,7 +815,8 @@ These are the standard tool call sequences from the AdCP storyboards. Each flow 
 
 ### Brand
 
-**Brand baseline** — Baseline domain storyboard — every brand agent must resolve brand identity, declare authorization via adagents.json, and expose rights-related metadata.
+**Brand baseline** — Baseline protocol storyboard — every brand agent must declare the brand protocol in capabilities and return a schema-valid brand identity.
+Flow: `get_adcp_capabilities → get_brand_identity`
 
 **Brand agent rejects rights acquisition when governance denies** — Verifies that a brand agent propagates GOVERNANCE_DENIED when the buyer's governance plan denies a rights license.
 Flow: `sync_plans → sync_accounts → sync_governance → get_rights → acquire_rights`
@@ -972,8 +973,6 @@ Flow: `get_adcp_capabilities → create_collection_list → list_collection_list
 **Content standards** — Define creative quality rules, calibrate content against them, and validate that delivered ads met the standards.
 Flow: `get_adcp_capabilities → create_content_standards → list_content_standards → get_content_standards → update_content_standards → calibrate_content → update_content_standards → calibrate_content → validate_content_delivery`
 
-**Measurement and verification** — Third-party measurement and verification — viewability, brand safety, attribution, and SI outcome measurement across domains.
-
 **Property lists** — Curated property lists for inventory grouping, targeting governance, and delivery compliance — create, query, update, delete, and validate.
 Flow: `get_adcp_capabilities → create_property_list → list_property_lists → get_property_list → update_property_list → validate_property_delivery → delete_property_list`
 
@@ -983,15 +982,6 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists �
 Flow: `get_adcp_capabilities → list_creative_formats → build_creative → sync_catalogs → build_creative → sync_catalogs → build_creative → expect_substitution_safe`
 
 **Runner output contract** — Required failure-detail shape that AdCP storyboard runners MUST emit so implementors can self-diagnose validation failures.
-
-### Media Buy
-
-**Programmatic exchange sales** — Programmatic exchange or SSP — auction-based inventory access with real-time bidding semantics and multi-seller inventory pooling.
-
-**Retail media sales** — Retail media network seller — onsite, offsite, and in-store inventory tied to commerce signals and SKU-level reporting.
-Flow: `sync_catalogs`
-
-**Streaming TV sales** — Connected TV and streaming sellers — ad-supported video inventory, audience-based buying, and frequency management across CTV apps.
 
 ### Security transport
 

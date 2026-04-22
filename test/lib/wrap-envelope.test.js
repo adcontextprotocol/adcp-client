@@ -11,7 +11,12 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { wrapEnvelope, ERROR_ENVELOPE_FIELD_ALLOWLIST } = require('../../dist/lib/server/index.js');
+const {
+  wrapEnvelope,
+  ERROR_ENVELOPE_FIELD_ALLOWLIST,
+  DEFAULT_ERROR_ENVELOPE_FIELDS,
+  CONFLICT_ADCP_ERROR_ALLOWLIST,
+} = require('../../dist/lib/server/index.js');
 
 describe('wrapEnvelope: success envelopes', () => {
   it('attaches replayed:true when explicitly set', () => {
@@ -144,10 +149,12 @@ describe('wrapEnvelope: error envelopes', () => {
     assert.equal(out.operation_id, 'op_abc');
   });
 
-  it('unknown error code falls back to success-envelope semantics', () => {
-    // A code with no entry in the allowlist is treated as "all fields
-    // allowed". Sellers can still build custom error envelopes without
-    // having to register each one in the allowlist.
+  it('unknown error code fails closed — only context echoes', () => {
+    // An unregistered error code falls back to DEFAULT_ERROR_ENVELOPE_FIELDS
+    // ({ context }). A seller who introduces a new code without registering
+    // it does NOT inherit success-path semantics — they must opt in to any
+    // sibling field they want round-tripped. Correlation tracing still
+    // works because context is in the default set.
     const err = {
       adcp_error: {
         code: 'SOME_BESPOKE_CODE',
@@ -160,9 +167,9 @@ describe('wrapEnvelope: error envelopes', () => {
       context: { correlation_id: 'corr_1' },
       operationId: 'op_xyz',
     });
-    assert.equal(out.replayed, false);
-    assert.deepEqual(out.context, { correlation_id: 'corr_1' });
-    assert.equal(out.operation_id, 'op_xyz');
+    assert.ok(!('replayed' in out), 'fail-closed: replayed dropped on unregistered code');
+    assert.deepEqual(out.context, { correlation_id: 'corr_1' }, 'context always echoes');
+    assert.ok(!('operation_id' in out), 'fail-closed: operation_id dropped on unregistered code');
   });
 
   it('errorCode override forces allowlist lookup even without adcp_error', () => {
@@ -227,5 +234,48 @@ describe('ERROR_ENVELOPE_FIELD_ALLOWLIST: exported shape', () => {
     for (const [code, fields] of Object.entries(ERROR_ENVELOPE_FIELD_ALLOWLIST)) {
       assert.ok(fields.has('context'), `ERROR_ENVELOPE_FIELD_ALLOWLIST['${code}'] must include 'context'`);
     }
+  });
+});
+
+describe('DEFAULT_ERROR_ENVELOPE_FIELDS: fail-closed default', () => {
+  it('permits context only', () => {
+    assert.ok(DEFAULT_ERROR_ENVELOPE_FIELDS instanceof Set);
+    assert.ok(DEFAULT_ERROR_ENVELOPE_FIELDS.has('context'));
+    assert.ok(!DEFAULT_ERROR_ENVELOPE_FIELDS.has('replayed'));
+    assert.ok(!DEFAULT_ERROR_ENVELOPE_FIELDS.has('operation_id'));
+    assert.equal(DEFAULT_ERROR_ENVELOPE_FIELDS.size, 1);
+  });
+});
+
+describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
+  it('permits only metadata keys inside the adcp_error block', () => {
+    // Guards against the stolen-key read oracle: an IDEMPOTENCY_CONFLICT
+    // response must NOT echo the prior request payload inside adcp_error.
+    // Only spec-defined metadata keys are permitted.
+    assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST instanceof Set);
+    for (const expected of [
+      'code',
+      'message',
+      'recovery',
+      'status',
+      'retry_after',
+      'correlation_id',
+      'request_id',
+      'operation_id',
+    ]) {
+      assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has(expected), `missing ${expected}`);
+    }
+    // Common payload fields that would leak prior state must NOT be in the set.
+    for (const leaky of ['payload', 'stored_payload', 'budget', 'product_id', 'account_id']) {
+      assert.ok(!CONFLICT_ADCP_ERROR_ALLOWLIST.has(leaky), `leaky key ${leaky} must not be allowlisted`);
+    }
+  });
+
+  it('permits recovery so framework-emitted conflicts do not false-positive', () => {
+    // Regression: `adcpError('IDEMPOTENCY_CONFLICT', ...)` always adds
+    // `recovery: 'correctable'` from STANDARD_ERROR_CODES. Omitting it
+    // from the allowlist would flag every framework-emitted conflict as
+    // a leak — the invariant would fire on the SDK's own output.
+    assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has('recovery'));
   });
 });

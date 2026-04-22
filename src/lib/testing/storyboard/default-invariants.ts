@@ -34,6 +34,7 @@
  */
 
 import { ADCP_VERSION } from '../../version';
+import { CONFLICT_ADCP_ERROR_ALLOWLIST } from '../../server/envelope-allowlist';
 import { registerAssertion } from './assertions';
 
 // Register only once per process. `registerAssertion` throws on duplicates —
@@ -45,27 +46,6 @@ function registerOnce(id: string, spec: Parameters<typeof registerAssertion>[0])
   REGISTERED.add(id);
   registerAssertion(spec);
 }
-
-/**
- * Envelope fields that MAY legitimately appear on an IDEMPOTENCY_CONFLICT
- * error body. Anything else on the error envelope is flagged as a potential
- * payload leak. The allowlist is narrow on purpose: sellers that need more
- * fields should push back on the spec, not silently leak cached state.
- *
- * The previous implementation used a denylist of 5 specific field names
- * (`payload`, `stored_payload`, etc.) — trivially bypassed by a seller
- * inlining `budget` / `product_id` / `account_id` at the envelope root,
- * which turns key-reuse into a read oracle for the stolen-key attacker.
- */
-const CONFLICT_ALLOWED_ENVELOPE_KEYS = new Set([
-  'code',
-  'message',
-  'status',
-  'retry_after',
-  'correlation_id',
-  'request_id',
-  'operation_id',
-]);
 
 registerOnce('idempotency.conflict_no_payload_leak', {
   id: 'idempotency.conflict_no_payload_leak',
@@ -80,7 +60,7 @@ registerOnce('idempotency.conflict_no_payload_leak', {
     const description = 'IDEMPOTENCY_CONFLICT error redacts prior payload';
     const leaked: string[] = [];
     for (const key of Object.keys(err.details)) {
-      if (!CONFLICT_ALLOWED_ENVELOPE_KEYS.has(key)) leaked.push(key);
+      if (!CONFLICT_ADCP_ERROR_ALLOWLIST.has(key)) leaked.push(key);
     }
     if (leaked.length === 0) {
       return [{ passed: true, description, step_id: stepResult.step_id }];
@@ -92,7 +72,7 @@ registerOnce('idempotency.conflict_no_payload_leak', {
         step_id: stepResult.step_id,
         error:
           `IDEMPOTENCY_CONFLICT error envelope leaked non-allowlisted field(s): ${leaked.sort().join(', ')}. ` +
-          `Allowed envelope keys: ${[...CONFLICT_ALLOWED_ENVELOPE_KEYS].join(', ')}.`,
+          `Allowed envelope keys: ${[...CONFLICT_ADCP_ERROR_ALLOWLIST].join(', ')}.`,
       },
     ];
   },

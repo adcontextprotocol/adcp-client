@@ -128,6 +128,13 @@ function collectFieldValidations(storyboards) {
       for (const step of phase.steps) {
         if (!step.validations) continue;
         if (step.expect_error) continue; // error steps validate extracted error data, not response schemas
+        // Steps that declare `is_error` as a validation are also asserting
+        // an error-response shape (e.g. `error.code`, `error.recovery`) even
+        // if `expect_error` isn't set at the step level. Their paths target
+        // the error envelope, not the task's success response schema, so
+        // schema drift checks don't apply.
+        const isErrorStep = step.validations.some(v => v.check === 'is_error');
+        if (isErrorStep) continue;
         for (const v of step.validations) {
           if ((v.check === 'field_present' || v.check === 'field_value') && v.path) {
             if (ENVELOPE_PATHS.has(v.path)) continue; // protocol-level, not per-schema

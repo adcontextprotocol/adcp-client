@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-22T07:01:51.193Z
+// Generated at: 2026-04-22T08:32:47.706Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -12491,17 +12491,13 @@ export type AdCPSpecialism =
   | 'governance-aware-seller'
   | 'governance-delivery-monitor'
   | 'governance-spend-authority'
-  | 'measurement-verification'
   | 'property-lists'
   | 'sales-broadcast-tv'
   | 'sales-catalog-driven'
-  | 'sales-exchange'
   | 'sales-guaranteed'
   | 'sales-non-guaranteed'
   | 'sales-proposal-mode'
-  | 'sales-retail-media'
   | 'sales-social'
-  | 'sales-streaming-tv'
   | 'signal-marketplace'
   | 'signal-owned'
   | 'signed-requests';
