@@ -71,11 +71,7 @@ export async function testSISessionLifecycle(
       async () =>
         client.siGetOffering({
           offering_id: offeringId,
-          context: options.si_context || 'E2E testing - checking SI offering availability',
-          identity: {
-            principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
-            device_id: 'e2e-test-device',
-          },
+          intent: options.si_context || 'E2E testing - checking SI offering availability',
         } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
     );
 
@@ -121,11 +117,11 @@ export async function testSISessionLifecycle(
         client.siInitiateSession({
           offering_id: options.si_offering_id || 'e2e-test-offering',
           offering_token: offeringToken,
+          intent: options.si_context || 'E2E testing - initiating conversation about products',
           identity: {
-            principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
-            device_id: 'e2e-test-device',
+            consent_granted: true,
+            user: { name: resolveAuthPrincipal(options) || 'e2e-test-principal' },
           },
-          context: options.si_context || 'E2E testing - initiating conversation about products',
           placement: 'e2e-test-placement',
           supported_capabilities: {
             modalities: {
@@ -427,11 +423,7 @@ export async function testSIHandoff(
       async () =>
         client.siGetOffering({
           offering_id: options.si_offering_id || 'e2e-test-offering',
-          context: 'E2E testing - preparing for handoff flow',
-          identity: {
-            principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
-            device_id: 'e2e-test-device',
-          },
+          intent: 'E2E testing - preparing for handoff flow',
         } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
     );
 
@@ -450,11 +442,11 @@ export async function testSIHandoff(
       client.siInitiateSession({
         offering_id: options.si_offering_id || 'e2e-test-offering',
         offering_token: offeringToken,
+        intent: options.si_context || 'E2E testing - initiating session for handoff test',
         identity: {
-          principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
-          device_id: 'e2e-test-device',
+          consent_granted: true,
+          user: { name: resolveAuthPrincipal(options) || 'e2e-test-principal' },
         },
-        context: options.si_context || 'E2E testing - initiating session for handoff test',
         placement: 'e2e-test-placement',
         supported_capabilities: {
           modalities: { conversational: true },
@@ -624,11 +616,7 @@ export async function testSIAvailability(
     async () =>
       client.siGetOffering({
         offering_id: offeringId,
-        context: options.si_context || 'E2E testing - checking SI availability',
-        identity: {
-          principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
-          device_id: 'e2e-test-device',
-        },
+        intent: options.si_context || 'E2E testing - checking SI availability',
       } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
   );
 
@@ -668,10 +656,7 @@ export async function testSIAvailability(
     async () =>
       client.siGetOffering({
         offering_id: 'INVALID_OFFERING_ID_DOES_NOT_EXIST_12345',
-        context: 'E2E testing - checking unavailable offering',
-        identity: {
-          principal: 'e2e-test-principal',
-        },
+        intent: 'E2E testing - checking unavailable offering',
       } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
   );
 

@@ -446,7 +446,13 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Governance ─────────────────────────────────────────
 
-  sync_governance(_step, context, options) {
+  sync_governance(step, context, options) {
+    // Honor hand-authored sample_request so governance storyboards can
+    // pin specific governance_agent urls (e.g., $context.governance_agent_url)
+    // that downstream check_governance steps assert against.
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
     return {
       accounts: [
         {
@@ -456,7 +462,8 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
               url: 'https://governance.test.example',
               authentication: {
                 schemes: ['Bearer'],
-                credentials: 'test-governance-token',
+                // Schema enforces credentials.minLength >= 32 (sync-governance-request.json).
+                credentials: 'e2e-test-governance-token-padding-0000',
               },
               categories: ['budget_authority', 'brand_policy'],
             },
@@ -617,26 +624,33 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 
   // ── Sponsored Intelligence ─────────────────────────────
 
-  si_get_offering(_step, _context, options) {
+  si_get_offering(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    // Per si-get-offering-request.json: `intent` carries the user's
+    // natural-language ask; `context` is the core context object and
+    // `identity` is not part of this request schema.
     return {
       offering_id: options.si_offering_id ?? 'e2e-test-offering',
-      context: options.si_context ?? 'E2E testing - checking SI offering availability',
-      identity: {
-        principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal',
-        device_id: 'e2e-test-device',
-      },
+      intent: options.si_context ?? 'E2E testing - checking SI offering availability',
     };
   },
 
-  si_initiate_session(_step, context, options) {
+  si_initiate_session(step, context, options) {
+    if (step.sample_request) {
+      return injectContext({ ...step.sample_request }, context);
+    }
+    // Per si-initiate-session-request.json, `intent` + `identity` are required;
+    // the prose handoff string belongs in `intent`, not `context`.
     return {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
+      intent: options.si_context ?? 'E2E test session',
       identity: {
         consent_granted: true,
-        user: { principal: resolveAuthPrincipal(options) ?? 'e2e-test-principal' },
+        user: { name: resolveAuthPrincipal(options) ?? 'e2e-test-principal' },
       },
-      context: options.si_context ?? 'E2E test session',
       placement: 'e2e-test',
       supported_capabilities: {
         modalities: { conversational: true, rich_media: true },
