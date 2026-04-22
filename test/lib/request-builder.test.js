@@ -238,7 +238,14 @@ describe('Request Builder', () => {
         ],
       };
       const result = buildRequest(step('sync_event_sources', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.event_sources.length, 1, 'fallback entry must not be appended');
       assert.strictEqual(result.event_sources[0].event_source_id, 'amsterdam_website');
+      assert.strictEqual(result.event_sources[0].name, 'Amsterdam Website', 'authored name must survive');
+      assert.deepStrictEqual(
+        result.event_sources[0].event_types,
+        ['purchase', 'add_to_cart'],
+        'authored event_types must survive'
+      );
       assert.ok(result.account, 'account still injected');
     });
 
