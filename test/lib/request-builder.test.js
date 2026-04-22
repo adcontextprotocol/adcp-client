@@ -53,6 +53,55 @@ describe('Request Builder', () => {
       assert.ok(result.end_time, 'should have end_time');
       assert.ok(new Date(result.start_time) < new Date(result.end_time), 'start should be before end');
     });
+
+    test('emits every package when sample_request authors multiple', () => {
+      // Regression: storyboards with multi-package sample_request (e.g.,
+      // sales_non_guaranteed) had packages[1+] dropped, which left
+      // context_outputs like second_package_id unresolved and caused the
+      // next step to be skipped with "unresolved context variables".
+      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: future,
+          end_time: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString(),
+          packages: [
+            {
+              product_id: 'sports_display_auction',
+              budget: 10000,
+              bid_price: 8.5,
+              pricing_option_id: 'cpm_auction',
+            },
+            {
+              product_id: 'outdoor_video_auction',
+              budget: 15000,
+              bid_price: 22.0,
+              pricing_option_id: 'cpm_auction',
+            },
+          ],
+        },
+      });
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages.length, 2, 'both packages emitted');
+      assert.strictEqual(result.packages[1].product_id, 'outdoor_video_auction');
+      assert.strictEqual(result.packages[1].bid_price, 22.0);
+      assert.strictEqual(result.packages[1].pricing_option_id, 'cpm_auction');
+    });
+
+    test('injects context into additional packages', () => {
+      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: future,
+          packages: [
+            { product_id: 'p1', budget: 1000, pricing_option_id: 'opt' },
+            { product_id: '$context.secondary_product', budget: 2000, pricing_option_id: 'opt' },
+          ],
+        },
+      });
+      const context = { secondary_product: 'resolved_product_id' };
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[1].product_id, 'resolved_product_id');
+    });
   });
 
   describe('provide_performance_feedback', () => {
@@ -183,6 +232,54 @@ describe('Request Builder', () => {
       assert.ok(Array.isArray(result.events), 'should have events array');
       assert.ok(result.events[0].event_id, 'should have event_id');
       assert.ok(result.events[0].event_type, 'should have event_type');
+    });
+
+    test('fallback event uses spec field names (event_time, custom_data)', () => {
+      // Regression: the fallback emitted `timestamp` (spec requires
+      // `event_time`) and nested `value: {amount, currency}` (spec places
+      // both under `custom_data`). Framework-dispatch agents rejected with
+      // -32602 invalid_type; legacy-dispatch permissively accepted it.
+      const result = buildRequest(step('log_event'), {}, DEFAULT_OPTIONS);
+      const event = result.events[0];
+      assert.strictEqual(typeof event.event_time, 'string', 'event_time required per event.json');
+      assert.strictEqual(event.timestamp, undefined, 'timestamp is not a spec field');
+      assert.ok(event.custom_data, 'value + currency live under custom_data per event-custom-data.json');
+      assert.strictEqual(typeof event.custom_data.value, 'number', 'custom_data.value must be number');
+      assert.strictEqual(typeof event.custom_data.currency, 'string', 'custom_data.currency must be string');
+    });
+
+    test('honors step.sample_request when present', () => {
+      // Storyboards (sales_catalog_driven, sales_social) author complete
+      // spec-conformant sample_request blocks with event_time, content_ids,
+      // and siblings. The builder must pass those through unchanged.
+      const fixture = {
+        event_source_id: 'amsterdam_website',
+        events: [
+          {
+            event_id: 'evt_001',
+            event_type: 'purchase',
+            event_time: '2026-04-15T19:30:00Z',
+            content_ids: ['ribeye_36oz'],
+            value: 89.0,
+            currency: 'USD',
+          },
+        ],
+      };
+      const result = buildRequest(step('log_event', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.event_source_id, 'amsterdam_website');
+      assert.strictEqual(result.events[0].event_time, '2026-04-15T19:30:00Z');
+      assert.deepStrictEqual(result.events[0].content_ids, ['ribeye_36oz']);
+      assert.strictEqual(result.events[0].value, 89.0);
+    });
+
+    test('injects context into sample_request', () => {
+      const fixture = {
+        event_source_id: '$context.event_source_id',
+        events: [{ event_id: 'e1', event_type: 'purchase', event_time: '2026-04-15T19:30:00Z' }],
+      };
+      const context = { event_source_id: 'resolved-source-id' };
+      const result = buildRequest(step('log_event', { sample_request: fixture }), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.event_source_id, 'resolved-source-id');
     });
   });
 
