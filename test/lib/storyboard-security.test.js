@@ -14,7 +14,7 @@ const {
 } = require('../../dist/lib/testing/storyboard/probes');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
-const { comply } = require('../../dist/lib/testing/compliance/comply');
+const { comply, detectAuthRejection } = require('../../dist/lib/testing/compliance/comply');
 const {
   validateTestKit,
   TestKitValidationError,
@@ -948,6 +948,72 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
     } finally {
       server.close();
     }
+  });
+
+  it('detectAuthRejection classifies NeedsAuthorizationError-style messages as auth', async () => {
+    // Regression: `NeedsAuthorizationError.defaultMessage()` phrases the
+    // error as "Agent <url> requires OAuth authorization. ... Provide an
+    // OAuthFlowHandler or run an interactive flow to complete authorization."
+    // Those words never appear in the original keyword list
+    // (401/unauthorized/authentication/jws/jwt), and if the probe can't
+    // reach the agent (e.g., offline host), isAuth stays false and the
+    // operator sees "Agent unreachable" instead of the --save-auth hint.
+    //
+    // Point the agent URL at a closed port so the probe fallback fails
+    // cleanly (network-level error → catch block silently returns). With
+    // that guardrail, the keyword match is the only path to isAuth=true.
+    const errMsg =
+      'Agent https://example.test/mcp requires OAuth authorization. ' +
+      'Authorization server: https://example.test/mcp. ' +
+      'Provide an OAuthFlowHandler or run an interactive flow to complete authorization.';
+    const result = await detectAuthRejection('https://127.0.0.1:1/mcp', errMsg);
+    assert.strictEqual(result.isAuth, true, 'keyword match on "authorization"/"oauth" should classify as auth');
+    const hint = result.observations.find(o => o.category === 'auth' && /--save-auth/.test(o.message));
+    assert.ok(hint, `expected a --save-auth remediation hint, got ${JSON.stringify(result.observations)}`);
+    assert.match(hint.message, /--oauth/);
+  });
+
+  it('detectAuthRejection emits the OAuth hint even when OAuth metadata is not discoverable', async () => {
+    // Regression for the "hint only fires when discoverOAuthMetadata returns
+    // non-null" branch. An agent that 401s before its /.well-known/* chain
+    // resolves should still get an actionable hint — the wording in the
+    // error is sufficient signal that it's an OAuth agent.
+    const errMsg = 'Unauthorized — MCP server requires OAuth2 authorization';
+    const result = await detectAuthRejection('https://127.0.0.1:1/mcp', errMsg);
+    assert.strictEqual(result.isAuth, true);
+    const hint = result.observations.find(o => o.category === 'auth' && /--save-auth/.test(o.message));
+    assert.ok(hint, 'hint must fire on OAuth wording even without discovery');
+    assert.match(hint.message, /issuer: \(unknown\)/i);
+  });
+
+  it('detectAuthRejection does not mis-classify benign "authorization header" upstream errors as OAuth', async () => {
+    // Regression: an earlier draft matched the bare substring "authorization"
+    // which false-matched upstream proxy errors like this. With the keyword
+    // list restricted to OAuth-specific bigrams, this stays in the "not
+    // classified as auth" path and the operator sees the real network error.
+    const result = await detectAuthRejection(
+      'https://127.0.0.1:1/mcp',
+      'Failed to connect to oauth proxy upstream (authorization header missing)'
+    );
+    // Network-level failure with no 401/OAuth signal → not auth.
+    assert.strictEqual(
+      result.isAuth,
+      false,
+      'keyword tightening must not classify bare "authorization" / "oauth" substrings as auth'
+    );
+    assert.deepStrictEqual(result.observations, []);
+  });
+
+  it('detectAuthRejection does not mis-classify plain-bearer 401 as OAuth', async () => {
+    // Negative: a 401 with no OAuth signal in the error text and no
+    // discoverable OAuth metadata should stay on the "check your --auth
+    // token" path, not the OAuth remediation path.
+    const result = await detectAuthRejection('https://127.0.0.1:1/mcp', 'HTTP 401 Unauthorized: invalid token');
+    assert.strictEqual(result.isAuth, true);
+    const obs = result.observations.find(o => o.category === 'auth');
+    assert.ok(obs);
+    assert.doesNotMatch(obs.message, /--save-auth/, 'plain bearer 401 should not get the OAuth --save-auth hint');
+    assert.match(obs.message, /--auth token/);
   });
 
   it('falls back to auth_required when selected storyboards all require discovered tools', async () => {

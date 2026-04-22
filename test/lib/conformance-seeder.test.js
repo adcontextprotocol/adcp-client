@@ -152,7 +152,7 @@ describe('conformance: seedFixtures', () => {
 
     assert.deepEqual(result.fixtures.creative_ids, ['cre_seeded_abc']);
     assert.equal(observed.formatIds[0], 'text_line');
-    assert.deepEqual(observed.assets[0], { headline: { content: 'Conformance seed text' } });
+    assert.deepEqual(observed.assets[0], { headline: { asset_type: 'text', content: 'Conformance seed text' } });
     assert.deepEqual(result.warnings, []);
   });
 

@@ -454,7 +454,7 @@ describe('Zod Schema Validation', () => {
     const result = schemas.GetCreativeFeaturesRequestSchema.safeParse({
       creative_manifest: {
         format_id: { agent_url: 'https://creative.example.com', id: 'display_300x250' },
-        assets: { banner: { url: 'https://example.com/banner.jpg' } },
+        assets: { banner: { asset_type: 'image', url: 'https://example.com/banner.jpg', width: 300, height: 250 } },
       },
       feature_ids: ['viewability', 'brand_safety'],
     });
