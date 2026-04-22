@@ -51,11 +51,10 @@ after(() => {
 });
 
 test('--local-agent imports the module and passes capability_discovery', () => {
-  const res = spawnSync(
-    'node',
-    [CLI, 'storyboard', 'run', '--local-agent', agentModulePath, 'capability_discovery'],
-    { encoding: 'utf8', timeout: 45_000 }
-  );
+  const res = spawnSync('node', [CLI, 'storyboard', 'run', '--local-agent', agentModulePath, 'capability_discovery'], {
+    encoding: 'utf8',
+    timeout: 45_000,
+  });
   assert.strictEqual(res.status, 0, `CLI exited non-zero:\nstdout:${res.stdout}\nstderr:${res.stderr}`);
   assert.match(res.stdout, /capability_discovery/);
 });
@@ -76,11 +75,10 @@ test('--format junit emits valid JUnit XML on stdout', () => {
 test('--local-agent rejects modules without a createAgent export', () => {
   const brokenPath = path.join(tmpDir, 'broken.cjs');
   writeFileSync(brokenPath, 'module.exports = { notCreateAgent: () => null };');
-  const res = spawnSync(
-    'node',
-    [CLI, 'storyboard', 'run', '--local-agent', brokenPath, 'capability_discovery'],
-    { encoding: 'utf8', timeout: 10_000 }
-  );
+  const res = spawnSync('node', [CLI, 'storyboard', 'run', '--local-agent', brokenPath, 'capability_discovery'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
   assert.strictEqual(res.status, 2);
   assert.match(res.stderr, /must export `createAgent`/);
 });

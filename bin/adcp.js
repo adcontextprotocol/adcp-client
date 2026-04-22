@@ -2252,7 +2252,10 @@ function formatStoryboardResultsAsJUnit(results) {
         }
         if (!step.passed) {
           totalFailures += 1;
-          const failureDetails = [step.error, ...step.validations.filter(v => !v.passed).map(v => `${v.description}: ${v.error || 'failed'}`)]
+          const failureDetails = [
+            step.error,
+            ...step.validations.filter(v => !v.passed).map(v => `${v.description}: ${v.error || 'failed'}`),
+          ]
             .filter(Boolean)
             .join('\n');
           suiteCases.push(
