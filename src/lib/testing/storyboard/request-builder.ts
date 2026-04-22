@@ -1,25 +1,41 @@
 /**
- * Request builder for storyboard steps.
+ * Request enrichers for storyboard steps.
  *
- * Builds valid requests from discovered context rather than using
- * raw sample_request YAML payloads. Each task has a builder that
- * constructs a minimal valid request from the accumulated context
- * (discovered products, accounts, formats, etc.) and TestOptions.
+ * Contract (see issue #820):
+ *   - `sample_request` (when authored) is the authoritative base payload.
+ *     The runner injects context placeholders into it and passes it through
+ *     to the agent under test.
+ *   - An enricher fills top-level fields the fixture didn't specify —
+ *     typically discovery-derived identifiers (`product_id`, `format_id`,
+ *     `account`, `media_buy_id`) or envelope fields that only the harness
+ *     knows.
+ *   - For conflicts at the top level, the fixture wins — storyboard authors'
+ *     intent is not silently overridden.
  *
- * sample_request from YAML is used only as documentation and as a
- * fallback when no builder exists for a task.
+ * A short list of tasks need to splice discovery-derived fields INTO
+ * nested structures in the fixture (e.g. `create_media_buy` injects
+ * `product_id` into `packages[0]`) and can't be expressed by a top-level
+ * overlay. Those enrichers declare themselves fixture-aware via
+ * `FIXTURE_AWARE_ENRICHERS` below and the runner uses their output as-is.
+ *
+ * `sample_request` from YAML, when a task has no enricher, is used directly
+ * after context injection — preserves the "no handler, fixture is the wire
+ * payload" pattern.
  */
 
 import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
-import { injectContext } from './context';
+import { injectContext, type RunnerVariables } from './context';
 
-type RequestBuilder = (
+type RequestEnricher = (
   step: StoryboardStep,
   context: StoryboardContext,
   options: TestOptions
 ) => Record<string, unknown>;
+
+/** Legacy alias kept for external consumers pinned to the old terminology. */
+type RequestBuilder = RequestEnricher;
 
 /**
  * Placeholder `format_id` used when neither `list_creative_formats` discovery
@@ -46,7 +62,20 @@ const UNKNOWN_FORMAT_ID = Object.freeze({ agent_url: 'https://unknown.example.co
  */
 const FALLBACK_CALLER_AGENT_URL = 'https://e2e-orchestrator.adcontextprotocol.org/';
 
-const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
+/**
+ * Tasks whose enricher must see `sample_request` to produce the final
+ * payload — typically because it needs to splice discovery-derived fields
+ * INTO nested structures the fixture owns (arrays, object trees). For
+ * these, the runner uses the enricher's output verbatim and does not
+ * layer the fixture on top; the enricher is responsible for fixture
+ * precedence internally.
+ */
+const FIXTURE_AWARE_ENRICHERS = new Set<string>([
+  'create_media_buy', // merges discovery-derived product_id / pricing_option_id INTO fixture packages[0]
+  'comply_test_controller', // forces account.sandbox: true regardless of fixture
+]);
+
+const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Account & Audience ─────────────────────────────────
 
   sync_accounts(_step, _context, options) {
@@ -112,9 +141,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // $context.rights_id doesn't resolve, and downstream acquire_rights
     // steps fail with rights_not_found instead of the error the
     // storyboard is actually asserting (e.g., GOVERNANCE_DENIED).
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     const brand = resolveBrand(options);
     return {
       query: 'available rights for advertising',
@@ -218,9 +244,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // are hand-authored to exercise specific seller behaviors (creative
     // assignment, targeting overlay swaps, pause/resume/cancel, etc.) and the
     // builder should not override the intent.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
 
     // `account` is required per bundled/media-buy/update-media-buy-request.json —
     // sellers enforce governance and account resolution against it.
@@ -273,9 +296,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // ('json') is NOT in the spec's 5-literal union and its `type` is
     // missing entirely, so any agent running the generated Zod schema
     // rejects the fallback with -32602 on both fields.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
-    }
     return {
       account: context.account ?? resolveAccount(options),
       catalogs: [
@@ -307,9 +327,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // Storyboards routinely ship spec-conformant event payloads with
     // event_time, content_ids, and custom_data siblings that only the
     // author knows. Honor sample_request when present.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       event_source_id: context.event_source_id ?? 'test-source',
       events: [
@@ -328,9 +345,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // specialisms carry per-usage-entry fields (vendor_cost, currency,
     // pricing_option_id) that the hardcoded fallback here omits, causing
     // agents running the generated Zod schema to reject every step.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
-    }
     const now = new Date();
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     return {
@@ -360,18 +374,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // declares `format_ids: ["..."]` in sample_request hits the wire as an
     // empty request and the agent returns unfiltered results — failing
     // round-trip / substitution-observer assertions silently.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {};
   },
 
   build_creative(step, context, options) {
     // Hand-authored sample_request can exercise slot-specific briefs, target
     // format overrides, or multi-format requests — honor it when present.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     const format = selectFormat(context);
     return {
       target_format_id: format?.format_id ?? context.format_id ?? UNKNOWN_FORMAT_ID,
@@ -397,9 +405,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   sync_creatives(step, context, options) {
     // Honor hand-authored sample_request for scenarios that require specific
     // creative shapes (delete/patch flows, format-scoped uploads, etc).
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request, account: context.account ?? resolveAccount(options) }, context);
-    }
     const formats = (context.formats as Array<Record<string, unknown>> | undefined) ?? [];
     const now = Date.now();
 
@@ -481,9 +486,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Governance ─────────────────────────────────────────
 
   sync_governance(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       accounts: [
         {
@@ -514,9 +516,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   calibrate_content(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       standards_id: context.content_standards_id ?? 'unknown',
       artifact: {
@@ -531,9 +530,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // Governance storyboards define scenario-specific plans in sample_request
     // (e.g., custom_policies for conditions, reallocation_threshold for denied).
     // Delegate to sample_request when present.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     const now = Date.now();
     const startDate = new Date(now + 24 * 60 * 60 * 1000).toISOString();
     const endDate = new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -552,9 +548,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   check_governance(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     // `caller` names the CALLER-AGENT's URL, not the brand — governance agents
     // use it for agent identity (rate limits, audit, JWS issuer correlation).
     // The brand belongs inside `payload`, where governance rules about the
@@ -579,9 +572,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   create_content_standards(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     // `anyOf: [{required: [policies]}, {required: [registry_policy_ids]}]` —
     // one must be present. Emit a minimal inline bespoke policy rather than
     // pinning a registry id the agent may not carry; storyboards that want
@@ -608,18 +598,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   update_content_standards(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       standards_id: context.content_standards_id ?? 'unknown',
     };
   },
 
   validate_content_delivery(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       standards_id: context.content_standards_id ?? 'unknown',
       records: [
@@ -636,9 +620,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   acquire_rights(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       rights_id: context.rights_id ?? 'unknown',
       pricing_option_id: 'standard',
@@ -658,18 +639,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   update_rights(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       rights_id: context.rights_id ?? 'unknown',
     };
   },
 
   creative_approval(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       rights_id: context.rights_id ?? 'unknown',
       creative_id: context.creative_id ?? 'test-creative',
@@ -682,9 +657,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Sponsored Intelligence ─────────────────────────────
 
   si_get_offering(step, context, options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       offering_id: options.si_offering_id ?? 'e2e-test-offering',
       intent: options.si_context ?? 'E2E testing - checking SI offering availability',
@@ -696,9 +668,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // semantically plausible one so agents that dispatch on intent still
     // behave sensibly; storyboards override via sample_request when
     // testing intent-specific paths.
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       offering_id: context.offering_id ?? options.si_offering_id ?? 'e2e-test-offering',
       offering_token: context.offering_token,
@@ -715,9 +684,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   si_send_message(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       session_id: context.session_id ?? 'unknown',
       message: 'Tell me more about this product.',
@@ -725,9 +691,6 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   },
 
   si_terminate_session(step, context, _options) {
-    if (step.sample_request) {
-      return injectContext({ ...step.sample_request }, context);
-    }
     return {
       session_id: context.session_id ?? 'unknown',
       reason: 'user_exit',
@@ -750,34 +713,94 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
 };
 
 /**
- * Build a request for a storyboard step.
+ * Enrich a storyboard step's request payload.
  *
- * Priority:
- * 1. User-provided --request override (from StoryboardRunOptions)
- * 2. Request builder for the task (builds from context + options)
- * 3. sample_request from YAML with context injection (fallback)
- * 4. Empty object
+ * Contract (issue #820):
+ *   - `sample_request`, when authored, is the authoritative base. The runner
+ *     injects context placeholders into it before calling here.
+ *   - An enricher (if registered for the task) produces fields that should
+ *     fill gaps the fixture left unset — discovery-derived identifiers,
+ *     envelope fields the author couldn't know at YAML-authoring time.
+ *   - Top-level merge: fixture wins on key conflicts. Fixture-aware
+ *     enrichers (see `FIXTURE_AWARE_ENRICHERS`) skip the generic merge and
+ *     return the final payload themselves.
+ *
+ * Returns `{}` when the task has no enricher and no `sample_request` — the
+ * runner's load-time validator prevents this for mutating tasks, so the
+ * empty return is reachable only for read tasks that have no fixture and
+ * no registered enricher (rare).
  */
-export function buildRequest(
+/**
+ * Envelope fields that live on every AdCP request and are owned by the
+ * storyboard author — `context.correlation_id`, runner-supplied
+ * `idempotency_key` aliases, webhook pointers, per-request extensions.
+ * Fixture-aware enrichers (`create_media_buy`, `comply_test_controller`)
+ * build their body from scratch and don't re-copy these fields, so the
+ * outer `enrichRequest` overlays them from sample_request after the
+ * enricher runs. Non-fixture-aware enrichers get these via the generic
+ * top-level merge below.
+ *
+ * If a future fixture-aware enricher starts emitting an envelope field
+ * itself (e.g. a scenario where the enricher needs to inject a specific
+ * `idempotency_key` independent of the fixture), the `=== undefined`
+ * guard below keeps the enricher's value — intentional, not a bug.
+ * Fixture envelope fields only flow through for fields the enricher
+ * didn't set.
+ */
+const ENVELOPE_FIELDS = ['context', 'ext', 'push_notification_config', 'idempotency_key'] as const;
+
+export function enrichRequest(
   step: StoryboardStep,
   context: StoryboardContext,
-  options: TestOptions
+  options: TestOptions,
+  runnerVars?: RunnerVariables
 ): Record<string, unknown> {
-  const builder = REQUEST_BUILDERS[step.task];
-  if (builder) {
-    return builder(step, context, options);
+  const enricher = REQUEST_ENRICHERS[step.task];
+  const fixture =
+    step.sample_request !== undefined
+      ? (injectContext(
+          { ...(step.sample_request as Record<string, unknown>) },
+          context,
+          runnerVars
+        ) as Record<string, unknown>)
+      : undefined;
+
+  if (!enricher) return fixture ?? {};
+
+  const enriched = enricher(step, context, options);
+
+  // Fixture-aware enrichers already did the body merge internally and know
+  // the array/nested shapes better than a generic top-level overlay can.
+  // Envelope fields still flow through from sample_request.
+  if (FIXTURE_AWARE_ENRICHERS.has(step.task)) {
+    if (!fixture) return enriched;
+    const out: Record<string, unknown> = { ...enriched };
+    for (const field of ENVELOPE_FIELDS) {
+      if (fixture[field] !== undefined && out[field] === undefined) out[field] = fixture[field];
+    }
+    return out;
   }
 
-  // No builder — fall through to sample_request (handled by runner)
-  return {};
+  // Generic fixture-authoritative merge: fixture keys overlay enricher keys.
+  return fixture ? { ...enriched, ...fixture } : enriched;
 }
 
-/**
- * Check if a request builder exists for a task.
- */
-export function hasRequestBuilder(taskName: string): boolean {
-  return taskName in REQUEST_BUILDERS;
+/** True iff a request enricher is registered for this task. */
+export function hasRequestEnricher(taskName: string): boolean {
+  return taskName in REQUEST_ENRICHERS;
 }
+
+// ────────────────────────────────────────────────────────────
+// Legacy aliases — pre-#820 terminology. Kept for one release so
+// external consumers (repo greps found none, but public exports may
+// have downstream users) migrate at their own pace.
+// ────────────────────────────────────────────────────────────
+
+/** @deprecated Renamed to `enrichRequest`. Same behavior. */
+export const buildRequest = enrichRequest;
+
+/** @deprecated Renamed to `hasRequestEnricher`. Same behavior. */
+export const hasRequestBuilder = hasRequestEnricher;
 
 // ────────────────────────────────────────────────────────────
 // Selection helpers: pick the best item from discovered data

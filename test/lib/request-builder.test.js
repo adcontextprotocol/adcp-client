@@ -125,27 +125,25 @@ describe('Request Builder', () => {
       assert.strictEqual(result.brand_id, 'acmeoutdoor.example');
     });
 
-    test('honors step.sample_request when present', () => {
-      // Regression: the builder previously ignored sample_request for
-      // everything except brand_id, so a storyboard declaring specific
-      // query text / uses / countries hit the wire with the generic
-      // fallback. That silently broke scenarios like
-      // brand_rights/governance_denied where the buyer query matters
-      // for the rights-holder roster to return a non-empty list.
+    test('honors step.sample_request when present (fixture wins top-level conflicts)', () => {
+      // Under #820 (fixture-authoritative), every field the author specified
+      // in sample_request takes precedence over the enricher's fabrication.
+      // Fields the author omitted (brand_id here) are gap-filled by the
+      // enricher from resolveBrand(options) — the harness's run-scoped
+      // brand. Storyboards that specifically require brand_id to NOT be
+      // sent must omit it from the fixture and opt out of the enricher
+      // (not possible today without authoring an explicit null, tracked
+      // as a possible #820+ follow-up).
       const fixture = {
         buyer: { domain: 'pinnacle-agency.example' },
         query: 'licensed commercial rights for a regional outdoor retail campaign',
         uses: ['commercial', 'endorsement'],
       };
       const result = buildRequest(step('get_rights', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
-      assert.strictEqual(result.query, fixture.query);
-      assert.deepStrictEqual(result.uses, fixture.uses);
-      assert.deepStrictEqual(result.buyer, fixture.buyer);
-      assert.strictEqual(
-        result.brand_id,
-        undefined,
-        'brand_id from caller domain must not leak when sample_request omits it'
-      );
+      assert.strictEqual(result.query, fixture.query, 'fixture query wins');
+      assert.deepStrictEqual(result.uses, fixture.uses, 'fixture uses wins');
+      assert.deepStrictEqual(result.buyer, fixture.buyer, 'fixture buyer preserved');
+      assert.strictEqual(result.brand_id, 'acmeoutdoor.example', 'brand_id gap-filled from options.brand');
     });
   });
 
@@ -335,7 +333,12 @@ describe('Request Builder', () => {
       assert.strictEqual(result.signal_spec, undefined);
     });
 
-    test('brief takes priority over signal_ids', () => {
+    test('fixture signal_ids coexist with options.brief (both present; author-authored fields preserved)', () => {
+      // Under #820 (fixture-authoritative), the author's signal_ids are
+      // preserved; the enricher's `signal_spec` derived from `options.brief`
+      // is additive. `anyOf: [signal_spec, signal_ids]` accepts either or
+      // both, so the downstream agent receives a richer query (authored
+      // exact signal_ids plus the caller's natural-language brief).
       const s = step('get_signals', {
         sample_request: {
           signal_ids: [{ source: 'catalog', data_provider_domain: 'x.example', id: 'seg1' }],
@@ -343,8 +346,12 @@ describe('Request Builder', () => {
       });
       const options = { ...DEFAULT_OPTIONS, brief: 'override brief' };
       const result = buildRequest(s, {}, options);
-      assert.strictEqual(result.signal_spec, 'override brief');
-      assert.strictEqual(result.signal_ids, undefined);
+      assert.strictEqual(result.signal_spec, 'override brief', 'enricher gap-fills signal_spec from options.brief');
+      assert.deepStrictEqual(
+        result.signal_ids,
+        [{ source: 'catalog', data_provider_domain: 'x.example', id: 'seg1' }],
+        'fixture signal_ids are preserved (author wins)'
+      );
     });
 
     test('falls back to a minimal discovery signal_spec when no brief and no signal_ids', () => {
