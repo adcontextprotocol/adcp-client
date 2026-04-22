@@ -826,7 +826,7 @@ Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → li
 **Sales agent with creative capabilities** — Stateful sales agent that accepts pushed creative assets and renders them in its environment.
 Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → preview_creative`
 
-**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy with pricing and billing.
+**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy. Optionally bills through AdCP.
 Flow: `get_adcp_capabilities → list_creatives → list_creative_formats → build_creative → get_creative_delivery → report_usage`
 
 **Creative template and transformation agent** — Stateless creative agent that takes assets in, applies templates, and produces tags or rendered output.
