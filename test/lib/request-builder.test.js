@@ -347,9 +347,15 @@ describe('Request Builder', () => {
       assert.strictEqual(result.signal_ids, undefined);
     });
 
-    test('returns empty object when no brief and no signal_ids', () => {
+    test('falls back to a minimal discovery signal_spec when no brief and no signal_ids', () => {
+      // The get-signals-request schema requires anyOf [signal_spec, signal_ids];
+      // an empty object fails strict JSON-schema validation. With no brief
+      // and no authored signal_ids, emit a synthetic signal_spec so the
+      // request stays schema-conforming.
       const result = buildRequest(step('get_signals'), {}, DEFAULT_OPTIONS);
-      assert.deepStrictEqual(result, {});
+      assert.strictEqual(typeof result.signal_spec, 'string');
+      assert.ok(result.signal_spec.length > 0);
+      assert.strictEqual(result.signal_ids, undefined);
     });
 
     test('injects context placeholders in signal_ids', () => {

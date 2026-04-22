@@ -34,21 +34,12 @@ const SCHEMA_ROOT = path.resolve(__dirname, '..', '..', 'schemas', 'cache', ADCP
 const EXTRA_MUTATING = new Set(['creative_approval', 'update_rights']);
 
 // Builders whose fallback is known to fail JSON-schema validation today.
-// Skipping these keeps the invariant focused on catching NEW regressions —
-// each entry is a separately-filable fix that doesn't belong in the same
-// change as the two #805 bugs. The `covered` guard below asserts the
-// intersection with actual builders is stable, so adding a builder to the
-// code without re-evaluating this list still fails the suite.
-const KNOWN_NONCONFORMING = new Map([
-  // All three use `agent_url: "unknown"` as a placeholder — schema requires URI.
-  ['build_creative', 'target_format_id.agent_url fallback is "unknown"; schema requires format: uri'],
-  ['preview_creative', 'creative_manifest.format_id.agent_url fallback is "unknown"; schema requires format: uri'],
-  ['sync_creatives', 'creatives[].format_id.agent_url fallback is "unknown"; schema requires format: uri'],
-  // Required fields missing from the fallback body.
-  ['create_content_standards', 'missing required `policies` / `registry_policy_ids` (anyOf unsatisfied)'],
-  ['get_signals', 'empty fallback; schema requires `signal_spec` or `signal_ids` (anyOf unsatisfied)'],
-  ['update_media_buy', 'missing required `account`'],
-]);
+// Kept as an explicit allowlist so this invariant stays useful the moment a
+// future fallback drifts out of spec — add it here with a reason, fix it,
+// then remove the entry. Empty today; the guard tests below still run so any
+// newly-documented-and-then-fixed entry would surface via the "still-fail"
+// guard.
+const KNOWN_NONCONFORMING = new Map([]);
 
 const SYNTHETIC_IDEMPOTENCY_KEY = 'roundtrip_test_key_0000000000';
 

@@ -2,26 +2,49 @@
 '@adcp/client': patch
 ---
 
-Fix storyboard `check_governance` builder fallback: emit a URI-formatted
-`caller` instead of a bare domain.
+Fix storyboard request-builder fallback shapes: every fallback now
+satisfies the upstream JSON schema it pairs with, unblocking strict-mode
+agents that reject non-conforming payloads at the MCP boundary.
 
-`governance/check-governance-request.json` declares `caller` as
-`format: uri`; the fallback was passing `resolveBrand(options).domain`
-directly, which fails strict JSON-schema validation (framework-dispatch
-agents reject with `-32602 invalid_type`; legacy-dispatch accepts
-permissively). The generated Zod schema does not enforce `format`
-keywords, so the existing Zod round-trip invariant did not catch it.
+**Builder fixes** (all only take effect when `step.sample_request` is
+absent — authored fixtures are unaffected):
 
-Adds `test/lib/request-builder-jsonschema-roundtrip.test.js` — an AJV
-round-trip invariant that validates every builder fallback against the
-upstream JSON schema, catching `format` violations and strict
-`additionalProperties` regressions that Zod misses. The suite ships
-with a small `KNOWN_NONCONFORMING` allowlist for six pre-existing
-fallback bugs (format_id.agent_url placeholders, missing required
-fields on `update_media_buy` / `get_signals` / `create_content_standards`);
-a companion guard test fails if any listed task starts passing, forcing
-the allowlist to stay minimal as fixes land.
+- `check_governance` — `caller` now emits `https://${brand.domain}`
+  instead of a bare domain. Schema declares `caller: format: uri`. (#805)
+- `build_creative`, `preview_creative`, `sync_creatives` — the
+  `format_id` placeholder for a missing format now carries a
+  URI-formatted `agent_url` (`https://unknown.example.com/`) instead of
+  the string `"unknown"`. Schema (`core/format-id.json`) declares
+  `agent_url: format: uri`.
+- `update_media_buy` — fallback now injects
+  `account: context.account ?? resolveAccount(options)`; schema lists
+  `account` as required. Matches the pattern peer builders
+  (`sync_creatives`, `sync_catalogs`, `report_usage`) already use.
+- `get_signals` — when neither `options.brief` nor
+  `sample_request.signal_ids` is present, fallback now emits
+  `{ signal_spec: 'E2E fallback signal discovery' }` instead of `{}`.
+  Schema `anyOf: [signal_spec | signal_ids]`.
+- `create_content_standards` — fallback now emits a minimal inline
+  bespoke policy (`policies: [{policy_id, enforcement: 'must', policy}]`)
+  alongside `scope`. Schema `anyOf: [policies | registry_policy_ids]`.
 
-Closes #805 (check_governance half; the creative_approval half was
-already fixed by prior work on the builder and is covered by the new
-invariant).
+**New test**: `test/lib/request-builder-jsonschema-roundtrip.test.js` —
+AJV round-trip invariant that validates every builder fallback against
+the upstream JSON schema. Complements the existing Zod round-trip test
+(`request-builder-schema-roundtrip.test.js`), which does not enforce
+`format` keywords or strict `additionalProperties`. `KNOWN_NONCONFORMING`
+allowlist is empty; self-pruning guard tests fire if a new fallback
+regresses or an allowlisted task starts passing.
+
+**Observable-behavior notes**:
+
+- Callers importing `buildRequest` who asserted on `get_signals` returning
+  `{}` will need to update — it now returns `{ signal_spec }`.
+- `update_media_buy` fallback now carries an `account`. Storyboards
+  relying on a seller resolving account from `media_buy_id` alone via the
+  fallback will now send a canonical account; if the seller is strict
+  about account consistency across lifecycle, this is the correct signal.
+  No shipping first-party storyboards hit this path (all author
+  `sample_request.account`).
+
+Closes #805.

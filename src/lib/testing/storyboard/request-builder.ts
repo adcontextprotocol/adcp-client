@@ -21,6 +21,19 @@ type RequestBuilder = (
   options: TestOptions
 ) => Record<string, unknown>;
 
+/**
+ * Placeholder `format_id` used when neither `list_creative_formats` discovery
+ * nor accumulated `context.format_id` supplied one. Schema
+ * (core/format-id.json) requires `agent_url` in URI form, so a bare
+ * `"unknown"` string fails validation. `example.com` is reserved for
+ * documentation per RFC 2606 — an obvious fixture that strict JSON-schema
+ * validators accept and that downstream handlers resolve to a clean
+ * format-not-found error rather than an unrelated crash. Frozen so a
+ * builder that accidentally spread-mutates the shared constant hits a
+ * TypeError instead of silently corrupting sibling calls.
+ */
+const UNKNOWN_FORMAT_ID = Object.freeze({ agent_url: 'https://unknown.example.com/', id: 'unknown' });
+
 const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Account & Audience ─────────────────────────────────
 
@@ -188,7 +201,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     };
   },
 
-  update_media_buy(step, context, _options) {
+  update_media_buy(step, context, options) {
     // If the storyboard provides a sample_request, honor it — these requests
     // are hand-authored to exercise specific seller behaviors (creative
     // assignment, targeting overlay swaps, pause/resume/cancel, etc.) and the
@@ -197,7 +210,10 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
       return injectContext({ ...step.sample_request }, context);
     }
 
+    // `account` is required per bundled/media-buy/update-media-buy-request.json —
+    // sellers enforce governance and account resolution against it.
     const request: Record<string, unknown> = {
+      account: context.account ?? resolveAccount(options),
       media_buy_id: context.media_buy_id ?? 'unknown',
     };
 
@@ -346,7 +362,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     }
     const format = selectFormat(context);
     return {
-      target_format_id: format?.format_id ?? context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
+      target_format_id: format?.format_id ?? context.format_id ?? UNKNOWN_FORMAT_ID,
       brand: resolveBrand(options),
       message: 'Create a test advertisement for an e-commerce brand promoting a summer sale.',
       quality: 'draft',
@@ -359,7 +375,7 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     return {
       request_type: 'single',
       creative_manifest: {
-        format_id: format?.format_id ?? context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
+        format_id: format?.format_id ?? context.format_id ?? UNKNOWN_FORMAT_ID,
         name: 'E2E Test Creative',
         assets: {},
       },
@@ -382,14 +398,14 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
         ? formats.map((fmt, i) => ({
             creative_id: `test-creative-${now}-${i}`,
             name: `E2E Test Creative ${i + 1}`,
-            format_id: fmt.format_id ?? context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
+            format_id: fmt.format_id ?? context.format_id ?? UNKNOWN_FORMAT_ID,
             assets: buildAssetsForFormat(fmt),
           }))
         : [
             {
               creative_id: `test-creative-${now}`,
               name: 'E2E Test Creative',
-              format_id: context.format_id ?? { agent_url: 'unknown', id: 'unknown' },
+              format_id: context.format_id ?? UNKNOWN_FORMAT_ID,
               assets: {
                 primary: {
                   asset_type: 'image',
@@ -421,7 +437,12 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     if (step.sample_request?.signal_ids) {
       return injectContext({ signal_ids: step.sample_request.signal_ids }, context);
     }
-    return {};
+    // `anyOf: [{required: [signal_spec]}, {required: [signal_ids]}]` — the
+    // schema rejects an empty object. Default to a discovery-style
+    // `signal_spec` so storyboards that omit `options.brief` still send a
+    // conforming request. A real test should author sample_request or pass
+    // options.brief; this is the minimally valid fallback.
+    return { signal_spec: 'E2E fallback signal discovery' };
   },
 
   activate_signal(step, context, _options) {
@@ -550,11 +571,22 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     if (step.sample_request) {
       return injectContext({ ...step.sample_request }, context);
     }
+    // `anyOf: [{required: [policies]}, {required: [registry_policy_ids]}]` —
+    // one must be present. Emit a minimal inline bespoke policy rather than
+    // pinning a registry id the agent may not carry; storyboards that want
+    // real governance coverage will author sample_request.
     return {
       scope: {
         languages_any: ['en'],
         description: 'E2E Test Content Standards',
       },
+      policies: [
+        {
+          policy_id: 'e2e_test_policy',
+          enforcement: 'must',
+          policy: 'E2E fallback policy — replace via sample_request for real governance coverage.',
+        },
+      ],
     };
   },
 
