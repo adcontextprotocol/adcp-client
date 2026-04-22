@@ -1,9 +1,26 @@
 const { describe, it, mock } = require('node:test');
 const assert = require('node:assert');
-const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
+const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { adcpError } = require('../dist/lib/server/errors');
+
+// These tests exercise envelope wrapping, state-store propagation, and
+// idempotency middleware using deliberately sparse handler fixtures
+// (e.g. `{ products: [{ product_id: 'p1' }] }`). The strict response-
+// validation default turns that drift into VALIDATION_ERROR at the
+// dispatcher. Opt out so this file keeps testing middleware behavior;
+// `test/lib/schema-validation-server.test.js` covers the validator itself.
+//
+// Shallow-merge `validation` so a per-test `validation: { requests: 'strict' }`
+// doesn't silently re-enable response validation; only keys the test
+// explicitly sets win over the file-level opt-out.
+function createAdcpServer(config) {
+  return _createAdcpServer({
+    ...config,
+    validation: { responses: 'off', ...(config?.validation ?? {}) },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers

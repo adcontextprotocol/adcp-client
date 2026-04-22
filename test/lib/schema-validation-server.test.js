@@ -173,4 +173,96 @@ describe('createAdcpServer validation middleware', () => {
       assert.notStrictEqual(res.isError, true);
     });
   });
+
+  // Default selector: no `validation` config at all — the dispatcher
+  // reads `process.env.NODE_ENV` once at server construction and picks
+  // 'strict' in dev/test, 'off' in prod. Tests here capture the current
+  // env, mutate it around each construction, and restore after. Without
+  // this canary a future refactor that inlines the wrong default (e.g.
+  // 'warn' everywhere) has nothing to trip it.
+  describe('responses: unset (default selector on NODE_ENV)', () => {
+    const originalEnv = process.env.NODE_ENV;
+
+    test('dev default (NODE_ENV unset) fails drifted responses with VALIDATION_ERROR', async () => {
+      delete process.env.NODE_ENV;
+      try {
+        const server = createAdcpServer({
+          name: 'test',
+          version: '0.0.1',
+          stateStore: new InMemoryStateStore(),
+          mediaBuy: { getProducts: async () => ({ products: 'oops' }) },
+        });
+        const res = await callTool(server, 'get_products', VALID_GET_PRODUCTS);
+        assert.strictEqual(res.isError, true);
+        assert.strictEqual(res.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+        assert.strictEqual(res.structuredContent.adcp_error.details.side, 'response');
+      } finally {
+        if (originalEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    test('production default (NODE_ENV=production) lets drifted responses through', async () => {
+      process.env.NODE_ENV = 'production';
+      try {
+        const server = createAdcpServer({
+          name: 'test',
+          version: '0.0.1',
+          stateStore: new InMemoryStateStore(),
+          mediaBuy: { getProducts: async () => ({ products: 'oops' }) },
+        });
+        const res = await callTool(server, 'get_products', VALID_GET_PRODUCTS);
+        assert.notStrictEqual(res.isError, true, 'prod default must not validate responses');
+        assert.strictEqual(res.structuredContent.products, 'oops');
+      } finally {
+        if (originalEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    test('schemaPath is gated behind exposeErrorDetails', async () => {
+      process.env.NODE_ENV = 'production';
+      try {
+        const server = createAdcpServer({
+          name: 'test',
+          version: '0.0.1',
+          stateStore: new InMemoryStateStore(),
+          validation: { responses: 'strict' },
+          // exposeErrorDetails defaults to false when NODE_ENV=production
+          mediaBuy: { getProducts: async () => ({ products: 'oops' }) },
+        });
+        const res = await callTool(server, 'get_products', VALID_GET_PRODUCTS);
+        assert.strictEqual(res.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+        const issues = res.structuredContent.adcp_error.details.issues;
+        assert.ok(Array.isArray(issues) && issues.length > 0);
+        for (const issue of issues) {
+          assert.strictEqual(issue.schemaPath, undefined, 'schemaPath must not leak when exposeErrorDetails is off');
+          assert.ok(issue.pointer, 'pointer still present');
+          assert.ok(issue.keyword, 'keyword still present');
+        }
+      } finally {
+        if (originalEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    test('schemaPath is present when exposeErrorDetails is on', async () => {
+      delete process.env.NODE_ENV;
+      try {
+        const server = createAdcpServer({
+          name: 'test',
+          version: '0.0.1',
+          stateStore: new InMemoryStateStore(),
+          validation: { responses: 'strict' },
+          mediaBuy: { getProducts: async () => ({ products: 'oops' }) },
+        });
+        const res = await callTool(server, 'get_products', VALID_GET_PRODUCTS);
+        const issues = res.structuredContent.adcp_error.details.issues;
+        assert.ok(issues.some(i => typeof i.schemaPath === 'string' && i.schemaPath.length > 0));
+      } finally {
+        if (originalEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalEnv;
+      }
+    });
+  });
 });
