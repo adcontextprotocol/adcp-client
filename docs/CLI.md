@@ -279,6 +279,25 @@ Useful flags:
 - `--brief TEXT`: Override the default sample discovery brief
 - `--dry-run`: Preview steps without executing
 - `--json`: Emit machine-readable output for automation
+- `--oauth`: Complete the browser OAuth flow inline when the saved alias has no valid tokens (MCP only — requires a saved alias)
+
+### OAuth-protected agents
+
+Storyboard runs reuse OAuth tokens saved under an alias (see `~/.adcp/agents.json`). Two supported flows:
+
+```bash
+# 1. Save tokens once, then run any number of storyboard assessments
+adcp --save-auth spotify-agent https://agents.scope3.com/spotify --oauth
+adcp storyboard run spotify-agent
+
+# 2. Save the alias without auth, then let the storyboard command drive the flow
+adcp --save-auth spotify-agent https://agents.scope3.com/spotify --no-auth
+adcp storyboard run spotify-agent --oauth
+```
+
+The first time `storyboard run` sees `--oauth` on an alias without valid tokens, it opens a browser, completes the PKCE flow, and persists the tokens to the alias. Subsequent runs reuse the cached tokens (auto-refreshing via the stored `refresh_token`). Static `--auth TOKEN` tokens are unaffected and still work the same way.
+
+**CI / headless environments.** The browser flow requires a local machine. For CI, save tokens once locally (`adcp --save-auth <alias> <url> --oauth`), copy `~/.adcp/agents.json` into the CI runner's home directory (or mount it as a secret), and run `adcp storyboard run <alias>` without `--oauth` — the stored `refresh_token` auto-refreshes on 401. Passing `--oauth` with a raw URL under `--json` exits with `{ "error": "oauth_requires_alias" }` and code 2 so pipelines fail fast instead of hanging on a browser prompt that will never arrive.
 
 ## Environment Variables
 

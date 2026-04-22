@@ -1023,8 +1023,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
  * Detect whether a capability-discovery failure is an auth rejection.
  * Centralized so the "run security.yaml against 401-happy agents" path and
  * the fallback "unreachable result" path share the same truth.
+ *
+ * Exported for direct unit tests of the keyword classifier — callers inside
+ * the library should go through `comply()`, not this helper.
  */
-async function detectAuthRejection(
+export async function detectAuthRejection(
   agentUrl: string,
   errorMsg: string | undefined,
   signal?: AbortSignal
@@ -1034,11 +1037,29 @@ async function detectAuthRejection(
 
   // Check for explicit auth keywords. Case-insensitive so wrapper messages
   // like "Authentication required ..." match alongside raw 401/unauthorized.
+  //
+  // OAuth signals are intentionally narrow — bigrams / fully-qualified names
+  // like "oauth authorization" and "OAuthFlowHandler" rather than the bare
+  // words "authorization" / "oauth". The loose-substring form would false-
+  // match on benign network errors that happen to contain "authorization
+  // header missing from upstream" or "oauth proxy unreachable", which would
+  // then suppress the real "Agent unreachable" classification and tell the
+  // operator to re-authenticate a healthy-but-offline agent.
   const lower = err.toLowerCase();
+  const hasOAuthSignal =
+    lower.includes('oauth authorization') ||
+    lower.includes('requires oauth') ||
+    lower.includes('requires authorization') ||
+    lower.includes('oauth flow') ||
+    lower.includes('oauthflowhandler') ||
+    lower.includes('needsauthorizationerror') ||
+    lower.includes('www-authenticate') ||
+    lower.includes('bearer realm');
   const isExplicitAuthError =
     lower.includes('401') ||
     lower.includes('unauthorized') ||
     lower.includes('authentication') ||
+    hasOAuthSignal ||
     lower.includes('jws') ||
     lower.includes('jwt') ||
     lower.includes('signature verification');
@@ -1066,15 +1087,22 @@ async function detectAuthRejection(
   if (isAuth) {
     const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
     const oauthMeta = await discoverOAuthMetadata(agentUrl);
-    if (oauthMeta) {
+    // Classify OAuth vs bearer based on (a) explicit OAuth phrasing in the
+    // error text, or (b) a resolvable OAuth metadata document. Either is
+    // enough; a plain 401 on a static-token endpoint matches neither.
+    const looksOAuth = oauthMeta !== null || hasOAuthSignal;
+    if (looksOAuth) {
       // `oauthMeta.issuer` comes from the agent's well-known document — agent-
       // controlled, same fencing as capabilities_probe_error.
-      const issuer = oauthMeta.issuer ? fenceAgentText(oauthMeta.issuer, 200) : '(unknown)';
+      const issuer = oauthMeta?.issuer ? fenceAgentText(oauthMeta.issuer, 200) : '(unknown)';
       observations.push({
         category: 'auth',
         severity: 'error',
-        message: `Agent requires OAuth. Issuer: ${issuer}. Save credentials: adcp --save-auth <alias> ${agentUrl} --oauth`,
-        evidence: { oauth_issuer: oauthMeta.issuer },
+        message:
+          `Agent requires OAuth (issuer: ${issuer}). ` +
+          `Inline: adcp storyboard run ${agentUrl} --oauth (requires a saved alias). ` +
+          `Save once: adcp --save-auth <alias> ${agentUrl} --oauth.`,
+        ...(oauthMeta?.issuer && { evidence: { oauth_issuer: oauthMeta.issuer } }),
       });
     } else {
       observations.push({

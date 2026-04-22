@@ -77,6 +77,23 @@ npx @adcp/client storyboard run http://localhost:3001/mcp --json > report.json
 - `--multi-instance-strategy round-robin|multi-pass` — when paired with two or more `--url`s
 - `--brief <text>` — custom product-discovery brief (default varies by storyboard)
 - `--auth <token>` — bearer token (also accepts `$ADCP_AUTH_TOKEN`)
+- `--oauth` — run the browser OAuth flow inline when the saved alias has no valid tokens (MCP only; equivalent to `adcp --save-auth <alias> <url> --oauth` then re-running)
+
+**OAuth-protected agents.** Storyboard runs reuse tokens saved under an alias. Two supported flows:
+
+```bash
+# (a) pre-save tokens
+npx @adcp/client --save-auth my-agent https://agent.example.com/mcp --oauth
+npx @adcp/client storyboard run my-agent
+
+# (b) inline on first run
+npx @adcp/client --save-auth my-agent https://agent.example.com/mcp --no-auth
+npx @adcp/client storyboard run my-agent --oauth
+```
+
+Either way, subsequent runs reuse the cached tokens (auto-refresh on expiry via the stored `refresh_token`). Raw URLs don't support `--oauth` — save an alias first.
+
+**CI.** `--oauth` needs a browser. In CI, save tokens once locally, ship `~/.adcp/agents.json` to the runner, and drop the `--oauth` flag from the CI command — the stored `refresh_token` auto-renews on 401.
 
 **Output:** JSON with `tracks[].status` (`passed`/`failed`/`skipped`), `steps[]` with diagnostics, and validations per step.
 
@@ -312,6 +329,7 @@ Use before merging skill changes. ~60s per pair; matrix runs fan out.
 |---|---|
 | `storyboard run` skips steps with "no webhook_receiver_runner" | Add `--webhook-receiver` |
 | `storyboard run` fails on `security_baseline` | You skipped `authenticate` in `serve()` — see [build-seller-agent/SKILL.md § signed-requests](../../skills/build-seller-agent/SKILL.md) |
+| `storyboard run` reports `Agent requires OAuth` / exits without running | Save tokens once with `adcp --save-auth <alias> <url> --oauth`, or pass `--oauth` to `storyboard run` to complete auth inline |
 | `fuzz` reports `500` status with stack trace | Validate inputs and return `adcpError('REFERENCE_NOT_FOUND', ...)` instead |
 | `fuzz` reports `response_shape_mismatch` | Response drifted from schema — regen with `npm run sync-schemas` + check your handler |
 | Multi-instance fails with `NOT_FOUND` on read-after-write | State keyed by session ID instead of `(brand, account)` — see multi-instance guide |

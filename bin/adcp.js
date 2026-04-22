@@ -699,6 +699,160 @@ function parseAgentOptions(args) {
 }
 
 /**
+ * If `--oauth` appears in `args` and `agentArg` is a saved alias, ensure
+ * the alias has valid OAuth tokens by running the browser flow when
+ * needed. No-op when `--oauth` is absent.
+ *
+ * Mirrors the top-level CLI constraint: `--oauth` requires a saved alias.
+ * Raw URLs get a friendly pointer to `--save-auth` instead of a silent pass.
+ */
+async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
+  if (!args.includes('--oauth')) return;
+  if (!agentArg) return;
+
+  if (isAlias(agentArg)) {
+    const saved = getAgent(agentArg);
+    if (!saved) return;
+    try {
+      await ensureOAuthTokensForAlias(agentArg, saved.url, { quiet: jsonOutput });
+    } catch (err) {
+      const hint = `Run: adcp --save-auth ${agentArg} ${saved.url} --oauth to re-register`;
+      if (jsonOutput) {
+        console.log(
+          JSON.stringify({
+            success: false,
+            error: 'oauth_flow_failed',
+            alias: agentArg,
+            message: err.message,
+            hint,
+          })
+        );
+      } else {
+        console.error(`\n❌ OAuth failed for '${agentArg}': ${err.message}`);
+        console.error(`   ${hint}\n`);
+      }
+      process.exit(1);
+    }
+    if (!jsonOutput) console.log('');
+    return;
+  }
+
+  if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
+    // Raw URL + `--oauth` never fires the browser flow (no alias to persist
+    // tokens under). Treat as a hard error under `--json` so CI jobs exit
+    // non-zero instead of silently running and failing N minutes later on
+    // a 401 from the storyboard runner.
+    if (jsonOutput) {
+      console.log(
+        JSON.stringify({
+          success: false,
+          error: 'oauth_requires_alias',
+          message: `--oauth requires a saved alias, not a raw URL. Save first: adcp --save-auth <alias> ${agentArg} --oauth`,
+        })
+      );
+      process.exit(2);
+    }
+    console.error('⚠️  --oauth requires a saved agent alias, not a raw URL.');
+    console.error(`   Save first: adcp --save-auth <alias> ${agentArg} --oauth\n`);
+  }
+}
+
+/**
+ * Run the interactive browser OAuth flow against `url` and persist the
+ * resulting tokens under `alias`. Idempotent — returns early if the alias
+ * already has valid tokens.
+ *
+ * Callers:
+ *   - `adcp --save-auth <alias> <url> --oauth` (first-time setup)
+ *   - `adcp storyboard run <alias> --oauth` (inline auth before a run)
+ *   - any other subcommand that wants the same contract
+ *
+ * Only supports MCP — authorization-code OAuth is an MCP concept in AdCP.
+ * A2A agents use static bearer tokens or client credentials.
+ *
+ * @returns The updated saved agent record (with oauth_tokens and oauth_client).
+ */
+async function ensureOAuthTokensForAlias(alias, url, { quiet = false } = {}) {
+  const existing = getAgent(alias);
+  if (existing && hasValidOAuthTokens(existing)) {
+    if (!quiet) console.log(`Using saved OAuth tokens for '${alias}'.`);
+    return existing;
+  }
+
+  // Spread the in-flight PKCE verifier too: if a prior attempt crashed mid-
+  // flow the verifier lives on the saved record, and without it the MCP SDK
+  // throws "No PKCE code verifier found" when the AS redirects back.
+  const tempAgent = {
+    id: alias,
+    name: alias,
+    agent_uri: url,
+    protocol: 'mcp',
+    ...(existing?.oauth_client && { oauth_client: existing.oauth_client }),
+    ...(existing?.oauth_tokens && { oauth_tokens: existing.oauth_tokens }),
+    ...(existing?.oauth_code_verifier && { oauth_code_verifier: existing.oauth_code_verifier }),
+  };
+
+  const { Client: MCPClient } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+  const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
+
+  const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet });
+  const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+  const transport = new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
+
+  // Persist back to disk if the MCP SDK silently refreshed tokens during
+  // connect/finishAuth — otherwise the refreshed access_token dies with
+  // tempAgent and the next call burns a second refresh. Saves only when
+  // something changed to avoid a needless write on the happy idempotent path.
+  const persistIfChanged = () => {
+    if (!tempAgent.oauth_tokens) return null;
+    const same =
+      existing?.oauth_tokens?.access_token === tempAgent.oauth_tokens.access_token &&
+      existing?.oauth_tokens?.refresh_token === tempAgent.oauth_tokens.refresh_token;
+    if (same) return existing;
+    const merged = {
+      ...(existing ?? {}),
+      url,
+      protocol: 'mcp',
+      oauth_tokens: tempAgent.oauth_tokens,
+      oauth_client: tempAgent.oauth_client ?? existing?.oauth_client,
+    };
+    saveAgent(alias, merged);
+    return merged;
+  };
+
+  try {
+    if (!quiet) console.log(`Authorizing '${alias}' via browser…`);
+    try {
+      await mcpClient.connect(transport);
+      // Connected without needing OAuth — agent isn't gated. Persist in
+      // case the SDK silently refreshed tokens during connect.
+      const refreshed = persistIfChanged();
+      if (!quiet) {
+        console.log(
+          refreshed && refreshed !== existing
+            ? 'Server accepted refreshed OAuth tokens.'
+            : 'Server did not require OAuth — no tokens saved.'
+        );
+      }
+      return refreshed ?? existing ?? null;
+    } catch (error) {
+      if (!(error instanceof UnauthorizedError) && error.name !== 'UnauthorizedError') {
+        throw error;
+      }
+      const code = await oauthProvider.waitForCallback();
+      await transport.finishAuth(code);
+      const merged = persistIfChanged();
+      if (!quiet) console.log(`OAuth tokens saved to '${alias}'.`);
+      return merged ?? existing ?? null;
+    }
+  } finally {
+    await oauthProvider.cleanup().catch(() => {});
+    await mcpClient.close().catch(() => {});
+  }
+}
+
+/**
  * Build the `auth` option for the testing library from a resolved agent.
  * Single source of truth for CLI → lib auth handoff so every runner
  * (storyboard, step, fuzz, grade) uses the same precedence:
@@ -951,6 +1105,9 @@ OPTIONS:
   --request JSON      Override sample_request for the step (step only)
   --json              JSON output (recommended for LLM consumption)
   --auth TOKEN        Authentication token
+  --oauth             Run the browser OAuth flow inline if the saved alias
+                      has no valid tokens yet. Requires a saved alias
+                      (use --save-auth first for raw URLs). MCP only.
   --protocol PROTO    Force protocol: mcp or a2a
   --dry-run           Preview steps without executing
   --debug             Debug output
@@ -1183,6 +1340,11 @@ async function handleStoryboardRun(args) {
     console.error('ERROR: Cannot combine a storyboard ID with --file. Use one or the other.');
     process.exit(2);
   }
+
+  // Inline OAuth: if --oauth is set and the agent is a saved alias that
+  // doesn't have valid tokens, run the browser flow now so the downstream
+  // runner sees freshly-saved tokens via getAgent().
+  await maybeRunInlineOAuth(agentArg, args, { jsonOutput });
 
   // No storyboard ID and no --file → capability-driven full assessment.
   if (!storyboardId && !filePath) {
@@ -2312,6 +2474,8 @@ async function handleStoryboardStepCmd(args) {
     console.error(`Storyboard not found: ${storyboardId}`);
     process.exit(2);
   }
+
+  await maybeRunInlineOAuth(agentArg, args, { jsonOutput });
 
   const {
     agentUrl,
