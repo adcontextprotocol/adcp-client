@@ -830,6 +830,16 @@ export interface ValidationResult {
    */
   observations?: unknown[];
   /**
+   * Non-fatal human-readable warning attached when a check `passed` but
+   * detected a softer issue the caller should still see — today used only
+   * by `response_schema` to surface the top strict-AJV issue when Zod
+   * accepts and AJV rejects (the "lenient-passes ∧ strict-fails" subset
+   * of issue #820). LLM-driven self-correction and CI graphs that scan
+   * `error`/`warning` fields can act on this without the runner flipping
+   * step pass/fail and breaking existing tests.
+   */
+  warning?: string;
+  /**
    * Issue #820 follow-up — strict JSON-schema (AJV) verdict for
    * `response_schema` checks. `passed` remains the lenient Zod outcome
    * (runner's historical pass/fail semantics); `strict` carries the
@@ -851,10 +861,20 @@ export interface ValidationResult {
  */
 export interface StrictValidationVerdict {
   valid: boolean;
-  /** Response variant AJV selected, e.g. `"sync"`, `"submitted"`, `"working"`, `"input-required"`. */
+  /** Response variant AJV ultimately validated against. After fallback: `"sync"`. */
   variant: string;
   /** Concrete AJV issues (RFC 6901 pointers) when `valid: false`. Absent when valid. */
   issues?: SchemaValidationError[];
+  /**
+   * True when the agent's response `status` field named an async variant
+   * (`submitted` / `working` / `input-required`) but no compiled schema
+   * existed for that variant, so validation fell back to the sync
+   * response schema. Conformance signal: the agent advertised an async
+   * shape this tool doesn't explicitly schema. Present only on fallback.
+   */
+  variant_fallback_applied?: boolean;
+  /** Variant requested by payload shape before fallback. Set iff `variant_fallback_applied`. */
+  requested_variant?: string;
 }
 
 export interface StoryboardStepPreview {

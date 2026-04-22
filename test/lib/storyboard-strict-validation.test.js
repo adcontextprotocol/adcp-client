@@ -88,6 +88,57 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     assert.ok(v.strict.issues);
     const hasFormat = v.strict.issues.some(i => i.keyword === 'format');
     assert.ok(hasFormat, `expected a format issue, got: ${JSON.stringify(v.strict.issues)}`);
+    // Warning must be populated on strict-only failure so LLM-driven
+    // self-correction and CI graphs that scan error/warning fields see
+    // something — the runner shouldn't flip passed (backwards compat)
+    // but also shouldn't leave the strict finding only in nested arrays.
+    assert.ok(typeof v.warning === 'string', 'warning surfaced on strict-only failure');
+    assert.match(v.warning, /strict JSON-schema rejected/);
+    assert.match(v.warning, /format/);
+  });
+
+  test('warning absent when both Zod and AJV pass cleanly', () => {
+    const results = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctx('list_creative_formats', { formats: [] }, 'creative/list-creative-formats-response.json')
+    );
+    const v = results[0];
+    assert.strictEqual(v.passed, true);
+    assert.ok(v.strict && v.strict.valid);
+    assert.strictEqual(v.warning, undefined, 'no warning on a clean pass');
+  });
+
+  test('warning absent when Zod rejects (failure already carries error)', () => {
+    const results = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctx('list_creative_formats', {}, 'creative/list-creative-formats-response.json')
+    );
+    const v = results[0];
+    assert.strictEqual(v.passed, false);
+    assert.ok(typeof v.error === 'string', 'error message populated by the Zod failure path');
+    assert.strictEqual(v.warning, undefined, 'warning reserved for the strict-only case');
+  });
+
+  test('variant fallback surfaces as a warning when the tool has no async schema', () => {
+    // `list_creative_formats` has no async-response-working schema, so an
+    // agent advertising `status: "working"` triggers the sync-fallback
+    // validation path. AJV may still accept, but the conformance signal
+    // — "agent advertised an async shape the tool hasn't schema'd" — is
+    // otherwise invisible. Warning surfaces it with the requested variant
+    // named so the author knows what to author.
+    const response = { status: 'working', formats: [] };
+    const results = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctx('list_creative_formats', response, 'creative/list-creative-formats-response.json')
+    );
+    const v = results[0];
+    assert.ok(v.strict, 'strict verdict attached');
+    assert.strictEqual(v.strict.variant_fallback_applied, true, 'fallback flag set');
+    assert.strictEqual(v.strict.requested_variant, 'working', 'requested variant recorded');
+    assert.strictEqual(v.strict.variant, 'sync', 'AJV validated against sync after fallback');
+    assert.ok(typeof v.warning === 'string', 'warning surfaces the fallback');
+    assert.match(v.warning, /status="working"/);
+    assert.match(v.warning, /sync fallback/);
   });
 
   test('no AJV schema registered: strict verdict absent (not a failure)', () => {

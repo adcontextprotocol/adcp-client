@@ -63,15 +63,53 @@ didn't count toward `checked`; now they grade strict-eligible, so
 mismatches (protocol-wide requirements per AdCP 3.0 GA) surface in the
 strictness delta where they belong.
 
-### Out of scope — tracked as follow-ups
+### CLI summary line
 
-- CLI summary line (`adcp storyboard run` prints the JSON field but no
-  human-readable summary yet).
-- `warning` field on strict-only failures so step-level output surfaces
-  the top issue instead of only the nested `strict.issues[]`.
-- Distinct signal when `selectResponseVariant` picks an async variant
-  that has no schema and falls back to sync (protocol reviewer's
-  follow-up #2).
+`adcp storyboard run` now prints a single human-readable line under the
+lenient pass/fail tally when `observable: true`:
+
+```
+✅ 32 passed, 0 failed, 3 skipped (1240ms)
+⚠️  strict: 11/18 passed (7 lenient-only — strict dispatcher would reject)
+```
+
+Silent when the run had no strict-eligible checks. The multi-storyboard
+local-agent mode aggregates across results before printing.
+
+### `ValidationResult.warning` on strict-only failures
+
+When Zod passes and AJV rejects, the step stays `passed: true` but a new
+`warning` field carries the top AJV issue:
+
+```
+"warning": "strict JSON-schema rejected /caller: must match format \"uri\" (+2 more AJV issues)"
+```
+
+This closes the loop for LLM-driven self-correction and CI graphs that
+scan `error`/`warning` fields — they can act on the strict signal
+without the runner flipping step pass/fail and breaking existing tests.
+
+### Async variant fallback signal
+
+When the agent's response advertises an async variant (`status:
+submitted` / `working` / `input-required`) but the tool schema doesn't
+ship a variant schema, validation falls back to the sync response
+schema. The fallback is now surfaced:
+
+- `StrictValidationVerdict.variant_fallback_applied: true`
+- `StrictValidationVerdict.requested_variant: 'working'`
+- `ValidationResult.warning` names the gap
+
+A conformance signal that was previously invisible (the tool accepts
+sync-shaped validation even though the agent sent an async shape) now
+tells the author: "this tool doesn't schema the variant your agent is
+using." AJV acceptance of the sync fallback doesn't mask the signal.
+
+### Out of scope — tracked follow-ups (#832)
+
 - Per-field envelope validation (`replayed`, `operation_id`, `context`,
-  `ext` value shapes) as a separate check type.
-- Opt-in `--strict` CLI flag that gates CI on `strict_only_failures == 0`.
+  `ext` value shapes) as a separate check type — needs a spec
+  contribution for `core/envelope.json`.
+- Opt-in `--strict` CLI flag that gates CI on
+  `strict_only_failures == 0` — waiting for real-world delta telemetry
+  before calibrating the gating policy.
