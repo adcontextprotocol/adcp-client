@@ -77,15 +77,27 @@ export interface AssertionSpec {
 
 const registry = new Map<string, AssertionSpec>();
 
+export interface RegisterAssertionOptions {
+  /**
+   * Replace an existing registration for the same id instead of throwing.
+   * Intended for consumers that want to override a default assertion shipped
+   * by this package (e.g. a stricter `context.no_secret_echo`) without
+   * clearing the whole registry and re-registering every other default.
+   * Defaults to `false` so the throw-on-duplicate behaviour still catches
+   * two modules fighting over the same id unintentionally.
+   */
+  override?: boolean;
+}
+
 /**
- * Register an assertion. Throws on duplicate id — re-registration is almost
- * always a sign of two modules fighting over the same id, not an intent to
- * override. Tests that want to replace a registration should call
- * `clearAssertionRegistry()` first.
+ * Register an assertion. Throws on duplicate id unless `options.override` is
+ * set — re-registration is almost always a sign of two modules fighting over
+ * the same id, not an intent to override. Consumers that want to replace a
+ * default shipped by this package should pass `{ override: true }`.
  */
-export function registerAssertion(spec: AssertionSpec): void {
+export function registerAssertion(spec: AssertionSpec, options: RegisterAssertionOptions = {}): void {
   if (!spec.id) throw new Error('registerAssertion: spec.id is required');
-  if (registry.has(spec.id)) {
+  if (registry.has(spec.id) && !options.override) {
     throw new Error(`registerAssertion: "${spec.id}" is already registered`);
   }
   registry.set(spec.id, spec);

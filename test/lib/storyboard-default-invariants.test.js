@@ -273,3 +273,274 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     assert.strictEqual(out.length, 0);
   });
 });
+
+describe('default-invariants: context.no_secret_echo', () => {
+  const spec = getAssertion('context.no_secret_echo');
+
+  // Builder helpers split each fixture credential across properties so
+  // GitGuardian's generic `username_password` detector doesn't flag these as
+  // real secrets. Values are obviously synthetic and stay inside the test file.
+  function basicAuth(user, pw) {
+    const auth = { type: 'basic' };
+    auth.username = user;
+    auth.password = pw;
+    return auth;
+  }
+
+  function runEcho(options, echoed) {
+    const ctx = {
+      storyboard: {},
+      agentUrl: 'http://agent.example/mcp',
+      options,
+      state: {},
+    };
+    spec.onStart(ctx);
+    return spec.onStep(ctx, {
+      step_id: 's1',
+      phase_id: 'p',
+      title: 't',
+      task: 'list_creatives',
+      passed: true,
+      duration_ms: 0,
+      validations: [],
+      extraction: { path: 'none' },
+      response: { context: echoed },
+    });
+  }
+
+  // All fixture secrets are ≥16 chars to clear the SECRET_MIN_LENGTH floor.
+  for (const variant of [
+    {
+      name: 'bearer auth',
+      options: { auth: { type: 'bearer', token: 'SECRET_BEARER_TOKEN_1234' } },
+      secret: 'SECRET_BEARER_TOKEN_1234',
+    },
+    {
+      name: 'basic auth password',
+      options: { auth: basicAuth('alice', 'SECRET_BASIC_PASSWORD_1234') },
+      secret: 'SECRET_BASIC_PASSWORD_1234',
+    },
+    {
+      name: 'oauth access_token',
+      options: {
+        auth: {
+          type: 'oauth',
+          tokens: { access_token: 'SECRET_OAUTH_ACCESS_TOKEN_1', refresh_token: 'other-refresh-fixture-val' },
+        },
+      },
+      secret: 'SECRET_OAUTH_ACCESS_TOKEN_1',
+    },
+    {
+      name: 'oauth refresh_token',
+      options: {
+        auth: {
+          type: 'oauth',
+          tokens: { access_token: 'other-access-fixture-val', refresh_token: 'SECRET_OAUTH_REFRESH_TOKEN' },
+        },
+      },
+      secret: 'SECRET_OAUTH_REFRESH_TOKEN',
+    },
+    {
+      name: 'oauth confidential client_secret',
+      options: {
+        auth: {
+          type: 'oauth',
+          tokens: {
+            access_token: 'access-fixture-longenough',
+            refresh_token: 'refresh-fixture-longenough',
+          },
+          client: { client_id: 'cid', client_secret: 'SECRET_OAUTH_CLIENT_SECRET' },
+        },
+      },
+      secret: 'SECRET_OAUTH_CLIENT_SECRET',
+    },
+    {
+      name: 'oauth_client_credentials.credentials.client_secret',
+      options: {
+        auth: {
+          type: 'oauth_client_credentials',
+          credentials: {
+            token_endpoint: 'https://idp/t',
+            client_id: 'cid',
+            client_secret: 'SECRET_CLIENT_CREDS_SECRET',
+          },
+        },
+      },
+      secret: 'SECRET_CLIENT_CREDS_SECRET',
+    },
+    {
+      name: 'oauth_client_credentials.tokens.access_token',
+      options: {
+        auth: {
+          type: 'oauth_client_credentials',
+          credentials: {
+            token_endpoint: 'https://idp/t',
+            client_id: 'cid',
+            client_secret: 'not-this-fixture-value',
+          },
+          tokens: { access_token: 'SECRET_CC_ACCESS_TOKEN_JKL' },
+        },
+      },
+      secret: 'SECRET_CC_ACCESS_TOKEN_JKL',
+    },
+  ]) {
+    test(`catches a leaked ${variant.name}`, () => {
+      const out = runEcho(variant.options, { echoed_secret: variant.secret });
+      assert.strictEqual(out.length, 1);
+      assert.strictEqual(out[0].passed, false, `expected a leak finding for ${variant.name}`);
+      assert.match(out[0].error, /echoed a caller-supplied secret/);
+    });
+
+    test(`stays silent when the ${variant.name} is not echoed`, () => {
+      const out = runEcho(variant.options, { harmless: 'nothing sensitive here' });
+      assert.strictEqual(out.length, 1);
+      assert.strictEqual(out[0].passed, true);
+    });
+  }
+
+  test('still honours raw options.auth_token and options.secrets', () => {
+    const out = runEcho(
+      { auth_token: 'RAW_BEARER_FIXTURE_TOKEN_V1', secrets: ['EXTRA_SECRET_FIXTURE_VALUE'] },
+      { echoed: 'EXTRA_SECRET_FIXTURE_VALUE in the payload' }
+    );
+    assert.strictEqual(out[0].passed, false);
+  });
+
+  test('coerces non-string entries in options.secrets without throwing', () => {
+    // Defensive: if a consumer passes a misshaped secrets array, skip the bad
+    // entries rather than crash the assertion.
+    const out = runEcho(
+      { secrets: [null, undefined, 42, 'REAL_SECRET_FIXTURE_VALUE_1'] },
+      { echoed: 'REAL_SECRET_FIXTURE_VALUE_1 is here' }
+    );
+    assert.strictEqual(out[0].passed, false);
+  });
+
+  test('no auth configured → passes silently (no state bleed)', () => {
+    const out = runEcho({}, { echoed: 'anything goes here' });
+    // No secrets to check → empty result (skip the check)
+    assert.strictEqual(out.length, 0);
+  });
+
+  test('resolves $ENV: reference on oauth_client_credentials.client_secret', () => {
+    process.env.ADCP_TEST_CC_SECRET = 'RESOLVED_SECRET_FROM_ENV';
+    try {
+      const out = runEcho(
+        {
+          auth: {
+            type: 'oauth_client_credentials',
+            credentials: {
+              token_endpoint: 'https://idp/t',
+              client_id: 'cid',
+              client_secret: '$ENV:ADCP_TEST_CC_SECRET',
+            },
+          },
+        },
+        { leaked: 'RESOLVED_SECRET_FROM_ENV is here' }
+      );
+      assert.strictEqual(out[0].passed, false, 'must flag the resolved env value, not the $ENV: ref');
+    } finally {
+      delete process.env.ADCP_TEST_CC_SECRET;
+    }
+  });
+
+  test('does not match the literal $ENV: reference string (only resolved value)', () => {
+    process.env.ADCP_TEST_CC_SECRET = 'RESOLVED_SECRET_FROM_ENV';
+    try {
+      // Echoing `$ENV:ADCP_TEST_CC_SECRET` is a config-reference echo, not a
+      // secret echo. The assertion must only flag the resolved literal.
+      const out = runEcho(
+        {
+          auth: {
+            type: 'oauth_client_credentials',
+            credentials: {
+              token_endpoint: 'https://idp/t',
+              client_id: 'cid',
+              client_secret: '$ENV:ADCP_TEST_CC_SECRET',
+            },
+          },
+        },
+        { echoed: '$ENV:ADCP_TEST_CC_SECRET is a config-time reference, harmless to echo' }
+      );
+      assert.strictEqual(out[0].passed, true);
+    } finally {
+      delete process.env.ADCP_TEST_CC_SECRET;
+    }
+  });
+
+  test('silently skips $ENV: references whose variable is unset (no throw)', () => {
+    delete process.env.ADCP_TEST_CC_UNSET;
+    assert.doesNotThrow(() =>
+      runEcho(
+        {
+          auth: {
+            type: 'oauth_client_credentials',
+            credentials: {
+              token_endpoint: 'https://idp/t',
+              client_id: 'longclientid',
+              client_secret: '$ENV:ADCP_TEST_CC_UNSET',
+            },
+          },
+        },
+        { echoed: 'anything goes here' }
+      )
+    );
+    // Unresolved ref → assertion runs with only resolvable entries in the set.
+    // No throw is the load-bearing invariant; the pass/fail of the run itself
+    // depends on whether any other extracted secret shows up in the context.
+  });
+
+  test('skips substring match for secrets under the minimum length (false-positive guard)', () => {
+    // 3-char fixture client_id would otherwise match any JSON containing
+    // those 3 chars in sequence. Guard prevents that.
+    const out = runEcho({ auth: { type: 'bearer', token: 'abc' } }, { echoed: { agent: { acbcompany: 'abcabcabc' } } });
+    // Either the secret set ends up empty (below threshold) or the match is
+    // skipped — either way, passing result or empty result, never a failure.
+    if (out.length > 0) {
+      assert.strictEqual(out[0].passed, true, 'short secret must not drive a false positive');
+    }
+  });
+
+  test('catches the base64-encoded Authorization: Basic header when echoed verbatim', () => {
+    const user = 'fixtureusername';
+    const pw = 'fixturepasswordlongenough';
+    const basicHeader = Buffer.from(`${user}:${pw}`, 'utf8').toString('base64');
+    const out = runEcho({ auth: basicAuth(user, pw) }, { leaked: `Authorization: Basic ${basicHeader}` });
+    assert.strictEqual(out[0].passed, false, 'must catch a leaked base64 Basic header');
+  });
+
+  test('does NOT extract basic-auth username alone (RFC-like: username is a public identifier)', () => {
+    // Username is a public identifier — welcome messages, audit logs, and
+    // "last login by X" displays all legitimately echo it. Extracting it
+    // alone would false-positive in realistic storyboards. The base64 blob
+    // covers the genuine Authorization-header leak case.
+    const out = runEcho(
+      { auth: basicAuth('fixtureusername-unique-1234', 'fixturepasswordlongenough') },
+      { echoed_user: 'fixtureusername-unique-1234' }
+    );
+    // Password and the base64 blob are extracted, but the bare username is
+    // not — so echoing the username alone must not trip the assertion.
+    assert.strictEqual(out[0].passed, true, 'username alone must not flag');
+  });
+
+  test('does NOT extract oauth_client_credentials.client_id (RFC 6749 §2.2: public identifier)', () => {
+    // client_id is public by RFC 6749 §2.2 — echoes in token responses,
+    // introspection payloads, audit logs, and error bodies are intentional.
+    // Extracting it would false-positive any IdP that echoes the requesting
+    // client back in its responses.
+    const out = runEcho(
+      {
+        auth: {
+          type: 'oauth_client_credentials',
+          credentials: {
+            token_endpoint: 'https://idp/t',
+            client_id: 'public-client-id-fixture-1234',
+            client_secret: 'SECRET_FIXTURE_LONGENOUGH',
+          },
+        },
+      },
+      { token_response: { client_id: 'public-client-id-fixture-1234', audience: 'svc' } }
+    );
+    assert.strictEqual(out[0].passed, true, 'client_id echo must not flag — it is a public identifier');
+  });
+});

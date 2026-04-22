@@ -46,7 +46,7 @@ export {
   clearAssertionRegistry,
   resolveAssertions,
 } from './assertions';
-export type { AssertionSpec, AssertionContext } from './assertions';
+export type { AssertionSpec, AssertionContext, RegisterAssertionOptions } from './assertions';
 
 // Webhook receiver (outbound-webhook conformance testing per adcontextprotocol/adcp#2431)
 export { createWebhookReceiver } from './webhook-receiver';

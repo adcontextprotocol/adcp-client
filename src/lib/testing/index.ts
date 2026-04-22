@@ -200,6 +200,7 @@ export {
   type AssertionSpec,
   type AssertionContext,
   type AssertionResult,
+  type RegisterAssertionOptions,
   // Types
   type Storyboard,
   type StoryboardPhase,
