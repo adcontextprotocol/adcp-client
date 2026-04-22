@@ -1,12 +1,18 @@
 # Migrating from @adcp/client 4.x to 5.x
 
-`@adcp/client` 5.x tracks **AdCP 3.0 GA**. Most 4.x users will skip the
-intermediate 5.x releases entirely and land on 5.10 in one step — so this
-guide centres on the two arcs that actually matter: the framework reshape
-(Parts 1–3, originally 5.0 → 5.2) and the schema tightening + strict
-defaults that finish the 3.0 GA alignment (Part 4, 5.10). Part 5
-collects the 5.3–5.9 changes as **adoption-gated** items — read the
-subsystem that applies to you, skip the rest.
+`@adcp/client` 5.x tracks **AdCP 3.0 GA**. As of library 5.13 the
+`ADCP_VERSION` pin is `3.0.0` (the published GA release) instead of
+the rolling `latest` alias — generated types, Zod schemas, and the
+compliance/storyboard tree are now locked to the 3.0.0 registry.
+`COMPATIBLE_ADCP_VERSIONS` adds `'3.0.0'` alongside the existing `v3`,
+beta.1, and beta.3 entries so mixed-version wire traffic keeps
+working. Most 4.x users will skip the intermediate 5.x releases
+entirely and land on 5.13 in one step — so this guide centres on the
+two arcs that actually matter: the framework reshape (Parts 1–3,
+originally 5.0 → 5.2) and the schema tightening + strict defaults
+that finish the 3.0 GA alignment (Part 4, 5.10). Part 5 collects the
+5.3–5.9 changes as **adoption-gated** items — read the subsystem
+that applies to you, skip the rest.
 
 Breaking items are marked **BREAKING**. Everything else is additive but
 recommended. The migration checklist at the bottom is the condensed

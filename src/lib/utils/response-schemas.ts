@@ -88,12 +88,8 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerResponseSchema,
 
-  // Property governance — validate_property_delivery has no generated schema yet.
-  // Hand-written from protocol spec. Replace with generated schema when available.
-  validate_property_delivery: z.union([
-    z.object({ compliant: z.boolean() }).passthrough(),
-    z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
-  ]),
+  // Property governance
+  validate_property_delivery: schemas.ValidatePropertyDeliveryResponseSchema,
 
   // Brand rights
   get_brand_identity: schemas.GetBrandIdentityResponseSchema,

@@ -101,7 +101,7 @@ export const ADCP_MAJOR_VERSION = 3;
 /**
  * AdCP versions this library maintains backward compatibility with
  */
-export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3'] as const;
+export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3', '3.0.0'] as const;
 
 /**
  * Full version information
