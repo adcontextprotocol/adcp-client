@@ -620,6 +620,19 @@ describe('default-invariants: idempotency.conflict_no_payload_leak (widened allo
     assert.strictEqual(out[0].passed, true);
   });
 
+  test('passes on the exact shape adcpError() emits (code+message+recovery)', () => {
+    // Regression: `adcpError('IDEMPOTENCY_CONFLICT', ...)` adds
+    // `recovery: 'correctable'` from STANDARD_ERROR_CODES. If the
+    // allowlist omits `recovery`, every framework-emitted conflict
+    // false-positives the invariant on its own SDK output.
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', recovery: 'correctable' })
+    );
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0].passed, true, out[0].error);
+  });
+
   test('flags any non-allowlisted envelope field (the read-oracle leak vector)', () => {
     const out = spec.onStep(
       { state: {} },

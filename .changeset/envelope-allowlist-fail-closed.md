@@ -26,8 +26,20 @@ Security-review follow-ups from #788 (M3 + M4):
   `create-adcp-server.ts` error paths only ever echo `context` via
   `finalize()`; `injectReplayed` is never called on error responses.
 
+**Who is affected**: consumers calling `wrapEnvelope` with an
+`adcp_error.code` other than `IDEMPOTENCY_CONFLICT` (the only code
+registered today) AND relying on `replayed` or `operation_id` to
+round-trip. On upgrade, those fields silently drop — only `context`
+echoes. `IDEMPOTENCY_CONFLICT` is unchanged.
+
+**Upgrade path**: for bespoke error codes that genuinely need
+`replayed` or `operation_id` on the envelope, build the envelope
+directly instead of calling `wrapEnvelope`, or open an issue so the
+code can be added to `ERROR_ENVELOPE_FIELD_ALLOWLIST`. The allowlist
+is intentionally frozen at the module level — extending it requires a
+spec-and-SDK conversation, not a local override.
+
 Breaking change (minor — `wrapEnvelope` was just shipped in 5.11.0):
-consumers of the public helper that relied on the fail-open fallback
-for bespoke error codes need to register those codes explicitly.
+narrow external surface, days-old on npm.
 
 Closes #799, closes #800.

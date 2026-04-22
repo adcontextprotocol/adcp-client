@@ -256,6 +256,7 @@ describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
     for (const expected of [
       'code',
       'message',
+      'recovery',
       'status',
       'retry_after',
       'correlation_id',
@@ -268,5 +269,13 @@ describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
     for (const leaky of ['payload', 'stored_payload', 'budget', 'product_id', 'account_id']) {
       assert.ok(!CONFLICT_ADCP_ERROR_ALLOWLIST.has(leaky), `leaky key ${leaky} must not be allowlisted`);
     }
+  });
+
+  it('permits recovery so framework-emitted conflicts do not false-positive', () => {
+    // Regression: `adcpError('IDEMPOTENCY_CONFLICT', ...)` always adds
+    // `recovery: 'correctable'` from STANDARD_ERROR_CODES. Omitting it
+    // from the allowlist would flag every framework-emitted conflict as
+    // a leak — the invariant would fire on the SDK's own output.
+    assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has('recovery'));
   });
 });

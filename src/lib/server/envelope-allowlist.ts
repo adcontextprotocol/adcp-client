@@ -67,9 +67,14 @@ export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet
  *
  * The allowlist is narrow on purpose: sellers that need more fields
  * should push back on the spec, not silently leak cached state.
+ *
+ * `recovery` is permitted because `adcpError()` emits it unconditionally
+ * from the standard error-code table, it's a first-class `core/error.json`
+ * field, and it carries no payload-fingerprint risk (it's a
+ * closed enum of `transient | correctable | terminal`).
  */
 export const CONFLICT_ADCP_ERROR_ALLOWLIST: ReadonlySet<string> = Object.freeze(
-  new Set(['code', 'message', 'status', 'retry_after', 'correlation_id', 'request_id', 'operation_id'])
+  new Set(['code', 'message', 'recovery', 'status', 'retry_after', 'correlation_id', 'request_id', 'operation_id'])
 );
 
 /**

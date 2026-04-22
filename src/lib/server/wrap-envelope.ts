@@ -24,8 +24,6 @@
 
 import { DEFAULT_ERROR_ENVELOPE_FIELDS, ERROR_ENVELOPE_FIELD_ALLOWLIST } from './envelope-allowlist';
 
-export { ERROR_ENVELOPE_FIELD_ALLOWLIST, DEFAULT_ERROR_ENVELOPE_FIELDS } from './envelope-allowlist';
-
 /**
  * Options accepted by {@link wrapEnvelope}.
  *
@@ -141,7 +139,23 @@ function isEchoableContext(value: unknown): boolean {
  *   { adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message: '...', recovery: 'terminal' } },
  *   { replayed: true, context: { correlation_id: 'abc' }, operationId: 'op_123' }
  * );
- * // => { adcp_error: {...}, context: {...}, operation_id: 'op_123' }  // no `replayed`
+ * // `replayed: true` is intentionally dropped — IDEMPOTENCY_CONFLICT's
+ * // per-code allowlist excludes it (a conflict is not a cached replay).
+ * // => { adcp_error: {...}, context: {...}, operation_id: 'op_123' }
+ * ```
+ *
+ * @example Bespoke error code — fail-closed default
+ * ```ts
+ * const response = wrapEnvelope(
+ *   { adcp_error: { code: 'MY_CUSTOM_ERROR', message: '...', recovery: 'terminal' } },
+ *   { replayed: false, context: { correlation_id: 'abc' }, operationId: 'op_123' }
+ * );
+ * // An unregistered error code inherits DEFAULT_ERROR_ENVELOPE_FIELDS
+ * // ({ context } only). `replayed` and `operation_id` are silently
+ * // dropped. Sellers that need those fields on bespoke codes should
+ * // build the envelope directly rather than calling wrapEnvelope, or
+ * // open an issue to register the code in ERROR_ENVELOPE_FIELD_ALLOWLIST.
+ * // => { adcp_error: {...}, context: {...} }
  * ```
  */
 export function wrapEnvelope<T extends object>(
