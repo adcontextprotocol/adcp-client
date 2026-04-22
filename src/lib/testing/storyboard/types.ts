@@ -133,6 +133,15 @@ export interface StoryboardInvariantsObject {
  * Every id in `disable` MUST be in the assertion set resolved for this
  * run. An unknown id, or an id already suppressed storyboard-wide, is
  * dead code and fails fast at runner start rather than silently no-op.
+ *
+ * Semantics for stateful invariants: disable means the invariant does
+ * not OBSERVE the step. Invariants that accumulate per-step state
+ * (e.g. `status.monotonic`'s last-observed transition anchor) will
+ * therefore miss any observation the disabling step would have
+ * contributed. That's the point for `governance.denial_blocks_mutation`
+ * (a deliberate setup is not an anchor); for accumulator-style
+ * invariants, prefer disabling run-wide if the missed observation
+ * would hide later violations.
  */
 export interface StepInvariantsObject {
   disable?: string[];

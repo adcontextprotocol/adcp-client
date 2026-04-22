@@ -515,7 +515,10 @@ describe('runStoryboard: step-level invariants.disable', () => {
     } finally {
       server.close();
     }
-    // The untouched assertion fires on both steps. The disabled one fires on s1 only.
+    // Observation order is the runner's documented contract (assertions.ts:
+    // registration order) × the per-step loop (runner.ts:702). Outer axis is
+    // the step, inner axis is the spec in registration order. A breaking
+    // change to either loop should trip this test.
     assert.deepStrictEqual(observed, [
       ['disabled', 's1'],
       ['untouched', 's1'],
@@ -568,5 +571,88 @@ describe('runStoryboard: step-level invariants.disable', () => {
     } finally {
       server.close();
     }
+  });
+
+  // Integration — the feature's motivating use case end-to-end. A stateful
+  // invariant anchors in onStep and fires on any later step when anchored;
+  // disabling it on the anchoring step must prevent the anchor from ever
+  // being set, so the later step passes cleanly. Models the shape
+  // `governance.denial_blocks_mutation` takes on a `check_governance` 200
+  // `status: denied` recovery-setup storyboard — #815.
+  function registerAnchorInvariant() {
+    registerAssertion({
+      id: 'test.denial_anchor',
+      description: 'anchors on s1, fires on any step while anchored',
+      default: true,
+      onStart: ctx => {
+        ctx.state.anchored = false;
+      },
+      onStep: (ctx, stepResult) => {
+        const state = ctx.state;
+        if (stepResult.step_id === 's1') {
+          state.anchored = true;
+          return [];
+        }
+        if (state.anchored) {
+          return [{ passed: false, description: 'fired while anchored' }];
+        }
+        return [];
+      },
+    });
+  }
+
+  // Helper: gather every per-step assertion validation the runner emitted
+  // for a given assertion id across the whole run. `overall_passed` isn't
+  // useful here — the stub intentionally doesn't implement executeTask, so
+  // steps fail at the transport layer regardless. What we care about is
+  // whether our invariant's onStep contributed a validation row.
+  function assertionValidations(result, assertionId) {
+    const hits = [];
+    for (const phase of result.phases ?? []) {
+      for (const step of phase.steps ?? []) {
+        for (const v of step.validations ?? []) {
+          if (v.check === 'assertion' && v.description?.startsWith(`${assertionId}:`)) {
+            hits.push({ step_id: step.step_id, passed: v.passed, description: v.description });
+          }
+        }
+      }
+    }
+    return hits;
+  }
+
+  it('disabling the invariant on the anchoring step prevents it from firing on a later step', async () => {
+    registerAnchorInvariant();
+    const { server, url } = await startStubAgent();
+    let result;
+    try {
+      // Disable `test.denial_anchor` on s1 (the anchoring step). s2 runs
+      // normally but has nothing to fire on because onStep never saw s1.
+      const sb = buildStoryboard();
+      sb.phases[0].steps[0].invariants = { disable: ['test.denial_anchor'] };
+      result = await runStoryboard(url, sb, runnerOptions);
+    } finally {
+      server.close();
+    }
+    assert.deepStrictEqual(
+      assertionValidations(result, 'test.denial_anchor'),
+      [],
+      'invariant must not contribute any validation — anchor was never set'
+    );
+  });
+
+  it('without the step-level disable, the same invariant does fire on the later step (negative control)', async () => {
+    registerAnchorInvariant();
+    const { server, url } = await startStubAgent();
+    let result;
+    try {
+      // Same storyboard, no step-level disable. s1 anchors, s2 fires.
+      result = await runStoryboard(url, buildStoryboard(), runnerOptions);
+    } finally {
+      server.close();
+    }
+    const hits = assertionValidations(result, 'test.denial_anchor');
+    assert.strictEqual(hits.length, 1, 'exactly one invariant contribution expected');
+    assert.strictEqual(hits[0].step_id, 's2');
+    assert.strictEqual(hits[0].passed, false);
   });
 });
