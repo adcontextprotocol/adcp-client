@@ -5,23 +5,25 @@
  * `resolveAssertions` doesn't throw on fresh `@adcp/client` installs.
  *
  * The implementations aim for the spec's stated intent, not byte-perfect
- * fidelity with the upstream reference. Consumers can override by calling
- * `clearAssertionRegistry()` then re-registering with their own spec.
+ * fidelity with the upstream reference. Consumers can override a default by
+ * calling `registerAssertion(spec, { override: true })` with a stricter
+ * implementation of their own.
  *
  * Registered ids:
  *   - `idempotency.conflict_no_payload_leak` — when a mutating step returns
- *     `IDEMPOTENCY_CONFLICT`, the error must not echo the prior request's
- *     payload or response (stolen-key read oracle). We scan error envelopes
- *     for fields that look like leaked payload / identifiers.
- *   - `context.no_secret_echo` — the echoed `context` object on any step
- *     must not contain any bearer token, API key, or auth header value
- *     supplied in the options. Scan recursively.
+ *     `IDEMPOTENCY_CONFLICT`, the error envelope must carry only allowlisted
+ *     keys. Any other top-level property is flagged as a potential payload
+ *     leak (stolen-key read oracle).
+ *   - `context.no_secret_echo` — response bodies (not just `.context`) MUST
+ *     NOT contain bearer tokens, API keys, auth header values, or any leaf
+ *     string extracted from the caller-supplied `auth` union. Walks the
+ *     whole body, matches on suspect property names at any depth, and
+ *     catches bearer-token literals via regex.
  *   - `governance.denial_blocks_mutation` — once a plan is denied by a
  *     governance signal (GOVERNANCE_DENIED, CAMPAIGN_SUSPENDED, etc., or
  *     `check_governance` returning `status: "denied"`), no subsequent step
- *     in the run may acquire a resource for that plan. Catches sellers that
- *     surface the denial but mutate anyway. Plan-scoped via `plan_id`; runs
- *     without a denial signal are a silent pass.
+ *     in the run may acquire a resource for that plan. Plan-scoped via
+ *     `plan_id`; runs without a denial signal are a silent pass.
  */
 
 import { registerAssertion } from './assertions';
@@ -36,8 +38,26 @@ function registerOnce(id: string, spec: Parameters<typeof registerAssertion>[0])
   registerAssertion(spec);
 }
 
-// Tokens indicative of leaked payload on an IDEMPOTENCY_CONFLICT error.
-const CONFLICT_LEAK_FIELDS = ['payload', 'stored_payload', 'request_body', 'original_request', 'original_response'];
+/**
+ * Envelope fields that MAY legitimately appear on an IDEMPOTENCY_CONFLICT
+ * error body. Anything else on the error envelope is flagged as a potential
+ * payload leak. The allowlist is narrow on purpose: sellers that need more
+ * fields should push back on the spec, not silently leak cached state.
+ *
+ * The previous implementation used a denylist of 5 specific field names
+ * (`payload`, `stored_payload`, etc.) — trivially bypassed by a seller
+ * inlining `budget` / `product_id` / `account_id` at the envelope root,
+ * which turns key-reuse into a read oracle for the stolen-key attacker.
+ */
+const CONFLICT_ALLOWED_ENVELOPE_KEYS = new Set([
+  'code',
+  'message',
+  'status',
+  'retry_after',
+  'correlation_id',
+  'request_id',
+  'operation_id',
+]);
 
 registerOnce('idempotency.conflict_no_payload_leak', {
   id: 'idempotency.conflict_no_payload_leak',
@@ -48,66 +68,135 @@ registerOnce('idempotency.conflict_no_payload_leak', {
     if (!err) return [];
     if (err.code !== 'IDEMPOTENCY_CONFLICT') return [];
 
-    const findings: Omit<import('./types').AssertionResult, 'assertion_id' | 'scope'>[] = [];
     const description = 'IDEMPOTENCY_CONFLICT error redacts prior payload';
-    for (const field of CONFLICT_LEAK_FIELDS) {
-      if (field in err.details) {
-        findings.push({
-          passed: false,
-          description,
-          step_id: stepResult.step_id,
-          error: `IDEMPOTENCY_CONFLICT error leaked field "${field}" — must redact prior payload.`,
-        });
-      }
+    const leaked: string[] = [];
+    for (const key of Object.keys(err.details)) {
+      if (!CONFLICT_ALLOWED_ENVELOPE_KEYS.has(key)) leaked.push(key);
     }
-    if (findings.length === 0) {
-      findings.push({ passed: true, description, step_id: stepResult.step_id });
+    if (leaked.length === 0) {
+      return [{ passed: true, description, step_id: stepResult.step_id }];
     }
-    return findings;
+    return [
+      {
+        passed: false,
+        description,
+        step_id: stepResult.step_id,
+        error:
+          `IDEMPOTENCY_CONFLICT error envelope leaked non-allowlisted field(s): ${leaked.sort().join(', ')}. ` +
+          `Allowed envelope keys: ${[...CONFLICT_ALLOWED_ENVELOPE_KEYS].join(', ')}.`,
+      },
+    ];
   },
 });
 
+/**
+ * Bearer-token literal pattern. Matches the wire form a seller might echo
+ * from `Authorization: Bearer <token>` — case-insensitive `bearer` keyword
+ * followed by a token body of at least 10 characters of base64url / JWT
+ * vocabulary. Kept strict on length to avoid false positives on prose like
+ * "bearer of bad news".
+ */
+const BEARER_TOKEN_PATTERN = /\bbearer\s+[A-Za-z0-9._~+/=-]{10,}/i;
+
+/**
+ * Property names that MUST NOT appear on a response body — a seller that
+ * serializes `Authorization` / `api_key` / `x-api-key` headers or fields
+ * into the response is almost certainly leaking credentials, regardless of
+ * whether the scanner picks up the value verbatim (header normalization,
+ * whitespace differences, etc. can mask verbatim matches). Case-insensitive.
+ */
+const SUSPECT_PROPERTY_NAMES = new Set(['authorization', 'api_key', 'apikey', 'bearer', 'x-api-key']);
+
+/**
+ * Minimum length for a caller-supplied secret to be hunted for verbatim.
+ * Set to 16 because real OAuth access tokens, refresh tokens, and signing
+ * secrets are ≥20 chars by convention (opaque UUIDs, JWTs, HMAC hex). A
+ * shorter floor would false-positive on benign identifiers (short
+ * usernames, environment names, 8-char hex prefixes, ISO timestamps).
+ * Hand-coded fixture keys like `"test-key"` below this bar are not caught
+ * — that's the right tradeoff: a real agent echoing such a value is an
+ * obvious leak a human reviewer would spot, and the collision cost of
+ * matching short strings against every response body is too high to
+ * justify the coverage.
+ */
+const SECRET_MIN_LENGTH = 16;
+
 registerOnce('context.no_secret_echo', {
   id: 'context.no_secret_echo',
-  description: 'Echoed context MUST NOT contain bearer tokens, API keys, or auth header values.',
+  description: 'Response bodies MUST NOT echo bearer tokens, API keys, or auth header values back to the caller.',
   onStart: ctx => {
-    // Stash the sensitive values we know about. `auth` is the structured
-    // discriminated union from TestOptions — we walk it and extract leaf
-    // strings so `String.includes(obj)` can't silently no-op. Consumers can
-    // extend via `options.secrets` with additional raw strings.
+    // Stash caller-supplied secrets worth hunting verbatim. `auth` is the
+    // structured discriminated union from TestOptions — we walk it and
+    // extract leaf strings so `String.includes(obj)` can't silently no-op.
+    // test_kit api_key pickup matches what storyboards typically stage;
+    // options.secrets is a consumer hook for custom credentials.
     const secrets = new Set<string>();
-    const optAny = ctx.options as unknown as { auth_token?: string; auth?: unknown; secrets?: string[] };
-    if (typeof optAny.auth_token === 'string' && optAny.auth_token) secrets.add(optAny.auth_token);
-    for (const s of extractAuthSecrets(optAny.auth)) secrets.add(s);
-    for (const s of optAny.secrets ?? []) if (typeof s === 'string' && s) secrets.add(s);
+    const optAny = ctx.options as unknown as {
+      auth_token?: string;
+      auth?: unknown;
+      secrets?: string[];
+      test_kit?: { auth?: { api_key?: string } };
+    };
+    addIfSecret(secrets, optAny.auth_token);
+    for (const s of extractAuthSecrets(optAny.auth)) addIfSecret(secrets, s);
+    for (const s of optAny.secrets ?? []) addIfSecret(secrets, s);
+    addIfSecret(secrets, optAny.test_kit?.auth?.api_key);
     ctx.state.secrets = secrets;
   },
   onStep: (ctx, stepResult) => {
-    const secrets = ctx.state.secrets as Set<string> | undefined;
-    if (!secrets || secrets.size === 0) return [];
-    const context = extractResponseContext(stepResult);
-    if (context === undefined) return [];
-    const dumped = safeStringify(context);
-    const description = 'Response context omits caller-supplied secrets';
-    for (const secret of secrets) {
-      // Minimum length guards against collisions on short fixture values
-      // (e.g. a 2-char `client_id` would match most JSON payloads by accident).
-      // Real bearer / access tokens are ≥ 20 chars in practice; the threshold
-      // keeps false positives out without missing realistic secrets.
-      if (secret.length >= SECRET_MIN_LENGTH && dumped.includes(secret)) {
-        return [
-          {
-            passed: false,
-            description,
-            step_id: stepResult.step_id,
-            error: `Response context echoed a caller-supplied secret verbatim.`,
-          },
-        ];
-      }
+    const body = (stepResult as unknown as { response?: unknown }).response;
+    if (body === undefined || body === null) return [];
+
+    const secrets = (ctx.state.secrets as Set<string> | undefined) ?? new Set<string>();
+    const description = 'Response omits caller-supplied secrets and credential-shaped fields';
+
+    const hit = findSecretEcho(body, secrets);
+    if (hit) {
+      return [
+        {
+          passed: false,
+          description,
+          step_id: stepResult.step_id,
+          error: `step "${stepResult.step_id}" response ${hit}`,
+        },
+      ];
     }
     return [{ passed: true, description, step_id: stepResult.step_id }];
   },
 });
+
+/**
+ * Recursively walk `value` hunting for (a) suspect property names at any
+ * depth, (b) bearer-token literals in any string value, and (c) verbatim
+ * copies of caller-supplied secrets. First hit wins; the caller turns the
+ * reason into a human-readable error message.
+ */
+function findSecretEcho(value: unknown, secrets: Set<string>): string | null {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    if (typeof v === 'string') {
+      if (BEARER_TOKEN_PATTERN.test(v)) return 'contains a bearer-token literal';
+      for (const s of secrets) {
+        if (v.includes(s)) return 'contains a caller-supplied secret value verbatim';
+      }
+      continue;
+    }
+    if (Array.isArray(v)) {
+      for (const item of v) stack.push(item);
+      continue;
+    }
+    if (v !== null && typeof v === 'object') {
+      for (const [key, inner] of Object.entries(v as Record<string, unknown>)) {
+        if (SUSPECT_PROPERTY_NAMES.has(key.toLowerCase())) {
+          return `contains suspect property name "${key}"`;
+        }
+        stack.push(inner);
+      }
+    }
+  }
+  return null;
+}
 
 // ────────────────────────────────────────────────────────────
 // governance.denial_blocks_mutation
@@ -294,17 +383,16 @@ function extractAdcpError(step: import('./types').StoryboardStepResult): AdcpErr
 }
 
 /**
- * Minimum secret length before substring matching runs. Set to 16 because
- * real OAuth access tokens, refresh tokens, and signing secrets are ≥20 chars
- * by convention (opaque UUIDs, JWTs, HMAC hex). A shorter floor would
- * false-positive on benign identifiers (short usernames, environment names,
- * 8-char hex prefixes, ISO timestamps). Hand-coded fixture keys like
- * `"test-key"` below this bar are not caught — that's the right tradeoff:
- * a real agent echoing such a value is an obvious leak a human reviewer
- * would spot, and the collision cost of matching short strings against
- * every response context is too high to justify the coverage.
+ * Add a value to the secrets set if it is a non-empty string of at least
+ * `SECRET_MIN_LENGTH` chars. Centralises the length guard so every source
+ * (structured auth, `auth_token`, `secrets[]`, `test_kit.auth.api_key`)
+ * gets the same floor.
  */
-const SECRET_MIN_LENGTH = 16;
+function addIfSecret(out: Set<string>, value: unknown): void {
+  if (typeof value !== 'string') return;
+  if (value.length < SECRET_MIN_LENGTH) return;
+  out.add(value);
+}
 
 const ENV_REFERENCE_PREFIX = '$ENV:';
 
@@ -367,7 +455,8 @@ function pushCredentialValue(out: string[], value: unknown): void {
  *                                 logs, and error bodies.
  *
  * Returns an empty list for anything we can't recognise — the goal is a best-
- * effort extraction, not schema validation.
+ * effort extraction, not schema validation. The SECRET_MIN_LENGTH guard is
+ * applied by the caller via `addIfSecret`.
  */
 function extractAuthSecrets(auth: unknown): string[] {
   if (!auth || typeof auth !== 'object') return [];
@@ -402,18 +491,4 @@ function extractAuthSecrets(auth: unknown): string[] {
     pushCredentialValue(out, c.client_secret);
   }
   return out;
-}
-
-function extractResponseContext(step: import('./types').StoryboardStepResult): unknown {
-  const resp = (step as unknown as { response?: unknown }).response;
-  if (!resp || typeof resp !== 'object') return undefined;
-  return (resp as { context?: unknown }).context;
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '';
-  }
 }
