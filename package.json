@@ -70,6 +70,11 @@
       "import": "./dist/lib/substitution/index.js",
       "require": "./dist/lib/substitution/index.js",
       "types": "./dist/lib/substitution/index.d.ts"
+    },
+    "./express-mcp": {
+      "import": "./dist/lib/express-mcp/index.js",
+      "require": "./dist/lib/express-mcp/index.js",
+      "types": "./dist/lib/express-mcp/index.d.ts"
     }
   },
   "typesVersions": {
@@ -109,6 +114,9 @@
       ],
       "substitution": [
         "dist/lib/substitution/index.d.ts"
+      ],
+      "express-mcp": [
+        "dist/lib/express-mcp/index.d.ts"
       ]
     }
   },

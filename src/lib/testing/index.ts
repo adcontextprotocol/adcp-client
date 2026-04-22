@@ -174,6 +174,21 @@ export {
 } from '../server/test-controller-bridge';
 export type { TestControllerBridge, TestControllerBridgeContext } from '../server/test-controller-bridge';
 
+// Default TestControllerStore factory — ships wired defaults for every
+// force_* / simulate_* / seed_* scenario so sellers can bring a session and
+// skip the 300-line boilerplate.
+export { createDefaultTestControllerStore, createDefaultSession } from './default-controller-store';
+export type {
+  BudgetSpendRecord,
+  CreateDefaultTestControllerStoreOptions,
+  DefaultLoadSessionInput,
+  DefaultSessionShape,
+  DefaultTestControllerStoreResult,
+  DeliverySimulationRecord,
+  SeedFixture,
+  SessionTerminalStatus,
+} from './default-controller-store';
+
 // Storyboard-driven testing
 export {
   // Runner
@@ -215,6 +230,7 @@ export {
   registerAssertion,
   getAssertion,
   listAssertions,
+  listDefaultAssertions,
   clearAssertionRegistry,
   resolveAssertions,
   type AssertionSpec,
@@ -223,6 +239,8 @@ export {
   type RegisterAssertionOptions,
   // Types
   type Storyboard,
+  type StoryboardInvariants,
+  type StoryboardInvariantsObject,
   type StoryboardPhase,
   type StoryboardStep,
   type StoryboardValidation,

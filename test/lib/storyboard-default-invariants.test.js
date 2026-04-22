@@ -42,6 +42,44 @@ describe('default-invariants: auto-registration', () => {
       ])
     );
   });
+
+  it('all four bundled assertion ids register with default:true so they apply by default', () => {
+    for (const id of [
+      'idempotency.conflict_no_payload_leak',
+      'context.no_secret_echo',
+      'governance.denial_blocks_mutation',
+      'status.monotonic',
+    ]) {
+      assert.strictEqual(
+        getAssertion(id).default,
+        true,
+        `assertion "${id}" must be default:true — storyboards that omit invariants: would otherwise silently skip it`
+      );
+    }
+  });
+
+  it('resolveAssertions(undefined) returns the full bundled default set (default-on, not opt-in)', () => {
+    const resolved = resolveAssertions(undefined)
+      .map(s => s.id)
+      .sort();
+    assert.deepStrictEqual(resolved, [
+      'context.no_secret_echo',
+      'governance.denial_blocks_mutation',
+      'idempotency.conflict_no_payload_leak',
+      'status.monotonic',
+    ]);
+  });
+
+  it('resolveAssertions({ disable: [...] }) is the escape hatch — drops the named default, keeps the rest', () => {
+    const resolved = resolveAssertions({ disable: ['status.monotonic'] })
+      .map(s => s.id)
+      .sort();
+    assert.deepStrictEqual(resolved, [
+      'context.no_secret_echo',
+      'governance.denial_blocks_mutation',
+      'idempotency.conflict_no_payload_leak',
+    ]);
+  });
 });
 
 describe('default-invariants: governance.denial_blocks_mutation', () => {
@@ -755,7 +793,7 @@ describe('default-invariants: status.monotonic', () => {
     assert.ok(out.every(r => r.output.every(o => o.passed)));
   });
 
-  test('media_buy backward transition fails with actionable error', () => {
+  test('media_buy backward transition fails with actionable error (legal targets + enum URL)', () => {
     const out = run([
       step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') }),
       step({ step_id: 'regress', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'pending_creatives')] } }),
@@ -765,15 +803,43 @@ describe('default-invariants: status.monotonic', () => {
     assert.match(fail.error, /media_buy mb-1/);
     assert.match(fail.error, /active → pending_creatives/);
     assert.match(fail.error, /step "create" → step "regress"/);
+    // Legal targets from `active` are the other edges in the graph — sorted
+    // alphabetically, quoted, comma-separated. Anchors the enrichment so a
+    // regression that drops any one of them gets caught.
+    assert.match(fail.error, /Legal next states from "active": "canceled", "completed", "paused"/);
+    // Canonical enum URL points implementors straight at the spec lifecycle.
+    assert.match(fail.error, /adcontextprotocol\.org\/schemas\/.+\/enums\/media-buy-status\.json/);
   });
 
-  test('media_buy terminal is terminal — no exit transitions allowed', () => {
+  test('media_buy terminal is terminal — error names "(none — terminal state)" and the enum URL', () => {
     const out = run([
       step({ step_id: 'done', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'completed')] } }),
       step({ step_id: 'revive', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } }),
     ]);
-    assert.strictEqual(out[1].output[0].passed, false);
-    assert.match(out[1].output[0].error, /completed → active/);
+    const fail = out[1].output[0];
+    assert.strictEqual(fail.passed, false);
+    assert.match(fail.error, /completed → active/);
+    assert.match(fail.error, /Legal next states from "completed": \(none — terminal state\)/);
+    assert.match(fail.error, /enums\/media-buy-status\.json/);
+  });
+
+  test('creative asset error references the creative-status enum URL, not media-buy-status', () => {
+    // Sanity check that the per-resource enumFile routes to the right schema
+    // — otherwise a single regression in the graph table would be invisible
+    // from the message.
+    const creativeOf = (id, status) => ({ creative_id: id, status });
+    const out = run([
+      step({ step_id: 'first', task: 'sync_creatives', response: { creatives: [creativeOf('cr-1', 'approved')] } }),
+      step({
+        step_id: 'illegal_back_to_processing',
+        task: 'sync_creatives',
+        response: { creatives: [creativeOf('cr-1', 'processing')] },
+      }),
+    ]);
+    const fail = out[1].output[0];
+    assert.strictEqual(fail.passed, false);
+    assert.match(fail.error, /enums\/creative-status\.json/);
+    assert.doesNotMatch(fail.error, /media-buy-status/);
   });
 
   test('scope is per-(resource_type, resource_id) — two media buys independent', () => {
@@ -1045,5 +1111,114 @@ describe('default-invariants: status.monotonic', () => {
     ]);
     assert.strictEqual(out[0].output[0].passed, false);
     assert.match(out[0].output[0].error, /media_buy mb-1: active → pending_creatives/);
+  });
+
+  // ── audience ───────────────────────────────────────────────
+
+  const audienceOf = (id, status, extra = {}) => ({ audience_id: id, status, ...extra });
+
+  test('audience: processing → ready forward flow passes', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1200 })] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: too_small → processing → ready re-sync path passes', () => {
+    const out = run([
+      step({
+        step_id: 's1',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'too_small', { minimum_size: 1000 })] },
+      }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
+      step({
+        step_id: 's3',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1500 })] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: ready ↔ too_small is bidirectional (counts cross minimum_size)', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'too_small')] } }),
+      step({ step_id: 's3', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: ready → processing is allowed on re-sync', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
+    ]);
+    assert.ok(out[1].output.every(o => o.passed));
+  });
+
+  test('audience: self-edge (same status re-read) is silent pass', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+    ]);
+    // Two passes, no failures. `prev.status === ob.status` is a no-op path.
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: action deleted / failed omits status — observations are silent', () => {
+    // Spec envelope omits `status` entirely when `action` is `deleted` or
+    // `failed`. pushAudience requires both id and status, so these rows
+    // contribute no observations — the assertion can't see absence.
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', action: 'deleted' }] },
+      }),
+      step({
+        step_id: 's3',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', action: 'failed' }] },
+      }),
+    ]);
+    // s2/s3 carry no status → no observations → assertion doesn't emit.
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: observations are scoped per audience_id', () => {
+    // aud-1 and aud-2 have independent histories. A ready on aud-1 doesn't
+    // anchor aud-2, so aud-2 starting at too_small isn't a regression.
+    const out = run([
+      step({
+        step_id: 's1',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready'), audienceOf('aud-2', 'too_small')] },
+      }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'processing'), audienceOf('aud-2', 'ready')] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: unknown status value is treated as enum drift (not a fail)', () => {
+    // Matches the existing drift behaviour on media_buy — unknown prev.status
+    // resets the anchor instead of failing; response_schema is the gate for
+    // enum conformance.
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'xx_unknown')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+    ]);
+    assert.ok(out[1].output.every(o => o.passed));
   });
 });

@@ -21,7 +21,13 @@
  * See adcontextprotocol/adcp#2639 for the originating design.
  */
 
-import type { AssertionResult, Storyboard, StoryboardRunOptions, StoryboardStepResult } from './types';
+import type {
+  AssertionResult,
+  Storyboard,
+  StoryboardInvariants,
+  StoryboardRunOptions,
+  StoryboardStepResult,
+} from './types';
 
 // ────────────────────────────────────────────────────────────
 // Public types
@@ -61,6 +67,17 @@ export interface AssertionContext {
 export interface AssertionSpec {
   id: string;
   description: string;
+  /**
+   * When true, the assertion runs on every storyboard unless explicitly
+   * disabled via `storyboard.invariants.disable`. Defaults to `false` —
+   * non-default assertions are opt-in through `invariants.enable` (object
+   * form) or `invariants: [id, ...]` (legacy additive array form). The
+   * bundled assertions in `default-invariants.ts` all set this to `true`
+   * so forks and new specialisms inherit baseline cross-step gating
+   * automatically; consumers registering custom assertions can opt in by
+   * setting it on their own specs.
+   */
+  default?: boolean;
   onStart?(ctx: AssertionContext): void | Promise<void>;
   onStep?(
     ctx: AssertionContext,
@@ -114,6 +131,20 @@ export function listAssertions(): string[] {
 }
 
 /**
+ * List every assertion id registered with `default: true`. Used by
+ * `resolveAssertions` to build the baseline set that applies when a
+ * storyboard omits `invariants:` entirely or uses the object form's
+ * `disable: [...]` escape hatch.
+ */
+export function listDefaultAssertions(): string[] {
+  const out: string[] = [];
+  for (const [id, spec] of registry) {
+    if (spec.default) out.push(id);
+  }
+  return out;
+}
+
+/**
  * Remove all registrations. Scoped for tests — production runs rely on
  * module-init registration, and clearing the registry mid-run would break
  * any in-flight storyboard.
@@ -123,24 +154,132 @@ export function clearAssertionRegistry(): void {
 }
 
 /**
- * Resolve a list of ids to their registered specs. Throws with a single
- * aggregated error naming every unknown id — fails fast at runner start
- * rather than silently dropping ids.
+ * Resolve a storyboard's `invariants` declaration to the ordered list of
+ * `AssertionSpec`s the runner will drive. Every assertion registered with
+ * `default: true` is in the result unless the object form explicitly
+ * disables it; any ids supplied (legacy array form, or the object form's
+ * `enable`) are merged in on top.
+ *
+ * Fails fast at runner start on:
+ *   - any unknown id in the caller-supplied enable / legacy-array list,
+ *   - any id in `disable` that is not registered as a default (typo guard —
+ *     silently no-opping would mask real coverage gaps).
+ *
+ * The return order is: default specs (in registration order, with disabled
+ * ones filtered out) followed by the enable / legacy-array specs in the
+ * order the caller supplied them. Duplicates are collapsed.
+ *
+ * Accepts `string[]` (legacy additive form) and the `{ disable?, enable? }`
+ * object form from `Storyboard.invariants`; `undefined` means "apply all
+ * defaults". The looser `StoryboardInvariants | undefined` parameter type
+ * exists so callers can forward `storyboard.invariants` directly.
  */
-export function resolveAssertions(ids: string[] | undefined): AssertionSpec[] {
-  if (!ids || ids.length === 0) return [];
-  const resolved: AssertionSpec[] = [];
-  const missing: string[] = [];
-  for (const id of ids) {
-    const spec = registry.get(id);
-    if (spec) resolved.push(spec);
-    else missing.push(id);
+export function resolveAssertions(invariants: StoryboardInvariants | undefined): AssertionSpec[] {
+  const { disable, enable } = normaliseInvariants(invariants);
+
+  const resolved = new Map<string, AssertionSpec>();
+  const defaultIds: string[] = [];
+  for (const [id, spec] of registry) {
+    if (!spec.default) continue;
+    defaultIds.push(id);
+    if (!disable.includes(id)) resolved.set(id, spec);
   }
-  if (missing.length > 0) {
+
+  const unknownEnable: string[] = [];
+  for (const id of enable) {
+    const spec = registry.get(id);
+    if (!spec) unknownEnable.push(id);
+    else resolved.set(id, spec);
+  }
+
+  const defaultIdSet = new Set(defaultIds);
+  const unknownDisable: string[] = disable.filter(id => !defaultIdSet.has(id));
+
+  if (unknownEnable.length > 0 || unknownDisable.length > 0) {
+    const lines: string[] = [];
+    if (unknownEnable.length > 0) {
+      const registered = [...registry.keys()].sort().join(', ') || '(none registered)';
+      lines.push(
+        `Storyboard references unregistered assertion${unknownEnable.length > 1 ? 's' : ''}: ${unknownEnable.join(', ')}. ` +
+          suggestionClause(unknownEnable, [...registry.keys()]) +
+          `Registered ids: ${registered}. ` +
+          `Import the module that calls registerAssertion(...) for each id before running the storyboard.`
+      );
+    }
+    if (unknownDisable.length > 0) {
+      const known = defaultIds.slice().sort().join(', ') || '(none registered)';
+      lines.push(
+        `Storyboard invariants.disable names id${unknownDisable.length > 1 ? 's' : ''} that are not default-on: ${unknownDisable.join(', ')}. ` +
+          suggestionClause(unknownDisable, defaultIds) +
+          `Known default-on ids: ${known}. Non-default assertions don't need to be disabled — omit them instead.`
+      );
+    }
+    throw new Error(lines.join(' '));
+  }
+
+  return [...resolved.values()];
+}
+
+interface NormalisedInvariants {
+  disable: string[];
+  enable: string[];
+}
+
+// Object form keys. Any other top-level key (common typo: `disabled`) is a
+// silent-no-op trap under the permissive spread, so we catch it at parse-time.
+const INVARIANTS_OBJECT_KEYS: ReadonlySet<string> = new Set(['disable', 'enable']);
+
+function normaliseInvariants(invariants: StoryboardInvariants | undefined): NormalisedInvariants {
+  if (!invariants) return { disable: [], enable: [] };
+  if (Array.isArray(invariants)) return { disable: [], enable: invariants };
+  const unknown = Object.keys(invariants).filter(k => !INVARIANTS_OBJECT_KEYS.has(k));
+  if (unknown.length > 0) {
     throw new Error(
-      `Storyboard references unregistered assertion${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}. ` +
-        `Import the module that calls registerAssertion(...) for each id before running the storyboard.`
+      `Storyboard invariants has unknown field${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. ` +
+        `Supported fields are: ${[...INVARIANTS_OBJECT_KEYS].sort().join(', ')}.`
     );
   }
-  return resolved;
+  return { disable: invariants.disable ?? [], enable: invariants.enable ?? [] };
+}
+
+/**
+ * Render a `Did you mean "X"?` clause when one of the unknown ids has a
+ * close Levenshtein match in the candidate set. Kept narrow (distance ≤ 2,
+ * first hit wins) so typo suggestions don't bleed into legitimate near-
+ * collisions between registered ids.
+ */
+function suggestionClause(unknown: string[], candidates: string[]): string {
+  for (const id of unknown) {
+    const hit = closestMatch(id, candidates);
+    if (hit) return `Did you mean "${hit}"? `;
+  }
+  return '';
+}
+
+function closestMatch(input: string, candidates: string[]): string | null {
+  let best: { id: string; distance: number } | null = null;
+  for (const c of candidates) {
+    const d = levenshtein(input, c);
+    if (d === 0) continue;
+    if (d > 2) continue;
+    if (!best || d < best.distance) best = { id: c, distance: d };
+  }
+  return best ? best.id : null;
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  let curr = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1]! + 1, prev[j]! + 1, prev[j - 1]! + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[b.length]!;
 }
