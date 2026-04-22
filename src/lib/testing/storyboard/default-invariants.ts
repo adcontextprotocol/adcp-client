@@ -883,9 +883,7 @@ registerOnce('status.monotonic', {
         // fine, just not this one".
         const legalTargets = [...allowedTargets].sort();
         const legalDescription =
-          legalTargets.length > 0
-            ? legalTargets.map(t => `"${t}"`).join(', ')
-            : '(none — terminal state)';
+          legalTargets.length > 0 ? legalTargets.map(t => `"${t}"`).join(', ') : '(none — terminal state)';
         return [
           {
             passed: false,

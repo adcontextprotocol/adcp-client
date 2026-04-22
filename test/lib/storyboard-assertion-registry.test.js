@@ -112,27 +112,35 @@ describe('resolveAssertions: default-on semantics', () => {
   test('undefined invariants runs every default-on assertion', () => {
     registerTwoDefaults();
     registerAssertion({ id: 'custom.only', description: 'custom, not default' });
-    const resolved = resolveAssertions(undefined).map(s => s.id).sort();
+    const resolved = resolveAssertions(undefined)
+      .map(s => s.id)
+      .sort();
     assert.deepStrictEqual(resolved, ['default.one', 'default.two']);
   });
 
   test('empty object invariants runs every default-on assertion', () => {
     registerTwoDefaults();
-    const resolved = resolveAssertions({}).map(s => s.id).sort();
+    const resolved = resolveAssertions({})
+      .map(s => s.id)
+      .sort();
     assert.deepStrictEqual(resolved, ['default.one', 'default.two']);
   });
 
   test('legacy array form is additive on top of defaults', () => {
     registerTwoDefaults();
     registerAssertion({ id: 'custom.extra', description: 'extra' });
-    const resolved = resolveAssertions(['custom.extra']).map(s => s.id).sort();
+    const resolved = resolveAssertions(['custom.extra'])
+      .map(s => s.id)
+      .sort();
     assert.deepStrictEqual(resolved, ['custom.extra', 'default.one', 'default.two']);
   });
 
   test('object form enable is additive on top of defaults', () => {
     registerTwoDefaults();
     registerAssertion({ id: 'custom.extra', description: 'extra' });
-    const resolved = resolveAssertions({ enable: ['custom.extra'] }).map(s => s.id).sort();
+    const resolved = resolveAssertions({ enable: ['custom.extra'] })
+      .map(s => s.id)
+      .sort();
     assert.deepStrictEqual(resolved, ['custom.extra', 'default.one', 'default.two']);
   });
 
@@ -186,18 +194,12 @@ describe('resolveAssertions: default-on semantics', () => {
 
   test('unknown object-form top-level key ("disabled" typo) throws instead of silent no-op', () => {
     registerTwoDefaults();
-    assert.throws(
-      () => resolveAssertions({ disabled: ['default.one'] }),
-      /invariants has unknown field: disabled/
-    );
+    assert.throws(() => resolveAssertions({ disabled: ['default.one'] }), /invariants has unknown field: disabled/);
   });
 
   test('disable typo triggers a "Did you mean" suggestion against the default-on set', () => {
     registerTwoDefaults();
-    assert.throws(
-      () => resolveAssertions({ disable: ['default.onee'] }),
-      /Did you mean "default\.one"\?/
-    );
+    assert.throws(() => resolveAssertions({ disable: ['default.onee'] }), /Did you mean "default\.one"\?/);
   });
 
   test('unknown enable id names registered ids symmetric to unknown disable', () => {

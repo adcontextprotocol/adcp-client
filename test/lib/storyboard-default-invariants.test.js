@@ -59,7 +59,9 @@ describe('default-invariants: auto-registration', () => {
   });
 
   it('resolveAssertions(undefined) returns the full bundled default set (default-on, not opt-in)', () => {
-    const resolved = resolveAssertions(undefined).map(s => s.id).sort();
+    const resolved = resolveAssertions(undefined)
+      .map(s => s.id)
+      .sort();
     assert.deepStrictEqual(resolved, [
       'context.no_secret_echo',
       'governance.denial_blocks_mutation',
