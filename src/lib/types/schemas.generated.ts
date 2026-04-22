@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-22T04:09:10.844Z
+// Generated at: 2026-04-22T07:02:00.312Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2553,6 +2553,8 @@ export const SyncAudiencesErrorSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const AudienceStatusSchema = z.union([z.literal("processing"), z.literal("ready"), z.literal("too_small")]);
+
 export const MatchIDTypeSchema = z.union([z.literal("hashed_email"), z.literal("hashed_phone"), z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("other")]);
 
 export const SyncAudiencesSuccessSchema = z.object({
@@ -2561,7 +2563,7 @@ export const SyncAudiencesSuccessSchema = z.object({
         name: z.string().optional(),
         seller_id: z.string().optional(),
         action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("deleted"), z.literal("failed")]),
-        status: z.union([z.literal("processing"), z.literal("ready"), z.literal("too_small")]).optional(),
+        status: AudienceStatusSchema.optional(),
         uploaded_count: z.number().optional(),
         total_uploaded_count: z.number().optional(),
         matched_count: z.number().optional(),
@@ -2682,6 +2684,7 @@ export const DeletePropertyListRequestSchema = z.object({
 export const DeletePropertyListResponseSchema = z.object({
     deleted: z.boolean(),
     list_id: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4653,6 +4656,7 @@ export const PropertyListSchema = z.object({
 
 export const UpdatePropertyListResponseSchema = z.object({
     list: PropertyListSchema,
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4720,6 +4724,7 @@ export const UpdateCollectionListRequestSchema = z.object({
 
 export const UpdateCollectionListResponseSchema = z.object({
     list: CollectionListSchema,
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4790,6 +4795,7 @@ export const DeleteCollectionListRequestSchema = z.object({
 export const DeleteCollectionListResponseSchema = z.object({
     deleted: z.boolean(),
     list_id: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4901,6 +4907,7 @@ export const SyncPlansResponseSchema = z.object({
             reason: z.string().optional()
         }).passthrough()).optional()
     }).passthrough()),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4955,6 +4962,7 @@ export const ReportPlanOutcomeResponseSchema = z.object({
         total_committed: z.number().optional(),
         budget_remaining: z.number().optional()
     }).passthrough().optional(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -6019,6 +6027,7 @@ export const CreativeAsset1Schema = z.object({
 export const CreatePropertyListResponseSchema = z.object({
     list: PropertyListSchema,
     auth_token: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -6242,6 +6251,7 @@ export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema
 export const CreateCollectionListResponseSchema = z.object({
     list: CollectionListSchema,
     auth_token: z.string(),
+    replayed: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();

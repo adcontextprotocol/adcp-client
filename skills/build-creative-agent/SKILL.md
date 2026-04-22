@@ -95,7 +95,8 @@ What happens when a creative is synced:
 > - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['creative-ad-server']`), NOT `[{id, version}]` objects.
 > - `build_creative` response is `{ creative_manifest: { format_id, assets } }`. Each asset in `creative_manifest.assets` requires an `asset_type` discriminator — use the typed factories (`imageAsset({...})`, `videoAsset({...})`, `htmlAsset({...})`, `urlAsset({...})`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
 > - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
-> - `get_creative_delivery` requires **top-level `currency: string`** (ISO 4217), in addition to any per-row spend fields.
+> - `get_creative_delivery` requires **top-level `currency: string`** (ISO 4217), in addition to any per-row spend fields. `reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only.
+> - `videoAsset({...})` requires `width` + `height` per GA (previously optional). Set realistic pixel values — `{ url, width: 1920, height: 1080 }`.
 
 **Handler bindings — read the Contract column entry before writing each return:**
 

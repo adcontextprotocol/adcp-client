@@ -1112,4 +1112,113 @@ describe('default-invariants: status.monotonic', () => {
     assert.strictEqual(out[0].output[0].passed, false);
     assert.match(out[0].output[0].error, /media_buy mb-1: active → pending_creatives/);
   });
+
+  // ── audience ───────────────────────────────────────────────
+
+  const audienceOf = (id, status, extra = {}) => ({ audience_id: id, status, ...extra });
+
+  test('audience: processing → ready forward flow passes', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1200 })] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: too_small → processing → ready re-sync path passes', () => {
+    const out = run([
+      step({
+        step_id: 's1',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'too_small', { minimum_size: 1000 })] },
+      }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
+      step({
+        step_id: 's3',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1500 })] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: ready ↔ too_small is bidirectional (counts cross minimum_size)', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'too_small')] } }),
+      step({ step_id: 's3', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: ready → processing is allowed on re-sync', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
+    ]);
+    assert.ok(out[1].output.every(o => o.passed));
+  });
+
+  test('audience: self-edge (same status re-read) is silent pass', () => {
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+    ]);
+    // Two passes, no failures. `prev.status === ob.status` is a no-op path.
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: action deleted / failed omits status — observations are silent', () => {
+    // Spec envelope omits `status` entirely when `action` is `deleted` or
+    // `failed`. pushAudience requires both id and status, so these rows
+    // contribute no observations — the assertion can't see absence.
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', action: 'deleted' }] },
+      }),
+      step({
+        step_id: 's3',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', action: 'failed' }] },
+      }),
+    ]);
+    // s2/s3 carry no status → no observations → assertion doesn't emit.
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: observations are scoped per audience_id', () => {
+    // aud-1 and aud-2 have independent histories. A ready on aud-1 doesn't
+    // anchor aud-2, so aud-2 starting at too_small isn't a regression.
+    const out = run([
+      step({
+        step_id: 's1',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready'), audienceOf('aud-2', 'too_small')] },
+      }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'processing'), audienceOf('aud-2', 'ready')] },
+      }),
+    ]);
+    assert.ok(out.every(r => r.output.every(o => o.passed)));
+  });
+
+  test('audience: unknown status value is treated as enum drift (not a fail)', () => {
+    // Matches the existing drift behaviour on media_buy — unknown prev.status
+    // resets the anchor instead of failing; response_schema is the gate for
+    // enum conformance.
+    const out = run([
+      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'xx_unknown')] } }),
+      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
+    ]);
+    assert.ok(out[1].output.every(o => o.passed));
+  });
 });

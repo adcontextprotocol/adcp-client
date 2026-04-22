@@ -74,6 +74,42 @@ function loadJson(file: string): LoadedSchema {
 }
 
 /**
+ * Clear `additionalProperties: false` at the response root so envelope
+ * fields (`replayed`, `context`, `ext`, and future envelope additions)
+ * can ride alongside the tool-specific body — per security.mdx the
+ * envelope is always extensible. Upstream bundled schemas pin
+ * `additionalProperties: false` at the root on a handful of mutating
+ * tools (the property-list family), which rejects `replayed: false`.
+ *
+ * Scope is deliberately narrow: only the top-level object, plus each
+ * direct branch of a root-level `oneOf` / `anyOf` / `allOf`. Nested
+ * bodies stay strict so response-side drift detection still catches
+ * typos inside `Product`, `Package`, `MediaBuy` etc. Applied only to
+ * response variants; request schemas stay strict so outgoing drift
+ * fails at the edge.
+ */
+function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
+  const clone = { ...schema };
+  if (clone.additionalProperties === false) {
+    clone.additionalProperties = true;
+  }
+  for (const key of ['oneOf', 'anyOf', 'allOf'] as const) {
+    const branches = clone[key];
+    if (Array.isArray(branches)) {
+      clone[key] = branches.map(branch => {
+        if (!branch || typeof branch !== 'object') return branch;
+        const branchClone = { ...(branch as Record<string, unknown>) };
+        if (branchClone.additionalProperties === false) {
+          branchClone.additionalProperties = true;
+        }
+        return branchClone;
+      });
+    }
+  }
+  return clone;
+}
+
+/**
  * Build the (toolName, direction) → file path index by scanning the schema
  * tree once. Runs eagerly at first validator lookup.
  */
@@ -177,7 +213,8 @@ export function getValidator(toolName: string, direction: Direction): ValidateFu
     ensureCoreLoaded(s);
   }
 
-  const schema = loadJson(file);
+  const rawSchema = loadJson(file);
+  const schema = direction === 'request' ? rawSchema : relaxResponseRoot(rawSchema);
   const existing = typeof schema.$id === 'string' ? s.ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? s.ajv.compile(schema);
   s.validators.set(cacheKey, compiled);

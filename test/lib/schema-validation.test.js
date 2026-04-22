@@ -89,6 +89,75 @@ describe('schema-driven validation', () => {
       assert.strictEqual(productsIssue.keyword, 'type');
       assert.ok(productsIssue.schemaPath.length > 0);
     });
+
+    test('accepts envelope fields (replayed, unknown vendor keys) at the response root when bundled schema is additionalProperties:false', () => {
+      // create_property_list-response declares additionalProperties:false at root.
+      // Envelope fields like `replayed` (per security.mdx) must ride alongside.
+      // Body fields (`list`, `auth_token`) are intentionally omitted — AJV runs
+      // with allErrors, so required-field issues don't mask the envelope check.
+      const outcome = validateResponse('create_property_list', {
+        replayed: false,
+        unknown_envelope_field: { any: 'value' },
+      });
+      const rootAdditional = outcome.issues.filter(
+        i => i.keyword === 'additionalProperties' && (i.pointer === '' || i.pointer === '/')
+      );
+      assert.deepStrictEqual(
+        rootAdditional,
+        [],
+        `envelope fields should not trigger additionalProperties at the response root: ${JSON.stringify(rootAdditional)}`
+      );
+    });
+
+    test('envelope passthrough applies across the property-list family (not just create)', () => {
+      // delete_property_list and get_property_list ship the same root-level
+      // additionalProperties:false. One tool passing could be schema-specific;
+      // a second tool confirms the loader fix is general.
+      for (const tool of ['delete_property_list', 'get_property_list']) {
+        const outcome = validateResponse(tool, { replayed: false });
+        const rootAdditional = outcome.issues.filter(
+          i => i.keyword === 'additionalProperties' && (i.pointer === '' || i.pointer === '/')
+        );
+        assert.deepStrictEqual(
+          rootAdditional,
+          [],
+          `${tool}: envelope passthrough regressed at root: ${JSON.stringify(rootAdditional)}`
+        );
+      }
+    });
+
+    test('nested-body drift is still caught (relaxation does not recurse)', () => {
+      // get_property_list-response nests `list: { ... }` with its own
+      // additionalProperties:false. Typos inside the body must still fail
+      // — envelope passthrough is a root-level concession only.
+      const outcome = validateResponse('get_property_list', {
+        list: { unknown_nested_field: 'typo' },
+      });
+      const nestedAdditional = outcome.issues.filter(
+        i => i.keyword === 'additionalProperties' && i.pointer.startsWith('/list')
+      );
+      assert.ok(
+        nestedAdditional.length > 0,
+        `expected additionalProperties failure inside /list body, got: ${JSON.stringify(outcome.issues)}`
+      );
+    });
+  });
+
+  describe('validateRequest envelope strictness', () => {
+    test('request schemas stay strict — unknown top-level fields are rejected', () => {
+      // The fix explicitly preserves request strictness so outgoing drift
+      // fails at the edge. Regression guard: if relaxResponseRoot ever leaks
+      // to requests, this test catches it.
+      const outcome = validateRequest('create_property_list', {
+        name: 'Test',
+        unknown_request_field: { should: 'reject' },
+      });
+      const additional = outcome.issues.filter(i => i.keyword === 'additionalProperties');
+      assert.ok(
+        additional.length > 0,
+        `request validation should still reject unknown top-level fields: ${JSON.stringify(outcome.issues)}`
+      );
+    });
   });
 
   describe('formatIssues', () => {

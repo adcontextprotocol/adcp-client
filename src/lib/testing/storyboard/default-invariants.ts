@@ -645,6 +645,20 @@ const PROPOSAL_TRANSITIONS: TransitionGraph = {
   enumFile: 'proposal-status.json',
 };
 
+const AUDIENCE_TRANSITIONS: TransitionGraph = {
+  // See `static/schemas/source/enums/audience-status.json`. Fully bidirectional
+  // across the three states — sellers MAY re-enter `processing` on re-sync
+  // from `ready` or `too_small`, and `ready ↔ too_small` can happen as
+  // member counts cross `minimum_size` (spec hedges this as MAY, not MUST).
+  // No terminals: delete / fail omit `status` entirely via the envelope's
+  // `action` field, so there's nothing to record for them.
+  transitions: new Map<string, ReadonlySet<string>>([
+    ['processing', new Set(['ready', 'too_small'])],
+    ['ready', new Set(['processing', 'too_small'])],
+    ['too_small', new Set(['processing', 'ready'])],
+  ]),
+};
+
 /**
  * Extractor record per resource type. For each response shape we recognize,
  * describe how to walk the body and emit `(resource_id, status)` pairs.
@@ -715,6 +729,15 @@ function extractStatusObservations(task: string, body: Record<string, unknown>):
   // caller is refining toward commitment.
   if (task === 'get_products' && isObject(body.proposal)) {
     pushProposal(obs, body.proposal);
+  }
+
+  // Audience lifecycle: sync_audiences is both the write and discovery path
+  // (discovery-only calls omit the request `audiences` array but still return
+  // `audiences[]`). No separate list_audiences task exists.
+  if (task === 'sync_audiences') {
+    for (const a of asArray(body.audiences)) {
+      if (isObject(a)) pushAudience(obs, a);
+    }
   }
 
   return obs;
@@ -823,6 +846,22 @@ function pushProposal(obs: StatusObservation[], record: Record<string, unknown>)
   }
 }
 
+function pushAudience(obs: StatusObservation[], record: Record<string, unknown>): void {
+  // `status` is absent when `action` is `deleted` or `failed` — spec
+  // envelope intentionally omits the field rather than emitting a terminal
+  // value. The `&& status` guard below makes those observations silent.
+  const id = asString(record.audience_id);
+  const status = asString(record.status);
+  if (id && status) {
+    obs.push({
+      resource_type: 'audience',
+      resource_id: id,
+      status,
+      graph: AUDIENCE_TRANSITIONS,
+    });
+  }
+}
+
 interface MonotonicState {
   stepId: string;
   status: string;
@@ -832,7 +871,7 @@ registerOnce('status.monotonic', {
   id: 'status.monotonic',
   default: true,
   description:
-    'Observed resource statuses (media_buy, creative, account, si_session, catalog_item, proposal, creative_approval) MUST only transition along edges in the spec lifecycle graph.',
+    'Observed resource statuses (media_buy, creative, account, si_session, catalog_item, proposal, creative_approval, audience) MUST only transition along edges in the spec lifecycle graph.',
   onStart: ctx => {
     // `${resource_type}:${resource_id}` → last-observed state. Tuple key
     // disambiguates the unlikely `media_buy_id` / `creative_id` collision.

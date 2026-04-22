@@ -154,6 +154,21 @@ export {
 } from '../server/test-controller';
 export type { ControllerScenario, SeedFixtureCache, SeedScenario } from '../server/test-controller';
 
+// Default TestControllerStore factory — ships wired defaults for every
+// force_* / simulate_* / seed_* scenario so sellers can bring a session and
+// skip the 300-line boilerplate.
+export { createDefaultTestControllerStore, createDefaultSession } from './default-controller-store';
+export type {
+  BudgetSpendRecord,
+  CreateDefaultTestControllerStoreOptions,
+  DefaultLoadSessionInput,
+  DefaultSessionShape,
+  DefaultTestControllerStoreResult,
+  DeliverySimulationRecord,
+  SeedFixture,
+  SessionTerminalStatus,
+} from './default-controller-store';
+
 // Storyboard-driven testing
 export {
   // Runner

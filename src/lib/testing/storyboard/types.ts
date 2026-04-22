@@ -45,7 +45,25 @@ export interface Storyboard {
   prerequisites?: {
     description: string;
     test_kit?: string;
+    /**
+     * When true and the storyboard carries a top-level `fixtures:` block,
+     * the runner fires `comply_test_controller` seed_* calls for each fixture
+     * entry before phase 1. Spec: adcontextprotocol/adcp#2585 (fixtures block)
+     * + adcontextprotocol/adcp#2584 (seed_* scenarios). Opts-out per run via
+     * `StoryboardRunOptions.skip_controller_seeding` (for agents that seed via
+     * tests or HTTP admin rather than the MCP controller).
+     */
+    controller_seeding?: boolean;
   };
+  /**
+   * Fixture entries consumed by the runner's pre-flight controller seeding
+   * (see `prerequisites.controller_seeding`). Each entry is split into id
+   * params + a `fixture` body before being issued as a `seed_*` scenario on
+   * `comply_test_controller`. Entries are spec-shaped objects drawn from the
+   * source storyboard YAML; the runner preserves every field besides the id
+   * field(s) into `params.fixture` verbatim.
+   */
+  fixtures?: StoryboardFixtures;
   phases: StoryboardPhase[];
   /**
    * Cross-step assertions that apply to this storyboard. Every assertion
@@ -96,6 +114,30 @@ export interface StoryboardInvariantsObject {
    * MUST resolve; unknown ids fail fast at runner start.
    */
   enable?: string[];
+}
+
+/**
+ * Fixture entries the runner seeds into the seller via `comply_test_controller`
+ * pre-flight (adcp#2585, adcp#2743). Each array entry carries its id field(s)
+ * alongside the body the runner forwards into `params.fixture` for the
+ * corresponding `seed_*` scenario.
+ *
+ *   - `products[]`      → `seed_product`         — requires `product_id`
+ *   - `pricing_options[]` → `seed_pricing_option` — requires `product_id` + `pricing_option_id`
+ *   - `creatives[]`     → `seed_creative`        — requires `creative_id`
+ *   - `plans[]`         → `seed_plan`            — requires `plan_id`
+ *   - `media_buys[]`    → `seed_media_buy`       — requires `media_buy_id`
+ *
+ * Every other field on the entry is forwarded verbatim as `params.fixture`.
+ * Entries without their required id field produce a pre-flight error so the
+ * authoring mistake is surfaced before any real step runs.
+ */
+export interface StoryboardFixtures {
+  products?: Array<Record<string, unknown> & { product_id?: string }>;
+  pricing_options?: Array<Record<string, unknown> & { product_id?: string; pricing_option_id?: string }>;
+  creatives?: Array<Record<string, unknown> & { creative_id?: string }>;
+  plans?: Array<Record<string, unknown> & { plan_id?: string }>;
+  media_buys?: Array<Record<string, unknown> & { media_buy_id?: string }>;
 }
 
 export interface StoryboardPhase {
@@ -578,6 +620,16 @@ export interface StoryboardRunOptions extends TestOptions {
    */
   contracts?: string[];
   /**
+   * Opt out of the runner's pre-flight `comply_test_controller` seeding
+   * (adcp-client#778). When true, the runner skips the seed_* loop even if
+   * the storyboard declares `prerequisites.controller_seeding: true` and a
+   * `fixtures:` block. Intended for agents that load fixtures via a non-MCP
+   * path (HTTP admin, test bootstrap, inline Node state) — set the flag so
+   * the runner doesn't race the external seeding or fail against an agent
+   * that doesn't host `comply_test_controller`.
+   */
+  skip_controller_seeding?: boolean;
+  /**
    * Dependencies for `expect_webhook_signature_valid`. When omitted the step
    * grades `not_applicable` — matches the spec's "pending" gate. Supply the
    * publisher's JWKS resolver (typically fetched via `brand.json`
@@ -697,7 +749,17 @@ export type RunnerDetailedSkipReason =
   /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
   | 'mcp_mode_flattens_url_edges'
   /** RFC 9728 protected-resource metadata returned 404 → agent is not advertising OAuth, cascade-skip oauth_discovery (#677). */
-  | 'oauth_not_advertised';
+  | 'oauth_not_advertised'
+  /**
+   * Pre-flight `comply_test_controller` seeding failed (adcp-client#778), so
+   * every real phase cascade-skipped rather than run against an unseeded
+   * agent. The structured `skip.reason` resolves to the canonical
+   * `prerequisite_failed` per `DETAILED_SKIP_TO_CANONICAL` — the detailed
+   * form stays on the legacy `skip_reason` field so report consumers can
+   * still distinguish setup breaks from stateful-chain breaks within a
+   * phase.
+   */
+  | 'controller_seeding_failed';
 
 /**
  * Map detailed grader skip reasons onto the six canonical spec values so
@@ -714,6 +776,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   missing_test_kit_contract: 'unsatisfied_contract',
   live_side_effect_opt_in_required: 'unsatisfied_contract',
   operator_skip: 'unsatisfied_contract',
+  controller_seeding_failed: 'prerequisite_failed',
 };
 
 export interface RunnerSkipResult {
