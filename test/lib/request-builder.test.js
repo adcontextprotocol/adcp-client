@@ -516,11 +516,7 @@ describe('Request Builder', () => {
         identity: { consent_granted: false, anonymous_session_id: 'anon-123' },
         placement: 'chatgpt_search',
       };
-      const result = buildRequest(
-        step('si_initiate_session', { sample_request: fixture }),
-        {},
-        DEFAULT_OPTIONS
-      );
+      const result = buildRequest(step('si_initiate_session', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
       assert.strictEqual(result.intent, fixture.intent);
       assert.deepStrictEqual(result.identity, fixture.identity);
       assert.strictEqual(result.placement, 'chatgpt_search');
