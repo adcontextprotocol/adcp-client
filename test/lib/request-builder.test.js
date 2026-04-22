@@ -75,6 +75,29 @@ describe('Request Builder', () => {
       assert.ok(Array.isArray(result.uses), 'should have uses array');
       assert.strictEqual(result.brand_id, 'acmeoutdoor.example');
     });
+
+    test('honors step.sample_request when present', () => {
+      // Regression: the builder previously ignored sample_request for
+      // everything except brand_id, so a storyboard declaring specific
+      // query text / uses / countries hit the wire with the generic
+      // fallback. That silently broke scenarios like
+      // brand_rights/governance_denied where the buyer query matters
+      // for the rights-holder roster to return a non-empty list.
+      const fixture = {
+        buyer: { domain: 'pinnacle-agency.example' },
+        query: 'licensed commercial rights for a regional outdoor retail campaign',
+        uses: ['commercial', 'endorsement'],
+      };
+      const result = buildRequest(step('get_rights', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.query, fixture.query);
+      assert.deepStrictEqual(result.uses, fixture.uses);
+      assert.deepStrictEqual(result.buyer, fixture.buyer);
+      assert.strictEqual(
+        result.brand_id,
+        undefined,
+        'brand_id from caller domain must not leak when sample_request omits it'
+      );
+    });
   });
 
   describe('sync_catalogs', () => {
