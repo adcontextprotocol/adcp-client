@@ -18,7 +18,7 @@ function runMiddleware(req) {
   const middleware = mcpAcceptHeaderMiddleware();
   let nextCalled = false;
   let nextErr;
-  middleware(req, /* res */ {}, (err) => {
+  middleware(req, /* res */ {}, err => {
     nextCalled = true;
     nextErr = err;
   });

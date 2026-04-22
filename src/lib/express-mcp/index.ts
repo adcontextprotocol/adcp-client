@@ -35,11 +35,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 type NextFn = (err?: unknown) => void;
 
 /** Minimal Express-compatible handler signature. */
-export type McpAcceptHeaderHandler = (
-  req: IncomingMessage,
-  res: ServerResponse,
-  next: NextFn,
-) => void;
+export type McpAcceptHeaderHandler = (req: IncomingMessage, res: ServerResponse, next: NextFn) => void;
 
 const JSON_TYPE = 'application/json';
 const SSE_TYPE = 'text/event-stream';
