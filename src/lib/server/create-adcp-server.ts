@@ -142,6 +142,13 @@ import type {
 } from '../types/schemas.generated';
 
 import type {
+  AcquireRightsAcquired,
+  AcquireRightsPendingApproval,
+  AcquireRightsRejected,
+  GetBrandIdentitySuccess,
+  GetRightsSuccess,
+} from '../types/core.generated';
+import type {
   GetProductsResponse,
   CreateMediaBuySuccess,
   UpdateMediaBuySuccess,
@@ -388,11 +395,12 @@ export interface AdcpToolMap {
   si_send_message: { params: z.input<typeof SISendMessageRequestSchema>; result: SISendMessageResponse };
   si_terminate_session: { params: z.input<typeof SITerminateSessionRequestSchema>; result: SITerminateSessionResponse };
 
-  // Brand rights — response types are not yet code-generated. Handlers return
-  // loose records which the framework wraps with `genericResponse`.
-  get_brand_identity: { params: z.input<typeof GetBrandIdentityRequestSchema>; result: Record<string, unknown> };
-  get_rights: { params: z.input<typeof GetRightsRequestSchema>; result: Record<string, unknown> };
-  acquire_rights: { params: z.input<typeof AcquireRightsRequestSchema>; result: Record<string, unknown> };
+  get_brand_identity: { params: z.input<typeof GetBrandIdentityRequestSchema>; result: GetBrandIdentitySuccess };
+  get_rights: { params: z.input<typeof GetRightsRequestSchema>; result: GetRightsSuccess };
+  acquire_rights: {
+    params: z.input<typeof AcquireRightsRequestSchema>;
+    result: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
+  };
 }
 
 export type AdcpServerToolName = keyof AdcpToolMap;
@@ -402,12 +410,12 @@ export type AdcpServerToolName = keyof AdcpToolMap;
 // ---------------------------------------------------------------------------
 
 /** Handler that receives validated params and a resolved context.
- *  Return the exact response type for autocomplete, or a plain object —
- *  the response builder layer handles shaping either way. */
+ *  Return the tool's typed success shape, or an error envelope via
+ *  `adcpError(...)` (typed as `McpToolResponse`). */
 type DomainHandler<K extends AdcpServerToolName, TAccount> = (
   params: AdcpToolMap[K]['params'],
   ctx: HandlerContext<TAccount>
-) => Promise<AdcpToolMap[K]['result'] | McpToolResponse | Record<string, unknown>>;
+) => Promise<AdcpToolMap[K]['result'] | McpToolResponse>;
 
 export interface MediaBuyHandlers<TAccount = unknown> {
   getProducts?: DomainHandler<'get_products', TAccount>;

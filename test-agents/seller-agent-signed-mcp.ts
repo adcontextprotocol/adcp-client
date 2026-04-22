@@ -127,8 +127,8 @@ function createAgent({ taskStore }: ServeContext) {
         status: 'active' as const,
         confirmed_at: new Date().toISOString(),
         revision: 1,
-        packages: (params.packages ?? []).map(pkg => ({
-          package_id: pkg.package_id,
+        packages: (params.packages ?? []).map(() => ({
+          package_id: crypto.randomUUID(),
           status: 'active' as const,
         })),
         context: params.context,
