@@ -267,6 +267,21 @@ registerOnce('governance.denial_blocks_mutation', {
     // Denial observation is never itself a failure — record and return.
     const denial = detectGovernanceDenial(stepResult);
     if (denial) {
+      // A step authored with `expect_error: true` is the storyboard declaring
+      // "this denial is a planned part of the flow." First-party storyboards
+      // use this shape to test denial-recovery — the buyer reads the denial
+      // findings, corrects the payload (shrink the buy, relax the terms), and
+      // retries. The retry SHOULD succeed; it is not a silent bypass. Skip
+      // anchoring so the subsequent mutation is not flagged.
+      //
+      // The invariant's value-add is catching UN-acknowledged denials being
+      // ignored downstream — e.g. `check_governance` 200 with `status:
+      // "denied"` (expect_error is false; the 200 is not a wire error) that a
+      // buggy seller mutates past. Those still anchor below. Post-recovery
+      // mutation correctness after an acknowledged denial is a storyboard-
+      // level concern (payload assertions, status checks on the retry), not
+      // this invariant's scope. See issue #811.
+      if (stepResult.expect_error) return [];
       const anchor: GovernanceDenialAnchor = { stepId: stepResult.step_id, signal: denial };
       if (planId) {
         if (!state.deniedPlans.has(planId)) state.deniedPlans.set(planId, anchor);

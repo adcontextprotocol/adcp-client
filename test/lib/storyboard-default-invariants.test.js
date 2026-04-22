@@ -110,10 +110,15 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
   }
 
   function denialStep(planId, code = 'GOVERNANCE_DENIED') {
+    // `expect_error` intentionally NOT set — this models an unacknowledged
+    // denial (e.g. a handler returning GOVERNANCE_DENIED on a step whose
+    // author did not plan for it, or a `check_governance` 200 with
+    // `status: "denied"` that the flow continues past). That's the scenario
+    // the invariant guards: silent mutation after an un-anchored denial.
+    // Acknowledged denials (`expect_error: true`) are covered separately below.
     return makeStep({
       step_id: 'deny',
       task: 'check_governance',
-      expect_error: true,
       response: { plan_id: planId, adcp_error: { code, message: 'denied' } },
     });
   }
@@ -250,7 +255,6 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     const step = makeStep({
       step_id: 'deny_no_plan',
       task: 'get_products',
-      expect_error: true,
       response: { adcp_error: { code: 'POLICY_VIOLATION', message: 'refused' } },
     });
     const out = run([step, mutateStep({ response: { media_buy_id: 'mb-1', status: 'active' } })]);
@@ -311,6 +315,102 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     spec.onStart(ctx);
     const out = spec.onStep(ctx, mutateStep({ response: { media_buy_id: 'mb-1', status: 'active' } }));
     assert.strictEqual(out.length, 0);
+  });
+
+  // ── issue #811: denial-recovery storyboards ─────────────────────────
+  //
+  // A step authored with `expect_error: true` is the storyboard declaring
+  // "this denial is planned — the subsequent corrected request is the
+  // recovery path." Two first-party storyboards rely on this shape:
+  // `media_buy_seller/governance_denied_recovery` (GOVERNANCE_DENIED → shrink
+  // budget → retry) and `media_buy_seller/measurement_terms_rejected`
+  // (TERMS_REJECTED → relax terms → retry). The invariant previously fired on
+  // the retry; that was the false positive reported in #811.
+
+  test('acknowledged denial (expect_error: true) does not anchor — retry may succeed', () => {
+    const acknowledgedDenial = makeStep({
+      step_id: 'create_media_buy_denied',
+      task: 'create_media_buy',
+      expect_error: true,
+      response: { adcp_error: { code: 'GOVERNANCE_DENIED', message: 'exceeds plan' } },
+    });
+    const retry = makeStep({
+      step_id: 'create_media_buy_retry',
+      task: 'create_media_buy',
+      response: { media_buy_id: 'mb-corrected', status: 'active' },
+    });
+    const out = run([acknowledgedDenial, retry]);
+    assert.strictEqual(out[0].output.length, 0, 'denial observation itself never emits a finding');
+    assert.strictEqual(
+      out[1].output.length,
+      0,
+      'retry after an acknowledged denial must not trip the invariant — it is the recovery path'
+    );
+  });
+
+  test('acknowledged denial with plan linkage does not anchor on that plan', () => {
+    // Same as above but with plan_id surfacing from the response body —
+    // ensures the "don't anchor" rule applies to plan-scoped anchors too,
+    // not just run-wide.
+    const acknowledgedDenial = makeStep({
+      step_id: 'denied',
+      task: 'create_media_buy',
+      expect_error: true,
+      response: { plan_id: 'plan-a', adcp_error: { code: 'TERMS_REJECTED', message: 'terms too aggressive' } },
+    });
+    const retry = makeStep({
+      step_id: 'retry',
+      task: 'create_media_buy',
+      response: { plan_id: 'plan-a', media_buy_id: 'mb-relaxed', status: 'active' },
+    });
+    const out = run([acknowledgedDenial, retry]);
+    assert.strictEqual(out[1].output.length, 0);
+  });
+
+  for (const code of [
+    'GOVERNANCE_DENIED',
+    'CAMPAIGN_SUSPENDED',
+    'PERMISSION_DENIED',
+    'POLICY_VIOLATION',
+    'TERMS_REJECTED',
+    'COMPLIANCE_UNSATISFIED',
+  ]) {
+    test(`acknowledged ${code} allows a subsequent successful mutation`, () => {
+      const acknowledgedDenial = makeStep({
+        step_id: 'denied',
+        task: 'create_media_buy',
+        expect_error: true,
+        response: { adcp_error: { code, message: 'denied' } },
+      });
+      const retry = makeStep({
+        step_id: 'retry',
+        task: 'create_media_buy',
+        response: { media_buy_id: 'mb-corrected', status: 'active' },
+      });
+      const out = run([acknowledgedDenial, retry]);
+      assert.strictEqual(out[1].output.length, 0);
+    });
+  }
+
+  test('unacknowledged denial still anchors even when a later step is expect_error: true', () => {
+    // Guard: the "acknowledgment" only applies to the denial-bearing step
+    // itself. An unrelated expect_error step downstream must not retroactively
+    // clear a legitimate anchor established by a silent-bypass scenario.
+    const silentDenial = makeStep({
+      step_id: 'check',
+      task: 'check_governance',
+      response: { status: 'denied', plan_id: 'plan-a' },
+    });
+    const unrelatedFailure = makeStep({
+      step_id: 'unrelated_err',
+      task: 'get_products',
+      expect_error: true,
+      response: { adcp_error: { code: 'INVALID_REQUEST', message: 'unrelated' } },
+    });
+    const mutation = mutateStep({ planId: 'plan-a' });
+    const out = run([silentDenial, unrelatedFailure, mutation]);
+    assert.strictEqual(out[2].output[0].passed, false);
+    assert.match(out[2].output[0].error, /CHECK_GOVERNANCE_DENIED/);
   });
 });
 
