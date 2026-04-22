@@ -513,14 +513,14 @@ Optional: `purchase_type: Purchase Type`, `tool: string`, `payload: object`, `go
 Get offering details, availability, and optionally matching products before session handoff.
 
 Required: `offering_id: string`
-Optional: `context: string`, `include_products: boolean`, `product_limit: integer`
+Optional: `intent: string`, `context: Context`, `include_products: boolean`, `product_limit: integer`
 
 #### `si_initiate_session`
 
 Host initiates SI session with brand agent - includes context, identity, and capability negotiation.
 
-Required: `context: string`, `identity: Si Identity`, `idempotency_key: string`
-Optional: `media_buy_id: string`, `placement: string`, `offering_id: string`, `supported_capabilities: Si Capabilities`, `offering_token: string`
+Required: `intent: string`, `identity: Si Identity`, `idempotency_key: string`
+Optional: `context: Context`, `media_buy_id: string`, `placement: string`, `offering_id: string`, `supported_capabilities: Si Capabilities`, `offering_token: string`
 
 #### `si_send_message`
 

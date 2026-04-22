@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-21T21:52:50.424Z
+// Generated at: 2026-04-22T03:12:40.417Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1909,7 +1909,7 @@ export interface TextAsset {
  */
 export interface URLAsset {
   /**
-   * URL reference
+   * URL reference. May be a plain URI or an RFC 6570 URI template carrying AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`). Buyers MUST NOT pre-encode macro braces at sync time; the ad server URL-encodes substituted values at impression time. See docs/creative/universal-macros.mdx.
    */
   url: string;
   url_type?: URLAssetType;
@@ -13402,9 +13402,10 @@ export interface SIGetOfferingRequest {
    */
   offering_id: string;
   /**
-   * Optional natural language context about user intent for personalized results (e.g., 'mens size 14 near Cincinnati'). Must be anonymous - no PII.
+   * Optional natural language description of user intent for personalized results (e.g., 'mens size 14 near Cincinnati'). Must be anonymous - no PII.
    */
-  context?: string;
+  intent?: string;
+  context?: ContextObject;
   /**
    * Whether to include matching products in the response
    */
@@ -13537,9 +13538,10 @@ export interface SIInitiateSessionRequest {
    */
   adcp_major_version?: number;
   /**
-   * Conversation handoff from the host describing what the user needs
+   * Natural language description of user intent — the conversation handoff from the host describing what the user needs from the brand agent
    */
-  context: string;
+  intent: string;
+  context?: ContextObject;
   identity: SIIdentity;
   /**
    * AdCP media buy ID if session was triggered by advertising
