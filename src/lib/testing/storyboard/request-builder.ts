@@ -34,6 +34,18 @@ type RequestBuilder = (
  */
 const UNKNOWN_FORMAT_ID = Object.freeze({ agent_url: 'https://unknown.example.com/', id: 'unknown' });
 
+/**
+ * Placeholder `caller` URL for tasks whose schema names the CALLER-AGENT's
+ * URL (not the brand or the seller). `check_governance.caller` is the canonical
+ * case: governance agents bind this field to agent identity for rate limiting,
+ * audit trails, and (with `signed-requests`) JWS issuer correlation — emitting
+ * the brand domain here names the wrong entity and will confuse strict
+ * governance agents. Storyboards that care about a specific caller identity
+ * author sample_request; this is the fallback when neither fixture nor
+ * harness-supplied agent URL is present.
+ */
+const FALLBACK_CALLER_AGENT_URL = 'https://e2e-orchestrator.adcontextprotocol.org/';
+
 const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
   // ── Account & Audience ─────────────────────────────────
 
@@ -543,19 +555,18 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     if (step.sample_request) {
       return injectContext({ ...step.sample_request }, context);
     }
-    // `caller` is `format: uri` per governance/check-governance-request.json
-    // — a bare domain fails strict JSON-schema validation. Prefix with
-    // `https://` so the fallback payload round-trips through the upstream
-    // schema when no sample_request is authored. Scheme-check defends against
-    // a future change to `resolveBrand` that could return a URL instead of a
-    // bare hostname (would otherwise produce `https://https://…`).
-    const brandDomain = resolveBrand(options).domain;
+    // `caller` names the CALLER-AGENT's URL, not the brand — governance agents
+    // use it for agent identity (rate limits, audit, JWS issuer correlation).
+    // The brand belongs inside `payload`, where governance rules about the
+    // advertised entity are evaluated. Using the fallback harness-orchestrator
+    // URL keeps the semantics honest when no sample_request is authored.
     return {
       plan_id: context.plan_id ?? 'unknown',
-      caller: brandDomain.includes('://') ? brandDomain : `https://${brandDomain}`,
+      caller: FALLBACK_CALLER_AGENT_URL,
       payload: {
         type: 'media_buy',
         account: context.account ?? resolveAccount(options),
+        brand: resolveBrand(options),
         total_budget: options.budget ?? 10000,
       },
     };
@@ -574,17 +585,23 @@ const REQUEST_BUILDERS: Record<string, RequestBuilder> = {
     // `anyOf: [{required: [policies]}, {required: [registry_policy_ids]}]` —
     // one must be present. Emit a minimal inline bespoke policy rather than
     // pinning a registry id the agent may not carry; storyboards that want
-    // real governance coverage will author sample_request.
+    // real governance coverage author sample_request.
+    //
+    // Contamination safeguards for the rare case a fallback hits a shared
+    // sandbox: `enforcement: "should"` keeps this from hardening into a deny
+    // rule against real content, and the ephemeral `policy_id` (timestamped
+    // + "e2e-fallback-" prefix) guarantees uniqueness per run so a stale
+    // policy can't be matched by accident.
     return {
       scope: {
         languages_any: ['en'],
-        description: 'E2E Test Content Standards',
+        description: 'E2E fallback content standards — replace via sample_request for real governance coverage',
       },
       policies: [
         {
-          policy_id: 'e2e_test_policy',
-          enforcement: 'must',
-          policy: 'E2E fallback policy — replace via sample_request for real governance coverage.',
+          policy_id: `e2e-fallback-${Date.now()}`,
+          enforcement: 'should',
+          policy: 'E2E fallback policy — storyboard author did not supply sample_request.',
         },
       ],
     };
