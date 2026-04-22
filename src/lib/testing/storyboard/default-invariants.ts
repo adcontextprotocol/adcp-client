@@ -294,11 +294,17 @@ function extractAdcpError(step: import('./types').StoryboardStepResult): AdcpErr
 }
 
 /**
- * Minimum secret length before substring matching runs. Anything shorter is
- * almost certainly a test fixture value that would collide with benign JSON.
- * Bearer / OAuth access tokens in practice are well above this threshold.
+ * Minimum secret length before substring matching runs. Set to 16 because
+ * real OAuth access tokens, refresh tokens, and signing secrets are ≥20 chars
+ * by convention (opaque UUIDs, JWTs, HMAC hex). A shorter floor would
+ * false-positive on benign identifiers (short usernames, environment names,
+ * 8-char hex prefixes, ISO timestamps). Hand-coded fixture keys like
+ * `"test-key"` below this bar are not caught — that's the right tradeoff:
+ * a real agent echoing such a value is an obvious leak a human reviewer
+ * would spot, and the collision cost of matching short strings against
+ * every response context is too high to justify the coverage.
  */
-const SECRET_MIN_LENGTH = 8;
+const SECRET_MIN_LENGTH = 16;
 
 const ENV_REFERENCE_PREFIX = '$ENV:';
 
@@ -343,16 +349,22 @@ function pushCredentialValue(out: string[], value: unknown): void {
  * Extract every leaf string secret from a structured `TestOptions.auth` value.
  * Mirrors the four variants in `src/lib/testing/types.ts`:
  *   - bearer                    → `token`
- *   - basic                     → `password`, `username`, and the
- *                                 `base64(user:pass)` an Authorization: Basic
- *                                 header would carry, so echoes of the full
- *                                 header or the raw tuple are both caught
+ *   - basic                     → `password` and, when both credentials are
+ *                                 present, the `base64(user:pass)` blob an
+ *                                 `Authorization: Basic` header carries.
+ *                                 Username alone is NOT extracted — it's a
+ *                                 public identifier (welcome messages, audit
+ *                                 logs, "last login by X" echoes legitimately).
  *   - oauth                     → `tokens.access_token`, `tokens.refresh_token`,
  *                                 `client.client_secret` (if confidential)
- *   - oauth_client_credentials  → `credentials.client_secret` and
- *                                 `credentials.client_id` (both may be
- *                                 `$ENV:VAR` references, resolved at runtime),
- *                                 `tokens.access_token`, `tokens.refresh_token`
+ *   - oauth_client_credentials  → `credentials.client_secret` (may be a
+ *                                 `$ENV:VAR` reference, resolved at runtime),
+ *                                 `tokens.access_token`, `tokens.refresh_token`.
+ *                                 `client_id` is NOT extracted — RFC 6749 §2.2
+ *                                 is explicit that the client identifier is
+ *                                 public and legitimately echoed in token
+ *                                 responses, introspection payloads, audit
+ *                                 logs, and error bodies.
  *
  * Returns an empty list for anything we can't recognise — the goal is a best-
  * effort extraction, not schema validation.
@@ -363,14 +375,13 @@ function extractAuthSecrets(auth: unknown): string[] {
   const out: string[] = [];
   pushCredentialValue(out, a.token); // bearer
 
-  // basic: echo of the decoded tuple, the username alone, or the full
-  // base64 Authorization header are all plausible leaks.
-  if (typeof a.username === 'string' && a.username && typeof a.password === 'string' && a.password) {
-    out.push(a.username);
+  // basic: the password is the secret; the base64 blob catches echoes of the
+  // full Authorization: Basic header. Username alone is not a secret.
+  if (typeof a.password === 'string' && a.password) {
     out.push(a.password);
-    out.push(Buffer.from(`${a.username}:${a.password}`, 'utf8').toString('base64'));
-  } else if (typeof a.password === 'string' && a.password) {
-    out.push(a.password);
+    if (typeof a.username === 'string' && a.username) {
+      out.push(Buffer.from(`${a.username}:${a.password}`, 'utf8').toString('base64'));
+    }
   }
 
   if (a.tokens && typeof a.tokens === 'object') {
@@ -384,10 +395,10 @@ function extractAuthSecrets(auth: unknown): string[] {
   }
   if (a.credentials && typeof a.credentials === 'object') {
     const c = a.credentials as Record<string, unknown>;
-    // client_id/client_secret on AgentOAuthClientCredentials may be
-    // `$ENV:VAR` references (see adcp.ts). Resolve so the assertion compares
-    // the real runtime value the AS sees, not the reference string.
-    pushCredentialValue(out, c.client_id);
+    // client_secret on AgentOAuthClientCredentials may be a `$ENV:VAR`
+    // reference — resolve so the assertion compares the real runtime value
+    // the AS sees, not the reference string. client_id is NOT extracted
+    // (RFC 6749 §2.2 — public identifier).
     pushCredentialValue(out, c.client_secret);
   }
   return out;

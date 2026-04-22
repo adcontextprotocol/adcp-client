@@ -308,68 +308,80 @@ describe('default-invariants: context.no_secret_echo', () => {
     });
   }
 
+  // All fixture secrets are ≥16 chars to clear the SECRET_MIN_LENGTH floor.
   for (const variant of [
     {
       name: 'bearer auth',
-      options: { auth: { type: 'bearer', token: 'SECRET_BEARER_123' } },
-      secret: 'SECRET_BEARER_123',
+      options: { auth: { type: 'bearer', token: 'SECRET_BEARER_TOKEN_1234' } },
+      secret: 'SECRET_BEARER_TOKEN_1234',
     },
     {
       name: 'basic auth password',
-      options: { auth: basicAuth('alice', 'SECRET_PW_456') },
-      secret: 'SECRET_PW_456',
+      options: { auth: basicAuth('alice', 'SECRET_BASIC_PASSWORD_1234') },
+      secret: 'SECRET_BASIC_PASSWORD_1234',
     },
     {
       name: 'oauth access_token',
       options: {
         auth: {
           type: 'oauth',
-          tokens: { access_token: 'SECRET_ACCESS_789', refresh_token: 'other-refresh' },
+          tokens: { access_token: 'SECRET_OAUTH_ACCESS_TOKEN_1', refresh_token: 'other-refresh-fixture-val' },
         },
       },
-      secret: 'SECRET_ACCESS_789',
+      secret: 'SECRET_OAUTH_ACCESS_TOKEN_1',
     },
     {
       name: 'oauth refresh_token',
       options: {
         auth: {
           type: 'oauth',
-          tokens: { access_token: 'other-access', refresh_token: 'SECRET_REFRESH_ABC' },
+          tokens: { access_token: 'other-access-fixture-val', refresh_token: 'SECRET_OAUTH_REFRESH_TOKEN' },
         },
       },
-      secret: 'SECRET_REFRESH_ABC',
+      secret: 'SECRET_OAUTH_REFRESH_TOKEN',
     },
     {
       name: 'oauth confidential client_secret',
       options: {
         auth: {
           type: 'oauth',
-          tokens: { access_token: 'access-xxx', refresh_token: 'refresh-xxx' },
-          client: { client_id: 'cid', client_secret: 'SECRET_CLIENT_DEF' },
+          tokens: {
+            access_token: 'access-fixture-longenough',
+            refresh_token: 'refresh-fixture-longenough',
+          },
+          client: { client_id: 'cid', client_secret: 'SECRET_OAUTH_CLIENT_SECRET' },
         },
       },
-      secret: 'SECRET_CLIENT_DEF',
+      secret: 'SECRET_OAUTH_CLIENT_SECRET',
     },
     {
       name: 'oauth_client_credentials.credentials.client_secret',
       options: {
         auth: {
           type: 'oauth_client_credentials',
-          credentials: { token_endpoint: 'https://idp/t', client_id: 'cid', client_secret: 'SECRET_CC_GHI' },
+          credentials: {
+            token_endpoint: 'https://idp/t',
+            client_id: 'cid',
+            client_secret: 'SECRET_CLIENT_CREDS_SECRET',
+          },
         },
       },
-      secret: 'SECRET_CC_GHI',
+      secret: 'SECRET_CLIENT_CREDS_SECRET',
     },
     {
       name: 'oauth_client_credentials.tokens.access_token',
       options: {
         auth: {
           type: 'oauth_client_credentials',
-          credentials: { token_endpoint: 'https://idp/t', client_id: 'cid', client_secret: 'not-this' },
-          tokens: { access_token: 'SECRET_CC_ACCESS_JKL' },
+          credentials: {
+            token_endpoint: 'https://idp/t',
+            client_id: 'cid',
+            client_secret: 'not-this-fixture-value',
+          },
+          tokens: { access_token: 'SECRET_CC_ACCESS_TOKEN_JKL' },
         },
       },
-      secret: 'SECRET_CC_ACCESS_JKL',
+      secret: 'SECRET_CC_ACCESS_TOKEN_JKL',
     },
   ]) {
     test(`catches a leaked ${variant.name}`, () => {
@@ -388,8 +400,8 @@ describe('default-invariants: context.no_secret_echo', () => {
 
   test('still honours raw options.auth_token and options.secrets', () => {
     const out = runEcho(
-      { auth_token: 'RAW_TOKEN', secrets: ['EXTRA_SECRET'] },
-      { echoed: 'EXTRA_SECRET in the payload' }
+      { auth_token: 'RAW_BEARER_FIXTURE_TOKEN_V1', secrets: ['EXTRA_SECRET_FIXTURE_VALUE'] },
+      { echoed: 'EXTRA_SECRET_FIXTURE_VALUE in the payload' }
     );
     assert.strictEqual(out[0].passed, false);
   });
@@ -397,7 +409,10 @@ describe('default-invariants: context.no_secret_echo', () => {
   test('coerces non-string entries in options.secrets without throwing', () => {
     // Defensive: if a consumer passes a misshaped secrets array, skip the bad
     // entries rather than crash the assertion.
-    const out = runEcho({ secrets: [null, undefined, 42, 'REAL_SECRET'] }, { echoed: 'REAL_SECRET is here' });
+    const out = runEcho(
+      { secrets: [null, undefined, 42, 'REAL_SECRET_FIXTURE_VALUE_1'] },
+      { echoed: 'REAL_SECRET_FIXTURE_VALUE_1 is here' }
+    );
     assert.strictEqual(out[0].passed, false);
   });
 
@@ -487,15 +502,45 @@ describe('default-invariants: context.no_secret_echo', () => {
   });
 
   test('catches the base64-encoded Authorization: Basic header when echoed verbatim', () => {
-    const user = 'longusername';
-    const pw = 'longpassword';
+    const user = 'fixtureusername';
+    const pw = 'fixturepasswordlongenough';
     const basicHeader = Buffer.from(`${user}:${pw}`, 'utf8').toString('base64');
     const out = runEcho({ auth: basicAuth(user, pw) }, { leaked: `Authorization: Basic ${basicHeader}` });
     assert.strictEqual(out[0].passed, false, 'must catch a leaked base64 Basic header');
   });
 
-  test('catches a leaked basic auth username (when ≥ min length)', () => {
-    const out = runEcho({ auth: basicAuth('longusername', 'longpassword') }, { echoed_user: 'longusername' });
-    assert.strictEqual(out[0].passed, false);
+  test('does NOT extract basic-auth username alone (RFC-like: username is a public identifier)', () => {
+    // Username is a public identifier — welcome messages, audit logs, and
+    // "last login by X" displays all legitimately echo it. Extracting it
+    // alone would false-positive in realistic storyboards. The base64 blob
+    // covers the genuine Authorization-header leak case.
+    const out = runEcho(
+      { auth: basicAuth('fixtureusername-unique-1234', 'fixturepasswordlongenough') },
+      { echoed_user: 'fixtureusername-unique-1234' }
+    );
+    // Password and the base64 blob are extracted, but the bare username is
+    // not — so echoing the username alone must not trip the assertion.
+    assert.strictEqual(out[0].passed, true, 'username alone must not flag');
+  });
+
+  test('does NOT extract oauth_client_credentials.client_id (RFC 6749 §2.2: public identifier)', () => {
+    // client_id is public by RFC 6749 §2.2 — echoes in token responses,
+    // introspection payloads, audit logs, and error bodies are intentional.
+    // Extracting it would false-positive any IdP that echoes the requesting
+    // client back in its responses.
+    const out = runEcho(
+      {
+        auth: {
+          type: 'oauth_client_credentials',
+          credentials: {
+            token_endpoint: 'https://idp/t',
+            client_id: 'public-client-id-fixture-1234',
+            client_secret: 'SECRET_FIXTURE_LONGENOUGH',
+          },
+        },
+      },
+      { token_response: { client_id: 'public-client-id-fixture-1234', audience: 'svc' } }
+    );
+    assert.strictEqual(out[0].passed, true, 'client_id echo must not flag — it is a public identifier');
   });
 });
