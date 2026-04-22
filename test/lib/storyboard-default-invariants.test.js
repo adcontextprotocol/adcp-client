@@ -1054,16 +1054,28 @@ describe('default-invariants: status.monotonic', () => {
   test('audience: processing → ready forward flow passes', () => {
     const out = run([
       step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
-      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1200 })] } }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1200 })] },
+      }),
     ]);
     assert.ok(out.every(r => r.output.every(o => o.passed)));
   });
 
   test('audience: too_small → processing → ready re-sync path passes', () => {
     const out = run([
-      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'too_small', { minimum_size: 1000 })] } }),
+      step({
+        step_id: 's1',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'too_small', { minimum_size: 1000 })] },
+      }),
       step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing')] } }),
-      step({ step_id: 's3', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1500 })] } }),
+      step({
+        step_id: 's3',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready', { matched_count: 1500 })] },
+      }),
     ]);
     assert.ok(out.every(r => r.output.every(o => o.passed)));
   });
@@ -1100,8 +1112,16 @@ describe('default-invariants: status.monotonic', () => {
     // contribute no observations — the assertion can't see absence.
     const out = run([
       step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready')] } }),
-      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [{ audience_id: 'aud-1', action: 'deleted' }] } }),
-      step({ step_id: 's3', task: 'sync_audiences', response: { audiences: [{ audience_id: 'aud-1', action: 'failed' }] } }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', action: 'deleted' }] },
+      }),
+      step({
+        step_id: 's3',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', action: 'failed' }] },
+      }),
     ]);
     // s2/s3 carry no status → no observations → assertion doesn't emit.
     assert.ok(out.every(r => r.output.every(o => o.passed)));
@@ -1111,8 +1131,16 @@ describe('default-invariants: status.monotonic', () => {
     // aud-1 and aud-2 have independent histories. A ready on aud-1 doesn't
     // anchor aud-2, so aud-2 starting at too_small isn't a regression.
     const out = run([
-      step({ step_id: 's1', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'ready'), audienceOf('aud-2', 'too_small')] } }),
-      step({ step_id: 's2', task: 'sync_audiences', response: { audiences: [audienceOf('aud-1', 'processing'), audienceOf('aud-2', 'ready')] } }),
+      step({
+        step_id: 's1',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'ready'), audienceOf('aud-2', 'too_small')] },
+      }),
+      step({
+        step_id: 's2',
+        task: 'sync_audiences',
+        response: { audiences: [audienceOf('aud-1', 'processing'), audienceOf('aud-2', 'ready')] },
+      }),
     ]);
     assert.ok(out.every(r => r.output.every(o => o.passed)));
   });
