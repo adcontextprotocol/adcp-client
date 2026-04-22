@@ -984,15 +984,24 @@ function deepMergePlainObjects(target: unknown, source: unknown): unknown {
 }
 
 /**
- * Set `replayed` on the response envelope (MCP structuredContent).
- * Both fresh executions (`false`) and replays (`true`) carry the field,
- * per spec — a buyer that checks `replayed` to decide whether side
- * effects already fired needs the field present on every mutating
- * response, not just replays.
+ * Set `replayed: true` on the response envelope (MCP structuredContent)
+ * for replays only. `protocol-envelope.json` permits the field to be
+ * **"omitted when the request was executed fresh"** — emitting
+ * `replayed: false` pollutes task payloads and violates strict task
+ * response schemas that declare `additionalProperties: false`
+ * (`create-property-list-response`, etc.). Absence implies fresh exec.
+ *
+ * Callers pass `false` during the fresh-path call so replay bookkeeping
+ * can be reset cleanly; we honor that at the metadata layer by stripping
+ * any prior `replayed` rather than re-stamping it.
  */
 function injectReplayed(response: McpToolResponse, value: boolean): void {
-  if (response.structuredContent && typeof response.structuredContent === 'object') {
-    (response.structuredContent as Record<string, unknown>).replayed = value;
+  if (!response.structuredContent || typeof response.structuredContent !== 'object') return;
+  const sc = response.structuredContent as Record<string, unknown>;
+  if (value) {
+    sc.replayed = true;
+  } else {
+    delete sc.replayed;
   }
 }
 

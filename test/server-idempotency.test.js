@@ -69,11 +69,12 @@ describe('createAdcpServer with idempotency', () => {
     });
     assert.equal(calls.length, 1);
     assert.equal(result.media_buy_id, 'mb_1');
-    assert.equal(
-      result.replayed,
-      false,
-      'fresh execution must set replayed:false so buyers can distinguish retry-vs-first'
-    );
+    // `protocol-envelope.json` permits `replayed` to be "omitted when the
+    // request was executed fresh" (the spec text). Absence signals fresh
+    // exec; presence with `true` signals a cached replay. Emitting
+    // `replayed:false` breaks strict task response schemas that declare
+    // `additionalProperties: false` (create-property-list-response, etc.).
+    assert.ok(!('replayed' in result), 'fresh execution must omit `replayed` so strict task schemas still validate');
   });
 
   it('replay with same key + equivalent payload returns cached response with replayed:true', async () => {
