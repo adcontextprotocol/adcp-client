@@ -27,10 +27,7 @@ describe('handler return type tightness (issue #727 B)', () => {
   test('AdcpToolMap brand-rights slots are not `Record<string, unknown>`', () => {
     const src = fs.readFileSync(SERVER_PATH, 'utf8');
     const looseTools = ['acquire_rights', 'get_rights', 'get_brand_identity'].filter(tool => {
-      const pattern = new RegExp(
-        `^\\s*${tool}:\\s*\\{[^}]*result:\\s*Record<string,\\s*unknown>`,
-        'm'
-      );
+      const pattern = new RegExp(`^\\s*${tool}:\\s*\\{[^}]*result:\\s*Record<string,\\s*unknown>`, 'm');
       return pattern.test(src);
     });
     assert.deepStrictEqual(
@@ -43,9 +40,7 @@ describe('handler return type tightness (issue #727 B)', () => {
 
   test('DomainHandler return union does not include `Record<string, unknown>`', () => {
     const src = fs.readFileSync(SERVER_PATH, 'utf8');
-    const match = src.match(
-      /type DomainHandler<[^>]+>\s*=\s*\([^)]*\)\s*=>\s*Promise<([^;]+)>;/m
-    );
+    const match = src.match(/type DomainHandler<[^>]+>\s*=\s*\([^)]*\)\s*=>\s*Promise<([^;]+)>;/m);
     assert.ok(match, 'Could not locate DomainHandler type definition');
     const returnUnion = match[1];
     assert.ok(
