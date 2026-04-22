@@ -394,15 +394,15 @@ function synthesizeManifestAssets(format: FormatDef): Record<string, unknown> {
 // we can satisfy without format-specific knowledge (dimensions, codecs,
 // etc. use safe defaults).
 const ASSET_PLACEHOLDER = {
-  image: () => ({ url: 'https://conformance.example/placeholder.png', width: 300, height: 250 }),
-  video: () => ({ url: 'https://conformance.example/placeholder.mp4', width: 640, height: 360 }),
-  audio: () => ({ url: 'https://conformance.example/placeholder.mp3' }),
-  text: () => ({ content: 'Conformance seed text' }),
-  url: () => ({ url: 'https://conformance.example/' }),
-  html: () => ({ content: '<div>Conformance seed</div>' }),
-  javascript: () => ({ content: '/* conformance seed */' }),
-  css: () => ({ content: '/* conformance seed */' }),
-  markdown: () => ({ content: 'Conformance seed' }),
+  image: () => ({ asset_type: 'image', url: 'https://conformance.example/placeholder.png', width: 300, height: 250 }),
+  video: () => ({ asset_type: 'video', url: 'https://conformance.example/placeholder.mp4', width: 640, height: 360 }),
+  audio: () => ({ asset_type: 'audio', url: 'https://conformance.example/placeholder.mp3' }),
+  text: () => ({ asset_type: 'text', content: 'Conformance seed text' }),
+  url: () => ({ asset_type: 'url', url: 'https://conformance.example/' }),
+  html: () => ({ asset_type: 'html', content: '<div>Conformance seed</div>' }),
+  javascript: () => ({ asset_type: 'javascript', content: '/* conformance seed */' }),
+  css: () => ({ asset_type: 'css', content: '/* conformance seed */' }),
+  markdown: () => ({ asset_type: 'markdown', content: 'Conformance seed' }),
 } as const;
 
 function extractCreativeIds(data: unknown, fallbackId: string): string[] {
