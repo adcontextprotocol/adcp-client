@@ -21,7 +21,7 @@ test('build_creative with platform-native tag_url at top level → hint fires', 
     media_type: 'audio/mpeg',
   });
   assert.ok(hint, 'expected a hint for platform-native shape');
-  assert.match(hint, /platform-native response/);
+  assert.match(hint, /platform-native shape/);
   assert.match(hint, /creative_manifest/);
   assert.match(hint, /buildCreativeResponse/);
   assert.match(hint, /@adcp\/client\/server/);

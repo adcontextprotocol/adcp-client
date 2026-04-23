@@ -246,17 +246,15 @@ Runs all applicable capability tracks against an agent and reports the full pict
 # Run all applicable tracks
 adcp storyboard run myagent
 
-# Declare platform type for coherence checking
-adcp storyboard run myagent --platform-type social_platform
+# Target a specific bundle or storyboard
+adcp storyboard run myagent --storyboards creative-template
 
 # Limit to a subset of tracks
 adcp storyboard run myagent --tracks core,products,media_buy
 
-# List available platform types
-adcp storyboard run --list-platform-types
-
-# Use raw JSON in CI
-adcp storyboard run https://agent.example.com/mcp --auth "$ADCP_AUTH_TOKEN" --json
+# Recommended for CI: --json for machine-readable output + --strict-flags
+# so stale flags fail the build instead of passing advisory warnings.
+adcp storyboard run https://agent.example.com/mcp --auth "$ADCP_AUTH_TOKEN" --json --strict-flags
 ```
 
 Available tracks:
@@ -273,13 +271,15 @@ Available tracks:
 
 Useful flags:
 
-- `--platform-type TYPE`: Declare what you're building for coherence checking
-- `--list-platform-types`: Show all available platform types
+- `--storyboards ID,...`: Run specific storyboard or bundle IDs instead of capability-driven selection
 - `--tracks core,products,...`: Restrict the run to specific tracks
 - `--brief TEXT`: Override the default sample discovery brief
 - `--dry-run`: Preview steps without executing
 - `--json`: Emit machine-readable output for automation
+- `--strict-flags`: Exit non-zero if any removed flag (e.g. `--platform-type`, removed in 5.1) is passed — recommended for CI
 - `--oauth`: Complete the browser OAuth flow inline when the saved alias has no valid tokens (MCP only — requires a saved alias)
+
+> **Removed in 5.1:** `--platform-type` / `--list-platform-types` / `--storyboards` options. Agent selection is now driven by `get_adcp_capabilities` (`supported_protocols` + `specialisms`). Use `--storyboards` above to target a specific bundle.
 
 ### OAuth-protected agents
 

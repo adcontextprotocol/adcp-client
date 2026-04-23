@@ -796,16 +796,21 @@ export { Render, urlRender, htmlRender, bothRender } from './utils/render-builde
 // (audio, template formats). A render with only `{ role }` fails validation.
 // Audio specifically cannot use `{ role, duration_seconds }` — duration is
 // not a recognized `renders[]` field and wouldn't satisfy the oneOf anyway.
-// Use `parameterizedRender({ role })` so format_id parameters carry duration.
+// Use `parameterizedRender({ role })` (or the alias `templateRender`) so
+// format_id parameters carry duration.
 //
-// Named exports only — the `FormatRender` name is already in use by the v3
-// structural interface in `utils/format-renders`. Grouped namespace (if
-// needed) should be added after that duplication is resolved.
+// `FormatRender` below is the grouped namespace (value export). The v3
+// structural interface by the same name is re-exported from
+// `utils/format-renders` further down — TypeScript keeps type and value
+// namespaces separate, so both are available under the single import.
 export {
+  FormatRender,
   displayRender,
   parameterizedRender,
+  templateRender,
   type DimensionsRender,
   type ParameterizedRender,
+  type RenderItem,
 } from './utils/format-render-builders';
 
 // ====== V3.0 COMPATIBILITY UTILITIES ======
@@ -874,7 +879,12 @@ export {
   usesV3Renders,
   getFormatDimensions,
 } from './utils/format-renders';
-export type { FormatRender, RenderDimensions } from './utils/format-renders';
+// FormatRender (the v3 structural interface) was renamed to FormatRenderEntry
+// so the `FormatRender` name at the barrel becomes the factory namespace
+// exported from `./utils/format-render-builders` above. The deprecated type
+// alias `FormatRender = FormatRenderEntry` still lives in `utils/format-renders`
+// for callers importing the sub-module directly; it's not re-exported here.
+export type { FormatRenderEntry, RenderDimensions } from './utils/format-renders';
 
 // Preview response normalizer (v2 output_id ↔ v3 render_id)
 export {

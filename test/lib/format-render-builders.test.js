@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { displayRender, parameterizedRender } = require('../../dist/lib/index.js');
+const { displayRender, parameterizedRender, templateRender, FormatRender } = require('../../dist/lib/index.js');
 
 test('displayRender injects role + dimensions only (no parameters_from_format_id)', () => {
   const render = displayRender({
@@ -29,6 +29,23 @@ test('displayRender supports non-pixel units (e.g. DOOH physical dimensions)', (
     dimensions: { width: 12, height: 8, unit: 'feet' },
   });
   assert.strictEqual(render.dimensions.unit, 'feet');
+});
+
+test('templateRender is an alias for parameterizedRender', () => {
+  // Same function reference — matches creative-template specialism terminology
+  // without paying a second-factory cost.
+  assert.strictEqual(templateRender, parameterizedRender);
+  assert.deepStrictEqual(templateRender({ role: 'primary' }), {
+    role: 'primary',
+    parameters_from_format_id: true,
+  });
+});
+
+test('FormatRender namespace exposes all three builders', () => {
+  // One-dot autocomplete for callers constructing renders[] by hand.
+  assert.strictEqual(FormatRender.display, displayRender);
+  assert.strictEqual(FormatRender.parameterized, parameterizedRender);
+  assert.strictEqual(FormatRender.template, templateRender);
 });
 
 test('renders satisfy the Format.renders[] oneOf at the shape level', () => {

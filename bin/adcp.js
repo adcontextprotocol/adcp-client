@@ -1376,8 +1376,8 @@ const REMOVED_FLAGS = {
 // Writes to stderr unconditionally — stderr does not corrupt `--json` stdout,
 // and the CI logs where these warnings need to land capture both streams.
 // Returns the names of the removed flags actually present so callers can
-// decide to hard-fail (see `--strict-flags` handling at the top of
-// `handleStoryboardRun`). Non-breaking unless `--strict-flags` is set.
+// decide to hard-fail (see `enforceStrictFlags`). Non-breaking unless
+// `--strict-flags` is set.
 function warnRemovedFlags(args) {
   const found = [];
   for (const [flag, meta] of Object.entries(REMOVED_FLAGS)) {
@@ -1389,14 +1389,12 @@ function warnRemovedFlags(args) {
   return found;
 }
 
-async function handleStoryboardRun(args) {
-  const opts = parseAgentOptions(args);
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
-
-  const removedFound = warnRemovedFlags(args);
-  // --strict-flags upgrades removed-flag warnings into a hard failure so CI
-  // pipelines can catch stale scripts as build-breakers instead of reading
-  // log streams for advisory warnings.
+// If `--strict-flags` is present and any removed flag was passed, exit 2
+// after emitting a pointed error that names every offender. Advisory-by-
+// default means CI pipelines opt-in; a team that wants stale scripts to
+// break the build sets the flag. Factored out of `handleStoryboardRun`
+// so `storyboard step` and future runner commands can share it.
+function enforceStrictFlags(args, removedFound) {
   if (removedFound.length > 0 && args.includes('--strict-flags')) {
     console.error(
       `ERROR: --strict-flags was set and ${removedFound.length} removed flag(s) were passed: ${removedFound.join(', ')}. ` +
@@ -1404,6 +1402,13 @@ async function handleStoryboardRun(args) {
     );
     process.exit(2);
   }
+}
+
+async function handleStoryboardRun(args) {
+  const opts = parseAgentOptions(args);
+  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
+
+  enforceStrictFlags(args, warnRemovedFlags(args));
 
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side
@@ -2799,6 +2804,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
   const { authToken, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
+
+  enforceStrictFlags(args, warnRemovedFlags(args));
 
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];

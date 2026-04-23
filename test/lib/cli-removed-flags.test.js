@@ -79,3 +79,15 @@ test('--strict-flags alone (no removed flags) is a no-op', () => {
   assert.strictEqual(withStrict.status, withoutStrict.status);
   assert.doesNotMatch(withStrict.stderr, /--strict-flags was set/);
 });
+
+test('storyboard step also warns + honors --strict-flags', () => {
+  // The strict-flags machinery is shared across runner commands. storyboard
+  // step would otherwise silently accept `--platform-type` — verify it
+  // warns advisorily by default and hard-exits under --strict-flags.
+  const advisory = runCli(['storyboard', 'step', '--platform-type', 'x']);
+  assert.match(advisory.stderr, /DEPRECATED: --platform-type was removed/);
+
+  const strict = runCli(['storyboard', 'step', '--platform-type', 'x', '--strict-flags']);
+  assert.strictEqual(strict.status, 2);
+  assert.match(strict.stderr, /ERROR: --strict-flags was set/);
+});

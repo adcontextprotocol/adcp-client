@@ -422,11 +422,13 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
     const platformNativeKeys = ['tag_url', 'creative_id', 'media_type', 'tag_type'];
     const platformNativePresent = platformNativeKeys.filter(k => k in payload);
     if (!hasManifest && platformNativePresent.length > 0) {
+      // Short and actionable — a developer hitting this is in their terminal
+      // looking for the fix, not reading docs. The @adcp/client/server
+      // breadcrumb is enough to lead them to the typed helpers.
       return (
-        `looks like a platform-native response (${platformNativePresent.join(', ')} at top level). ` +
-        `build_creative must return { creative_manifest: { format_id, assets } } (single) or { creative_manifests: [...] } (multi). ` +
-        `Use buildCreativeResponse() / buildCreativeMultiResponse() from @adcp/client/server to enforce the shape at compile time. ` +
-        `See skills/build-creative-agent/ § creative-template.`
+        `build_creative returned platform-native shape (${platformNativePresent.join(', ')} at top level). ` +
+        `Required: { creative_manifest: { format_id, assets } }. ` +
+        `Use buildCreativeResponse() from @adcp/client/server.`
       );
     }
   }

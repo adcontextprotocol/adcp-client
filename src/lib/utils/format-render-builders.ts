@@ -62,16 +62,44 @@ export function displayRender(fields: { role: string; dimensions: RenderDimensio
  * formats whose render parameters come from `format_id.parameters`.
  * `parameters_from_format_id: true` is injected.
  *
+ * Also exported as `templateRender` — the friendlier name for the same
+ * factory, matching the `creative-template` specialism terminology.
+ *
  * @example
- *   parameterizedRender({ role: 'primary' })
+ *   templateRender({ role: 'primary' })
  *   // → { role: 'primary', parameters_from_format_id: true }
  */
 export function parameterizedRender(fields: { role: string }): ParameterizedRender {
   return { role: fields.role, parameters_from_format_id: true };
 }
 
-// No grouped namespace on this file — `FormatRender` is already an exported
-// interface (v3 structural type) in `utils/format-renders.ts`. Callers use
-// the named exports directly. `@adcp/client` exports a `Render` namespace
-// from `render-builders.ts` that is scoped to `preview_creative` response
-// renders — those are a different concept from `Format.renders[]`.
+/**
+ * Alias for `parameterizedRender` — matches the `creative-template`
+ * specialism terminology (template formats carry render parameters in
+ * `format_id.parameters`). Use either; both are exported for discoverability.
+ */
+export const templateRender = parameterizedRender;
+
+/**
+ * Discriminated union of the two valid `Format.renders[]` branches. Use when
+ * building a mixed `renders: RenderItem[]` array by hand (e.g. a companion
+ * format that combines a display render with a parameterized audio render).
+ */
+export type RenderItem = DimensionsRender | ParameterizedRender;
+
+/**
+ * Grouped namespace for `Format.renders[]` factories — one-dot autocomplete
+ * when building `renders[]` by hand. Parallels `Asset.*` (creative assets)
+ * and `Render.*` (preview renders) from `@adcp/client`.
+ *
+ * Note: `FormatRender` is also re-exported as a type from
+ * `utils/format-renders.ts` (v3 structural interface). TypeScript keeps
+ * type and value namespaces separate, so the name supports both usages:
+ *   const r: FormatRender = { render_id, role, dimensions };   // type
+ *   FormatRender.display({ role, dimensions });                // factory
+ */
+export const FormatRender = {
+  display: displayRender,
+  parameterized: parameterizedRender,
+  template: templateRender,
+} as const;
