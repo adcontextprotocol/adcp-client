@@ -158,9 +158,10 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     assert.match(v.error, /GOVERNANCE_DENIED/);
     assert.match(v.error, /plan_id=plan-a/);
     assert.match(v.error, /media_buy_id=mb-1/);
-    // Wire-error denial: error message should point authors at the
-    // expect_error: true escape so they don't have to file an issue.
-    assert.match(v.error, /expect_error: true/);
+    // The error message points future authors at the step-level escape so
+    // they don't have to re-derive it from source. One hint for every
+    // anchor shape (wire-error AND check_governance 200 `status: denied`).
+    assert.match(v.error, /invariants:\s*\n\s*disable: \[governance\.denial_blocks_mutation\]/);
   });
 
   test('is plan-scoped — denial on plan A does not block mutation on plan B', () => {
@@ -199,10 +200,9 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     });
     const out = run([step, mutateStep({ planId: 'plan-b' })]);
     assert.match(out[1].output[0].error, /CHECK_GOVERNANCE_DENIED/);
-    // 200-status denials are not wire errors — `expect_error: true` has no
-    // effect on them, so the escape hint must NOT appear (it would send
-    // authors down a dead end).
-    assert.doesNotMatch(out[1].output[0].error, /expect_error: true/);
+    // 200-status denials get the same step-level escape hint as wire-error
+    // anchors — `invariants.disable` works for both shapes.
+    assert.match(out[1].output[0].error, /invariants:\s*\n\s*disable: \[governance\.denial_blocks_mutation\]/);
   });
 
   test('treats rejected media_buy status as NOT acquired', () => {
@@ -388,6 +388,22 @@ describe('default-invariants: governance.denial_blocks_mutation', () => {
     ]);
     assert.strictEqual(out[2].output[0].passed, false);
     assert.match(out[2].output[0].error, /run-wide/);
+  });
+
+  test('step-level invariants.disable short-circuits onStep so no anchor forms', () => {
+    // This simulates what the runner does when a step carries
+    // `invariants: { disable: [governance.denial_blocks_mutation] }` — it
+    // skips calling onStep entirely for that step. Verifies the contract
+    // from the invariant's side: no hidden state is set, so a subsequent
+    // mutation is not flagged.
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    // Denial step: runner does NOT call spec.onStep because the step
+    // disables this invariant. The invariant therefore never sees the
+    // denial and has no anchor to trip on later.
+    const mutation = mutateStep({ planId: 'plan-a' });
+    const out = spec.onStep(ctx, mutation);
+    assert.deepStrictEqual(out, []);
   });
 
   test('onStart resets runDenial so stale state does not bleed across runs', () => {

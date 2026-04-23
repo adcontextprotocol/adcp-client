@@ -117,6 +117,37 @@ export interface StoryboardInvariantsObject {
 }
 
 /**
+ * Per-step invariant opt-out. Mirrors `StoryboardInvariantsObject.disable`
+ * but scoped to a single step — the runner skips calling the named
+ * assertions' `onStep` for that step only. Use when a step deliberately
+ * models behavior a default invariant would otherwise flag (e.g. a
+ * `check_governance` 200 `status: denied` setting up a buyer-recovery
+ * sequence that the `governance.denial_blocks_mutation` invariant would
+ * anchor).
+ *
+ * Step-level is narrower on purpose — there is no `enable`. Enabling an
+ * assertion for a single step makes no sense at this scope (assertions
+ * reason across steps), and disallowing it at the type level removes a
+ * footgun. Only `disable` is accepted.
+ *
+ * Every id in `disable` MUST be in the assertion set resolved for this
+ * run. An unknown id, or an id already suppressed storyboard-wide, is
+ * dead code and fails fast at runner start rather than silently no-op.
+ *
+ * Semantics for stateful invariants: disable means the invariant does
+ * not OBSERVE the step. Invariants that accumulate per-step state
+ * (e.g. `status.monotonic`'s last-observed transition anchor) will
+ * therefore miss any observation the disabling step would have
+ * contributed. That's the point for `governance.denial_blocks_mutation`
+ * (a deliberate setup is not an anchor); for accumulator-style
+ * invariants, prefer disabling run-wide if the missed observation
+ * would hide later violations.
+ */
+export interface StepInvariantsObject {
+  disable?: string[];
+}
+
+/**
  * Fixture entries the runner seeds into the seller via `comply_test_controller`
  * pre-flight (adcp#2585, adcp#2743). Each array entry carries its id field(s)
  * alongside the body the runner forwards into `params.fixture` for the
@@ -244,6 +275,14 @@ export interface StoryboardStep {
   stateful?: boolean;
   /** When true, the step passes if the task returns an error */
   expect_error?: boolean;
+  /**
+   * Per-step invariant opt-out. See `StepInvariantsObject`. Use when a
+   * specific step deliberately trips a default invariant (e.g. a
+   * `check_governance` 200 `status: denied` that is the setup for a
+   * buyer-recovery sequence, which `governance.denial_blocks_mutation`
+   * would otherwise anchor for the remainder of the run).
+   */
+  invariants?: StepInvariantsObject;
   /**
    * When true, suppress the runner's `idempotency_key` auto-injection on a
    * mutating step so the storyboard can exercise the server's missing-key

@@ -76,7 +76,13 @@ import type {
 } from './types';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
 import type { TaskResult } from '../types';
-import { type AssertionContext, type AssertionSpec, resolveAssertions } from './assertions';
+import {
+  type AssertionContext,
+  type AssertionSpec,
+  resolveAssertions,
+  stepDisablesAssertion,
+  validateStepInvariants,
+} from './assertions';
 
 // ────────────────────────────────────────────────────────────
 // Runner-output contract helpers
@@ -452,6 +458,11 @@ async function executeStoryboardPass(
   // `resolveAssertions` throws on unknown ids — fail fast here rather than
   // silently skip, since a missing assertion means unknown conformance gaps.
   const assertions = resolveAssertions(storyboard.invariants);
+  // Step-level `invariants.disable` uses the resolved set as its universe:
+  // an id is only a valid step-level opt-out if it actually runs on this
+  // storyboard. Typos and dead-code references (already disabled run-wide)
+  // fail fast here for the same reason.
+  validateStepInvariants(storyboard, assertions);
   const assertionContexts = new Map<string, AssertionContext>();
   for (const spec of assertions) {
     assertionContexts.set(spec.id, {
@@ -692,6 +703,10 @@ async function executeStoryboardPass(
       // failure — that's what makes assertions gating, not advisory.
       for (const spec of assertions) {
         if (!spec.onStep) continue;
+        // Per-step opt-out: authors use `step.invariants.disable: [id]` to
+        // suppress a default invariant on a step that deliberately models
+        // behavior the invariant would flag (validated at runner start).
+        if (stepDisablesAssertion(step.invariants, spec.id)) continue;
         const raw = await spec.onStep(assertionContexts.get(spec.id)!, result);
         for (const r of raw) {
           const full: AssertionResult = { ...r, assertion_id: spec.id, scope: 'step', step_id: step.id };
