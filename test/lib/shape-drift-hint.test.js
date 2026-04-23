@@ -312,6 +312,31 @@ test('get_signals with bare array → hint suggests { signals: [...] }', () => {
   assert.match(hint, /getSignalsResponse/);
 });
 
+test('list_property_lists with bare array → hint suggests { lists: [...] }', () => {
+  const hint = detectShapeDriftHint('list_property_lists', [{ list_id: 'pl1', name: 'Premium inventory' }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ lists: \[\.\.\.\] \}/);
+  assert.match(hint, /listPropertyListsResponse/);
+});
+
+test('list_collection_lists with bare array → hint suggests { lists: [...] }', () => {
+  const hint = detectShapeDriftHint('list_collection_lists', [{ list_id: 'cl1', name: 'News collections' }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ lists: \[\.\.\.\] \}/);
+  assert.match(hint, /listCollectionListsResponse/);
+});
+
+test('list_content_standards with bare array → hint suggests { standards: [...] }', () => {
+  // Also covers the error-branch drift — the detector is key-agnostic on
+  // array contents and fires for any bare array at the top level. A
+  // handler that returned a bare array of Error objects hits the same
+  // hint, which is the right behavior: the shape fix is identical.
+  const hint = detectShapeDriftHint('list_content_standards', [{ standard_id: 'cs1', name: 'Brand safety' }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ standards: \[\.\.\.\] \}/);
+  assert.match(hint, /listContentStandardsResponse/);
+});
+
 test('null / primitive payloads → no hint (detector exits cleanly)', () => {
   // Defensive: the detector must handle `null`, strings, numbers without
   // throwing — they're not a shape-drift pattern but they'd otherwise crash

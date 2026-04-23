@@ -15,6 +15,9 @@ const {
   previewCreativeResponse,
   creativeDeliveryResponse,
   listCreativesResponse,
+  listPropertyListsResponse,
+  listCollectionListsResponse,
+  listContentStandardsResponse,
   syncCreativesResponse,
   getSignalsResponse,
   activateSignalResponse,
@@ -505,5 +508,79 @@ describe('cancelMediaBuyResponse', () => {
     });
     assert.strictEqual(result.structuredContent.affected_packages, undefined);
     assert.strictEqual(result.structuredContent.sandbox, undefined);
+  });
+});
+
+describe('listPropertyListsResponse', () => {
+  it('wraps lists in the correct envelope with a counted default summary', () => {
+    const data = {
+      lists: [
+        { list_id: 'pl1', name: 'Premium inventory', properties: [] },
+        { list_id: 'pl2', name: 'Sponsored sports', properties: [] },
+      ],
+    };
+    const result = listPropertyListsResponse(data);
+    assert.match(result.content[0].text, /Found 2 property lists/);
+    assert.deepStrictEqual(result.structuredContent.lists, data.lists);
+  });
+
+  it('handles the singular case without the plural "s"', () => {
+    const result = listPropertyListsResponse({ lists: [{ list_id: 'pl1', name: 'One', properties: [] }] });
+    assert.match(result.content[0].text, /Found 1 property list\b/);
+  });
+
+  it('handles the empty case cleanly', () => {
+    const result = listPropertyListsResponse({ lists: [] });
+    assert.match(result.content[0].text, /Found 0 property lists/);
+  });
+});
+
+describe('listCollectionListsResponse', () => {
+  it('wraps lists with the expected collection summary', () => {
+    const data = {
+      lists: [
+        { list_id: 'cl1', name: 'News collections', collections: [] },
+        { list_id: 'cl2', name: 'Sports', collections: [] },
+        { list_id: 'cl3', name: 'Lifestyle', collections: [] },
+      ],
+    };
+    const result = listCollectionListsResponse(data);
+    assert.match(result.content[0].text, /Found 3 collection lists/);
+    assert.deepStrictEqual(result.structuredContent.lists, data.lists);
+  });
+});
+
+describe('listContentStandardsResponse', () => {
+  it('names the standards count on the success branch', () => {
+    const data = {
+      standards: [
+        { standard_id: 'cs1', name: 'Brand safety', policies: [] },
+        { standard_id: 'cs2', name: 'Suitability', policies: [] },
+      ],
+    };
+    const result = listContentStandardsResponse(data);
+    assert.match(result.content[0].text, /Found 2 content standards/);
+    assert.deepStrictEqual(result.structuredContent.standards, data.standards);
+  });
+
+  it('switches default summary on the error branch', () => {
+    // The response type is a union — error branch has `errors` array and no `standards`.
+    const data = { errors: [{ code: 'UNAUTHORIZED', message: 'bad token' }] };
+    const result = listContentStandardsResponse(data);
+    assert.match(result.content[0].text, /Content standards lookup error/);
+    assert.deepStrictEqual(result.structuredContent.errors, data.errors);
+  });
+
+  it('success branch with advisory errors still gets the count summary', () => {
+    // Discriminator is presence of `standards`, not absence of `errors` —
+    // a legitimate success response carrying advisory warnings under
+    // `errors` must NOT be labelled a lookup error.
+    const data = {
+      standards: [{ standard_id: 'cs1', name: 'Brand safety', policies: [] }],
+      errors: [{ code: 'PARTIAL_RESULTS', message: 'some registries timed out' }],
+    };
+    const result = listContentStandardsResponse(data);
+    assert.match(result.content[0].text, /Found 1 content standard\b/);
+    assert.doesNotMatch(result.content[0].text, /error/i);
   });
 });

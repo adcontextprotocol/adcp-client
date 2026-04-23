@@ -419,11 +419,6 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
  * `getMediaBuysResponse`. Names match the exports in
  * `src/lib/server/responses.ts` verbatim so a developer can grep
  * straight from the hint.
- *
- * Tools whose response helpers don't exist yet
- * (`list_property_lists`, `list_collection_lists`, `list_content_standards`)
- * are tracked separately — extending the detector to them depends on those
- * helpers landing first so the hint can name a real SDK symbol.
  */
 const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }> = {
   list_creatives: { wrapperKey: 'creatives', helper: 'listCreativesResponse' },
@@ -432,6 +427,9 @@ const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }>
   get_products: { wrapperKey: 'products', helper: 'productsResponse' },
   get_media_buys: { wrapperKey: 'media_buys', helper: 'getMediaBuysResponse' },
   get_signals: { wrapperKey: 'signals', helper: 'getSignalsResponse' },
+  list_property_lists: { wrapperKey: 'lists', helper: 'listPropertyListsResponse' },
+  list_collection_lists: { wrapperKey: 'lists', helper: 'listCollectionListsResponse' },
+  list_content_standards: { wrapperKey: 'standards', helper: 'listContentStandardsResponse' },
 };
 
 /**
@@ -451,14 +449,18 @@ const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }>
  *     `preview_html`) at the top level without the `previews[].renders[]`
  *     nesting and `response_type` discriminator
  *   - List tools (`list_creatives`, `list_creative_formats`, `list_accounts`,
- *     `get_products`, `get_media_buys`, `get_signals`) returning a bare
+ *     `get_products`, `get_media_buys`, `get_signals`, `list_property_lists`,
+ *     `list_collection_lists`, `list_content_standards`) returning a bare
  *     array at the top level instead of the `{ <key>: [...] }` envelope
  *
  * The detector is a switch on taskName — narrow by design. Add an entry
  * to `LIST_WRAPPER_TOOLS` for a new list tool, or a new `if (taskName === ...)`
- * branch for a new object-shape drift pattern. A registry refactor that
- * unifies the two halves into one data table is tracked as follow-up once
- * the branch count justifies it.
+ * branch for a new object-shape drift pattern. A unified registry is NOT
+ * planned: the table half is pure data; the object-branch half carries
+ * per-tool logic (wrapper-alternative keys on `sync_creatives`, discriminator
+ * exclusion on `preview_creative`, per-item key lists on `build_creative`)
+ * that would hurt readability if forced through a common predicate shape.
+ * Keep the two halves separate.
  *
  * Exported for direct unit testing; consumers should rely on the hint
  * reaching `ValidationResult.warning` through the normal run path rather
