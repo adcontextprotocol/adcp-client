@@ -253,14 +253,7 @@ describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
     // response must NOT echo the prior request payload inside adcp_error.
     // Only spec-defined metadata keys are permitted.
     assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST instanceof Set);
-    for (const expected of [
-      'code',
-      'message',
-      'status',
-      'correlation_id',
-      'request_id',
-      'operation_id',
-    ]) {
+    for (const expected of ['code', 'message', 'status', 'correlation_id', 'request_id', 'operation_id']) {
       assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has(expected), `missing ${expected}`);
     }
     // Common payload fields that would leak prior state must NOT be in the set.

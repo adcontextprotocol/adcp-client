@@ -11,10 +11,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  bridgeFromTestControllerStore,
-  bridgeFromSessionStore,
-} = require('../../dist/lib/server/index.js');
+const { bridgeFromTestControllerStore, bridgeFromSessionStore } = require('../../dist/lib/server/index.js');
 
 describe('bridgeFromTestControllerStore', () => {
   it('returns seeded products merged onto defaults', async () => {
@@ -121,10 +118,7 @@ describe('bridgeFromSessionStore', () => {
     });
     const products = await bridge.getSeededProducts({ input: {} });
     assert.equal(products.length, 2);
-    assert.deepEqual(
-      products.map(p => p.product_id).sort(),
-      ['p1', 'p2']
-    );
+    assert.deepEqual(products.map(p => p.product_id).sort(), ['p1', 'p2']);
   });
 
   it('tolerates non-object fixture values (treats them as empty)', async () => {
@@ -132,7 +126,12 @@ describe('bridgeFromSessionStore', () => {
     // a valid product (with just `product_id` + defaults) rather than
     // throwing mid-request.
     const bridge = bridgeFromSessionStore({
-      loadSession: () => ({ seeds: new Map([['p1', null], ['p2', 'not-an-object']]) }),
+      loadSession: () => ({
+        seeds: new Map([
+          ['p1', null],
+          ['p2', 'not-an-object'],
+        ]),
+      }),
       selectSeededProducts: session => session.seeds,
       productDefaults: { delivery_type: 'non_guaranteed' },
     });

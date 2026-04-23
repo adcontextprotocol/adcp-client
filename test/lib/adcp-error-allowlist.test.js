@@ -12,7 +12,11 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { adcpError, ADCP_ERROR_FIELD_ALLOWLIST, CONFLICT_ADCP_ERROR_ALLOWLIST } = require('../../dist/lib/server/index.js');
+const {
+  adcpError,
+  ADCP_ERROR_FIELD_ALLOWLIST,
+  CONFLICT_ADCP_ERROR_ALLOWLIST,
+} = require('../../dist/lib/server/index.js');
 
 describe('adcpError: IDEMPOTENCY_CONFLICT allowlist', () => {
   it('drops recovery even though STANDARD_ERROR_CODES declares it "correctable"', () => {

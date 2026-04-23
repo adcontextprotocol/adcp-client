@@ -743,10 +743,7 @@ describe('default-invariants: idempotency.conflict_no_payload_leak (widened allo
   });
 
   test('failure message names the allowlist symbol for quick grep', () => {
-    const out = spec.onStep(
-      { state: {} },
-      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', leak_me: 42 })
-    );
+    const out = spec.onStep({ state: {} }, step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', leak_me: 42 }));
     assert.match(out[0].error, /ADCP_ERROR_FIELD_ALLOWLIST\.IDEMPOTENCY_CONFLICT/);
   });
 
