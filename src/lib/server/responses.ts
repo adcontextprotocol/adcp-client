@@ -361,12 +361,18 @@ export function listCollectionListsResponse(data: ListCollectionListsResponse, s
  * (success branch with `standards` array, error branch with `errors`) —
  * the helper wraps either shape verbatim; schema-level invariants are
  * enforced at wire validation, not here.
+ *
+ * Discriminates on `'standards' in data` rather than `'errors' in data` so
+ * a legitimate success response that happens to carry advisory `errors`
+ * still gets a counted summary. The error-only text fires only when
+ * `standards` is absent. Mirrors `acquireRightsResponse`'s success-first
+ * discrimination pattern a few screens down.
  */
 export function listContentStandardsResponse(data: ListContentStandardsResponse, summary?: string): McpToolResponse {
   const defaultSummary =
-    'errors' in data
-      ? 'Content standards lookup error'
-      : `Found ${data.standards.length} content standard${data.standards.length === 1 ? '' : 's'}`;
+    'standards' in data
+      ? `Found ${data.standards.length} content standard${data.standards.length === 1 ? '' : 's'}`
+      : 'Content standards lookup error';
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: toStructuredContent(data),

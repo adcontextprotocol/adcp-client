@@ -837,16 +837,20 @@ type BaseProperty = {
 };
 ```
 
-**`list_property_lists` / `list_collection_lists`** — destructure `ctx.store.list`. It returns `{ items, nextCursor? }`, never a bare array. Calling `.map` / `.filter` on the raw result throws `TypeError` and the dispatcher wraps it as `SERVICE_UNAVAILABLE`:
+**`list_property_lists` / `list_collection_lists`** — destructure `ctx.store.list`. It returns `{ items, nextCursor? }`, never a bare array. Calling `.map` / `.filter` on the raw result throws `TypeError` and the dispatcher wraps it as `SERVICE_UNAVAILABLE`. Use the typed response helper so you can't accidentally ship a bare `[...]` at the top level (the storyboard runner flags that as shape drift):
 
 ```typescript
+import { listPropertyListsResponse } from '@adcp/client/server';
+
 listPropertyLists: async (params, ctx) => {
   const { items } = await ctx.store.list('property_list');
-  return {
+  return listPropertyListsResponse({
     lists: items.map(list => ({ list_id: list.list_id, name: list.name })),
-  };
+  });
 },
 ```
+
+The same pattern applies to `list_collection_lists` (use `listCollectionListsResponse`) and `list_content_standards` (use `listContentStandardsResponse`). Both wrap the same `lists` / `standards` shape and guard against the bare-array drift at compile time.
 
 `validate_property_delivery` returns `violations[]` with `list_id`, `list_type`, `severity: 'critical'`, and an explanation per non-compliant record — see the response shape in the tool section above.
 

@@ -327,6 +327,10 @@ test('list_collection_lists with bare array → hint suggests { lists: [...] }',
 });
 
 test('list_content_standards with bare array → hint suggests { standards: [...] }', () => {
+  // Also covers the error-branch drift — the detector is key-agnostic on
+  // array contents and fires for any bare array at the top level. A
+  // handler that returned a bare array of Error objects hits the same
+  // hint, which is the right behavior: the shape fix is identical.
   const hint = detectShapeDriftHint('list_content_standards', [{ standard_id: 'cs1', name: 'Brand safety' }]);
   assert.ok(hint);
   assert.match(hint, /\{ standards: \[\.\.\.\] \}/);

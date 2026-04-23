@@ -570,4 +570,17 @@ describe('listContentStandardsResponse', () => {
     assert.match(result.content[0].text, /Content standards lookup error/);
     assert.deepStrictEqual(result.structuredContent.errors, data.errors);
   });
+
+  it('success branch with advisory errors still gets the count summary', () => {
+    // Discriminator is presence of `standards`, not absence of `errors` —
+    // a legitimate success response carrying advisory warnings under
+    // `errors` must NOT be labelled a lookup error.
+    const data = {
+      standards: [{ standard_id: 'cs1', name: 'Brand safety', policies: [] }],
+      errors: [{ code: 'PARTIAL_RESULTS', message: 'some registries timed out' }],
+    };
+    const result = listContentStandardsResponse(data);
+    assert.match(result.content[0].text, /Found 1 content standard\b/);
+    assert.doesNotMatch(result.content[0].text, /error/i);
+  });
 });

@@ -455,9 +455,12 @@ const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }>
  *
  * The detector is a switch on taskName — narrow by design. Add an entry
  * to `LIST_WRAPPER_TOOLS` for a new list tool, or a new `if (taskName === ...)`
- * branch for a new object-shape drift pattern. A registry refactor that
- * unifies the two halves into one data table is tracked as follow-up once
- * the branch count justifies it.
+ * branch for a new object-shape drift pattern. A unified registry is NOT
+ * planned: the table half is pure data; the object-branch half carries
+ * per-tool logic (wrapper-alternative keys on `sync_creatives`, discriminator
+ * exclusion on `preview_creative`, per-item key lists on `build_creative`)
+ * that would hurt readability if forced through a common predicate shape.
+ * Keep the two halves separate.
  *
  * Exported for direct unit testing; consumers should rely on the hint
  * reaching `ValidationResult.warning` through the normal run path rather
