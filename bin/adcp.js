@@ -1375,20 +1375,35 @@ const REMOVED_FLAGS = {
 // Scan `args` for removed flags and emit a stderr warning for each one found.
 // Writes to stderr unconditionally — stderr does not corrupt `--json` stdout,
 // and the CI logs where these warnings need to land capture both streams.
-// Non-breaking — execution continues.
+// Returns the names of the removed flags actually present so callers can
+// decide to hard-fail (see `--strict-flags` handling at the top of
+// `handleStoryboardRun`). Non-breaking unless `--strict-flags` is set.
 function warnRemovedFlags(args) {
+  const found = [];
   for (const [flag, meta] of Object.entries(REMOVED_FLAGS)) {
     if (args.includes(flag) || args.some(a => a.startsWith(`${flag}=`))) {
+      found.push(flag);
       console.error(`DEPRECATED: ${flag} was removed in ${meta.since} and is being ignored. ${meta.hint}`);
     }
   }
+  return found;
 }
 
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
   const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
 
-  warnRemovedFlags(args);
+  const removedFound = warnRemovedFlags(args);
+  // --strict-flags upgrades removed-flag warnings into a hard failure so CI
+  // pipelines can catch stale scripts as build-breakers instead of reading
+  // log streams for advisory warnings.
+  if (removedFound.length > 0 && args.includes('--strict-flags')) {
+    console.error(
+      `ERROR: --strict-flags was set and ${removedFound.length} removed flag(s) were passed: ${removedFound.join(', ')}. ` +
+        `Remove them or drop --strict-flags to continue with advisory warnings only.`
+    );
+    process.exit(2);
+  }
 
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side
