@@ -100,8 +100,17 @@ export function mapStoryboardResultsToTrackResult(
  * Map a StoryboardStepResult to a TestStepResult.
  */
 function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
+  // v.warning carries actionable hints (shape-drift recipes, strict deltas,
+  // variant-fallback notices). Append alongside v.error so JSON consumers —
+  // CI dashboards, LLM self-correction loops, JUnit formatters — see the
+  // recipe without having to know to read the full ValidationResult shape.
   const validationDetails = stepResult.validations
-    .map(v => `${v.passed ? '✓' : '✗'} ${v.description}${v.error ? ': ' + v.error : ''}`)
+    .map(v => {
+      const status = v.passed ? '✓' : '✗';
+      const error = v.error ? `: ${v.error}` : '';
+      const warning = v.warning ? ` [⚠ ${v.warning}]` : '';
+      return `${status} ${v.description}${error}${warning}`;
+    })
     .join('; ');
 
   return {
