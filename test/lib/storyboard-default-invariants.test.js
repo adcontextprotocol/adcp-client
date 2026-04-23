@@ -729,6 +729,27 @@ describe('default-invariants: idempotency.conflict_no_payload_leak (widened allo
     assert.match(out[0].error, /recovery/);
   });
 
+  test('flags retry_after as a cached-entry-age oracle', () => {
+    // A seller that naively computed `retry_after = cached_entry_age`
+    // on conflict would leak a distinguisher between "key never seen"
+    // and "key seen N seconds ago". Keep it out of the allowlist so
+    // hand-rolled conflict responses that set it get caught.
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', retry_after: 30 })
+    );
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /retry_after/);
+  });
+
+  test('failure message names the allowlist symbol for quick grep', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', leak_me: 42 })
+    );
+    assert.match(out[0].error, /ADCP_ERROR_FIELD_ALLOWLIST\.IDEMPOTENCY_CONFLICT/);
+  });
+
   test('flags any non-allowlisted envelope field (the read-oracle leak vector)', () => {
     const out = spec.onStep(
       { state: {} },

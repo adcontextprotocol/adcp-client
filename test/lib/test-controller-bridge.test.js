@@ -45,16 +45,16 @@ describe('bridgeFromSessionStore', () => {
     const sessionB = { seeds: new Map([['pB', { name: 'Tenant B product' }]]) };
 
     const loadCalls = [];
-    const bridge = bridgeFromSessionStore(
-      input => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: input => {
         loadCalls.push(input);
         // Route by a synthetic tenant key on the request — mirrors the
         // real-world `session_id` / `brand.domain` / `account_id` pattern.
         return input.tenant === 'A' ? sessionA : sessionB;
       },
-      session => session.seeds,
-      { delivery_type: 'guaranteed' }
-    );
+      selectSeededProducts: session => session.seeds,
+      productDefaults: { delivery_type: 'guaranteed' },
+    });
 
     const aProducts = await bridge.getSeededProducts({ input: { tenant: 'A' } });
     const bProducts = await bridge.getSeededProducts({ input: { tenant: 'B' } });
@@ -73,16 +73,37 @@ describe('bridgeFromSessionStore', () => {
   });
 
   it('accepts an async loadSession', async () => {
-    const bridge = bridgeFromSessionStore(
-      async () => ({ seeds: new Map([['p1', { name: 'Async product' }]]) }),
-      session => session.seeds
-    );
+    const bridge = bridgeFromSessionStore({
+      loadSession: async () => ({ seeds: new Map([['p1', { name: 'Async product' }]]) }),
+      selectSeededProducts: session => session.seeds,
+    });
     const products = await bridge.getSeededProducts({ input: {} });
     assert.equal(products[0].name, 'Async product');
   });
 
+  it('accepts an async selectSeededProducts (lazy-load pattern)', async () => {
+    // A seller whose seed collection is lazy-loaded (referenced by an ID
+    // on the session) can await inside the selector without having to
+    // eagerly hydrate inside loadSession.
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({ seedCollectionId: 'seeds-v1' }),
+      selectSeededProducts: async session => {
+        // Simulate a second round-trip on the selector path.
+        await new Promise(resolve => setImmediate(resolve));
+        return new Map([[`${session.seedCollectionId}:p1`, { name: 'Lazy product' }]]);
+      },
+    });
+    const products = await bridge.getSeededProducts({ input: {} });
+    assert.equal(products.length, 1);
+    assert.equal(products[0].product_id, 'seeds-v1:p1');
+    assert.equal(products[0].name, 'Lazy product');
+  });
+
   it('returns [] when the selector returns null / undefined', async () => {
-    const bridge = bridgeFromSessionStore(() => ({}), () => undefined);
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({}),
+      selectSeededProducts: () => undefined,
+    });
     const products = await bridge.getSeededProducts({ input: {} });
     assert.deepEqual(products, []);
   });
@@ -91,13 +112,13 @@ describe('bridgeFromSessionStore', () => {
     // Sellers whose seed state is an array of [id, fixture] tuples (or a
     // custom iterable) should be able to pass that directly without
     // rebuilding a Map.
-    const bridge = bridgeFromSessionStore(
-      () => ({}),
-      () => [
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({}),
+      selectSeededProducts: () => [
         ['p1', { name: 'From array' }],
         ['p2', { name: 'Also from array' }],
-      ]
-    );
+      ],
+    });
     const products = await bridge.getSeededProducts({ input: {} });
     assert.equal(products.length, 2);
     assert.deepEqual(
@@ -110,14 +131,27 @@ describe('bridgeFromSessionStore', () => {
     // A storyboard that seeded `null` or a primitive should still produce
     // a valid product (with just `product_id` + defaults) rather than
     // throwing mid-request.
-    const bridge = bridgeFromSessionStore(
-      () => ({ seeds: new Map([['p1', null], ['p2', 'not-an-object']]) }),
-      session => session.seeds,
-      { delivery_type: 'non_guaranteed' }
-    );
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({ seeds: new Map([['p1', null], ['p2', 'not-an-object']]) }),
+      selectSeededProducts: session => session.seeds,
+      productDefaults: { delivery_type: 'non_guaranteed' },
+    });
     const products = await bridge.getSeededProducts({ input: {} });
     assert.equal(products.length, 2);
     assert.equal(products[0].product_id, 'p1');
     assert.equal(products[0].delivery_type, 'non_guaranteed');
+  });
+
+  it('propagates loadSession rejections (silent seed loss is worse than loud failure)', async () => {
+    // If the session store is down, fail loudly. A silent fallback to []
+    // would mask a storyboard regression where a seeded product gets
+    // dropped because the DB hiccupped mid-run.
+    const bridge = bridgeFromSessionStore({
+      loadSession: async () => {
+        throw new Error('db unavailable');
+      },
+      selectSeededProducts: session => session.seeds,
+    });
+    await assert.rejects(() => bridge.getSeededProducts({ input: {} }), /db unavailable/);
   });
 });

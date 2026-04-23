@@ -15,10 +15,40 @@ import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 
 export interface AdcpErrorOptions {
   message: string;
+  /**
+   * Override the recovery classification. Defaults to
+   * `STANDARD_ERROR_CODES[code].recovery` for known codes, `'terminal'`
+   * otherwise. Dropped from the wire shape for codes whose entry in
+   * `ADCP_ERROR_FIELD_ALLOWLIST` excludes it (`IDEMPOTENCY_CONFLICT`
+   * excludes `recovery` — the classifier is derivable from the code).
+   */
   recovery?: ErrorRecovery;
+  /**
+   * Name of the request field the error applies to (validation /
+   * constraint errors). Dropped from the wire shape for codes whose
+   * `ADCP_ERROR_FIELD_ALLOWLIST` entry excludes it (e.g. `IDEMPOTENCY_CONFLICT`
+   * — a conflict response MUST NOT echo prior payload state).
+   */
   field?: string;
+  /**
+   * Human-readable remediation hint. Dropped from the wire shape for
+   * codes whose `ADCP_ERROR_FIELD_ALLOWLIST` entry excludes it (e.g.
+   * `IDEMPOTENCY_CONFLICT`).
+   */
   suggestion?: string;
+  /**
+   * Seconds to wait before retrying a transient error. Only meaningful
+   * on retryable codes (`RATE_LIMITED`, `SERVICE_UNAVAILABLE`); dropped
+   * on terminal codes whose allowlist excludes it (`IDEMPOTENCY_CONFLICT`
+   * — a computed `retry_after` on conflict would leak cached-entry age).
+   */
   retry_after?: number;
+  /**
+   * Code-specific diagnostic payload. Dropped from the wire shape for
+   * codes whose `ADCP_ERROR_FIELD_ALLOWLIST` entry excludes it
+   * (`IDEMPOTENCY_CONFLICT` — a conflict response MUST NOT echo the
+   * prior request payload or cached response body).
+   */
   details?: Record<string, unknown>;
 }
 

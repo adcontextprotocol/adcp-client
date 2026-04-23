@@ -39,14 +39,16 @@ describe('adcpError: IDEMPOTENCY_CONFLICT allowlist', () => {
     assert.ok(!('details' in payload), 'details must be dropped on conflict');
   });
 
-  it('keeps retry_after (allowlisted)', () => {
-    // `retry_after` IS on the allowlist — the spec permits it on conflict
-    // responses as a hint to the client without leaking prior payload.
+  it('drops retry_after too (terminal code, and a seller-computed value would leak cached-entry age)', () => {
+    // Retry hints belong on transient codes (SERVICE_UNAVAILABLE,
+    // RATE_LIMITED). On a terminal conflict, `retry_after` is either
+    // meaningless or — worse — a cached-entry-age oracle if a seller
+    // computed it from the prior payload's creation time.
     const res = adcpError('IDEMPOTENCY_CONFLICT', {
       message: 'key reused',
       retry_after: 5,
     });
-    assert.equal(res.structuredContent.adcp_error.retry_after, 5);
+    assert.ok(!('retry_after' in res.structuredContent.adcp_error));
   });
 
   it('mirrors structured + text payloads after filtering', () => {

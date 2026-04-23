@@ -11,8 +11,12 @@
  *   `wrapEnvelope` in `./wrap-envelope.ts`.
  * - `ADCP_ERROR_FIELD_ALLOWLIST` governs keys that may appear INSIDE
  *   the `adcp_error` block, keyed by error code. Consumed by
- *   `adcpError()` (which filters its output to the allowlisted set) and
- *   by the `idempotency.conflict_no_payload_leak` invariant in
+ *   `adcpError()` (which filters its output to the allowlisted set)
+ *   AND by the dispatcher in `create-adcp-server.ts` (re-applied to
+ *   every handler-returned envelope via `sanitizeAdcpErrorEnvelope`
+ *   — defence-in-depth for handlers that hand-roll an error envelope
+ *   instead of going through the builder). The same set powers the
+ *   `idempotency.conflict_no_payload_leak` invariant in
  *   `../testing/storyboard/default-invariants.ts`. The legacy
  *   `CONFLICT_ADCP_ERROR_ALLOWLIST` export is a convenience alias for
  *   the `IDEMPOTENCY_CONFLICT` entry.
@@ -20,6 +24,10 @@
  * Both sets apply to the same wire response but at different nesting
  * levels. A seller that needs to extend one should audit whether the
  * other also needs updating.
+ *
+ * Hand-rolling an error envelope? Prefer `adcpError(code, options)` —
+ * it wraps both transport layers and applies this allowlist for you.
+ * The dispatcher sanitizer is a belt-and-suspenders, not a primary API.
  */
 
 /**
@@ -73,16 +81,31 @@ export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet
  * want a bespoke code to be strict should register it here (or wrap
  * `adcpError()` with their own sanitizer).
  *
+ * **Scope warning for future contributors:** only register a code here
+ * if it belongs to the AdCP standard error vocabulary (`enums/error-code.json`).
+ * Per `core/error.json`, clients "MUST handle unknown codes gracefully
+ * by falling back to the recovery classification" — so dropping
+ * `recovery` on a vendor / non-standard code makes the response
+ * genuinely lossy for any buyer agent that doesn't have the code in
+ * its local vocabulary. `IDEMPOTENCY_CONFLICT` is safe because it is
+ * a standard code whose `recovery` (`correctable`) is fixed in the
+ * enum schema and derivable client-side.
+ *
  * `IDEMPOTENCY_CONFLICT` is narrow on purpose: a conflict response MUST
  * NOT echo the prior request payload or cached response (stolen-key
  * read oracle defence). `recovery` is deliberately excluded — the
  * classifier is redundant with `code` (same information, derivable from
  * the standard error-code table), and adding it widens the surface the
- * invariant has to defend for future fields. `adcpError()` filters
- * `recovery` out of its output when the code is in this map.
+ * invariant has to defend for future fields. `retry_after` is excluded
+ * too: no framework path currently emits it on conflict, and a seller
+ * that computed `retry_after = cached_entry_age` would leak the prior
+ * payload's creation time (a distinguisher between "key never seen" vs
+ * "key seen N seconds ago"). Retry hints belong on transient codes
+ * (`SERVICE_UNAVAILABLE`, `RATE_LIMITED`), not on a terminal conflict.
+ * `adcpError()` and the dispatcher sanitizer both enforce this.
  */
 export const ADCP_ERROR_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
-  IDEMPOTENCY_CONFLICT: new Set(['code', 'message', 'status', 'retry_after', 'correlation_id', 'request_id', 'operation_id']),
+  IDEMPOTENCY_CONFLICT: new Set(['code', 'message', 'status', 'correlation_id', 'request_id', 'operation_id']),
 });
 
 /**
@@ -92,7 +115,7 @@ export const ADCP_ERROR_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet<str
  * handful of consumer tests reach for it by name; new code should use
  * `ADCP_ERROR_FIELD_ALLOWLIST.IDEMPOTENCY_CONFLICT` directly.
  */
-export const CONFLICT_ADCP_ERROR_ALLOWLIST: ReadonlySet<string> = ADCP_ERROR_FIELD_ALLOWLIST.IDEMPOTENCY_CONFLICT as ReadonlySet<string>;
+export const CONFLICT_ADCP_ERROR_ALLOWLIST: ReadonlySet<string> = ADCP_ERROR_FIELD_ALLOWLIST.IDEMPOTENCY_CONFLICT!;
 
 /**
  * Sanity check: every registered allowlist must permit `context` echo.

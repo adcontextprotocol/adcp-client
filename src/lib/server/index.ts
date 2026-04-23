@@ -212,7 +212,11 @@ export {
   bridgeFromTestControllerStore,
   bridgeFromSessionStore,
 } from './test-controller-bridge';
-export type { TestControllerBridge, TestControllerBridgeContext } from './test-controller-bridge';
+export type {
+  TestControllerBridge,
+  TestControllerBridgeContext,
+  BridgeFromSessionStoreOptions,
+} from './test-controller-bridge';
 
 export {
   createIdempotencyStore,

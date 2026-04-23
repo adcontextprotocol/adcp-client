@@ -21,6 +21,18 @@
  * leaves the transport reading the original unmodified value and the 406
  * still fires — the pair has to move together.
  *
+ * **Edge case, intentionally NOT auto-synthesized:** if `req.headers.accept`
+ * exists but `req.rawHeaders` has no Accept entry (some reverse proxies
+ * mutate `req.headers` without rebuilding `rawHeaders`), the middleware
+ * still patches `req.headers.accept` but leaves `rawHeaders` as-is. The
+ * transport then sees no Accept at all on the `rawHeaders` rebuild and
+ * falls through to its missing-Accept path. Adding a phantom `['Accept',
+ * '…']` pair would diverge `req.rawHeaders` from the wire-level headers
+ * and can confuse other middleware (RFC 9421 verifiers, request-signing
+ * canonicalizers) that use `rawHeaders` as authoritative. If you hit
+ * this divergence in practice, fix the upstream proxy — don't monkey-
+ * patch here.
+ *
  * Mount BEFORE the MCP transport handler:
  *
  * ```ts
