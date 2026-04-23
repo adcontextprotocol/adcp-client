@@ -20,7 +20,7 @@ A single-URL storyboard never sees this. Multi-instance mode round-robins steps 
 ## Usage
 
 ```
-npx @adcp/client storyboard run \
+npx @adcp/client@latest storyboard run \
   --url https://a.your-agent.example/mcp/ \
   --url https://b.your-agent.example/mcp/ \
   account_and_audience \
@@ -67,7 +67,7 @@ For local dev without Docker, the simplest setup is two `node` processes listeni
 Quick way to verify the multi-instance code path end-to-end against the AdCP public test agent:
 
 ```bash
-npx @adcp/client storyboard run \
+npx @adcp/client@latest storyboard run \
   --url "https://test-agent.adcontextprotocol.org/mcp/?replica=a" \
   --url "https://test-agent.adcontextprotocol.org/mcp/?replica=b" \
   property_lists \

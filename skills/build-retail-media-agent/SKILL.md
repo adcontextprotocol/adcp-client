@@ -440,14 +440,14 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy path — catalog-driven creative + conversion tracking
-npx @adcp/client storyboard run http://localhost:3001/mcp sales_catalog_driven --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp sales_catalog_driven --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz — includes the catalog surface
-npx @adcp/client fuzz http://localhost:3001/mcp \
+npx @adcp/client@latest fuzz http://localhost:3001/mcp \
   --tools get_products,list_creative_formats \
   --auth-token $TOKEN
 ```

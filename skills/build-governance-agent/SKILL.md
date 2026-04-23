@@ -636,19 +636,19 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy paths — run the storyboards matching your claimed specialisms
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards governance_spend_authority,governance_spend_authority/denied,governance_delivery_monitor \
   --auth $TOKEN
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards property_lists,collection_lists,content_standards \
   --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz — includes update_property_list / update_content_standards (Tier 3)
-npx @adcp/client fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
+npx @adcp/client@latest fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 ```
 
 Common failure decoder:

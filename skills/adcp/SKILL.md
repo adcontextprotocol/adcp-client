@@ -7,7 +7,7 @@ allowed-tools: Bash, Read
 
 # AdCP CLI
 
-Use `adcp` (or `npx @adcp/client`) to interact with AdCP advertising agents, run compliance tests, and query the AdCP registry.
+Use `adcp` (or `npx @adcp/client@latest`) to interact with AdCP advertising agents, run compliance tests, and query the AdCP registry.
 
 ## Quick start — zero config
 
@@ -285,9 +285,9 @@ Remote `--wait` requires ngrok: `brew install ngrok`
 
 ### Step 1: Check installation
 ```bash
-which adcp 2>/dev/null && echo "installed" || echo "use npx @adcp/client"
+which adcp 2>/dev/null && echo "installed" || echo "use npx @adcp/client@latest"
 ```
-If not installed, prefix all commands with `npx @adcp/client`. Requires Node.js 18+.
+If not installed, prefix all commands with `npx @adcp/client@latest`. Requires Node.js 18+.
 
 ### Step 2: Route the request
 

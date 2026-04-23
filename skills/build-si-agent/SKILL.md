@@ -297,14 +297,14 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy path — session lifecycle
-npx @adcp/client storyboard run http://localhost:3001/mcp si_baseline --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp si_baseline --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz
-npx @adcp/client fuzz http://localhost:3001/mcp \
+npx @adcp/client@latest fuzz http://localhost:3001/mcp \
   --tools si_get_offering --auth-token $TOKEN
 ```
 

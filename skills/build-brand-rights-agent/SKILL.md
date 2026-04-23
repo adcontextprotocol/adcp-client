@@ -477,18 +477,18 @@ For OAuth, `anyOf(verifyApiKey, verifyBearer)` composition, or `publicUrl` + `pr
 npx tsx agent.ts &
 
 # Happy path — brand_rights bundle (includes governance_denied sub-scenario)
-npx @adcp/client storyboard run http://localhost:3001/mcp brand_rights --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp brand_rights --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation --auth $TOKEN
 
 # Revocation webhook conformance (if you emit revocations)
-npx @adcp/client storyboard run http://localhost:3001/mcp webhook_emission \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp webhook_emission \
   --webhook-receiver --auth $TOKEN
 
 # Rejection-surface fuzz
-npx @adcp/client fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/client@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
 ```
 
 Common failure decoder:

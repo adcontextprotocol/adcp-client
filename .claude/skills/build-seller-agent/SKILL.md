@@ -680,7 +680,7 @@ Two things the example doesn't wire (app-specific):
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --json
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
 **Sandbox validation** (if ports are blocked):

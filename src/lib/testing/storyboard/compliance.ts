@@ -176,7 +176,7 @@ function readAdcpVersion(): string {
 function complianceMissingMessage(what: string, path: string): string {
   return (
     `${what} not found at ${path}. ` +
-    `The compliance cache ships with @adcp/client — try reinstalling the package. ` +
+    `The compliance cache ships with @adcp/client — run \`npm i @adcp/client@latest\` (or \`npx @adcp/client@latest …\`) to pick up the current cache. ` +
     `If developing locally, run \`npm run sync-schemas\` to populate the cache.`
   );
 }

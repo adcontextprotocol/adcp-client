@@ -157,11 +157,11 @@ The response must include the full media buy object with packages array. Comply 
 
 ```bash
 # Run all tracks
-npx @adcp/client storyboard run http://localhost:3456/mcp
+npx @adcp/client@latest storyboard run http://localhost:3456/mcp
 
 # Run one track
-npx @adcp/client storyboard run http://localhost:3456/mcp --track core
+npx @adcp/client@latest storyboard run http://localhost:3456/mcp --track core
 
 # JSON output for debugging
-npx @adcp/client storyboard run http://localhost:3456/mcp --format json
+npx @adcp/client@latest storyboard run http://localhost:3456/mcp --format json
 ```

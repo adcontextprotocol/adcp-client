@@ -1175,25 +1175,25 @@ npx tsx agent.ts &
 
 ```bash
 # Full seller lifecycle
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
 
 # Your specialism bundle (one of: sales_guaranteed, sales_non_guaranteed,
 # sales_broadcast_tv, sales_streaming_tv, sales_social, sales_proposal_mode)
-npx @adcp/client storyboard run http://localhost:3001/mcp sales_guaranteed --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp sales_guaranteed --auth $TOKEN
 
 # Cross-cutting obligations — every seller must pass these
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards idempotency,security_baseline,schema_validation,error_compliance --auth $TOKEN
 
 # Webhook conformance (if you claim async task lifecycles)
-npx @adcp/client storyboard run http://localhost:3001/mcp webhook_emission \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp webhook_emission \
   --webhook-receiver --auth $TOKEN
 ```
 
 **Rejection-surface conformance (property-based fuzzer — catches crashes on edge inputs):**
 
 ```bash
-npx @adcp/client fuzz http://localhost:3001/mcp \
+npx @adcp/client@latest fuzz http://localhost:3001/mcp \
   --tools get_products,get_media_buys,list_creative_formats \
   --auth-token $TOKEN
 ```
@@ -1629,7 +1629,7 @@ const revocationStore = new InMemoryRevocationStore({
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp signed_requests --json
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp signed_requests --json
 ```
 
 Every negative vector must return the exact `expected_outcome.error_code` in `WWW-Authenticate: Signature error="<code>"`. A non-claiming agent is not graded against this specialism.

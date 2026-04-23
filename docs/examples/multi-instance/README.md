@@ -25,7 +25,7 @@ Two replicas of an AdCP agent sharing one Postgres store, fronted by a round-rob
 
    **Runner-level round-robin** (client alternates per step, distinct MCP sessions per replica):
    ```bash
-   npx @adcp/client storyboard run \
+   npx @adcp/client@latest storyboard run \
      --url http://localhost:4100/mcp/ \
      --url http://localhost:4101/mcp/ \
      property_lists --auth "$AGENT_TOKEN" --allow-http
@@ -33,7 +33,7 @@ Two replicas of an AdCP agent sharing one Postgres store, fronted by a round-rob
 
    **LB-level rotation** (single MCP session; Caddy round-robins per request; matches production fronting):
    ```bash
-   npx @adcp/client storyboard run http://localhost:4099/mcp/ \
+   npx @adcp/client@latest storyboard run http://localhost:4099/mcp/ \
      property_lists --auth "$AGENT_TOKEN" --allow-http
    ```
 
@@ -53,7 +53,7 @@ Either is valid. The docker-compose here gives you both on the same stack so you
 The multi-instance failure mode only surfaces on storyboards that have write→read chains. List them with:
 
 ```bash
-npx @adcp/client storyboard list --stateful
+npx @adcp/client@latest storyboard list --stateful
 ```
 
 That returns the ~40 compliance storyboards with at least one step marked `stateful: true`. Run those; stateless probes (capability discovery, schema validation, auth rejection) don't exercise the cross-replica invariant.

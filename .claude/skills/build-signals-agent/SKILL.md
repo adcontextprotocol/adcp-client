@@ -203,8 +203,8 @@ The skill contains everything you need. Do not read additional docs before writi
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_owned --json       # for owned data
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace --json  # for marketplace
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_owned --json       # for owned data
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_marketplace --json  # for marketplace
 ```
 
 **Sandbox validation** (if ports are blocked):

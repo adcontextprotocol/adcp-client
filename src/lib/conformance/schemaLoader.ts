@@ -54,7 +54,7 @@ function findBundledDir(): string {
 
   throw new Error(
     `Conformance schema bundle not found. Looked in ${distCandidate} and ${srcCandidate}. ` +
-      `Run \`npm run sync-schemas && npm run build:lib\`, or reinstall @adcp/client.`
+      `Run \`npm run sync-schemas && npm run build:lib\`, or install the current package: \`npm i @adcp/client@latest\`.`
   );
 }
 

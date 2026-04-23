@@ -51,8 +51,8 @@ Start it and test immediately:
 
 ```bash
 npx tsx agent.ts
-npx @adcp/client http://localhost:3001/mcp                    # discover tools
-npx @adcp/client http://localhost:3001/mcp get_signals '{}'   # call get_signals
+npx @adcp/client@latest http://localhost:3001/mcp                    # discover tools
+npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}'   # call get_signals
 ```
 
 ## Key Concepts
@@ -389,7 +389,7 @@ const httpServer = createServer(async (req, res) => {
 ### Tool Discovery
 
 ```bash
-npx @adcp/client http://localhost:3001/mcp
+npx @adcp/client@latest http://localhost:3001/mcp
 ```
 
 This lists all tools your agent exposes, their descriptions, and parameters. If `get_signals` appears with the correct schema, your agent is wired up correctly.
@@ -398,22 +398,22 @@ This lists all tools your agent exposes, their descriptions, and parameters. If 
 
 ```bash
 # All segments
-npx @adcp/client http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
+npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
 
 # Filtered by text
-npx @adcp/client http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
+npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
 
 # Filtered by catalog type
-npx @adcp/client http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
+npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
 
 # JSON output for scripting
-npx @adcp/client http://localhost:3001/mcp get_signals '{}' --json
+npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}' --json
 ```
 
 ### Compliance Check
 
 ```bash
-npx @adcp/client storyboard run http://localhost:3001/mcp
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp
 ```
 
 This runs a standard validation suite against your agent to check AdCP compliance. For the full validation picture — storyboard runner, property-based fuzzing (`adcp fuzz`), multi-instance testing, webhook conformance, request-signing, schema-driven validation, and the skill→agent→grader dogfood harness — see [**VALIDATE-YOUR-AGENT.md**](./VALIDATE-YOUR-AGENT.md).

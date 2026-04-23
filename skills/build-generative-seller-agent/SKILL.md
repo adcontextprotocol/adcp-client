@@ -459,15 +459,15 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy paths — sells inventory AND generates creatives
-npx @adcp/client storyboard run http://localhost:3001/mcp creative_generative/seller --auth $TOKEN
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_generative/seller --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz
-npx @adcp/client fuzz http://localhost:3001/mcp \
+npx @adcp/client@latest fuzz http://localhost:3001/mcp \
   --tools get_products,list_creative_formats,get_creative_features,preview_creative \
   --auth-token $TOKEN
 ```

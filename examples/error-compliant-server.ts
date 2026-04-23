@@ -8,7 +8,7 @@
  *
  * Then test with:
  *
- *   npx @adcp/client comply http://localhost:3456/mcp
+ *   npx @adcp/client@latest comply http://localhost:3456/mcp
  */
 
 import {

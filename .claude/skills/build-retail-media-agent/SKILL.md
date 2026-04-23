@@ -258,7 +258,7 @@ The skill contains everything you need. Do not read additional docs before writi
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_catalog_creative --json
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_catalog_creative --json
 ```
 
 **Keep iterating until all steps pass.**
