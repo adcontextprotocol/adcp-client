@@ -789,6 +789,25 @@ export {
 // or its required sibling field.
 export { Render, urlRender, htmlRender, bothRender } from './utils/render-builders';
 
+// ====== FORMAT RENDER BUILDERS ======
+// Typed factories for `Format.renders[]` entries on format declarations.
+// The item schema's `oneOf` forces a render to satisfy exactly one branch —
+// either `dimensions` (display/video) OR `parameters_from_format_id: true`
+// (audio, template formats). A render with only `{ role }` fails validation.
+// Audio specifically cannot use `{ role, duration_seconds }` — duration is
+// not a recognized `renders[]` field and wouldn't satisfy the oneOf anyway.
+// Use `parameterizedRender({ role })` so format_id parameters carry duration.
+//
+// Named exports only — the `FormatRender` name is already in use by the v3
+// structural interface in `utils/format-renders`. Grouped namespace (if
+// needed) should be added after that duplication is resolved.
+export {
+  displayRender,
+  parameterizedRender,
+  type DimensionsRender,
+  type ParameterizedRender,
+} from './utils/format-render-builders';
+
 // ====== V3.0 COMPATIBILITY UTILITIES ======
 // Capabilities detection, version negotiation, and v3 enforcement.
 // See also:

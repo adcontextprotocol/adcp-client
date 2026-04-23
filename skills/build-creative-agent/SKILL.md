@@ -577,12 +577,14 @@ Storyboard: `creative_template`. Stateless — build from the inline `creative_m
 Formats declare `variables` the template will substitute:
 
 ```typescript
+import { displayRender } from '@adcp/client';
+
 listCreativeFormats: async (params) => ({
   formats: [{
     format_id: { agent_url: AGENT_URL, id: 'banner_300x250_template' },
     name: 'Responsive 300x250 Banner Template',
     type: 'display' as const,
-    renders: [{ role: 'primary', dimensions: { width: 300, height: 250 } }],
+    renders: [displayRender({ role: 'primary', dimensions: { width: 300, height: 250 } })],
     variables: [          // template-agent specific
       { variable_id: 'headline', type: 'text', max_length: 40 },
       { variable_id: 'cta', type: 'text', max_length: 20 },
@@ -625,19 +627,29 @@ Output can be HTML (`{ content: '<div>...</div>' }`), JavaScript tag (`{ content
 
 Audio creative agents (AudioStack, ElevenLabs, Resemble) fit the `creative-template` archetype — stateless transform from an inline manifest to a rendered audio file. Three things differ from display:
 
-1. **No width/height.** Declare `renders: [{ role: 'primary', duration_seconds: N }]` — the `renders` array is still required by the `discover_formats` storyboard validation, but audio formats surface duration instead of dimensions.
+1. **No width/height.** The `Format.renders[]` item schema has a `oneOf` — each render must satisfy either `dimensions` (width + height required) OR `parameters_from_format_id: true`. Audio has no dimensions, so audio renders go through the parameterized branch. Use `parameterizedRender({ role: 'primary' })` — it auto-injects `parameters_from_format_id: true`. Encode duration/codec/bitrate in the `format_id` parameters (declared via `accepts_parameters`), not in the render entry.
 2. **Async render pipelines.** TTS → mix → master is typically minutes long. Don't block the `build_creative` call waiting for the pipeline; the platform-native SDK (AudioStack's 300s poll window, etc.) belongs inside a task worker. If the platform's API returns quickly, build synchronously; otherwise return the task envelope and emit a `creative_review` completion webhook (see the [Webhooks](#webhooks-for-async-review-pipelines) section above for the wiring).
 3. **Inputs are text assets keyed by `asset_id`.** The buyer sends `creative_manifest.assets.script` (a `TextAsset` with `content: string`) — read `inputManifest.assets.script?.content`, not `.text`.
 
 Format declaration:
 
 ```typescript
+import { parameterizedRender } from '@adcp/client';
+
 listCreativeFormats: async () => ({
   formats: [{
-    format_id: { agent_url: AGENT_URL, id: 'audio_ad_30s' },
-    name: 'Audio Ad — 30s',
+    format_id: {
+      agent_url: AGENT_URL,
+      id: 'audio_ad',
+      parameters: { duration_seconds: 30, codec: 'mp3' },
+    },
+    name: 'Audio Ad',
     type: 'audio' as const,
-    renders: [{ role: 'primary', duration_seconds: 30 }],
+    accepts_parameters: [
+      { parameter_id: 'duration_seconds', type: 'number' },
+      { parameter_id: 'codec', type: 'string' },
+    ],
+    renders: [parameterizedRender({ role: 'primary' })],
     assets: [
       { asset_id: 'script',         asset_type: 'text', required: true,  item_type: 'individual', description: 'Ad script (~70-75 words for a 30s read)' },
       { asset_id: 'voice',          asset_type: 'text', required: false, item_type: 'individual', description: 'TTS voice name (e.g. "sara", "isaac")' },

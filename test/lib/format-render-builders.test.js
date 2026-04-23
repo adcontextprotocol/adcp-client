@@ -1,0 +1,45 @@
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { displayRender, parameterizedRender } = require('../../dist/lib/index.js');
+
+test('displayRender injects role + dimensions only (no parameters_from_format_id)', () => {
+  const render = displayRender({
+    role: 'primary',
+    dimensions: { width: 300, height: 250 },
+  });
+  assert.deepStrictEqual(render, {
+    role: 'primary',
+    dimensions: { width: 300, height: 250 },
+  });
+  assert.ok(!('parameters_from_format_id' in render));
+});
+
+test('parameterizedRender auto-injects parameters_from_format_id: true', () => {
+  const render = parameterizedRender({ role: 'primary' });
+  assert.deepStrictEqual(render, {
+    role: 'primary',
+    parameters_from_format_id: true,
+  });
+  assert.ok(!('dimensions' in render));
+});
+
+test('displayRender supports non-pixel units (e.g. DOOH physical dimensions)', () => {
+  const render = displayRender({
+    role: 'primary',
+    dimensions: { width: 12, height: 8, unit: 'feet' },
+  });
+  assert.strictEqual(render.dimensions.unit, 'feet');
+});
+
+test('renders satisfy the Format.renders[] oneOf at the shape level', () => {
+  // Smoke-test the invariant: a valid renders[] item has EXACTLY ONE of
+  // (dimensions present) XOR (parameters_from_format_id: true). These
+  // builders enforce that invariant by construction.
+  const dRender = displayRender({ role: 'primary', dimensions: { width: 300, height: 250 } });
+  assert.ok('dimensions' in dRender);
+  assert.ok(!('parameters_from_format_id' in dRender));
+
+  const pRender = parameterizedRender({ role: 'primary' });
+  assert.ok(!('dimensions' in pRender));
+  assert.strictEqual(pRender.parameters_from_format_id, true);
+});
