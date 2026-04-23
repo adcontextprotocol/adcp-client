@@ -12,6 +12,20 @@ push to non-`claude/*` branches.
 3. `docs/TYPE-SUMMARY.md` — type shapes (do NOT read the generated
    files listed as forbidden in AGENTS.md)
 
+## Pre-classification: skip these for auto-PR
+
+Before full classification, check if the issue is one of:
+
+- **RFC / proposal** — title starts with "RFC:" or "Proposal:", or
+  labeled `rfc` / `proposal`
+- **Epic** — labeled `epic`, title starts with "Epic:", or body
+  contains a task list of child issues
+- **Tracking / meta** — labeled `tracking`, `meta`, or `roadmap`
+
+If so: **do not open a PR**. Post a triage comment with scope +
+bucket + suggested milestone + any obvious follow-up work it
+decomposes into, apply `claude-triaged`, then stop.
+
 ## For each issue, classify
 
 One of:
@@ -29,6 +43,36 @@ One of:
   `runConformance`. Verify against the spec before assuming the client
   is wrong.
 
+## Scope bucket
+
+After classifying, identify which bucket(s) the issue touches. **Run
+`gh label list --repo adcontextprotocol/adcp-client --limit 200 --json name,description`
+first — prefer existing labels to invented ones.** Apply matching
+label(s) when you apply `claude-triaged`.
+
+Likely buckets (map to closest existing label):
+
+- **library** — `src/lib/` core client
+- **cli** — `bin/` command-line tooling
+- **conformance** — `runConformance`, fuzz tiers, compliance harness
+- **schema-sync** — generated types from adcp schemas
+- **examples** — `examples/`
+- **docs** — `docs/` pages and TypeDoc output
+- **skills** — `skills/` agent-build guide content
+- **cross-repo** — touches `adcontextprotocol/adcp` spec (add link
+  back, suggest OP retarget if that's the real home)
+
+## Milestone
+
+Run `gh api repos/adcontextprotocol/adcp-client/milestones --jq '.[] | {title, number, due_on, description}'`.
+
+- If a milestone fits naturally (e.g., "v3.1", "v4.0", "post-3.0
+  fixes"), include `**Suggested milestone:** <title> (#<number>)` in
+  the triage comment.
+- For small bug/doc fixes being auto-PR'd, apply the milestone to the
+  PR.
+- Never create new milestones — if uncertain, leave unset.
+
 ## Comment format
 
 ```
@@ -36,6 +80,8 @@ One of:
 
 **Classification:** <above>
 **Scope:** <small / medium / large / unclear>
+**Bucket(s):** <comma-separated buckets>
+**Suggested milestone:** <title (#N) or "none">
 **Status:** <needs-info / ready-for-human / drafting-pr / not-actionable>
 
 <2–4 sentences with relevant file/doc links, prior PRs, or related
@@ -50,7 +96,7 @@ issues. Link generously.>
 Triaged by Claude Code. Session: https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}
 ```
 
-Then apply the `claude-triaged` label.
+Apply the `claude-triaged` label and any matching bucket labels.
 
 ## PR criteria — all must be true
 
