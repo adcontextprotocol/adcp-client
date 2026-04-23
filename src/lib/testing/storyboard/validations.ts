@@ -397,12 +397,37 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
     );
   }
   if (!strict.valid && strict.issues && strict.issues.length > 0) {
-    const top = strict.issues[0];
-    if (top) {
-      const pointer = top.instance_path || '/';
-      const remaining = strict.issues.length - 1;
-      const more = remaining > 0 ? ` (+${remaining} more AJV issue${remaining === 1 ? '' : 's'})` : '';
-      parts.push(`strict JSON-schema rejected ${pointer}: ${top.message}${more}`);
+    // Group `required` keyword issues under their parent path so sellers see
+    // "missing properties at /x: a, b, c" in one pass instead of one missing
+    // field per storyboard run. This is the single biggest onramp cliff for
+    // sellers filling out response schemas with N required fields —
+    // previously they iterated N times, learning one required field per run.
+    const requiredIssues = strict.issues.filter(i => i.keyword === 'required');
+    const otherIssues = strict.issues.filter(i => i.keyword !== 'required');
+    if (requiredIssues.length > 0) {
+      const grouped = new Map<string, string[]>();
+      for (const issue of requiredIssues) {
+        const at = issue.instance_path || '/';
+        // AJV's `required`-issue message format: `must have required property '<name>'`.
+        const match = issue.message.match(/required property ['"]([^'"]+)['"]/);
+        const field = match?.[1] ?? issue.message;
+        const list = grouped.get(at) ?? [];
+        list.push(field);
+        grouped.set(at, list);
+      }
+      for (const [at, fields] of grouped) {
+        parts.push(`strict JSON-schema missing required at ${at}: ${fields.join(', ')}`);
+      }
+    }
+    const MAX_OTHER = 5;
+    const shown = otherIssues.slice(0, MAX_OTHER);
+    const remaining = otherIssues.length - shown.length;
+    for (const issue of shown) {
+      const pointer = issue.instance_path || '/';
+      parts.push(`strict JSON-schema rejected ${pointer}: ${issue.message}`);
+    }
+    if (remaining > 0) {
+      parts.push(`(+${remaining} more AJV issue${remaining === 1 ? '' : 's'})`);
     }
   }
   return parts.length > 0 ? parts.join('; ') : undefined;

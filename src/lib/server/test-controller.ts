@@ -96,7 +96,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AdcpServer } from './adcp-server';
-import { getSdkServer } from './adcp-server';
+import { ADCP_CAPABILITIES, getSdkServer } from './adcp-server';
+import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
 import type {
   ListScenariosSuccess,
   StateTransitionSuccess,
@@ -856,6 +857,28 @@ export function registerTestController(
   // this server instance. Callers can supply their own cache to scope by
   // session or tenant.
   const seedCache = options?.seedCache ?? createSeedFixtureCache();
+
+  // Per AdCP 3.0, comply_test_controller support is declared via the
+  // top-level `compliance_testing` capability block — NOT as an entry in
+  // `supported_protocols`. When we've been given an AdcpServer produced by
+  // createAdcpServer, auto-populate that block. The scenarios list comes
+  // from the factory's static `scenarios` (factory shape) or is inferred
+  // from the plain store's method presence.
+  const capsBag = (server as unknown as Record<PropertyKey, unknown>)[ADCP_CAPABILITIES] as
+    | GetAdCPCapabilitiesResponse
+    | undefined;
+  if (capsBag) {
+    const incoming = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : scenariosFromStore(storeOrFactory);
+    if (incoming.length > 0) {
+      // Merge with any previously-declared scenarios rather than silently
+      // dropping them. A server can wire more than one controller (e.g.
+      // media-buy + governance) and each call should contribute its
+      // scenarios to the advertised set.
+      const existing = (capsBag.compliance_testing?.scenarios ?? []) as readonly string[];
+      const merged = Array.from(new Set([...existing, ...incoming]));
+      capsBag.compliance_testing = { scenarios: merged } as GetAdCPCapabilitiesResponse['compliance_testing'];
+    }
+  }
   mcp.registerTool(
     'comply_test_controller',
     {
@@ -866,7 +889,16 @@ export function registerTestController(
       const response = await handleTestControllerRequest(storeOrFactory, input, {
         seedCache,
       });
-      return toMcpResponse(response);
+      // Echo request context back into the response envelope so callers see
+      // their correlation data round-trip (matches the auto-echo createAdcpServer
+      // does for domain tools). Only attaches when the handler didn't place a
+      // context itself — handler-supplied context wins.
+      const ctx = input.context;
+      const withContext =
+        ctx && typeof ctx === 'object' && (response as { context?: unknown }).context === undefined
+          ? { ...response, context: ctx }
+          : response;
+      return toMcpResponse(withContext as ComplyTestControllerResponse);
     }) as Parameters<typeof mcp.registerTool>[2]
   );
 }

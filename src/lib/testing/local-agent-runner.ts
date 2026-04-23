@@ -119,6 +119,13 @@ export interface RunAgainstLocalAgentOptions {
   /**
    * Forwarded to every `runStoryboard` call. `webhook_receiver` is set by
    * the helper — use `webhookReceiver` at the top level to override.
+   *
+   * `allow_http` defaults to `true` when the helper is running against its
+   * own ephemeral `http://127.0.0.1:<port>/mcp` URL — the storyboard
+   * runner's SSRF guard would otherwise refuse to probe the in-process
+   * agent it just stood up. Pass `allow_http: false` here if you redirect
+   * storyboards to an external `https://` agent via
+   * `resolvePerStoryboard` and want loopback-protection back.
    */
   runStoryboardOptions?: Omit<StoryboardRunOptions, 'webhook_receiver'>;
 
@@ -201,6 +208,28 @@ export interface LocalAgentRunResult {
 }
 
 /**
+ * True when `url` is an http:// (not https://) URL pointing at a loopback
+ * host — used to decide whether the SSRF guard's HTTPS-only default can be
+ * relaxed. Must be tight: a `http://` prefix alone is NOT sufficient (a
+ * caller override could redirect to `http://attacker.example.com/mcp` and
+ * inherit the allowance). Only `127.0.0.1`, `::1`, and `localhost` count.
+ *
+ * @internal
+ */
+function isLoopbackHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:') return false;
+    // `URL.hostname` wraps IPv6 literals in brackets (`[::1]`); strip them
+    // to match the bare forms typical in SSRF loopback checks.
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Run storyboards against an in-process AdCP agent. Handles lifecycle:
  * bind, seed, (optional) token issuance, loop, tear down.
  */
@@ -265,20 +294,36 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
     let skipped = 0;
 
     const webhookConfig = resolveWebhookReceiver(options.webhookReceiver);
-    const baseRunOptions: Omit<StoryboardRunOptions, 'webhook_receiver'> = {
+    const explicitAllowHttp = options.runStoryboardOptions?.allow_http;
+    const baseRunOptions: Omit<StoryboardRunOptions, 'webhook_receiver' | 'allow_http'> = {
       ...(options.runStoryboardOptions ?? {}),
     };
+    // `allow_http` is removed from baseRunOptions and recomputed per
+    // storyboard below — inheriting `true` across storyboards would let a
+    // `resolvePerStoryboard` override that redirected to a remote
+    // `http://...` URL bypass the SSRF guard and silently probe an
+    // attacker-controlled target with private-IP allowance.
+    delete (baseRunOptions as { allow_http?: unknown }).allow_http;
 
     for (let i = 0; i < toRun.storyboards.length; i++) {
       const sb = toRun.storyboards[i]!;
       const override = (await options.resolvePerStoryboard?.(sb, agentUrl)) ?? undefined;
       const { agentUrl: overrideUrl, ...overrideRunOptions } = override ?? {};
       const storyboardUrl = overrideUrl ?? agentUrl;
+      // Tighten the SSRF-guard bypass: only auto-opt-in `allow_http` when
+      // THIS storyboard's URL is loopback-bound (what the helper owns).
+      // An override to `http://attacker.example.com/...` must not
+      // inherit the default — that would re-enable the private-IP
+      // allowance against attacker-controlled infrastructure.
+      const storyboardIsLoopbackHttp = isLoopbackHttpUrl(storyboardUrl);
+      const effectiveAllowHttp =
+        (overrideRunOptions as { allow_http?: boolean }).allow_http ?? explicitAllowHttp ?? storyboardIsLoopbackHttp;
       // webhook_receiver is helper-owned — re-applied after the merge so
       // overrides can't replace the loopback mock the helper promised.
       const storyboardOptions: StoryboardRunOptions = {
         ...baseRunOptions,
         ...overrideRunOptions,
+        allow_http: effectiveAllowHttp,
         ...(webhookConfig ? { webhook_receiver: webhookConfig } : {}),
       };
       const result = await runStoryboard(storyboardUrl, sb, storyboardOptions);

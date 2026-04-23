@@ -675,6 +675,178 @@ describe('toMcpResponse', () => {
   });
 });
 
+// ── registerTestController context echo ──────────────────
+//
+// Storyboards (controller_validation, deterministic_*) check `field_present: context`
+// on every comply_test_controller response. `createAdcpServer` auto-echoes context
+// for domain tools; `registerTestController` bypasses that pipeline, so the wrapper
+// has to inject context itself or every storyboard fails. Regression test for that
+// echo behavior.
+
+describe('registerTestController context echo', () => {
+  function makeFakeMcpServer() {
+    const handlers = {};
+    return {
+      registerTool: (name, _meta, handler) => {
+        handlers[name] = handler;
+      },
+      invoke: async (name, input) => handlers[name](input),
+    };
+  }
+
+  it('attaches input.context to the structuredContent when handler does not set one', async () => {
+    const { registerTestController } = require('../dist/lib/server/test-controller');
+    const server = makeFakeMcpServer();
+    const store = {
+      async forceAccountStatus() {
+        return { success: true, previous_state: 'active', current_state: 'suspended' };
+      },
+    };
+    registerTestController(server, store);
+    const reply = await server.invoke('comply_test_controller', {
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+      context: { session_id: 'sess-abc', correlation_id: 'corr-123' },
+    });
+    assert.deepStrictEqual(reply.structuredContent.context, {
+      session_id: 'sess-abc',
+      correlation_id: 'corr-123',
+    });
+  });
+
+  it('does not overwrite handler-supplied context', async () => {
+    const { registerTestController } = require('../dist/lib/server/test-controller');
+    const server = makeFakeMcpServer();
+    const store = {
+      async forceAccountStatus() {
+        return {
+          success: true,
+          previous_state: 'active',
+          current_state: 'suspended',
+          context: { handler_tag: 'keeps_this' },
+        };
+      },
+    };
+    registerTestController(server, store);
+    const reply = await server.invoke('comply_test_controller', {
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+      context: { session_id: 'ignored' },
+    });
+    assert.deepStrictEqual(reply.structuredContent.context, { handler_tag: 'keeps_this' });
+  });
+
+  it('omits context when request carries none', async () => {
+    const { registerTestController } = require('../dist/lib/server/test-controller');
+    const server = makeFakeMcpServer();
+    registerTestController(server, {
+      async forceAccountStatus() {
+        return { success: true, previous_state: 'active', current_state: 'suspended' };
+      },
+    });
+    const reply = await server.invoke('comply_test_controller', {
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+    });
+    assert.strictEqual(reply.structuredContent.context, undefined);
+  });
+});
+
+// ── registerTestController capability block auto-emission ──
+//
+// Per AdCP 3.0, comply_test_controller support is declared via the
+// `capabilities.compliance_testing` block — not as an entry in
+// supported_protocols. When called against an AdcpServer produced by
+// createAdcpServer, registerTestController MUST populate that block
+// with the scenarios it advertises.
+
+describe('registerTestController compliance_testing auto-emission', () => {
+  it('sets capabilities.compliance_testing.scenarios from a TestControllerStoreFactory', () => {
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      scenarios: ['force_media_buy_status', 'simulate_delivery'],
+      createStore: () => ({
+        forceMediaBuyStatus: async () => ({ success: true, previous_state: 'active', current_state: 'paused' }),
+      }),
+    });
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.ok(caps.compliance_testing, 'compliance_testing block must be emitted');
+    assert.deepStrictEqual(caps.compliance_testing.scenarios, ['force_media_buy_status', 'simulate_delivery']);
+  });
+
+  it('infers scenarios from a plain TestControllerStore via method presence', () => {
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      async forceCreativeStatus() {},
+      async simulateBudgetSpend() {},
+    });
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.ok(caps.compliance_testing);
+    assert.ok(caps.compliance_testing.scenarios.includes('force_creative_status'));
+    assert.ok(caps.compliance_testing.scenarios.includes('simulate_budget_spend'));
+  });
+
+  it('does NOT add compliance_testing to supported_protocols (it is a capability block, not a protocol)', () => {
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      scenarios: ['force_account_status'],
+      createStore: () => ({ forceAccountStatus: async () => ({}) }),
+    });
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.ok(!caps.supported_protocols.includes('compliance_testing'));
+  });
+
+  it('merges + dedups scenarios across multiple register calls', () => {
+    // A server that wires two controllers (e.g. one for media-buy tools and
+    // one for governance tools, sharing a session store) should advertise
+    // the union of both scenario sets, not just the first registration's.
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      scenarios: ['force_media_buy_status', 'simulate_delivery'],
+      createStore: () => ({ forceMediaBuyStatus: async () => ({}) }),
+    });
+    // MCP registerTool rejects a duplicate 'comply_test_controller' — real
+    // multi-register usage would compose stores or factories. Here we
+    // swallow the expected tool-duplicate error and assert the capability
+    // merge ran BEFORE that throw; the capability update happens ahead of
+    // mcp.registerTool.
+    try {
+      registerTestController(server, {
+        scenarios: ['force_account_status', 'simulate_delivery'],
+        createStore: () => ({ forceAccountStatus: async () => ({}) }),
+      });
+    } catch {
+      /* tool already registered — expected on the second call */
+    }
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.deepStrictEqual(
+      [...caps.compliance_testing.scenarios].sort(),
+      ['force_account_status', 'force_media_buy_status', 'simulate_delivery'].sort(),
+      'second register must contribute force_account_status without dropping the first set or duplicating simulate_delivery'
+    );
+  });
+});
+
 // ── TOOL_INPUT_SHAPE ───────────────────────────────────────
 
 describe('TOOL_INPUT_SHAPE', () => {

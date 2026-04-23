@@ -12,6 +12,26 @@ function makeStore(opts = {}) {
 }
 
 describe('createIdempotencyStore', () => {
+  describe('config validation', () => {
+    it('throws helpful error when called with no config', () => {
+      assert.throws(() => createIdempotencyStore(), /config\.backend is required|requires an IdempotencyStoreConfig/);
+    });
+
+    it('throws helpful error when backend is missing', () => {
+      assert.throws(() => createIdempotencyStore({}), /config\.backend is required/);
+    });
+
+    it('error message names memoryBackend and pgBackend as the two options', () => {
+      try {
+        createIdempotencyStore({});
+        assert.fail('should have thrown');
+      } catch (err) {
+        assert.match(err.message, /memoryBackend/);
+        assert.match(err.message, /pgBackend/);
+      }
+    });
+  });
+
   describe('ttl bounds validation', () => {
     it('throws below 1h', () => {
       assert.throws(() => makeStore({ ttlSeconds: 100 }), /ttlSeconds must be >= 3600/);

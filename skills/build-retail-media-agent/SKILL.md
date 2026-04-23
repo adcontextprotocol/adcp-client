@@ -247,7 +247,7 @@ const store: TestControllerStore = {
 registerTestController(server, store);
 ```
 
-Declare `compliance_testing` in `supported_protocols` in your `get_adcp_capabilities` response. Only implement the store methods for scenarios your agent supports — unimplemented methods are excluded from `list_scenarios` automatically.
+`registerTestController` auto-emits the `capabilities.compliance_testing.scenarios` block per AdCP 3.0 — no manual `supported_protocols` edit. Only implement the store methods for scenarios your agent supports; unimplemented methods are excluded from `list_scenarios` automatically. For typed domain state (catalog entries with inventory, audience assignments), see `examples/seller-test-controller.ts`.
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 

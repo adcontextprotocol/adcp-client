@@ -36,7 +36,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import { ADCP_STATE_STORE, wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
+import {
+  ADCP_CAPABILITIES,
+  ADCP_STATE_STORE,
+  wrapMcpServer,
+  type AdcpServer,
+  type AdcpServerInternal,
+} from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
@@ -1066,25 +1072,22 @@ function deepMergePlainObjects(target: unknown, source: unknown): unknown {
 }
 
 /**
- * Set `replayed: true` on the response envelope (MCP structuredContent)
- * for replays only. `protocol-envelope.json` permits the field to be
- * **"omitted when the request was executed fresh"** — emitting
- * `replayed: false` pollutes task payloads and violates strict task
- * response schemas that declare `additionalProperties: false`
- * (`create-property-list-response`, etc.). Absence implies fresh exec.
+ * Stamp `replayed` on the response envelope (MCP structuredContent) for
+ * every idempotency-gated mutating tool.
  *
- * Callers pass `false` during the fresh-path call so replay bookkeeping
- * can be reset cleanly; we honor that at the metadata layer by stripping
- * any prior `replayed` rather than re-stamping it.
+ * Per `protocol-envelope.json`, `replayed` MAY be omitted on fresh exec,
+ * but every 3.0 mutating-tool response schema declares the property
+ * explicitly with `additionalProperties: true`, so emitting `false` is
+ * spec-legal AND unambiguous for buyers. The compliance
+ * `idempotency.replay_same_payload` storyboard relies on an explicit
+ * `false` on the fresh call to assert idempotency is wired — omission
+ * fails the `field_value, allowed_values: [false]` assertion. Emit
+ * explicitly.
  */
 function injectReplayed(response: McpToolResponse, value: boolean): void {
   if (!response.structuredContent || typeof response.structuredContent !== 'object') return;
   const sc = response.structuredContent as Record<string, unknown>;
-  if (value) {
-    sc.replayed = true;
-  } else {
-    delete sc.replayed;
-  }
+  sc.replayed = value;
 }
 
 /**
@@ -2513,6 +2516,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   });
   Object.defineProperty(wrapped, ADCP_STATE_STORE, {
     value: stateStore,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+  // Expose the capabilitiesData object so post-registration helpers
+  // (registerTestController) can add spec-defined capability blocks
+  // — comply_test_controller is registered AFTER createAdcpServer,
+  // so the compliance_testing block can't be emitted eagerly.
+  Object.defineProperty(wrapped, ADCP_CAPABILITIES, {
+    value: capabilitiesData,
     enumerable: false,
     configurable: true,
     writable: false,

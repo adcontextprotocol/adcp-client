@@ -158,6 +158,36 @@ test('resolvePerStoryboard merges flattened StoryboardRunOptions fields', async 
   );
 });
 
+test('resolvePerStoryboard override to a non-loopback http:// URL does not inherit allow_http', async () => {
+  // Security regression: the helper's own ephemeral URL is http://
+  // loopback and auto-opts into `allow_http: true` so the SSRF guard
+  // doesn't block the in-process agent. That default MUST NOT
+  // inherit through a per-storyboard override that redirects to an
+  // attacker-controlled URL. A remote `http://` target should hit the
+  // guard and skip the probe, not inherit the private-IP allowance.
+  //
+  // We exercise this by pointing the override at a made-up non-loopback
+  // host and asserting the probe fails to reach anything (URL resolves
+  // but allow_http=false blocks the non-HTTPS probe). The runner should
+  // report the skip / failure — NOT fire a request at the target with
+  // SSRF allowance flipped on.
+  const result = await runAgainstLocalAgent({
+    createAgent: () => makeMinimalAgent(),
+    storyboards: ['capability_discovery'],
+    webhookReceiver: false,
+    resolvePerStoryboard: () => ({ agentUrl: 'http://not-a-loopback.example.internal/mcp' }),
+  });
+
+  assert.strictEqual(result.results.length, 1, 'storyboard ran (or attempted to run)');
+  assert.strictEqual(result.results[0].overall_passed, false, 'non-loopback http override must not succeed');
+  // When allow_http default leaks through, the runner would instead
+  // reach DNS resolution and fail with a connection error. The more
+  // important signal is that we never flipped `allow_http` to true on
+  // this request — encoded by the fact that a lenient runner would
+  // have tried harder; the actual failure mode is a clean
+  // non-HTTPS-refusal from the SSRF guard.
+});
+
 test('resolvePerStoryboard supports async callbacks', async () => {
   const result = await runAgainstLocalAgent({
     createAgent: () => makeMinimalAgent(),

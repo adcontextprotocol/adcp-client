@@ -6,6 +6,13 @@
  * so storyboards can reference stable product / creative IDs, and force a
  * creative to a target status so the approval flow can be exercised.
  *
+ * **Which pattern?** Pick `createComplyController` when each scenario maps
+ * cleanly to one repository method (seed_creative → `creativeRepo.upsert`).
+ * For typed domain state — `MediaBuyState` with packages / revision /
+ * history, seed writing into the same records production tools read — see
+ * `examples/seller-test-controller.ts`, which uses the flat
+ * `TestControllerStore` surface instead.
+ *
  * Run with:
  *
  *   npx tsx examples/comply-controller-seller.ts
@@ -27,9 +34,8 @@
  *     --params '{"creative_id":"cr-1","status":"rejected","rejection_reason":"Brand safety"}'
  */
 
-import { createTaskCapableServer, serve, TestControllerError } from '@adcp/client';
-import { createComplyController } from '@adcp/client/testing';
-import type { CreativeStatus } from '@adcp/client';
+import { createTaskCapableServer, serve, type ServeContext } from '@adcp/client';
+import { createComplyController, TestControllerError, type CreativeStatus } from '@adcp/client/testing';
 
 // ---------------------------------------------------------------------------
 // In-memory state. In a real seller this would be Postgres / Firestore /
@@ -129,8 +135,8 @@ const controller = createComplyController({
 // cache persists across connections.
 // ---------------------------------------------------------------------------
 
-function createAgentServer() {
-  const server = createTaskCapableServer({ name: 'example-comply-seller', version: '0.1.0' });
+function createAgentServer({ taskStore }: ServeContext) {
+  const server = createTaskCapableServer('example-comply-seller', '0.1.0', { taskStore });
   // Register all production tools here (get_products, create_media_buy, …).
   // Omitted for brevity — this example focuses on the controller surface.
   controller.register(server);

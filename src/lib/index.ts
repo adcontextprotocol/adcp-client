@@ -461,7 +461,14 @@ export type {
   PricingOption,
   PriceGuidance,
 } from './types/tools.generated';
-export type { DelegationAuthority, CatalogAction, CatalogItemStatus } from './types/core.generated';
+export type {
+  AccountStatus,
+  CreativeStatus,
+  DelegationAuthority,
+  CatalogAction,
+  CatalogItemStatus,
+  MediaBuyStatus,
+} from './types/core.generated';
 
 // ====== ERROR CODES ======
 // Standard error code vocabulary for programmatic error handling

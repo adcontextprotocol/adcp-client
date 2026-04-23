@@ -209,11 +209,10 @@ export function bridgeFromTestControllerStore<TAccount = unknown>(
 /**
  * Options for {@link bridgeFromSessionStore}.
  *
- * Passed as an options object (rather than positional args) so the
- * session-loader and seed-selector names stay disambiguated from
- * `createDefaultTestControllerStore`'s same-named `loadSession` — which
- * receives `{ context }`, not the raw request — and so future additions
- * (logger, sandbox override, cache hooks) land non-breakingly.
+ * Passed as an options object (rather than positional args) so future
+ * additions (logger, sandbox override, cache hooks) land non-breakingly.
+ * `loadSession` here receives the raw `get_products` request — distinct
+ * from any session-loader a seller writes elsewhere that takes `{ context }`.
  */
 export interface BridgeFromSessionStoreOptions<TSession> {
   /**
@@ -257,8 +256,8 @@ export interface BridgeFromSessionStoreOptions<TSession> {
 /**
  * Session-scoped variant of {@link bridgeFromTestControllerStore}.
  *
- * The default-store bridge closes over a single `Map` at construction time
- * — fine for process-wide `DefaultSessionShape.seededProducts`, but doesn't
+ * {@link bridgeFromTestControllerStore} closes over a single `Map` at
+ * construction time — fine for a process-wide seed store, but doesn't
  * compose with sellers whose seed state is per-tenant / per-brand / per-
  * `account_id` and loaded from Postgres or Redis on every request. Those
  * sellers end up rewriting the same "load session, pull the seed Map,
