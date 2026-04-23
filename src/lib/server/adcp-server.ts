@@ -199,6 +199,19 @@ export const ADCP_SDK_SERVER: unique symbol = Symbol.for('@adcp/client.sdkServer
  */
 export const ADCP_STATE_STORE: unique symbol = Symbol.for('@adcp/client.stateStore');
 
+/**
+ * Symbol-keyed accessor for the capabilities object `createAdcpServer`
+ * assembles and the auto-wired `get_adcp_capabilities` handler reads from.
+ * Mutating this object mutates what subsequent capability-discovery calls
+ * return — `registerTestController` uses this to add a
+ * `compliance_testing` capability block after registration so the server
+ * advertises its controller scenarios even though `registerTestController`
+ * runs after `createAdcpServer`.
+ *
+ * @internal
+ */
+export const ADCP_CAPABILITIES: unique symbol = Symbol.for('@adcp/client.capabilities');
+
 /** @internal */
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;

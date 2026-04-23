@@ -96,7 +96,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AdcpServer } from './adcp-server';
-import { getSdkServer } from './adcp-server';
+import { ADCP_CAPABILITIES, getSdkServer } from './adcp-server';
+import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
 import type {
   ListScenariosSuccess,
   StateTransitionSuccess,
@@ -856,6 +857,24 @@ export function registerTestController(
   // this server instance. Callers can supply their own cache to scope by
   // session or tenant.
   const seedCache = options?.seedCache ?? createSeedFixtureCache();
+
+  // Per AdCP 3.0, comply_test_controller support is declared via the
+  // top-level `compliance_testing` capability block — NOT as an entry in
+  // `supported_protocols`. When we've been given an AdcpServer produced by
+  // createAdcpServer, auto-populate that block. The scenarios list comes
+  // from the factory's static `scenarios` (factory shape) or is inferred
+  // from the plain store's method presence.
+  const capsBag = (server as unknown as Record<PropertyKey, unknown>)[ADCP_CAPABILITIES] as
+    | GetAdCPCapabilitiesResponse
+    | undefined;
+  if (capsBag && !capsBag.compliance_testing) {
+    const scenarios = isFactory(storeOrFactory)
+      ? [...storeOrFactory.scenarios]
+      : scenariosFromStore(storeOrFactory);
+    if (scenarios.length > 0) {
+      capsBag.compliance_testing = { scenarios } as GetAdCPCapabilitiesResponse['compliance_testing'];
+    }
+  }
   mcp.registerTool(
     'comply_test_controller',
     {

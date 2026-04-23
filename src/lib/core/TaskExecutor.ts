@@ -632,10 +632,22 @@ export class TaskExecutor {
         const failedError = hasStructuredError
           ? this.extractOperationError(failedData)
           : response.error || response.message || `Task ${status}`;
+        // Preserve failedData whenever the server returned a structured
+        // payload — not just when extractAdcpErrorInfo recognizes an
+        // `adcp_error`/`errors` envelope. Tool-level error shapes like
+        // `comply_test_controller`'s `{ success: false, error: 'UNKNOWN_SCENARIO' }`
+        // don't match that extractor but still carry the information
+        // storyboard validators read (`success`, `error_code`, etc.).
+        // Only drop `data` when there's literally no structured payload —
+        // i.e. falsy or an empty object.
+        const hasStructuredPayload =
+          failedData != null &&
+          typeof failedData === 'object' &&
+          (Array.isArray(failedData) || Object.keys(failedData).length > 0);
         return {
           success: false as const,
           status: 'failed' as const,
-          data: hasStructuredError ? failedData : undefined,
+          data: hasStructuredError || hasStructuredPayload ? failedData : undefined,
           error: typeof failedError === 'string' ? failedError : `Task ${status}`,
           adcpError: adcpErrorInfo,
           errorInstance: this.buildErrorInstance(taskId, adcpErrorInfo),

@@ -312,6 +312,19 @@ const IN_FLIGHT_HASH = '__adcp_in_flight__';
  * effective replay window.
  */
 export function createIdempotencyStore(config: IdempotencyStoreConfig): IdempotencyStore {
+  if (!config || typeof config !== 'object') {
+    throw new TypeError(
+      'createIdempotencyStore requires an IdempotencyStoreConfig. ' +
+        'For tests / single-process: `createIdempotencyStore({ backend: memoryBackend() })`. ' +
+        'For production: `createIdempotencyStore({ backend: pgBackend(pool) })`.'
+    );
+  }
+  if (!config.backend) {
+    throw new TypeError(
+      'createIdempotencyStore: config.backend is required. ' +
+        'Pass `memoryBackend()` for tests / single-process deployments or `pgBackend(pool)` for production.'
+    );
+  }
   const ttlSeconds = validateTtl(config.ttlSeconds ?? DEFAULT_TTL);
   const clockSkewSeconds = config.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW;
   const backend = config.backend;

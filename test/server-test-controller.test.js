@@ -752,6 +752,66 @@ describe('registerTestController context echo', () => {
   });
 });
 
+// ── registerTestController capability block auto-emission ──
+//
+// Per AdCP 3.0, comply_test_controller support is declared via the
+// `capabilities.compliance_testing` block — not as an entry in
+// supported_protocols. When called against an AdcpServer produced by
+// createAdcpServer, registerTestController MUST populate that block
+// with the scenarios it advertises.
+
+describe('registerTestController compliance_testing auto-emission', () => {
+  it('sets capabilities.compliance_testing.scenarios from a TestControllerStoreFactory', () => {
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      scenarios: ['force_media_buy_status', 'simulate_delivery'],
+      createStore: () => ({
+        forceMediaBuyStatus: async () => ({ success: true, previous_state: 'active', current_state: 'paused' }),
+      }),
+    });
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.ok(caps.compliance_testing, 'compliance_testing block must be emitted');
+    assert.deepStrictEqual(caps.compliance_testing.scenarios, ['force_media_buy_status', 'simulate_delivery']);
+  });
+
+  it('infers scenarios from a plain TestControllerStore via method presence', () => {
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      async forceCreativeStatus() {},
+      async simulateBudgetSpend() {},
+    });
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.ok(caps.compliance_testing);
+    assert.ok(caps.compliance_testing.scenarios.includes('force_creative_status'));
+    assert.ok(caps.compliance_testing.scenarios.includes('simulate_budget_spend'));
+  });
+
+  it('does NOT add compliance_testing to supported_protocols (it is a capability block, not a protocol)', () => {
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      scenarios: ['force_account_status'],
+      createStore: () => ({ forceAccountStatus: async () => ({}) }),
+    });
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.ok(!caps.supported_protocols.includes('compliance_testing'));
+  });
+});
+
 // ── TOOL_INPUT_SHAPE ───────────────────────────────────────
 
 describe('TOOL_INPUT_SHAPE', () => {

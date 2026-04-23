@@ -36,7 +36,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import { ADCP_STATE_STORE, wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
+import { ADCP_CAPABILITIES, ADCP_STATE_STORE, wrapMcpServer, type AdcpServer, type AdcpServerInternal } from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
@@ -2513,6 +2513,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   });
   Object.defineProperty(wrapped, ADCP_STATE_STORE, {
     value: stateStore,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+  // Expose the capabilitiesData object so post-registration helpers
+  // (registerTestController) can add spec-defined capability blocks
+  // — comply_test_controller is registered AFTER createAdcpServer,
+  // so the compliance_testing block can't be emitted eagerly.
+  Object.defineProperty(wrapped, ADCP_CAPABILITIES, {
+    value: capabilitiesData,
     enumerable: false,
     configurable: true,
     writable: false,

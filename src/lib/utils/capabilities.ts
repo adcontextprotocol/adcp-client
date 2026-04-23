@@ -294,12 +294,16 @@ function detectProtocolsFromTools(toolNames: Set<string>): AdcpProtocol[] {
 }
 
 /**
- * Augment declared capabilities with compliance_testing if the tool is present.
+ * Augment declared capabilities with compliance_testing if the tool is present
+ * but no `compliance_testing` capability block / protocol entry was advertised.
  *
- * comply_test_controller is a testing-only tool that agents register but often
- * forget to declare in get_adcp_capabilities. Auto-adding it avoids a common
- * setup mistake without risk of false positives — no agent would register
- * comply_test_controller by accident.
+ * Per AdCP 3.0, agents declare comply_test_controller support via the
+ * top-level `capabilities.compliance_testing` block. `parseCapabilitiesResponse`
+ * already promotes that block into the internal `protocols` list, so if we
+ * reach this function with the tool present but the protocol missing, the
+ * agent forgot the declaration. We auto-bridge (the SDK's internal type can
+ * treat the agent as compliance-capable) and warn the agent once so they can
+ * ship the proper block.
  *
  * Other protocols (media_buy, signals, etc.) are NOT augmented because a stub
  * or partial tool registration could produce false positives.
@@ -311,7 +315,9 @@ export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, too
     return capabilities;
   }
   console.error(
-    `[AdCP] Agent has comply_test_controller but does not declare compliance_testing. Adding automatically.`
+    `[AdCP] Agent exposes comply_test_controller but omits the \`compliance_testing\` capability block ` +
+      `from get_adcp_capabilities. Per AdCP 3.0, declare \`capabilities.compliance_testing.scenarios\` ` +
+      `— not \`supported_protocols\`. The SDK is treating the agent as compliance-capable for this request.`
   );
   return {
     ...capabilities,
@@ -354,7 +360,17 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   const majorVersions = (response.adcp?.major_versions ?? [2]) as AdcpMajorVersion[];
   const highestVersion = Math.max(...majorVersions) as AdcpMajorVersion;
 
-  const protocols = (response.supported_protocols ?? []) as AdcpProtocol[];
+  // Per AdCP 3.0, `compliance_testing` is declared as a top-level
+  // capability block, not as a value in `supported_protocols`. Normalize
+  // legacy callers (who grep for `protocols.includes('compliance_testing')`)
+  // by promoting the block into the protocols list at parse time — the
+  // internal `AdcpCapabilities.protocols` shape is the SDK's own normalization
+  // and doesn't need to match the wire.
+  const wireProtocols = (response.supported_protocols ?? []) as AdcpProtocol[];
+  const protocols =
+    response.compliance_testing && !wireProtocols.includes('compliance_testing' as AdcpProtocol)
+      ? ([...wireProtocols, 'compliance_testing'] as AdcpProtocol[])
+      : wireProtocols;
 
   const features: MediaBuyFeatures = {
     inlineCreativeManagement: response.media_buy?.features?.inline_creative_management ?? false,
