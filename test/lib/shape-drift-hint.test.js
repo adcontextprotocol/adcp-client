@@ -239,7 +239,7 @@ test('list_creatives with bare array at the root → hint suggests { creatives: 
     { creative_id: 'c1', format_id: { agent_url: 'https://x', id: 'f1' } },
   ]);
   assert.ok(hint, 'expected a hint for bare-array list_creatives response');
-  assert.match(hint, /bare array at the root/);
+  assert.match(hint, /bare array at the top level/);
   assert.match(hint, /\{ creatives: \[\.\.\.\] \}/);
   assert.match(hint, /listCreativesResponse/);
   assert.match(hint, /@adcp\/client\/server/);
@@ -295,7 +295,21 @@ test('empty bare array for a list tool → still a hint (shape is still wrong)',
   // handler forgot the wrapper. Hint fires regardless of length.
   const hint = detectShapeDriftHint('list_creatives', []);
   assert.ok(hint);
-  assert.match(hint, /bare array at the root/);
+  assert.match(hint, /bare array at the top level/);
+});
+
+test('get_media_buys with bare array → hint suggests { media_buys: [...] }', () => {
+  const hint = detectShapeDriftHint('get_media_buys', [{ media_buy_id: 'mb1', status: 'active' }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ media_buys: \[\.\.\.\] \}/);
+  assert.match(hint, /getMediaBuysResponse/);
+});
+
+test('get_signals with bare array → hint suggests { signals: [...] }', () => {
+  const hint = detectShapeDriftHint('get_signals', [{ signal_id: { agent_url: 'x', id: 's1' } }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ signals: \[\.\.\.\] \}/);
+  assert.match(hint, /getSignalsResponse/);
 });
 
 test('null / primitive payloads → no hint (detector exits cleanly)', () => {

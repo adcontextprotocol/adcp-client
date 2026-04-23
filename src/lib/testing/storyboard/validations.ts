@@ -285,9 +285,7 @@ function validateResponseSchema(
   // enforces `format` keywords and `additionalProperties: false` that Zod's
   // `passthrough()` omits — a response can pass Zod and fail AJV. The step's
   // overall pass/fail stays Zod-driven to preserve backwards compatibility.
-  // Cast the array case to Record for the strict validator — its underlying
-  // AJV call accepts any JSON value but the type annotation expects an object.
-  const strict = computeStrictVerdict(taskName, dataWithoutMessage as Record<string, unknown>);
+  const strict = computeStrictVerdict(taskName, dataWithoutMessage);
 
   // Shape-drift hint runs regardless of strict/lenient outcome — a
   // platform-native `build_creative` response typically fails Zod, but the
@@ -352,7 +350,7 @@ function validateResponseSchema(
  * the SDK — notably the brand-rights and governance schemas that live
  * outside the `bundled/` tree the loader walks today).
  */
-function computeStrictVerdict(taskName: string, payload: Record<string, unknown>): StrictValidationVerdict | undefined {
+function computeStrictVerdict(taskName: string, payload: unknown): StrictValidationVerdict | undefined {
   const outcome = validateResponse(taskName, payload);
   // `variant: 'skipped'` means no AJV validator compiled for this task (no
   // strictness signal to emit); treat the same as "no AJV schema available".
@@ -412,18 +410,28 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
 
 /**
  * List-shaped tools where handlers commonly return the bare inner array
- * (`[{...}]`) at the root instead of wrapping it in the required object
- * envelope. Each entry names the wrapper key and the response helper that
- * builds the correct shape.
+ * (`[{...}]`) at the top level instead of wrapping it in the required
+ * object envelope. Each entry names the wrapper key and the response
+ * helper that builds the correct shape.
  *
- * `get_products` uses `productsResponse` (not `getProductsResponse`) —
- * matches the helper name in `src/lib/server/responses.ts`.
+ * Helper names aren't uniformly prefixed — `get_products` uses
+ * `productsResponse` (no `get` prefix) while `get_media_buys` uses
+ * `getMediaBuysResponse`. Names match the exports in
+ * `src/lib/server/responses.ts` verbatim so a developer can grep
+ * straight from the hint.
+ *
+ * Tools whose response helpers don't exist yet
+ * (`list_property_lists`, `list_collection_lists`, `list_content_standards`)
+ * are tracked separately — extending the detector to them depends on those
+ * helpers landing first so the hint can name a real SDK symbol.
  */
 const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }> = {
   list_creatives: { wrapperKey: 'creatives', helper: 'listCreativesResponse' },
   list_creative_formats: { wrapperKey: 'formats', helper: 'listCreativeFormatsResponse' },
   list_accounts: { wrapperKey: 'accounts', helper: 'listAccountsResponse' },
   get_products: { wrapperKey: 'products', helper: 'productsResponse' },
+  get_media_buys: { wrapperKey: 'media_buys', helper: 'getMediaBuysResponse' },
+  get_signals: { wrapperKey: 'signals', helper: 'getSignalsResponse' },
 };
 
 /**
@@ -443,19 +451,24 @@ const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }>
  *     `preview_html`) at the top level without the `previews[].renders[]`
  *     nesting and `response_type` discriminator
  *   - List tools (`list_creatives`, `list_creative_formats`, `list_accounts`,
- *     `get_products`) returning a bare array at the root instead of the
- *     `{ <key>: [...] }` envelope
+ *     `get_products`, `get_media_buys`, `get_signals`) returning a bare
+ *     array at the top level instead of the `{ <key>: [...] }` envelope
  *
- * The detector is a switch on taskName — narrow by design. Add a branch
- * here when a new top-level-key drift pattern shows up in the field.
- *
- * Takes `unknown` rather than `Record<string, unknown>` so bare-array
- * responses (a common list-shape drift) can be recognized at the root.
- * Object-path branches guard with `typeof payload === 'object'`.
+ * The detector is a switch on taskName — narrow by design. Add an entry
+ * to `LIST_WRAPPER_TOOLS` for a new list tool, or a new `if (taskName === ...)`
+ * branch for a new object-shape drift pattern. A registry refactor that
+ * unifies the two halves into one data table is tracked as follow-up once
+ * the branch count justifies it.
  *
  * Exported for direct unit testing; consumers should rely on the hint
  * reaching `ValidationResult.warning` through the normal run path rather
  * than calling this directly.
+ *
+ * @param taskName — tool name (snake_case) the storyboard dispatched under
+ * @param payload — raw response payload. `unknown` rather than
+ *   `Record<string, unknown>` so bare-array payloads are recognizable at
+ *   the top level. Object-path branches guard internally with
+ *   `typeof payload === 'object' && payload !== null`.
  */
 export function detectShapeDriftHint(taskName: string, payload: unknown): string | undefined {
   // Bare array at the root — common list-shape drift. Fire a pointed hint
@@ -466,7 +479,7 @@ export function detectShapeDriftHint(taskName: string, payload: unknown): string
     const listMeta = LIST_WRAPPER_TOOLS[taskName];
     if (listMeta) {
       return (
-        `${taskName} returned a bare array at the root. ` +
+        `${taskName} returned a bare array at the top level. ` +
         `Required: { ${listMeta.wrapperKey}: [...] }. ` +
         `Use ${listMeta.helper}() from @adcp/client/server.`
       );
