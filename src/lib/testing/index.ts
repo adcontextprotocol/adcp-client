@@ -144,15 +144,28 @@ export type {
   SimulateBudgetSpendParams,
   SimulateDeliveryParams,
 } from './comply-controller';
-// Re-export TestControllerError, cache helpers, and scenario constants so
-// everything needed to wire the controller is reachable from /testing.
+// Re-export the full `comply_test_controller` integration surface so sellers
+// wiring their own `TestControllerStore` against typed domain state
+// (MediaBuyState, CreativeState, PlanState, …) can import everything they need
+// from a single path. See `examples/seller-test-controller.ts` for the
+// end-to-end pattern.
 export {
   TestControllerError,
   CONTROLLER_SCENARIOS,
   SEED_SCENARIOS,
+  SESSION_ENTRY_CAP,
   createSeedFixtureCache,
+  enforceMapCap,
+  registerTestController,
 } from '../server/test-controller';
-export type { ControllerScenario, SeedFixtureCache, SeedScenario } from '../server/test-controller';
+export type {
+  ControllerScenario,
+  SeedFixtureCache,
+  SeedScenario,
+  TestControllerStore,
+  TestControllerStoreFactory,
+  TestControllerStoreOrFactory,
+} from '../server/test-controller';
 
 // Seed fixture merge helpers (permissive defaults + storyboard overlay).
 export {
@@ -178,21 +191,6 @@ export type {
   TestControllerBridgeContext,
   BridgeFromSessionStoreOptions,
 } from '../server/test-controller-bridge';
-
-// Default TestControllerStore factory — ships wired defaults for every
-// force_* / simulate_* / seed_* scenario so sellers can bring a session and
-// skip the 300-line boilerplate.
-export { createDefaultTestControllerStore, createDefaultSession } from './default-controller-store';
-export type {
-  BudgetSpendRecord,
-  CreateDefaultTestControllerStoreOptions,
-  DefaultLoadSessionInput,
-  DefaultSessionShape,
-  DefaultTestControllerStoreResult,
-  DeliverySimulationRecord,
-  SeedFixture,
-  SessionTerminalStatus,
-} from './default-controller-store';
 
 // One-call harness for server-side agents — composes serve() +
 // seedComplianceFixtures + createWebhookReceiver + runStoryboard.
