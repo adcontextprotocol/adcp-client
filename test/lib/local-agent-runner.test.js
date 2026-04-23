@@ -11,6 +11,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const http = require('node:http');
 const { runAgainstLocalAgent } = require('../../dist/lib/testing/index.js');
 const { createAdcpServer } = require('../../dist/lib/server/index.js');
 
@@ -70,4 +71,103 @@ test('throws on unknown storyboard ids', async () => {
     }),
     /unknown storyboard or bundle id/i
   );
+});
+
+test('resolvePerStoryboard receives each storyboard and the default URL', async () => {
+  const observed = [];
+  const result = await runAgainstLocalAgent({
+    createAgent: () => makeMinimalAgent(),
+    storyboards: ['capability_discovery'],
+    webhookReceiver: false,
+    resolvePerStoryboard: (sb, defaultAgentUrl) => {
+      observed.push({ id: sb.id, defaultAgentUrl });
+      return undefined;
+    },
+  });
+
+  assert.strictEqual(observed.length, 1, 'callback fires once per storyboard');
+  assert.strictEqual(observed[0].id, 'capability_discovery');
+  assert.ok(
+    observed[0].defaultAgentUrl.endsWith('/mcp'),
+    `expected default agent URL on /mcp, got ${observed[0].defaultAgentUrl}`
+  );
+  assert.ok(result.overall_passed, 'returning undefined keeps default behavior');
+});
+
+test('resolvePerStoryboard agentUrl override routes storyboard to a different URL', async () => {
+  // Positive signal: stand up a second HTTP listener that counts hits.
+  // If the override landed, our sink server sees traffic. If the helper
+  // ignored the override, the sink sees zero hits (traffic went to the
+  // helper's real MCP mount) and the storyboard passes against the real
+  // agent — either outcome would invalidate the override claim.
+  let sinkHits = 0;
+  const sink = http.createServer((req, res) => {
+    sinkHits += 1;
+    // Drain body so Node can close cleanly, then respond with a non-MCP
+    // 404 so the storyboard fails (proves traffic reached the sink rather
+    // than bypassing it silently).
+    req
+      .on('data', () => {})
+      .on('end', () => {
+        res.statusCode = 404;
+        res.end('sink-not-an-agent');
+      });
+  });
+  await new Promise(resolve => sink.listen(0, '127.0.0.1', resolve));
+  const sinkPort = sink.address().port;
+  const sinkUrl = `http://127.0.0.1:${sinkPort}/mcp`;
+
+  try {
+    const result = await runAgainstLocalAgent({
+      createAgent: () => makeMinimalAgent(),
+      storyboards: ['capability_discovery'],
+      webhookReceiver: false,
+      resolvePerStoryboard: () => ({ agentUrl: sinkUrl }),
+    });
+
+    assert.ok(sinkHits > 0, 'override target received at least one request');
+    assert.strictEqual(result.results.length, 1);
+    assert.strictEqual(
+      result.results[0].overall_passed,
+      false,
+      'sink returns 404; storyboard must fail once override lands there'
+    );
+  } finally {
+    sink.closeAllConnections?.();
+    await new Promise(resolve => sink.close(resolve));
+  }
+});
+
+test('resolvePerStoryboard merges flattened StoryboardRunOptions fields', async () => {
+  const result = await runAgainstLocalAgent({
+    createAgent: () => makeMinimalAgent(),
+    storyboards: ['capability_discovery'],
+    webhookReceiver: false,
+    // Supply `contracts` via the per-storyboard override. The storyboard
+    // doesn't declare any `requires_contract:` steps, so this is a smoke
+    // test that flattened-shape fields are accepted and don't break the
+    // run. Verifying the merge against a behavior-sensitive field is
+    // covered separately by runStoryboard's own tests.
+    resolvePerStoryboard: () => ({ contracts: ['webhook_receiver_runner'] }),
+  });
+
+  assert.strictEqual(result.results.length, 1);
+  assert.ok(
+    result.overall_passed,
+    `override should not break the run: ${JSON.stringify(result.results[0].phases, null, 2)}`
+  );
+});
+
+test('resolvePerStoryboard supports async callbacks', async () => {
+  const result = await runAgainstLocalAgent({
+    createAgent: () => makeMinimalAgent(),
+    storyboards: ['capability_discovery'],
+    webhookReceiver: false,
+    resolvePerStoryboard: async sb => {
+      await new Promise(resolve => setImmediate(resolve));
+      return sb.id === 'capability_discovery' ? undefined : { agentUrl: 'http://unused' };
+    },
+  });
+
+  assert.ok(result.overall_passed, 'awaited callback returning undefined runs against the helper URL');
 });

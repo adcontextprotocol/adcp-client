@@ -19,7 +19,7 @@ import {
   type RunnerVariables,
 } from './context';
 import { runValidations, type ValidationContext } from './validations';
-import { buildRequest, hasRequestBuilder } from './request-builder';
+import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
 import {
@@ -70,6 +70,8 @@ import type {
   StoryboardPhaseResult,
   StoryboardStepResult,
   StoryboardStepPreview,
+  StrictValidationSummary,
+  SchemaValidationError,
   ValidationResult,
 } from './types';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
@@ -818,6 +820,7 @@ async function executeStoryboardPass(
   // order matches execution order.
   if (seedingPhaseResult) phaseResults.unshift(seedingPhaseResult);
   const schemasUsed = collectSchemasUsed(phaseResults);
+  const strictSummary = summarizeStrictValidation(phaseResults);
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
@@ -837,6 +840,7 @@ async function executeStoryboardPass(
     tested_at: new Date().toISOString(),
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
+    strict_validation_summary: strictSummary,
   };
 
   // Close protocol connections when the runner created its own client. The
@@ -961,6 +965,99 @@ function collectSchemasUsed(phases: StoryboardPhaseResult[]): Array<{ schema_id:
     }
   }
   return out;
+}
+
+/**
+ * Walk every response_schema validation and aggregate the strict/lenient
+ * delta. Always returns a summary; `observable: false` signals "run had
+ * no strict-eligible checks" (distinct from strict-clean with zero
+ * findings). See issue #820 follow-up.
+ *
+ * `checked` counts validations with a `strict` verdict attached.
+ * `passed` / `failed` partition `checked` by `strict.valid`.
+ * `strict_only_failures` = #(lenient-pass ∧ strict-fail) — the agent's
+ * production-readiness gap.
+ * `lenient_also_failed` = #(lenient-fail ∧ strict-fail) — step already
+ * broken, strict-rejection isn't new signal.
+ *
+ * Exported so callers post-processing a `StoryboardResult` (dashboards,
+ * CI formatters) can compute the same summary over a subset of phases
+ * without re-running validation.
+ */
+/**
+ * Flatten every `strict_only_failure` (lenient-pass ∧ strict-fail) into a
+ * dashboard-friendly row list. Each row carries the step/phase context
+ * needed for triage without re-walking the nested result tree:
+ *
+ *   { phase_id, step_id, task, variant, issues }
+ *
+ * Exported because the ValidationResult tree is four levels deep
+ * (`phases[].steps[].validations[].strict.issues[]`) and a consumer
+ * seeing `strict_only_failures: 7` in the summary needs a direct path
+ * to the seven offending responses. This is that path.
+ *
+ * Returns `[]` on runs with no strict-only failures OR no AJV coverage
+ * (both cases produce zero rows). Inspect `strict_validation_summary`
+ * for the total counts.
+ */
+export function listStrictOnlyFailures(
+  phases: StoryboardPhaseResult[]
+): Array<{ phase_id: string; step_id: string; task: string; variant: string; issues: SchemaValidationError[] }> {
+  const rows: Array<{
+    phase_id: string;
+    step_id: string;
+    task: string;
+    variant: string;
+    issues: SchemaValidationError[];
+  }> = [];
+  for (const phase of phases) {
+    for (const step of phase.steps) {
+      for (const v of step.validations) {
+        if (v.check !== 'response_schema') continue;
+        if (v.strict === undefined) continue;
+        if (v.strict.valid) continue;
+        if (!v.passed) continue; // already counted by lenient path
+        rows.push({
+          phase_id: phase.phase_id,
+          step_id: step.step_id,
+          task: step.task,
+          variant: v.strict.variant,
+          issues: v.strict.issues ?? [],
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): StrictValidationSummary {
+  let checked = 0;
+  let passed = 0;
+  let strictOnlyFailures = 0;
+  for (const phase of phases) {
+    for (const step of phase.steps) {
+      for (const v of step.validations) {
+        if (v.check !== 'response_schema' || v.strict === undefined) continue;
+        checked++;
+        if (v.strict.valid) {
+          passed++;
+        } else if (v.passed) {
+          // Lenient Zod accepted this response; strict AJV rejected it.
+          // That's the agent's strictness gap — the signal #820 wants.
+          strictOnlyFailures++;
+        }
+      }
+    }
+  }
+  const failed = checked - passed;
+  return {
+    observable: checked > 0,
+    checked,
+    passed,
+    failed,
+    strict_only_failures: strictOnlyFailures,
+    lenient_also_failed: failed - strictOnlyFailures,
+  };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1142,51 +1239,19 @@ async function executeStep(
     };
   }
 
-  // Build request — priority:
+  // Build request — priority (issue #820, fixture-authoritative):
   // 1. User-provided --request override
-  // 2. For expect_error steps: use sample_request directly (preserves intentionally invalid input)
-  // 3. Request builder (builds from context + options, like hand-written scenarios)
-  // 4. sample_request from YAML with context injection (fallback)
+  // 2. For expect_error steps: sample_request directly (preserves intentionally invalid input)
+  // 3. enrichRequest — fixture is the base, enricher fills gaps (fixture wins conflicts)
+  // 4. sample_request with context injection when no enricher is registered
+  // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
   let request: Record<string, unknown>;
   if (options.request) {
     request = { ...options.request };
   } else if (step.expect_error && step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
-  } else if (hasRequestBuilder(effectiveStep.task)) {
-    request = buildRequest(effectiveStep, context, options);
-    // Merge pass-through envelope fields from sample_request — builders
-    // don't include these, but storyboards define them for compliance
-    // testing. `context` and `ext` are opaque pass-through. `idempotency_key`
-    // must be forwarded so compliance storyboards can test replay semantics:
-    // the same `$generate:uuid_v4#<alias>` across two steps resolves to the
-    // same UUID, and the server sees both calls with that UUID (no auto-
-    // generated UUID overriding it at the client layer).
-    if (step.sample_request) {
-      if (step.sample_request.context !== undefined && request.context === undefined) {
-        request.context = injectContext({ context: step.sample_request.context }, context, runState.runnerVars).context;
-      }
-      if (step.sample_request.ext !== undefined && request.ext === undefined) {
-        request.ext = step.sample_request.ext;
-      }
-      if (
-        step.sample_request.push_notification_config !== undefined &&
-        request.push_notification_config === undefined
-      ) {
-        request.push_notification_config = injectContext(
-          { push_notification_config: step.sample_request.push_notification_config },
-          context,
-          runState.runnerVars
-        ).push_notification_config;
-      }
-      if (step.sample_request.idempotency_key !== undefined && request.idempotency_key === undefined) {
-        const resolved = injectContext(
-          { idempotency_key: step.sample_request.idempotency_key },
-          context,
-          runState.runnerVars
-        ).idempotency_key;
-        if (typeof resolved === 'string') request.idempotency_key = resolved;
-      }
-    }
+  } else if (hasRequestEnricher(effectiveStep.task)) {
+    request = enrichRequest(effectiveStep, context, options, runState.runnerVars);
   } else if (step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else {

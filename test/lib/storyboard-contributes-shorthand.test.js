@@ -41,7 +41,7 @@ describe('storyboard loader: branch_set + contributes shorthand', () => {
     steps:
       - id: create_buy_past_start_reject
         title: Reject
-        task: create_media_buy
+        task: get_media_buys
         contributes: true`
     );
     const parsed = parseStoryboard(yamlContent);
@@ -61,7 +61,7 @@ describe('storyboard loader: branch_set + contributes shorthand', () => {
     steps:
       - id: s
         title: S
-        task: create_media_buy
+        task: get_media_buys
         contributes: false`
     );
     const parsed = parseStoryboard(yamlContent);
@@ -81,7 +81,7 @@ describe('storyboard loader: branch_set + contributes shorthand', () => {
     steps:
       - id: s
         title: S
-        task: create_media_buy
+        task: get_media_buys
         contributes_to: f`
     );
     const parsed = parseStoryboard(yamlContent);
@@ -99,7 +99,7 @@ describe('storyboard loader: branch_set + contributes shorthand', () => {
     steps:
       - id: s
         title: S
-        task: create_media_buy
+        task: get_media_buys
         contributes: true
         contributes_to: f`
     );
@@ -114,7 +114,7 @@ describe('storyboard loader: branch_set + contributes shorthand', () => {
     steps:
       - id: s
         title: S
-        task: create_media_buy
+        task: get_media_buys
         contributes: true`
     );
     assert.throws(() => parseStoryboard(yamlContent), /only legal inside a phase that declares branch_set/);
@@ -131,7 +131,7 @@ describe('storyboard loader: branch_set + contributes shorthand', () => {
     steps:
       - id: s
         title: S
-        task: create_media_buy
+        task: get_media_buys
         contributes_to: other_flag`
     );
     assert.throws(() => parseStoryboard(yamlContent), /must equal enclosing phase's branch_set\.id/);

@@ -132,8 +132,22 @@ function buildFileIndex(root: string): Map<string, string> {
     }
   }
 
-  // Async variants aren't bundled upstream — they live in the flat per-domain
-  // directory with $refs to core/context.json and core/ext.json.
+  // Async variants AND domain schemas that ship flat (not pre-bundled) both
+  // live in the per-domain directories. Walk each for sync request/response
+  // files and async variant files. Skip `bundled/` (already indexed above)
+  // and `core/` (pure $ref targets, no tools).
+  //
+  // Flat-tree domains include `governance/`, `brand/`, `account/`,
+  // `content-standards/`, `property/`, `collection/` — their schemas are
+  // NOT pre-resolved into `bundled/`, so a bundled-only walk would miss
+  // every `check_governance` / `acquire_rights` / `creative_approval` /
+  // `sync_governance` / `*_property_list` request-response pair. That gap
+  // (flagged by the ad-tech-protocol reviewer on PR #831) would leave
+  // protocol-wide-requirement-bearing tasks (idempotency_key pattern,
+  // `format: uri` on `caller`) invisible to the strict-validation signal.
+  // Register flat-tree sync pairs only when `bundled/` didn't already
+  // index them, so pre-resolved schemas (with $refs already inlined) win
+  // for any domain that ships both.
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (entry.name === 'bundled' || entry.name === 'core') continue;
@@ -149,6 +163,12 @@ function buildFileIndex(root: string): Map<string, string> {
       } else if (base.endsWith('-async-response-input-required')) {
         const tool = base.slice(0, -'-async-response-input-required'.length).replace(/-/g, '_');
         record(tool, 'input-required', file);
+      } else if (base.endsWith('-request')) {
+        const tool = base.slice(0, -'-request'.length).replace(/-/g, '_');
+        if (!index.has(`${tool}::request`)) record(tool, 'request', file);
+      } else if (base.endsWith('-response')) {
+        const tool = base.slice(0, -'-response'.length).replace(/-/g, '_');
+        if (!index.has(`${tool}::sync`)) record(tool, 'sync', file);
       }
     }
   }
@@ -178,16 +198,22 @@ function ensureInit(): LoaderState {
 }
 
 /**
- * Lazily load `core/` schemas on first compile of an async response variant.
- * Deferring keeps cold-start cheap for the common case (sync request/response).
+ * Lazily load `core/` and `enums/` schemas on first compile of a schema
+ * that may $ref them. Async response variants and flat-tree domain schemas
+ * (governance, brand, content-standards, account, property, collection)
+ * both dereference into these shared trees; bundled/ pre-resolves its own
+ * refs and doesn't need them. Deferring the load keeps cold-start cheap
+ * for consumers that only touch bundled/ tools.
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
-  const coreDir = path.join(s.root, 'core');
-  for (const file of walkJsonFiles(coreDir)) {
-    const schema = loadJson(file);
-    if (typeof schema.$id === 'string' && !s.ajv.getSchema(schema.$id)) {
-      s.ajv.addSchema(schema);
+  for (const dir of ['core', 'enums']) {
+    const abs = path.join(s.root, dir);
+    for (const file of walkJsonFiles(abs)) {
+      const schema = loadJson(file);
+      if (typeof schema.$id === 'string' && !s.ajv.getSchema(schema.$id)) {
+        s.ajv.addSchema(schema);
+      }
     }
   }
   s.coreLoaded = true;
@@ -207,11 +233,12 @@ export function getValidator(toolName: string, direction: Direction): ValidateFu
   const file = s.fileIndex.get(cacheKey);
   if (!file) return undefined;
 
-  // Async response variants $ref into core/ — only pay that load cost when
-  // we're actually about to compile one.
-  if (direction !== 'request' && direction !== 'sync') {
-    ensureCoreLoaded(s);
-  }
+  // Schemas that $ref into core/ and enums/ need those trees registered
+  // before compile. Async response variants always do; flat-tree domain
+  // schemas (anything outside `bundled/`) do too — their $refs weren't
+  // pre-resolved at spec-publish time.
+  const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
+  if (!fromBundled) ensureCoreLoaded(s);
 
   const rawSchema = loadJson(file);
   const schema = direction === 'request' ? rawSchema : relaxResponseRoot(rawSchema);

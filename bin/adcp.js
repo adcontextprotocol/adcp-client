@@ -1559,6 +1559,7 @@ async function handleStoryboardRun(args) {
     console.log(
       `${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)`
     );
+    printStrictSummary(result.strict_validation_summary);
   }
 
   process.exit(result.overall_passed ? 0 : 3);
@@ -2210,7 +2211,51 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
   console.log(
     `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)`
   );
+  printStrictSummary(aggregateStrictSummaries(result.results.map(r => r.strict_validation_summary)));
   process.exit(result.overall_passed ? 0 : 3);
+}
+
+/**
+ * Print the strict/lenient response-schema summary as a one-liner beneath
+ * the lenient pass/fail tally. Silent when the run had no strict-eligible
+ * checks (observable: false); visible only when something was graded.
+ * `strict_only_failures > 0` is the production-readiness signal — tint
+ * the icon to reflect it so scrolling eyes catch it.
+ */
+function printStrictSummary(summary) {
+  if (!summary || !summary.observable) return;
+  const { checked, passed, strict_only_failures: strictOnly } = summary;
+  const icon = strictOnly > 0 ? '⚠️ ' : '✅';
+  const tail = strictOnly > 0 ? ` (${strictOnly} lenient-only — strict dispatcher would reject)` : '';
+  console.log(`${icon} strict: ${passed}/${checked} passed${tail}`);
+}
+
+/**
+ * Aggregate per-storyboard strict summaries into one. Runs are
+ * independent grading passes against the same SDK; summing their
+ * counters produces the run-total signal the CLI summary needs.
+ * Returns a summary with `observable: true` iff any input was
+ * observable.
+ */
+function aggregateStrictSummaries(summaries) {
+  const out = {
+    observable: false,
+    checked: 0,
+    passed: 0,
+    failed: 0,
+    strict_only_failures: 0,
+    lenient_also_failed: 0,
+  };
+  for (const s of summaries) {
+    if (!s) continue;
+    if (s.observable) out.observable = true;
+    out.checked += s.checked;
+    out.passed += s.passed;
+    out.failed += s.failed;
+    out.strict_only_failures += s.strict_only_failures;
+    out.lenient_also_failed += s.lenient_also_failed;
+  }
+  return out;
 }
 
 /**

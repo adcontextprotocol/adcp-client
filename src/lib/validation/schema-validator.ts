@@ -29,6 +29,18 @@ export interface ValidationOutcome {
   issues: ValidationIssue[];
   /** Which schema variant was selected — useful for logging/debugging. */
   variant: Direction | 'skipped';
+  /**
+   * True when the response's `status` field named an async variant
+   * (`submitted` / `working` / `input-required`) but no compiled schema
+   * existed for that variant, so validation fell back to the sync
+   * response schema. The agent is using an async shape that this tool
+   * doesn't explicitly schema — a conformance signal the sync-fallback
+   * validation can't render by itself. Absent on normal sync or
+   * fully-schema-covered async flows.
+   */
+  variant_fallback_applied?: boolean;
+  /** Variant requested by payload shape before fallback. Set iff `variant_fallback_applied`. */
+  requested_variant?: ResponseVariant;
 }
 
 const OK: ValidationOutcome = Object.freeze({ valid: true, issues: [], variant: 'skipped' });
@@ -89,11 +101,16 @@ export function validateResponse(toolName: string, payload: unknown): Validation
   if (!effective) return OK;
   const valid = effective(payload) as boolean;
   const usedVariant: Direction = validator ? variant : 'sync';
-  if (valid) return { valid: true, issues: [], variant: usedVariant };
+  const variantFallback = !validator && variant !== 'sync';
+  const fallbackFields: Pick<ValidationOutcome, 'variant_fallback_applied' | 'requested_variant'> = variantFallback
+    ? { variant_fallback_applied: true, requested_variant: variant }
+    : {};
+  if (valid) return { valid: true, issues: [], variant: usedVariant, ...fallbackFields };
   return {
     valid: false,
     issues: (effective.errors ?? []).map(formatIssue),
     variant: usedVariant,
+    ...fallbackFields,
   };
 }
 

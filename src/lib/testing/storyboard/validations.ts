@@ -10,6 +10,7 @@
 
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
+import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
 import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
 import type {
@@ -19,6 +20,7 @@ import type {
   SchemaValidationError,
   StoryboardContext,
   StoryboardValidation,
+  StrictValidationVerdict,
   ValidationResult,
 } from './types';
 import { resolvePath, resolvePathAll, toJsonPointer } from './path';
@@ -269,14 +271,33 @@ function validateResponseSchema(
   // unwrapper as a text summary and is not part of the AdCP response schema.
   const { _message, ...dataWithoutMessage } = (taskResult.data ?? {}) as Record<string, unknown>;
   const parseResult = schema.safeParse(dataWithoutMessage);
+
+  // Strict (AJV) verdict runs alongside the lenient Zod check so the run
+  // report surfaces strictness deltas (issue #820 follow-up). The AJV path
+  // enforces `format` keywords and `additionalProperties: false` that Zod's
+  // `passthrough()` omits — a response can pass Zod and fail AJV. The step's
+  // overall pass/fail stays Zod-driven to preserve backwards compatibility.
+  const strict = computeStrictVerdict(taskName, dataWithoutMessage);
+
   if (parseResult.success) {
-    return {
+    const base: ValidationResult = {
       check: 'response_schema',
       passed: true,
       description: validation.description,
       schema_id,
       schema_url,
     };
+    if (!strict) return base;
+    // Surface two kinds of strict-only signal via `warning` so step-level
+    // output (and LLM-driven self-correction that scans `error`/`warning`
+    // fields) sees something without flipping `passed`:
+    //   1. Strict-only FAILURE — Zod accepted but AJV rejected. Top issue.
+    //   2. Variant FALLBACK — agent advertised an async variant the tool
+    //      doesn't schema, so validation fell back to sync. AJV may still
+    //      accept, but the conformance signal is that the tool hasn't
+    //      declared the variant schema the agent is using.
+    const warning = buildStrictWarning(strict);
+    return warning ? { ...base, strict, warning } : { ...base, strict };
   }
 
   const schemaErrors = zodIssuesToSchemaErrors(parseResult.error.issues);
@@ -287,7 +308,7 @@ function validateResponseSchema(
     .map(i => `${i.path.join('.')}: ${i.message}`)
     .join('; ');
 
-  return {
+  const failed: ValidationResult = {
     check: 'response_schema',
     passed: false,
     description: validation.description,
@@ -298,6 +319,72 @@ function validateResponseSchema(
     schema_id,
     schema_url,
   };
+  return strict ? { ...failed, strict } : failed;
+}
+
+/**
+ * Run the strict AJV validator for `taskName` against the response payload.
+ * Returns undefined when no AJV schema is available (the client can't
+ * observe a strictness delta for tools whose JSON-schema doesn't ship with
+ * the SDK — notably the brand-rights and governance schemas that live
+ * outside the `bundled/` tree the loader walks today).
+ */
+function computeStrictVerdict(taskName: string, payload: Record<string, unknown>): StrictValidationVerdict | undefined {
+  const outcome = validateResponse(taskName, payload);
+  // `variant: 'skipped'` means no AJV validator compiled for this task (no
+  // strictness signal to emit); treat the same as "no AJV schema available".
+  if (outcome.variant === 'skipped') return undefined;
+  const fallbackFields: Pick<StrictValidationVerdict, 'variant_fallback_applied' | 'requested_variant'> =
+    outcome.variant_fallback_applied
+      ? { variant_fallback_applied: true, requested_variant: outcome.requested_variant }
+      : {};
+  if (outcome.valid) {
+    return { valid: true, variant: outcome.variant, ...fallbackFields };
+  }
+  return {
+    valid: false,
+    variant: outcome.variant,
+    issues: outcome.issues.slice(0, 10).map(ajvIssueToSchemaError),
+    ...fallbackFields,
+  };
+}
+
+function ajvIssueToSchemaError(issue: ValidationIssue): SchemaValidationError {
+  return {
+    instance_path: issue.pointer,
+    schema_path: issue.schemaPath,
+    keyword: issue.keyword,
+    message: issue.message,
+  };
+}
+
+/**
+ * Render the strict verdict into a non-fatal warning for step-level
+ * output. Two cases produce signal (both preserve `passed`):
+ *   - Strict-only failure: Zod accepted, AJV rejected. Top AJV issue.
+ *   - Variant fallback: agent advertised an async variant without a
+ *     compiled schema; validation fell back to sync. Conformance gap
+ *     worth flagging even when AJV ultimately accepted.
+ * When both apply, both are joined. Returns undefined when neither
+ * applies (strict accepted and no fallback).
+ */
+function buildStrictWarning(strict: StrictValidationVerdict): string | undefined {
+  const parts: string[] = [];
+  if (strict.variant_fallback_applied && strict.requested_variant) {
+    parts.push(
+      `agent advertised status="${strict.requested_variant}" but the tool has no schema for that variant — validated against sync fallback`
+    );
+  }
+  if (!strict.valid && strict.issues && strict.issues.length > 0) {
+    const top = strict.issues[0];
+    if (top) {
+      const pointer = top.instance_path || '/';
+      const remaining = strict.issues.length - 1;
+      const more = remaining > 0 ? ` (+${remaining} more AJV issue${remaining === 1 ? '' : 's'})` : '';
+      parts.push(`strict JSON-schema rejected ${pointer}: ${top.message}${more}`);
+    }
+  }
+  return parts.length > 0 ? parts.join('; ') : undefined;
 }
 
 // ────────────────────────────────────────────────────────────
