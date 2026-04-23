@@ -868,9 +868,7 @@ export function registerTestController(
     | GetAdCPCapabilitiesResponse
     | undefined;
   if (capsBag && !capsBag.compliance_testing) {
-    const scenarios = isFactory(storeOrFactory)
-      ? [...storeOrFactory.scenarios]
-      : scenariosFromStore(storeOrFactory);
+    const scenarios = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : scenariosFromStore(storeOrFactory);
     if (scenarios.length > 0) {
       capsBag.compliance_testing = { scenarios } as GetAdCPCapabilitiesResponse['compliance_testing'];
     }
