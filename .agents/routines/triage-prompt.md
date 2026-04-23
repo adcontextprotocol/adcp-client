@@ -59,6 +59,27 @@ If > 0, another session beat you to this issue within 10 minutes.
 **Skip.** Don't apply `claude-triaged`. Don't spawn experts. Note
 the skip in the run summary.
 
+## Already-engaged check — before any expert work
+
+You can't see Conductor workspaces, local drafts, or Slack. A human
+may be actively working on an issue without any GitHub signal.
+Silent-defer (apply `claude-triaged`, no comment) if any of these:
+
+1. **Assigned to a repo member** — `issue.assignees[].login` includes
+   someone whose `author_association` on the issue is
+   `OWNER | MEMBER | COLLABORATOR`.
+2. **Open PR references it** —
+   `gh pr list --repo adcontextprotocol/adcp-client --search "in:body #<N>" --state open`
+   returns anything.
+3. **Recent repo-member comment** — any comment from
+   `OWNER | MEMBER | COLLABORATOR` (non-bot) in the last 7 days.
+   Exception: that comment explicitly asks for triage help —
+   then proceed.
+
+The bot's value is highest on issues no human is working on. A
+comment on an issue the maintainer is already deep on is noise at
+best, pre-framing at worst.
+
 ## Decision order
 
 ### Step 1 — Pre-classification (cheap, no experts)
@@ -103,8 +124,18 @@ Classification:
 - **needs-info** (tiebreaker) — if you can't decide without running
   code, ask one concrete repro question. Never guess.
 
-Scope buckets (run `gh label list` first, prefer existing labels,
-never invent):
+Scope buckets — **label application is strictly gated**:
+
+1. Run `gh label list --repo adcontextprotocol/adcp-client --limit 200 --json name,description` **first**.
+2. Apply only labels whose exact `name` is in that list and is a
+   clear, direct match.
+3. **Never create new labels.** Never POST to `/labels`. Never pass
+   a name to `add-labels` that wasn't returned from list. If a
+   bucket has no matching label, put the bucket name in the comment
+   body and flag the gap in the run summary.
+4. Default to not applying when uncertain.
+
+Common buckets (verify every time):
 
 - **library** — `src/lib/` core client
 - **cli** — `bin/` command-line tooling
