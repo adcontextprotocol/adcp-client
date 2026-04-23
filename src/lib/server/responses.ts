@@ -52,6 +52,9 @@ import type {
   GetSignalsResponse,
   ActivateSignalSuccess,
   ListAccountsResponse,
+  ListPropertyListsResponse,
+  ListCollectionListsResponse,
+  ListContentStandardsResponse,
   ReportUsageRequest,
   ReportUsageResponse,
   SyncAccountsResponse,
@@ -314,6 +317,58 @@ export function listCreativesResponse(data: ListCreativesResponse, summary?: str
           summary ?? `Found ${data.query_summary.total_matching} creatives (${data.query_summary.returned} returned)`,
       },
     ],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a list_property_lists response. The governance property-list catalog
+ * is returned under the required `lists` wrapper — use this helper so
+ * handlers can't accidentally emit a bare array at the top level (which the
+ * storyboard runner flags as shape drift).
+ */
+export function listPropertyListsResponse(data: ListPropertyListsResponse, summary?: string): McpToolResponse {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: summary ?? `Found ${data.lists.length} property list${data.lists.length === 1 ? '' : 's'}`,
+      },
+    ],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a list_collection_lists response. Companion to
+ * `listPropertyListsResponse` — same `lists` wrapper shape; parallel
+ * governance surface for program-level collections.
+ */
+export function listCollectionListsResponse(data: ListCollectionListsResponse, summary?: string): McpToolResponse {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: summary ?? `Found ${data.lists.length} collection list${data.lists.length === 1 ? '' : 's'}`,
+      },
+    ],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a list_content_standards response. The response type is a union
+ * (success branch with `standards` array, error branch with `errors`) —
+ * the helper wraps either shape verbatim; schema-level invariants are
+ * enforced at wire validation, not here.
+ */
+export function listContentStandardsResponse(data: ListContentStandardsResponse, summary?: string): McpToolResponse {
+  const defaultSummary =
+    'errors' in data
+      ? 'Content standards lookup error'
+      : `Found ${data.standards.length} content standard${data.standards.length === 1 ? '' : 's'}`;
+  return {
+    content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: toStructuredContent(data),
   };
 }
