@@ -267,9 +267,17 @@ function validateResponseSchema(
     };
   }
 
-  // Strip _message from data before validation — it's added by the response
-  // unwrapper as a text summary and is not part of the AdCP response schema.
-  const { _message, ...dataWithoutMessage } = (taskResult.data ?? {}) as Record<string, unknown>;
+  // Keep the raw payload separately from the object-form one below so the
+  // shape-drift detector can recognize bare-array responses (a common drift
+  // pattern for list tools). Strip _message when it's a top-level property —
+  // bare arrays don't carry that field.
+  const rawData = taskResult.data ?? {};
+  const dataWithoutMessage = Array.isArray(rawData)
+    ? rawData
+    : (() => {
+        const { _message, ...rest } = rawData as Record<string, unknown>;
+        return rest;
+      })();
   const parseResult = schema.safeParse(dataWithoutMessage);
 
   // Strict (AJV) verdict runs alongside the lenient Zod check so the run
@@ -342,7 +350,7 @@ function validateResponseSchema(
  * the SDK — notably the brand-rights and governance schemas that live
  * outside the `bundled/` tree the loader walks today).
  */
-function computeStrictVerdict(taskName: string, payload: Record<string, unknown>): StrictValidationVerdict | undefined {
+function computeStrictVerdict(taskName: string, payload: unknown): StrictValidationVerdict | undefined {
   const outcome = validateResponse(taskName, payload);
   // `variant: 'skipped'` means no AJV validator compiled for this task (no
   // strictness signal to emit); treat the same as "no AJV schema available".
@@ -401,37 +409,95 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
 }
 
 /**
+ * List-shaped tools where handlers commonly return the bare inner array
+ * (`[{...}]`) at the top level instead of wrapping it in the required
+ * object envelope. Each entry names the wrapper key and the response
+ * helper that builds the correct shape.
+ *
+ * Helper names aren't uniformly prefixed — `get_products` uses
+ * `productsResponse` (no `get` prefix) while `get_media_buys` uses
+ * `getMediaBuysResponse`. Names match the exports in
+ * `src/lib/server/responses.ts` verbatim so a developer can grep
+ * straight from the hint.
+ *
+ * Tools whose response helpers don't exist yet
+ * (`list_property_lists`, `list_collection_lists`, `list_content_standards`)
+ * are tracked separately — extending the detector to them depends on those
+ * helpers landing first so the hint can name a real SDK symbol.
+ */
+const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }> = {
+  list_creatives: { wrapperKey: 'creatives', helper: 'listCreativesResponse' },
+  list_creative_formats: { wrapperKey: 'formats', helper: 'listCreativeFormatsResponse' },
+  list_accounts: { wrapperKey: 'accounts', helper: 'listAccountsResponse' },
+  get_products: { wrapperKey: 'products', helper: 'productsResponse' },
+  get_media_buys: { wrapperKey: 'media_buys', helper: 'getMediaBuysResponse' },
+  get_signals: { wrapperKey: 'signals', helper: 'getSignalsResponse' },
+};
+
+/**
  * Recognize common payload-shape mistakes and emit an actionable hint
  * alongside the generic schema-error message. Keeps the fix-recipe next
  * to the failure signal so implementors don't have to cross-reference
  * docs from a bare AJV pointer like `/ must have required property
  * 'creative_manifest'`.
  *
- * Covers three shape-inversion patterns observed in real integrations:
+ * Covers four shape-inversion patterns observed in real integrations:
  *   - `build_creative` returning platform-native fields at the top level
  *     (scope3 agentic-adapters#100 — `tag_url`, `creative_id`, `media_type`)
  *   - `sync_creatives` returning a single creative's inner shape bubbled
- *     up without the `creatives` array wrapper
+ *     up without the `creatives` array wrapper, OR the wrong wrapper key
+ *     (`{ results: [...] }` instead of `{ creatives: [...] }`)
  *   - `preview_creative` returning raw render fields (`preview_url`,
  *     `preview_html`) at the top level without the `previews[].renders[]`
  *     nesting and `response_type` discriminator
+ *   - List tools (`list_creatives`, `list_creative_formats`, `list_accounts`,
+ *     `get_products`, `get_media_buys`, `get_signals`) returning a bare
+ *     array at the top level instead of the `{ <key>: [...] }` envelope
  *
- * The detector is a switch on taskName — narrow by design. Add a branch
- * here when a new top-level-key drift pattern shows up in the field.
+ * The detector is a switch on taskName — narrow by design. Add an entry
+ * to `LIST_WRAPPER_TOOLS` for a new list tool, or a new `if (taskName === ...)`
+ * branch for a new object-shape drift pattern. A registry refactor that
+ * unifies the two halves into one data table is tracked as follow-up once
+ * the branch count justifies it.
  *
  * Exported for direct unit testing; consumers should rely on the hint
  * reaching `ValidationResult.warning` through the normal run path rather
  * than calling this directly.
+ *
+ * @param taskName — tool name (snake_case) the storyboard dispatched under
+ * @param payload — raw response payload. `unknown` rather than
+ *   `Record<string, unknown>` so bare-array payloads are recognizable at
+ *   the top level. Object-path branches guard internally with
+ *   `typeof payload === 'object' && payload !== null`.
  */
-export function detectShapeDriftHint(taskName: string, payload: Record<string, unknown>): string | undefined {
+export function detectShapeDriftHint(taskName: string, payload: unknown): string | undefined {
+  // Bare array at the root — common list-shape drift. Fire a pointed hint
+  // only when the handler is a known list tool; an unknown tool with a
+  // bare array might be legitimate (some APIs do return top-level arrays)
+  // and we don't want a false positive.
+  if (Array.isArray(payload)) {
+    const listMeta = LIST_WRAPPER_TOOLS[taskName];
+    if (listMeta) {
+      return (
+        `${taskName} returned a bare array at the top level. ` +
+        `Required: { ${listMeta.wrapperKey}: [...] }. ` +
+        `Use ${listMeta.helper}() from @adcp/client/server.`
+      );
+    }
+    return undefined;
+  }
+
+  // Object branches — require a plain object. null and primitives exit here.
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const p = payload as Record<string, unknown>;
   // Short and actionable — a developer hitting this is in their terminal
   // looking for the fix, not reading docs. The @adcp/client/server
   // breadcrumb is enough to lead them to the typed helpers.
 
   if (taskName === 'build_creative') {
-    const hasManifest = 'creative_manifest' in payload || 'creative_manifests' in payload;
+    const hasManifest = 'creative_manifest' in p || 'creative_manifests' in p;
     const platformNativeKeys = ['tag_url', 'creative_id', 'media_type', 'tag_type'];
-    const platformNativePresent = platformNativeKeys.filter(k => k in payload);
+    const platformNativePresent = platformNativeKeys.filter(k => k in p);
     if (!hasManifest && platformNativePresent.length > 0) {
       return (
         `build_creative returned platform-native fields at the top level (${platformNativePresent.join(', ')}). ` +
@@ -449,12 +515,12 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
     // `task_id`) deliberately short-circuits before we look at the per-
     // item keys, so a response with BOTH a wrapper AND a top-level
     // `creative_id` (valid, schema-additive extension) stays silent.
-    const hasValidWrapper = 'creatives' in payload || 'errors' in payload || 'task_id' in payload;
+    const hasValidWrapper = 'creatives' in p || 'errors' in p || 'task_id' in p;
 
     // Drift A: per-item shape bubbled up to the top level — the handler
     // forgot to wrap per-creative results in the `creatives` array.
     const perItemKeys = ['creative_id', 'platform_id', 'action'];
-    const perItemPresent = perItemKeys.filter(k => k in payload);
+    const perItemPresent = perItemKeys.filter(k => k in p);
     if (!hasValidWrapper && perItemPresent.length > 0) {
       return (
         `sync_creatives returned a single creative's inner shape at the top level (${perItemPresent.join(', ')}). ` +
@@ -468,7 +534,7 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
     // instead of `{ creatives: [...] }`. Only fire when `results` contains
     // per-item sync shapes, so a legitimate preview handler misrouted to
     // sync_creatives doesn't spuriously trigger.
-    const results = payload.results;
+    const results = p.results;
     if (!hasValidWrapper && Array.isArray(results) && results.length > 0) {
       const firstRow = results[0];
       const looksLikeCreativeRow =
@@ -492,9 +558,9 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
     // (schema/3.0.0/creative/preview-creative-response.json — PreviewCreativeVariantResponse),
     // so deliberately NOT a trigger key. We key only on render-shape fields
     // that only belong inside previews[].renders[] entries.
-    const hasValidWrapper = 'response_type' in payload || 'previews' in payload || 'results' in payload;
+    const hasValidWrapper = 'response_type' in p || 'previews' in p || 'results' in p;
     const rawRenderKeys = ['preview_url', 'preview_html', 'interactive_url'];
-    const rawRenderPresent = rawRenderKeys.filter(k => k in payload);
+    const rawRenderPresent = rawRenderKeys.filter(k => k in p);
     // interactive_url is a legal top-level field on the single-variant branch,
     // so it alone doesn't signal drift — only count it when no wrapper and at
     // least one of the more-specific render fields is also present.
