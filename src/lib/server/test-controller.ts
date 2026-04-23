@@ -867,10 +867,16 @@ export function registerTestController(
   const capsBag = (server as unknown as Record<PropertyKey, unknown>)[ADCP_CAPABILITIES] as
     | GetAdCPCapabilitiesResponse
     | undefined;
-  if (capsBag && !capsBag.compliance_testing) {
-    const scenarios = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : scenariosFromStore(storeOrFactory);
-    if (scenarios.length > 0) {
-      capsBag.compliance_testing = { scenarios } as GetAdCPCapabilitiesResponse['compliance_testing'];
+  if (capsBag) {
+    const incoming = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : scenariosFromStore(storeOrFactory);
+    if (incoming.length > 0) {
+      // Merge with any previously-declared scenarios rather than silently
+      // dropping them. A server can wire more than one controller (e.g.
+      // media-buy + governance) and each call should contribute its
+      // scenarios to the advertised set.
+      const existing = (capsBag.compliance_testing?.scenarios ?? []) as readonly string[];
+      const merged = Array.from(new Set([...existing, ...incoming]));
+      capsBag.compliance_testing = { scenarios: merged } as GetAdCPCapabilitiesResponse['compliance_testing'];
     }
   }
   mcp.registerTool(

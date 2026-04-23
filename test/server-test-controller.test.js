@@ -810,6 +810,41 @@ describe('registerTestController compliance_testing auto-emission', () => {
     const caps = server[Symbol.for('@adcp/client.capabilities')];
     assert.ok(!caps.supported_protocols.includes('compliance_testing'));
   });
+
+  it('merges + dedups scenarios across multiple register calls', () => {
+    // A server that wires two controllers (e.g. one for media-buy tools and
+    // one for governance tools, sharing a session store) should advertise
+    // the union of both scenario sets, not just the first registration's.
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const server = createAdcpServer({
+      name: 't',
+      version: '0.0.1',
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    registerTestController(server, {
+      scenarios: ['force_media_buy_status', 'simulate_delivery'],
+      createStore: () => ({ forceMediaBuyStatus: async () => ({}) }),
+    });
+    // MCP registerTool rejects a duplicate 'comply_test_controller' — real
+    // multi-register usage would compose stores or factories. Here we
+    // swallow the expected tool-duplicate error and assert the capability
+    // merge ran BEFORE that throw; the capability update happens ahead of
+    // mcp.registerTool.
+    try {
+      registerTestController(server, {
+        scenarios: ['force_account_status', 'simulate_delivery'],
+        createStore: () => ({ forceAccountStatus: async () => ({}) }),
+      });
+    } catch {
+      /* tool already registered — expected on the second call */
+    }
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
+    assert.deepStrictEqual(
+      [...caps.compliance_testing.scenarios].sort(),
+      ['force_account_status', 'force_media_buy_status', 'simulate_delivery'].sort(),
+      'second register must contribute force_account_status without dropping the first set or duplicating simulate_delivery'
+    );
+  });
 });
 
 // ── TOOL_INPUT_SHAPE ───────────────────────────────────────

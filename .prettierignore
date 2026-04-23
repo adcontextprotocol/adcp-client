@@ -3,6 +3,10 @@ schemas/cache/
 compliance/cache/
 docs/
 
+# Workspace scratch directory — may contain checkouts of other repos with
+# their own formatting conventions. Always gitignored; should not block CI.
+.context/
+
 # Vendored AdCP conformance vectors — byte-identical to upstream. Prettier
 # would reformat and diverge from the source of truth. Remove once vectors
 # load from compliance/cache/ (already ignored) instead of test/fixtures/.

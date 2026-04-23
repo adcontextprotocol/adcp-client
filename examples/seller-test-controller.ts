@@ -285,7 +285,22 @@ function isCreativeStatus(value: unknown): value is CreativeStatus {
 // server fronts both sandbox and prod traffic on the same port, use
 // `createComplyController` (exposes a `sandboxGate` callback) or wrap
 // `handleTestControllerRequest` with your own per-request check.
+//
+// SECURITY: an env var is NOT an authority boundary. Operators who set
+// `ADCP_SANDBOX=1` in production by accident (bad .env, k8s ConfigMap
+// typo) would expose the controller to every caller and let them mutate
+// real media buys / creatives / accounts. This example refuses to run
+// that combination — belt-and-suspenders. For real mixed-traffic
+// deployments, front the sandbox on a separate port behind separate
+// auth.
 // ---------------------------------------------------------------------------
+
+if (process.env.ADCP_SANDBOX === '1' && process.env.NODE_ENV === 'production') {
+  throw new Error(
+    'seller-test-controller.ts refuses to expose comply_test_controller in production (NODE_ENV=production + ADCP_SANDBOX=1). ' +
+      'An env var is not an authority boundary — front the sandbox on a separate port behind separate auth before relying on this gate in prod.'
+  );
+}
 
 const seedCache = createSeedFixtureCache();
 

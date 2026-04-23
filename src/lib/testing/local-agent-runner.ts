@@ -208,6 +208,28 @@ export interface LocalAgentRunResult {
 }
 
 /**
+ * True when `url` is an http:// (not https://) URL pointing at a loopback
+ * host — used to decide whether the SSRF guard's HTTPS-only default can be
+ * relaxed. Must be tight: a `http://` prefix alone is NOT sufficient (a
+ * caller override could redirect to `http://attacker.example.com/mcp` and
+ * inherit the allowance). Only `127.0.0.1`, `::1`, and `localhost` count.
+ *
+ * @internal
+ */
+function isLoopbackHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:') return false;
+    // `URL.hostname` wraps IPv6 literals in brackets (`[::1]`); strip them
+    // to match the bare forms typical in SSRF loopback checks.
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Run storyboards against an in-process AdCP agent. Handles lifecycle:
  * bind, seed, (optional) token issuance, loop, tear down.
  */
@@ -272,30 +294,36 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
     let skipped = 0;
 
     const webhookConfig = resolveWebhookReceiver(options.webhookReceiver);
-    // `runAgainstLocalAgent` owns the URL — it binds an ephemeral loopback
-    // port and hands that http:// URL to the runner. The SSRF guard
-    // defaults to HTTPS-only for obvious reasons, so the runner would
-    // refuse to probe our own server without `allow_http: true`. Default
-    // the flag when the helper-built URL is non-HTTPS and the caller
-    // didn't explicitly opt out. Callers targeting a non-helper URL
-    // (e.g. a real https:// staging agent) can still override to `false`.
-    const helperBoundHttp = agentUrl.startsWith('http://');
     const explicitAllowHttp = options.runStoryboardOptions?.allow_http;
-    const baseRunOptions: Omit<StoryboardRunOptions, 'webhook_receiver'> = {
+    const baseRunOptions: Omit<StoryboardRunOptions, 'webhook_receiver' | 'allow_http'> = {
       ...(options.runStoryboardOptions ?? {}),
-      allow_http: explicitAllowHttp ?? helperBoundHttp,
     };
+    // `allow_http` is removed from baseRunOptions and recomputed per
+    // storyboard below — inheriting `true` across storyboards would let a
+    // `resolvePerStoryboard` override that redirected to a remote
+    // `http://...` URL bypass the SSRF guard and silently probe an
+    // attacker-controlled target with private-IP allowance.
+    delete (baseRunOptions as { allow_http?: unknown }).allow_http;
 
     for (let i = 0; i < toRun.storyboards.length; i++) {
       const sb = toRun.storyboards[i]!;
       const override = (await options.resolvePerStoryboard?.(sb, agentUrl)) ?? undefined;
       const { agentUrl: overrideUrl, ...overrideRunOptions } = override ?? {};
       const storyboardUrl = overrideUrl ?? agentUrl;
+      // Tighten the SSRF-guard bypass: only auto-opt-in `allow_http` when
+      // THIS storyboard's URL is loopback-bound (what the helper owns).
+      // An override to `http://attacker.example.com/...` must not
+      // inherit the default — that would re-enable the private-IP
+      // allowance against attacker-controlled infrastructure.
+      const storyboardIsLoopbackHttp = isLoopbackHttpUrl(storyboardUrl);
+      const effectiveAllowHttp =
+        (overrideRunOptions as { allow_http?: boolean }).allow_http ?? explicitAllowHttp ?? storyboardIsLoopbackHttp;
       // webhook_receiver is helper-owned — re-applied after the merge so
       // overrides can't replace the loopback mock the helper promised.
       const storyboardOptions: StoryboardRunOptions = {
         ...baseRunOptions,
         ...overrideRunOptions,
+        allow_http: effectiveAllowHttp,
         ...(webhookConfig ? { webhook_receiver: webhookConfig } : {}),
       };
       const result = await runStoryboard(storyboardUrl, sb, storyboardOptions);
