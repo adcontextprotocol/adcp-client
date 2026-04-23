@@ -113,7 +113,7 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 - ❌ Configuration files (`.eslintrc`, `tsconfig.json`, etc.)
 
 **Why CLI changes need changesets:**
-The CLI (`bin/adcp.js`) is bundled with the npm package. Users who run `npx @adcp/client` or install the package globally need version bumps to get CLI fixes. Without a changeset, the fix won't be published to npm.
+The CLI (`bin/adcp.js`) is bundled with the npm package. Users who run `npx @adcp/client@latest` or install the package globally need version bumps to get CLI fixes. Without a changeset, the fix won't be published to npm.
 
 ### 🚨 REQUIRED: Make Changeset Check a Required Status Check 🚨
 

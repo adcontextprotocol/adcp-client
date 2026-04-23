@@ -924,7 +924,7 @@ function generateLlmsTxt(
   ln(`- Documentation: ${DOCS_BASE_URL}/`);
   ln(`- npm: https://www.npmjs.com/package/@adcp/client`);
   ln(`- Spec: https://adcontextprotocol.org`);
-  ln(`- CLI: \`npx @adcp/client\``);
+  ln(`- CLI: \`npx @adcp/client@latest\``);
   ln();
 
   return lines.join('\n');

@@ -119,7 +119,7 @@ npm run test:all          # Full test suite
 ### CLI Async Operations
 
 ```bash
-npx @adcp/client agent-url get_products '{"brief":"test"}' --webhook --timeout 30
+npx @adcp/client@latest agent-url get_products '{"brief":"test"}' --webhook --timeout 30
 # Automatically starts webhook handler with ngrok tunnel
 ```
 

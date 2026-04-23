@@ -13,16 +13,16 @@
  * Then drive the controller from another terminal:
  *
  *   # List advertised scenarios (force_/simulate_ only — seeds are universal)
- *   npx @adcp/client call http://localhost:3456/mcp comply_test_controller \
+ *   npx @adcp/client@latest call http://localhost:3456/mcp comply_test_controller \
  *     --scenario list_scenarios
  *
  *   # Seed a product so storyboards can reference `test-product` by id
- *   npx @adcp/client call http://localhost:3456/mcp comply_test_controller \
+ *   npx @adcp/client@latest call http://localhost:3456/mcp comply_test_controller \
  *     --scenario seed_product \
  *     --params '{"product_id":"test-product","fixture":{"delivery_type":"non_guaranteed"}}'
  *
  *   # Force a creative into `rejected` to drive the rejection branch
- *   npx @adcp/client call http://localhost:3456/mcp comply_test_controller \
+ *   npx @adcp/client@latest call http://localhost:3456/mcp comply_test_controller \
  *     --scenario force_creative_status \
  *     --params '{"creative_id":"cr-1","status":"rejected","rejection_reason":"Brand safety"}'
  */

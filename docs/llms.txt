@@ -1145,4 +1145,4 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 - Documentation: https://adcontextprotocol.github.io/adcp-client/
 - npm: https://www.npmjs.com/package/@adcp/client
 - Spec: https://adcontextprotocol.org
-- CLI: `npx @adcp/client`
+- CLI: `npx @adcp/client@latest`

@@ -416,16 +416,16 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`
 npx tsx agent.ts &
 
 # Happy path — the archetype you're claiming
-npx @adcp/client storyboard run http://localhost:3001/mcp creative_ad_server --auth $TOKEN     # stateful
-npx @adcp/client storyboard run http://localhost:3001/mcp creative_template --auth $TOKEN      # stateless
-npx @adcp/client storyboard run http://localhost:3001/mcp creative_generative --auth $TOKEN    # brief-to-creative
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_ad_server --auth $TOKEN     # stateful
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_template --auth $TOKEN      # stateless
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_generative --auth $TOKEN    # brief-to-creative
 
 # Cross-cutting obligations (all creative agents)
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz — includes preview_creative (referential, fixture-eligible)
-npx @adcp/client fuzz http://localhost:3001/mcp \
+npx @adcp/client@latest fuzz http://localhost:3001/mcp \
   --tools list_creative_formats,list_creatives,get_creative_features,preview_creative \
   --fixture creative_ids=cre_a,cre_b \
   --auth-token $TOKEN

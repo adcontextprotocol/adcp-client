@@ -379,18 +379,18 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy path — the specialism you're claiming
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_owned --auth $TOKEN        # owned data
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace --auth $TOKEN  # marketplace
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_owned --auth $TOKEN        # owned data
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_marketplace --auth $TOKEN  # marketplace
 
 # Marketplace governance sub-scenario (if you claim signal_marketplace)
-npx @adcp/client storyboard run http://localhost:3001/mcp signal_marketplace/governance_denied --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_marketplace/governance_denied --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client storyboard run http://localhost:3001/mcp \
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz
-npx @adcp/client fuzz http://localhost:3001/mcp --tools get_signals --auth-token $TOKEN
+npx @adcp/client@latest fuzz http://localhost:3001/mcp --tools get_signals --auth-token $TOKEN
 ```
 
 Common failure decoder:

@@ -624,13 +624,13 @@ Save agents for quick access:
 
 ```bash
 # Save an agent with an alias
-npx @adcp/client --save-auth test https://test-agent.adcontextprotocol.org
+npx @adcp/client@latest --save-auth test https://test-agent.adcontextprotocol.org
 
 # Use the alias
-npx @adcp/client test get_products '{"brief":"Coffee brands"}'
+npx @adcp/client@latest test get_products '{"brief":"Coffee brands"}'
 
 # List saved agents
-npx @adcp/client --list-agents
+npx @adcp/client@latest --list-agents
 ```
 
 ### Direct URL Usage
@@ -639,20 +639,20 @@ Auto-detect protocol and call directly:
 
 ```bash
 # Protocol auto-detection (default)
-npx @adcp/client https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
+npx @adcp/client@latest https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
 
 # Force specific protocol with --protocol flag
-npx @adcp/client https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
-npx @adcp/client https://agent.example.com list_authorized_properties --protocol a2a
+npx @adcp/client@latest https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
+npx @adcp/client@latest https://agent.example.com list_authorized_properties --protocol a2a
 
 # List available tools
-npx @adcp/client https://agent.example.com
+npx @adcp/client@latest https://agent.example.com
 
 # Use a file for payload
-npx @adcp/client https://agent.example.com create_media_buy @payload.json
+npx @adcp/client@latest https://agent.example.com create_media_buy @payload.json
 
 # JSON output for scripting
-npx @adcp/client https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
+npx @adcp/client@latest https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
 ```
 
 ### Authentication
@@ -661,44 +661,44 @@ Three ways to provide auth tokens (priority order):
 
 ```bash
 # 1. Explicit flag (highest priority)
-npx @adcp/client test get_products '{"brief":"..."}' --auth your-token
+npx @adcp/client@latest test get_products '{"brief":"..."}' --auth your-token
 
 # 2. Saved in agent config (recommended)
-npx @adcp/client --save-auth prod https://prod-agent.com
+npx @adcp/client@latest --save-auth prod https://prod-agent.com
 # Will prompt for auth token securely
 
 # 3. Environment variable (fallback)
 export ADCP_AUTH_TOKEN=your-token
-npx @adcp/client test get_products '{"brief":"..."}'
+npx @adcp/client@latest test get_products '{"brief":"..."}'
 ```
 
 ### Agent Management
 
 ```bash
 # Save agent with auth
-npx @adcp/client --save-auth prod https://prod-agent.com mcp
+npx @adcp/client@latest --save-auth prod https://prod-agent.com mcp
 
 # List all saved agents
-npx @adcp/client --list-agents
+npx @adcp/client@latest --list-agents
 
 # Remove an agent
-npx @adcp/client --remove-agent test
+npx @adcp/client@latest --remove-agent test
 
 # Show config file location
-npx @adcp/client --show-config
+npx @adcp/client@latest --show-config
 ```
 
 ### Testing & Compliance
 
 ```bash
 # Run test scenarios against an agent
-npx @adcp/client test test-mcp full_sales_flow
-npx @adcp/client test test-mcp --list-scenarios
+npx @adcp/client@latest test test-mcp full_sales_flow
+npx @adcp/client@latest test test-mcp --list-scenarios
 
 # Run compliance assessment
-npx @adcp/client comply test-mcp
-npx @adcp/client comply test-mcp --platform-type social_platform
-npx @adcp/client comply --list-platform-types
+npx @adcp/client@latest comply test-mcp
+npx @adcp/client@latest comply test-mcp --platform-type social_platform
+npx @adcp/client@latest comply --list-platform-types
 ```
 
 **Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. Override with `--protocol mcp` or `--protocol a2a` if needed.
@@ -798,7 +798,7 @@ The skill guides domain decisions, scaffolds code, and tells you how to validate
 
 ```bash
 npx tsx agent.ts
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_seller --json
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
 Available skills:

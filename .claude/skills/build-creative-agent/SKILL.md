@@ -244,7 +244,7 @@ The `sync_creatives` handler adds/updates entries. The `list_creatives` handler 
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp creative_lifecycle --json
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_lifecycle --json
 ```
 
 **Sandbox validation** (if ports are blocked):

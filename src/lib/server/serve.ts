@@ -378,7 +378,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       options.onListening(url);
     } else {
       console.log(`AdCP agent running at ${url}`);
-      console.log(`\nTest with:\n  npx @adcp/client ${url}`);
+      console.log(`\nTest with:\n  npx @adcp/client@latest ${url}`);
     }
   });
 

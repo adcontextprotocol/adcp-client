@@ -308,7 +308,7 @@ The sync_creatives handler must check the format_id to decide how to process:
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client storyboard run http://localhost:3001/mcp media_buy_generative_seller --json
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_generative_seller --json
 ```
 
 **Sandbox validation** (if ports are blocked):
