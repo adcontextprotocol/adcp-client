@@ -23,7 +23,11 @@ A seller agent receives briefs from buyers, returns products with pricing, accep
 
 ## Specialisms This Skill Covers
 
-Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each specialism has a storyboard bundle at `compliance/cache/latest/specialisms/<id>/` that the AAO compliance runner executes. Pick one or more:
+Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each specialism has a storyboard bundle at `compliance/cache/latest/specialisms/<id>/` that the AAO compliance runner executes. Pick one or more.
+
+**Specialisms are additive on top of the baseline media-buy flow** (`get_products` → `create_media_buy` → lifecycle + creative sync + delivery reporting). A specialism's storyboard exercises the ADDITIONAL behaviors it requires; it does not displace the baseline. If the storyboard skips a baseline tool (because that tool is already covered by `sales-non-guaranteed` / `sales-guaranteed`), that doesn't mean the tool is optional for your agent — it means the test is focused elsewhere. Check the storyboard's `agent.capabilities` — if it lists `sells_media` / `accepts_briefs`, the baseline still applies.
+
+**Claim multiple specialisms.** A typical social seller claims `sales-non-guaranteed` + `sales-social`. A typical broadcast seller claims `sales-guaranteed` + `sales-broadcast-tv`. A typical social seller doing audience sync claims `sales-non-guaranteed` + `sales-social` + `audience-sync`.
 
 | Specialism             | Status  | Delta from baseline                                                                                                                                                                                                                                                                                                                                         | See                                                        |
 | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -31,7 +35,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 | `sales-non-guaranteed` | stable  | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes                                                                                                                                                                                                                            | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
 | `sales-broadcast-tv`   | stable  | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery                                                                                                                                                                          | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv)     |
 | `sales-streaming-tv`   | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products                                                                                                                                                                                                                                                     | Baseline only                                              |
-| `sales-social`         | stable  | Walled-garden: no `get_products`/`create_media_buy`; implement `sync_audiences`, `log_event`, `get_account_financials` instead                                                                                                                                                                                                                              | [§ sales-social](#specialism-sales-social)                 |
+| `sales-social`         | stable  | **Additive**: baseline `get_products` + `create_media_buy` still apply (Snap/Meta/TikTok all have product catalogs and campaigns). Adds `sync_audiences` (audience push), `sync_creatives` (native formats), `sync_catalogs` (dynamic product ads), `log_event` (conversion tracking), `get_account_financials` (prepaid-balance monitoring), and `sync_accounts` with `account_scope`/`payment_terms`/`setup` for advertiser onboarding. Declare `sales-social` **alongside** `sales-non-guaranteed` (or `-guaranteed`) — don't replace it.                                                                                                          | [§ sales-social](#specialism-sales-social)                 |
 | `sales-exchange`       | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending                                                                                                                                                                                                                                                    | Baseline only                                              |
 | `sales-proposal-mode`  | stable  | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages`                                                                                                                                                                         | [§ sales-proposal-mode](#specialism-sales-proposal-mode)   |
 | `audience-sync`        | stable  | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response.                                                                                                                                                                 | [§ audience-sync](#specialism-audience-sync)               |
@@ -1421,18 +1425,30 @@ Don't declare `measurement_windows: ['live', 'c3', 'c7']` — the Zod schema rej
 
 ### <a name="specialism-sales-social"></a>sales-social
 
-Storyboard: `social_platform`. This is a walled-garden sync flow — the classic `get_products` → `create_media_buy` path does not apply. The buyer pushes audiences and creatives **into** the platform.
+Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 
-Required tools (on top of baseline):
+**`sales-social` is additive, not a replacement.** The storyboard's own metadata declares `interaction_model: media_buy_seller` with `capabilities: [sells_media, accepts_briefs, supports_non_guaranteed]` and lists Snap, Meta, TikTok, and Pinterest as example agents — all of which have product catalogs (ad formats, placements, audience offerings as products) AND accept media buys (campaigns with flights, budgets, ad sets). The storyboard only exercises the audience / catalog / native-creative / events / financials leg because the baseline buyer-flow is covered by `sales-non-guaranteed` (or `sales-guaranteed`). Claim BOTH specialisms and implement the full surface.
 
-- `sync_accounts` with `account_scope`, `payment_terms`, `setup` fields
-- `list_accounts` with brand filter
-- `sync_audiences` → returns `{ audiences: [{ audience_id, name, status: 'active', action: 'created' }] }`
-- `log_event` → returns `{ events: [{ event_id, status: 'accepted' }] }`
-- `get_account_financials` → returns `{ account, financials: { currency, current_spend, remaining_balance, payment_status } }`
-- `sync_creatives` for platform-native assemblies with `{ creative_id, action, status: 'pending_review' }`
+**Baseline tools still apply** (these come from `sales-non-guaranteed` or `sales-guaranteed`):
 
-`sync_audiences` and `log_event` live under `eventTracking`, not `mediaBuy`, in `createAdcpServer`. `get_account_financials` lives under `accounts`.
+- `get_products` — return your platform's ad formats, placements, and audience-targeting products
+- `create_media_buy` — accept campaigns (ad sets / flights) with budgets, targeting, and package structure
+- `update_media_buy`, `get_media_buys`, `get_media_buy_delivery` — campaign lifecycle and reporting
+- `list_creative_formats`, `sync_creatives`, `list_creatives` — creative management
+
+**Additional tools `sales-social` requires** (beyond baseline):
+
+- `sync_accounts` with `account_scope`, `payment_terms`, `setup` fields — advertiser onboarding with identity verification setup_url when pending
+- `list_accounts` with brand filter — buyers listing their accounts on your platform
+- `sync_audiences` → returns `{ audiences: [{ audience_id, name, status: 'active', action: 'created' }] }` — buyer pushes audience segment definitions for platform match
+- `sync_catalogs` → product catalog push for dynamic product ads (Meta DPA, Snap Dynamic Ads, TikTok Dynamic Showcase). The storyboard's catalog-item macros (`{SKU}`, `{GTIN}`) resolve per-impression at render time.
+- `sync_creatives` for platform-native assemblies with `{ creative_id, action, status: 'pending_review' }` — image + headline + description slots assembled into the native unit
+- `log_event` → returns `{ events: [{ event_id, status: 'accepted' }] }` — server-side conversion events for attribution / optimization
+- `get_account_financials` → returns `{ account, financials: { currency, current_spend, remaining_balance, payment_status } }` — prepaid-balance monitoring typical of walled gardens
+
+**Handler grouping in `createAdcpServer`:** `sync_audiences`, `sync_catalogs`, and `log_event` live under `eventTracking`, NOT `mediaBuy`. `get_account_financials` and `sync_accounts` live under `accounts`. Baseline `get_products`/`create_media_buy`/etc. stay under `mediaBuy`.
+
+**Don't** rip out `get_products` or `create_media_buy` when adding `sales-social` — you need them. The failure mode from doing so: buyers who discover your agent via `get_adcp_capabilities` expecting a media-buy seller hit immediate compliance failures when every baseline storyboard fails with "tool not registered," and your entire `sales-non-guaranteed` bundle regresses to 0/N passing.
 
 ### <a name="specialism-sales-proposal-mode"></a>sales-proposal-mode
 
