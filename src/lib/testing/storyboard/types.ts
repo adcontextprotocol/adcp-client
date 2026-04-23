@@ -829,6 +829,52 @@ export interface ValidationResult {
    * when the check has something to report; absent otherwise.
    */
   observations?: unknown[];
+  /**
+   * Non-fatal human-readable warning attached when a check `passed` but
+   * detected a softer issue the caller should still see — today used only
+   * by `response_schema` to surface the top strict-AJV issue when Zod
+   * accepts and AJV rejects (the "lenient-passes ∧ strict-fails" subset
+   * of issue #820). LLM-driven self-correction and CI graphs that scan
+   * `error`/`warning` fields can act on this without the runner flipping
+   * step pass/fail and breaking existing tests.
+   */
+  warning?: string;
+  /**
+   * Issue #820 follow-up — strict JSON-schema (AJV) verdict for
+   * `response_schema` checks. `passed` remains the lenient Zod outcome
+   * (runner's historical pass/fail semantics); `strict` carries the
+   * AJV-with-formats-and-additionalProperties verdict separately so
+   * agent developers can see the strict/lenient delta without the
+   * runner failing a step that the Zod path accepts. Absent on non-
+   * response_schema checks or when no AJV schema is available.
+   */
+  strict?: StrictValidationVerdict;
+}
+
+/**
+ * Strict (AJV JSON-schema) verdict attached to a response_schema
+ * validation result. Informational — the step's pass/fail is driven by
+ * the lenient Zod path. `valid: false` with `valid_lenient: true`
+ * indicates the strict/lenient delta: the agent's response passes the
+ * generated Zod shape but fails strict JSON-schema (typically a
+ * `format` violation or an `additionalProperties: false` breach).
+ */
+export interface StrictValidationVerdict {
+  valid: boolean;
+  /** Response variant AJV ultimately validated against. After fallback: `"sync"`. */
+  variant: string;
+  /** Concrete AJV issues (RFC 6901 pointers) when `valid: false`. Absent when valid. */
+  issues?: SchemaValidationError[];
+  /**
+   * True when the agent's response `status` field named an async variant
+   * (`submitted` / `working` / `input-required`) but no compiled schema
+   * existed for that variant, so validation fell back to the sync
+   * response schema. Conformance signal: the agent advertised an async
+   * shape this tool doesn't explicitly schema. Present only on fallback.
+   */
+  variant_fallback_applied?: boolean;
+  /** Variant requested by payload shape before fallback. Set iff `variant_fallback_applied`. */
+  requested_variant?: string;
 }
 
 export interface StoryboardStepPreview {
@@ -938,6 +984,49 @@ export interface StoryboardResult {
    * failed.
    */
   assertions?: AssertionResult[];
+  /**
+   * Issue #820 follow-up — strict/lenient `response_schema` delta. Always
+   * emitted by the runner; inspect `observable` first to distinguish
+   * "observed zero strict-eligible checks" from "observed N and graded
+   * them". Storyboards dominated by non-`response_schema` validations
+   * (`field_present`, `error_code`, pure `assertion` runs) will have
+   * `observable: false` and zeroed counters.
+   */
+  strict_validation_summary?: StrictValidationSummary;
+}
+
+export interface StrictValidationSummary {
+  /**
+   * True when at least one `response_schema` validation had an AJV
+   * validator compiled (the strict path could actually grade something).
+   * False means "unobservable": the run exercised only tasks whose JSON
+   * schema isn't registered, or only non-`response_schema` validations —
+   * NOT "strict-clean with zero findings". Downstream dashboards and
+   * CI formatters MUST check this before rendering the counts.
+   */
+  observable: boolean;
+  /** Response-schema checks that had an AJV validator compiled. */
+  checked: number;
+  /** Of `checked`, how many passed strict AJV. */
+  passed: number;
+  /** Of `checked`, how many failed strict AJV. Equals `checked - passed`. */
+  failed: number;
+  /**
+   * Count of validations where lenient Zod accepted AND strict AJV
+   * rejected — the "silent failures" the agent ships today that a strict
+   * dispatcher would block. Subset of `failed`. This is the actionable
+   * production-readiness signal for agent developers: a green lenient run
+   * with `strict_only_failures > 0` is a migration trap.
+   */
+  strict_only_failures: number;
+  /**
+   * Count of validations where BOTH lenient Zod AND strict AJV rejected —
+   * the step already failed under today's semantics, so strict rejection
+   * isn't new signal. Equals `failed - strict_only_failures`. Useful for
+   * dashboards that want to distinguish "already-failing" from
+   * "silently-failing" in the same run.
+   */
+  lenient_also_failed: number;
 }
 
 /**

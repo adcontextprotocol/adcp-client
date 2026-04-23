@@ -37,6 +37,8 @@ export type {
   StoryboardPhaseResult,
   StoryboardResult,
   AssertionResult,
+  StrictValidationSummary,
+  StrictValidationVerdict,
 } from './types';
 export { WEBHOOK_IDEMPOTENCY_KEY_PATTERN } from './types';
 
@@ -70,7 +72,13 @@ export type { RunnerVariables } from './context';
 export { WEBHOOK_ASSERTION_TASKS } from './webhook-assertions';
 
 // Runner
-export { runStoryboard, runStoryboardStep, getFirstStepPreview } from './runner';
+export {
+  runStoryboard,
+  runStoryboardStep,
+  getFirstStepPreview,
+  summarizeStrictValidation,
+  listStrictOnlyFailures,
+} from './runner';
 
 // Parser (single-file load for spec evolution / targeted testing)
 export { parseStoryboard, loadStoryboardFile } from './loader';
