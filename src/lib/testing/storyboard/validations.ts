@@ -407,24 +407,32 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
  * docs from a bare AJV pointer like `/ must have required property
  * 'creative_manifest'`.
  *
- * Today covers the scope3 agentic-adapters#100 pattern: `build_creative`
- * handler returning a platform-native response (`tag_url`, `creative_id`,
- * `media_type` at the top level) instead of `{ creative_manifest: { ... } }`.
- * Extend as other drift patterns surface in real integrations.
+ * Covers three shape-inversion patterns observed in real integrations:
+ *   - `build_creative` returning platform-native fields at the top level
+ *     (scope3 agentic-adapters#100 — `tag_url`, `creative_id`, `media_type`)
+ *   - `sync_creatives` returning a single creative's inner shape bubbled
+ *     up without the `creatives` array wrapper
+ *   - `preview_creative` returning raw render fields (`preview_url`,
+ *     `preview_html`) at the top level without the `previews[].renders[]`
+ *     nesting and `response_type` discriminator
+ *
+ * The detector is a switch on taskName — narrow by design. Add a branch
+ * here when a new top-level-key drift pattern shows up in the field.
  *
  * Exported for direct unit testing; consumers should rely on the hint
  * reaching `ValidationResult.warning` through the normal run path rather
  * than calling this directly.
  */
 export function detectShapeDriftHint(taskName: string, payload: Record<string, unknown>): string | undefined {
+  // Short and actionable — a developer hitting this is in their terminal
+  // looking for the fix, not reading docs. The @adcp/client/server
+  // breadcrumb is enough to lead them to the typed helpers.
+
   if (taskName === 'build_creative') {
     const hasManifest = 'creative_manifest' in payload || 'creative_manifests' in payload;
     const platformNativeKeys = ['tag_url', 'creative_id', 'media_type', 'tag_type'];
     const platformNativePresent = platformNativeKeys.filter(k => k in payload);
     if (!hasManifest && platformNativePresent.length > 0) {
-      // Short and actionable — a developer hitting this is in their terminal
-      // looking for the fix, not reading docs. The @adcp/client/server
-      // breadcrumb is enough to lead them to the typed helpers.
       return (
         `build_creative returned platform-native shape (${platformNativePresent.join(', ')} at top level). ` +
         `Required: { creative_manifest: { format_id, assets } }. ` +
@@ -432,6 +440,44 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
       );
     }
   }
+
+  if (taskName === 'sync_creatives') {
+    // sync_creatives has three valid branches (creatives-array success,
+    // errors-array failure, submitted task envelope). The drift pattern
+    // bubbles one inner-item's shape up to the top level — the handler
+    // forgot to wrap per-creative results in the `creatives` array.
+    const hasValidWrapper = 'creatives' in payload || 'errors' in payload || 'task_id' in payload;
+    const perItemKeys = ['creative_id', 'platform_id', 'action'];
+    const perItemPresent = perItemKeys.filter(k => k in payload);
+    if (!hasValidWrapper && perItemPresent.length > 0) {
+      return (
+        `sync_creatives returned a single creative's inner shape at the top level (${perItemPresent.join(', ')}). ` +
+        `Required: { creatives: [{ creative_id, action, ... }] } (or { errors: [...] } / { status: 'submitted', task_id }). ` +
+        `Use syncCreativesResponse() from @adcp/client/server.`
+      );
+    }
+  }
+
+  if (taskName === 'preview_creative') {
+    // preview_creative has three valid branches via response_type discriminator
+    // (single, batch, variant). The drift pattern returns raw render fields
+    // at the top level instead of wrapping them in previews[].renders[].
+    const hasValidWrapper = 'response_type' in payload || 'previews' in payload || 'results' in payload;
+    const rawRenderKeys = ['preview_url', 'preview_html', 'interactive_url'];
+    const rawRenderPresent = rawRenderKeys.filter(k => k in payload);
+    // interactive_url is a legal top-level field on the single-variant branch,
+    // so it alone doesn't signal drift — only count it when no wrapper and at
+    // least one of the more-specific render fields is also present.
+    const driftSignal = rawRenderPresent.filter(k => k !== 'interactive_url');
+    if (!hasValidWrapper && driftSignal.length > 0) {
+      return (
+        `preview_creative returned raw render fields at the top level (${driftSignal.join(', ')}). ` +
+        `Required: { response_type: 'single', previews: [{ renders: [{ preview_url | preview_html }] }], expires_at }. ` +
+        `Use previewCreativeResponse() from @adcp/client/server.`
+      );
+    }
+  }
+
   return undefined;
 }
 
