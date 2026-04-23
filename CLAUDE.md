@@ -81,6 +81,8 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 - NEVER hardcode API keys, tokens, or credentials — use environment variables
 - NEVER manually edit `package.json` version — use `npm run changeset`
 
+**When a compliance storyboard fails, triage before patching.** Storyboards are assertions, not ground truth. Before changing the SDK to satisfy a failing assertion, ask: *does the AdCP spec define this contract?* Check `schemas/cache/{version}/` and the spec repo (`adcontextprotocol/adcp`). If the spec defines the behavior, fix the SDK — the storyboard is doing its job surfacing drift. If the spec is silent or contradicts the assertion, the storyboard is the bug: file an issue on `adcontextprotocol/adcp`. Don't bake storyboard opinion into SDK behavior — that compounds drift across the ecosystem and turns the SDK into a mirror of whichever storyboard was authored most recently.
+
 **Full agent instructions**: [AGENTS.md](./AGENTS.md) has protocol details, architecture patterns, and testing strategies.
 
 ---
