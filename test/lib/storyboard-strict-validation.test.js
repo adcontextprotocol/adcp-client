@@ -157,6 +157,55 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     assert.strictEqual(v.strict, undefined, 'no strict verdict when AJV has no schema for this task');
   });
 
+  test('warning groups `required` keyword issues under their parent path', () => {
+    // A handler that returns multiple incomplete reporting_capabilities
+    // objects (missing several required fields each). Without grouping a
+    // seller iterates once per missing field — the classic N-round onramp
+    // cliff. The warning should list all missing fields under their
+    // instance_path in a single pass.
+    const response = {
+      products: [
+        {
+          product_id: 'prod_1',
+          name: 'Test',
+          description: 'Test product',
+          publisher_properties: [{ publisher_domain: 'x.example', selection_type: 'all' }],
+          channels: ['display'],
+          format_ids: [{ agent_url: 'https://creatives.adcontextprotocol.org', id: 'display_static' }],
+          delivery_type: 'non_guaranteed',
+          pricing_options: [
+            {
+              pricing_option_id: 'po_cpm',
+              pricing_model: 'cpm',
+              fixed_price: 5,
+              currency: 'USD',
+              min_spend_per_package: 500,
+            },
+          ],
+          // reporting_capabilities is missing multiple required fields
+          reporting_capabilities: {
+            available_metrics: ['impressions'],
+          },
+        },
+      ],
+    };
+    const results = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctx('get_products', response, 'media-buy/get-products-response.json')
+    );
+    const v = results[0];
+    if (v.strict && v.strict.valid === false && typeof v.warning === 'string') {
+      // When AJV reports missing required fields, the warning groups them by
+      // instance_path so the seller sees all missing fields in one pass.
+      // Expected shape: `strict JSON-schema missing required at <path>: a, b, c`
+      assert.match(
+        v.warning,
+        /missing required at \/products\/0\/reporting_capabilities: [a-z_]+(, [a-z_]+)+/,
+        `expected grouped required-fields in warning, got: ${v.warning}`
+      );
+    }
+  });
+
   test('strict verdict caps issues at 10 (diagnostic stability)', () => {
     // A pathological response with many simultaneously-invalid siblings
     // exercises AJV's cascade mode — every bad format_id.agent_url surfaces

@@ -225,9 +225,9 @@ const controller = createComplyController({
 controller.register(server);
 ```
 
-Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO`. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` when the state machine disallows a transition; the helper emits the typed envelope. Declare `compliance_testing` in `supported_protocols` when registered.
+Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO`. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` when the state machine disallows a transition; the helper emits the typed envelope. `controller.register(server)` auto-emits `capabilities.compliance_testing.scenarios` per AdCP 3.0 — don't declare `compliance_testing` in `supported_protocols`.
 
-For lower-level store-based access (shared enforcement with production code, session-keyed stores), use `registerTestController(server, store)` — same primitives, flatter API.
+For domain state that carries internal structure (packages, revision, history) read by production tools, use `registerTestController(server, store)` — flat store surface, session-scoped factory. See `examples/seller-test-controller.ts`. Pick by state shape, not by helper tier — both sit on the same primitives and both auto-emit the capability block.
 
 ---
 

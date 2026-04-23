@@ -403,7 +403,7 @@ const controller = createComplyController({
 controller.register(server);
 ```
 
-Declare `compliance_testing` in `supported_protocols` when registered. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` from the adapter when the state machine disallows the transition — the helper emits the typed error envelope. Omitted adapters auto-return `UNKNOWN_SCENARIO`.
+`controller.register(server)` auto-emits the `capabilities.compliance_testing.scenarios` block per AdCP 3.0 — don't put `compliance_testing` in `supported_protocols`, that's a spec violation on 3.0. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` from the adapter when the state machine disallows the transition — the helper emits the typed error envelope. Omitted adapters auto-return `UNKNOWN_SCENARIO`.
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`.
 

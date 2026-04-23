@@ -119,6 +119,13 @@ export interface RunAgainstLocalAgentOptions {
   /**
    * Forwarded to every `runStoryboard` call. `webhook_receiver` is set by
    * the helper — use `webhookReceiver` at the top level to override.
+   *
+   * `allow_http` defaults to `true` when the helper is running against its
+   * own ephemeral `http://127.0.0.1:<port>/mcp` URL — the storyboard
+   * runner's SSRF guard would otherwise refuse to probe the in-process
+   * agent it just stood up. Pass `allow_http: false` here if you redirect
+   * storyboards to an external `https://` agent via
+   * `resolvePerStoryboard` and want loopback-protection back.
    */
   runStoryboardOptions?: Omit<StoryboardRunOptions, 'webhook_receiver'>;
 
@@ -265,8 +272,18 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
     let skipped = 0;
 
     const webhookConfig = resolveWebhookReceiver(options.webhookReceiver);
+    // `runAgainstLocalAgent` owns the URL — it binds an ephemeral loopback
+    // port and hands that http:// URL to the runner. The SSRF guard
+    // defaults to HTTPS-only for obvious reasons, so the runner would
+    // refuse to probe our own server without `allow_http: true`. Default
+    // the flag when the helper-built URL is non-HTTPS and the caller
+    // didn't explicitly opt out. Callers targeting a non-helper URL
+    // (e.g. a real https:// staging agent) can still override to `false`.
+    const helperBoundHttp = agentUrl.startsWith('http://');
+    const explicitAllowHttp = options.runStoryboardOptions?.allow_http;
     const baseRunOptions: Omit<StoryboardRunOptions, 'webhook_receiver'> = {
       ...(options.runStoryboardOptions ?? {}),
+      allow_http: explicitAllowHttp ?? helperBoundHttp,
     };
 
     for (let i = 0; i < toRun.storyboards.length; i++) {

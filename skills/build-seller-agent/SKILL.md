@@ -555,14 +555,7 @@ controller.register(server);
 
 Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO` (not schema errors). Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` from an adapter when the state machine disallows the transition; the helper emits the typed error envelope.
 
-When registered, declare `compliance_testing` in `supported_protocols`:
-
-```ts
-capabilitiesResponse({
-  adcp: { major_versions: [3] },
-  supported_protocols: ['media_buy', 'compliance_testing'],
-});
-```
+Registration auto-emits the `capabilities.compliance_testing.scenarios` block per AdCP 3.0 — `controller.register(server)` wires the tool AND declares capability. Don't add `compliance_testing` to `supported_protocols`; per spec it's a capability block, not a protocol.
 
 Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`.
 
@@ -654,16 +647,7 @@ const store: TestControllerStore = {
 registerTestController(server, store);
 ```
 
-When using this, declare `compliance_testing` in `supported_protocols`:
-
-```
-capabilitiesResponse({
-  adcp: { major_versions: [3] },
-  supported_protocols: ['media_buy', 'compliance_testing'],
-})
-```
-
-Only implement the store methods for scenarios your agent supports. Unimplemented methods are excluded from `list_scenarios` automatically.
+`registerTestController` auto-emits the `capabilities.compliance_testing.scenarios` block per AdCP 3.0 — scenarios come from the factory's static list or are inferred from the plain store's method presence. Don't add `compliance_testing` to `supported_protocols`; per spec it's a capability block, not a protocol. Unimplemented methods are excluded from `list_scenarios` automatically.
 
 The storyboard tests state machine correctness:
 

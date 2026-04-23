@@ -13,12 +13,14 @@ This directory contains practical examples of how to use the `@adcp/client` libr
 
 ### Agent testing (`comply_test_controller`)
 
-Two patterns for wiring the compliance controller, split by the shape of the state your seed / force handlers mutate:
+Start with `createComplyController` (`comply-controller-seller.ts`). Switch to `registerTestController` (`seller-test-controller.ts`) only when your domain state has internal structure that multiple production tools read from — i.e., when the adapter surface's one-method-per-scenario shape starts fighting the code you already have.
 
-- **`comply-controller-seller.ts`** — use `createComplyController` when each scenario maps cleanly to one repository method (`seed_creative` → `creativeRepo.upsert`). Adapter surface, simpler domain.
-- **`seller-test-controller.ts`** — use `registerTestController` with a hand-rolled `TestControllerStore` when your media buy / creative records carry internal structure (packages, revision, history) that seed must populate AND production tools (`get_media_buy`, `sync_creatives`) must read. Flat store surface, session-scoped.
+- **`comply-controller-seller.ts`** — `createComplyController` adapter surface. Each scenario maps cleanly to one repository method (`seed_creative` → `creativeRepo.upsert`). The default choice.
+- **`seller-test-controller.ts`** — `registerTestController` with a hand-rolled `TestControllerStore`. Pick this when your media buy / creative records carry internal structure (packages, revision, history) that seed must populate AND production tools (`get_media_buy`, `sync_creatives`) must read. Flat store surface, session-scoped factory.
 
-Pick by state shape, not by helper quality — both call the same underlying primitives.
+Both wire `comply_test_controller`, both auto-emit the `capabilities.compliance_testing.scenarios` block, both sit on the same primitives. Pick by state shape, not by perceived helper tier.
+
+Run `npm run typecheck:examples` to validate both examples against the built `dist/`.
 
 ### Running Examples
 
