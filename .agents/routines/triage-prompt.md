@@ -58,6 +58,35 @@ One of:
 without running code, classify as **needs-info** and ask one specific
 repro question. Never guess.
 
+## Silent triage: label-only, no comment
+
+A comment is only worth posting when it adds signal the reader doesn't
+already have from the issue + its labels. Apply `claude-triaged` +
+matching bucket labels silently (no comment) when ALL of these are
+true:
+
+- Classification is **Feature request**, or pre-classified as
+  RFC / Epic / Tracking / Child-of-open-parent
+- Author association is `OWNER | MEMBER | COLLABORATOR`
+- Body is well-structured: has a Summary / Description / Steps-to-
+  Reproduce section, **or** >200 chars of prose
+- Issue already carries at least one on-target label (`rfc`, `epic`,
+  `tracking`, `bug`, `enhancement`, `documentation`, `question`, or
+  a matching bucket label)
+
+**Still comment when:**
+
+- Author is `NONE` or `FIRST_TIME_CONTRIBUTOR`
+- Classification is **Bug**, **Usage/support**, **Protocol
+  question**, **Conformance failure**, or **needs-info**
+- You have a **duplicate**, **related open PR**, or **cross-repo
+  redirect** to surface
+- You're about to open a PR
+- `Status: not-actionable` and the reason is non-obvious
+
+The test: would a maintainer skimming the thread *learn something*
+from your comment? If no, stay silent.
+
 ## Pre-PR checks (even for bug/typo)
 
 Before drafting a PR:
