@@ -63,14 +63,7 @@ test('warning is advisory — exit status reflects the real command outcome, not
 test('--strict-flags upgrades the warning to a hard exit 2', () => {
   // Passing a removed flag + --strict-flags must exit 2 with a pointed message,
   // so CI pipelines can catch stale scripts as build-breakers.
-  const result = runCli([
-    'storyboard',
-    'run',
-    'test-mcp',
-    '--platform-type',
-    'creative_transformer',
-    '--strict-flags',
-  ]);
+  const result = runCli(['storyboard', 'run', 'test-mcp', '--platform-type', 'creative_transformer', '--strict-flags']);
   assert.strictEqual(result.status, 2);
   assert.match(result.stderr, /DEPRECATED: --platform-type was removed/);
   assert.match(result.stderr, /ERROR: --strict-flags was set/);
