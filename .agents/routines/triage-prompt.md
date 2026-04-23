@@ -35,15 +35,25 @@ Reference by quoting only.
 
 ## Four outcomes — pick one per issue
 
+Default: **execute when the outcome is clear.** The bot's job is
+to ship work, not narrate it. Flag is for genuine ambiguity or
+breaking changes, not for "I could have opened a PR but decided
+to be careful."
+
 1. **Clarify** — issue is underspecified; ask 1–3 concrete questions.
-2. **Flag for human review** — experts formed an opinion, but it's
-   architectural / cross-repo / contentious. Comment with synthesis +
-   an explicit ask for `@bokelley`.
-3. **Execute PR** — experts agree, scope is small and correct, no
-   protected-path concerns. Open a draft PR.
+2. **Flag for human review** — experts formed an opinion, but the
+   change is **breaking** (see definition below), architectural,
+   security-sensitive, or experts disagreed. Post synthesis + an
+   explicit ask for `@bokelley`.
+3. **Execute PR** — experts agree, change is **non-breaking**. Open
+   a draft PR. No scope cap, no classification gate, no author
+   gate. CODEOWNERS + human review still gate merge.
 4. **Defer** — well-formed but post-current-cycle or blocked on
    prereq. Apply `claude-triaged` + labels; comment only if author
    is `NONE` / `FIRST_TIME_CONTRIBUTOR`; otherwise silent.
+
+**When in doubt between Execute and Flag: Execute.** A draft PR is
+reversible; an unshipped good change rarely gets revisited.
 
 ## Concurrency check — first thing, every issue
 
@@ -223,23 +233,49 @@ version, a linked PR is already milestoned, or a version-shaped
 label is present. Otherwise omit. Never infer from vibes. Never
 create new milestones.
 
-## PR criteria — all must be true to Execute
+## Non-breaking vs. breaking — the central question for Execute
 
-- Outcome after expert consultation is Execute
-- Classification is Bug or Usage where a doc fix suffices
+**Non-breaking — Execute:**
+
+- Adding new optional params, methods, or convenience APIs
+- Adding new examples, docs, TypeDoc annotations
+- Adding new conformance tests for existing behavior
+- Fixing typos, broken links, dead references
+- Clarifying wording or error messages without semantic shift
+- Non-semantic internal refactors
+
+**Breaking — Flag:**
+
+- Removing or renaming exported methods / types / classes
+- Changing method signatures (new required params, changed types)
+- Changing default values on existing options
+- Changing error behavior / thrown types on existing paths
+
+If unsure whether a change is breaking, search for the identifier
+in `docs/llms.txt` + `docs/TYPE-SUMMARY.md`. If it's in the public
+surface, treat as breaking.
+
+## PR criteria — execute when the outcome is clear
+
+All must be true:
+
+- Experts converge on "ship it" — no material disagreement
+- Change is **non-breaking** (definition above)
+- Not security-sensitive (always Flag)
 - Not RFC / epic / tracking / child-of-open-parent / deferred
-- Not security-sensitive (always Flag, never Execute)
-- Scope small: 1–2 files, <150 lines
-- Success testable — test can be written that passes locally
 - Duplicate + open-PR checks clean
+- Success is testable (or change is docs-only)
 - No edits to generated files:
   - `src/lib/types/*.generated.ts`
   - `src/lib/agents/index.generated.ts`
   - `schemas/` (sync from adcp spec instead)
 - A changeset accompanies the change (`npx changeset`)
 
-Author association is NOT a gate — drive-by bugs welcome.
-CODEOWNERS + human review still gates merge.
+**Scope is NOT a gate.** **Author is NOT a gate.** A 200-line
+non-breaking API addition ships as a draft PR same as a 10-line
+typo fix. CODEOWNERS + human review gate the merge.
+
+**When in doubt: Execute.**
 
 ## PR constraints
 
