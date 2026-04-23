@@ -171,8 +171,13 @@ export {
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
   bridgeFromTestControllerStore,
+  bridgeFromSessionStore,
 } from '../server/test-controller-bridge';
-export type { TestControllerBridge, TestControllerBridgeContext } from '../server/test-controller-bridge';
+export type {
+  TestControllerBridge,
+  TestControllerBridgeContext,
+  BridgeFromSessionStoreOptions,
+} from '../server/test-controller-bridge';
 
 // Default TestControllerStore factory — ships wired defaults for every
 // force_* / simulate_* / seed_* scenario so sellers can bring a session and

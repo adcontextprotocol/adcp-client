@@ -1,13 +1,39 @@
 /**
  * Default factory for `comply_test_controller` stores.
  *
- * Most sellers implementing conformance wire ~300 lines of boilerplate against
- * their own session state: a Map per status kind, a Map per seed kind, matching
- * force/simulate/seed handlers, cap enforcement, and idempotent save calls.
- * {@link createDefaultTestControllerStore} collapses that to ten lines by
- * wiring every scenario against a generic {@link DefaultSessionShape} — the
- * seller brings `loadSession` / `saveSession`, the factory hands back a
- * conformance-ready {@link TestControllerStore}.
+ * Sellers whose session state IS a `DefaultSessionShape` — i.e. starting from
+ * zero, no production domain model yet, or a deliberate choice to keep
+ * conformance state in a bag of generic Maps — can wire the controller in
+ * ten lines: bring `loadSession` / `saveSession`, get a conformance-ready
+ * {@link TestControllerStore} back with defaults for every `force_*`,
+ * `simulate_*`, and `seed_*` scenario.
+ *
+ * ## Fit for purpose
+ *
+ * This helper is for sellers whose seed / status state is the generic shape
+ * {@link DefaultSessionShape} describes. If your production tools
+ * (`create_media_buy`, `sync_creatives`, `sync_plans`, `check_governance`)
+ * already read from a richer domain model — typed `MediaBuyState`,
+ * `CreativeState`, `GovernancePlanState` with packages, history, revision
+ * tracking, etc. — the default handlers here write into a PARALLEL bag of
+ * Maps that your production tools don't read. You'll either:
+ *
+ *   1. Override every `seed*` / `force*` / `simulate*` handler through
+ *      `overrides`, in which case the factory buys you nothing.
+ *   2. Leave the defaults in and watch `seed_media_buy` populate
+ *      `DefaultSessionShape.seededMediaBuys` while `get_media_buy` reads
+ *      from `session.mediaBuys` — so the seeded data is silently invisible
+ *      to subsequent storyboard steps.
+ *
+ * Rich-state sellers should write a `TestControllerStore` directly against
+ * their own session types, using the scope-management primitives the SDK
+ * ships separately: {@link enforceMapCap} for per-Map cap enforcement and
+ * `createSeedFixtureCache` (from `@adcp/client/server`) for seed-id-to-fixture
+ * bookkeeping. The helper target size in that case is ~400 LOC, not 10.
+ *
+ * If you adopt the default store literally on a rich-state agent, expect
+ * drift between `session.seededMediaBuys` (where seeds land) and your
+ * production `session.mediaBuys` (where tools read) — sellers have hit this.
  *
  * @example Postgres-backed seller
  * ```ts

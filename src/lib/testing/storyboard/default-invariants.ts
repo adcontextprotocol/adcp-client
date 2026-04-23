@@ -72,7 +72,8 @@ registerOnce('idempotency.conflict_no_payload_leak', {
         step_id: stepResult.step_id,
         error:
           `IDEMPOTENCY_CONFLICT error envelope leaked non-allowlisted field(s): ${leaked.sort().join(', ')}. ` +
-          `Allowed envelope keys: ${[...CONFLICT_ADCP_ERROR_ALLOWLIST].join(', ')}.`,
+          `Allowed envelope keys (ADCP_ERROR_FIELD_ALLOWLIST.IDEMPOTENCY_CONFLICT): ` +
+          `${[...CONFLICT_ADCP_ERROR_ALLOWLIST].join(', ')}.`,
       },
     ];
   },

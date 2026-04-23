@@ -253,16 +253,7 @@ describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
     // response must NOT echo the prior request payload inside adcp_error.
     // Only spec-defined metadata keys are permitted.
     assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST instanceof Set);
-    for (const expected of [
-      'code',
-      'message',
-      'recovery',
-      'status',
-      'retry_after',
-      'correlation_id',
-      'request_id',
-      'operation_id',
-    ]) {
+    for (const expected of ['code', 'message', 'status', 'correlation_id', 'request_id', 'operation_id']) {
       assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has(expected), `missing ${expected}`);
     }
     // Common payload fields that would leak prior state must NOT be in the set.
@@ -271,11 +262,22 @@ describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
     }
   });
 
-  it('permits recovery so framework-emitted conflicts do not false-positive', () => {
-    // Regression: `adcpError('IDEMPOTENCY_CONFLICT', ...)` always adds
-    // `recovery: 'correctable'` from STANDARD_ERROR_CODES. Omitting it
-    // from the allowlist would flag every framework-emitted conflict as
-    // a leak — the invariant would fire on the SDK's own output.
-    assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has('recovery'));
+  it('excludes recovery — adcpError() drops it on IDEMPOTENCY_CONFLICT', () => {
+    // The `recovery` classifier is redundant with `code` (derivable from
+    // STANDARD_ERROR_CODES) and widens the surface the stolen-key-read
+    // invariant has to defend. `adcpError()` consults this allowlist
+    // per-code and strips `recovery` from the output on conflict, so the
+    // allowlist stays strict (keeping option 1 from #826).
+    assert.ok(!CONFLICT_ADCP_ERROR_ALLOWLIST.has('recovery'));
+  });
+
+  it('excludes retry_after — a computed value would leak cached-entry age', () => {
+    // Retry hints belong on transient codes (SERVICE_UNAVAILABLE,
+    // RATE_LIMITED). On a terminal conflict, a seller that naively
+    // computed `retry_after = cached_entry_age` would leak a
+    // distinguisher between "key never seen" and "key seen N seconds
+    // ago" — a stolen-key read oracle narrower than payload echo but
+    // still load-bearing.
+    assert.ok(!CONFLICT_ADCP_ERROR_ALLOWLIST.has('retry_after'));
   });
 });

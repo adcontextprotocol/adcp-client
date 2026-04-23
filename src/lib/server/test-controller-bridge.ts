@@ -205,3 +205,100 @@ export function bridgeFromTestControllerStore<TAccount = unknown>(
     },
   };
 }
+
+/**
+ * Options for {@link bridgeFromSessionStore}.
+ *
+ * Passed as an options object (rather than positional args) so the
+ * session-loader and seed-selector names stay disambiguated from
+ * `createDefaultTestControllerStore`'s same-named `loadSession` — which
+ * receives `{ context }`, not the raw request — and so future additions
+ * (logger, sandbox override, cache hooks) land non-breakingly.
+ */
+export interface BridgeFromSessionStoreOptions<TSession> {
+  /**
+   * Resolve the session for the current request. Receives the raw
+   * `get_products` request post-schema-validation; pull whatever key
+   * you use (`session_id`, `brand.domain`, `account_id`) out of
+   * `input.context` / `input.account` / `input.brand` and return the
+   * session object. May be async.
+   *
+   * Errors propagate unchanged to the dispatcher — a `loadSession`
+   * rejection fails the bridge call rather than silently producing an
+   * empty seed list (seed loss under DB failure would be worse than a
+   * loud error, and the storyboard runner surfaces the failure).
+   */
+  loadSession: (input: Record<string, unknown>) => Promise<TSession> | TSession;
+
+  /**
+   * Extract the seeded products from a resolved session. Return a Map,
+   * any `[productId, fixture]` iterable, or a Promise of one — the
+   * bridge awaits the return value so callers with lazy-loaded seed
+   * collections don't have to eagerly hydrate inside `loadSession`.
+   * Return `null` / `undefined` when the session has no seeds.
+   */
+  selectSeededProducts: (
+    session: TSession
+  ) =>
+    | Iterable<readonly [string, unknown]>
+    | Promise<Iterable<readonly [string, unknown]> | null | undefined>
+    | null
+    | undefined;
+
+  /**
+   * Baseline product fields every seeded fixture is merged onto via
+   * {@link mergeSeedProduct}. Storyboards can then seed sparse
+   * `{ name, targeting }` fixtures and the baseline fills in reporting
+   * / pricing / property fields the response schema requires.
+   */
+  productDefaults?: Partial<Product>;
+}
+
+/**
+ * Session-scoped variant of {@link bridgeFromTestControllerStore}.
+ *
+ * The default-store bridge closes over a single `Map` at construction time
+ * — fine for process-wide `DefaultSessionShape.seededProducts`, but doesn't
+ * compose with sellers whose seed state is per-tenant / per-brand / per-
+ * `account_id` and loaded from Postgres or Redis on every request. Those
+ * sellers end up rewriting the same "load session, pull the seed Map,
+ * merge into products" glue each time.
+ *
+ * Sandbox gating and dedup happen in the dispatcher (same path as the
+ * default-store bridge); this helper returns fixtures unconditionally
+ * and leaves scoping to the framework.
+ *
+ * @example
+ * ```ts
+ * import { bridgeFromSessionStore } from '@adcp/client/server';
+ *
+ * const server = createAdcpServer({
+ *   testController: bridgeFromSessionStore({
+ *     loadSession: (input) => loadComplySession(sessionKeyFromInput(input)),
+ *     selectSeededProducts: (session) => session.complyExtensions.seededProducts,
+ *     productDefaults: SEED_PRODUCT_DEFAULTS,
+ *   }),
+ * });
+ * ```
+ */
+export function bridgeFromSessionStore<TSession, TAccount = unknown>(
+  opts: BridgeFromSessionStoreOptions<TSession>
+): TestControllerBridge<TAccount> {
+  const { loadSession, selectSeededProducts, productDefaults = {} } = opts;
+  return {
+    getSeededProducts: async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededProducts(session);
+      if (!entries) return [];
+      const out: Product[] = [];
+      for (const [productId, fixture] of entries) {
+        const merged = mergeSeedProduct(productDefaults, {
+          ...(fixture && typeof fixture === 'object' ? (fixture as Partial<Product>) : {}),
+          product_id: productId,
+        });
+        out.push(merged as Product);
+      }
+      return out;
+    },
+  };
+}

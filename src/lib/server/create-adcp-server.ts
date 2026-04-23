@@ -40,6 +40,7 @@ import { ADCP_STATE_STORE, wrapMcpServer, type AdcpServer, type AdcpServerIntern
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
+import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
 import {
@@ -1432,6 +1433,61 @@ function isFormattedResponse(value: unknown): value is McpToolResponse {
   return Array.isArray(obj.content) && 'structuredContent' in obj;
 }
 
+/**
+ * Defence-in-depth sanitizer for handler-returned error envelopes.
+ *
+ * `adcpError()` filters its own output against `ADCP_ERROR_FIELD_ALLOWLIST`,
+ * but a handler that hand-rolls `{ isError: true, structuredContent: {
+ * adcp_error: {...} } }` (or constructs the envelope through a different
+ * builder) bypasses that sanitizer. The storyboard invariant
+ * `idempotency.conflict_no_payload_leak` catches this at conformance-test
+ * time, but production traffic would be unprotected — so we re-apply the
+ * allowlist here too. Silent no-op when the code has no registered entry,
+ * or when `structuredContent.adcp_error` is missing its `code` field.
+ *
+ * Keeps L2 (`content[0].text`) and L3 (`structuredContent`) in lockstep —
+ * both transport layers get the same filtered payload.
+ */
+function sanitizeAdcpErrorEnvelope(response: McpToolResponse): void {
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (!sc || typeof sc !== 'object') return;
+  const err = sc.adcp_error as Record<string, unknown> | undefined;
+  if (!err || typeof err !== 'object') return;
+  const code = err.code;
+  if (typeof code !== 'string') return;
+  const allow = ADCP_ERROR_FIELD_ALLOWLIST[code];
+  if (!allow) return;
+
+  const filtered: Record<string, unknown> = {};
+  let droppedAny = false;
+  for (const [k, v] of Object.entries(err)) {
+    if (allow.has(k)) {
+      filtered[k] = v;
+    } else {
+      droppedAny = true;
+    }
+  }
+  if (!droppedAny) return;
+
+  sc.adcp_error = filtered;
+  if (Array.isArray(response.content)) {
+    const first = response.content[0];
+    if (first && first.type === 'text' && typeof first.text === 'string') {
+      try {
+        const parsed = JSON.parse(first.text);
+        if (parsed && typeof parsed === 'object') {
+          parsed.adcp_error = filtered;
+          first.text = JSON.stringify(parsed);
+        }
+      } catch {
+        // Text isn't JSON — leave it alone. adcpError()-emitted envelopes
+        // always serialize to JSON, so the only hit here would be a seller
+        // who hand-rolled a non-JSON content[0] (implausible for AdCP).
+      }
+    }
+  }
+}
+
 // Echo the request context into a formatted MCP tool response so buyers can
 // trace correlation_id across both success and error responses. Only plain
 // objects are echoed: `si_get_offering` and `si_initiate_session` override
@@ -1763,7 +1819,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // `injectContextIntoResponse` skips non-object values so SI tools
         // that override `context` as a string on the request don't leak the
         // string into the response envelope.
+        //
+        // `sanitizeAdcpErrorEnvelope` re-applies `ADCP_ERROR_FIELD_ALLOWLIST`
+        // as a runtime belt-and-suspenders for handlers that build an error
+        // envelope outside `adcpError()` — `adcpError()` already filters its
+        // own output, but a hand-rolled `{ isError, structuredContent:
+        // { adcp_error: ... } }` would otherwise ship unfiltered.
         const finalize = (response: McpToolResponse): McpToolResponse => {
+          sanitizeAdcpErrorEnvelope(response);
           injectContextIntoResponse(response, params.context);
           return response;
         };

@@ -835,6 +835,65 @@ describe('createAdcpServer', () => {
       assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
       assert.ok(errors.some(e => e.msg === 'Handler failed'));
     });
+
+    it('sanitizes a hand-rolled IDEMPOTENCY_CONFLICT envelope against the allowlist', async () => {
+      // Handlers that bypass adcpError() and build the envelope by hand
+      // must not ship non-allowlisted fields on the wire — the dispatcher
+      // re-applies ADCP_ERROR_FIELD_ALLOWLIST as defence-in-depth so a
+      // seller who hand-rolls { isError, structuredContent: { adcp_error:
+      // { code: 'IDEMPOTENCY_CONFLICT', ...prior_payload } } } doesn't
+      // leak the prior request body or cached response to a stolen-key
+      // attacker. (The storyboard invariant catches the same thing at
+      // conformance-test time; this closes the runtime gap.)
+      const leakyEnvelope = {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              adcp_error: {
+                code: 'IDEMPOTENCY_CONFLICT',
+                message: 'key reused',
+                recovery: 'correctable',
+                retry_after: 30,
+                details: { prior_budget: 5000, prior_account: 'acct_123' },
+              },
+            }),
+          },
+        ],
+        structuredContent: {
+          adcp_error: {
+            code: 'IDEMPOTENCY_CONFLICT',
+            message: 'key reused',
+            recovery: 'correctable',
+            retry_after: 30,
+            details: { prior_budget: 5000, prior_account: 'acct_123' },
+          },
+        },
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => leakyEnvelope,
+        },
+      });
+
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+      });
+      const sanitized = result.structuredContent.adcp_error;
+      assert.strictEqual(sanitized.code, 'IDEMPOTENCY_CONFLICT');
+      assert.strictEqual(sanitized.message, 'key reused');
+      assert.ok(!('recovery' in sanitized));
+      assert.ok(!('retry_after' in sanitized));
+      assert.ok(!('details' in sanitized));
+      // L2 text payload stays in lockstep.
+      const text = JSON.parse(result.content[0].text).adcp_error;
+      assert.ok(!('details' in text));
+      assert.ok(!('retry_after' in text));
+    });
   });
 
   describe('schema relaxation for handler-level validation', () => {
