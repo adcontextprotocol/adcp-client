@@ -43,6 +43,25 @@ const OPERATION_DOMAINS = ['trusted-match'] as const;
 // Skip internal/sandbox-only tools
 const SKIP_TOOLS = new Set(['comply-test-controller']);
 
+// Short, high-signal "watch out" notes appended below the Response block for
+// specific tools. Kept here so regenerating llms.txt from the schema index
+// still carries the operational lessons that bit real integrators.
+// Keep each entry under ~5 lines — llms.txt is a scan surface, not a tutorial.
+const TOOL_GOTCHAS: Record<string, string[]> = {
+  build_creative: [
+    'Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.',
+    'Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to enforce the shape at compile time.',
+    'Each asset under `creative_manifest.assets` needs an `asset_type` discriminator — use the factories: `imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset` (or `Asset.image(...)`).',
+  ],
+  preview_creative: [
+    'Each `renders[]` entry is a oneOf on `output_format` — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url`/`preview_html` field.',
+  ],
+  list_creative_formats: [
+    'Each `renders[]` entry needs `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. Top-level `{ width, height }` fails — wrap in `dimensions`.',
+    'Audio formats (`type: "audio"`) have no width/height — declare `renders: [{ role: "primary", duration_seconds: N }]` so storyboard `field_present formats[0].renders` validations still pass.',
+  ],
+};
+
 // GitHub Pages base URL for published docs
 const DOCS_BASE_URL = 'https://adcontextprotocol.github.io/adcp-client';
 
@@ -713,6 +732,15 @@ function generateLlmsTxt(
           let optLine = `- Optional: ${shown.map(f => `\`${f}\``).join(', ')}`;
           if (more > 0) optLine += `, +${more} more`;
           ln(optLine);
+        }
+        ln();
+      }
+
+      const gotchas = TOOL_GOTCHAS[tool.name];
+      if (gotchas?.length) {
+        ln(`**Watch out:**`);
+        for (const note of gotchas) {
+          ln(`- ${note}`);
         }
         ln();
       }
