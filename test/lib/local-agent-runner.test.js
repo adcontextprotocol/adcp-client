@@ -106,10 +106,12 @@ test('resolvePerStoryboard agentUrl override routes storyboard to a different UR
     // Drain body so Node can close cleanly, then respond with a non-MCP
     // 404 so the storyboard fails (proves traffic reached the sink rather
     // than bypassing it silently).
-    req.on('data', () => {}).on('end', () => {
-      res.statusCode = 404;
-      res.end('sink-not-an-agent');
-    });
+    req
+      .on('data', () => {})
+      .on('end', () => {
+        res.statusCode = 404;
+        res.end('sink-not-an-agent');
+      });
   });
   await new Promise(resolve => sink.listen(0, '127.0.0.1', resolve));
   const sinkPort = sink.address().port;
@@ -161,7 +163,7 @@ test('resolvePerStoryboard supports async callbacks', async () => {
     createAgent: () => makeMinimalAgent(),
     storyboards: ['capability_discovery'],
     webhookReceiver: false,
-    resolvePerStoryboard: async (sb) => {
+    resolvePerStoryboard: async sb => {
       await new Promise(resolve => setImmediate(resolve));
       return sb.id === 'capability_discovery' ? undefined : { agentUrl: 'http://unused' };
     },

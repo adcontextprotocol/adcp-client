@@ -182,10 +182,7 @@ export interface RunAgainstLocalAgentOptions {
  * that field via its `webhookReceiver` option and re-applies it after the
  * merge.
  */
-export type PerStoryboardOverride = { agentUrl?: string } & Omit<
-  Partial<StoryboardRunOptions>,
-  'webhook_receiver'
->;
+export type PerStoryboardOverride = { agentUrl?: string } & Omit<Partial<StoryboardRunOptions>, 'webhook_receiver'>;
 
 export interface LocalAgentRunResult {
   /** True iff every storyboard passed (steps + assertions). */
