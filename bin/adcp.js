@@ -1356,9 +1356,39 @@ async function handleStoryboardShow(args) {
   }
 }
 
+// Flags that used to be accepted but have been removed from the SDK/CLI.
+// Silent-ignore hides real divergence between author intent and runtime behavior
+// (observed in third-party CI scripts that still pass `--platform-type`).
+// Each entry: { since: version-string, hint: what-to-do-instead }.
+//
+// NOTE: `parseAgentOptions` still captures `--platform-type`'s value (line ~602)
+// solely so the value doesn't leak into `positionalArgs`. That capture + this
+// warning are both necessary — removing the capture would make a bare
+// `--platform-type X` turn `X` into an agent alias lookup.
+const REMOVED_FLAGS = {
+  '--platform-type': {
+    since: '5.1.0',
+    hint: 'Agent selection is now driven by get_adcp_capabilities (supported_protocols + specialisms). Pass --storyboards <bundle-or-id> to target a specific bundle.',
+  },
+};
+
+// Scan `args` for removed flags and emit a stderr warning for each one found.
+// Writes to stderr unconditionally — stderr does not corrupt `--json` stdout,
+// and the CI logs where these warnings need to land capture both streams.
+// Non-breaking — execution continues.
+function warnRemovedFlags(args) {
+  for (const [flag, meta] of Object.entries(REMOVED_FLAGS)) {
+    if (args.includes(flag) || args.some(a => a.startsWith(`${flag}=`))) {
+      console.error(`DEPRECATED: ${flag} was removed in ${meta.since} and is being ignored. ${meta.hint}`);
+    }
+  }
+}
+
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
   const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
+
+  warnRemovedFlags(args);
 
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side

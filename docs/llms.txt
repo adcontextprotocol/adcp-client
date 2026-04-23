@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-22
+> Generated at: 2026-04-23
 > Library: @adcp/client v5.13.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -265,6 +265,10 @@ Request parameters for discovering format IDs and creative agents supported by t
 - Required: `formats: object[]`
 - Optional: `creative_agents: object[]`, `errors: object[]`, `pagination: Pagination Response`, `sandbox: boolean`, `context: Context`
 
+**Watch out:**
+- Each `renders[]` entry needs `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. Top-level `{ width, height }` fails — wrap in `dimensions`.
+- Audio formats (`type: "audio"`) have no width/height — declare `renders: [{ role: "primary", duration_seconds: N }]` so storyboard `field_present formats[0].renders` validations still pass.
+
 #### `create_media_buy`
 
 Request parameters for creating a media buy.
@@ -391,6 +395,11 @@ Request parameters for AI-powered creative generation.
 - Required: `creative_manifest: Creative Manifest`
 - Optional: `sandbox: boolean`, `expires_at: string`, `preview: object`, `preview_error: Error`, `pricing_option_id: string`, `vendor_cost: number`, `currency: string`, `consumption: Creative Consumption`, +1 more
 
+**Watch out:**
+- Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.
+- Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to enforce the shape at compile time.
+- Each asset under `creative_manifest.assets` needs an `asset_type` discriminator — use the factories: `imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset` (or `Asset.image(...)`).
+
 #### `preview_creative`
 
 Request parameters for generating creative previews.
@@ -403,6 +412,9 @@ Request parameters for generating creative previews.
 - Required: `response_type: 'single'`, `previews: object[]`, `expires_at: string`
 - Optional: `interactive_url: string`, `context: Context`
 
+**Watch out:**
+- Each `renders[]` entry is a oneOf on `output_format` — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url`/`preview_html` field.
+
 #### `list_creative_formats`
 
 Request parameters for discovering creative formats from this creative agent.
@@ -413,6 +425,10 @@ Request parameters for discovering creative formats from this creative agent.
 **Response (success branch):**
 - Required: `formats: object[]`
 - Optional: `creative_agents: object[]`, `errors: object[]`, `pagination: Pagination Response`, `context: Context`
+
+**Watch out:**
+- Each `renders[]` entry needs `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. Top-level `{ width, height }` fails — wrap in `dimensions`.
+- Audio formats (`type: "audio"`) have no width/height — declare `renders: [{ role: "primary", duration_seconds: N }]` so storyboard `field_present formats[0].renders` validations still pass.
 
 #### `get_creative_delivery`
 
