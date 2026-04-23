@@ -21,7 +21,7 @@ test('build_creative with platform-native tag_url at top level → hint fires', 
     media_type: 'audio/mpeg',
   });
   assert.ok(hint, 'expected a hint for platform-native shape');
-  assert.match(hint, /platform-native shape/);
+  assert.match(hint, /platform-native fields at the top level/);
   assert.match(hint, /creative_manifest/);
   assert.match(hint, /buildCreativeResponse/);
   assert.match(hint, /@adcp\/client\/server/);
@@ -65,6 +65,12 @@ test('each detector branch is scoped to its own tool', () => {
   assert.strictEqual(detectShapeDriftHint('get_products', { tag_url: 'x' }), undefined);
   assert.strictEqual(detectShapeDriftHint('preview_creative', { media_type: 'image/png' }), undefined);
   assert.strictEqual(detectShapeDriftHint('build_creative', { preview_url: 'https://x' }), undefined);
+  // Each new branch must not steal the other new branch's signals:
+  assert.strictEqual(detectShapeDriftHint('sync_creatives', { preview_url: 'x' }), undefined);
+  assert.strictEqual(
+    detectShapeDriftHint('preview_creative', { creative_id: 'c1', platform_id: 'p1', action: 'created' }),
+    undefined
+  );
 });
 
 test('empty / unrelated build_creative payload → no hint', () => {
@@ -120,6 +126,38 @@ test('sync_creatives with unrelated top-level fields → no hint', () => {
   assert.strictEqual(detectShapeDriftHint('sync_creatives', { sandbox: true }), undefined);
 });
 
+test('sync_creatives with wrong wrapper key { results: [...] } → hint suggests { creatives }', () => {
+  // Copy-paste from preview_creative batch or a generic success envelope —
+  // handler used `results` instead of `creatives`. Catch when `results`
+  // contains per-item sync shapes.
+  const hint = detectShapeDriftHint('sync_creatives', {
+    results: [{ creative_id: 'c1', action: 'created', platform_id: 'plat_abc' }],
+  });
+  assert.ok(hint, 'expected a hint for wrong wrapper key');
+  assert.match(hint, /results.*instead of.*creatives/);
+  assert.match(hint, /wrong wrapper key/);
+  assert.match(hint, /syncCreativesResponse/);
+});
+
+test('sync_creatives with results that do NOT look like creative rows → no hint', () => {
+  // Generic `results: [...]` shape that doesn't carry creative_id/action
+  // should not spuriously fire the wrong-wrapper branch.
+  const hint = detectShapeDriftHint('sync_creatives', {
+    results: [{ id: 'x1', value: 42 }],
+  });
+  assert.strictEqual(hint, undefined);
+});
+
+test('sync_creatives with both creatives and results → no hint (creatives wrapper wins)', () => {
+  // If the handler emits BOTH wrappers, the detector must stay silent —
+  // wrong-wrapper detection is gated on `!hasValidWrapper`.
+  const hint = detectShapeDriftHint('sync_creatives', {
+    creatives: [{ creative_id: 'c1', action: 'created' }],
+    results: [{ creative_id: 'c1', action: 'created' }],
+  });
+  assert.strictEqual(hint, undefined);
+});
+
 // ────────────────────────────────────────────────────────────
 // preview_creative — raw render fields at top level
 // ────────────────────────────────────────────────────────────
@@ -171,6 +209,16 @@ test('preview_creative with only interactive_url → no hint (legitimate top-lev
     previews: [{ preview_id: 'p1', renders: [], input: { name: 'default' } }],
     interactive_url: 'https://cdn.example/sandbox',
     expires_at: '2026-05-01T00:00:00Z',
+  });
+  assert.strictEqual(hint, undefined);
+});
+
+test('preview_creative with ONLY interactive_url and no wrapper → no hint', () => {
+  // Defensive: even without any wrapper, `interactive_url` alone is not a
+  // drift signal — a future maintainer refactoring the filter could break
+  // the deliberate exclusion without this test catching it.
+  const hint = detectShapeDriftHint('preview_creative', {
+    interactive_url: 'https://cdn.example/sandbox',
   });
   assert.strictEqual(hint, undefined);
 });

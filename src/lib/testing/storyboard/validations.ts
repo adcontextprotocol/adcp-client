@@ -434,7 +434,7 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
     const platformNativePresent = platformNativeKeys.filter(k => k in payload);
     if (!hasManifest && platformNativePresent.length > 0) {
       return (
-        `build_creative returned platform-native shape (${platformNativePresent.join(', ')} at top level). ` +
+        `build_creative returned platform-native fields at the top level (${platformNativePresent.join(', ')}). ` +
         `Required: { creative_manifest: { format_id, assets } }. ` +
         `Use buildCreativeResponse() from @adcp/client/server.`
       );
@@ -443,10 +443,16 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
 
   if (taskName === 'sync_creatives') {
     // sync_creatives has three valid branches (creatives-array success,
-    // errors-array failure, submitted task envelope). The drift pattern
-    // bubbles one inner-item's shape up to the top level — the handler
-    // forgot to wrap per-creative results in the `creatives` array.
+    // errors-array failure, submitted task envelope). All three branches
+    // set `additionalProperties: true` — a seller MAY legitimately add a
+    // top-level vendor extension. The wrapper check (`creatives`/`errors`/
+    // `task_id`) deliberately short-circuits before we look at the per-
+    // item keys, so a response with BOTH a wrapper AND a top-level
+    // `creative_id` (valid, schema-additive extension) stays silent.
     const hasValidWrapper = 'creatives' in payload || 'errors' in payload || 'task_id' in payload;
+
+    // Drift A: per-item shape bubbled up to the top level — the handler
+    // forgot to wrap per-creative results in the `creatives` array.
     const perItemKeys = ['creative_id', 'platform_id', 'action'];
     const perItemPresent = perItemKeys.filter(k => k in payload);
     if (!hasValidWrapper && perItemPresent.length > 0) {
@@ -456,12 +462,36 @@ export function detectShapeDriftHint(taskName: string, payload: Record<string, u
         `Use syncCreativesResponse() from @adcp/client/server.`
       );
     }
+
+    // Drift B: wrong wrapper key — handler returned `{ results: [...] }`
+    // (copy-paste from preview_creative batch or a generic success envelope)
+    // instead of `{ creatives: [...] }`. Only fire when `results` contains
+    // per-item sync shapes, so a legitimate preview handler misrouted to
+    // sync_creatives doesn't spuriously trigger.
+    const results = payload.results;
+    if (!hasValidWrapper && Array.isArray(results) && results.length > 0) {
+      const firstRow = results[0];
+      const looksLikeCreativeRow =
+        firstRow != null && typeof firstRow === 'object' && ('creative_id' in firstRow || 'action' in firstRow);
+      if (looksLikeCreativeRow) {
+        return (
+          `sync_creatives returned { results: [...] } instead of { creatives: [...] } — wrong wrapper key. ` +
+          `Required: { creatives: [{ creative_id, action, ... }] }. ` +
+          `Use syncCreativesResponse() from @adcp/client/server.`
+        );
+      }
+    }
   }
 
   if (taskName === 'preview_creative') {
     // preview_creative has three valid branches via response_type discriminator
     // (single, batch, variant). The drift pattern returns raw render fields
     // at the top level instead of wrapping them in previews[].renders[].
+    //
+    // `creative_id` at the top level is legitimate on the variant branch
+    // (schema/3.0.0/creative/preview-creative-response.json — PreviewCreativeVariantResponse),
+    // so deliberately NOT a trigger key. We key only on render-shape fields
+    // that only belong inside previews[].renders[] entries.
     const hasValidWrapper = 'response_type' in payload || 'previews' in payload || 'results' in payload;
     const rawRenderKeys = ['preview_url', 'preview_html', 'interactive_url'];
     const rawRenderPresent = rawRenderKeys.filter(k => k in payload);

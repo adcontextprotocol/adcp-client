@@ -1602,6 +1602,10 @@ async function handleStoryboardRun(args) {
           const vIcon = v.passed ? '✅' : '❌';
           console.log(`   ${vIcon} ${v.description}`);
           if (v.error) console.log(`      ${v.error}`);
+          // v.warning carries actionable hints (shape-drift recipes, strict
+          // deltas, variant-fallback notices). Render it whether the step
+          // passed or failed — a passing step can still carry a warning.
+          if (v.warning) console.log(`      ⚠️  ${v.warning}`);
         }
       }
     }
@@ -2645,6 +2649,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
             const vIcon = v.passed ? '✅' : '❌';
             console.log(`   ${vIcon} ${v.description}`);
             if (v.error) console.log(`      ${v.error}`);
+            if (v.warning) console.log(`      ⚠️  ${v.warning}`);
           }
         }
       }
@@ -2881,6 +2886,7 @@ async function handleStoryboardStepCmd(args) {
       const vIcon = v.passed ? '✅' : '❌';
       console.log(`  ${vIcon} ${v.description}`);
       if (v.error) console.log(`     ${v.error}`);
+      if (v.warning) console.log(`     ⚠️  ${v.warning}`);
     }
 
     // Show context
