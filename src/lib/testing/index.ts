@@ -166,6 +166,10 @@ export type {
   TestControllerStoreFactory,
   TestControllerStoreOrFactory,
 } from '../server/test-controller';
+// Status enums every controller implementer mutates. Re-exported here so a
+// seller wiring `forceMediaBuyStatus` / `forceCreativeStatus` doesn't have to
+// reach into `@adcp/client` root just for the literal unions.
+export type { AccountStatus, CreativeStatus, MediaBuyStatus } from '../types/core.generated';
 
 // Seed fixture merge helpers (permissive defaults + storyboard overlay).
 export {

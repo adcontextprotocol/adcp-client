@@ -2,8 +2,16 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "structured-headers": ["./node_modules/structured-headers/cjs/index.d.cts"],
+      "@adcp/client": ["./dist/lib/index.d.ts"],
+      "@adcp/client/testing": ["./dist/lib/testing/index.d.ts"],
+      "@adcp/client/server": ["./dist/lib/server/index.d.ts"],
+      "@adcp/client/*": ["./dist/lib/*"]
+    }
   },
-  "include": ["examples/error-compliant-server.ts"],
+  "include": ["examples/comply-controller-seller.ts", "examples/seller-test-controller.ts"],
   "exclude": ["node_modules", "dist"]
 }

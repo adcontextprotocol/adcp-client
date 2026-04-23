@@ -517,7 +517,16 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 To pass the `deterministic_testing` storyboard — and the rejection-branch steps in most other storyboards (`governance_denied`, `invalid_transitions`, `measurement_terms_rejected`, etc.) — your agent must expose the `comply_test_controller` tool. Without it, the grader can only observe the happy path; forced state transitions, error-condition seeding, and simulation all silently degrade to skips or fail with `controller_detected: false`.
 
-**Preferred: `createComplyController`** (adapter-based, handles dispatch + validation + re-seed idempotency + sandbox gating for you):
+**Pick by state shape — not by helper quality.** Both helpers below call the same underlying primitives; the split is about the shape of the state you're mutating, not a gradient of abstraction.
+
+| Your domain state is… | Use | Worked example |
+|---|---|---|
+| Simple — each scenario maps cleanly to one repository method (`seed_creative` → `creativeRepo.upsert`) | `createComplyController` | [`examples/comply-controller-seller.ts`](../../examples/comply-controller-seller.ts) |
+| Typed — media buys with packages / revision / history, creatives with format_id / manifest, seed must populate the same records `get_*` reads | `registerTestController` + hand-rolled `TestControllerStore` | [`examples/seller-test-controller.ts`](../../examples/seller-test-controller.ts) |
+
+### Option A: `createComplyController` (adapter surface)
+
+Handles dispatch + validation + re-seed idempotency + sandbox gating for you. Your adapter bodies run; the helper routes:
 
 ```ts
 import { createComplyController } from '@adcp/client/testing';
@@ -598,13 +607,14 @@ const server = createAdcpServer({
 
 Your `getSeededProducts` callback — whether you write it by hand or get it via `bridgeFromTestControllerStore` — MUST re-verify that `ctx.account` (or an equivalent scope) is a sandbox account. The framework's sandbox check is a namespace selector, not an authority boundary.
 
-### Low-level alternative: `registerTestController`
+### Option B: `registerTestController` (flat store surface)
 
-If you need direct store access — e.g., shared enforcement with production code, or a session-keyed store factory — use the flat `registerTestController(server, store)` API. `createComplyController` calls into the same primitives, so picking one or the other is mostly ergonomic preference.
+Pick this when your seed and force handlers must mutate typed domain records (`MediaBuyState` with packages / revision / history) that your production tools already read. Session-scoped store factories close over a loaded session so every mutation lands in the same records `get_media_buy` / `sync_creatives` return — the drift class the flat store prevents.
+
+See [`examples/seller-test-controller.ts`](../../examples/seller-test-controller.ts) for the end-to-end pattern (typed `MediaBuyState` + `CreativeState`, per-request factory, `enforceMapCap` + `createSeedFixtureCache`, transition guards shared with production code). Sketch:
 
 ```
-import { registerTestController } from '@adcp/client';
-import type { TestControllerStore } from '@adcp/client';
+import { registerTestController, type TestControllerStore } from '@adcp/client/testing';
 
 const store: TestControllerStore = {
   async forceAccountStatus(accountId, status) {

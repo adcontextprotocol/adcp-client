@@ -170,6 +170,7 @@
     "lint": "eslint 'src/lib/testing/**/*.ts'",
     "lint:fix": "eslint 'src/lib/testing/**/*.ts' --fix",
     "typecheck": "tsc --noEmit",
+    "typecheck:examples": "tsc --noEmit --project tsconfig.examples.json",
     "clean": "rm -rf dist/",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",

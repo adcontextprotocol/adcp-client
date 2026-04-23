@@ -11,6 +11,15 @@ This directory contains practical examples of how to use the `@adcp/client` libr
 - **`env-config.ts`** - Loading agent configuration from environment variables
 - **`conversation-client.ts`** - Conversation-aware client with input handlers
 
+### Agent testing (`comply_test_controller`)
+
+Two patterns for wiring the compliance controller, split by the shape of the state your seed / force handlers mutate:
+
+- **`comply-controller-seller.ts`** — use `createComplyController` when each scenario maps cleanly to one repository method (`seed_creative` → `creativeRepo.upsert`). Adapter surface, simpler domain.
+- **`seller-test-controller.ts`** — use `registerTestController` with a hand-rolled `TestControllerStore` when your media buy / creative records carry internal structure (packages, revision, history) that seed must populate AND production tools (`get_media_buy`, `sync_creatives`) must read. Flat store surface, session-scoped.
+
+Pick by state shape, not by helper quality — both call the same underlying primitives.
+
 ### Running Examples
 
 ```bash
