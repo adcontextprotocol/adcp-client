@@ -28,6 +28,8 @@ If all five pass and your skill's specialism-specific checks below pass, you're 
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
+**Why `@latest` in every `npx` command?** Without the pin, `npx` reuses whatever version happens to be cached in `~/.npm/_npx/` — and it never re-checks. If you ran `npx @adcp/client` six months ago, you're still on that version today. `npx @adcp/client@latest` forces npx to resolve the `latest` dist-tag against the registry on every run. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
+
 ---
 
 ## What catches what
