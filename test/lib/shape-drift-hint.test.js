@@ -226,3 +226,83 @@ test('preview_creative with ONLY interactive_url and no wrapper → no hint', ()
 test('preview_creative empty payload → no hint', () => {
   assert.strictEqual(detectShapeDriftHint('preview_creative', {}), undefined);
 });
+
+// ────────────────────────────────────────────────────────────
+// List-shaped tools — bare array at the root instead of the wrapper envelope
+// ────────────────────────────────────────────────────────────
+
+test('list_creatives with bare array at the root → hint suggests { creatives: [...] }', () => {
+  // Handler returned the inner array directly instead of wrapping it in the
+  // envelope. AJV's error ("expected object, got array") doesn't name the
+  // required wrapper key — this hint does.
+  const hint = detectShapeDriftHint('list_creatives', [
+    { creative_id: 'c1', format_id: { agent_url: 'https://x', id: 'f1' } },
+  ]);
+  assert.ok(hint, 'expected a hint for bare-array list_creatives response');
+  assert.match(hint, /bare array at the root/);
+  assert.match(hint, /\{ creatives: \[\.\.\.\] \}/);
+  assert.match(hint, /listCreativesResponse/);
+  assert.match(hint, /@adcp\/client\/server/);
+});
+
+test('list_creative_formats with bare array → hint suggests { formats: [...] }', () => {
+  const hint = detectShapeDriftHint('list_creative_formats', [
+    { format_id: { agent_url: 'https://x', id: 'f1' }, name: 'Display 300x250' },
+  ]);
+  assert.ok(hint);
+  assert.match(hint, /\{ formats: \[\.\.\.\] \}/);
+  assert.match(hint, /listCreativeFormatsResponse/);
+});
+
+test('list_accounts with bare array → hint suggests { accounts: [...] }', () => {
+  const hint = detectShapeDriftHint('list_accounts', [{ account_id: 'a1', name: 'Acme' }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ accounts: \[\.\.\.\] \}/);
+  assert.match(hint, /listAccountsResponse/);
+});
+
+test('get_products with bare array → hint suggests { products: [...] }', () => {
+  const hint = detectShapeDriftHint('get_products', [{ product_id: 'p1', name: 'Awareness' }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ products: \[\.\.\.\] \}/);
+  assert.match(hint, /productsResponse/);
+});
+
+test('list tools with proper object wrapper → no hint', () => {
+  // A valid list response (object with the wrapper key populated) must not
+  // trigger the bare-array branch.
+  assert.strictEqual(
+    detectShapeDriftHint('list_creatives', {
+      creatives: [{ creative_id: 'c1' }],
+      query_summary: { total_matching: 1, returned: 1 },
+      pagination: { has_more: false },
+    }),
+    undefined
+  );
+  assert.strictEqual(detectShapeDriftHint('get_products', { products: [{ product_id: 'p1' }] }), undefined);
+});
+
+test('bare array for an unknown tool → no hint (avoids false positives)', () => {
+  // Some APIs legitimately return top-level arrays. The detector must not
+  // fire on unknown task names — only on the known list tools in
+  // LIST_WRAPPER_TOOLS.
+  assert.strictEqual(detectShapeDriftHint('unknown_tool', [{ id: 1 }]), undefined);
+  assert.strictEqual(detectShapeDriftHint('create_media_buy', [{ media_buy_id: 'mb1' }]), undefined);
+});
+
+test('empty bare array for a list tool → still a hint (shape is still wrong)', () => {
+  // An empty array is the same shape mistake as a populated one — the
+  // handler forgot the wrapper. Hint fires regardless of length.
+  const hint = detectShapeDriftHint('list_creatives', []);
+  assert.ok(hint);
+  assert.match(hint, /bare array at the root/);
+});
+
+test('null / primitive payloads → no hint (detector exits cleanly)', () => {
+  // Defensive: the detector must handle `null`, strings, numbers without
+  // throwing — they're not a shape-drift pattern but they'd otherwise crash
+  // the object-branch guards.
+  assert.strictEqual(detectShapeDriftHint('list_creatives', null), undefined);
+  assert.strictEqual(detectShapeDriftHint('build_creative', 'oops'), undefined);
+  assert.strictEqual(detectShapeDriftHint('sync_creatives', 42), undefined);
+});
