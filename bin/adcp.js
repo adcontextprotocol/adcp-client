@@ -32,6 +32,8 @@ const {
 } = require('./adcp-config.js');
 const { handleRegistryCommand } = require('./adcp-registry.js');
 const { captureStdoutLogs, writeJsonOutput } = require('./adcp-json-stdout.js');
+const { scheduleVersionCheck } = require('./adcp-version-check.js');
+const { LIBRARY_VERSION } = require('../dist/lib/version.js');
 const {
   createCLIOAuthProvider,
   hasValidOAuthTokens,
@@ -3165,6 +3167,11 @@ function formatVerdict(verdict) {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Fire a staleness check in the background so a months-old cached
+  // CLI doesn't run silently. Fails silent on any network/FS hiccup;
+  // skipped in CI, non-TTY, --json, and when ADCP_SKIP_VERSION_CHECK=1.
+  scheduleVersionCheck(LIBRARY_VERSION);
 
   // Global: suppress the v2-sunset warning before any subcommand runs.
   // v2 went unsupported on 2026-04-20 (AdCP 3.0 GA, adcp#2220) — the library
