@@ -1358,6 +1358,11 @@ async function handleStoryboardShow(args) {
 // Silent-ignore hides real divergence between author intent and runtime behavior
 // (observed in third-party CI scripts that still pass `--platform-type`).
 // Each entry: { since: version-string, hint: what-to-do-instead }.
+//
+// NOTE: `parseAgentOptions` still captures `--platform-type`'s value (line ~602)
+// solely so the value doesn't leak into `positionalArgs`. That capture + this
+// warning are both necessary — removing the capture would make a bare
+// `--platform-type X` turn `X` into an agent alias lookup.
 const REMOVED_FLAGS = {
   '--platform-type': {
     since: '5.1.0',
@@ -1366,26 +1371,22 @@ const REMOVED_FLAGS = {
 };
 
 // Scan `args` for removed flags and emit a stderr warning for each one found.
-// Returns an array of `{ flag, since, hint }` for callers that want to include
-// the notices in `--json` output. Non-breaking — execution continues.
-function warnRemovedFlags(args, { jsonOutput } = {}) {
-  const found = [];
+// Writes to stderr unconditionally — stderr does not corrupt `--json` stdout,
+// and the CI logs where these warnings need to land capture both streams.
+// Non-breaking — execution continues.
+function warnRemovedFlags(args) {
   for (const [flag, meta] of Object.entries(REMOVED_FLAGS)) {
     if (args.includes(flag) || args.some(a => a.startsWith(`${flag}=`))) {
-      found.push({ flag, since: meta.since, hint: meta.hint });
-      if (!jsonOutput) {
-        console.error(`[warn] ${flag} was removed in ${meta.since} and is being ignored. ${meta.hint}`);
-      }
+      console.error(`DEPRECATED: ${flag} was removed in ${meta.since} and is being ignored. ${meta.hint}`);
     }
   }
-  return found;
 }
 
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
   const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
 
-  warnRemovedFlags(args, { jsonOutput });
+  warnRemovedFlags(args);
 
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side

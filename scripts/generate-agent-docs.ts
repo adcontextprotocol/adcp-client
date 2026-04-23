@@ -1208,6 +1208,18 @@ function main() {
     `Found ${tools.length} tools, ${errorCodes.length} error codes, ${storyboards.length} storyboards, ${scenarios.length} test scenarios`
   );
 
+  // Fail loudly if TOOL_GOTCHAS grows stale. A tool rename would otherwise
+  // silently drop its "Watch out:" block from llms.txt with no CI signal.
+  const knownToolNames = new Set(tools.map(t => t.name));
+  const orphanGotchas = Object.keys(TOOL_GOTCHAS).filter(name => !knownToolNames.has(name));
+  if (orphanGotchas.length > 0) {
+    console.error(
+      `ERROR: TOOL_GOTCHAS references unknown tool(s): ${orphanGotchas.join(', ')}. ` +
+        `A tool was renamed or removed — update TOOL_GOTCHAS in scripts/generate-agent-docs.ts.`
+    );
+    process.exit(1);
+  }
+
   const llmsTxt = generateLlmsTxt(index, tools, errorCodes, storyboards, scenarios);
   const typeSummary = generateTypeSummary(index, tools);
 

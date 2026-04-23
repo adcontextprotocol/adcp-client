@@ -93,7 +93,8 @@ What happens when a creative is synced:
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
 > - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['creative-ad-server']`), NOT `[{id, version}]` objects.
-> - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to lock the shape at compile time. Each asset in `creative_manifest.assets` requires an `asset_type` discriminator — use the typed factories (`imageAsset({...})`, `videoAsset({...})`, `audioAsset({...})`, `htmlAsset({...})`, `urlAsset({...})`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
+> - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to lock the shape at compile time.
+> - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator. Use the typed factories (`imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
 > - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
 > - `get_creative_delivery` requires **top-level `currency: string`** (ISO 4217), in addition to any per-row spend fields. `reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only.
 > - `videoAsset({...})` requires `width` + `height` per GA (previously optional). Set realistic pixel values — `{ url, width: 1920, height: 1080 }`.
@@ -115,7 +116,7 @@ Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 - Video: `{ url: string, duration_ms: number, format: string }`
 - Audio: `{ url: string, container_format: string, codec: string, duration_ms: number, channels?: string, sampling_rate_hz?: number }`
 - HTML: `{ content: string }` (not `{ html: string }`)
-- Text: `{ text: string }`
+- Text: `{ content: string }` (not `{ text: string }` — the field is `content`, same as HTML)
 
 ### Context and Ext Passthrough
 
@@ -622,13 +623,15 @@ Output can be HTML (`{ content: '<div>...</div>' }`), JavaScript tag (`{ content
 
 #### Audio creative-template (TTS / mix / master)
 
-Audio creative agents (AudioStack, ElevenLabs, Resemble) fit the `creative-template` archetype — stateless transform from an inline manifest to a rendered audio file. Two things differ from display:
+Audio creative agents (AudioStack, ElevenLabs, Resemble) fit the `creative-template` archetype — stateless transform from an inline manifest to a rendered audio file. Three things differ from display:
 
 1. **No width/height.** Declare `renders: [{ role: 'primary', duration_seconds: N }]` — the `renders` array is still required by the `discover_formats` storyboard validation, but audio formats surface duration instead of dimensions.
-2. **Async render pipelines.** TTS → mix → master is typically minutes long. Don't block the `build_creative` call waiting for the pipeline; the platform-native SDK (AudioStack's 300s poll window, etc.) belongs inside a task worker. If the platform's API returns quickly, build synchronously; otherwise return the task envelope and emit a `creative_review` completion webhook.
+2. **Async render pipelines.** TTS → mix → master is typically minutes long. Don't block the `build_creative` call waiting for the pipeline; the platform-native SDK (AudioStack's 300s poll window, etc.) belongs inside a task worker. If the platform's API returns quickly, build synchronously; otherwise return the task envelope and emit a `creative_review` completion webhook (see the [Webhooks](#webhooks-for-async-review-pipelines) section above for the wiring).
+3. **Inputs are text assets keyed by `asset_id`.** The buyer sends `creative_manifest.assets.script` (a `TextAsset` with `content: string`) — read `inputManifest.assets.script?.content`, not `.text`.
+
+Format declaration:
 
 ```typescript
-// Format declaration
 listCreativeFormats: async () => ({
   formats: [{
     format_id: { agent_url: AGENT_URL, id: 'audio_ad_30s' },
@@ -642,15 +645,18 @@ listCreativeFormats: async () => ({
     ],
   }],
 }),
+```
 
-// Handler — inline manifest in, rendered audio out
+Handler — inline manifest in, rendered audio out:
+
+```typescript
 import { buildCreativeResponse, audioAsset } from '@adcp/client/server';
 
 buildCreative: async (params) => {
   const inputManifest = params.creative_manifest;                 // already inline — no lookup
   const targetFid = params.target_format_id ?? inputManifest.format_id;
 
-  // Read inputs from the inline manifest's assets
+  // Read inputs from the inline manifest's assets (TextAsset.content, not .text)
   const script = inputManifest.assets.script?.content ?? '';
   const voice = inputManifest.assets.voice?.content;
   const musicTemplate = inputManifest.assets.music_template?.content;
