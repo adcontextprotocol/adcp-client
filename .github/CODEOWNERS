@@ -1,0 +1,11 @@
+# CODEOWNERS — required reviewers on PRs touching these paths.
+# Claude-authored PRs touching these paths won't merge until an owner
+# approves. Prevents prompt-injection rewrites of agent behavior,
+# workflow hijacking, or dep-chain tampering from ever reaching main.
+
+/.agents/                   @bokelley
+/.github/                   @bokelley
+/.github/workflows/         @bokelley
+/.changeset/                @bokelley
+/package.json               @bokelley
+/package-lock.json          @bokelley
