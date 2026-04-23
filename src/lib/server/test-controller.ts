@@ -866,7 +866,16 @@ export function registerTestController(
       const response = await handleTestControllerRequest(storeOrFactory, input, {
         seedCache,
       });
-      return toMcpResponse(response);
+      // Echo request context back into the response envelope so callers see
+      // their correlation data round-trip (matches the auto-echo createAdcpServer
+      // does for domain tools). Only attaches when the handler didn't place a
+      // context itself — handler-supplied context wins.
+      const ctx = input.context;
+      const withContext =
+        ctx && typeof ctx === 'object' && (response as { context?: unknown }).context === undefined
+          ? { ...response, context: ctx }
+          : response;
+      return toMcpResponse(withContext as ComplyTestControllerResponse);
     }) as Parameters<typeof mcp.registerTool>[2]
   );
 }
