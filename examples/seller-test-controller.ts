@@ -142,10 +142,7 @@ function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus): voi
 const CONTROLLER_ACTOR = 'comply_test_controller';
 
 const storeFactory: TestControllerStoreFactory = {
-  scenarios: [
-    CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS,
-    CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS,
-  ],
+  scenarios: [CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS, CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS],
 
   createStore(input): TestControllerStore {
     const session = loadSession(resolveSessionId(input));
