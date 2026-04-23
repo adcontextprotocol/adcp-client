@@ -49,11 +49,7 @@ function writeCache(latestVersion) {
     if (!fs.existsSync(CONFIG_DIR)) {
       fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
     }
-    fs.writeFileSync(
-      CACHE_FILE,
-      JSON.stringify({ latestVersion, checkedAt: Date.now() }),
-      'utf8'
-    );
+    fs.writeFileSync(CACHE_FILE, JSON.stringify({ latestVersion, checkedAt: Date.now() }), 'utf8');
   } catch {
     /* fail silent */
   }
@@ -61,32 +57,28 @@ function writeCache(latestVersion) {
 
 function fetchLatest() {
   return new Promise(resolve => {
-    const req = https.get(
-      REGISTRY_URL,
-      { headers: { accept: 'application/json' }, timeout: FETCH_TIMEOUT_MS },
-      res => {
-        if (res.statusCode !== 200) {
-          res.resume();
-          resolve(null);
-          return;
-        }
-        let body = '';
-        res.setEncoding('utf8');
-        res.on('data', chunk => {
-          body += chunk;
-          // Abort runaway responses — the registry's `latest` entry is ~2KB.
-          if (body.length > 64 * 1024) req.destroy();
-        });
-        res.on('end', () => {
-          try {
-            const parsed = JSON.parse(body);
-            resolve(typeof parsed.version === 'string' ? parsed.version : null);
-          } catch {
-            resolve(null);
-          }
-        });
+    const req = https.get(REGISTRY_URL, { headers: { accept: 'application/json' }, timeout: FETCH_TIMEOUT_MS }, res => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        resolve(null);
+        return;
       }
-    );
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => {
+        body += chunk;
+        // Abort runaway responses — the registry's `latest` entry is ~2KB.
+        if (body.length > 64 * 1024) req.destroy();
+      });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          resolve(typeof parsed.version === 'string' ? parsed.version : null);
+        } catch {
+          resolve(null);
+        }
+      });
+    });
     req.on('error', () => resolve(null));
     req.on('timeout', () => {
       req.destroy();
@@ -100,7 +92,11 @@ function fetchLatest() {
 // which is the right call for a staleness nudge — we don't want to tell a
 // user on 5.13.0 that 5.14.0-next.3 is "newer" and they should upgrade.
 function compareVersions(a, b) {
-  const parse = v => v.split('-')[0].split('.').map(n => parseInt(n, 10));
+  const parse = v =>
+    v
+      .split('-')[0]
+      .split('.')
+      .map(n => parseInt(n, 10));
   const aa = parse(a);
   const bb = parse(b);
   for (let i = 0; i < 3; i++) {
