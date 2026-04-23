@@ -57,8 +57,9 @@ const TOOL_GOTCHAS: Record<string, string[]> = {
     'Each `renders[]` entry is a oneOf on `output_format` — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url`/`preview_html` field.',
   ],
   list_creative_formats: [
-    'Each `renders[]` entry needs `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. Top-level `{ width, height }` fails — wrap in `dimensions`.',
-    'Audio formats (`type: "audio"`) have no width/height — declare `renders: [{ role: "primary", duration_seconds: N }]` so storyboard `field_present formats[0].renders` validations still pass.',
+    'Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.',
+    'Use the typed factories from `@adcp/client`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).',
+    'Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).',
   ],
 };
 

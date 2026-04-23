@@ -1375,12 +1375,32 @@ const REMOVED_FLAGS = {
 // Scan `args` for removed flags and emit a stderr warning for each one found.
 // Writes to stderr unconditionally — stderr does not corrupt `--json` stdout,
 // and the CI logs where these warnings need to land capture both streams.
-// Non-breaking — execution continues.
+// Returns the names of the removed flags actually present so callers can
+// decide to hard-fail (see `enforceStrictFlags`). Non-breaking unless
+// `--strict-flags` is set.
 function warnRemovedFlags(args) {
+  const found = [];
   for (const [flag, meta] of Object.entries(REMOVED_FLAGS)) {
     if (args.includes(flag) || args.some(a => a.startsWith(`${flag}=`))) {
+      found.push(flag);
       console.error(`DEPRECATED: ${flag} was removed in ${meta.since} and is being ignored. ${meta.hint}`);
     }
+  }
+  return found;
+}
+
+// If `--strict-flags` is present and any removed flag was passed, exit 2
+// after emitting a pointed error that names every offender. Advisory-by-
+// default means CI pipelines opt-in; a team that wants stale scripts to
+// break the build sets the flag. Factored out of `handleStoryboardRun`
+// so `storyboard step` and future runner commands can share it.
+function enforceStrictFlags(args, removedFound) {
+  if (removedFound.length > 0 && args.includes('--strict-flags')) {
+    console.error(
+      `ERROR: --strict-flags was set and ${removedFound.length} removed flag(s) were passed: ${removedFound.join(', ')}. ` +
+        `Remove them or drop --strict-flags to continue with advisory warnings only.`
+    );
+    process.exit(2);
   }
 }
 
@@ -1388,7 +1408,7 @@ async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
   const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
 
-  warnRemovedFlags(args);
+  enforceStrictFlags(args, warnRemovedFlags(args));
 
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side
@@ -2784,6 +2804,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
   const { authToken, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
+
+  enforceStrictFlags(args, warnRemovedFlags(args));
 
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];

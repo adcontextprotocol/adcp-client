@@ -15,9 +15,16 @@ export interface RenderDimensions {
 }
 
 /**
- * v3 render specification
+ * v3 render specification — one entry in `Format.renders[]`.
+ *
+ * Renamed from `FormatRender` (see deprecated alias below) to free the
+ * `FormatRender` name for the factory namespace in `format-render-builders`,
+ * which is the more common autocomplete target. TypeScript keeps type and
+ * value namespaces separate, but the re-export barrel in `src/lib/index.ts`
+ * can't disambiguate between a type re-export and a const re-export at the
+ * same name — hence the rename.
  */
-export interface FormatRender {
+export interface FormatRenderEntry {
   /** Unique identifier for this render */
   render_id: string;
   /** Semantic role (e.g., 'primary', 'companion', 'mobile_variant') */
@@ -27,6 +34,14 @@ export interface FormatRender {
   /** Whether dimensions come from format_id parameters */
   parameters_from_format_id?: boolean;
 }
+
+/**
+ * @deprecated Renamed to `FormatRenderEntry`. This alias keeps existing
+ * imports compiling but is not re-exported from the package barrel
+ * (`@adcp/client`) — the barrel's `FormatRender` identifier now refers to
+ * the factory namespace. Migrate to `FormatRenderEntry` next release.
+ */
+export type FormatRender = FormatRenderEntry;
 
 /**
  * v2 format with top-level dimensions
@@ -42,7 +57,7 @@ export interface FormatV2 {
  * v3 format with renders array
  */
 export interface FormatV3 {
-  renders?: FormatRender[];
+  renders?: FormatRenderEntry[];
   [key: string]: unknown;
 }
 
@@ -118,7 +133,7 @@ export function normalizeFormatsResponse(response: any): any {
 /**
  * Get renders from a format (normalizes v2 to v3 format)
  */
-export function getFormatRenders(format: FormatV2 | FormatV3): FormatRender[] {
+export function getFormatRenders(format: FormatV2 | FormatV3): FormatRenderEntry[] {
   const normalized = normalizeFormatRenders(format);
   return normalized.renders ?? [];
 }
@@ -126,7 +141,7 @@ export function getFormatRenders(format: FormatV2 | FormatV3): FormatRender[] {
 /**
  * Get primary render from a format
  */
-export function getPrimaryRender(format: FormatV2 | FormatV3): FormatRender | undefined {
+export function getPrimaryRender(format: FormatV2 | FormatV3): FormatRenderEntry | undefined {
   const renders = getFormatRenders(format);
   return renders.find(r => r.role === 'primary') ?? renders[0];
 }
@@ -134,7 +149,7 @@ export function getPrimaryRender(format: FormatV2 | FormatV3): FormatRender | un
 /**
  * Get companion renders from a format
  */
-export function getCompanionRenders(format: FormatV2 | FormatV3): FormatRender[] {
+export function getCompanionRenders(format: FormatV2 | FormatV3): FormatRenderEntry[] {
   const renders = getFormatRenders(format);
   return renders.filter(r => r.role === 'companion');
 }

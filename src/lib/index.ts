@@ -789,6 +789,30 @@ export {
 // or its required sibling field.
 export { Render, urlRender, htmlRender, bothRender } from './utils/render-builders';
 
+// ====== FORMAT RENDER BUILDERS ======
+// Typed factories for `Format.renders[]` entries on format declarations.
+// The item schema's `oneOf` forces a render to satisfy exactly one branch —
+// either `dimensions` (display/video) OR `parameters_from_format_id: true`
+// (audio, template formats). A render with only `{ role }` fails validation.
+// Audio specifically cannot use `{ role, duration_seconds }` — duration is
+// not a recognized `renders[]` field and wouldn't satisfy the oneOf anyway.
+// Use `parameterizedRender({ role })` (or the alias `templateRender`) so
+// format_id parameters carry duration.
+//
+// `FormatRender` below is the grouped namespace (value export). The v3
+// structural interface by the same name is re-exported from
+// `utils/format-renders` further down — TypeScript keeps type and value
+// namespaces separate, so both are available under the single import.
+export {
+  FormatRender,
+  displayRender,
+  parameterizedRender,
+  templateRender,
+  type DimensionsRender,
+  type ParameterizedRender,
+  type RenderItem,
+} from './utils/format-render-builders';
+
 // ====== V3.0 COMPATIBILITY UTILITIES ======
 // Capabilities detection, version negotiation, and v3 enforcement.
 // See also:
@@ -855,7 +879,12 @@ export {
   usesV3Renders,
   getFormatDimensions,
 } from './utils/format-renders';
-export type { FormatRender, RenderDimensions } from './utils/format-renders';
+// FormatRender (the v3 structural interface) was renamed to FormatRenderEntry
+// so the `FormatRender` name at the barrel becomes the factory namespace
+// exported from `./utils/format-render-builders` above. The deprecated type
+// alias `FormatRender = FormatRenderEntry` still lives in `utils/format-renders`
+// for callers importing the sub-module directly; it's not re-exported here.
+export type { FormatRenderEntry, RenderDimensions } from './utils/format-renders';
 
 // Preview response normalizer (v2 output_id ↔ v3 render_id)
 export {

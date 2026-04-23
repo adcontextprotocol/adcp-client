@@ -59,3 +59,35 @@ test('warning is advisory — exit status reflects the real command outcome, not
     'removed-flag warning must not alter exit status — it is advisory'
   );
 });
+
+test('--strict-flags upgrades the warning to a hard exit 2', () => {
+  // Passing a removed flag + --strict-flags must exit 2 with a pointed message,
+  // so CI pipelines can catch stale scripts as build-breakers.
+  const result = runCli(['storyboard', 'run', 'test-mcp', '--platform-type', 'creative_transformer', '--strict-flags']);
+  assert.strictEqual(result.status, 2);
+  assert.match(result.stderr, /DEPRECATED: --platform-type was removed/);
+  assert.match(result.stderr, /ERROR: --strict-flags was set/);
+  assert.match(result.stderr, /--platform-type/);
+});
+
+test('--strict-flags alone (no removed flags) is a no-op', () => {
+  // Passing --strict-flags without any removed flag must not cause a failure
+  // beyond whatever the underlying command would do. No agent → exit 2 (usage),
+  // which is the same as without --strict-flags.
+  const withStrict = runCli(['storyboard', 'run', '--strict-flags']);
+  const withoutStrict = runCli(['storyboard', 'run']);
+  assert.strictEqual(withStrict.status, withoutStrict.status);
+  assert.doesNotMatch(withStrict.stderr, /--strict-flags was set/);
+});
+
+test('storyboard step also warns + honors --strict-flags', () => {
+  // The strict-flags machinery is shared across runner commands. storyboard
+  // step would otherwise silently accept `--platform-type` — verify it
+  // warns advisorily by default and hard-exits under --strict-flags.
+  const advisory = runCli(['storyboard', 'step', '--platform-type', 'x']);
+  assert.match(advisory.stderr, /DEPRECATED: --platform-type was removed/);
+
+  const strict = runCli(['storyboard', 'step', '--platform-type', 'x', '--strict-flags']);
+  assert.strictEqual(strict.status, 2);
+  assert.match(strict.stderr, /ERROR: --strict-flags was set/);
+});

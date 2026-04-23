@@ -279,6 +279,17 @@ function validateResponseSchema(
   // overall pass/fail stays Zod-driven to preserve backwards compatibility.
   const strict = computeStrictVerdict(taskName, dataWithoutMessage);
 
+  // Shape-drift hint runs regardless of strict/lenient outcome — a
+  // platform-native `build_creative` response typically fails Zod, but the
+  // detector emits the same actionable recipe either way. Prepended to any
+  // strict-warning so the fix-recipe comes first.
+  const shapeDriftHint = detectShapeDriftHint(taskName, dataWithoutMessage);
+
+  const mergeWarnings = (...parts: Array<string | undefined>): string | undefined => {
+    const kept = parts.filter((p): p is string => Boolean(p));
+    return kept.length > 0 ? kept.join('; ') : undefined;
+  };
+
   if (parseResult.success) {
     const base: ValidationResult = {
       check: 'response_schema',
@@ -287,16 +298,13 @@ function validateResponseSchema(
       schema_id,
       schema_url,
     };
-    if (!strict) return base;
-    // Surface two kinds of strict-only signal via `warning` so step-level
-    // output (and LLM-driven self-correction that scans `error`/`warning`
-    // fields) sees something without flipping `passed`:
-    //   1. Strict-only FAILURE — Zod accepted but AJV rejected. Top issue.
-    //   2. Variant FALLBACK — agent advertised an async variant the tool
-    //      doesn't schema, so validation fell back to sync. AJV may still
-    //      accept, but the conformance signal is that the tool hasn't
-    //      declared the variant schema the agent is using.
-    const warning = buildStrictWarning(strict);
+    // Surface strict-only / variant-fallback / shape-drift signal via
+    // `warning` so step-level output (and LLM-driven self-correction that
+    // scans `error`/`warning` fields) sees something without flipping
+    // `passed`.
+    const warning = mergeWarnings(shapeDriftHint, strict ? buildStrictWarning(strict) : undefined);
+    if (!strict && !warning) return base;
+    if (!strict) return { ...base, warning };
     return warning ? { ...base, strict, warning } : { ...base, strict };
   }
 
@@ -319,6 +327,11 @@ function validateResponseSchema(
     schema_id,
     schema_url,
   };
+  // Shape-drift hint lives on `warning` even on failed validations so
+  // readers get the actionable fix-recipe next to the bare schema error.
+  if (shapeDriftHint) {
+    return strict ? { ...failed, strict, warning: shapeDriftHint } : { ...failed, warning: shapeDriftHint };
+  }
   return strict ? { ...failed, strict } : failed;
 }
 
@@ -385,6 +398,41 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
     }
   }
   return parts.length > 0 ? parts.join('; ') : undefined;
+}
+
+/**
+ * Recognize common payload-shape mistakes and emit an actionable hint
+ * alongside the generic schema-error message. Keeps the fix-recipe next
+ * to the failure signal so implementors don't have to cross-reference
+ * docs from a bare AJV pointer like `/ must have required property
+ * 'creative_manifest'`.
+ *
+ * Today covers the scope3 agentic-adapters#100 pattern: `build_creative`
+ * handler returning a platform-native response (`tag_url`, `creative_id`,
+ * `media_type` at the top level) instead of `{ creative_manifest: { ... } }`.
+ * Extend as other drift patterns surface in real integrations.
+ *
+ * Exported for direct unit testing; consumers should rely on the hint
+ * reaching `ValidationResult.warning` through the normal run path rather
+ * than calling this directly.
+ */
+export function detectShapeDriftHint(taskName: string, payload: Record<string, unknown>): string | undefined {
+  if (taskName === 'build_creative') {
+    const hasManifest = 'creative_manifest' in payload || 'creative_manifests' in payload;
+    const platformNativeKeys = ['tag_url', 'creative_id', 'media_type', 'tag_type'];
+    const platformNativePresent = platformNativeKeys.filter(k => k in payload);
+    if (!hasManifest && platformNativePresent.length > 0) {
+      // Short and actionable — a developer hitting this is in their terminal
+      // looking for the fix, not reading docs. The @adcp/client/server
+      // breadcrumb is enough to lead them to the typed helpers.
+      return (
+        `build_creative returned platform-native shape (${platformNativePresent.join(', ')} at top level). ` +
+        `Required: { creative_manifest: { format_id, assets } }. ` +
+        `Use buildCreativeResponse() from @adcp/client/server.`
+      );
+    }
+  }
+  return undefined;
 }
 
 // ────────────────────────────────────────────────────────────
