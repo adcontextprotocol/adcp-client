@@ -160,6 +160,14 @@ describe('E2E: context_value_rejected hints via real MCP transport (#882)', () =
       webhookReceiver: false, // Not needed for this storyboard.
     });
 
+    // A capability-skipped storyboard shows up in `not_applicable[]` and
+    // leaves `results[]` empty — check that first so a skip doesn't
+    // surface as the opaque "runs exactly the provided storyboard" below.
+    assert.equal(
+      result.not_applicable?.length ?? 0,
+      0,
+      `storyboard was skipped: ${JSON.stringify(result.not_applicable)}`
+    );
     assert.equal(result.results.length, 1, 'runs exactly the provided storyboard');
     const sb = result.results[0];
     assert.equal(sb.storyboard_id, 'rejection_hint_e2e');
@@ -170,7 +178,15 @@ describe('E2E: context_value_rejected hints via real MCP transport (#882)', () =
 
     const searchStep = steps.find(s => s.step_id === 'search_by_spec');
     assert.ok(searchStep, 'search step present');
-    assert.equal(searchStep.passed, true, `search step should pass: ${searchStep.error ?? ''}`);
+    // If the fixture drifts out of spec, the failure lands in
+    // `validations[]`, not on `.error` — dump both so future maintainers
+    // don't chase an empty string.
+    const failingValidations = (searchStep.validations ?? []).filter(v => !v.passed);
+    assert.equal(
+      searchStep.passed,
+      true,
+      `search step should pass: error=${searchStep.error ?? '(none)'}; failing validations=${JSON.stringify(failingValidations)}`
+    );
     assert.ok(searchStep.context_provenance, 'search step surfaces context_provenance (#880)');
     assert.equal(
       searchStep.context_provenance.first_signal_pricing_option_id.source_step_id,
