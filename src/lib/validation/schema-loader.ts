@@ -79,7 +79,8 @@ function loadJson(file: string): LoadedSchema {
  * can ride alongside the tool-specific body — per security.mdx the
  * envelope is always extensible. Upstream bundled schemas pin
  * `additionalProperties: false` at the root on a handful of mutating
- * tools (the property-list family), which rejects `replayed: false`.
+ * tools (the property-list family), which rejects envelope fields like
+ * `replayed` that aren't declared in the tool-specific body.
  *
  * Scope is deliberately narrow: only the top-level object, plus each
  * direct branch of a root-level `oneOf` / `anyOf` / `allOf`. Nested
