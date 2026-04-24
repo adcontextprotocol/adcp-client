@@ -217,7 +217,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
     const firstPkg: Record<string, unknown> = {
       ...baseSample,
-      product_id: (baseSample.product_id as string | undefined) ?? product?.product_id ?? context.product_id ?? 'test-product',
+      product_id:
+        (baseSample.product_id as string | undefined) ?? product?.product_id ?? context.product_id ?? 'test-product',
       budget:
         (baseSample.budget as number | undefined) ??
         options.budget ??

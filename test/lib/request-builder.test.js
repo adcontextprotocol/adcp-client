@@ -173,7 +173,11 @@ describe('Request Builder', () => {
       });
       const result = buildRequest(s, context, DEFAULT_OPTIONS);
       assert.strictEqual(result.packages[0].product_id, 'discovered', 'discovery fills missing product_id');
-      assert.strictEqual(result.packages[0].pricing_option_id, 'discovered-pricing', 'discovery fills missing pricing_option_id');
+      assert.strictEqual(
+        result.packages[0].pricing_option_id,
+        'discovered-pricing',
+        'discovery fills missing pricing_option_id'
+      );
       assert.deepStrictEqual(
         result.packages[0].targeting_overlay,
         { geo_targets: { countries: ['US'] } },
