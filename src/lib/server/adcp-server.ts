@@ -89,6 +89,26 @@ export interface AdcpTestToolsCallRequest {
 export type AdcpTestResponse = unknown;
 
 /**
+ * Optional per-call overrides for `dispatchTestRequest()`. Lets tests
+ * simulate transport-level state — most importantly the `authInfo` that
+ * `serve()` populates from its `authenticate` hook — without spinning up
+ * a real HTTP transport.
+ */
+export interface AdcpTestRequestExtras {
+  /**
+   * Auth principal visible to handlers and `resolveAccount`. Mirrors the
+   * shape `serve()` produces from its `authenticate` hook.
+   */
+  authInfo?: {
+    token: string;
+    clientId: string;
+    scopes: string[];
+    expiresAt?: number;
+    extra?: Record<string, unknown>;
+  };
+}
+
+/**
  * Test-harness hooks attached to every `AdcpServer`. Namespaced under
  * `compliance` so production code paths don't accidentally reach for
  * them — `reset()` drops cached state and is intended for storyboard
@@ -161,6 +181,12 @@ export interface AdcpServer {
    * error from the tool's input schema (not from dispatch) is the
    * expected failure mode for a missing required field.
    *
+   * **Never mount this behind an HTTP route.** `extras.authInfo` is
+   * written directly onto the MCP handler's `extra` without any check
+   * against `serve({ authenticate })` — exposing it externally lets a
+   * caller impersonate any principal. This API is for in-process test
+   * harnesses and storyboard runners only.
+   *
    * @example
    * ```typescript
    * const result = await server.dispatchTestRequest({
@@ -172,8 +198,8 @@ export interface AdcpServer {
    * });
    * ```
    */
-  dispatchTestRequest(request: AdcpTestToolsCallRequest): Promise<CallToolResult>;
-  dispatchTestRequest(request: AdcpTestRequest): Promise<AdcpTestResponse>;
+  dispatchTestRequest(request: AdcpTestToolsCallRequest, extras?: AdcpTestRequestExtras): Promise<CallToolResult>;
+  dispatchTestRequest(request: AdcpTestRequest, extras?: AdcpTestRequestExtras): Promise<AdcpTestResponse>;
 }
 
 /**
@@ -307,8 +333,14 @@ export function wrapMcpServer(
       );
     },
   };
-  const dispatch = async (request: AdcpTestRequest): Promise<AdcpTestResponse> => {
-    const extra = { signal: new AbortController().signal };
+  const dispatch = async (
+    request: AdcpTestRequest,
+    extras?: AdcpTestRequestExtras
+  ): Promise<AdcpTestResponse> => {
+    const extra: { signal: AbortSignal; authInfo?: AdcpTestRequestExtras['authInfo'] } = {
+      signal: new AbortController().signal,
+    };
+    if (extras?.authInfo) extra.authInfo = extras.authInfo;
 
     if (request.method === 'tools/call') {
       const params = (request.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };

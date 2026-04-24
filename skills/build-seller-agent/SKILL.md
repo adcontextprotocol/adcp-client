@@ -1131,6 +1131,71 @@ The quick-start uses `memoryBackend()` + `InMemoryStateStore` — both reset on 
 
 Auth is not wired in the example — see [§ Protecting your agent](#protecting-your-agent) below.
 
+## Alternative Transports
+
+`serve()` is the supported path for HTTP-hosted seller agents: one process, one `publicUrl`, one MCP mount. Two setups need something else:
+
+- **Multi-host routing on a single process.** Fronting many hostnames (white-label publishers, multi-brand operators) from one Fly machine or pod — one `publicUrl` per incoming host, resolved from `Host` / `Forwarded`.
+- **Stdio transport.** Running as a local subprocess of a buyer agent (CLI tools, desktop clients) instead of an HTTP server.
+
+The escape hatch for both is the same: `createAdcpServer()` returns a handle with a `connect(transport)` method. Skip `serve()` and drive the transport yourself.
+
+### Multi-host HTTP
+
+```typescript
+import { createServer } from 'node:http';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createAdcpServer } from '@adcp/client/server';
+
+// One AdcpServer per host — build lazily and cache.
+const servers = new Map<string, ReturnType<typeof createAdcpServer>>();
+function getServer(host: string) {
+  let s = servers.get(host);
+  if (!s) {
+    s = createAdcpServer({
+      name: `Seller for ${host}`,
+      version: '1.0.0',
+      resolveAccount: async (ref, { authInfo }) => lookupAccount(host, ref, authInfo),
+      mediaBuy: { /* ... */ },
+    });
+    servers.set(host, s);
+  }
+  return s;
+}
+
+createServer(async (req, res) => {
+  const host = req.headers['x-forwarded-host'] ?? req.headers.host ?? '';
+  const server = getServer(String(host));
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+  } finally {
+    transport.close();
+  }
+}).listen(3001);
+```
+
+Things `serve()` does that you now own: auth verification, RFC 9421 request-signature verification (if you claim `signed-requests`), `/.well-known/oauth-protected-resource/<path>` publishing, request-body buffering for signature hashing, and idempotency+governance composition. Most of those helpers are exported — see `verifyApiKey`, `verifyBearer`, `requireSignatureWhenPresent`, and `createExpressAdapter` if you want a partial shortcut. Only go this route if you genuinely need multi-host; a separate process per host with `serve()` is the simpler answer.
+
+### Stdio
+
+```typescript
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createAdcpServer } from '@adcp/client/server';
+
+const server = createAdcpServer({
+  name: 'Local Seller',
+  version: '1.0.0',
+  resolveAccount: async (ref) => lookupAccount(ref),
+  mediaBuy: { /* ... */ },
+});
+
+await server.connect(new StdioServerTransport());
+```
+
+Stdio agents skip the entire HTTP stack — no `authenticate`, no `publicUrl`, no OAuth discovery. The host process (a CLI or local buyer agent) establishes trust by launching the subprocess, so `authenticate` on `serve()` doesn't apply. Your handlers still run the same way; `ctx.authInfo` is simply undefined.
+
 <a name="protecting-your-agent"></a>
 
 ## Protecting your agent
