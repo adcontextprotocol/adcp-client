@@ -15,6 +15,13 @@ const DEFAULT_OPTIONS = {
   account: { brand: { domain: 'acmeoutdoor.example' }, operator: 'acmeoutdoor.example' },
 };
 
+// Fixture dates past the enricher's stale-date substitution boundary.
+// The create_media_buy enricher replaces past-dated sample_request.start_time
+// / end_time with dynamic defaults; these literals skip that path so
+// fixture-precedence tests stay deterministic across CI wall-clock drift.
+const FUTURE_START = '2099-01-01T00:00:00Z';
+const FUTURE_END = '2099-02-01T00:00:00Z';
+
 function step(task, overrides = {}) {
   return { id: `test-${task}`, title: `Test ${task}`, task, ...overrides };
 }
@@ -59,11 +66,10 @@ describe('Request Builder', () => {
       // sales_non_guaranteed) had packages[1+] dropped, which left
       // context_outputs like second_package_id unresolved and caused the
       // next step to be skipped with "unresolved context variables".
-      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const s = step('create_media_buy', {
         sample_request: {
-          start_time: future,
-          end_time: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString(),
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
           packages: [
             {
               product_id: 'sports_display_auction',
@@ -88,10 +94,9 @@ describe('Request Builder', () => {
     });
 
     test('injects context into additional packages', () => {
-      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const s = step('create_media_buy', {
         sample_request: {
-          start_time: future,
+          start_time: FUTURE_START,
           packages: [
             { product_id: 'p1', budget: 1000, pricing_option_id: 'opt' },
             { product_id: '$context.secondary_product', budget: 2000, pricing_option_id: 'opt' },
@@ -116,10 +121,9 @@ describe('Request Builder', () => {
           },
         ],
       };
-      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const s = step('create_media_buy', {
         sample_request: {
-          start_time: future,
+          start_time: FUTURE_START,
           packages: [{ product_id: 'fixture-product', pricing_option_id: 'cpm_guaranteed', budget: 5000 }],
         },
       });
@@ -141,10 +145,9 @@ describe('Request Builder', () => {
           },
         ],
       };
-      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const s = step('create_media_buy', {
         sample_request: {
-          start_time: future,
+          start_time: FUTURE_START,
           packages: [{ product_id: 'auction-product', pricing_option_id: 'opt', bid_price: 2.5 }],
         },
       });
@@ -164,10 +167,9 @@ describe('Request Builder', () => {
           },
         ],
       };
-      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const s = step('create_media_buy', {
         sample_request: {
-          start_time: future,
+          start_time: FUTURE_START,
           packages: [{ targeting_overlay: { geo_targets: { countries: ['US'] } } }],
         },
       });

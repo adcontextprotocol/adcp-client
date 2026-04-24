@@ -231,10 +231,42 @@ describe('schema-driven validation', () => {
       'activate_signal',
     ]) {
       test(`${tool} request schema compiles + runs without $ref errors`, () => {
-        assert.doesNotThrow(() => validateRequest(tool, {}));
+        let outcome;
+        assert.doesNotThrow(() => {
+          outcome = validateRequest(tool, {});
+        });
+        // Guard against silent-regression where a refactor drops the tool
+        // from the catalog and the doesNotThrow assertion becomes trivial.
+        assert.notStrictEqual(
+          outcome.variant,
+          'skipped',
+          `${tool} must have a compiled request validator — got variant:skipped`
+        );
+        // Even if AJV ever demoted unresolved-$ref to a soft error instead
+        // of throwing, the issue list would surface it.
+        for (const issue of outcome.issues) {
+          assert.ok(
+            !/can't resolve reference/i.test(issue.message),
+            `${tool} request compile leaked unresolved-$ref: ${issue.message}`
+          );
+        }
       });
       test(`${tool} response schema compiles + runs without $ref errors`, () => {
-        assert.doesNotThrow(() => validateResponse(tool, {}));
+        let outcome;
+        assert.doesNotThrow(() => {
+          outcome = validateResponse(tool, {});
+        });
+        assert.notStrictEqual(
+          outcome.variant,
+          'skipped',
+          `${tool} must have a compiled response validator — got variant:skipped`
+        );
+        for (const issue of outcome.issues) {
+          assert.ok(
+            !/can't resolve reference/i.test(issue.message),
+            `${tool} response compile leaked unresolved-$ref: ${issue.message}`
+          );
+        }
       });
     }
   });
