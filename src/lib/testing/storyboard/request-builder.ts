@@ -201,14 +201,15 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     const startTime = sampleStart && Date.parse(sampleStart) >= now ? sampleStart : defaultStart;
     const endTime = sampleEnd && Date.parse(sampleEnd) >= now ? sampleEnd : defaultEnd;
 
-    // Merge any hand-authored package fields from sample_request (targeting_overlay,
+    // Merge hand-authored package fields from sample_request (targeting_overlay,
     // measurement_terms, creative_assignments, performance_standards, etc.) so
-    // scenario-specific behaviors are exercised. The first package receives
-    // context-derived identifiers (product_id, pricing_option_id) so single-
-    // package storyboards that test against arbitrary sellers still find a
-    // real discovered product. Additional packages pass through as-authored
-    // with context injection only — storyboards that ship multi-package
-    // sample_request blocks author specific product_ids on purpose.
+    // scenario-specific behaviors are exercised. The fixture wins on every
+    // field it authors — storyboards that name a specific `product_id` +
+    // `pricing_option_id` are asserting against a seller that ships those
+    // identifiers, and discovery-derived values must never override them.
+    // Discovery fills the gaps for generic storyboards that omit the first
+    // package's identifiers. Additional packages pass through as-authored
+    // with context injection only.
     const samplePackages = (step.sample_request?.packages as Array<Record<string, unknown>> | undefined) ?? [];
     const baseSample = samplePackages[0]
       ? (injectContext({ ...samplePackages[0] }, context) as Record<string, unknown>)
@@ -216,17 +217,27 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
     const firstPkg: Record<string, unknown> = {
       ...baseSample,
-      product_id: product?.product_id ?? context.product_id ?? baseSample.product_id ?? 'test-product',
+      product_id: (baseSample.product_id as string | undefined) ?? product?.product_id ?? context.product_id ?? 'test-product',
       budget:
         (baseSample.budget as number | undefined) ??
         options.budget ??
         Math.max(1000, (pricingOption?.min_spend_per_package as number) ?? 1000),
       pricing_option_id:
-        pricingOption?.pricing_option_id ?? context.pricing_option_id ?? baseSample.pricing_option_id ?? 'default',
+        (baseSample.pricing_option_id as string | undefined) ??
+        pricingOption?.pricing_option_id ??
+        context.pricing_option_id ??
+        'default',
     };
 
-    // Add bid_price for auction-based pricing
-    if (pricingOption?.pricing_model === 'auction' || pricingOption?.pricing_model === 'cpm') {
+    // Synthesize a bid_price for auction/cpm pricing only when the fixture
+    // didn't author one. Storyboards that test auction flows (e.g.
+    // sales-non-guaranteed) author explicit bid_prices the seller validates
+    // against floor_price; discovery-synthesized values would silently
+    // override intentional bid-floor-boundary tests.
+    if (
+      baseSample.bid_price === undefined &&
+      (pricingOption?.pricing_model === 'auction' || pricingOption?.pricing_model === 'cpm')
+    ) {
       const floor = Number(pricingOption?.floor_price) || 5;
       firstPkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
     }

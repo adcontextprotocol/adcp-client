@@ -102,6 +102,84 @@ describe('Request Builder', () => {
       const result = buildRequest(s, context, DEFAULT_OPTIONS);
       assert.strictEqual(result.packages[1].product_id, 'resolved_product_id');
     });
+
+    test('fixture pricing_option_id wins over discovered product pricing (regression #862)', () => {
+      // Storyboards that author an explicit pricing_option_id on the first
+      // package are asserting against a seller that ships that identifier.
+      // Discovery may return unrelated pricing_options[0] values — the
+      // enricher must not override the fixture's intent.
+      const context = {
+        products: [
+          {
+            product_id: 'discovered-product',
+            pricing_options: [{ pricing_option_id: 'discovered-pricing-id', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: future,
+          packages: [{ product_id: 'fixture-product', pricing_option_id: 'cpm_guaranteed', budget: 5000 }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].pricing_option_id, 'cpm_guaranteed', 'fixture pricing_option_id wins');
+      assert.strictEqual(result.packages[0].product_id, 'fixture-product', 'fixture product_id wins');
+      assert.strictEqual(result.packages[0].budget, 5000, 'fixture budget wins');
+    });
+
+    test('fixture bid_price wins over discovered floor-based synthesis (regression #862)', () => {
+      // Storyboards that assert bid-floor boundary behavior author explicit
+      // bid_prices the seller validates. Discovery-derived floor math must
+      // not silently override those values.
+      const context = {
+        products: [
+          {
+            product_id: 'auction-product',
+            pricing_options: [{ pricing_option_id: 'opt', pricing_model: 'auction', floor_price: 10 }],
+          },
+        ],
+      };
+      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: future,
+          packages: [{ product_id: 'auction-product', pricing_option_id: 'opt', bid_price: 2.5 }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].bid_price, 2.5, 'fixture bid_price wins over floor * 1.5');
+    });
+
+    test('discovered pricing fills gaps when fixture omits the first package package-level ids', () => {
+      // Generic storyboards that ship a sample_request body without
+      // per-package identifiers rely on discovery — this behavior is what
+      // lets single-package storyboards run against arbitrary sellers.
+      const context = {
+        products: [
+          {
+            product_id: 'discovered',
+            pricing_options: [{ pricing_option_id: 'discovered-pricing', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: future,
+          packages: [{ targeting_overlay: { geo_targets: { countries: ['US'] } } }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].product_id, 'discovered', 'discovery fills missing product_id');
+      assert.strictEqual(result.packages[0].pricing_option_id, 'discovered-pricing', 'discovery fills missing pricing_option_id');
+      assert.deepStrictEqual(
+        result.packages[0].targeting_overlay,
+        { geo_targets: { countries: ['US'] } },
+        'fixture fields outside the id set pass through'
+      );
+    });
   });
 
   describe('provide_performance_feedback', () => {

@@ -209,6 +209,36 @@ describe('schema-driven validation', () => {
     });
   });
 
+  describe('cross-domain $ref resolution (regression #862)', () => {
+    // sync-plans-request.json lives in governance/ and $refs three sibling
+    // building-block fragments in the same directory:
+    //   - governance/audience-constraints.json
+    //   - governance/policy-entry.json
+    //   - enums/restricted-attribute.json
+    // Before the loader pre-registered flat-tree domain fragments, AJV could
+    // not resolve the governance/* siblings and threw at compile time. This
+    // guard compiles each validator and runs it against a minimal payload;
+    // a $ref resolution regression would show up as a thrown exception.
+    for (const tool of [
+      'sync_plans',
+      'check_governance',
+      'acquire_rights',
+      'update_rights',
+      'get_rights',
+      'create_content_standards',
+      'create_property_list',
+      'create_collection_list',
+      'activate_signal',
+    ]) {
+      test(`${tool} request schema compiles + runs without $ref errors`, () => {
+        assert.doesNotThrow(() => validateRequest(tool, {}));
+      });
+      test(`${tool} response schema compiles + runs without $ref errors`, () => {
+        assert.doesNotThrow(() => validateResponse(tool, {}));
+      });
+    }
+  });
+
   describe('client hooks', () => {
     test('validateOutgoingRequest strict throws a ValidationError', () => {
       assert.throws(
