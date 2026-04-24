@@ -834,11 +834,19 @@ async function executeStoryboardPass(
   // required_tools filtered out everything) would pass vacuously. (c) makes
   // assertions gating — a run with all validations green but a cross-step
   // invariant broken is not conformant.
-  const requiredPhasesPassed = phaseResults.some((p, idx) => {
-    const phaseDef = storyboard.phases[idx];
-    if (!phaseDef || phaseDef.optional || !p.passed) return false;
-    return p.steps.some(s => !s.skipped && s.passed);
-  });
+  // When no phases had executable steps the storyboard result is a skip, not a
+  // failure. The index-aligned guard below would hit storyboard.phases[0] ===
+  // undefined for an empty-phases storyboard and force requiredPhasesPassed to
+  // false, flipping overall_passed to false. Short-circuit to true so the
+  // no-phases sentinel produces overall_passed: true (consistent with how
+  // buildNotApplicableStoryboardResult shapes its result in comply.ts).
+  const requiredPhasesPassed =
+    !hasExecutableSteps ||
+    phaseResults.some((p, idx) => {
+      const phaseDef = storyboard.phases[idx];
+      if (!phaseDef || phaseDef.optional || !p.passed) return false;
+      return p.steps.some(s => !s.skipped && s.passed);
+    });
   // Prepend the pre-flight seeding phase now that every consumer that
   // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
   // order matches execution order.
