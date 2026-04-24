@@ -61,10 +61,11 @@ describe('serve() multi-host', () => {
     await request(port, { host: `SELLER-A.EXAMPLE.COM:${port}` });
 
     // Host header is lowercased, port preserved.
-    assert.deepStrictEqual(
-      seen.sort(),
-      [`seller-a.example.com:${port}`, `seller-a.example.com:${port}`, `seller-b.example.com:${port}`]
-    );
+    assert.deepStrictEqual(seen.sort(), [
+      `seller-a.example.com:${port}`,
+      `seller-a.example.com:${port}`,
+      `seller-b.example.com:${port}`,
+    ]);
 
     server.close();
   });
@@ -169,14 +170,8 @@ describe('serve() multi-host', () => {
 
     // Each resolver called exactly once per unique host — the 2x snap
     // request shares the cache entry from the first.
-    assert.deepStrictEqual(publicUrlCalls.sort(), [
-      `meta.example.com:${port}`,
-      `snap.example.com:${port}`,
-    ]);
-    assert.deepStrictEqual(prmCalls.sort(), [
-      `meta.example.com:${port}`,
-      `snap.example.com:${port}`,
-    ]);
+    assert.deepStrictEqual(publicUrlCalls.sort(), [`meta.example.com:${port}`, `snap.example.com:${port}`]);
+    assert.deepStrictEqual(prmCalls.sort(), [`meta.example.com:${port}`, `snap.example.com:${port}`]);
 
     server.close();
   });
