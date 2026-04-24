@@ -38,7 +38,12 @@ describe('verifyIntrospection — construction', () => {
 
   it('throws when introspectionUrl is http:// to a non-loopback host', () => {
     assert.throws(
-      () => verifyIntrospection({ introspectionUrl: 'http://auth.example.com/introspect', clientId: 'c', clientSecret: 's' }),
+      () =>
+        verifyIntrospection({
+          introspectionUrl: 'http://auth.example.com/introspect',
+          clientId: 'c',
+          clientSecret: 's',
+        }),
       /must use https/
     );
   });
@@ -50,11 +55,21 @@ describe('verifyIntrospection — construction', () => {
 
   it('throws when clientId or clientSecret missing', () => {
     assert.throws(
-      () => verifyIntrospection({ introspectionUrl: 'https://auth.example.com/introspect', clientId: '', clientSecret: 's' }),
+      () =>
+        verifyIntrospection({
+          introspectionUrl: 'https://auth.example.com/introspect',
+          clientId: '',
+          clientSecret: 's',
+        }),
       /clientId.*clientSecret/
     );
     assert.throws(
-      () => verifyIntrospection({ introspectionUrl: 'https://auth.example.com/introspect', clientId: 'c', clientSecret: '' }),
+      () =>
+        verifyIntrospection({
+          introspectionUrl: 'https://auth.example.com/introspect',
+          clientId: 'c',
+          clientSecret: '',
+        }),
       /clientId.*clientSecret/
     );
   });
@@ -130,7 +145,7 @@ describe('verifyIntrospection — authentication flow', () => {
     // the `:` INSIDE the secret is encoded as `%3A`. If formUrlEncode is ever
     // removed, this assertion breaks — secret's `:` would clash with the
     // delimiter and ASes would see a different username/password split.
-    assert.strictEqual(decoded, "client-id:p%40ss%20w0rd%2B%3A%21%27");
+    assert.strictEqual(decoded, 'client-id:p%40ss%20w0rd%2B%3A%21%27');
   });
 
   it('sends client creds in body when clientAuth: "body"', async () => {
