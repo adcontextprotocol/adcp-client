@@ -968,6 +968,78 @@ export interface StoryboardStepResult {
   response_record?: RunnerResponseRecord;
   /** Which extraction path produced the parsed response (required per contract). */
   extraction: RunnerExtractionRecord;
+  /**
+   * Non-fatal diagnostic hints the runner emitted alongside this step —
+   * currently surfaces `context_value_rejected` when a request value came
+   * from a prior-step `$context.*` write and the seller's error response
+   * lists the set of values it would have accepted. Pass/fail is unchanged;
+   * hints help triage collapse from "SDK bug vs seller bug" to one line.
+   */
+  hints?: StoryboardStepHint[];
+}
+
+/**
+ * Provenance entry for a context key: which step wrote it and how.
+ * Populated by the runner as it applies `context_outputs` and convention-
+ * based extractors after each successful step, and consumed when emitting
+ * `context_value_rejected` hints.
+ */
+export interface ContextProvenanceEntry {
+  /** Step id that produced this context value. */
+  source_step_id: string;
+  /**
+   * `context_outputs`: author-authored extraction from the YAML.
+   * `convention`: task-default extractor in CONTEXT_EXTRACTORS.
+   */
+  source_kind: 'context_outputs' | 'convention';
+  /** Response path the value was extracted from (set for `context_outputs`). */
+  response_path?: string;
+  /** Task name whose response this value was extracted from. */
+  source_task?: string;
+}
+
+/**
+ * Non-fatal hint attached to a step result. Today the runner only emits
+ * `context_value_rejected` — more kinds may be added over time. The
+ * discriminator lives on `kind` so consumers that only know how to render
+ * a subset can ignore the rest without losing them.
+ */
+export type StoryboardStepHint = ContextValueRejectedHint;
+
+/**
+ * A seller rejected a request value that the runner traced back to a
+ * `$context.*` substitution (or a request-builder field populated from the
+ * same context key). Without this hint, the rejection in logs looks
+ * identical to an SDK bug; with it, the caller can see the substitution
+ * chain (step → context key → response path) and go talk to the seller.
+ */
+export interface ContextValueRejectedHint {
+  kind: 'context_value_rejected';
+  /** Pre-formatted human-readable message suitable for a console line. */
+  message: string;
+  /** Context key whose value matched the rejected request field. */
+  context_key: string;
+  /** Step id that wrote the context key. */
+  source_step_id: string;
+  /** How the context key was written (`context_outputs` vs convention). */
+  source_kind: 'context_outputs' | 'convention';
+  /** YAML response path set for `context_outputs`; absent for convention extractors. */
+  response_path?: string;
+  /** Task whose response the value was extracted from. */
+  source_task?: string;
+  /** The value the seller rejected. */
+  rejected_value: unknown;
+  /**
+   * Dotted path to the rejected field in the runner's request (when the
+   * seller's error carried an explicit `field` pointer). Absent when the
+   * match was resolved by scanning the request for a context-sourced value
+   * in the rejection set.
+   */
+  request_field?: string;
+  /** The accepted values the seller reported (`available` / `allowed` / `accepted_values`). */
+  accepted_values: unknown[];
+  /** Error code from the seller's error (if present). */
+  error_code?: string;
 }
 
 export interface StoryboardPhaseResult {

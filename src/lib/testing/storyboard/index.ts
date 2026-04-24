@@ -30,11 +30,14 @@ export type {
   WebhookAssertionErrorCode,
   ContextOutput,
   ContextInput,
+  ContextProvenanceEntry,
+  ContextValueRejectedHint,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,
   StoryboardStepPreview,
   StoryboardStepResult,
+  StoryboardStepHint,
   StoryboardPhaseResult,
   StoryboardResult,
   AssertionResult,
@@ -119,7 +122,19 @@ export { TASK_TO_METHOD, executeStoryboardTask } from './task-map';
 export { parsePath, resolvePath, setPath } from './path';
 
 // Context
-export { CONTEXT_EXTRACTORS, extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
+export {
+  CONTEXT_EXTRACTORS,
+  extractContext,
+  extractContextWithProvenance,
+  injectContext,
+  applyContextOutputs,
+  applyContextOutputsWithProvenance,
+  applyContextInputs,
+} from './context';
+export type { ContextWriteResult } from './context';
+
+// Rejection-hint detection (issue #870)
+export { detectContextRejectionHints } from './rejection-hints';
 
 // Request builder
 export { buildRequest, hasRequestBuilder } from './request-builder';
