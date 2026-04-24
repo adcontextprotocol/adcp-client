@@ -3,12 +3,15 @@
  *
  * Catches when field_present / field_value / field_value_or_absent paths in
  * storyboard YAML reference fields that don't exist in the corresponding
- * Zod response schemas, and when context extractors reference tasks without
- * schemas.
+ * Zod response schemas, when context extractors reference tasks without
+ * schemas, and when `field_value_or_absent` is asserted on a path the
+ * response schema already marks required (the tolerance is meaningless —
+ * the storyboard author should have used `field_value`).
  */
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { z } = require('zod');
 
 const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
 const { parsePath } = require('../../dist/lib/testing/storyboard/path.js');
@@ -95,6 +98,70 @@ function isPathReachable(schema, segments) {
 
   // Leaf types (string, number, boolean, enum, literal, etc.)
   // If we still have segments left, the path doesn't exist
+  return false;
+}
+
+/**
+ * Walk a Zod v4 schema along a parsed path and report whether the path is
+ * *required* — i.e. the spec guarantees the field is present. A path that
+ * traverses ANY `optional` / `nullable` / `default` wrapper is not required;
+ * neither is a path through a `record` (any key) or a `union` branch that
+ * omits the field.
+ *
+ * Conservative on unions: required only if ALL branches require it. On
+ * intersections: required if EITHER side requires it — a value in
+ * `z.intersection(L, R)` must satisfy both sides, so the union of their
+ * requirements applies.
+ *
+ * Used to lint `field_value_or_absent` assertions: if the path the tolerant
+ * matcher targets is already required by the schema, the tolerance is dead
+ * code — the author should have used `field_value`.
+ */
+function isPathRequired(schema, segments) {
+  const type = schema?._zod?.def?.type;
+  if (!type) return false;
+
+  // Any tolerance wrapper means "not required at this level."
+  if (type === 'optional' || type === 'nullable' || type === 'default' || type === 'catch') {
+    return false;
+  }
+
+  if (type === 'pipe') {
+    return isPathRequired(schema._zod.def.in, segments);
+  }
+
+  if (type === 'union') {
+    const options = schema.options || [];
+    return options.length > 0 && options.every(opt => isPathRequired(opt, segments));
+  }
+
+  if (type === 'intersection') {
+    const { left, right } = schema._zod.def;
+    return isPathRequired(left, segments) || isPathRequired(right, segments);
+  }
+
+  if (segments.length === 0) {
+    // Reached the end of the path on a non-tolerance schema — required.
+    return true;
+  }
+
+  const [head, ...rest] = segments;
+
+  if (typeof head === 'number') {
+    if (type === 'array' && schema.element) return isPathRequired(schema.element, rest);
+    return false;
+  }
+
+  if (type === 'object' && schema.shape) {
+    const field = schema.shape[head];
+    if (!field) return false;
+    return isPathRequired(field, rest);
+  }
+
+  // Records don't guarantee any specific key.
+  if (type === 'record') return false;
+
+  // Leaf with segments remaining — path doesn't exist.
   return false;
 }
 
@@ -273,6 +340,87 @@ describe('storyboard schema drift', () => {
         );
       });
     }
+  });
+
+  // Lint: `field_value_or_absent` is meaningful only when the schema does NOT
+  // already guarantee the field is present. If a storyboard uses the tolerant
+  // matcher on a required field, the tolerance is dead code — the spec already
+  // rules out the "absent" branch. Redirect authors to `field_value` there.
+  // Envelope-tolerant paths (declared in `ENVELOPE_PATHS` above) are skipped
+  // because they target protocol-level fields not modeled on individual tool
+  // response schemas.
+  describe('field_value_or_absent is not redundantly applied to schema-required fields', () => {
+    const tolerantValidations = fieldValidations.filter(v => v.check === 'field_value_or_absent');
+
+    for (const entry of tolerantValidations) {
+      const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
+      if (!schema) continue;
+
+      it(`${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`, () => {
+        const segments = parsePath(entry.path);
+        const required = isPathRequired(schema, segments);
+        assert.ok(
+          !required,
+          `Path "${entry.path}" is required in ${entry.task} response schema — ` +
+            `the tolerance in \`field_value_or_absent\` is meaningless. Use \`field_value\` instead.`
+        );
+      });
+    }
+  });
+
+  describe('isPathRequired helper', () => {
+    it('returns true for a top-level required string field', () => {
+      const schema = z.object({ status: z.string() });
+      assert.equal(isPathRequired(schema, ['status']), true);
+    });
+
+    it('returns false for a top-level optional field', () => {
+      const schema = z.object({ replayed: z.boolean().optional() });
+      assert.equal(isPathRequired(schema, ['replayed']), false);
+    });
+
+    it('returns false for a nullable field (null is a legal value, not presence)', () => {
+      const schema = z.object({ note: z.string().nullable() });
+      assert.equal(isPathRequired(schema, ['note']), false);
+    });
+
+    it('returns false for a defaulted field (default implies absence is tolerated)', () => {
+      const schema = z.object({ currency: z.string().default('USD') });
+      assert.equal(isPathRequired(schema, ['currency']), false);
+    });
+
+    it('returns true through a nested required object', () => {
+      const schema = z.object({ envelope: z.object({ status: z.string() }) });
+      assert.equal(isPathRequired(schema, ['envelope', 'status']), true);
+    });
+
+    it('returns false when the intermediate wrapper is optional', () => {
+      const schema = z.object({ envelope: z.object({ status: z.string() }).optional() });
+      assert.equal(isPathRequired(schema, ['envelope', 'status']), false);
+    });
+
+    it('returns false for a missing field', () => {
+      const schema = z.object({ status: z.string() });
+      assert.equal(isPathRequired(schema, ['nope']), false);
+    });
+
+    it('returns true through an array element when the element schema requires the key', () => {
+      const schema = z.object({ accounts: z.array(z.object({ id: z.string() })) });
+      assert.equal(isPathRequired(schema, ['accounts', 0, 'id']), true);
+    });
+
+    it('returns false for record key access (no specific key is guaranteed)', () => {
+      const schema = z.object({ props: z.record(z.string(), z.string()) });
+      assert.equal(isPathRequired(schema, ['props', 'whatever']), false);
+    });
+
+    it('union: required only if EVERY branch requires it', () => {
+      const both = z.union([z.object({ id: z.string() }), z.object({ id: z.string(), extra: z.number() })]);
+      assert.equal(isPathRequired(both, ['id']), true);
+
+      const onlyOne = z.union([z.object({ id: z.string() }), z.object({ other: z.string() })]);
+      assert.equal(isPathRequired(onlyOne, ['id']), false);
+    });
   });
 
   describe('context extractor tasks have registered response schemas', () => {
