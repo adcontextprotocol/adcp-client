@@ -11,6 +11,7 @@ const {
   generateRandomInvalidApiKey,
   generateRandomInvalidJwt,
   rawMcpProbe,
+  rawA2aProbe,
 } = require('../../dist/lib/testing/storyboard/probes');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
@@ -472,6 +473,217 @@ describe('rawMcpProbe', () => {
     });
     assert.strictEqual(httpResult.status, 0);
     assert.match(httpResult.error ?? '', /non-HTTPS/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// rawA2aProbe end-to-end (against a generated A2A agent server)
+// ────────────────────────────────────────────────────────────
+
+describe('rawA2aProbe', () => {
+  it('sends JSON-RPC message/send and surfaces HTTP 200 + text_fallback extraction', async () => {
+    let seenBody, seenAuth, seenAccept;
+    const server = http.createServer(async (req, res) => {
+      seenAuth = req.headers.authorization ?? null;
+      seenAccept = req.headers.accept ?? null;
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: seenBody.id,
+          result: { kind: 'task', id: 'task_abc', status: { state: 'submitted' } },
+        })
+      );
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawA2aProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/a2a`,
+        method: 'message/send',
+        params: {
+          message: {
+            messageId: 'msg_1',
+            role: 'user',
+            kind: 'message',
+            parts: [{ kind: 'text', text: 'ping' }],
+          },
+        },
+        headers: { authorization: 'Bearer sk_test' },
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 200);
+      assert.strictEqual(seenAuth, 'Bearer sk_test');
+      assert.strictEqual(seenAccept, 'application/json');
+      assert.strictEqual(seenBody.jsonrpc, '2.0');
+      assert.strictEqual(seenBody.method, 'message/send');
+      assert.strictEqual(taskResult.success, true);
+      // A2A result is plain object, not structured-content envelope
+      assert.strictEqual(taskResult._extraction_path, 'text_fallback');
+      assert.deepStrictEqual(taskResult.data, {
+        kind: 'task',
+        id: 'task_abc',
+        status: { state: 'submitted' },
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('defaults params to {} when caller omits them', async () => {
+    let seenBody;
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: seenBody.id, result: {} }));
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      await rawA2aProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/a2a`,
+        method: 'tasks/get',
+        allowPrivateIp: true,
+      });
+      assert.deepStrictEqual(seenBody.params, {});
+    } finally {
+      server.close();
+    }
+  });
+
+  it('surfaces 401 + WWW-Authenticate from the agent', async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="agent", error="invalid_token"',
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawA2aProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/a2a`,
+        method: 'message/send',
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 401);
+      assert.match(httpResult.headers['www-authenticate'], /Bearer realm/);
+      assert.strictEqual(taskResult.success, false);
+      assert.strictEqual(taskResult._extraction_path, 'error');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('surfaces A2A -32002 (TaskNotCancelable) as-is, without MCP session-init aliasing', async () => {
+    // Distinct from rawMcpProbe: in A2A, -32002 is TaskNotCancelable.
+    // The probe must not relabel it as "session not initialized."
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          error: { code: -32002, message: 'Task is not in a cancelable state' },
+        })
+      );
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawA2aProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/a2a`,
+        method: 'tasks/cancel',
+        params: { id: 'task_abc' },
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 200);
+      assert.strictEqual(taskResult.success, false);
+      assert.strictEqual(taskResult.error, 'JSON-RPC error -32002: Task is not in a cancelable state');
+      // Full raw code is preserved in the error string
+      // Must NOT be labeled as MCP-session-init
+      assert.doesNotMatch(taskResult.error, /session.*(?:not.*)?initialized/i);
+      assert.strictEqual(httpResult.body.error.code, -32002, 'raw numeric code preserved on httpResult.body');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('refuses https:// loopback agent URLs by default (no allowPrivateIp)', async () => {
+    const { httpResult } = await rawA2aProbe({
+      agentUrl: 'https://127.0.0.1:1/a2a',
+      method: 'message/send',
+    });
+    assert.strictEqual(httpResult.status, 0);
+    assert.match(httpResult.error ?? '', /private\/loopback/);
+  });
+
+  it('refuses IMDS (169.254.169.254) even when allowPrivateIp is on', async () => {
+    const { httpResult } = await rawA2aProbe({
+      agentUrl: 'http://169.254.169.254/a2a',
+      method: 'message/send',
+      allowPrivateIp: true,
+    });
+    assert.strictEqual(httpResult.status, 0);
+    assert.match(httpResult.error ?? '', /always-blocked/);
+  });
+
+  it('refuses non-HTTPS URLs by default', async () => {
+    const { httpResult } = await rawA2aProbe({
+      agentUrl: 'http://example.com/a2a',
+      method: 'message/send',
+    });
+    assert.strictEqual(httpResult.status, 0);
+    assert.match(httpResult.error ?? '', /non-HTTPS/);
+  });
+
+  it('surfaces distinct error on non-JSON response body (e.g., SSE leaking through)', async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('event: message\ndata: {"foo":"bar"}\n\n');
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawA2aProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/a2a`,
+        method: 'message/send',
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 200);
+      assert.strictEqual(taskResult.success, false);
+      assert.strictEqual(taskResult._extraction_path, 'error');
+      assert.match(taskResult.error, /Non-JSON response body/);
+      assert.match(taskResult.error, /text\/event-stream/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('uses a per-call incrementing id (no collision with prior calls)', async () => {
+    const seenIds = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seenIds.push(rpc.id);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: {} }));
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const agentUrl = `http://127.0.0.1:${server.address().port}/a2a`;
+      await rawA2aProbe({ agentUrl, method: 'tasks/get', allowPrivateIp: true });
+      await rawA2aProbe({ agentUrl, method: 'tasks/get', allowPrivateIp: true });
+      assert.strictEqual(seenIds.length, 2);
+      assert.notStrictEqual(seenIds[0], seenIds[1]);
+    } finally {
+      server.close();
+    }
   });
 });
 
