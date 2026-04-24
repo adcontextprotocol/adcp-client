@@ -494,7 +494,10 @@ async function executeStoryboardPass(
       : `Storyboard "${storyboard.id}" has no executable phases — populate \`phases[].steps\` or remove the storyboard.`;
     const syntheticStep: StoryboardStepResult = {
       storyboard_id: storyboard.id,
-      // Synthetic sentinel — cannot collide with real phase/step ids since phases is empty or has no steps.
+      // Synthetic sentinel. Functionally non-colliding because downstream
+      // consumers (CLI report, storyboard-tracks) key on `skip_reason`,
+      // not `phase_id`/`step_id`. Matches the documented `RunnerSkipReason`
+      // vocabulary in storyboard/types.ts.
       step_id: 'no_phases',
       phase_id: 'no_phases',
       title: 'Storyboard has no executable phases',
@@ -510,7 +513,6 @@ async function executeStoryboardPass(
       extraction: { path: 'none' },
     };
     phaseResults.push({
-      // Synthetic sentinel — cannot collide with real phase ids since phases is empty or has no steps.
       phase_id: 'no_phases',
       phase_title: 'No phases',
       passed: true, // skipped step is neutral — phase must not fail
