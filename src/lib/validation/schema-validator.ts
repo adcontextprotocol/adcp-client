@@ -11,7 +11,8 @@ import { getValidator, type Direction, type ResponseVariant } from './schema-loa
 /**
  * A single validation failure with a JSON Pointer to the offending field,
  * the AJV message, and the schema path that rejected it. Mirrors the
- * format a `VALIDATION_ERROR` carries in its `details.issues`.
+ * format a `VALIDATION_ERROR` carries at `adcp_error.issues` (top level)
+ * and `adcp_error.details.issues` (spec-convention mirror).
  */
 export interface ValidationIssue {
   /** RFC 6901 JSON Pointer to the offending field in the payload. */

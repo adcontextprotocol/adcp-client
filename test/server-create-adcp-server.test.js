@@ -457,6 +457,222 @@ describe('createAdcpServer', () => {
     });
   });
 
+  describe('response-union narrowing (handler returns full Response)', () => {
+    it('handler that returns create_media_buy Error arm → isError + errors preserved', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          createMediaBuy: async () => ({
+            errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'no such product', field: 'packages[0].product_id' }],
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.strictEqual(result.isError, true, 'Error arm must surface as MCP isError');
+      assert.ok(Array.isArray(result.structuredContent.errors), 'errors array preserved on wire');
+      assert.strictEqual(result.structuredContent.errors[0].code, 'PRODUCT_NOT_FOUND');
+      // Must NOT apply Success-arm defaults to an Error payload.
+      assert.strictEqual(result.structuredContent.revision, undefined);
+      assert.strictEqual(result.structuredContent.confirmed_at, undefined);
+      assert.strictEqual(result.structuredContent.media_buy_id, undefined);
+    });
+
+    it('handler that returns create_media_buy Submitted arm → no success defaults, structuredContent preserved', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          createMediaBuy: async () => ({
+            status: 'submitted',
+            task_id: 'tk_123',
+            message: 'Awaiting IO signature',
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.notStrictEqual(result.isError, true, 'submitted is not an error');
+      assert.strictEqual(result.structuredContent.status, 'submitted');
+      assert.strictEqual(result.structuredContent.task_id, 'tk_123');
+      // Success defaults must not leak onto an async-task envelope.
+      assert.strictEqual(result.structuredContent.revision, undefined);
+      assert.strictEqual(result.structuredContent.confirmed_at, undefined);
+      assert.ok(result.content[0].text.includes('tk_123') || result.content[0].text.includes('signature'));
+    });
+
+    it('handler that returns sync_creatives Error arm → errors preserved, no creatives/summary corruption', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        creative: {
+          syncCreatives: async () => ({
+            errors: [{ code: 'AUTHENTICATION_FAILED', message: 'bad token' }],
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'sync_creatives', {
+        account: { account_id: 'a1' },
+        creatives: [],
+        idempotency_key: '11111111-1111-1111-1111-111111111111',
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.creatives, undefined, 'Success-only field absent on Error arm');
+      assert.strictEqual(result.structuredContent.errors[0].code, 'AUTHENTICATION_FAILED');
+    });
+
+    it('handler that returns Success arm still gets response-builder defaults', async () => {
+      // Regression: narrowing must not change the Success-path behavior.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
+        },
+      });
+      const result = await callToolRaw(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.strictEqual(result.structuredContent.media_buy_id, 'mb_1');
+      assert.strictEqual(result.structuredContent.revision, 1);
+      assert.ok(result.structuredContent.confirmed_at);
+    });
+
+    it('sync_creatives Submitted with advisory errors routes as submitted, not error', async () => {
+      // SyncCreativesSubmitted has optional `errors: Error[]` for advisory warnings
+      // (e.g. throttled_severity). The isSubmittedEnvelope check must fire BEFORE
+      // isErrorArm so the payload doesn't accidentally flip to isError: true.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        creative: {
+          syncCreatives: async () => ({
+            status: 'submitted',
+            task_id: 'tk_batch_1',
+            message: 'Batch ingestion queued',
+            errors: [{ code: 'THROTTLED_SEVERITY', message: 'rate-limited severity advisory' }],
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'sync_creatives', {
+        account: { account_id: 'a1' },
+        creatives: [],
+        idempotency_key: '22222222-2222-2222-2222-222222222222',
+      });
+      assert.notStrictEqual(result.isError, true, 'submitted-with-advisories must not flip to isError');
+      assert.strictEqual(result.structuredContent.status, 'submitted');
+      assert.strictEqual(result.structuredContent.task_id, 'tk_batch_1');
+      assert.strictEqual(result.structuredContent.errors[0].code, 'THROTTLED_SEVERITY');
+    });
+
+    it('Error arm preserves context and ext siblings on structuredContent', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          createMediaBuy: async () => ({
+            errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'gone' }],
+            context: { correlation_id: 'corr_xyz' },
+            ext: { seller_note: 'see knowledge base kb_1234' },
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.errors[0].code, 'PRODUCT_NOT_FOUND');
+      assert.strictEqual(result.structuredContent.context.correlation_id, 'corr_xyz');
+      assert.strictEqual(result.structuredContent.ext.seller_note, 'see knowledge base kb_1234');
+    });
+
+    it('empty errors[] still flips isError and emits a generic summary', async () => {
+      // Spec violation at the handler, but the dispatcher must not throw.
+      // Operators see the warn log; the wire shape stays consistent.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          createMediaBuy: async () => ({ errors: [] }),
+        },
+      });
+      const result = await callToolRaw(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.strictEqual(result.isError, true);
+      assert.deepStrictEqual(result.structuredContent.errors, []);
+      assert.ok(result.content[0].text.length > 0);
+    });
+
+    it('errors[] alongside a Success-only field falls through to the Success builder', async () => {
+      // Unknown sibling keys mean this is NOT a pure Error arm — the shape
+      // carries Success fields (media_buy_id) so isErrorArm returns false.
+      // Success builder runs. Response validation (off by default in this
+      // file) would reject this drift in strict mode, which is correct.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          createMediaBuy: async () => ({
+            errors: [{ code: 'WARNING', message: 'partial success' }],
+            media_buy_id: 'mb_partial_1',
+            packages: [],
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.notStrictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.media_buy_id, 'mb_partial_1');
+      assert.strictEqual(result.structuredContent.revision, 1, 'Success defaults applied');
+    });
+  });
+
+  describe('adcpError() does not carry issues on non-VALIDATION_ERROR codes', () => {
+    it('RATE_LIMITED envelope has no top-level issues field', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => adcpError('RATE_LIMITED', { message: 'slow down', retry_after: 30 }),
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+      });
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'RATE_LIMITED');
+      // issues is conditional-spread in adcpError; undefined options.issues
+      // must not materialize an empty key.
+      assert.ok(
+        !('issues' in result.structuredContent.adcp_error),
+        'issues must be absent when caller did not pass options.issues'
+      );
+    });
+  });
+
   describe('account resolution', () => {
     it('resolves account and passes to handler context', async () => {
       let receivedCtx;

@@ -182,19 +182,25 @@ import type {
 import type {
   GetProductsResponse,
   CreateMediaBuySuccess,
+  CreateMediaBuyResponse,
   UpdateMediaBuySuccess,
+  UpdateMediaBuyResponse,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
   ListAccountsResponse,
   ListCreativeFormatsResponse,
   ProvidePerformanceFeedbackSuccess,
+  ProvidePerformanceFeedbackResponse,
   BuildCreativeSuccess,
   BuildCreativeMultiSuccess,
+  BuildCreativeResponse,
   GetCreativeDeliveryResponse,
   ListCreativesResponse,
   SyncCreativesSuccess,
+  SyncCreativesResponse,
   GetSignalsResponse,
   ActivateSignalSuccess,
+  ActivateSignalResponse,
   GetAdCPCapabilitiesResponse,
   CreatePropertyListResponse,
   UpdatePropertyListResponse,
@@ -210,12 +216,19 @@ import type {
   SISendMessageResponse,
   SITerminateSessionResponse,
   SyncEventSourcesSuccess,
+  SyncEventSourcesResponse,
   LogEventSuccess,
+  LogEventResponse,
   SyncAudiencesSuccess,
+  SyncAudiencesResponse,
   SyncCatalogsSuccess,
+  SyncCatalogsResponse,
   SyncAccountsSuccess,
+  SyncAccountsResponse,
   SyncGovernanceSuccess,
+  SyncGovernanceResponse,
   GetAccountFinancialsSuccess,
+  GetAccountFinancialsResponse,
   GetCreativeFeaturesResponse,
   ReportUsageResponse,
   PreviewCreativeResponse,
@@ -360,96 +373,253 @@ export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccou
 // Tool → type mapping (kept from v1 for type-level handler signatures)
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-tool param / result / response types.
+ *
+ * `result` is the narrow success arm — what the framework's response
+ * builders (`mediaBuyResponse`, `syncCreativesResponse`, ...) expect.
+ * `response` is the full AdCP response union (Success | Error | Submitted).
+ * Handlers can return either shape: adapter patterns that produce
+ * `Result<FooResponse, ...>` now type-check without `as any`, and the
+ * dispatcher narrows Error / Submitted arms at runtime so the response
+ * builder only fires on the Success arm.
+ */
 export interface AdcpToolMap {
-  get_products: { params: z.input<typeof GetProductsRequestSchema>; result: GetProductsResponse };
-  create_media_buy: { params: z.input<typeof CreateMediaBuyRequestSchema>; result: CreateMediaBuySuccess };
-  update_media_buy: { params: z.input<typeof UpdateMediaBuyRequestSchema>; result: UpdateMediaBuySuccess };
-  get_media_buys: { params: z.input<typeof GetMediaBuysRequestSchema>; result: GetMediaBuysResponse };
+  get_products: {
+    params: z.input<typeof GetProductsRequestSchema>;
+    result: GetProductsResponse;
+    response: GetProductsResponse;
+  };
+  create_media_buy: {
+    params: z.input<typeof CreateMediaBuyRequestSchema>;
+    result: CreateMediaBuySuccess;
+    response: CreateMediaBuyResponse;
+  };
+  update_media_buy: {
+    params: z.input<typeof UpdateMediaBuyRequestSchema>;
+    result: UpdateMediaBuySuccess;
+    response: UpdateMediaBuyResponse;
+  };
+  get_media_buys: {
+    params: z.input<typeof GetMediaBuysRequestSchema>;
+    result: GetMediaBuysResponse;
+    response: GetMediaBuysResponse;
+  };
   get_media_buy_delivery: {
     params: z.input<typeof GetMediaBuyDeliveryRequestSchema>;
     result: GetMediaBuyDeliveryResponse;
+    response: GetMediaBuyDeliveryResponse;
   };
   provide_performance_feedback: {
     params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>;
     result: ProvidePerformanceFeedbackSuccess;
+    response: ProvidePerformanceFeedbackResponse;
   };
   list_creative_formats: {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
     result: ListCreativeFormatsResponse;
+    response: ListCreativeFormatsResponse;
   };
   build_creative: {
     params: z.input<typeof BuildCreativeRequestSchema>;
     result: BuildCreativeSuccess | BuildCreativeMultiSuccess;
+    response: BuildCreativeResponse;
   };
-  preview_creative: { params: z.input<typeof PreviewCreativeRequestSchema>; result: PreviewCreativeResponse };
+  preview_creative: {
+    params: z.input<typeof PreviewCreativeRequestSchema>;
+    result: PreviewCreativeResponse;
+    response: PreviewCreativeResponse;
+  };
   get_creative_delivery: {
     params: z.input<typeof GetCreativeDeliveryRequestSchema>;
     result: GetCreativeDeliveryResponse;
+    response: GetCreativeDeliveryResponse;
   };
-  list_creatives: { params: z.input<typeof ListCreativesRequestSchema>; result: ListCreativesResponse };
-  sync_creatives: { params: z.input<typeof SyncCreativesRequestSchema>; result: SyncCreativesSuccess };
-  get_signals: { params: z.input<typeof GetSignalsRequestSchema>; result: GetSignalsResponse };
-  activate_signal: { params: z.input<typeof ActivateSignalRequestSchema>; result: ActivateSignalSuccess };
-  list_accounts: { params: z.input<typeof ListAccountsRequestSchema>; result: ListAccountsResponse };
-  sync_accounts: { params: z.input<typeof SyncAccountsRequestSchema>; result: SyncAccountsSuccess };
-  sync_governance: { params: z.input<typeof SyncGovernanceRequestSchema>; result: SyncGovernanceSuccess };
+  list_creatives: {
+    params: z.input<typeof ListCreativesRequestSchema>;
+    result: ListCreativesResponse;
+    response: ListCreativesResponse;
+  };
+  sync_creatives: {
+    params: z.input<typeof SyncCreativesRequestSchema>;
+    result: SyncCreativesSuccess;
+    response: SyncCreativesResponse;
+  };
+  get_signals: {
+    params: z.input<typeof GetSignalsRequestSchema>;
+    result: GetSignalsResponse;
+    response: GetSignalsResponse;
+  };
+  activate_signal: {
+    params: z.input<typeof ActivateSignalRequestSchema>;
+    result: ActivateSignalSuccess;
+    response: ActivateSignalResponse;
+  };
+  list_accounts: {
+    params: z.input<typeof ListAccountsRequestSchema>;
+    result: ListAccountsResponse;
+    response: ListAccountsResponse;
+  };
+  sync_accounts: {
+    params: z.input<typeof SyncAccountsRequestSchema>;
+    result: SyncAccountsSuccess;
+    response: SyncAccountsResponse;
+  };
+  sync_governance: {
+    params: z.input<typeof SyncGovernanceRequestSchema>;
+    result: SyncGovernanceSuccess;
+    response: SyncGovernanceResponse;
+  };
   get_account_financials: {
     params: z.input<typeof GetAccountFinancialsRequestSchema>;
     result: GetAccountFinancialsSuccess;
+    response: GetAccountFinancialsResponse;
   };
-  report_usage: { params: z.input<typeof ReportUsageRequestSchema>; result: ReportUsageResponse };
-  sync_event_sources: { params: z.input<typeof SyncEventSourcesRequestSchema>; result: SyncEventSourcesSuccess };
-  log_event: { params: z.input<typeof LogEventRequestSchema>; result: LogEventSuccess };
-  sync_audiences: { params: z.input<typeof SyncAudiencesRequestSchema>; result: SyncAudiencesSuccess };
-  sync_catalogs: { params: z.input<typeof SyncCatalogsRequestSchema>; result: SyncCatalogsSuccess };
-  create_property_list: { params: z.input<typeof CreatePropertyListRequestSchema>; result: CreatePropertyListResponse };
-  update_property_list: { params: z.input<typeof UpdatePropertyListRequestSchema>; result: UpdatePropertyListResponse };
-  get_property_list: { params: z.input<typeof GetPropertyListRequestSchema>; result: GetPropertyListResponse };
-  list_property_lists: { params: z.input<typeof ListPropertyListsRequestSchema>; result: ListPropertyListsResponse };
-  delete_property_list: { params: z.input<typeof DeletePropertyListRequestSchema>; result: DeletePropertyListResponse };
+  report_usage: {
+    params: z.input<typeof ReportUsageRequestSchema>;
+    result: ReportUsageResponse;
+    response: ReportUsageResponse;
+  };
+  sync_event_sources: {
+    params: z.input<typeof SyncEventSourcesRequestSchema>;
+    result: SyncEventSourcesSuccess;
+    response: SyncEventSourcesResponse;
+  };
+  log_event: {
+    params: z.input<typeof LogEventRequestSchema>;
+    result: LogEventSuccess;
+    response: LogEventResponse;
+  };
+  sync_audiences: {
+    params: z.input<typeof SyncAudiencesRequestSchema>;
+    result: SyncAudiencesSuccess;
+    response: SyncAudiencesResponse;
+  };
+  sync_catalogs: {
+    params: z.input<typeof SyncCatalogsRequestSchema>;
+    result: SyncCatalogsSuccess;
+    response: SyncCatalogsResponse;
+  };
+  create_property_list: {
+    params: z.input<typeof CreatePropertyListRequestSchema>;
+    result: CreatePropertyListResponse;
+    response: CreatePropertyListResponse;
+  };
+  update_property_list: {
+    params: z.input<typeof UpdatePropertyListRequestSchema>;
+    result: UpdatePropertyListResponse;
+    response: UpdatePropertyListResponse;
+  };
+  get_property_list: {
+    params: z.input<typeof GetPropertyListRequestSchema>;
+    result: GetPropertyListResponse;
+    response: GetPropertyListResponse;
+  };
+  list_property_lists: {
+    params: z.input<typeof ListPropertyListsRequestSchema>;
+    result: ListPropertyListsResponse;
+    response: ListPropertyListsResponse;
+  };
+  delete_property_list: {
+    params: z.input<typeof DeletePropertyListRequestSchema>;
+    result: DeletePropertyListResponse;
+    response: DeletePropertyListResponse;
+  };
   list_content_standards: {
     params: z.input<typeof ListContentStandardsRequestSchema>;
     result: ListContentStandardsResponse;
+    response: ListContentStandardsResponse;
   };
   get_content_standards: {
     params: z.input<typeof GetContentStandardsRequestSchema>;
     result: GetContentStandardsResponse;
+    response: GetContentStandardsResponse;
   };
   create_content_standards: {
     params: z.input<typeof CreateContentStandardsRequestSchema>;
     result: CreateContentStandardsResponse;
+    response: CreateContentStandardsResponse;
   };
   update_content_standards: {
     params: z.input<typeof UpdateContentStandardsRequestSchema>;
     result: UpdateContentStandardsResponse;
+    response: UpdateContentStandardsResponse;
   };
-  calibrate_content: { params: z.input<typeof CalibrateContentRequestSchema>; result: CalibrateContentResponse };
+  calibrate_content: {
+    params: z.input<typeof CalibrateContentRequestSchema>;
+    result: CalibrateContentResponse;
+    response: CalibrateContentResponse;
+  };
   validate_content_delivery: {
     params: z.input<typeof ValidateContentDeliveryRequestSchema>;
     result: ValidateContentDeliveryResponse;
+    response: ValidateContentDeliveryResponse;
   };
   get_media_buy_artifacts: {
     params: z.input<typeof GetMediaBuyArtifactsRequestSchema>;
     result: GetMediaBuyArtifactsResponse;
+    response: GetMediaBuyArtifactsResponse;
   };
   get_creative_features: {
     params: z.input<typeof GetCreativeFeaturesRequestSchema>;
     result: GetCreativeFeaturesResponse;
+    response: GetCreativeFeaturesResponse;
   };
-  sync_plans: { params: z.input<typeof SyncPlansRequestSchema>; result: SyncPlansResponse };
-  check_governance: { params: z.input<typeof CheckGovernanceRequestSchema>; result: CheckGovernanceResponse };
-  report_plan_outcome: { params: z.input<typeof ReportPlanOutcomeRequestSchema>; result: ReportPlanOutcomeResponse };
-  get_plan_audit_logs: { params: z.input<typeof GetPlanAuditLogsRequestSchema>; result: GetPlanAuditLogsResponse };
-  si_get_offering: { params: z.input<typeof SIGetOfferingRequestSchema>; result: SIGetOfferingResponse };
-  si_initiate_session: { params: z.input<typeof SIInitiateSessionRequestSchema>; result: SIInitiateSessionResponse };
-  si_send_message: { params: z.input<typeof SISendMessageRequestSchema>; result: SISendMessageResponse };
-  si_terminate_session: { params: z.input<typeof SITerminateSessionRequestSchema>; result: SITerminateSessionResponse };
+  sync_plans: {
+    params: z.input<typeof SyncPlansRequestSchema>;
+    result: SyncPlansResponse;
+    response: SyncPlansResponse;
+  };
+  check_governance: {
+    params: z.input<typeof CheckGovernanceRequestSchema>;
+    result: CheckGovernanceResponse;
+    response: CheckGovernanceResponse;
+  };
+  report_plan_outcome: {
+    params: z.input<typeof ReportPlanOutcomeRequestSchema>;
+    result: ReportPlanOutcomeResponse;
+    response: ReportPlanOutcomeResponse;
+  };
+  get_plan_audit_logs: {
+    params: z.input<typeof GetPlanAuditLogsRequestSchema>;
+    result: GetPlanAuditLogsResponse;
+    response: GetPlanAuditLogsResponse;
+  };
+  si_get_offering: {
+    params: z.input<typeof SIGetOfferingRequestSchema>;
+    result: SIGetOfferingResponse;
+    response: SIGetOfferingResponse;
+  };
+  si_initiate_session: {
+    params: z.input<typeof SIInitiateSessionRequestSchema>;
+    result: SIInitiateSessionResponse;
+    response: SIInitiateSessionResponse;
+  };
+  si_send_message: {
+    params: z.input<typeof SISendMessageRequestSchema>;
+    result: SISendMessageResponse;
+    response: SISendMessageResponse;
+  };
+  si_terminate_session: {
+    params: z.input<typeof SITerminateSessionRequestSchema>;
+    result: SITerminateSessionResponse;
+    response: SITerminateSessionResponse;
+  };
 
-  get_brand_identity: { params: z.input<typeof GetBrandIdentityRequestSchema>; result: GetBrandIdentitySuccess };
-  get_rights: { params: z.input<typeof GetRightsRequestSchema>; result: GetRightsSuccess };
+  get_brand_identity: {
+    params: z.input<typeof GetBrandIdentityRequestSchema>;
+    result: GetBrandIdentitySuccess;
+    response: GetBrandIdentitySuccess;
+  };
+  get_rights: {
+    params: z.input<typeof GetRightsRequestSchema>;
+    result: GetRightsSuccess;
+    response: GetRightsSuccess;
+  };
   acquire_rights: {
     params: z.input<typeof AcquireRightsRequestSchema>;
     result: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
+    response: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
   };
 }
 
@@ -460,12 +630,20 @@ export type AdcpServerToolName = keyof AdcpToolMap;
 // ---------------------------------------------------------------------------
 
 /** Handler that receives validated params and a resolved context.
- *  Return the tool's typed success shape, or an error envelope via
- *  `adcpError(...)` (typed as `McpToolResponse`). */
+ *
+ *  Return any of:
+ *  - The narrow Success arm (`result`) — framework applies the response builder.
+ *  - The full response union (`response` = Success | Error | Submitted) — the
+ *    dispatcher narrows Error / Submitted arms at runtime. Useful for adapters
+ *    that already produce a `Result<FooResponse, ...>` and don't want to
+ *    pre-narrow.
+ *  - A pre-formatted `McpToolResponse` (e.g. from `adcpError(...)`) — passed
+ *    through unchanged.
+ */
 type DomainHandler<K extends AdcpServerToolName, TAccount> = (
   params: AdcpToolMap[K]['params'],
   ctx: HandlerContext<TAccount>
-) => Promise<AdcpToolMap[K]['result'] | McpToolResponse>;
+) => Promise<AdcpToolMap[K]['result'] | AdcpToolMap[K]['response'] | McpToolResponse>;
 
 export interface MediaBuyHandlers<TAccount = unknown> {
   getProducts?: DomainHandler<'get_products', TAccount>;
@@ -1488,6 +1666,79 @@ function isFormattedResponse(value: unknown): value is McpToolResponse {
 }
 
 /**
+ * Detect an AdCP Submitted envelope (async task acknowledgement).
+ *
+ * Every *Submitted arm in the generated types has `status: 'submitted'`
+ * plus a required `task_id: string`. The discriminant is stable enough
+ * to use for routing at dispatch time without per-tool knowledge.
+ */
+function isSubmittedEnvelope(value: unknown): value is { status: 'submitted'; task_id: string; message?: string } {
+  if (value == null || typeof value !== 'object') return false;
+  const obj = value as Record<string, unknown>;
+  return obj.status === 'submitted' && typeof obj.task_id === 'string';
+}
+
+/**
+ * Detect an AdCP *Error arm (union member, not the framework `adcp_error`
+ * envelope). Every *Error interface in the generated types carries a
+ * required `errors: Error[]` and a narrow set of allowed siblings
+ * (`context`, `ext`, plus a couple of tool-specific extras). Success
+ * arms may have optional advisory fields but never a required `errors`
+ * array — the `status === 'submitted'` exclusion keeps us from
+ * confusing a Submitted envelope that advisory-echoes errors as an
+ * Error arm. The set of allowed sibling keys is intentionally narrow:
+ * any other top-level key means the payload carries Success-only fields
+ * (`media_buy_id`, `creatives`, `signal_id`, ...) and should fall
+ * through to the response builder.
+ */
+const ERROR_ARM_ALLOWED_KEYS = new Set(['errors', 'context', 'ext', 'success', 'conflicting_standards_id']);
+function isErrorArm(value: unknown): value is { errors: unknown[]; context?: unknown; ext?: unknown } {
+  if (value == null || typeof value !== 'object') return false;
+  const obj = value as Record<string, unknown>;
+  if (!Array.isArray(obj.errors)) return false;
+  if ('status' in obj) return false;
+  for (const key of Object.keys(obj)) {
+    if (!ERROR_ARM_ALLOWED_KEYS.has(key)) return false;
+  }
+  return true;
+}
+
+/**
+ * Wrap a Submitted envelope returned directly by a handler. Skips the
+ * Success-builder defaults (`revision`, `confirmed_at`, `valid_actions`)
+ * — those fields are specific to `CreateMediaBuySuccess` and would
+ * corrupt the async-task shape if applied.
+ */
+function wrapSubmittedEnvelope(value: { status: 'submitted'; task_id: string; message?: string }): McpToolResponse {
+  const summary = value.message ?? `Task ${value.task_id} submitted`;
+  return {
+    content: [{ type: 'text', text: summary }],
+    structuredContent: value as unknown as Record<string, unknown>,
+  };
+}
+
+/**
+ * Wrap an *Error arm returned directly by a handler. Preserves the
+ * generated-type shape (`errors: Error[]`) on `structuredContent` so
+ * buyers reading the typed response union see the exact branch the
+ * spec defines; also sets `isError: true` so the MCP-level signal
+ * matches `adcp_error` envelopes, which keeps `isErrorResponse()` and
+ * `response-validation: strict` consistent across both error paths.
+ */
+function wrapErrorArm(value: { errors: unknown[] }): McpToolResponse {
+  const firstError = value.errors[0] as { code?: unknown; message?: unknown } | undefined;
+  const summary =
+    firstError && typeof firstError === 'object'
+      ? `${typeof firstError.code === 'string' ? firstError.code : 'ERROR'}: ${typeof firstError.message === 'string' ? firstError.message : 'operation failed'}`
+      : 'operation failed';
+  return {
+    content: [{ type: 'text', text: summary }],
+    isError: true,
+    structuredContent: value as unknown as Record<string, unknown>,
+  };
+}
+
+/**
  * Defence-in-depth sanitizer for handler-returned error envelopes.
  *
  * `adcpError()` filters its own output against `ADCP_ERROR_FIELD_ALLOWLIST`,
@@ -1892,7 +2143,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           const outcome = validateRequest(toolName, params);
           if (!outcome.valid) {
             if (requestValidationMode === 'strict') {
-              const payload = buildAdcpValidationErrorPayload(toolName, 'request', outcome.issues);
+              // Thread `exposeSchemaPath` the same way response-side does
+              // so request-side schemaPath also ships in dev and stays
+              // gated in production. Prior to this, request-side silently
+              // stripped schemaPath even in dev — asymmetric with response-side.
+              const payload = buildAdcpValidationErrorPayload(toolName, 'request', outcome.issues, {
+                exposeSchemaPath: exposeErrorDetails,
+              });
               return finalize(adcpError('VALIDATION_ERROR', payload));
             }
             logger.warn(`Schema validation warning (request) for ${toolName}: ${formatIssues(outcome.issues)}`, {
@@ -2063,7 +2320,43 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Handler ---
         try {
           const result = await handler(params, ctx);
-          let formatted: McpToolResponse = isFormattedResponse(result) ? result : wrap(result);
+          // Narrow Error / Submitted arms of the *Response union before
+          // reaching the success-arm builder: wrap() on an Error payload
+          // would still serialize it but apply success-shaped defaults
+          // (revision, confirmed_at, 'Media buy undefined created') to
+          // a shape that doesn't have those fields. Routing here keeps
+          // the wire shape correct regardless of which arm the handler
+          // chose to return.
+          let formatted: McpToolResponse;
+          if (isFormattedResponse(result)) {
+            formatted = result;
+          } else if (isSubmittedEnvelope(result)) {
+            formatted = wrapSubmittedEnvelope(result);
+          } else if (isErrorArm(result)) {
+            // Log-warn (always) on spec-violating Error items — required
+            // `code`/`message` are spec-mandatory on core/error.json. We
+            // don't fail the response: response-schema validation is
+            // already skipped for `isError: true` envelopes and flipping
+            // a handler-returned Error arm into a framework VALIDATION_ERROR
+            // would obscure the seller's intended error. A steady-state
+            // warn is enough to surface drift in dev/test logs.
+            const malformed = (result.errors as unknown[]).some(
+              e =>
+                e == null ||
+                typeof e !== 'object' ||
+                typeof (e as Record<string, unknown>).code !== 'string' ||
+                typeof (e as Record<string, unknown>).message !== 'string'
+            );
+            if (malformed) {
+              logger.warn(`Handler returned ${toolName} Error arm with spec-violating errors[]`, {
+                tool: toolName,
+                errors: result.errors,
+              });
+            }
+            formatted = wrapErrorArm(result);
+          } else {
+            formatted = wrap(result);
+          }
 
           // --- Test-controller bridge: augment get_products with seeded fixtures. ---
           // Only runs when the seller opted in via `testController.getSeededProducts`

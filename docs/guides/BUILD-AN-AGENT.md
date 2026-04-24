@@ -96,6 +96,34 @@ serve(() => createAdcpServer({
 - **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing
 - **Sets tool annotations** — `readOnlyHint`, `destructiveHint`, `idempotentHint` per tool
 - **Warns on incoherent tool sets** — e.g., `create_media_buy` without `get_products`
+- **Narrows response unions** — a handler may return the Success arm *or* the full response union (`Success | Error | Submitted`). Adapter-style handlers that already produce `Result<CreateMediaBuyResponse, ...>` don't need to pre-narrow: the dispatcher detects the arm by shape and routes accordingly. Error arms surface as `{ isError: true, structuredContent: { errors: [...] } }`; Submitted arms surface as `{ structuredContent: { status: 'submitted', task_id, ... } }` without the Success-only `revision` / `confirmed_at` defaults. You can still call `adcpError('CODE', ...)` directly for framework-style error envelopes.
+
+### Reading tool results (client side)
+
+The framework emits responses with typed data in `structuredContent` (MCP L3) and a human-readable summary in `content[0].text` (L2). When calling an AdCP agent from client code, prefer `structuredContent`; only fall back to parsing the text block for pre-`structuredContent` servers. The SDK ships two helpers with different failure modes:
+
+```typescript
+import { extractResult, unwrapProtocolResponse } from '@adcp/client';
+
+const res = await mcpClient.callTool({ name: 'get_products', arguments: { brief: '...' } });
+
+// Happy-path: returns structuredContent (or JSON-parsed text); undefined if neither yields data.
+const payload = extractResult<GetProductsResponse>(res);
+
+// Validated read: narrows against the tool schema, throws on missing / drifted payloads.
+const validated = unwrapProtocolResponse(res, 'get_products', 'mcp');
+```
+
+Pick based on the caller: `extractResult` when you just want the payload and can handle `undefined`; `unwrapProtocolResponse` when you want a schema-narrowed AdCP response or an explicit throw.
+
+### Returning errors from handlers
+
+Two shapes round-trip as errors, and they mean different things:
+
+- **Spec-defined tool failure** — return the tool's `*Error` arm directly: `return { errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'no such product' }] }`. The dispatcher detects the Error arm by shape, sets `isError: true`, and preserves the `errors[]` / `context` / `ext` fields on `structuredContent`. Use this when the AdCP spec defines a per-tool error variant for the condition you're surfacing.
+- **Framework / infra failure** — return `adcpError('CODE', { message: '...' })`. Use this for validation drift, idempotency conflicts, authentication failures, rate-limits, `SERVICE_UNAVAILABLE`, and anything else the spec classifies via the standard `code` vocabulary. The envelope lands at `structuredContent.adcp_error`.
+
+Both surface as `isError: true` on the wire, and both skip response-schema validation. Buyers that need to distinguish can look for `structuredContent.adcp_error` (framework) vs `structuredContent.errors` (tool Error arm).
 
 **7 domain groups:**
 
@@ -217,7 +245,7 @@ createAdcpServer({
 });
 ```
 
-Modes per side: `'strict' | 'warn' | 'off'`. Default is `'off'` — enable explicitly. `VALIDATION_ERROR` envelopes carry the full issue list (pointer, message, keyword, schema path) under `details.issues` so buyers can surface each offending field.
+Modes per side: `'strict' | 'warn' | 'off'`. Default is `'off'` — enable explicitly. `VALIDATION_ERROR` envelopes carry the full issue list (pointer, message, keyword, schema path) at the top level `adcp_error.issues` (and mirrored at `details.issues` for spec-convention compatibility) so buyers can surface each offending field without drilling into nested metadata.
 
 The same validator runs on the `AdcpClient` side — storyboards and third-party clients configure it via `validation: { requests, responses }` on the client config. Request default is `warn` (so existing callers that send partial payloads still work); response default is `strict` in dev/test, `warn` in production. Set either side to `'off'` for zero overhead.
 
