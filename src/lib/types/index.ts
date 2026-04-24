@@ -22,5 +22,9 @@ export type {
 // Re-export FormatID from generated core types
 export type { FormatID } from './core.generated';
 
+// Strict format asset slot types (hand-authored — the codegen drops the
+// discriminated per-asset-type branches of Format.assets[]).
+export * from './format-asset-slots';
+
 // Re-export Zod schemas for runtime validation
 export * from './schemas.generated';

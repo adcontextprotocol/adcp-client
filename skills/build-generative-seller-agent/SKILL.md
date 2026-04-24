@@ -184,6 +184,80 @@ listCreativeFormatsResponse({
 })
 ```
 
+#### Format requirements as generation constraints
+
+Generative sellers consume `requirements` as the input spec the generator must satisfy. When you declare a format, its requirements are the contract for what your generator will produce — so the field names and units have to match the spec exactly or downstream validators will reject what you generate even when the bytes are correct.
+
+Four constraints that recur on every generative format declaration:
+
+1. **Image** uses `formats: ('jpg' | 'png' | 'gif' | 'webp' | 'svg' | 'avif' | 'tiff' | 'pdf' | 'eps')[]` — not `file_types`. Image `aspect_ratio` matches `^\d+(\.\d+)?:\d+(\.\d+)?$` (decimals allowed, e.g. `1.91:1`), single-valued.
+2. **Video** uses `containers: ('mp4' | 'webm' | 'mov' | 'avi' | 'mkv')[]` — not `file_types`. Video `aspect_ratio` is integer-only `^\d+:\d+$`. Durations are `min_duration_ms` / `max_duration_ms`.
+3. **Audio** uses `formats: ('mp3' | 'aac' | 'wav' | 'ogg' | 'flac')[]`. Durations are `min_duration_ms` / `max_duration_ms`.
+4. **`min_count` / `max_count`** live on the `repeatable_group` wrapper for formats that generate multiple items (carousel packs, product collections). Never on an individual asset.
+
+Use the typed slot builders to declare format slots — the `requirements` object is strictly typed per `asset_type`, so misnamed fields and wrong units fail at compile time:
+
+```typescript
+import {
+  briefAssetSlot,
+  imageAssetSlot,
+  videoAssetSlot,
+  repeatableGroup,
+  imageGroupAsset,
+  textGroupAsset,
+} from '@adcp/client';
+
+// Generative display format — brief in, spec-compliant image out
+{
+  format_id: { agent_url, id: 'display_300x250_generative' },
+  name: 'Generated Display 300x250',
+  renders: [{ role: 'primary', dimensions: { width: 300, height: 250 } }],
+  assets: [
+    briefAssetSlot({ asset_id: 'brief', required: true }),
+  ],
+}
+
+// Generative carousel pack — generator produces 3–6 image+headline cards
+{
+  format_id: { agent_url, id: 'carousel_generative' },
+  name: 'Generated Product Carousel',
+  renders: [{ role: 'primary', dimensions: { width: 1080, height: 1080 } }],
+  assets: [
+    briefAssetSlot({ asset_id: 'brief', required: true }),
+    repeatableGroup({
+      asset_group_id: 'cards',
+      required: true,
+      min_count: 3,
+      max_count: 6,
+      selection_mode: 'sequential',
+      assets: [
+        imageGroupAsset({ asset_id: 'card_image', required: true, requirements: { aspect_ratio: '1:1', formats: ['jpg', 'png'] } }),
+        textGroupAsset({ asset_id: 'card_headline', required: true, requirements: { max_length: 40 } }),
+      ],
+    }),
+  ],
+}
+```
+
+Reading requirements on the generation path — discriminate by `asset_type` to narrow to the correct requirements shape, then feed it to the generator:
+
+```typescript
+import type { IndividualAssetSlot } from '@adcp/client';
+
+function constraintsFor(slot: IndividualAssetSlot) {
+  switch (slot.asset_type) {
+    case 'image':
+      return slot.requirements; // ImageAssetRequirements — formats, aspect_ratio, max_file_size_kb
+    case 'video':
+      return slot.requirements; // VideoAssetRequirements — containers, *_duration_ms, aspect_ratio
+    case 'audio':
+      return slot.requirements; // AudioAssetRequirements — formats, *_duration_ms
+    default:
+      return undefined;
+  }
+}
+```
+
 **`sync_creatives`** — `SyncCreativesRequestSchema.shape`
 
 Handle both brief-based and standard creatives:

@@ -214,6 +214,11 @@ const formats = [
   },
 ];
 
+// The plain literal above works, but creative agents declaring richer
+// acceptance specs (technical `requirements`, carousel/collection wrappers)
+// should use the typed slot builders — see "Format asset slot builders"
+// below.
+
 // Idempotency — required for v3 compliance on any agent with mutating
 // handlers. `sync_creatives`, `build_creative`, and `calibrate_content`
 // are all mutating for creative agents.
@@ -331,6 +336,85 @@ serve(() => {
 Use `ctx.store` to persist synced creatives. The framework provides `InMemoryStateStore` by default — no need for module-level Maps or external state management.
 
 The `sync_creatives` handler adds/updates entries via `ctx.store.put('creatives', id, data)`. The `list_creatives` handler queries via `ctx.store.list('creatives')` (include `created_date` and `updated_date` in each creative). The `preview_creative` handler previews the `creative_manifest` sent in the request (no library lookup needed). The `build_creative` handler finds a synced creative by `target_format_id` (matching the format), then builds a serving tag from it.
+
+### Format asset slot builders
+
+Ad servers and creative management platforms declare the technical acceptance contract in `Format.assets[]` — what a buyer must submit for a creative to be accepted. The spec's closed enums and field shapes are easy to get slightly wrong in a handwritten literal; strict response validation then rejects the format even when it's structurally close.
+
+Four recurring mistakes:
+
+1. **Image** uses `formats: ('jpg' | 'png' | 'gif' | 'webp' | 'svg' | 'avif' | 'tiff' | 'pdf' | 'eps')[]` — not `file_types`. Image `aspect_ratio` matches `^\d+(\.\d+)?:\d+(\.\d+)?$` (single-valued).
+2. **Video** uses `containers: ('mp4' | 'webm' | 'mov' | 'avi' | 'mkv')[]` and `codecs: ('h264' | 'h265' | 'vp8' | 'vp9' | 'av1' | 'prores')[]`. Video `aspect_ratio` is integer-only `^\d+:\d+$`. Durations are `min_duration_ms` / `max_duration_ms`.
+3. **Audio** uses `formats: ('mp3' | 'aac' | 'wav' | 'ogg' | 'flac')[]`. Durations are `*_duration_ms`.
+4. **`min_count` / `max_count`** live on the `repeatable_group` wrapper. Formats that render multiple items (galleries, story frames, product showcases) declare an `item_type: 'repeatable_group'` slot with `assets[]` inside — never put counts on an individual asset.
+
+Use the typed slot builders when declaring acceptance specs. `requirements` is strictly typed per `asset_type`, so misnamed fields and wrong units fail at compile time:
+
+```typescript
+import {
+  imageAssetSlot,
+  videoAssetSlot,
+  repeatableGroup,
+  imageGroupAsset,
+  textGroupAsset,
+} from '@adcp/client';
+
+// MRec banner with typed image requirements
+{
+  format_id: { agent_url: AGENT_URL, id: 'display_banner_300x250' },
+  name: 'Display Banner 300x250',
+  renders: [{ role: 'primary', dimensions: { width: 300, height: 250 } }],
+  assets: [
+    imageAssetSlot({
+      asset_id: 'image',
+      required: true,
+      requirements: { formats: ['jpg', 'png', 'webp'], max_file_size_kb: 200 },
+    }),
+  ],
+}
+
+// In-stream video, 6–30s
+{
+  format_id: { agent_url: AGENT_URL, id: 'video_instream_16x9' },
+  name: 'In-Stream Video 16:9',
+  renders: [{ role: 'primary', dimensions: { width: 1920, height: 1080 } }],
+  assets: [
+    videoAssetSlot({
+      asset_id: 'video',
+      required: true,
+      requirements: {
+        aspect_ratio: '16:9',
+        containers: ['mp4', 'webm'],
+        codecs: ['h264', 'h265'],
+        min_duration_ms: 6000,
+        max_duration_ms: 30000,
+      },
+    }),
+  ],
+}
+
+// Gallery format — 3 to 8 image+headline pairs. Counts on the GROUP.
+{
+  format_id: { agent_url: AGENT_URL, id: 'gallery_1x1' },
+  name: 'Image Gallery',
+  renders: [{ role: 'primary', dimensions: { width: 1080, height: 1080 } }],
+  assets: [
+    repeatableGroup({
+      asset_group_id: 'cards',
+      required: true,
+      min_count: 3,
+      max_count: 8,
+      selection_mode: 'sequential',
+      assets: [
+        imageGroupAsset({ asset_id: 'card_image', required: true, requirements: { aspect_ratio: '1:1', formats: ['jpg', 'png'] } }),
+        textGroupAsset({ asset_id: 'card_headline', required: true, requirements: { max_length: 40 } }),
+      ],
+    }),
+  ],
+}
+```
+
+Ad servers whose output is a serving-tag (VAST, display tag HTML) declare those via `vastAssetSlot`, `htmlAssetSlot`, or `javascriptAssetSlot` with their respective requirement shapes (`vast_version`, `sandbox`, `module_type`).
 
 ## Idempotency
 

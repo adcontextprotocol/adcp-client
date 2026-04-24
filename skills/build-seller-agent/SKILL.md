@@ -529,6 +529,57 @@ listCreativeFormatsResponse({
 })
 ```
 
+#### Format asset slots — translating platform-native constraints to AdCP
+
+Social and retail-media sellers translate platform-native format catalogs (Meta, Pinterest, TikTok, Criteo, CitrusAd, UniversalAds) into AdCP's `Format.assets[]`. Four recurring footguns fail strict response validation even when the data is "there":
+
+1. **Wrong field name for file types.** The spec uses `formats` on image requirements and `containers` on video requirements — NOT `file_types`. Platforms commonly carry `file_types: ['mp4']`; remap to `containers: ['mp4']` for video, `formats: ['jpg', 'png']` for image.
+2. **Wrong unit on duration.** AdCP uses `min_duration_ms` / `max_duration_ms` (milliseconds). Platforms often carry `min_duration_seconds`. Multiply by 1000 on translation.
+3. **Aspect ratios are single-valued per format.** Image pattern `^\d+(\.\d+)?:\d+(\.\d+)?$` allows decimals (`1.91:1`); video is integer-only `^\d+:\d+$`. Comma-joined values (`"1:1,16:9"`) fail — emit separate format variants per ratio.
+4. **`min_count` / `max_count` live on the repeatable_group wrapper.** Carousels, collections, story-pin frames, product showcases are `repeatable_group` assets with `assets[]` inside. Putting counts on an individual asset slot is a spec violation that strict validation rejects.
+
+Retail-media sponsored-products formats often reach for `asset_type: 'promoted_offerings'`. That value isn't in the AdCP enum — the correct choice is `asset_type: 'catalog'` with a `CatalogRequirements` object declaring `catalog_type: 'product'` (or `offering`, etc.), `min_items`, `max_items`, and the expected `feed_formats`.
+
+Use the typed slot builders — they inject `item_type` and `asset_type`, and the `requirements` object is strictly typed per asset_type, so `file_types`, `min_duration_seconds`, and `min_count` on an individual asset all fail at compile time:
+
+```typescript
+import { imageAssetSlot, videoAssetSlot, catalogAssetSlot, repeatableGroup, imageGroupAsset, textGroupAsset } from '@adcp/client';
+
+// Single image asset slot
+imageAssetSlot({
+  asset_id: 'hero_image',
+  required: true,
+  requirements: { aspect_ratio: '1:1', formats: ['jpg', 'png', 'webp'], max_file_size_kb: 5120 },
+});
+
+// Carousel: 2–5 images. Counts on the GROUP, not the individual image.
+repeatableGroup({
+  asset_group_id: 'carousel_items',
+  required: true,
+  min_count: 2,
+  max_count: 5,
+  selection_mode: 'sequential',
+  assets: [
+    imageGroupAsset({ asset_id: 'card_image', required: true, requirements: { aspect_ratio: '1:1', formats: ['jpg', 'png'] } }),
+    textGroupAsset({ asset_id: 'card_headline', required: true, requirements: { max_length: 40 } }),
+  ],
+});
+
+// Sponsored-products: catalog slot, not 'promoted_offerings'
+catalogAssetSlot({
+  asset_id: 'products',
+  required: true,
+  requirements: {
+    catalog_type: 'product',
+    min_items: 3,
+    max_items: 10,
+    feed_formats: ['google_merchant_center'],
+  },
+});
+```
+
+Grouped namespace `FormatAsset.image(...)`, `FormatAsset.group(...)`, etc. is available when constructing several slot types together.
+
 **`sync_creatives`** — `SyncCreativesRequestSchema.shape`
 
 ```

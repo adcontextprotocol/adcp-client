@@ -849,6 +849,47 @@ export {
   webhookAsset,
 } from './utils/asset-builders';
 
+// ====== FORMAT ASSET SLOT BUILDERS ======
+// Typed factories for the slot definitions inside `Format.assets[]` — what a
+// seller/publisher declares it accepts. Each builder injects the `item_type`
+// and `asset_type` discriminators, and the `requirements` object is strictly
+// typed per asset_type: misnamed fields (`file_types` vs `formats`) and wrong
+// units (`min_duration_seconds` vs `min_duration_ms`) fail type-check.
+// Use `repeatableGroup({...})` (or `FormatAsset.group(...)`) to wrap assets
+// that repeat — that's the correct home for `min_count` / `max_count`.
+export {
+  FormatAsset,
+  imageAssetSlot,
+  videoAssetSlot,
+  audioAssetSlot,
+  textAssetSlot,
+  markdownAssetSlot,
+  htmlAssetSlot,
+  cssAssetSlot,
+  javascriptAssetSlot,
+  vastAssetSlot,
+  daastAssetSlot,
+  urlAssetSlot,
+  webhookAssetSlot,
+  briefAssetSlot,
+  catalogAssetSlot,
+  repeatableGroup,
+  imageGroupAsset,
+  videoGroupAsset,
+  audioGroupAsset,
+  textGroupAsset,
+  markdownGroupAsset,
+  htmlGroupAsset,
+  cssGroupAsset,
+  javascriptGroupAsset,
+  vastGroupAsset,
+  daastGroupAsset,
+  urlGroupAsset,
+  webhookGroupAsset,
+  briefGroupAsset,
+  catalogGroupAsset,
+} from './utils/format-asset-slot-builders';
+
 // ====== PREVIEW RENDER BUILDERS ======
 // Typed factories that inject the `output_format` discriminator on
 // `PreviewRender` objects. `urlRender({ render_id, preview_url, role })`
