@@ -24,8 +24,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/interfaces.js';
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import type { AuthPrincipal, Authenticator } from './auth';
-import { AuthError, authenticatorNeedsRawBody, respondUnauthorized, signatureErrorCodeFromCause } from './auth';
+import type { AuthPrincipal, Authenticator, ServeRequestContext } from './auth';
+import {
+  ADCP_SERVE_REQUEST_CONTEXT,
+  AuthError,
+  authenticatorNeedsRawBody,
+  respondUnauthorized,
+  signatureErrorCodeFromCause,
+} from './auth';
 import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
 import type { AdcpServer } from './adcp-server';
 
@@ -35,13 +41,39 @@ import type { AdcpServer } from './adcp-server';
  * Contains shared resources that must survive across stateless HTTP requests,
  * such as the task store for MCP Tasks protocol support.
  *
- * This helper is designed for single-tenant servers (one agent per process).
- * For multi-tenant deployments, provide a custom `TaskStore` via `ServeOptions`
- * that enforces tenant/session scoping.
+ * For multi-tenant / multi-host deployments, provide a custom `TaskStore` via
+ * `ServeOptions` that enforces tenant/session scoping, and branch on
+ * {@link host} inside your factory to return host-specific handlers.
  */
 export interface ServeContext {
   /** Shared task store — use this when creating your McpServer so tasks persist across requests. */
   taskStore: TaskStore;
+  /**
+   * Canonical host the request arrived on, lowercased with port preserved
+   * (e.g. `snap.example.com`, `localhost:3001`). Resolved from
+   * `X-Forwarded-Host` when `ServeOptions.trustForwardedHost` is true,
+   * otherwise from the `Host` header. Empty string when neither header
+   * is present (unusual — HTTP/1.1 requires `Host`).
+   *
+   * Use this in the factory to branch on hostname when a single process
+   * fronts multiple agents. The same string is passed to
+   * `publicUrl` / `protectedResource` resolver functions.
+   */
+  host: string;
+}
+
+/**
+ * Thrown from an agent factory (or a `publicUrl` / `protectedResource`
+ * resolver) when the incoming request's host isn't configured. `serve()`
+ * catches it and responds 404 with a generic body — the adapter routing
+ * table never crosses the wire. Any other thrown error still surfaces
+ * as 500 so unrelated bugs stay loud.
+ */
+export class UnknownHostError extends Error {
+  constructor(message = 'Unknown host') {
+    super(message);
+    this.name = 'UnknownHostError';
+  }
 }
 
 /**
@@ -93,19 +125,16 @@ export interface ServeOptions {
    *
    * Must be an absolute https:// URL whose path matches the mount path.
    *
-   * **Multi-host caveat.** `publicUrl` is static per `serve()` call. If a
-   * single Node process fronts multiple hostnames (e.g., a reverse-proxy
-   * splitting `seller-a.example.com` and `seller-b.example.com` into one
-   * backend), every host sees the same advertised `resource` — buyers
-   * hitting `seller-b` will get a token audience-bound to `seller-a`'s
-   * URL and fail JWT audience validation. For multi-host deployments,
-   * run one `serve()` per host (separate ports + reverse proxy by Host
-   * header) or route hosts to isolated Node processes upstream. A
-   * host-aware helper is on the roadmap but not in 5.2.x — until it
-   * ships, the single-`publicUrl`-per-process model is the only
-   * supported configuration.
+   * **Multi-host.** Pass a function `(host) => string` when one process
+   * fronts multiple hostnames (white-label publishers, multi-brand
+   * adapters). The resolver runs per unique host — the returned URL is
+   * cached and used as the RFC 9728 `resource`, the 401-challenge
+   * `resource_metadata`, and the JWT audience for that host. Each
+   * resolved URL's path must match the mount path, same as the static
+   * form. Setting {@link trustForwardedHost} is recommended when
+   * behind a proxy.
    */
-  publicUrl?: string;
+  publicUrl?: string | ((host: string) => string);
 
   /**
    * Authentication middleware applied to every request. When configured,
@@ -119,8 +148,72 @@ export interface ServeOptions {
   /**
    * Advertise OAuth 2.0 protected-resource metadata at
    * `/.well-known/oauth-protected-resource<mountPath>`. Requires {@link publicUrl}.
+   *
+   * Pass a function `(host) => ProtectedResourceMetadata` for multi-host
+   * deployments whose authorization servers or supported scopes vary per
+   * hostname (e.g., each white-label seller has its own AS). The resolver
+   * runs once per unique host and the result is cached. The static form
+   * still works when every host uses the same PRM body.
    */
-  protectedResource?: ProtectedResourceMetadata;
+  protectedResource?: ProtectedResourceMetadata | ((host: string) => ProtectedResourceMetadata);
+
+  /**
+   * Reuse the agent returned by the factory across requests instead of
+   * closing it after each. Default `false` (one fresh server per
+   * request — the pre-existing behavior).
+   *
+   * When `true`, `serve()` DOES NOT call `agentServer.close()` between
+   * requests. The factory is still called on every request; it's the
+   * caller's responsibility to cache `AdcpServer` instances (typically
+   * keyed on `ctx.host`) and return the cached instance when possible.
+   * Concurrent requests to the same cached server are serialized per
+   * instance — `McpServer.connect()` rejects when a transport is
+   * already attached, so the framework wraps the
+   * connect→handleRequest→release cycle in a per-instance async
+   * mutex. Requests for DIFFERENT cached servers still run in parallel.
+   *
+   * Use when `createAdcpServer(...)` setup cost (tool registration,
+   * handler wiring) is a measurable portion of request latency — common
+   * in multi-host deployments with many tools per host. Trade-off:
+   * throughput per unique host drops to 1 in flight at a time. For
+   * higher concurrency per host, cache a small pool of servers in the
+   * factory and round-robin.
+   *
+   * Cleanup is the caller's responsibility: listen for the process
+   * shutdown signal and call `close()` on every cached server to
+   * release MCP Tasks timers, HTTP keepalives, etc.
+   *
+   * **Incompatible with long-lived server→client streams.** MCP's
+   * `Protocol._onclose` aborts in-flight handlers and clears progress
+   * tokens when the transport closes. In stateless HTTP mode (the
+   * default this helper uses) each request is already single-response,
+   * so this is a no-op concern. Don't enable `reuseAgent` if you
+   * eventually wire a transport that keeps an SSE channel open across
+   * multiple logical requests.
+   */
+  reuseAgent?: boolean;
+
+  /**
+   * Trust `X-Forwarded-Host` and RFC 7239 `Forwarded: host=...` for
+   * host resolution and for reconstructing the public URL on 401
+   * challenges. Default `false` — an attacker-controlled header can't
+   * flip the advertised OAuth `resource` URL unless you opt in.
+   *
+   * **Your proxy must OVERWRITE the forwarded headers on ingress, not
+   * append.** The framework trusts the first (left-most) entry in a
+   * chain. With an overwriting proxy that's the sanitized value; with
+   * an appending proxy it's whatever the client sent — an attacker
+   * picks it. Common behavior:
+   *
+   * - Overwrite (safe to trust): Fly.io, Cloud Run, GCP HTTPS LB.
+   * - Append (NOT safe without extra config): AWS ALB default, nginx
+   *   default. These need `proxy_set_header X-Forwarded-Host $host;`
+   *   or equivalent before enabling this flag.
+   *
+   * Verify your proxy's behavior against a request that already has
+   * `X-Forwarded-Host: attacker.example` in it before turning this on.
+   */
+  trustForwardedHost?: boolean;
 
   /**
    * Pre-MCP middleware — runs after authentication but before MCP transport
@@ -152,12 +245,19 @@ export interface ServeOptions {
  * request via `ServeContext`. This ensures MCP Tasks (create → poll → result)
  * work correctly across stateless HTTP requests.
  *
+ * **Multi-host.** Pass functions for `publicUrl` and `protectedResource` and
+ * branch on `ctx.host` in the factory to front multiple hostnames from one
+ * process. The framework resolves host from `X-Forwarded-Host` (when
+ * `trustForwardedHost: true`) or `Host`, threads it through `ServeContext`,
+ * and caches per-host `publicUrl`/PRM so each hostname advertises its own
+ * audience-bound `resource`.
+ *
  * @param createAgent - Factory function that returns a configured server —
  *   either an `AdcpServer` from `createAdcpServer()` or a raw SDK `McpServer`
  *   from `createTaskCapableServer()`. Called once per request so each gets a
  *   fresh instance (a server can only be connected once). Receives a
- *   `ServeContext` with a shared `taskStore` — pass it to
- *   `createTaskCapableServer()` so tasks persist across stateless requests.
+ *   `ServeContext` with a shared `taskStore` and the resolved `host` —
+ *   branch on `host` to return host-specific handlers in multi-host mode.
  * @param options - Port, path, and callback configuration.
  * @returns The http.Server instance. Use the `onListening` callback or
  *   listen for the 'listening' event to know when it's ready.
@@ -170,7 +270,18 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const port = options?.port ?? envPort ?? 3001;
   const mountPath = options?.path ?? '/mcp';
   const taskStore = options?.taskStore ?? new InMemoryTaskStore();
-  const ctx: ServeContext = { taskStore };
+  const trustForwardedHost = options?.trustForwardedHost === true;
+  const reuseAgent = options?.reuseAgent === true;
+
+  // Per-instance mutex chain for `reuseAgent: true`. The MCP SDK's
+  // `Protocol.connect()` hard-throws when a transport is already
+  // attached (node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:215),
+  // so concurrent requests that land on the same cached server would
+  // race without this. WeakMap so agents GC normally when the caller
+  // drops references. Only used when `reuseAgent` is true — the
+  // default path still creates a fresh server per request and doesn't
+  // share any state across calls.
+  const reuseMutexes = new WeakMap<AdcpServer | McpServer, Promise<unknown>>();
 
   if (options?.protectedResource && !options.publicUrl) {
     throw new Error(
@@ -179,23 +290,53 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     );
   }
 
-  const publicUrl = options?.publicUrl;
-  let publicOrigin: string | undefined;
-  if (publicUrl) {
-    let parsed: URL;
-    try {
-      parsed = new URL(publicUrl);
-    } catch {
-      throw new Error(`serve(): \`publicUrl\` is not a valid URL: ${publicUrl}`);
-    }
-    if (trimTrailingSlashes(parsed.pathname) !== trimTrailingSlashes(mountPath)) {
-      throw new Error(
-        `serve(): \`publicUrl\` path (${parsed.pathname}) must match mount path (${mountPath}). ` +
-          'The public URL is the full MCP endpoint URL, including the path.'
-      );
-    }
-    publicOrigin = parsed.origin;
+  const publicUrlOption = options?.publicUrl;
+  const protectedResourceOption = options?.protectedResource;
+  const publicUrlIsFn = typeof publicUrlOption === 'function';
+  const prmIsFn = typeof protectedResourceOption === 'function';
+
+  // Static publicUrl — validate once at construction. Function form validates
+  // lazily per host so a stale factory for one host can't prevent boot.
+  let staticPublicOrigin: string | undefined;
+  if (typeof publicUrlOption === 'string') {
+    staticPublicOrigin = validatePublicUrl(publicUrlOption, mountPath);
   }
+
+  // Per-host caches. Function-form options are pure host → value lookups,
+  // so memoization is safe and avoids the per-request allocation of
+  // `new URL(...)` plus the caller's own host → config table work.
+  const publicUrlCache = new Map<string, string>();
+  const publicOriginCache = new Map<string, string>();
+  const prmCache = new Map<string, ProtectedResourceMetadata>();
+
+  const resolvePublicUrl = (host: string): string | undefined => {
+    if (typeof publicUrlOption === 'string') return publicUrlOption;
+    if (!publicUrlIsFn) return undefined;
+    let cached = publicUrlCache.get(host);
+    if (cached !== undefined) return cached;
+    cached = (publicUrlOption as (h: string) => string)(host);
+    const origin = validatePublicUrl(cached, mountPath);
+    publicUrlCache.set(host, cached);
+    publicOriginCache.set(host, origin);
+    return cached;
+  };
+
+  const resolvePublicOrigin = (host: string): string | undefined => {
+    if (typeof publicUrlOption === 'string') return staticPublicOrigin;
+    // Populate via resolvePublicUrl so both caches share a single validation pass.
+    if (resolvePublicUrl(host) == null) return undefined;
+    return publicOriginCache.get(host);
+  };
+
+  const resolveProtectedResource = (host: string): ProtectedResourceMetadata | undefined => {
+    if (!protectedResourceOption) return undefined;
+    if (!prmIsFn) return protectedResourceOption as ProtectedResourceMetadata;
+    let cached = prmCache.get(host);
+    if (cached !== undefined) return cached;
+    cached = (protectedResourceOption as (h: string) => ProtectedResourceMetadata)(host);
+    prmCache.set(host, cached);
+    return cached;
+  };
 
   if (options?.authenticate == null && process.env.NODE_ENV === 'production') {
     console.warn(
@@ -207,19 +348,46 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const explicitPreTransport = options?.preTransport as AdcpPreTransport | undefined;
 
   const protectedResourcePath = `/.well-known/oauth-protected-resource${mountPath}`;
-  const resourceMetadataUrl =
-    options?.protectedResource && publicOrigin ? `${publicOrigin}${protectedResourcePath}` : undefined;
 
   const httpServer = createServer(async (req, res) => {
     const { pathname } = new URL(req.url || '', 'http://localhost');
+    const host = resolveHost(req, { trustForwardedHost });
 
     // RFC 9728 protected-resource metadata — intentionally auth-free so
     // clients can discover the authorization server before they have a token.
-    if (options?.protectedResource && pathname === protectedResourcePath) {
+    if (protectedResourceOption && pathname === protectedResourcePath) {
+      let resource: string | undefined;
+      let prm: ProtectedResourceMetadata | undefined;
+      try {
+        resource = resolvePublicUrl(host);
+        prm = resolveProtectedResource(host);
+      } catch (err) {
+        if (err instanceof UnknownHostError) {
+          // Operator signalled "this host isn't in my routing table." 404
+          // lets the OAuth grader probe fall through cleanly and doesn't
+          // leak the configured host set across the wire.
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        console.error('[adcp/serve] publicUrl/protectedResource resolver failed:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Protected-resource metadata unavailable for this host.' }));
+        return;
+      }
+      if (!resource || !prm) {
+        // Fail closed: advertising a garbage resource URL would mint
+        // audience-mismatched tokens across the fleet. 404 signals "this
+        // host doesn't publish PRM" — the operator sees it and either
+        // wires the host up or takes it out of DNS.
+        res.writeHead(404);
+        res.end('Not found');
+        return;
+      }
       const body = {
-        resource: publicUrl!,
-        ...options.protectedResource,
-        bearer_methods_supported: options.protectedResource.bearer_methods_supported ?? ['header'],
+        resource,
+        ...prm,
+        bearer_methods_supported: prm.bearer_methods_supported ?? ['header'],
       };
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
@@ -227,6 +395,45 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     }
 
     if (pathname === mountPath || pathname === `${mountPath}/`) {
+      // Resolve per-request `resource_metadata` URL for 401 challenges and
+      // the per-host `publicUrl` authenticators read via
+      // {@link getServeRequestContext}. Resolving both up front means
+      // the audience callback in `verifyBearer` can never diverge from
+      // what the framework advertises in `/.well-known/...`. For static
+      // PRM this is the same string every request (pre-multi-host
+      // behavior); for function-form PRM/URL it follows the host.
+      let resourceMetadataUrl: string | undefined;
+      let resolvedPublicUrl: string | undefined;
+      try {
+        resolvedPublicUrl = resolvePublicUrl(host);
+      } catch (err) {
+        if (err instanceof UnknownHostError) {
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        console.error('[adcp/serve] publicUrl resolver failed:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Protected-resource metadata unavailable for this host.' }));
+        return;
+      }
+      if (protectedResourceOption) {
+        const hostOrigin = resolvePublicOrigin(host);
+        if (hostOrigin) resourceMetadataUrl = `${hostOrigin}${protectedResourcePath}`;
+      }
+
+      // Stamp the serve-resolved context on the request so authenticator
+      // callbacks (e.g. `verifyBearer`'s audience resolver) inherit the
+      // framework's host resolution — they MUST NOT re-derive host from
+      // raw headers, since that would diverge from what PRM advertises
+      // and let a spoofed `X-Forwarded-Host` flip the JWT audience check
+      // when `trustForwardedHost` is false.
+      const serveRequestContext: ServeRequestContext = resolvedPublicUrl
+        ? { host, publicUrl: resolvedPublicUrl }
+        : { host };
+      (req as IncomingMessage & { [ADCP_SERVE_REQUEST_CONTEXT]?: ServeRequestContext })[ADCP_SERVE_REQUEST_CONTEXT] =
+        serveRequestContext;
+
       // Body buffering happens at most once per request. An idempotent helper
       // lets the auth path (for signature authenticators) and the preTransport
       // path share the buffer without re-reading a drained stream.
@@ -313,7 +520,29 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       // explicit `options.preTransport` wins — it lets callers override the
       // default wiring (e.g., to add request logging or swap verifier
       // implementations).
-      const agentServer = createAgent(ctx);
+      let agentServer: AdcpServer | McpServer;
+      try {
+        agentServer = createAgent({ taskStore, host });
+      } catch (err) {
+        if (err instanceof UnknownHostError) {
+          // Factory signalled "this host isn't routable." 404 keeps the
+          // adapter table off the wire while giving ops a clean failure
+          // mode instead of the generic-500 confusion.
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        // Unexpected factory failure — surface as 500 to the client and
+        // log server-side. Rethrowing would bubble to the createServer
+        // handler as an unhandled rejection (async callback), which
+        // could crash a node process with `--unhandled-rejections=strict`.
+        console.error('[adcp/serve] factory threw:', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+        return;
+      }
       const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
       const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
       const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;
@@ -342,28 +571,63 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         }
       }
 
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      });
-      try {
-        await agentServer.connect(transport);
-        // When preTransport already consumed the request stream, pass the
-        // parsed body through so the transport doesn't re-read (stream is
-        // drained). MCP SDK's `handleRequest(req, res, parsedBody)` accepts
-        // this shape.
-        if (parsedBody !== undefined) {
-          await transport.handleRequest(req, res, parsedBody);
-        } else {
-          await transport.handleRequest(req, res);
+      // In reuseAgent mode, serialize connect→handle→close per server
+      // instance. `McpServer.connect()` rejects when a transport is
+      // already attached (protocol.js:215), so concurrent requests on a
+      // cached server would race without this chain. Requests on
+      // DIFFERENT servers (different WeakMap keys) proceed in parallel.
+      // Outside reuseAgent mode the factory returns a fresh server per
+      // request — no shared instance, no lock needed.
+      const runTransportCycle = async (): Promise<void> => {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        try {
+          await agentServer.connect(transport);
+          // When preTransport already consumed the request stream, pass the
+          // parsed body through so the transport doesn't re-read (stream is
+          // drained). MCP SDK's `handleRequest(req, res, parsedBody)` accepts
+          // this shape.
+          if (parsedBody !== undefined) {
+            await transport.handleRequest(req, res, parsedBody);
+          } else {
+            await transport.handleRequest(req, res);
+          }
+        } catch (err) {
+          console.error('Server error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+          }
+        } finally {
+          // close() here releases the transport AND (in reuseAgent mode)
+          // resets `_transport = undefined` on the cached server so the
+          // next queued request can connect. The server's tools,
+          // handlers, and idempotency wiring survive — close() clears
+          // the transport, not the registration.
+          await agentServer.close();
         }
-      } catch (err) {
-        console.error('Server error:', err);
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Internal server error' }));
-        }
-      } finally {
-        await agentServer.close();
+      };
+
+      if (reuseAgent) {
+        const prev = reuseMutexes.get(agentServer) ?? Promise.resolve();
+        // `.then(runTransportCycle, runTransportCycle)` runs the cycle on
+        // EITHER prior outcome — we only care about sequencing, not the
+        // prior request's result. A plain `.then(runTransportCycle)`
+        // would skip this request when the prior rejected, leaving it
+        // stuck behind a poison-pill promise forever.
+        const current = prev.then(runTransportCycle, runTransportCycle);
+        // Swallow errors on the copy stored for sequencing so one
+        // rejection doesn't poison every subsequent request for this
+        // server instance. `current` itself is still awaited below and
+        // surfaces errors to THIS request.
+        reuseMutexes.set(
+          agentServer,
+          current.catch(() => {})
+        );
+        await current;
+      } else {
+        await runTransportCycle();
       }
     } else {
       res.writeHead(404);
@@ -389,6 +653,167 @@ function trimTrailingSlashes(s: string): string {
   let end = s.length;
   while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end--;
   return s.slice(0, end);
+}
+
+/**
+ * Parse and validate a `publicUrl`, returning its origin. Shared by the
+ * static-string path (validated once at `serve()` construction) and the
+ * function path (validated lazily per unique host). A bad value from the
+ * function form throws on the first request for that host, after PRM
+ * resolution has already decided to fetch; the error is caught at the
+ * call site and surfaced as a 500 so the operator sees the misconfigured
+ * host instead of a silent audience-mismatch on minted tokens.
+ */
+function validatePublicUrl(publicUrl: string, mountPath: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(publicUrl);
+  } catch {
+    throw new Error(`serve(): \`publicUrl\` is not a valid URL: ${publicUrl}`);
+  }
+  if (trimTrailingSlashes(parsed.pathname) !== trimTrailingSlashes(mountPath)) {
+    throw new Error(
+      `serve(): \`publicUrl\` path (${parsed.pathname}) must match mount path (${mountPath}). ` +
+        'The public URL is the full MCP endpoint URL, including the path.'
+    );
+  }
+  return parsed.origin;
+}
+
+/**
+ * Strip the port from a `host` string (`"snap.example.com:3001"` →
+ * `"snap.example.com"`). Use inside `publicUrl` / `protectedResource`
+ * resolvers to build scheme://host URLs without carrying the test-time
+ * port into production URLs. IPv6 brackets preserved.
+ */
+export function hostname(host: string): string {
+  if (host.startsWith('[')) {
+    // IPv6 — preserve brackets, drop port after the closing bracket.
+    const end = host.indexOf(']');
+    if (end === -1) return host;
+    return host.slice(0, end + 1);
+  }
+  const colon = host.lastIndexOf(':');
+  return colon === -1 ? host : host.slice(0, colon);
+}
+
+/**
+ * Resolve the canonical host the request arrived on for multi-host
+ * routing and per-host PRM / audience advertisement. Same logic
+ * `serve()` uses internally — exported so callers writing their own
+ * host-dispatch middleware (e.g., behind `createExpressAdapter`) can
+ * match `serve()`'s semantics exactly instead of re-implementing them.
+ *
+ * When `options.trustForwardedHost: true`, consults in order:
+ *   1. `X-Forwarded-Host` (most common — Fly, Cloud Run, most ALBs).
+ *   2. RFC 7239 `Forwarded: host=...` (spec-standard, less common).
+ *   3. `Host`.
+ *
+ * When `trustForwardedHost: false` (default), only `Host` is read — an
+ * attacker-controlled forwarded header can't flip the advertised OAuth
+ * `resource` URL.
+ *
+ * **Proxy behavior matters when you opt in.** The helper trusts the
+ * FIRST entry in a forwarded chain. That's safe when your proxy
+ * OVERWRITES the header on ingress (rewriting the original value from
+ * the client). It's UNSAFE when your proxy APPENDS — the attacker gets
+ * to pick the first entry. Fly, Cloud Run, and GCP HTTPS LBs overwrite;
+ * AWS ALB and nginx (by default) append. Verify your proxy's behavior
+ * before enabling `trustForwardedHost`.
+ *
+ * Normalizes to lowercase and preserves port. Returns empty string when
+ * no usable header is present (HTTP/1.1 requires `Host`, so this is
+ * unusual — callers can branch on it to fail closed).
+ *
+ * @example
+ * ```ts
+ * import express from 'express';
+ * import { resolveHost } from '@adcp/client/server';
+ *
+ * const routersByHost = new Map<string, express.Router>();
+ *
+ * function hostDispatch(req, res, next) {
+ *   const host = resolveHost(req, { trustForwardedHost: true });
+ *   const router = routersByHost.get(host);
+ *   if (!router) return res.status(404).end();
+ *   return router(req, res, next);
+ * }
+ * ```
+ */
+export function resolveHost(req: IncomingMessage, options?: { trustForwardedHost?: boolean }): string {
+  const trustForwardedHost = options?.trustForwardedHost === true;
+  if (trustForwardedHost) {
+    const xfh = firstHeaderValue(req.headers['x-forwarded-host']);
+    if (xfh) {
+      const first = xfh.split(',')[0]?.trim();
+      if (first) return first.toLowerCase();
+    }
+    const forwarded = firstHeaderValue(req.headers['forwarded']);
+    if (forwarded) {
+      const host = parseForwardedHost(forwarded);
+      if (host) return host.toLowerCase();
+    }
+  }
+  const host = firstHeaderValue(req.headers['host']);
+  return host ? host.toLowerCase() : '';
+}
+
+/**
+ * Extract the `host=` parameter from an RFC 7239 `Forwarded:` header.
+ * Takes the first (left-most) hop — same policy as the `X-Forwarded-Host`
+ * chain rule above, and subject to the same "your proxy must overwrite,
+ * not append" guarantee.
+ *
+ * Handles quoted-string values per RFC 7239 §4 (IPv6 literals and hosts
+ * with ports must be quoted). Returns undefined when the header has no
+ * `host` parameter, a malformed value, or a blank host.
+ */
+function parseForwardedHost(header: string): string | undefined {
+  // Multi-hop: `Forwarded: for=1;host=a.example, for=2;host=b.example` —
+  // first hop is the client-facing proxy's view. Commas INSIDE quoted
+  // strings aren't separators, so a naive split would mis-parse IPv6.
+  // Scan manually, respecting quotes.
+  const firstHop = extractFirstForwardedHop(header);
+  if (!firstHop) return undefined;
+  for (const pair of firstHop.split(';')) {
+    const eq = pair.indexOf('=');
+    if (eq === -1) continue;
+    const key = pair.slice(0, eq).trim().toLowerCase();
+    if (key !== 'host') continue;
+    let value = pair.slice(eq + 1).trim();
+    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+      value = value.slice(1, -1).replace(/\\(.)/g, '$1');
+    }
+    return value || undefined;
+  }
+  return undefined;
+}
+
+function extractFirstForwardedHop(header: string): string | undefined {
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < header.length; i++) {
+    const ch = header[i];
+    if (ch === '"') {
+      // Skip the quoted run, respecting backslash escapes.
+      i++;
+      while (i < header.length && header[i] !== '"') {
+        if (header[i] === '\\') i++;
+        i++;
+      }
+      continue;
+    }
+    if (ch === ',' && depth === 0) {
+      return header.slice(start, i);
+    }
+  }
+  return header.slice(start).trim() || undefined;
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length > 0) return value[0];
+  return undefined;
 }
 
 function attachAuthInfo(req: IncomingMessage, principal: AuthPrincipal): void {

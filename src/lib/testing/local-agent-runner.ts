@@ -237,7 +237,10 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
   const startedAt = Date.now();
   const mountPath = options.serveOptions?.path ?? '/mcp';
   const taskStore: TaskStore = new InMemoryTaskStore();
-  const ctx: ServeContext = { taskStore };
+  // Bootstrap the factory once with a synthetic host so seeding and
+  // fixture preparation run before the server ever binds. `serve()` will
+  // pass the real per-request host when it calls the factory again.
+  const ctx: ServeContext = { taskStore, host: '' };
 
   let auth: TestAuthorizationServer | undefined;
   let httpServer: HttpServer | undefined;

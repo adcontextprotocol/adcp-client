@@ -122,6 +122,34 @@ export const AUTH_NEEDS_RAW_BODY: unique symbol = Symbol.for('@adcp/client.auth.
  */
 export const AUTH_PRESENCE_GATED: unique symbol = Symbol.for('@adcp/client.auth.presenceGated');
 
+/**
+ * Request-scoped context that {@link serve} stamps on the incoming request
+ * before the authenticator runs. Authenticator callbacks read this via
+ * {@link getServeRequestContext} so they inherit `serve()`'s host
+ * resolution (which honors `trustForwardedHost`) instead of re-reading
+ * headers that may be attacker-controlled.
+ */
+export const ADCP_SERVE_REQUEST_CONTEXT: unique symbol = Symbol.for('@adcp/client.auth.serveRequestContext');
+
+/**
+ * Per-request context exposed to the `verifyBearer` audience callback.
+ * Authoritative host + resolved publicUrl come from `serve()` — the
+ * callback MUST NOT reach past this object to read `X-Forwarded-Host`
+ * itself, or it will diverge from the advertised OAuth `resource` and
+ * let a spoofed header flip the audience check.
+ */
+export interface ServeRequestContext {
+  /** Canonical host for the request as resolved by `serve()`. Lowercased, port preserved. */
+  host: string;
+  /** Resolved `publicUrl` for this host (if configured). Undefined in single-host mode with no publicUrl. */
+  publicUrl?: string;
+}
+
+/** Read the serve()-populated context off a request. Returns `undefined` when the request didn't come through `serve()`. */
+export function getServeRequestContext(req: IncomingMessage): ServeRequestContext | undefined {
+  return (req as IncomingMessage & { [ADCP_SERVE_REQUEST_CONTEXT]?: ServeRequestContext })[ADCP_SERVE_REQUEST_CONTEXT];
+}
+
 interface AuthenticatorFlags {
   [AUTH_NEEDS_RAW_BODY]?: boolean;
   [AUTH_PRESENCE_GATED]?: boolean;
@@ -247,8 +275,22 @@ export interface VerifyBearerOptions {
    * endpoint (e.g., `https://my-agent.example.com/mcp`). MUST match what
    * the token was issued for. If you advertise via
    * {@link ServeOptions.protectedResource}, set this to the same URL.
+   *
+   * For multi-host deployments pass a function. The two-argument form
+   * receives `(req, ctx)` where `ctx.host` and `ctx.publicUrl` come from
+   * `serve()`'s host resolution — inheriting the same
+   * `trustForwardedHost` policy that governs the advertised PRM. Prefer
+   * `(_req, { publicUrl }) => publicUrl!` so the JWT audience check and
+   * the RFC 9728 `resource` URL can never diverge; a callback that reads
+   * `X-Forwarded-Host` directly is a footgun when `trustForwardedHost`
+   * is off.
+   *
+   * The single-argument form `(req) => string` still works for agents
+   * mounting `verifyBearer` outside `serve()` (e.g., under
+   * `createExpressAdapter`), but inherits none of `serve()`'s header
+   * hardening — you MUST validate audience inputs yourself.
    */
-  audience: string;
+  audience: string | ((req: IncomingMessage) => string) | ((req: IncomingMessage, ctx: ServeRequestContext) => string);
   /** Optional: required scopes (all must be present in the `scope` / `scp` claim). */
   requiredScopes?: string[];
   /**
@@ -281,17 +323,41 @@ export interface VerifyBearerOptions {
  */
 export function verifyBearer(options: VerifyBearerOptions): Authenticator {
   const jwks = createRemoteJWKSet(new URL(options.jwksUri));
-  const verifyOptions: JWTVerifyOptions = {
+  const audienceIsFn = typeof options.audience === 'function';
+  const baseVerifyOptions: Omit<JWTVerifyOptions, 'audience'> = {
     algorithms: DEFAULT_JWT_ALGORITHMS.slice(),
     clockTolerance: DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
     ...options.jwtOptions,
     issuer: options.issuer,
-    audience: options.audience,
   };
+  const staticVerifyOptions: JWTVerifyOptions | undefined = audienceIsFn
+    ? undefined
+    : { ...baseVerifyOptions, audience: options.audience as string };
   return async req => {
     const token = extractBearerToken(req);
     if (!token) return null;
     let payload: JWTPayload;
+    let verifyOptions: JWTVerifyOptions;
+    if (audienceIsFn) {
+      let audience: string;
+      try {
+        // Pass the serve()-resolved context as the second argument. The
+        // callback can use `ctx.publicUrl` (preferred — it's the same URL
+        // the RFC 9728 PRM advertises) or `ctx.host` for its own
+        // reconstruction. Falls back to an empty-host ctx when the
+        // authenticator is mounted outside `serve()`, so callbacks must
+        // still tolerate `host === ''`.
+        const ctx: ServeRequestContext = getServeRequestContext(req) ?? { host: '' };
+        audience = (options.audience as (r: IncomingMessage, c: ServeRequestContext) => string)(req, ctx);
+      } catch (err) {
+        // Resolver threw — surface as auth failure rather than 500 so the
+        // client sees a clean 401 and the operator sees the cause in the log.
+        throw new AuthError('Token validation failed.', { cause: err });
+      }
+      verifyOptions = { ...baseVerifyOptions, audience };
+    } else {
+      verifyOptions = staticVerifyOptions as JWTVerifyOptions;
+    }
     try {
       ({ payload } = await jwtVerify(token, jwks, verifyOptions));
     } catch (err) {
