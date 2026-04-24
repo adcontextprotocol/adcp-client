@@ -14,7 +14,13 @@
  * rejected" rather than falling through.
  *
  * ```ts
- * import { serve, verifyApiKey, anyOf, verifySignatureAsAuthenticator } from '@adcp/client/server';
+ * import {
+ *   serve,
+ *   verifyApiKey,
+ *   anyOf,
+ *   verifySignatureAsAuthenticator,
+ *   mcpToolNameResolver,
+ * } from '@adcp/client/server';
  *
  * serve(createAgent, {
  *   authenticate: anyOf(
@@ -22,13 +28,7 @@
  *     verifySignatureAsAuthenticator({
  *       jwks, replayStore, revocationStore,
  *       capability: { supported: true, required_for: [], covers_content_digest: 'either' },
- *       resolveOperation: req => {
- *         try {
- *           const body = JSON.parse(req.rawBody ?? '');
- *           if (body.method === 'tools/call') return body.params?.name;
- *         } catch {}
- *         return undefined;
- *       },
+ *       resolveOperation: mcpToolNameResolver,
  *     }),
  *   ),
  * });
@@ -276,18 +276,9 @@ export interface RequireSignatureWhenPresentOptions {
    * Extract the AdCP operation name (or any identifier that can be
    * matched against `requiredFor`) from the incoming request.
    *
-   * For MCP agents, this usually parses `req.rawBody` as JSON-RPC and
-   * pulls `params.name` when `method === 'tools/call'`:
-   *
-   * ```ts
-   * resolveOperation: (req) => {
-   *   try {
-   *     const body = JSON.parse(req.rawBody ?? '');
-   *     if (body?.method === 'tools/call') return body.params?.name;
-   *   } catch {}
-   *   return undefined;
-   * }
-   * ```
+   * For MCP agents, pass the exported {@link mcpToolNameResolver} — it
+   * implements the standard `tools/call` → `params.name` parse. For A2A
+   * agents (or other non-JSON-RPC envelopes), supply a bespoke resolver.
    *
    * When `requiredFor` is set but `resolveOperation` is omitted OR
    * returns `undefined`, the pre-check is skipped — better to let the
@@ -433,21 +424,19 @@ export interface RequireAuthenticatedOrSignedOptions {
  *   anyOf,
  *   verifySignatureAsAuthenticator,
  *   requireAuthenticatedOrSigned,
+ *   mcpToolNameResolver,
  *   MUTATING_TASKS,
  * } from '@adcp/client/server';
  *
  * serve(createAgent, {
  *   authenticate: requireAuthenticatedOrSigned({
- *     signature: verifySignatureAsAuthenticator({ jwks, replayStore, revocationStore, capability, resolveOperation }),
+ *     signature: verifySignatureAsAuthenticator({
+ *       jwks, replayStore, revocationStore, capability,
+ *       resolveOperation: mcpToolNameResolver,
+ *     }),
  *     fallback: anyOf(verifyApiKey({ keys }), verifyBearer({ jwksUri, issuer, audience })),
  *     requiredFor: [...MUTATING_TASKS],
- *     resolveOperation: req => {
- *       try {
- *         const body = JSON.parse(req.rawBody ?? '');
- *         if (body?.method === 'tools/call') return body.params?.name;
- *       } catch {}
- *       return undefined;
- *     },
+ *     resolveOperation: mcpToolNameResolver,
  *   }),
  * });
  * ```
@@ -457,6 +446,46 @@ export function requireAuthenticatedOrSigned(options: RequireAuthenticatedOrSign
     requiredFor: options.requiredFor,
     resolveOperation: options.resolveOperation,
   });
+}
+
+/**
+ * Default `resolveOperation` for MCP agents. Parses the buffered JSON-RPC
+ * body on `req.rawBody` and returns `params.name` when `method === 'tools/call'`.
+ * Returns `undefined` for non-`tools/call` methods, a missing body, or
+ * malformed JSON — the same "skip the pre-check and let the handler produce
+ * a precise error" semantics every other `resolveOperation` in the SDK
+ * uses.
+ *
+ * Pass directly as `resolveOperation` on {@link verifySignatureAsAuthenticator},
+ * {@link requireSignatureWhenPresent}, or {@link requireAuthenticatedOrSigned}:
+ *
+ * ```ts
+ * serve(createAgent, {
+ *   authenticate: requireAuthenticatedOrSigned({
+ *     signature: verifySignatureAsAuthenticator({
+ *       jwks, replayStore, revocationStore, capability,
+ *       resolveOperation: mcpToolNameResolver,
+ *     }),
+ *     fallback: anyOf(verifyApiKey({ keys }), verifyBearer({ jwksUri, issuer, audience })),
+ *     requiredFor: [...MUTATING_TASKS],
+ *     resolveOperation: mcpToolNameResolver,
+ *   }),
+ * });
+ * ```
+ *
+ * A2A agents use a different envelope — write a bespoke resolver there.
+ */
+export function mcpToolNameResolver(req: IncomingMessage & { rawBody?: string }): string | undefined {
+  const raw = req.rawBody;
+  if (!raw) return undefined;
+  try {
+    const body = JSON.parse(raw) as { method?: unknown; params?: unknown };
+    if (body?.method !== 'tools/call') return undefined;
+    const params = body.params as { name?: unknown } | undefined;
+    return typeof params?.name === 'string' ? params.name : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const SAFE_KEYID = /^[A-Za-z0-9._-]{1,256}$/;
