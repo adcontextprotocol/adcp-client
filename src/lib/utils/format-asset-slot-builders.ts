@@ -6,8 +6,7 @@
 // `asset_type` discriminator so callers only supply the meaningful fields.
 // The slot's `requirements` object is strictly typed per asset type — misnamed
 // fields like `file_types` or wrong units like `min_duration_seconds` become
-// compile-time errors, and the Zod schemas catch runtime drift (e.g.
-// comma-joined aspect ratios) at validation time.
+// compile-time errors at the authorship site.
 
 import type {
   GroupAudioAssetSlot,
@@ -62,9 +61,7 @@ export function textAssetSlot(fields: IndividualFields<IndividualTextAssetSlot>)
   return { ...fields, item_type: 'individual', asset_type: 'text' };
 }
 
-export function markdownAssetSlot(
-  fields: IndividualFields<IndividualMarkdownAssetSlot>,
-): IndividualMarkdownAssetSlot {
+export function markdownAssetSlot(fields: IndividualFields<IndividualMarkdownAssetSlot>): IndividualMarkdownAssetSlot {
   return { ...fields, item_type: 'individual', asset_type: 'markdown' };
 }
 
@@ -77,7 +74,7 @@ export function cssAssetSlot(fields: IndividualFields<IndividualCssAssetSlot>): 
 }
 
 export function javascriptAssetSlot(
-  fields: IndividualFields<IndividualJavascriptAssetSlot>,
+  fields: IndividualFields<IndividualJavascriptAssetSlot>
 ): IndividualJavascriptAssetSlot {
   return { ...fields, item_type: 'individual', asset_type: 'javascript' };
 }
@@ -94,9 +91,7 @@ export function urlAssetSlot(fields: IndividualFields<IndividualUrlAssetSlot>): 
   return { ...fields, item_type: 'individual', asset_type: 'url' };
 }
 
-export function webhookAssetSlot(
-  fields: IndividualFields<IndividualWebhookAssetSlot>,
-): IndividualWebhookAssetSlot {
+export function webhookAssetSlot(fields: IndividualFields<IndividualWebhookAssetSlot>): IndividualWebhookAssetSlot {
   return { ...fields, item_type: 'individual', asset_type: 'webhook' };
 }
 
@@ -104,9 +99,7 @@ export function briefAssetSlot(fields: IndividualFields<IndividualBriefAssetSlot
   return { ...fields, item_type: 'individual', asset_type: 'brief' };
 }
 
-export function catalogAssetSlot(
-  fields: IndividualFields<IndividualCatalogAssetSlot>,
-): IndividualCatalogAssetSlot {
+export function catalogAssetSlot(fields: IndividualFields<IndividualCatalogAssetSlot>): IndividualCatalogAssetSlot {
   return { ...fields, item_type: 'individual', asset_type: 'catalog' };
 }
 
@@ -163,9 +156,7 @@ export function catalogGroupAsset(fields: GroupFields<GroupCatalogAssetSlot>): G
  * frames, product showcases. The platform repeats the inner `assets` once
  * per item; each repetition must provide all required assets within it.
  */
-export function repeatableGroup(
-  fields: Omit<RepeatableGroupSlot, 'item_type'>,
-): RepeatableGroupSlot {
+export function repeatableGroup(fields: Omit<RepeatableGroupSlot, 'item_type'>): RepeatableGroupSlot {
   return { ...fields, item_type: 'repeatable_group' };
 }
 
