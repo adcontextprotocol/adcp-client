@@ -21,27 +21,27 @@ A seller agent receives briefs from buyers, returns products with pricing, accep
 - Serving audience segments → `skills/build-signals-agent/`
 - Rendering creatives from briefs → that's a creative agent
 
-## <a name="the-baseline-what-every-sales--agent-must-implement"></a>The baseline: what every sales-* agent MUST implement
+## <a name="the-baseline-what-every-sales--agent-must-implement"></a>The baseline: what every sales-\* agent MUST implement
 
-Every sales-* specialism (including `sales-social`, `sales-broadcast-tv`, `sales-retail-media`, `sales-catalog-driven`, etc.) is **additive on top of this baseline**. If you claim any `sales-*` specialism, you implement these tools regardless of the specialism-specific deltas below.
+Every sales-_ specialism (including `sales-social`, `sales-broadcast-tv`, `sales-retail-media`, `sales-catalog-driven`, etc.) is **additive on top of this baseline**. If you claim any `sales-_` specialism, you implement these tools regardless of the specialism-specific deltas below.
 
 **Required tools** (tested by the `media_buy_seller` storyboard bundle at `compliance/cache/3.0.0/protocols/media-buy/`):
 
-| Tool | Purpose | `createAdcpServer` group |
-|---|---|---|
-| `get_adcp_capabilities` | Declare protocols + specialisms + features | auto (framework) |
-| `sync_accounts` | Advertiser onboarding, per-tenant account creation | `accounts` |
-| `list_accounts` | Account lookup by brand/operator; buyers listing their accounts on your platform | `accounts` |
-| `get_products` | Product catalog discovery from a brief; returns `{ products: [...] }` | `mediaBuy` |
-| `list_creative_formats` | Formats your agent accepts | `mediaBuy` |
-| `create_media_buy` | Accept a campaign with packages, budget, flight dates | `mediaBuy` |
-| `update_media_buy` | Bid, budget, status, package mutations over the campaign lifecycle | `mediaBuy` |
-| `get_media_buys` | Read campaigns back with full state (status, budget, packages, targeting overlays) | `mediaBuy` |
-| `sync_creatives` | Accept creative assets and return per-asset status | `mediaBuy` |
-| `list_creatives` | Read the creative library back with pagination | `mediaBuy` |
-| `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows | `mediaBuy` |
+| Tool                     | Purpose                                                                            | `createAdcpServer` group |
+| ------------------------ | ---------------------------------------------------------------------------------- | ------------------------ |
+| `get_adcp_capabilities`  | Declare protocols + specialisms + features                                         | auto (framework)         |
+| `sync_accounts`          | Advertiser onboarding, per-tenant account creation                                 | `accounts`               |
+| `list_accounts`          | Account lookup by brand/operator; buyers listing their accounts on your platform   | `accounts`               |
+| `get_products`           | Product catalog discovery from a brief; returns `{ products: [...] }`              | `mediaBuy`               |
+| `list_creative_formats`  | Formats your agent accepts                                                         | `mediaBuy`               |
+| `create_media_buy`       | Accept a campaign with packages, budget, flight dates                              | `mediaBuy`               |
+| `update_media_buy`       | Bid, budget, status, package mutations over the campaign lifecycle                 | `mediaBuy`               |
+| `get_media_buys`         | Read campaigns back with full state (status, budget, packages, targeting overlays) | `mediaBuy`               |
+| `sync_creatives`         | Accept creative assets and return per-asset status                                 | `mediaBuy`               |
+| `list_creatives`         | Read the creative library back with pagination                                     | `mediaBuy`               |
+| `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows       | `mediaBuy`               |
 
-**Minimum handler skeleton** — every sales-* seller starts here, then adds specialism-specific behavior on top:
+**Minimum handler skeleton** — every sales-\* seller starts here, then adds specialism-specific behavior on top:
 
 ```ts
 createAdcpServer({
@@ -77,17 +77,17 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 
 **Claim multiple specialisms.** A typical social seller claims `sales-non-guaranteed` + `sales-social`. A typical broadcast seller claims `sales-guaranteed` + `sales-broadcast-tv`. A typical social seller doing audience sync claims `sales-non-guaranteed` + `sales-social` + `audience-sync`.
 
-| Specialism             | Status  | Delta from baseline                                                                                                                                                                                                                                                                                                                                         | See                                                        |
-| ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `sales-guaranteed`     | stable  | IO approval is **task-layer**, not MediaBuy-layer. Return a task envelope (MCP Tasks SDK) with `status: 'submitted'` + `task_id` + `message`. Do NOT return `media_buy_id` or `packages` yet — those land on the final artifact when the task completes. There is no `pending_approval` MediaBuy status.                                                    | [§ sales-guaranteed](#specialism-sales-guaranteed)         |
-| `sales-non-guaranteed` | stable  | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes                                                                                                                                                                                                                            | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
-| `sales-broadcast-tv`   | stable  | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery                                                                                                                                                                          | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv)     |
-| `sales-streaming-tv`   | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products                                                                                                                                                                                                                                                     | Baseline only                                              |
-| `sales-social`         | stable  | **Additive**: baseline `get_products` + `create_media_buy` still apply (Snap/Meta/TikTok all have product catalogs and campaigns). Adds `sync_audiences` (audience push), `sync_creatives` (native formats), `sync_catalogs` (dynamic product ads), `log_event` (conversion tracking), `get_account_financials` (prepaid-balance monitoring), and `sync_accounts` with `account_scope`/`payment_terms`/`setup` for advertiser onboarding. Declare `sales-social` **alongside** `sales-non-guaranteed` (or `-guaranteed`) — don't replace it.                                                                                                          | [§ sales-social](#specialism-sales-social)                 |
-| `sales-exchange`       | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending                                                                                                                                                                                                                                                    | Baseline only                                              |
-| `sales-proposal-mode`  | stable  | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages`                                                                                                                                                                         | [§ sales-proposal-mode](#specialism-sales-proposal-mode)   |
-| `audience-sync`        | stable  | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response.                                                                                                                                                                 | [§ audience-sync](#specialism-audience-sync)               |
-| `signed-requests`      | preview | RFC 9421 HTTP Signature verification on mutating requests. Advertise `request_signing.supported: true` in capabilities; graded against conformance vectors — positive vectors must produce non-4xx; negative vectors must return `401` with `WWW-Authenticate: Signature error="<code>"` matching the vector's `expected_outcome.error_code` byte-for-byte. | [§ signed-requests](#specialism-signed-requests)           |
+| Specialism             | Status  | Delta from baseline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | See                                                        |
+| ---------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `sales-guaranteed`     | stable  | IO approval is **task-layer**, not MediaBuy-layer. Return a task envelope (MCP Tasks SDK) with `status: 'submitted'` + `task_id` + `message`. Do NOT return `media_buy_id` or `packages` yet — those land on the final artifact when the task completes. There is no `pending_approval` MediaBuy status.                                                                                                                                                                                                                                     | [§ sales-guaranteed](#specialism-sales-guaranteed)         |
+| `sales-non-guaranteed` | stable  | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes                                                                                                                                                                                                                                                                                                                                                                                                             | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
+| `sales-broadcast-tv`   | stable  | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery                                                                                                                                                                                                                                                                                                                                                           | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv)     |
+| `sales-streaming-tv`   | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products                                                                                                                                                                                                                                                                                                                                                                                                                                      | Baseline only                                              |
+| `sales-social`         | stable  | **Additive**: baseline `get_products` + `create_media_buy` still apply (Snap/Meta/TikTok all have product catalogs and campaigns). Adds `sync_audiences` (audience push), `sync_creatives` (native formats), `sync_catalogs` (dynamic product ads), `log_event` (conversion tracking), `get_account_financials` (prepaid-balance monitoring), and `sync_accounts` with `account_scope`/`payment_terms`/`setup` for advertiser onboarding. Declare `sales-social` **alongside** `sales-non-guaranteed` (or `-guaranteed`) — don't replace it. | [§ sales-social](#specialism-sales-social)                 |
+| `sales-exchange`       | preview | v3.1 placeholder — target `sales-non-guaranteed` baseline; PMP / deal IDs / auction transparency pending                                                                                                                                                                                                                                                                                                                                                                                                                                     | Baseline only                                              |
+| `sales-proposal-mode`  | stable  | `get_products` returns `proposals[]` with `budget_allocations`; handle `buying_mode: 'refine'`; accept via `create_media_buy` with `proposal_id` + `total_budget` and no `packages`                                                                                                                                                                                                                                                                                                                                                          | [§ sales-proposal-mode](#specialism-sales-proposal-mode)   |
+| `audience-sync`        | stable  | Track: `audiences`. Implement `sync_audiences` (handles discovery, add, and delete) and `list_accounts`. Hashed identifiers (SHA-256 lowercased+trimmed). Match-rate telemetry on response.                                                                                                                                                                                                                                                                                                                                                  | [§ audience-sync](#specialism-audience-sync)               |
+| `signed-requests`      | preview | RFC 9421 HTTP Signature verification on mutating requests. Advertise `request_signing.supported: true` in capabilities; graded against conformance vectors — positive vectors must produce non-4xx; negative vectors must return `401` with `WWW-Authenticate: Signature error="<code>"` matching the vector's `expected_outcome.error_code` byte-for-byte.                                                                                                                                                                                  | [§ signed-requests](#specialism-signed-requests)           |
 
 **Not in this skill:** `sales-catalog-driven` and `sales-retail-media` (both in `skills/build-retail-media-agent/` — catalog-driven applies to restaurants, travel, and local commerce too, not only retail).
 
@@ -571,10 +571,10 @@ To pass the `deterministic_testing` storyboard — and the rejection-branch step
 
 **Pick by state shape — not by helper quality.** Both helpers below call the same underlying primitives; the split is about the shape of the state you're mutating, not a gradient of abstraction.
 
-| Your domain state is… | Use | Worked example |
-|---|---|---|
-| Simple — each scenario maps cleanly to one repository method (`seed_creative` → `creativeRepo.upsert`) | `createComplyController` | [`examples/comply-controller-seller.ts`](../../examples/comply-controller-seller.ts) |
-| Typed — media buys with packages / revision / history, creatives with format_id / manifest, seed must populate the same records `get_*` reads | `registerTestController` + hand-rolled `TestControllerStore` | [`examples/seller-test-controller.ts`](../../examples/seller-test-controller.ts) |
+| Your domain state is…                                                                                                                          | Use                                                          | Worked example                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Simple — each scenario maps cleanly to one repository method (`seed_creative` → `creativeRepo.upsert`)                                         | `createComplyController`                                     | [`examples/comply-controller-seller.ts`](../../examples/comply-controller-seller.ts) |
+| Typed — media buys with packages / revision / history, creatives with format*id / manifest, seed must populate the same records `get*\*` reads | `registerTestController` + hand-rolled `TestControllerStore` | [`examples/seller-test-controller.ts`](../../examples/seller-test-controller.ts)     |
 
 ### Option A: `createComplyController` (adapter surface)
 
@@ -1144,9 +1144,12 @@ Auth is not wired in the example — see [§ Protecting your agent](#protecting-
 Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in the factory, and turn on `trustForwardedHost` when a proxy terminates TLS:
 
 ```typescript
-import { serve, createAdcpServer, verifyBearer, UnknownHostError } from '@adcp/client';
+import { serve, createAdcpServer, verifyBearer, UnknownHostError, hostname } from '@adcp/client';
 
 // Host → adapter config. Whatever shape suits your deployment (DB, env, static).
+// Cache the CONFIG (not the AdcpServer). serve() still instantiates the
+// server per request today, but a config Map keeps the expensive part
+// (handler bundle, idempotency store, DB pool) at module scope.
 const adapters = new Map<string, { name: string; handlers: MediaBuyHandlers }>([
   ['snap.agentic-adapters.scope3.com', { name: 'Snap seller', handlers: snapHandlers }],
   ['meta.agentic-adapters.scope3.com', { name: 'Meta seller', handlers: metaHandlers }],
@@ -1155,6 +1158,11 @@ const adapters = new Map<string, { name: string; handlers: MediaBuyHandlers }>([
 
 serve(
   ctx => {
+    // Fail closed on missing Host header. HTTP/1.1 requires it, but a
+    // misbehaving client can omit it — ctx.host is `''` in that case,
+    // and a blank-host adapter lookup would mint audience-mismatched
+    // tokens if we proceeded.
+    if (!ctx.host) throw new UnknownHostError('Host header required');
     const cfg = adapters.get(ctx.host);
     // UnknownHostError → 404 (generic body, routing table stays off the wire).
     // Any other thrown error still surfaces as 500.
@@ -1168,9 +1176,11 @@ serve(
   },
   {
     trustForwardedHost: true, // behind Fly/Cloud Run/ALB that sets X-Forwarded-Host
-    publicUrl: host => `https://${host}/mcp`,
+    // hostname() strips the port — test/local runs include `:3001`, production
+    // doesn't. Works for IPv6 too.
+    publicUrl: host => `https://${hostname(host)}/mcp`,
     protectedResource: host => ({
-      authorization_servers: [`https://${host}/oauth`],
+      authorization_servers: [`https://${hostname(host)}/oauth`],
       scopes_supported: ['read', 'write'],
     }),
     authenticate: verifyBearer({
@@ -1190,13 +1200,15 @@ Each unique host runs its resolver once and the result is cached. Every host adv
 
 **Audience binding: use the ctx-form callback.** `audience: (req, { publicUrl }) => publicUrl` is the safest shape — the JWT audience check is guaranteed to match what RFC 9728 PRM advertises for this host, and `publicUrl` already follows `serve()`'s host resolution. `audience: (req) => ...` also works but you own the security: don't read `X-Forwarded-Host` there directly (it bypasses `trustForwardedHost`), and don't string-concat the mount path (it breaks silently if the mount path changes).
 
-**Set `trustForwardedHost: true` only when upstream sanitizes `X-Forwarded-Host`.** Without the flag, the framework reads `Host` directly — an attacker-controlled `X-Forwarded-Host` can't influence which adapter handles the request or which audience the advertised PRM carries. With the flag, you're telling `serve()` that your proxy already filtered spoofed values.
+**`trustForwardedHost: true` requires an overwriting proxy.** The framework trusts the first entry in an `X-Forwarded-Host` chain — safe when your proxy rewrites the header on ingress, UNSAFE when it appends (the attacker gets to pick the first entry). Fly, Cloud Run, and GCP HTTPS LBs overwrite. AWS ALB default and nginx default append — these need `proxy_set_header X-Forwarded-Host $host;` or equivalent before you enable the flag. Verify against a request that already has `X-Forwarded-Host: attacker.example` in it. RFC 7239 `Forwarded: host=...` is read the same way (same trust requirement).
 
 **Unknown hosts: throw `UnknownHostError` from the factory.** `serve()` catches it and responds 404 with a generic body (the routing table never crosses the wire). Throwing any other `Error` stays as a 500 so unrelated bugs remain loud.
 
+**Factory runs per request.** `serve()` calls the factory on every incoming request (to avoid cross-request state bleed) and closes the returned server at the end. Keep the factory cheap: look up a pre-built adapter config from a module-scoped `Map`, and let `createAdcpServer(...)` build a fresh wrapper from that config. Do NOT cache the `AdcpServer` instance across requests — `serve()` closes it after each call, so the cache would be stale on request 2. If per-request `createAdcpServer` cost is a measurable bottleneck, track [#901](https://github.com/adcontextprotocol/adcp-client/issues/901) — a reuse mode is planned.
+
 ### Express + OAuth Authorization Server in one process
 
-When your agent is *both* an OAuth 2.1 AS (issues tokens) and a protected resource (MCP endpoint), mount both on a single `express()` app using `createExpressAdapter`. This is the supported composition path — you re-own nothing vs. running `serve()`.
+When your agent is _both_ an OAuth 2.1 AS (issues tokens) and a protected resource (MCP endpoint), mount both on a single `express()` app using `createExpressAdapter`. This is the supported composition path — you re-own nothing vs. running `serve()`.
 
 ```typescript
 import express from 'express';
@@ -1208,7 +1220,9 @@ const agent = createAdcpServer({
   name: 'Snap seller',
   version: '1.0.0',
   resolveAccount: async (ref, { authInfo }) => lookupAccount(ref, authInfo),
-  mediaBuy: { /* ... */ },
+  mediaBuy: {
+    /* ... */
+  },
 });
 
 const adapter = createExpressAdapter({
@@ -1229,10 +1243,13 @@ app.use(express.json({ limit: '5mb', verify: adapter.rawBodyVerify }));
 app.use(adapter.protectedResourceMiddleware);
 
 // OAuth 2.1 Authorization Server routes alongside the MCP endpoint.
-app.use('/oauth', mcpAuthRouter({
-  provider: myOAuthProvider,
-  issuerUrl: new URL('https://seller.example.com/oauth'),
-}));
+app.use(
+  '/oauth',
+  mcpAuthRouter({
+    provider: myOAuthProvider,
+    issuerUrl: new URL('https://seller.example.com/oauth'),
+  })
+);
 
 // MCP endpoint — per-request transport, agent is reused.
 const authenticate = verifyBearer({
@@ -1243,7 +1260,10 @@ const authenticate = verifyBearer({
 
 app.post('/api/snap/mcp', async (req, res) => {
   const principal = await authenticate(req);
-  if (!principal) { res.status(401).end(); return; }
+  if (!principal) {
+    res.status(401).end();
+    return;
+  }
   (req as any).auth = { token: principal.token, clientId: principal.principal, scopes: principal.scopes };
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   try {
@@ -1268,8 +1288,10 @@ import { createAdcpServer } from '@adcp/client/server';
 const server = createAdcpServer({
   name: 'Local Seller',
   version: '1.0.0',
-  resolveAccount: async (ref) => lookupAccount(ref),
-  mediaBuy: { /* ... */ },
+  resolveAccount: async ref => lookupAccount(ref),
+  mediaBuy: {
+    /* ... */
+  },
 });
 
 await server.connect(new StdioServerTransport());

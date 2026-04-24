@@ -158,13 +158,24 @@ export interface ServeOptions {
   protectedResource?: ProtectedResourceMetadata | ((host: string) => ProtectedResourceMetadata);
 
   /**
-   * Trust `X-Forwarded-Host` / `X-Forwarded-Proto` for host resolution
-   * and for reconstructing the public URL on 401 challenges. Default
-   * `false`. Enable when `serve()` sits behind a proxy that sanitizes
-   * these headers (Fly.io, Cloud Run, an internal ALB that overwrites
-   * them). Leaving this off on the open internet lets an attacker pick
-   * the advertised OAuth `resource` URL by spoofing the header — so the
-   * framework ignores the forwarded value unless you opt in.
+   * Trust `X-Forwarded-Host` and RFC 7239 `Forwarded: host=...` for
+   * host resolution and for reconstructing the public URL on 401
+   * challenges. Default `false` — an attacker-controlled header can't
+   * flip the advertised OAuth `resource` URL unless you opt in.
+   *
+   * **Your proxy must OVERWRITE the forwarded headers on ingress, not
+   * append.** The framework trusts the first (left-most) entry in a
+   * chain. With an overwriting proxy that's the sanitized value; with
+   * an appending proxy it's whatever the client sent — an attacker
+   * picks it. Common behavior:
+   *
+   * - Overwrite (safe to trust): Fly.io, Cloud Run, GCP HTTPS LB.
+   * - Append (NOT safe without extra config): AWS ALB default, nginx
+   *   default. These need `proxy_set_header X-Forwarded-Host $host;`
+   *   or equivalent before enabling this flag.
+   *
+   * Verify your proxy's behavior against a request that already has
+   * `X-Forwarded-Host: attacker.example` in it before turning this on.
    */
   trustForwardedHost?: boolean;
 
@@ -579,29 +590,114 @@ function validatePublicUrl(publicUrl: string, mountPath: string): string {
 }
 
 /**
+ * Strip the port from a `host` string (`"snap.example.com:3001"` →
+ * `"snap.example.com"`). Use inside `publicUrl` / `protectedResource`
+ * resolvers to build scheme://host URLs without carrying the test-time
+ * port into production URLs. IPv6 brackets preserved.
+ */
+export function hostname(host: string): string {
+  if (host.startsWith('[')) {
+    // IPv6 — preserve brackets, drop port after the closing bracket.
+    const end = host.indexOf(']');
+    if (end === -1) return host;
+    return host.slice(0, end + 1);
+  }
+  const colon = host.lastIndexOf(':');
+  return colon === -1 ? host : host.slice(0, colon);
+}
+
+/**
  * Resolve the canonical host the request arrived on for multi-host
  * routing and per-host PRM / audience advertisement.
  *
- * `X-Forwarded-Host` is trusted only when `trustForwardedHost: true` —
- * otherwise an attacker could flip the advertised OAuth `resource` URL
- * by spoofing one header. When a comma-separated forwarded chain is
- * present the first (left-most) entry is the client-reported origin —
- * use it and let the operator's upstream sanitize what it forwards.
+ * When `trustForwardedHost: true`, consults in order:
+ *   1. `X-Forwarded-Host` (most common — Fly, Cloud Run, most ALBs).
+ *   2. RFC 7239 `Forwarded: host=...` (spec-standard, less common).
+ *   3. `Host`.
+ *
+ * When `trustForwardedHost: false` (default), only `Host` is read — an
+ * attacker-controlled forwarded header can't flip the advertised OAuth
+ * `resource` URL.
+ *
+ * **Proxy behavior matters when you opt in.** The framework trusts the
+ * FIRST entry in a forwarded chain. That's safe when your proxy
+ * OVERWRITES the header on ingress (rewriting the original value from
+ * the client). It's UNSAFE when your proxy APPENDS — the attacker gets
+ * to pick the first entry. Fly, Cloud Run, and GCP HTTPS LBs overwrite;
+ * AWS ALB and nginx (by default) append. Verify your proxy's behavior
+ * before enabling `trustForwardedHost`.
  *
  * Normalizes to lowercase and preserves port. Returns empty string when
- * neither header is present (HTTP/1.1 requires `Host`, so this is
+ * no usable header is present (HTTP/1.1 requires `Host`, so this is
  * unusual — factories can branch on it to fail closed).
  */
 function resolveHost(req: IncomingMessage, trustForwardedHost: boolean): string {
   if (trustForwardedHost) {
-    const forwarded = firstHeaderValue(req.headers['x-forwarded-host']);
-    if (forwarded) {
-      const first = forwarded.split(',')[0]?.trim();
+    const xfh = firstHeaderValue(req.headers['x-forwarded-host']);
+    if (xfh) {
+      const first = xfh.split(',')[0]?.trim();
       if (first) return first.toLowerCase();
+    }
+    const forwarded = firstHeaderValue(req.headers['forwarded']);
+    if (forwarded) {
+      const host = parseForwardedHost(forwarded);
+      if (host) return host.toLowerCase();
     }
   }
   const host = firstHeaderValue(req.headers['host']);
   return host ? host.toLowerCase() : '';
+}
+
+/**
+ * Extract the `host=` parameter from an RFC 7239 `Forwarded:` header.
+ * Takes the first (left-most) hop — same policy as the `X-Forwarded-Host`
+ * chain rule above, and subject to the same "your proxy must overwrite,
+ * not append" guarantee.
+ *
+ * Handles quoted-string values per RFC 7239 §4 (IPv6 literals and hosts
+ * with ports must be quoted). Returns undefined when the header has no
+ * `host` parameter, a malformed value, or a blank host.
+ */
+function parseForwardedHost(header: string): string | undefined {
+  // Multi-hop: `Forwarded: for=1;host=a.example, for=2;host=b.example` —
+  // first hop is the client-facing proxy's view. Commas INSIDE quoted
+  // strings aren't separators, so a naive split would mis-parse IPv6.
+  // Scan manually, respecting quotes.
+  const firstHop = extractFirstForwardedHop(header);
+  if (!firstHop) return undefined;
+  for (const pair of firstHop.split(';')) {
+    const eq = pair.indexOf('=');
+    if (eq === -1) continue;
+    const key = pair.slice(0, eq).trim().toLowerCase();
+    if (key !== 'host') continue;
+    let value = pair.slice(eq + 1).trim();
+    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+      value = value.slice(1, -1).replace(/\\(.)/g, '$1');
+    }
+    return value || undefined;
+  }
+  return undefined;
+}
+
+function extractFirstForwardedHop(header: string): string | undefined {
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < header.length; i++) {
+    const ch = header[i];
+    if (ch === '"') {
+      // Skip the quoted run, respecting backslash escapes.
+      i++;
+      while (i < header.length && header[i] !== '"') {
+        if (header[i] === '\\') i++;
+        i++;
+      }
+      continue;
+    }
+    if (ch === ',' && depth === 0) {
+      return header.slice(start, i);
+    }
+  }
+  return header.slice(start).trim() || undefined;
 }
 
 function firstHeaderValue(value: string | string[] | undefined): string | undefined {

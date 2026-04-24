@@ -395,6 +395,115 @@ describe('serve() multi-host', () => {
     server.close();
   });
 
+  test('hostname() helper strips port (including IPv6 brackets)', () => {
+    const { hostname } = require('../../dist/lib/index.js');
+    assert.strictEqual(hostname('snap.example.com'), 'snap.example.com');
+    assert.strictEqual(hostname('snap.example.com:3001'), 'snap.example.com');
+    assert.strictEqual(hostname('[::1]'), '[::1]');
+    assert.strictEqual(hostname('[::1]:3001'), '[::1]');
+    assert.strictEqual(hostname('[2001:db8::1]:8080'), '[2001:db8::1]');
+  });
+
+  test('honors RFC 7239 Forwarded: host= when trustForwardedHost: true', async () => {
+    const seen = [];
+    const factory = ctx => {
+      seen.push(ctx.host);
+      return new McpServer({ name: 'Test', version: '1.0.0' });
+    };
+    const server = serve(factory, {
+      port: 0,
+      trustForwardedHost: true,
+      onListening: () => {},
+    });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    await request(port, {
+      host: `internal.fly:${port}`,
+      headers: { forwarded: 'for=1.2.3.4;host=snap.example.com;proto=https' },
+    });
+
+    assert.strictEqual(seen[0], 'snap.example.com');
+
+    server.close();
+  });
+
+  test('RFC 7239 Forwarded: picks first hop, strips quotes, handles IPv6', async () => {
+    const seen = [];
+    const factory = ctx => {
+      seen.push(ctx.host);
+      return new McpServer({ name: 'Test', version: '1.0.0' });
+    };
+    const server = serve(factory, {
+      port: 0,
+      trustForwardedHost: true,
+      onListening: () => {},
+    });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    // Quoted host (RFC 7239 §4 — IPv6 and hosts-with-ports must be quoted).
+    await request(port, {
+      host: `internal.fly:${port}`,
+      headers: { forwarded: 'host="snap.example.com:8443"' },
+    });
+    assert.strictEqual(seen[0], 'snap.example.com:8443');
+
+    // Multi-hop — first entry is the client-facing proxy.
+    await request(port, {
+      host: `internal.fly:${port}`,
+      headers: { forwarded: 'for=1;host=first.example, for=2;host=second.example' },
+    });
+    assert.strictEqual(seen[1], 'first.example');
+
+    server.close();
+  });
+
+  test('X-Forwarded-Host takes precedence over Forwarded: when both set', async () => {
+    const seen = [];
+    const factory = ctx => {
+      seen.push(ctx.host);
+      return new McpServer({ name: 'Test', version: '1.0.0' });
+    };
+    const server = serve(factory, {
+      port: 0,
+      trustForwardedHost: true,
+      onListening: () => {},
+    });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    await request(port, {
+      host: `internal.fly:${port}`,
+      headers: {
+        'x-forwarded-host': 'xfh.example.com',
+        forwarded: 'host=forwarded.example.com',
+      },
+    });
+    assert.strictEqual(seen[0], 'xfh.example.com');
+
+    server.close();
+  });
+
+  test('RFC 7239 ignored when trustForwardedHost: false', async () => {
+    const seen = [];
+    const factory = ctx => {
+      seen.push(ctx.host);
+      return new McpServer({ name: 'Test', version: '1.0.0' });
+    };
+    const server = serve(factory, { port: 0, onListening: () => {} });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    await request(port, {
+      host: `real.example.com:${port}`,
+      headers: { forwarded: 'host=attacker.example.com' },
+    });
+    assert.strictEqual(seen[0], `real.example.com:${port}`);
+
+    server.close();
+  });
+
   test('function-form publicUrl with no protectedResource is allowed', async () => {
     // publicUrl-only mode (no PRM advertising). Factory sees the host so
     // an adapter can pick a handler set without ever publishing OAuth.

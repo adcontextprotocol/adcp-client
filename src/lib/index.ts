@@ -547,6 +547,7 @@ export {
   isTerminal,
   serve,
   UnknownHostError,
+  hostname,
   registerTestController,
   handleTestControllerRequest,
   TestControllerError,
