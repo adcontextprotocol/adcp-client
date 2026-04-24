@@ -662,6 +662,69 @@ describe('detectContextRejectionHints', () => {
     assert.match(hints[0].message, /convention extractor for `get_products`/);
   });
 
+  describe('currentTask → closing sentence (tail polish)', () => {
+    const baseTaskResult = {
+      success: false,
+      data: {
+        errors: [{ code: 'X', message: 'x', field: 'pricing_option_id', details: { available: ['po_b'] } }],
+      },
+    };
+    const request = { pricing_option_id: 'po_a' };
+    const context = { first_signal_pricing_option_id: 'po_a' };
+    const prov = provenance({
+      first_signal_pricing_option_id: {
+        source_step_id: 'discover',
+        source_kind: 'context_outputs',
+        response_path: 'signals[0].pricing_options[0].pricing_option_id',
+        source_task: 'get_signals',
+      },
+    });
+
+    test('both tasks known → closes with both tool names', () => {
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov, 'activate_signal');
+      assert.match(hint.message, /Check that the seller's `get_signals` and `activate_signal` catalogs agree\.$/);
+    });
+
+    test('same source and current task → collapses to the single-task form', () => {
+      // A self-rejection (context written by and rejected by the same
+      // task) shouldn't produce "X and X catalogs agree" — fall through
+      // to single-task wording.
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov, 'get_signals');
+      assert.match(hint.message, /Check that the seller's `get_signals` catalog agrees with other tools\.$/);
+    });
+
+    test('no currentTask passed → single-task form using source_task', () => {
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov);
+      assert.match(hint.message, /Check that the seller's `get_signals` catalog agrees with other tools\.$/);
+    });
+
+    test('no source_task and no currentTask → generic closing', () => {
+      const bareProv = provenance({
+        first_signal_pricing_option_id: {
+          source_step_id: 'discover',
+          source_kind: 'context_outputs',
+          response_path: 'signals[0].pricing_options[0].pricing_option_id',
+          // no source_task
+        },
+      });
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, bareProv);
+      assert.match(hint.message, /Check that the seller's catalogs agree across tools\.$/);
+    });
+
+    test('no key-derived identifier fragment ever appears in the closing', () => {
+      // Regression guard for the original bug — the previous formatter
+      // produced "for this first_signal_pricing_option across steps"
+      // (key minus _id suffix embedded as prose). The literal context
+      // key still appears earlier (in the `$context.<key>` substring);
+      // the guard scopes to the closing sentence, which starts after
+      // "Seller's accepted values: [...]."
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov, 'activate_signal');
+      const closing = hint.message.split(/Seller's accepted values: \[[^\]]*\]\.\s*/)[1] ?? '';
+      assert.doesNotMatch(closing, /first_signal_pricing_option/);
+      assert.doesNotMatch(closing, /for this [a-z_]+\b across/);
+    });
+  });
+
   test('empty provenance map yields no hints (provenance gate, not value absence)', () => {
     // With the request carrying `a: "c"` and the error rejecting "c",
     // the only thing holding the hint back is the empty provenance map —
