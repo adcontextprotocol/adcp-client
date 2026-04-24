@@ -1,5 +1,565 @@
 # Changelog
 
+## 5.14.0
+
+### Minor Changes
+
+- 36b920c: Dogfooding follow-ups from reference training agent (adcp#2889) plus
+  four fixes surfaced while running the `media_buy` +
+  `sales-non-guaranteed` compliance bundle against a fresh
+  Spotify-shaped seller built on the new patterns. Nine bundled fixes
+  across the server + testing surfaces:
+  - **`registerTestController` auto-emits the `compliance_testing`
+    capability block on `AdcpServer`** — per AdCP 3.0, comply_test_controller
+    support is declared via `capabilities.compliance_testing.scenarios`,
+    NOT as a value in `supported_protocols`. `registerTestController` now
+    writes that block onto the server's capabilities object (new
+    `ADCP_CAPABILITIES` internal symbol) using `factory.scenarios` or
+    inferring from plain-store method presence. `parseCapabilitiesResponse`
+    additionally normalizes the client-side `AdcpCapabilities.protocols`
+    list from the block when declared by a peer. The misleading
+    augmenter log that told sellers to "declare compliance_testing" was
+    rewritten to point at the correct declaration (the capability block,
+    not `supported_protocols`).
+  - **`TaskExecutor` preserves structured tool-error payloads on failed
+    tasks** — previously the FAILED branch dropped `result.data` unless
+    `extractAdcpErrorInfo` recognized an `adcp_error` or `errors`
+    envelope. Tool-level error shapes like `comply_test_controller`'s
+    `{ success: false, error: 'UNKNOWN_SCENARIO', error_detail }` don't
+    match that extractor, so storyboard validators checking
+    `success: false` / `error_code` on controller error paths saw
+    `undefined`. The branch now retains any non-empty structured
+    payload so validators can read tool-specific envelopes the SDK
+    doesn't model explicitly.
+  - **`createIdempotencyStore()` throws a helpful error when called
+    without `{ backend }`** — the zero-arg path previously crashed with
+    `Cannot read properties of undefined (reading 'ttlSeconds')`. The
+    error now names `memoryBackend()` and `pgBackend(pool)` as the two
+    options.
+  - **`registerTestController` echoes request `context` into the response
+    envelope** — `createAdcpServer` auto-echoes `context` for domain tool
+    handlers, but `registerTestController` wires `comply_test_controller`
+    on the raw MCP surface and bypassed that pipeline. Every
+    `controller_validation` + `deterministic_*` storyboard step fails
+    `field_present: context` without this echo. The wrapper now attaches
+    `input.context` onto the response when the handler didn't set one
+    itself (handler-supplied context still wins, matching the
+    domain-handler rule). Surfaced by a mini-seller migration exercise
+    against the full `media_buy` + `sales-non-guaranteed` storyboard
+    bundle.
+  - **`bridgeFromSessionStore({ loadSession, selectSeededProducts, productDefaults? })`**
+    (adcp-client#824) — new helper for sellers whose seed store is
+    session-scoped (one Map per tenant / brand.domain / account_id, loaded
+    per request). The existing `bridgeFromTestControllerStore` takes a
+    single Map at construction time and doesn't compose with per-request
+    session loading; the new helper takes an options object with two
+    callbacks. Both `loadSession` and `selectSeededProducts` may be async,
+    so lazy-loaded seed collections don't force eager hydration inside
+    the loader. `loadSession` rejections propagate to the dispatcher —
+    silent seed loss under DB failure would be worse than a loud error.
+    `BridgeFromSessionStoreOptions<TSession>` is exported.
+  - **`mcpAcceptHeaderMiddleware` now rewrites `req.rawHeaders`**
+    (adcp-client#825) — the MCP SDK's `StreamableHTTPServerTransport`
+    rebuilds its Fetch `Headers` from `req.rawHeaders` via
+    `@hono/node-server`, ignoring `req.headers`. Patching only the parsed
+    map was a silent no-op for the transport the middleware's name
+    implies. Both surfaces now move in lockstep (case-insensitive on the
+    rawHeaders name, all duplicate entries rewritten, no phantom entry
+    added when `rawHeaders` lacks Accept — see JSDoc for the proxy-
+    divergence tradeoff).
+  - **`adcpError()` + dispatcher consult a per-code inside-`adcp_error` allowlist**
+    (adcp-client#826) — new `ADCP_ERROR_FIELD_ALLOWLIST` map in
+    `@adcp/client/server` (parallel to the existing
+    `ERROR_ENVELOPE_FIELD_ALLOWLIST` for siblings). The builder filters
+    its output against the allowlist for the given code. `IDEMPOTENCY_CONFLICT`
+    is the canonical strict case: `recovery`, `retry_after`, `field`,
+    `suggestion`, and `details` all drop from the wire shape so the
+    envelope can't become a stolen-key read oracle. The dispatcher
+    (`create-adcp-server.ts`) re-applies the same allowlist as
+    defence-in-depth for handlers that hand-roll an envelope outside
+    `adcpError()`. Codes without an entry pass through unchanged.
+    Legacy `CONFLICT_ADCP_ERROR_ALLOWLIST` stays exported as an alias for
+    the `IDEMPOTENCY_CONFLICT` entry. The allowlist is scoped to standard
+    error codes on purpose — vendor codes need `recovery` per the spec's
+    graceful-degradation contract, so don't extend this pattern there.
+  - **Breaking (narrow surface): remove `createDefaultTestControllerStore` /
+    `createDefaultSession` / `DefaultSessionShape`** (adcp-client#827) — the
+    "collapse 300 lines to 10" default factory shipped in 5.11.0 only held
+    for sellers whose session IS `DefaultSessionShape` (a bag of generic
+    Maps). Every real seller has typed domain state (`MediaBuyState` with
+    packages, history, revision; `CreativeState` with format_id, manifest,
+    pricing_option_id; `GovernancePlanState` with budget allocations,
+    flight, policy categories). The default handlers wrote into a
+    **parallel bag of seed Maps those sellers' production tools don't
+    read** — so `seed_media_buy` populated `session.seededMediaBuys` while
+    `get_media_buy` read from `session.mediaBuys`, and subsequent storyboard
+    steps silently saw empty state. Sellers either overrode every handler
+    (net savings: zero) or silently drifted. The helper had been on npm
+    for ~24 hours with zero documented adopters.
+
+    The replacement is documentation, not another helper. `@adcp/client/testing`
+    now re-exports the full integration surface in one place —
+    `registerTestController`, `TestControllerStore`,
+    `TestControllerStoreFactory`, `enforceMapCap`, `createSeedFixtureCache`,
+    `SESSION_ENTRY_CAP`, `TestControllerError`, `CONTROLLER_SCENARIOS`,
+    `SEED_SCENARIOS` — and `examples/seller-test-controller.ts` shows the
+    real pattern (typed `MediaBuyState` + `CreativeState`, session-scoped
+    factory, seed writes into the same records production readers use,
+    ~200 LOC). Sellers with simpler domains should keep using
+    `createComplyController` (adapter surface, unchanged).
+
+  ## Type change
+  - `AdcpErrorPayload.recovery` is now optional (previously required).
+    Reflects the filtered wire shape — consumers that destructure
+    `recovery` off a parsed conflict response MUST tolerate `undefined`.
+    If you hit a TS strict-null complaint, use `payload.recovery ?? 'terminal'`
+    or re-derive from `STANDARD_ERROR_CODES[payload.code]?.recovery`.
+
+  ## Who is affected / upgrade path
+
+  **No action required** for:
+  - Callers of `adcpError()` — the builder now quietly filters disallowed
+    fields per code; the wire shape is what the spec expects.
+  - Callers of `bridgeFromTestControllerStore` — unchanged.
+  - Callers reading `CONFLICT_ADCP_ERROR_ALLOWLIST` — it still exports as
+    an alias for `ADCP_ERROR_FIELD_ALLOWLIST.IDEMPOTENCY_CONFLICT`.
+
+  **Action required** for:
+  - Handlers that emit `recovery` / `retry_after` / `details` on an
+    `IDEMPOTENCY_CONFLICT` envelope via a hand-rolled response (not
+    through `adcpError()`): the dispatcher now strips those fields before
+    they reach the wire. Either switch to `adcpError('IDEMPOTENCY_CONFLICT', {...})`
+    (recommended) or drop the disallowed fields from your envelope.
+  - TS consumers that destructure `AdcpErrorPayload.recovery`
+    non-optionally: guard with `??` or re-derive from the code.
+  - Callers of `createDefaultTestControllerStore` / `createDefaultSession`
+    or importers of the `DefaultSessionShape` / `DefaultLoadSessionInput` /
+    `CreateDefaultTestControllerStoreOptions` / `DefaultTestControllerStoreResult`
+    / `SeedFixture` / `BudgetSpendRecord` / `DeliverySimulationRecord` /
+    `SessionTerminalStatus` types from `@adcp/client/testing`: these are
+    removed. Replace with a `TestControllerStore` / `TestControllerStoreFactory`
+    implementation against your own domain types — see
+    `examples/seller-test-controller.ts` for the pattern. The scope
+    primitives you need (`enforceMapCap`, `createSeedFixtureCache`,
+    `SESSION_ENTRY_CAP`, `TestControllerError`) are now reachable from
+    `@adcp/client/testing` alongside `registerTestController`.
+  - Downstream tests that snapshot the exact `get_adcp_capabilities`
+    response JSON for a server with `registerTestController` wired:
+    the response now includes a top-level `compliance_testing.scenarios`
+    block per AdCP 3.0. This is the spec-correct wire shape (previously
+    missing), but snapshot tests pinning the old omitted-block shape
+    will need regeneration. Mutating-tool responses on the fresh-exec
+    path also now include `replayed: false` explicitly (was omitted) —
+    same implication for pinned-snapshot tests.
+
+- 6061973: Creative-agent ergonomics follow-ups from scope3 agentic-adapters#100 review (#844 follow-up):
+
+  **`displayRender` / `parameterizedRender` factories for `Format.renders[]`** (closes #846)
+
+  The `Format.renders[]` item schema's `oneOf` forces each entry to satisfy exactly one branch — `dimensions` (width + height) OR `parameters_from_format_id: true`. A render with only `{ role }` or `{ role, duration_seconds }` fails strict validation. Two new named exports from `@adcp/client`:
+
+  ```ts
+  import { displayRender, parameterizedRender } from '@adcp/client';
+
+  renders: [
+    displayRender({ role: 'primary', dimensions: { width: 300, height: 250 } }), // display/video
+    parameterizedRender({ role: 'companion' }), // audio / template
+  ];
+  ```
+
+  Also **corrects a spec-non-conformant audio example that shipped in #844** — audio `renders[]` must use `parameterizedRender` and encode duration/codec in `format_id.parameters` via `accepts_parameters`, not in the render entry.
+
+  **`--strict-flags` on `adcp storyboard run`** (closes #847)
+
+  Removed-flag warnings (added in #844) stay advisory by default. `--strict-flags` upgrades them to a hard exit 2 so CI pipelines can catch stale scripts as build-breakers:
+
+  ```bash
+  adcp storyboard run my-agent --platform-type creative_transformer --strict-flags
+  # DEPRECATED: --platform-type was removed in 5.1.0 ...
+  # ERROR: --strict-flags was set and 1 removed flag(s) were passed: --platform-type.
+  # exit 2
+  ```
+
+  **`detectShapeDriftHint` on `build_creative` responses** (closes #845)
+
+  When a `build_creative` response has platform-native fields (`tag_url`, `creative_id`, `media_type`, `tag_type`) at the top level instead of `{ creative_manifest }`, the storyboard runner now attaches an actionable fix-recipe to `ValidationResult.warning` — naming `buildCreativeResponse` / `buildCreativeMultiResponse` from `@adcp/client/server` and pointing at the `creative-template` skill section. Fires on both Zod-fail (common — platform-native shape) and Zod-pass-AJV-fail paths. No change to pass/fail logic — `warning` is advisory.
+
+- e2f9ea9: Storyboard runner: fixture-authoritative request construction (closes #820).
+
+  The runner's request-construction priority is inverted. `sample_request`
+  is now the authoritative base payload — when authored, every top-level
+  key the author wrote reaches the wire verbatim. The per-task enricher
+  (formerly "request builder") runs alongside, filling fields the fixture
+  left unset — typically discovery-derived identifiers, envelope fields,
+  or context-substituted placeholders.
+
+  The previous behavior silently fabricated payloads and discarded author
+  fixtures on ~20 tasks whose enrichers didn't opt into a fixture-honoring
+  early return. That false-green failure mode produced five consecutive
+  fallback-shape bugs (#780 / #792 / #793 / #802 / #805) before anyone
+  noticed the architecture was backward.
+
+  ### New contract
+  - **`sample_request` (authored)** — base payload. Context placeholders
+    (`$context.*`, `$generate:uuid_v4`, `{{runner.*}}`) resolve as before.
+  - **Enricher (per-task)** — produces fields that gap-fill the fixture.
+    Fixture wins every top-level conflict.
+  - **Fixture-aware enrichers** (`create_media_buy`, `comply_test_controller`) —
+    declared in `FIXTURE_AWARE_ENRICHERS` because they splice
+    discovery-derived fields INTO nested fixture structures (array-level
+    merges the generic overlay can't express). The runner passes their
+    output verbatim; envelope fields from the fixture (`context`, `ext`,
+    `push_notification_config`, `idempotency_key`) still flow through.
+
+  ### Load-time hard-fail
+
+  Mutating tasks (per `MUTATING_TASKS`) now throw at storyboard load when
+  `sample_request` is absent and `expect_error !== true`. The runner no
+  longer fabricates write payloads. Error messages point at the task,
+  step id, storyboard id, and suggest the concrete author action. Synthesized
+  phases (request-signing, controller seeding) are unaffected — their
+  runtime-generated steps don't pass through `parseStoryboard`.
+
+  ### Rename (compat preserved)
+  - `buildRequest` → `enrichRequest` (old name kept as deprecated alias)
+  - `hasRequestBuilder` → `hasRequestEnricher` (old name kept)
+  - `REQUEST_BUILDERS` → `REQUEST_ENRICHERS` (internal)
+
+  External consumers pinned to the old names continue to work for one
+  release. Migrate to the new names at your own pace.
+
+  ### Observable-behavior changes
+  - Mutating storyboards that omitted `sample_request` fail loudly at load
+    instead of silently shipping fabricated payloads. This is the
+    intentional correctness improvement.
+  - **Fixture `account` now wins** on four tasks whose pre-inversion
+    builders injected `context.account` OVER the fixture's authored
+    `account` via the hybrid `{ ...sample_request, account: context.account }`
+    pattern: `sync_catalogs`, `sync_creatives`, `report_usage`,
+    `sync_audiences`. Storyboards that relied on the runner silently
+    substituting `context.account` over their authored value will now send
+    the authored value. Audit these fixtures if your tests depend on a
+    specific account on these tasks.
+  - Under fixture-wins merge, options-derived fields (e.g.
+    `options.brief` → `signal_spec`) now coexist with authored fields
+    (`sample_request.signal_ids`) instead of replacing them. A storyboard
+    authoring signal_ids and being invoked with `--brief X` now sends
+    both; agents receive a richer query. Schema-valid under
+    `anyOf: [signal_spec | signal_ids]`.
+  - Enricher-derived identity fields (e.g. `get_rights.brand_id` from
+    `resolveBrand(options)`) gap-fill when fixture omits them. A
+    storyboard that specifically needs an identity field absent must
+    author it explicitly or opt out via `expect_error: true`.
+
+  Strict-vs-lenient run reporting (the fourth proposal in #820) is
+  deferred to a separate issue — it's a reporting-subsystem concern
+  orthogonal to the request-construction flow.
+
+- 122aaf5: Add response helpers and shape-drift detection for governance list tools (closes #854):
+
+  **New response helpers** in `@adcp/client/server`:
+  - `listPropertyListsResponse(data)` — wraps `{ lists: PropertyList[] }`
+  - `listCollectionListsResponse(data)` — wraps `{ lists: CollectionList[] }`
+  - `listContentStandardsResponse(data)` — handles the union type (success `{ standards }` / error `{ errors }`)
+
+  All three follow the existing list-response pattern (`listCreativesResponse` / `listAccountsResponse`): default summary names the count and singular/plural handling, pass-through of the typed payload into `structuredContent`.
+
+  **Shape-drift detection** — `list_property_lists`, `list_collection_lists`, and `list_content_standards` now join the `LIST_WRAPPER_TOOLS` table in the storyboard runner's `detectShapeDriftHint`. A handler that returns a bare array at the top level gets a pointed hint naming the correct wrapper key and the new helper.
+
+  Brings the shape-drift detector's coverage of list tools to nine: `list_creatives`, `list_creative_formats`, `list_accounts`, `get_products`, `get_media_buys`, `get_signals`, and now the three governance tools. 34 shape-drift tests + 3 new response-helper tests covering count-formatting and the error-branch split on content standards.
+
+- 42debb0: Catch stale CLI installs before users spend hours debugging phantom behavior.
+  - **Docs:** pin `@latest` in every documented `npx @adcp/client` invocation. Unpinned `npx` reuses whatever version is cached in `~/.npm/_npx/` — users can have six different versions co-existing and not know which one runs. `@latest` forces npx to re-resolve against the registry each invocation.
+  - **CLI:** add a startup staleness check. On every run, the CLI hits `registry.npmjs.org/@adcp/client/latest` (cached for 24h at `~/.adcp/version-check.json`, 800ms timeout, fire-and-forget) and prints a one-time stderr warning if the running version is behind the published latest. Catches every stale-install path, not just the npx copy-paste one: global installs, pinned `package.json`, corporate forks, `pnpm dlx` caches.
+  - **Silenced in:** CI (`CI=true`), non-TTY stderr, `--json` mode, and `ADCP_SKIP_VERSION_CHECK=1`.
+
+- a2ec3c0: Add `resolvePerStoryboard` callback to `runAgainstLocalAgent`
+
+  `runAgainstLocalAgent` now accepts a `resolvePerStoryboard(storyboard, defaultAgentUrl)` callback that returns optional per-storyboard overrides. Callers can redirect a single storyboard to a different URL (e.g. route `signed_requests` at `/mcp-strict` while the rest stay on `/mcp`) and shallow-merge `StoryboardRunOptions` fields like `test_kit`, `brand`, `contracts`, or `auth` per storyboard without giving up the helper's single-serve / single-seed lifecycle. The override shape is flat — `{ agentUrl?, ...StoryboardRunOptions }` — and `webhook_receiver` stays helper-owned (typed out of the shape; re-applied after the merge). The callback may return a `Promise` for async work such as loading a test-kit YAML or minting a scoped token. Returning `undefined` keeps the run-level defaults, so existing callers are unaffected. Resolves #810.
+
+- 94b1ebd: Storyboard steps can now opt out of a default invariant for that step
+  only. New `StoryboardStep.invariants.disable: string[]` mirrors the
+  existing storyboard-level `invariants.disable` but scoped to one step:
+  the runner skips calling the named invariants' `onStep` for that step
+  and leaves every other invariant (and every other step) untouched.
+
+  ```yaml
+  - id: check_plan_first_pass
+    task: check_governance
+    invariants:
+      disable: [governance.denial_blocks_mutation]
+  ```
+
+  Motivating case: storyboards that exercise buyer recovery from a
+  `check_governance` 200 `status: denied`. The `expect_error: true`
+  escape introduced in 5.12.1 only covers wire-error denials
+  (`adcp_error` responses). A 200 with `status: denied` is not a wire
+  error, so the flag was semantically inapplicable — the invariant would
+  anchor and flag every subsequent mutation in the run as a silent
+  bypass. `invariants.disable` covers both shapes uniformly.
+
+  Validation is fail-fast at runner start (matches the storyboard-level
+  precedent):
+  - unknown assertion id in step `invariants.disable` throws;
+  - id already disabled storyboard-wide throws (dead code — remove one);
+  - unknown top-level key (e.g. `disabled`) throws.
+
+  The `governance.denial_blocks_mutation` failure message now names this
+  field and renders the exact YAML snippet to paste, for every anchor
+  shape. The previous message branched on anchor kind and suppressed the
+  hint for 200-status denials — that suppression pointed authors at
+  nothing. Unified under the one escape that works for both.
+
+  `expect_error: true`'s implicit skip is unchanged. It remains the
+  zero-ceremony path for expected-error contracts; `invariants.disable`
+  is the explicit surface for everything else.
+
+  Closes #815.
+
+- c61ac15: Storyboard runner: strict/lenient response-schema reporting (closes the
+  final proposal from #820).
+
+  `response_schema` validations now run the strict AJV path alongside the
+  existing lenient Zod check and record the strict verdict on each
+  `ValidationResult.strict` (new optional field). The step's pass/fail is
+  unchanged — it remains Zod-driven so existing tests and downstream
+  reporting stay backward-compatible. The strict verdict is additive
+  signal.
+
+  ### Per-run summary
+
+  Every `StoryboardResult` now carries a `strict_validation_summary`:
+
+  ```ts
+  {
+    observable: boolean; // false = no strict-eligible checks ran
+    checked: number; // response_schema checks with AJV coverage
+    passed: number; // of checked, how many cleared strict AJV
+    failed: number; // checked - passed
+    strict_only_failures: number; // lenient-pass ∧ strict-fail — the #820 signal
+    lenient_also_failed: number; // failed - strict_only_failures
+  }
+  ```
+
+  `strict_only_failures` is the actionable number. Responses that cleared
+  Zod passthrough but strict AJV rejected — typically `format: uri` or
+  pattern violations Zod's generated `z.string()` doesn't enforce. A green
+  lenient run with `strict_only_failures > 0` tells the developer their
+  agent isn't production-ready for strict dispatchers.
+
+  `observable: false` with zeroed counters signals "run had no
+  strict-eligible checks" (distinct from strict-clean). Dashboards and
+  JUnit formatters MUST check `observable` before rendering counts.
+
+  ### New helpers exported from `@adcp/client/testing`
+  - `summarizeStrictValidation(phases)` — compute the summary over a
+    filtered subset of phases (e.g. render per-phase rollups in a
+    dashboard without re-running validation).
+  - `listStrictOnlyFailures(phases)` — flat drill-down list of every
+    `strict_only_failure` with `{phase_id, step_id, task, variant,
+issues}` for triage. Direct path from `strict_only_failures: 7` to
+    the seven offending responses without walking four levels of nested
+    arrays.
+
+  ### AJV coverage extended to flat-tree domains
+
+  The AJV schema loader now indexes `governance/`, `brand/`,
+  `content-standards/`, `account/`, `property/`, and `collection/`
+  alongside `bundled/`. This closes a coverage gap where
+  `strict_validation_summary` systematically under-reported for mutating
+  tasks whose schemas ship outside the bundled tree —
+  `check_governance`, `acquire_rights`, `creative_approval`,
+  `sync_governance`, `sync_plans`, CRUD on property_list / collection_list,
+  etc. Previously those validations returned `strict: undefined` and
+  didn't count toward `checked`; now they grade strict-eligible, so
+  `format: uri` violations on `caller` and `idempotency_key` pattern
+  mismatches (protocol-wide requirements per AdCP 3.0 GA) surface in the
+  strictness delta where they belong.
+
+  ### CLI summary line
+
+  `adcp storyboard run` now prints a single human-readable line under the
+  lenient pass/fail tally when `observable: true`:
+
+  ```
+  ✅ 32 passed, 0 failed, 3 skipped (1240ms)
+  ⚠️  strict: 11/18 passed (7 lenient-only — strict dispatcher would reject)
+  ```
+
+  Silent when the run had no strict-eligible checks. The multi-storyboard
+  local-agent mode aggregates across results before printing.
+
+  ### `ValidationResult.warning` on strict-only failures
+
+  When Zod passes and AJV rejects, the step stays `passed: true` but a new
+  `warning` field carries the top AJV issue:
+
+  ```
+  "warning": "strict JSON-schema rejected /caller: must match format \"uri\" (+2 more AJV issues)"
+  ```
+
+  This closes the loop for LLM-driven self-correction and CI graphs that
+  scan `error`/`warning` fields — they can act on the strict signal
+  without the runner flipping step pass/fail and breaking existing tests.
+
+  ### Async variant fallback signal
+
+  When the agent's response advertises an async variant (`status:
+submitted` / `working` / `input-required`) but the tool schema doesn't
+  ship a variant schema, validation falls back to the sync response
+  schema. The fallback is now surfaced:
+  - `StrictValidationVerdict.variant_fallback_applied: true`
+  - `StrictValidationVerdict.requested_variant: 'working'`
+  - `ValidationResult.warning` names the gap
+
+  A conformance signal that was previously invisible (the tool accepts
+  sync-shaped validation even though the agent sent an async shape) now
+  tells the author: "this tool doesn't schema the variant your agent is
+  using." AJV acceptance of the sync fallback doesn't mask the signal.
+
+  ### Out of scope — tracked follow-ups (#832)
+  - Per-field envelope validation (`replayed`, `operation_id`, `context`,
+    `ext` value shapes) as a separate check type — needs a spec
+    contribution for `core/envelope.json`.
+  - Opt-in `--strict` CLI flag that gates CI on
+    `strict_only_failures == 0` — waiting for real-world delta telemetry
+    before calibrating the gating policy.
+
+### Patch Changes
+
+- e2f9ea9: Fix storyboard request-builder fallback shapes: every fallback now
+  satisfies the upstream JSON schema it pairs with, unblocking strict-mode
+  agents that reject non-conforming payloads at the MCP boundary.
+
+  **Builder fixes** (all only take effect when `step.sample_request` is
+  absent — authored fixtures are unaffected):
+  - `check_governance` — `caller` now emits `https://${brand.domain}`
+    instead of a bare domain. Schema declares `caller: format: uri`. (#805)
+  - `build_creative`, `preview_creative`, `sync_creatives` — the
+    `format_id` placeholder for a missing format now carries a
+    URI-formatted `agent_url` (`https://unknown.example.com/`) instead of
+    the string `"unknown"`. Schema (`core/format-id.json`) declares
+    `agent_url: format: uri`.
+  - `update_media_buy` — fallback now injects
+    `account: context.account ?? resolveAccount(options)`; schema lists
+    `account` as required. Matches the pattern peer builders
+    (`sync_creatives`, `sync_catalogs`, `report_usage`) already use.
+  - `get_signals` — when neither `options.brief` nor
+    `sample_request.signal_ids` is present, fallback now emits
+    `{ signal_spec: 'E2E fallback signal discovery' }` instead of `{}`.
+    Schema `anyOf: [signal_spec | signal_ids]`.
+  - `create_content_standards` — fallback now emits a minimal inline
+    bespoke policy (`policies: [{policy_id, enforcement: 'must', policy}]`)
+    alongside `scope`. Schema `anyOf: [policies | registry_policy_ids]`.
+
+  **New test**: `test/lib/request-builder-jsonschema-roundtrip.test.js` —
+  AJV round-trip invariant that validates every builder fallback against
+  the upstream JSON schema. Complements the existing Zod round-trip test
+  (`request-builder-schema-roundtrip.test.js`), which does not enforce
+  `format` keywords or strict `additionalProperties`. `KNOWN_NONCONFORMING`
+  allowlist is empty; self-pruning guard tests fire if a new fallback
+  regresses or an allowlisted task starts passing.
+
+  **Observable-behavior notes**:
+  - Callers importing `buildRequest` who asserted on `get_signals` returning
+    `{}` will need to update — it now returns `{ signal_spec }`.
+  - `update_media_buy` fallback now carries an `account`. Storyboards
+    relying on a seller resolving account from `media_buy_id` alone via the
+    fallback will now send a canonical account; if the seller is strict
+    about account consistency across lifecycle, this is the correct signal.
+    No shipping first-party storyboards hit this path (all author
+    `sample_request.account`).
+
+  Closes #805.
+
+- 9e588bf: cli: warn on removed flags instead of silently ignoring
+
+  `--platform-type` was removed from the SDK in 5.1 (`comply()` throws when it's passed programmatically), but the CLI was still capturing and silently dropping the flag. Third-party CI scripts that pass it today believe they're filtering agent selection when they aren't.
+
+  `adcp storyboard run` (and its `adcp comply` deprecated alias) now emits a stderr warning naming the flag, the version it was removed in, and the migration path:
+
+  ```
+  [warn] --platform-type was removed in 5.1.0 and is being ignored.
+  Agent selection is now driven by get_adcp_capabilities (supported_protocols + specialisms).
+  Pass --storyboards <bundle-or-id> to target a specific bundle.
+  ```
+
+  Non-breaking — execution continues. Warnings are suppressed under `--json` to keep stdout as pure JSON. Detection covers both space-separated (`--platform-type value`) and equals (`--platform-type=value`) forms.
+
+  The `REMOVED_FLAGS` map in `bin/adcp.js` is a single location to extend as we deprecate additional flags.
+
+- 9e588bf: docs(creative-agent): louder build_creative response-shape callouts, add audio creative-template example
+
+  Makes discoverability of existing SDK surface better for creative agents:
+  - `docs/llms.txt` — new "Watch out:" blocks on `build_creative`, `preview_creative`, and `list_creative_formats` that point at `buildCreativeResponse`/`buildCreativeMultiResponse`/typed asset factories and flag the audio-formats `renders` gotcha. Driven by a data map in `scripts/generate-agent-docs.ts`.
+  - `skills/build-creative-agent/SKILL.md` — cross-cutting pitfalls now mention `audioAsset` and spell out that platform-native top-level fields (`tag_url`, `creative_id`, `media_type`) are invalid responses. Adds an Audio subsection under `creative-template` covering format declaration (`type: 'audio'`, `renders: [{ role, duration_seconds }]`), async render pipelines, and a handler example using `buildCreativeResponse` + `audioAsset`.
+
+  No library code changes — the factories and response helpers already shipped in prior releases.
+
+- 48096a7: fix(testing): honor `step.sample_request` on add-shaped payloads in storyboard `sync_audiences` builder
+
+  The storyboard request builder for `sync_audiences` only delegated to `step.sample_request` for delete or discovery shapes. Add-shaped payloads — where a storyboard authors `audience_id` with `add: [...]` identifiers — fell through to the generated fallback, which overwrote the authored id with `test-audience-${Date.now()}`. Downstream steps that referenced the authored id (e.g., `delete_audience` in the `audience_sync` specialism, or `$context.audience_id` substitutions) then hit `AUDIENCE_NOT_FOUND` because sync had registered a different id.
+
+  The builder now delegates to `step.sample_request` whenever it's present (matching `sync_event_sources`, `sync_catalogs`, `sync_creatives`, and peers), falling back to the generated payload only when no `sample_request` is authored.
+
+- d3bd569: Two independent envelope-layer fixes for mutating responses:
+
+  ### 1. Omit `replayed` on fresh execution (align with `protocol-envelope.json`)
+
+  The SDK used to stamp `replayed: false` on every fresh-path mutating response. The envelope spec explicitly permits the field to be "omitted when the request was executed fresh" — absence now signals fresh execution, presence signals replay. Replay responses still carry `replayed: true`.
+
+  ### 2. Mirror the replay marker into L2 `content[0].text` (A2A/REST parity)
+
+  The replay-path stamp previously only touched MCP `structuredContent` (L3). A2A and REST transports that consume `content[0].text` (L2) never saw `replayed: true` on replay — replay detection was silently broken on those transports. `stampReplayed` now updates both layers, matching the lockstep pattern used by `injectContextIntoResponse` and `sanitizeAdcpErrorEnvelope`. This is orthogonal to the envelope-semantics change and a bona fide bug fix.
+
+  ### What you'll see
+  - **Seller handlers (`createAdcpServer`)**: fresh mutating responses no longer carry `replayed: false`. Snapshot / contract tests asserting `replayed === false` on fresh need to be updated to `replayed !== true` (or `replayed === undefined`).
+  - **A2A / REST buyers**: replay responses now carry `replayed: true` on the text body where they previously didn't. Replay detection on non-MCP transports starts working.
+  - **Observability / log pipelines**: dashboards that count fresh executions via `replayed === false` go silent on this version. Switch to `replayed !== true` (fresh = absent or false) or key off a different signal (e.g. tool handler invocation count).
+  - **Buyer-side readers (`@adcp/client` SDK)**: no change. `ProtocolResponseParser.getReplayed` already treats absence and `false` identically, and the envelope schema's `"default": false` means schema-aware parsers materialize the same value either way.
+  - **Public `wrapEnvelope` helper**: unchanged. Sellers calling `wrapEnvelope({replayed: false})` directly still round-trip the explicit marker. The asymmetry between the framework path (omits on fresh) and wrapEnvelope callers (honors explicit `false`) is intentional and documented on the option.
+
+  ### Upstream coordination
+
+  Filed [`adcp-client#857`](https://github.com/adcontextprotocol/adcp-client/issues/857) against the `compliance/cache/latest/universal/idempotency.yaml` storyboard: its `field_value allowed_values: [false]` assertion on the fresh-path step conflicts with its own prose (`"Initial execution sets replayed: false (or omits the field)"`) — a literal-match bug where `any_of: [field_absent, field_value: false]` was intended. Until the storyboard fix lands, the `replay_same_payload` phase will fail on the fresh-path step for sellers on this SDK version; all other phases (`key_reuse_conflict`, `fresh_key_new_resource`, webhook dedup) still pass. Per `CLAUDE.md`'s storyboard-failure triage rule, the storyboard is the bug here — the envelope spec unambiguously permits omission.
+
+  ### Internal
+  - `create-adcp-server.ts`: `injectReplayed(response, value)` renamed to `stampReplayed(response)`; fresh-path call site dropped; replay-path stamp mirrors into both L2 text and L3 structuredContent.
+  - `wrap-envelope.ts`, `envelope-allowlist.ts`, `validation/schema-loader.ts`: documentation only. `wrap-envelope.ts` picks up a note that the framework/helper asymmetry on fresh `replayed` is intentional.
+  - `test/server-idempotency.test.js`: fresh-path assertion relaxed from `=== false` to `!== true`.
+
+- 0cc6f98: docs(seller-skill): define the baseline explicitly
+
+  Follow-up to #843. The seller-agent skill referenced "the baseline" 25+ times without enumerating it. A reader (or a coding agent like Claude) hitting the skill could not find an authoritative list of tools every `sales-*` agent must implement, which is the gap that let an adapter update remove `get_products` and `create_media_buy` on the read that `sales-social` is "walled-garden-only."
+
+  Adds a new top-level "The baseline: what every sales-\* agent MUST implement" section to `skills/build-seller-agent/SKILL.md` with the full 11-tool table (`get_adcp_capabilities`, `sync_accounts`, `list_accounts`, `get_products`, `list_creative_formats`, `create_media_buy`, `update_media_buy`, `get_media_buys`, `sync_creatives`, `list_creatives`, `get_media_buy_delivery`), the `createAdcpServer` handler group each belongs to, a minimum handler skeleton, and an explicit "if a specialism's storyboard doesn't exercise a baseline tool, the tool is not optional" note.
+
+  Also anchors the section and wires cross-refs from the "Specialisms are additive" intro paragraph and the `sales-social` "Baseline tools still apply" block so readers have a single source of truth for the baseline surface.
+
+  No code changes; skill is shipped under `files[]` so a patch bump surfaces the doc update to downstream consumers who ship CLAUDE.md-linked skill packs.
+
+- 42e43d4: Extend `detectShapeDriftHint` in the storyboard runner to cover `sync_creatives` and `preview_creative` alongside the existing `build_creative` detection (closes #849).
+
+  Both tools share the same drift pattern as `build_creative`: a handler returns a single inner shape at the top level instead of wrapping it in the tool's required array/discriminator envelope. A bare schema error ("must have required property X") doesn't tell the developer they've inverted the response shape — this hint does.
+  - **`sync_creatives`** — top-level `creative_id` / `platform_id` / `action` without a `creatives` array (or `errors` / `task_id` for the other two valid branches) → hint names `syncCreativesResponse()` from `@adcp/client/server`.
+  - **`preview_creative`** — top-level `preview_url` / `preview_html` without the `previews[].renders[]` nesting and `response_type` discriminator → hint names `previewCreativeResponse()`. `interactive_url` alone doesn't trigger (it's a legal top-level sibling on the single-variant branch).
+
+  Scoped per-tool so cross-tool field names can't bleed across branches (e.g. `build_creative`-specific `tag_url` doesn't trip the `preview_creative` branch).
+
+  11 new tests covering positive detection, each valid branch that must stay silent, and cross-tool scoping.
+
+- 908786e: Extend `detectShapeDriftHint` in the storyboard runner to cover list-shaped tools (closes #852):
+  - `list_creatives` — handler returns bare `[{...}]` instead of `{ creatives, query_summary, pagination }`
+  - `list_creative_formats` — bare array instead of `{ formats: [...] }`
+  - `list_accounts` — bare array instead of `{ accounts: [...] }`
+  - `get_products` — bare array instead of `{ products: [...] }`
+
+  The detector now accepts `unknown` rather than `Record<string, unknown>` so it can recognize bare-array responses at the root — a common drift class where AJV's error ("expected object, got array") doesn't name the required wrapper key. Each known list tool gets a pointed hint naming the wrapper and the response helper (`listCreativesResponse`, `listCreativeFormatsResponse`, `listAccountsResponse`, `productsResponse`) from `@adcp/client/server`.
+
+  Bare arrays for unknown task names pass through silently — the detector only fires on registered list tools to avoid false positives on APIs that legitimately return top-level arrays.
+
+  8 new tests covering each tool, the wrapper-present negative case, unknown-task pass-through, empty-array handling, and null/primitive defensive cases.
+
 ## 5.13.0
 
 ### Minor Changes
