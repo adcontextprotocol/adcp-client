@@ -32,7 +32,7 @@ const {
 } = require('./adcp-config.js');
 const { handleRegistryCommand } = require('./adcp-registry.js');
 const { captureStdoutLogs, writeJsonOutput } = require('./adcp-json-stdout.js');
-const { printStepHints } = require('./adcp-step-hints.js');
+const { printStepHints, countHintsInResult } = require('./adcp-step-hints.js');
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
 const { LIBRARY_VERSION } = require('../dist/lib/version.js');
@@ -1162,6 +1162,17 @@ OPTIONS:
                       emits a JUnit XML report to stdout — each storyboard
                       becomes a testsuite, each step a testcase.
 
+OUTPUT:
+  If you see a \`💡 Hint: …\` line in a failing step, the runner has
+  traced the rejection to seller-side catalog drift between two of the
+  agent's own tools — not an SDK bug. Fix the agent's catalog, not the
+  client. Hints fire only when the rejected value can be tied back to
+  a prior-step \`\$context.*\` write; otherwise they stay silent. They
+  also land in JUnit XML \`<failure>\` bodies and on
+  \`StoryboardStepResult.hints[]\` in JSON output, and the run summary
+  appends \`· N hints\` when any fired. Full reader's guide:
+  docs/guides/VALIDATE-YOUR-AGENT.md § Reading hint lines.
+
 NOTE: Storyboards are pulled from the compliance cache populated by
       \`npm run sync-schemas\` (fetches /protocol/{version}.tgz).
 
@@ -1600,7 +1611,6 @@ async function handleStoryboardRun(args) {
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
-        printStepHints(step.hints);
         for (const v of step.validations) {
           const vIcon = v.passed ? '✅' : '❌';
           console.log(`   ${vIcon} ${v.description}`);
@@ -1610,13 +1620,23 @@ async function handleStoryboardRun(args) {
           // passed or failed — a passing step can still carry a warning.
           if (v.warning) console.log(`      ⚠️  ${v.warning}`);
         }
+        // Hints land AFTER validations on a failing step so the
+        // "what to do next" line is visually adjacent to the next step's
+        // start — not pushed up the screen by passing validations the
+        // operator no longer needs to read.
+        printStepHints(step.hints);
       }
     }
 
     console.log(`\n${'─'.repeat(50)}`);
     const overallIcon = result.overall_passed ? '✅' : '❌';
+    // Hint count surfaces diagnostic info that lives on `step.hints[]` so
+    // operators see "the run emitted N hints" without scrolling per-step
+    // output. Stays silent when N=0 — no useful signal in announcing zero.
+    const hintCount = countHintsInResult(result);
+    const hintTail = hintCount > 0 ? ` · ${hintCount} hint${hintCount === 1 ? '' : 's'}` : '';
     console.log(
-      `${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)`
+      `${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)${hintTail}`
     );
     printStrictSummary(result.strict_validation_summary);
   }
@@ -2267,8 +2287,10 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     }
   }
   const overallIcon = result.overall_passed ? '✅' : '❌';
+  const aggregateHints = (result.results || []).reduce((n, sb) => n + countHintsInResult(sb), 0);
+  const hintTail = aggregateHints > 0 ? ` · ${aggregateHints} hint${aggregateHints === 1 ? '' : 's'}` : '';
   console.log(
-    `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)`
+    `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)${hintTail}`
   );
   printStrictSummary(aggregateStrictSummaries(result.results.map(r => r.strict_validation_summary)));
   process.exit(result.overall_passed ? 0 : 3);
@@ -2574,13 +2596,16 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
-          printStepHints(step.hints);
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
             console.log(`   ${vIcon} ${v.description}`);
             if (v.error) console.log(`      ${v.error}`);
             if (v.warning) console.log(`      ⚠️  ${v.warning}`);
           }
+          // Hint after validations so the operator's eye lands on the
+          // diagnostic at the bottom of the failing-step block — not
+          // pushed up the screen by passing validations.
+          printStepHints(step.hints);
         }
       }
     }
@@ -2591,16 +2616,18 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
         failed: acc.failed + r.failed_count,
         skipped: acc.skipped + r.skipped_count,
         duration: acc.duration + r.total_duration_ms,
+        hints: acc.hints + countHintsInResult(r),
       }),
-      { passed: 0, failed: 0, skipped: 0, duration: 0 }
+      { passed: 0, failed: 0, skipped: 0, duration: 0, hints: 0 }
     );
     const overallIcon = !hadFailure ? '✅' : '❌';
     const passSuffix =
       strategy === 'multi-pass'
         ? ` across ${urls.length} passes × ${urls.length} instances`
         : ` across ${urls.length} instances`;
+    const hintTail = totals.hints > 0 ? ` · ${totals.hints} hint${totals.hints === 1 ? '' : 's'}` : '';
     console.log(
-      `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms)${passSuffix}`
+      `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms)${passSuffix}${hintTail}`
     );
   }
 
