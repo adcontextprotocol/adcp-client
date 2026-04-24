@@ -1130,6 +1130,10 @@ export async function runStoryboardStep(
     );
   }
 
+  // Seed provenance from the caller-supplied map (threaded through from a
+  // previous step's result). Storyboard-level runs build this internally;
+  // here the caller owns accumulation across stateless invocations.
+  const contextProvenance = new Map<string, ContextProvenanceEntry>(Object.entries(options.context_provenance ?? {}));
   const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options, {
     contributions: new Set(),
     priorStepResults: new Map(),
@@ -1137,7 +1141,7 @@ export async function runStoryboardStep(
     agentUrl,
     webhookReceiver,
     runnerVars,
-    contextProvenance: new Map(),
+    contextProvenance,
   });
 
   if (!options._client) {
@@ -1573,6 +1577,10 @@ async function executeStep(
     response: taskResult?.data,
     validations,
     context: updatedContext,
+    ...(runState.contextProvenance &&
+      runState.contextProvenance.size > 0 && {
+        context_provenance: Object.fromEntries(runState.contextProvenance),
+      }),
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
     next,
     request: requestRecord,

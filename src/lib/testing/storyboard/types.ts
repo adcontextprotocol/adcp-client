@@ -545,6 +545,16 @@ export type StoryboardContext = Record<string, unknown>;
 export interface StoryboardRunOptions extends TestOptions {
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
+  /**
+   * Initial context-provenance map, typically threaded from a prior
+   * `runStoryboardStep` invocation's `StoryboardStepResult.context_provenance`.
+   * Lets LLM-orchestrated step-by-step runs accumulate the per-key write
+   * history the runner needs to emit `context_value_rejected` hints when a
+   * later step's seller rejects a value an earlier step extracted. Ignored by
+   * `runStoryboard` (full run builds its own map internally). Closes
+   * adcp-client#880.
+   */
+  context_provenance?: Record<string, ContextProvenanceEntry>;
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
   /** Agent's available tools (for requires_tool filtering) */
@@ -956,6 +966,15 @@ export interface StoryboardStepResult {
   validations: ValidationResult[];
   /** Accumulated context after this step */
   context: StoryboardContext;
+  /**
+   * Accumulated context-provenance after this step. Each entry records which
+   * step wrote the matching context key and how (convention extractor vs
+   * author-provided `context_outputs` path). Thread back into
+   * `StoryboardRunOptions.context_provenance` on the next `runStoryboardStep`
+   * invocation so hints fire across the stateless step-by-step surface the
+   * same way they do inside `runStoryboard`. adcp-client#880.
+   */
+  context_provenance?: Record<string, ContextProvenanceEntry>;
   error?: string;
   /** Preview of the next step (for LLM consumption) */
   next?: StoryboardStepPreview;
