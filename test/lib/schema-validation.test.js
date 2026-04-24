@@ -204,8 +204,14 @@ describe('schema-driven validation', () => {
       const requiredSets = anyOfIssue.variants.map(v => v.required);
       // The variants are symmetric (either policies OR registry_policy_ids) —
       // order not guaranteed, so check both are represented.
-      assert.ok(requiredSets.some(r => r.includes('policies')), `policies variant missing: ${JSON.stringify(requiredSets)}`);
-      assert.ok(requiredSets.some(r => r.includes('registry_policy_ids')), `registry_policy_ids variant missing: ${JSON.stringify(requiredSets)}`);
+      assert.ok(
+        requiredSets.some(r => r.includes('policies')),
+        `policies variant missing: ${JSON.stringify(requiredSets)}`
+      );
+      assert.ok(
+        requiredSets.some(r => r.includes('registry_policy_ids')),
+        `registry_policy_ids variant missing: ${JSON.stringify(requiredSets)}`
+      );
     });
 
     test('oneOf rejections carry variant metadata', async () => {
@@ -237,6 +243,37 @@ describe('schema-driven validation', () => {
           `issue at ${issue.pointer} (keyword=${issue.keyword}) must not have variants`
         );
       }
+    });
+
+    test('buildAdcpValidationErrorPayload strips variants when exposeSchemaPath=false', () => {
+      // Security parity with schemaPath: variants carry structural shape
+      // (branch required / properties) and are gated by the same flag.
+      const issues = [
+        {
+          pointer: '/account',
+          message: 'must match exactly one schema in oneOf',
+          keyword: 'oneOf',
+          schemaPath: '#/properties/account/oneOf',
+          variants: [
+            { index: 0, required: ['account_id'], properties: ['account_id'] },
+            { index: 1, required: ['brand', 'operator'], properties: ['brand', 'operator', 'sandbox'] },
+          ],
+        },
+      ];
+      const stripped = buildAdcpValidationErrorPayload('create_media_buy', 'request', issues);
+      assert.strictEqual(stripped.issues[0].schemaPath, undefined, 'schemaPath must be stripped by default');
+      assert.strictEqual(
+        stripped.issues[0].variants,
+        undefined,
+        'variants must be stripped by default (same policy as schemaPath)'
+      );
+      assert.strictEqual(stripped.issues[0].keyword, 'oneOf', 'non-gated fields stay');
+      const exposed = buildAdcpValidationErrorPayload('create_media_buy', 'request', issues, {
+        exposeSchemaPath: true,
+      });
+      assert.strictEqual(exposed.issues[0].schemaPath, '#/properties/account/oneOf', 'schemaPath present when exposed');
+      assert.ok(Array.isArray(exposed.issues[0].variants), 'variants present when exposed');
+      assert.strictEqual(exposed.issues[0].variants.length, 2);
     });
 
     test('builds an L3 error payload for adcpError() with dual-location issues', () => {

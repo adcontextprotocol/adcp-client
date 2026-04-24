@@ -84,7 +84,16 @@ export function buildAdcpValidationErrorPayload(
     first != null
       ? `${tool} ${side} failed schema validation at ${first.pointer}: ${first.message}`
       : `${tool} ${side} failed schema validation`;
-  const emittedIssues = options.exposeSchemaPath ? issues : issues.map(({ schemaPath: _schemaPath, ...rest }) => rest);
+  // `exposeSchemaPath` gates BOTH `schemaPath` and `variants`. Same
+  // reasoning: they reveal the schema's internal branch shape (schemaPath
+  // the oneOf index; variants every variant's required/properties).
+  // Today AdCP validators only load from the canonical public spec, so
+  // the leak is theoretical — but if a future seller extends a core tool
+  // schema with private fields, gating keeps the policy simple. Prod
+  // deployments that want the richer envelope flip `exposeErrorDetails`.
+  const emittedIssues = options.exposeSchemaPath
+    ? issues
+    : issues.map(({ schemaPath: _schemaPath, variants: _variants, ...rest }) => rest);
   const payload: {
     message: string;
     field?: string;
