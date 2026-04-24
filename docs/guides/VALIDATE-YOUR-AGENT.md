@@ -327,6 +327,54 @@ Use before merging skill changes. ~60s per pair; matrix runs fan out.
 
 ---
 
+## Reading `💡 Hint:` lines (context-value rejections)
+
+> **If you see a `💡 Hint:` line, the fix is almost always in your catalog, not the SDK.** The two tools named in the hint are returning inconsistent values — unify their source.
+
+Example output:
+
+```
+❌ Activate PII signal (412ms)
+   Task: activate_signal
+   Error: Pricing option not found: po_prism_abandoner_cpm
+   💡 Hint: Rejected `pricing_option_id: po_prism_abandoner_cpm` was extracted
+           from `$context.first_signal_pricing_option_id` (set by step
+           `search_by_spec` from response path
+           `signals[0].pricing_options[0].pricing_option_id`). Seller's
+           accepted values: [po_prism_cart_cpm].
+```
+
+The runner is telling you:
+
+1. Step `search_by_spec` wrote `po_prism_abandoner_cpm` into `$context.first_signal_pricing_option_id` — extracted from `signals[0].pricing_options[0].pricing_option_id` on your own `get_signals` response.
+2. Step `activate_signal` sent that id back to you.
+3. Your `activate_signal` handler rejected it with `available: [po_prism_cart_cpm]`.
+
+So **`get_signals` advertised one id and `activate_signal` accepted a different one**. **Fix by unifying the catalog source** — typically both handlers should read from the same store ([build-seller-agent/SKILL.md](../../skills/build-seller-agent/SKILL.md) covers the shared-store pattern).
+
+The runner only prints a hint when it can trace the rejected value back to a prior-step `$context.*` write. **No hint?** The mismatch came from somewhere else — a hardcoded `sample_request` in the storyboard, a stale fixture, or a `--request` override. Fix the storyboard, not the handler.
+
+Hints are diagnostic-only; pass/fail is decided by the step result, not by hint presence.
+
+### For CI dashboards
+
+Hints also land in machine-readable output:
+
+- **JUnit XML** — appended to the `<failure>` body as `Hint (context_value_rejected): …`, and used as the `message=` attribute when `step.error` is empty (e.g. validation-only failures on 200-OK responses):
+
+  ```xml
+  <failure message="Rejected `pricing_option_id: po_prism_abandoner_cpm` …" type="StoryboardFailure">
+  Pricing option not found: po_prism_abandoner_cpm
+  Hint (context_value_rejected): Rejected `pricing_option_id: po_prism_abandoner_cpm` …
+  </failure>
+  ```
+
+- **JSON report** (`--format json`) — on `StoryboardStepResult.hints[]` as `ContextValueRejectedHint` objects. Fields: `kind`, `context_key`, `source_step_id`, `source_kind`, `response_path`, `source_task`, `rejected_value`, `request_field`, `accepted_values`, `error_code`, `message`. Dashboards can aggregate rejections by `source_step_id` or `context_key` to spot systemic catalog-drift. See `StoryboardStepHint` / `ContextValueRejectedHint` types exported from `@adcp/client/testing`.
+
+> The rejection-envelope shape (`errors[].details.available` etc.) is tracked in [adcontextprotocol/adcp#3049](https://github.com/adcontextprotocol/adcp/issues/3049); field names here may evolve as the spec pins a canonical key.
+
+---
+
 ## When each check fails: debug first-lookups
 
 | Failure | First lookup |
@@ -334,6 +382,7 @@ Use before merging skill changes. ~60s per pair; matrix runs fan out.
 | `storyboard run` skips steps with "no webhook_receiver_runner" | Add `--webhook-receiver` |
 | `storyboard run` fails on `security_baseline` | You skipped `authenticate` in `serve()` — see [build-seller-agent/SKILL.md § signed-requests](../../skills/build-seller-agent/SKILL.md) |
 | `storyboard run` reports `Agent requires OAuth` / exits without running | Save tokens once with `adcp --save-auth <alias> <url> --oauth`, or pass `--oauth` to `storyboard run` to complete auth inline |
+| `storyboard run` prints `💡 Hint: Rejected …` below an error | Catalog inconsistency between the two tools — see [§ Reading hint lines](#reading--hint-lines-context-value-rejections) above |
 | `fuzz` reports `500` status with stack trace | Validate inputs and return `adcpError('REFERENCE_NOT_FOUND', ...)` instead |
 | `fuzz` reports `response_shape_mismatch` | Response drifted from schema — regen with `npm run sync-schemas` + check your handler |
 | Multi-instance fails with `NOT_FOUND` on read-after-write | State keyed by session ID instead of `(brand, account)` — see multi-instance guide |

@@ -49,13 +49,29 @@ export function detectContextRejectionHints(
   taskResult: TaskResult | undefined,
   request: Record<string, unknown>,
   context: StoryboardContext,
-  provenance: ReadonlyMap<string, ContextProvenanceEntry>
+  provenance: ReadonlyMap<string, ContextProvenanceEntry>,
+  /**
+   * Current step's AdCP task name (e.g. `activate_signal`). Used only to
+   * produce a human-readable closing sentence that cites both tools
+   * involved in the catalog drift — "Check that `get_signals` and
+   * `activate_signal` catalogs agree." Optional for backwards
+   * compatibility; callers that can't supply it get a generic closing.
+   */
+  currentTask?: string
 ): StoryboardStepHint[] {
   if (!taskResult) return [];
   const data = taskResult.data as Record<string, unknown> | undefined;
   if (!data) return [];
-  const errors = data.errors;
-  if (!Array.isArray(errors)) return [];
+  // Normalize both envelope shapes the AdCP error surface produces:
+  //   - `errors: [{...}]` — plural array (AdCP core/error.json)
+  //   - `adcp_error: {...}` — singular object, what the canonical
+  //     `adcpError()` SDK helper emits. Most sellers use the helper, so
+  //     without this normalization the hint would silently never fire
+  //     against them (dogfood surfaced this; see adcp-client#907).
+  // Also accepts `adcp_error: [{...}]` defensively in case a seller
+  // ever emits the key with an array payload.
+  const errors = resolveErrorsList(data);
+  if (!errors) return [];
 
   const hints: StoryboardStepHint[] = [];
   // De-dupe: the same (context_key, rejected_value) shouldn't produce
@@ -87,6 +103,7 @@ export function detectContextRejectionHints(
         context,
         provenance,
         emitted,
+        ...(currentTask !== undefined && { currentTask }),
       });
       if (hint) hints.push(hint);
       continue;
@@ -110,6 +127,7 @@ export function detectContextRejectionHints(
           rejectedValue: contextValue,
           acceptedValues,
           ...(errorCode !== undefined && { errorCode }),
+          ...(currentTask !== undefined && { currentTask }),
         })
       );
     }
@@ -126,6 +144,7 @@ interface BuildForValueInput {
   context: StoryboardContext;
   provenance: ReadonlyMap<string, ContextProvenanceEntry>;
   emitted: Set<string>;
+  currentTask?: string;
 }
 
 /**
@@ -137,7 +156,7 @@ interface BuildForValueInput {
  * to author distinct context keys to disambiguate.
  */
 function buildHintForValue(input: BuildForValueInput): StoryboardStepHint | undefined {
-  const { rejectedValue, fieldPath, acceptedValues, errorCode, context, provenance, emitted } = input;
+  const { rejectedValue, fieldPath, acceptedValues, errorCode, context, provenance, emitted, currentTask } = input;
   if (rejectedValue === undefined || rejectedValue === null) return undefined;
   // If the seller claims to accept the value they rejected, the error
   // shape is inconsistent — skip rather than emit a confusing hint.
@@ -156,6 +175,7 @@ function buildHintForValue(input: BuildForValueInput): StoryboardStepHint | unde
       acceptedValues,
       requestField: fieldPath,
       ...(errorCode !== undefined && { errorCode }),
+      ...(currentTask !== undefined && { currentTask }),
     });
   }
   return undefined;
@@ -168,16 +188,18 @@ interface BuildHintInput {
   acceptedValues: unknown[];
   requestField?: string;
   errorCode?: string;
+  currentTask?: string;
 }
 
 function buildHint(input: BuildHintInput): ContextValueRejectedHint {
-  const { contextKey, entry, rejectedValue, acceptedValues, requestField, errorCode } = input;
+  const { contextKey, entry, rejectedValue, acceptedValues, requestField, errorCode, currentTask } = input;
   const message = formatMessage({
     contextKey,
     entry,
     rejectedValue,
     acceptedValues,
     ...(requestField !== undefined && { requestField }),
+    ...(currentTask !== undefined && { currentTask }),
   });
   return {
     kind: 'context_value_rejected',
@@ -200,10 +222,11 @@ interface FormatMessageInput {
   rejectedValue: unknown;
   acceptedValues: unknown[];
   requestField?: string;
+  currentTask?: string;
 }
 
 function formatMessage(input: FormatMessageInput): string {
-  const { contextKey, entry, rejectedValue, acceptedValues, requestField } = input;
+  const { contextKey, entry, rejectedValue, acceptedValues, requestField, currentTask } = input;
   const valueRepr = formatScalar(rejectedValue);
   const fieldRepr = requestField ? `\`${requestField}: ${valueRepr}\`` : `\`${valueRepr}\``;
   const sourceDetail =
@@ -213,13 +236,31 @@ function formatMessage(input: FormatMessageInput): string {
         ? `set by step \`${entry.source_step_id}\` (convention extractor for \`${entry.source_task}\`)`
         : `set by step \`${entry.source_step_id}\``;
   const acceptedRepr = `[${acceptedValues.map(formatScalar).join(', ')}]`;
+  // Closing sentence prefers the two-task form ("`get_signals` and
+  // `activate_signal` catalogs agree") when both source and current task
+  // are known — reads naturally regardless of how the context key was
+  // named. Falls back to the single-task form ("the `get_signals`
+  // catalog") when only the source is known, and to a generic nudge when
+  // neither is known. The earlier context-key-derived phrasing read
+  // awkwardly for multi-word keys (`first_signal_pricing_option_id` →
+  // "for this first_signal_pricing_option"); cited by dogfood findings.
+  const closing = buildClosing(entry.source_task, currentTask);
   return (
     `Rejected ${fieldRepr} was extracted from \`$context.${contextKey}\` ` +
     `(${sourceDetail}). ` +
     `Seller's accepted values: ${acceptedRepr}. ` +
-    `Check that the seller's catalogs agree on the id for this ` +
-    `${contextKey.replace(/_id$/, '')} across steps.`
+    closing
   );
+}
+
+function buildClosing(sourceTask: string | undefined, currentTask: string | undefined): string {
+  if (sourceTask && currentTask && sourceTask !== currentTask) {
+    return `Check that the seller's \`${sourceTask}\` and \`${currentTask}\` catalogs agree.`;
+  }
+  if (sourceTask) {
+    return `Check that the seller's \`${sourceTask}\` catalog agrees with other tools.`;
+  }
+  return `Check that the seller's catalogs agree across tools.`;
 }
 
 function formatScalar(value: unknown): string {
@@ -231,6 +272,24 @@ function formatScalar(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * Normalize the response body's error envelope into a flat list for the
+ * hint detector. Recognizes:
+ *   - `errors: [{...}]` — AdCP core/error.json shape
+ *   - `adcp_error: {...}` — what `adcpError()` helper produces
+ *   - `adcp_error: [{...}]` — defensive; some sellers emit this
+ * Returns undefined when neither shape is present or the values aren't
+ * objects we can inspect.
+ */
+function resolveErrorsList(data: Record<string, unknown>): unknown[] | undefined {
+  const errors = data.errors;
+  if (Array.isArray(errors)) return errors;
+  const adcpError = data.adcp_error;
+  if (Array.isArray(adcpError)) return adcpError;
+  if (adcpError && typeof adcpError === 'object') return [adcpError];
+  return undefined;
 }
 
 function findAcceptedValues(

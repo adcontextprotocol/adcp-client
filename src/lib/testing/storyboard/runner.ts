@@ -1130,6 +1130,10 @@ export async function runStoryboardStep(
     );
   }
 
+  // Seed provenance from the caller-supplied map (threaded through from a
+  // previous step's result). Storyboard-level runs build this internally;
+  // here the caller owns accumulation across stateless invocations.
+  const contextProvenance = new Map<string, ContextProvenanceEntry>(Object.entries(options.context_provenance ?? {}));
   const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options, {
     contributions: new Set(),
     priorStepResults: new Map(),
@@ -1137,7 +1141,7 @@ export async function runStoryboardStep(
     agentUrl,
     webhookReceiver,
     runnerVars,
-    contextProvenance: new Map(),
+    contextProvenance,
   });
 
   if (!options._client) {
@@ -1534,19 +1538,29 @@ async function executeStep(
   // back to a prior-step $context.* write. Non-fatal: doesn't flip
   // pass/fail; collapses "SDK bug vs seller bug" triage to one line.
   //
-  // Gated on `!passed` (the task-level pass flag, pre-validations):
-  //   - Normal steps: hints fire only when the task reported a failure,
-  //     since that's where `errors[].available` would surface.
+  // Gate fires on any step-level failure — task-level failure OR a
+  // validation failure on a 200-OK response. Some sellers return 200 with
+  // an advisory `errors[]` + `available:` list (success envelope with
+  // warnings), and the hint is most useful on exactly that shape. Before
+  // adcp-client#883 the gate was task-level only and missed schema-
+  // rejected-but-200 flows.
+  //
+  //   - Normal steps: hints fire whenever the step failed.
   //   - `expect_error` steps: `passed` is inverted (true when the task
-  //     failed), so `!passed` means an expected error did NOT arrive —
-  //     hints stay silent, which matches intent (the caller asked for a
-  //     rejection; the runner doesn't second-guess whose fault it is).
+  //     failed), so a genuinely-failing `expect_error` step has
+  //     `passed && allValidationsPassed === true`, gate stays shut —
+  //     expected rejections don't chatter hints by design. When the
+  //     validations DO fail (the caller's assertion about the error
+  //     shape was wrong), hints fire and can point them at the source
+  //     step that supplied the rejected value.
+  //
   // Hints trace to context that existed BEFORE this step's own writes,
   // since the rejected value can't have come from this step's own
   // extraction.
+  const stepFailed = !(passed && allValidationsPassed);
   const hints =
-    !passed && runState.contextProvenance
-      ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance)
+    stepFailed && runState.contextProvenance
+      ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance, effectiveStep.task)
       : [];
 
   // Build next step preview
@@ -1563,6 +1577,10 @@ async function executeStep(
     response: taskResult?.data,
     validations,
     context: updatedContext,
+    ...(runState.contextProvenance &&
+      runState.contextProvenance.size > 0 && {
+        context_provenance: Object.fromEntries(runState.contextProvenance),
+      }),
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
     next,
     request: requestRecord,

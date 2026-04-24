@@ -351,6 +351,100 @@ describe('detectContextRejectionHints', () => {
     assert.deepEqual(hints, []);
   });
 
+  test('recognizes adcp_error singular envelope from adcpError() SDK helper', () => {
+    // `adcpError()` produces `{ adcp_error: { code, message, field, details, ... } }`
+    // (singular object). Most sellers use the helper, so the detector
+    // must treat this as a one-element errors list. Surfaced during
+    // dogfood (#907).
+    const taskResult = {
+      success: false,
+      data: {
+        adcp_error: {
+          code: 'PRODUCT_NOT_FOUND',
+          message: "Product 'prod-a' not found",
+          recovery: 'correctable',
+          field: 'packages[0].product_id',
+          details: { available: ['prod-b'] },
+        },
+      },
+    };
+    const request = { packages: [{ product_id: 'prod-a' }] };
+    const context = { first_product_id: 'prod-a' };
+    const prov = provenance({
+      first_product_id: {
+        source_step_id: 'discover',
+        source_kind: 'context_outputs',
+        response_path: 'products[0].product_id',
+        source_task: 'get_products',
+      },
+    });
+    const hints = detectContextRejectionHints(taskResult, request, context, prov);
+    assert.equal(hints.length, 1);
+    assert.equal(hints[0].error_code, 'PRODUCT_NOT_FOUND');
+    assert.equal(hints[0].context_key, 'first_product_id');
+    assert.equal(hints[0].rejected_value, 'prod-a');
+    assert.deepEqual(hints[0].accepted_values, ['prod-b']);
+  });
+
+  test('recognizes adcp_error array envelope (defensive)', () => {
+    // Some sellers have been observed emitting `adcp_error` as an array
+    // rather than the canonical singular object. Handle both.
+    const taskResult = {
+      success: false,
+      data: {
+        adcp_error: [
+          {
+            code: 'INVALID_REQUEST',
+            message: 'bad',
+            field: 'x',
+            details: { available: ['ok'] },
+          },
+        ],
+      },
+    };
+    const request = { x: 'bad' };
+    const context = { x: 'bad' };
+    const prov = provenance({
+      x: { source_step_id: 's', source_kind: 'convention' },
+    });
+    const hints = detectContextRejectionHints(taskResult, request, context, prov);
+    assert.equal(hints.length, 1);
+    assert.deepEqual(hints[0].accepted_values, ['ok']);
+  });
+
+  test('prefers errors[] when both envelope shapes are present', () => {
+    // Defensive: if an agent somehow emits BOTH (shouldn't happen but
+    // possible in a migration), read the plural array — it's the
+    // authoritative spec shape.
+    const taskResult = {
+      success: false,
+      data: {
+        errors: [
+          {
+            code: 'FROM_ARRAY',
+            message: '1',
+            field: 'x',
+            details: { available: ['ok'] },
+          },
+        ],
+        adcp_error: {
+          code: 'FROM_SINGULAR',
+          message: '2',
+          field: 'x',
+          details: { available: ['different'] },
+        },
+      },
+    };
+    const request = { x: 'bad' };
+    const context = { x: 'bad' };
+    const prov = provenance({
+      x: { source_step_id: 's', source_kind: 'convention' },
+    });
+    const hints = detectContextRejectionHints(taskResult, request, context, prov);
+    assert.equal(hints.length, 1);
+    assert.equal(hints[0].error_code, 'FROM_ARRAY');
+  });
+
   test('no hint when taskResult is undefined', () => {
     const prov = provenance({});
     const hints = detectContextRejectionHints(undefined, {}, {}, prov);
@@ -566,6 +660,69 @@ describe('detectContextRejectionHints', () => {
     assert.equal(hints[0].source_kind, 'convention');
     assert.equal(hints[0].source_task, 'get_products');
     assert.match(hints[0].message, /convention extractor for `get_products`/);
+  });
+
+  describe('currentTask → closing sentence (tail polish)', () => {
+    const baseTaskResult = {
+      success: false,
+      data: {
+        errors: [{ code: 'X', message: 'x', field: 'pricing_option_id', details: { available: ['po_b'] } }],
+      },
+    };
+    const request = { pricing_option_id: 'po_a' };
+    const context = { first_signal_pricing_option_id: 'po_a' };
+    const prov = provenance({
+      first_signal_pricing_option_id: {
+        source_step_id: 'discover',
+        source_kind: 'context_outputs',
+        response_path: 'signals[0].pricing_options[0].pricing_option_id',
+        source_task: 'get_signals',
+      },
+    });
+
+    test('both tasks known → closes with both tool names', () => {
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov, 'activate_signal');
+      assert.match(hint.message, /Check that the seller's `get_signals` and `activate_signal` catalogs agree\.$/);
+    });
+
+    test('same source and current task → collapses to the single-task form', () => {
+      // A self-rejection (context written by and rejected by the same
+      // task) shouldn't produce "X and X catalogs agree" — fall through
+      // to single-task wording.
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov, 'get_signals');
+      assert.match(hint.message, /Check that the seller's `get_signals` catalog agrees with other tools\.$/);
+    });
+
+    test('no currentTask passed → single-task form using source_task', () => {
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov);
+      assert.match(hint.message, /Check that the seller's `get_signals` catalog agrees with other tools\.$/);
+    });
+
+    test('no source_task and no currentTask → generic closing', () => {
+      const bareProv = provenance({
+        first_signal_pricing_option_id: {
+          source_step_id: 'discover',
+          source_kind: 'context_outputs',
+          response_path: 'signals[0].pricing_options[0].pricing_option_id',
+          // no source_task
+        },
+      });
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, bareProv);
+      assert.match(hint.message, /Check that the seller's catalogs agree across tools\.$/);
+    });
+
+    test('no key-derived identifier fragment ever appears in the closing', () => {
+      // Regression guard for the original bug — the previous formatter
+      // produced "for this first_signal_pricing_option across steps"
+      // (key minus _id suffix embedded as prose). The literal context
+      // key still appears earlier (in the `$context.<key>` substring);
+      // the guard scopes to the closing sentence, which starts after
+      // "Seller's accepted values: [...]."
+      const [hint] = detectContextRejectionHints(baseTaskResult, request, context, prov, 'activate_signal');
+      const closing = hint.message.split(/Seller's accepted values: \[[^\]]*\]\.\s*/)[1] ?? '';
+      assert.doesNotMatch(closing, /first_signal_pricing_option/);
+      assert.doesNotMatch(closing, /for this [a-z_]+\b across/);
+    });
   });
 
   test('empty provenance map yields no hints (provenance gate, not value absence)', () => {
