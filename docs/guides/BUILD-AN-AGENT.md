@@ -502,17 +502,18 @@ npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}' --json
 
 ```bash
 # Create a media buy (mutating tool — requires idempotency_key)
-# Schema traps: package-level budget is a plain number (not {amount,currency}); brand uses {domain} (not {brand_id});
+# Schema traps: idempotency_key must be 16-255 chars (UUID v4 recommended);
+# package-level budget is a plain number (not {amount,currency}); brand uses {domain} (not {brand_id});
 # packages require product_id, budget, and pricing_option_id
 npx @adcp/client@latest http://localhost:3001/mcp create_media_buy '{
+  "idempotency_key": "550e8400-e29b-41d4-a716-446655440000",
   "account": { "account_id": "acct_123" },
   "brand": { "domain": "acme.example" },
   "start_time": "2026-05-01T00:00:00Z",
   "end_time": "2026-05-31T23:59:59Z",
   "packages": [
     { "product_id": "p_sports_ctv", "budget": 10000, "pricing_option_id": "po_cpm_35" }
-  ],
-  "idempotency_key": "test-buy-001"
+  ]
 }'
 ```
 
