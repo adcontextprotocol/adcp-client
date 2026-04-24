@@ -324,6 +324,138 @@ export async function rawMcpProbe(options: {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Raw-A2A probe (transport-layer diagnostics for A2A agents)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST a JSON-RPC 2.0 request to an A2A agent endpoint with caller-provided
+ * headers. Bypasses the A2A SDK so raw HTTP status, headers, and JSON-RPC
+ * error codes can be captured by storyboard diagnostics.
+ *
+ * Mirrors `rawMcpProbe` in structure and SSRF-safety contract. Key
+ * differences from the MCP variant:
+ *
+ * - The caller supplies `method` + optional `params` (not a fixed `tools/call`
+ *   body). A2A has no single canonical method — use `"message/send"` for most
+ *   auth and error-code probes, `"tasks/get"` / `"tasks/cancel"` for lifecycle
+ *   checks. **Note:** `message/send` requires `params.message` (a full A2A
+ *   `Message` object with `messageId`, `role`, `kind`, `parts`). Passing
+ *   `params: {}` will produce `-32602 Invalid params` from a conformant server,
+ *   masking auth rejections — supply a minimal message when probing auth paths.
+ * - A2A JSON-RPC error codes differ from MCP's. Notably `-32002` means
+ *   `TaskNotCancelable` in A2A (not session-not-initialized). The probe
+ *   surfaces raw numeric codes without protocol-specific aliasing so
+ *   storyboards can assert on the exact code.
+ * - SSE (streaming) responses are handled the same way as `rawMcpProbe`:
+ *   `Accept: application/json` is sent; non-JSON bodies surface a distinct
+ *   error so callers don't mistake an event-stream for a silent success.
+ *
+ * **Args are not secret** — must not contain credentials or PII. The
+ * server's response body lands in `httpResult.body` and is written to
+ * compliance reports.
+ *
+ * Returns an `HttpProbeResult` plus an optional `TaskResult` (same shape as
+ * `rawMcpProbe`) so the storyboard `ValidationContext` can consume both probes
+ * interchangeably. The A2A success `_extraction_path` is `'text_fallback'`
+ * (not `'structured_content'`) because A2A's `result` field is a plain object,
+ * not an MCP structured-content envelope.
+ */
+export async function rawA2aProbe(options: {
+  /** Base URL of the A2A agent endpoint (e.g. `https://agent.example.com/a2a`). */
+  agentUrl: string;
+  /** A2A/JSON-RPC 2.0 method name (e.g. `"message/send"`, `"tasks/get"`). */
+  method: string;
+  /** JSON-RPC params. Defaults to `{}` so the probe always emits a valid envelope. */
+  params?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  /** Allow http:// and private-IP agent URLs (dev loops). Default false. */
+  allowPrivateIp?: boolean;
+}): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
+  const { agentUrl, method, params, headers = {}, allowPrivateIp = false } = options;
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: ++probeRequestId,
+    method,
+    params: params ?? {},
+  });
+
+  const httpResult: HttpProbeResult = { url: agentUrl, status: 0, headers: {}, body: null };
+  try {
+    const res = await ssrfSafeFetch(agentUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        ...headers,
+      },
+      body,
+      allowPrivateIp,
+    });
+    httpResult.status = res.status;
+    httpResult.headers = res.headers;
+
+    const text = Buffer.from(res.body.buffer, res.body.byteOffset, res.body.byteLength).toString('utf8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      httpResult.body = text;
+      return {
+        httpResult,
+        taskResult: {
+          success: false,
+          data: undefined,
+          error: `Non-JSON response body (content-type: ${httpResult.headers['content-type'] ?? 'unknown'}).`,
+          _extraction_path: 'error',
+        },
+      };
+    }
+    httpResult.body = parsed;
+
+    const rpc = parsed as {
+      result?: unknown;
+      error?: { message?: string; code?: number };
+    };
+
+    if (httpResult.status >= 400) {
+      return {
+        httpResult,
+        taskResult: {
+          success: false,
+          data: undefined,
+          error: rpc.error?.message ?? `HTTP ${httpResult.status}`,
+          _extraction_path: 'error',
+        },
+      };
+    }
+
+    if (rpc.error) {
+      const code = rpc.error.code;
+      return {
+        httpResult,
+        taskResult: {
+          success: false,
+          data: undefined,
+          error:
+            code !== undefined
+              ? `JSON-RPC error ${code}: ${rpc.error.message ?? 'no message'}`
+              : (rpc.error.message ?? 'JSON-RPC error (no code)'),
+          _extraction_path: 'error',
+        },
+      };
+    }
+
+    const data = rpc.result;
+    const extractionPath: 'text_fallback' | 'none' =
+      data !== undefined && data !== null ? 'text_fallback' : 'none';
+    return { httpResult, taskResult: { success: true, data, _extraction_path: extractionPath } };
+  } catch (err) {
+    httpResult.error = err instanceof Error ? err.message : String(err);
+    return { httpResult };
+  }
+}
+
 // IP classifiers live in `src/lib/net/address-guards.ts` so the SSRF-safe
 // fetch primitive can use them without depending on the testing module.
 // Re-exported here for existing import sites (storyboard-security test + any
