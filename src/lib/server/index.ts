@@ -204,6 +204,7 @@ export type {
   AccountHandlers,
   EventTrackingHandlers,
   SponsoredIntelligenceHandlers,
+  ResolveAccountContext,
 } from './create-adcp-server';
 
 export { DEFAULT_REPORTING_CAPABILITIES } from './product-defaults';

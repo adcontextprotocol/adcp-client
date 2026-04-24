@@ -18,7 +18,11 @@
  *   name: 'My Publisher',
  *   version: '1.0.0',
  *
- *   resolveAccount: async (ref) => db.findAccount(ref),
+ *   // Second argument carries `toolName` and (when `authenticate` is wired
+ *   // on `serve()`) the caller's `authInfo`. Adapters that front an
+ *   // upstream platform API can use the caller's token here to resolve
+ *   // the platform account in one pass.
+ *   resolveAccount: async (ref, { authInfo }) => db.findAccount(ref, authInfo),
  *
  *   mediaBuy: {
  *     getProducts: async (params, ctx) => ({ products: catalog.search(params) }),
@@ -310,6 +314,25 @@ export interface SessionKeyContext<TAccount = unknown> {
   toolName: AdcpServerToolName;
   params: Record<string, unknown>;
   account?: TAccount;
+}
+
+/**
+ * Request context passed to `resolveAccount` so the resolver can inspect the
+ * authenticated principal at resolution time. This matters for adapters that
+ * front an upstream platform API (Snap, Meta, TikTok, retail media networks)
+ * where the upstream account lookup requires the caller's platform OAuth
+ * token — forwarding `authInfo` into `resolveAccount` lets the resolver put
+ * platform identifiers (ad_account_id, upstream token state) directly on the
+ * resolved `TAccount` rather than re-resolving inside every handler.
+ */
+export interface ResolveAccountContext {
+  /** The AdCP tool being called. */
+  toolName: AdcpServerToolName;
+  /**
+   * Authentication info for the caller, populated from `extra.authInfo` on the
+   * MCP request. Undefined when no `authenticate` is configured on `serve()`.
+   */
+  authInfo?: HandlerContext['authInfo'];
 }
 
 /**
@@ -779,8 +802,22 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * Resolve an account from an AccountReference.
    * Called on every request that has an `account` field.
    * Return null if the account doesn't exist — framework responds ACCOUNT_NOT_FOUND.
+   *
+   * The second argument carries the AdCP `toolName` and, when `serve()` is
+   * configured with `authenticate`, the caller's `authInfo`. Adapters that
+   * need the caller's upstream platform token to look up the account can
+   * read it from `ctx.authInfo` here and attach anything they want to the
+   * resolved account.
+   *
+   * Single-argument resolvers (`async (ref) => ...`) are valid — TypeScript
+   * allows a shorter parameter list.
+   *
+   * **Do not persist `authInfo` outside the returned account object.** The
+   * framework makes no isolation guarantees about values closed over by the
+   * resolver; caching `authInfo` into shared state can leak the caller's
+   * principal across requests.
    */
-  resolveAccount?: (ref: AccountReference) => Promise<TAccount | null>;
+  resolveAccount?: (ref: AccountReference, ctx: ResolveAccountContext) => Promise<TAccount | null>;
 
   /**
    * Derive a session-scoping key from the request. Populates `ctx.sessionKey`
@@ -1868,7 +1905,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Account resolution ---
         if (hasAccount && params.account != null && resolveAccount) {
           try {
-            const account = await resolveAccount(params.account);
+            const account = await resolveAccount(params.account, {
+              toolName: toolName as AdcpServerToolName,
+              authInfo: ctx.authInfo,
+            });
             if (account == null) {
               logger.warn('Account not found', { tool: toolName, account: params.account });
               return finalize(

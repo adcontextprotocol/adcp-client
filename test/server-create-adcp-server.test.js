@@ -591,6 +591,71 @@ describe('createAdcpServer', () => {
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
     });
+
+    it('passes toolName and authInfo to resolveAccount via the second argument', async () => {
+      let resolverCtx;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async (ref, ctx) => {
+          resolverCtx = ctx;
+          return { id: ref.account_id, upstreamToken: ctx.authInfo?.extra?.upstreamToken };
+        },
+        mediaBuy: {
+          getProducts: async (_params, ctx) => {
+            assert.strictEqual(ctx.account.upstreamToken, 'upstream-xyz');
+            return { products: [] };
+          },
+        },
+      });
+
+      const authInfo = {
+        token: 'caller-token',
+        clientId: 'buyer-1',
+        scopes: ['adcp.media_buy'],
+        extra: { upstreamToken: 'upstream-xyz' },
+      };
+
+      await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'get_products',
+            arguments: { buying_mode: 'brief', brief: 'test', account: { account_id: 'a1' } },
+          },
+        },
+        { authInfo }
+      );
+
+      assert.ok(resolverCtx);
+      assert.strictEqual(resolverCtx.toolName, 'get_products');
+      assert.strictEqual(resolverCtx.authInfo.token, 'caller-token');
+      assert.deepStrictEqual(resolverCtx.authInfo.extra, { upstreamToken: 'upstream-xyz' });
+    });
+
+    it('single-argument resolvers remain compatible', async () => {
+      // A pre-existing `async (ref) => ...` must still be callable. TS widens
+      // a 1-arg callback to fit the 2-arg resolver signature; the runtime
+      // just ignores the extra argument.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          getProducts: async (_params, ctx) => {
+            assert.strictEqual(ctx.account.id, 'legacy-1');
+            return { products: [] };
+          },
+        },
+      });
+
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+        account: { account_id: 'legacy-1' },
+      });
+      assert.strictEqual(result.isError, undefined);
+    });
   });
 
   describe('governance helper', () => {
