@@ -447,8 +447,7 @@ export async function rawA2aProbe(options: {
     }
 
     const data = rpc.result;
-    const extractionPath: 'text_fallback' | 'none' =
-      data !== undefined && data !== null ? 'text_fallback' : 'none';
+    const extractionPath: 'text_fallback' | 'none' = data !== undefined && data !== null ? 'text_fallback' : 'none';
     return { httpResult, taskResult: { success: true, data, _extraction_path: extractionPath } };
   } catch (err) {
     httpResult.error = err instanceof Error ? err.message : String(err);
