@@ -548,6 +548,7 @@ export {
   serve,
   UnknownHostError,
   hostname,
+  resolveHost,
   registerTestController,
   handleTestControllerRequest,
   TestControllerError,

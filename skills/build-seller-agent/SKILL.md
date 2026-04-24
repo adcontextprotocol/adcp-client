@@ -1277,7 +1277,189 @@ app.post('/api/snap/mcp', async (req, res) => {
 app.listen(3001);
 ```
 
-`createExpressAdapter` gives you four pieces `serve()` would otherwise handle: `rawBodyVerify` (for signed requests), `protectedResourceMiddleware` (RFC 9728 at origin root, not inside the router), `getUrl` (reconstructs the canonical URL with Express's stripped mount prefix — pass to `verifySignatureAsAuthenticator`), and `resetHook` (compliance state reset between storyboards). Scale it to many hostnames with one Express Router per host, dispatched by a Host-header middleware — the 13-adapter pattern.
+`createExpressAdapter` gives you four pieces `serve()` would otherwise handle: `rawBodyVerify` (for signed requests), `protectedResourceMiddleware` (RFC 9728 at origin root, not inside the router), `getUrl` (reconstructs the canonical URL with Express's stripped mount prefix — pass to `verifySignatureAsAuthenticator`), and `resetHook` (compliance state reset between storyboards).
+
+### Multi-host Express with per-host OAuth AS
+
+The shape when one Node process fronts N hostnames AND each hostname is also its own OAuth 2.1 Authorization Server — the common pattern for white-label sellers, multi-platform adapter fleets (one process → Snap, Meta, TikTok, …), retail media networks with per-brand issuers, etc. `serve()`'s multi-host mode doesn't cover this because it has no composition surface for AS routes ([#887](https://github.com/adcontextprotocol/adcp-client/issues/887)); `createExpressAdapter` does, and the pieces compose as follows.
+
+```typescript
+import express from 'express';
+import {
+  createAdcpServer,
+  createExpressAdapter,
+  verifyBearer,
+  resolveHost,
+  hostname,
+  UnknownHostError,
+} from '@adcp/client/server';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+
+// One entry per hostname you front. Each carries the per-host
+// configuration AND the per-host OAuth provider — the provider is
+// what `mcpAuthRouter` invokes for authorize/token/introspect.
+const adapters = new Map<string, AdapterConfig>([
+  ['snap.agentic-adapters.example.com', snapConfig],
+  ['meta.agentic-adapters.example.com', metaConfig],
+  // ... 13 total in the deployment this recipe was designed around
+]);
+
+const app = express();
+
+// Per-host Express Router, built once at module load and cached.
+// The Router carries: express.json (with rawBody capture), the OAuth
+// AS routes, and the MCP endpoint.
+const routersByHost = new Map<string, express.Router>();
+for (const [host, cfg] of adapters) {
+  const agent = createAdcpServer({
+    name: cfg.name,
+    version: '1.0.0',
+    resolveAccount: async (ref, { authInfo }) => cfg.lookupAccount(ref, authInfo),
+    mediaBuy: cfg.handlers,
+  });
+
+  const adapter = createExpressAdapter({
+    mountPath: `/api/${cfg.slug}`,
+    publicUrl: `https://${host}/api/${cfg.slug}/mcp`,
+    prm: { authorization_servers: [`https://${host}/oauth`] },
+    server: agent,
+  });
+
+  const router = express.Router();
+
+  // Raw-body capture: express.json() drains the stream, but RFC 9421
+  // signature verification needs the exact bytes that were signed.
+  router.use(express.json({ limit: '5mb', verify: adapter.rawBodyVerify }));
+
+  // OAuth 2.1 AS routes — authorize, token, register, introspect, etc.
+  // `cfg.createOAuthProvider()` returns an OAuthServerProvider
+  // specific to this platform (Snap's, Meta's, …). See the two
+  // provider sketches below for the common shapes.
+  router.use(
+    '/oauth',
+    mcpAuthRouter({
+      provider: cfg.createOAuthProvider(),
+      issuerUrl: new URL(`https://${host}/oauth`),
+    })
+  );
+
+  // MCP endpoint. verifyBearer's audience is tied to THIS host's
+  // publicUrl so a token minted for snap.example.com can't be replayed
+  // at meta.example.com.
+  const authenticate = verifyBearer({
+    jwksUri: `https://${host}/oauth/.well-known/jwks.json`,
+    issuer: `https://${host}/oauth`,
+    audience: `https://${host}/api/${cfg.slug}/mcp`,
+  });
+
+  router.post(`/api/${cfg.slug}/mcp`, async (req, res) => {
+    const principal = await authenticate(req);
+    if (!principal) {
+      res.status(401).end();
+      return;
+    }
+    (req as any).auth = {
+      token: principal.token,
+      clientId: principal.principal,
+      scopes: principal.scopes,
+    };
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    try {
+      await agent.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } finally {
+      transport.close();
+    }
+  });
+
+  routersByHost.set(host, router);
+}
+
+// PRM lives at the origin root, BEFORE the host-dispatch middleware —
+// the OAuth grader probes `/.well-known/oauth-protected-resource/<mount>`
+// at the top-level app. Each adapter's `protectedResourceMiddleware`
+// handles its own probe path; the fall-through ordering matters.
+for (const cfg of adapters.values()) {
+  const adapter = createExpressAdapter({
+    mountPath: `/api/${cfg.slug}`,
+    publicUrl: `https://${cfg.host}/api/${cfg.slug}/mcp`,
+    prm: { authorization_servers: [`https://${cfg.host}/oauth`] },
+  });
+  app.use(adapter.protectedResourceMiddleware);
+}
+
+// Host dispatch — resolveHost mirrors serve()'s X-Forwarded-Host /
+// Forwarded / append-vs-replace semantics, so this middleware closes
+// the same attacker-header-flip hole serve() does.
+app.use((req, res, next) => {
+  const host = resolveHost(req, { trustForwardedHost: true });
+  if (!host) {
+    res.status(400).end();
+    return;
+  }
+  const router = routersByHost.get(host);
+  if (!router) {
+    // UnknownHostError shape — keep the routing table off the wire.
+    res.status(404).end();
+    return;
+  }
+  router(req, res, next);
+});
+
+app.listen(3001);
+```
+
+#### OAuth provider shape 1: mint your own JWTs
+
+The straightforward case. You own the IdP, issue JWTs with `aud` bound to `publicUrl`, and `verifyBearer` validates them against your JWKS.
+
+```typescript
+// cfg.createOAuthProvider() returns an OAuthServerProvider that:
+//  - authorize(): runs your login + consent flow, redirects with a code
+//  - exchangeAuthorizationCode(): verifies PKCE, mints a JWT with
+//    `iss = https://<host>/oauth`, `aud = https://<host>/api/<slug>/mcp`,
+//    `sub = <account_id>`, `scope = <granted scopes>`
+//  - revokeToken(), introspect(): as needed
+// JWKS is published under the same host so verifyBearer's remote fetch
+// can discover the signing key.
+```
+
+#### OAuth provider shape 2: pass-through upstream platform tokens
+
+Used when the adapter is a thin proxy over an external IdP (Snap OAuth, Meta OAuth, etc.) and the bearer clients present IS the upstream platform's access token. Your AS is an orchestrator, not an issuer.
+
+```typescript
+// cfg.createOAuthProvider() returns an OAuthServerProvider that:
+//  - authorize(): redirects to the upstream platform's authorize
+//    endpoint, captures the platform's callback, persists the
+//    platform's access/refresh token keyed by YOUR auth code
+//  - exchangeAuthorizationCode(): returns the stored UPSTREAM access
+//    token as the Bearer (not a freshly-minted JWT)
+// Bearer verification on the MCP endpoint is NOT `verifyBearer({...})`
+// — the token isn't your JWT. Options:
+//   a. Upstream JWKS: if the platform publishes one and signs JWTs,
+//      verifyBearer against THEIR JWKS + audience.
+//   b. Introspection (RFC 7662): POST the token to the platform's
+//      introspection endpoint, check `active: true` + scopes.
+//   c. Opaque-token cache: short-lived in-memory cache of verified
+//      tokens, keyed by hash(token), with a TTL.
+// Tracked as a follow-up — see #902 for a
+// `verifyIntrospection({ introspectionUrl })` helper.
+```
+
+Both shapes compose with the multi-host Express scaffold above — swap the provider, the rest stays.
+
+#### Why this scaffold, not `serve()`
+
+`serve()`'s multi-host mode handles the PR side cleanly but has no hook for AS routes. Going to `createExpressAdapter` gives you:
+
+- `rawBodyVerify` for signed-request verification (you'd otherwise have to re-implement express.json body-capture integration)
+- `protectedResourceMiddleware` at the origin root (OAuth graders probe here; mounting inside the router makes them 404)
+- `getUrl` for signature verifier audience reconstruction (Express strips the mount prefix from `req.url`)
+- `resetHook` for conformance-runner storyboard resets
+
+You own: the `mcpAuthRouter` wiring (provider-specific), the per-request `transport.connect()` + `handleRequest()` dance, the host-dispatch middleware. `resolveHost` + `hostname` + `UnknownHostError` from `@adcp/client/server` give you the same security posture as `serve()`'s internal resolution — export and reuse rather than re-deriving.
 
 ### Stdio
 

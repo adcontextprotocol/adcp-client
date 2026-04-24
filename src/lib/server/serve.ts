@@ -304,7 +304,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
 
   const httpServer = createServer(async (req, res) => {
     const { pathname } = new URL(req.url || '', 'http://localhost');
-    const host = resolveHost(req, trustForwardedHost);
+    const host = resolveHost(req, { trustForwardedHost });
 
     // RFC 9728 protected-resource metadata — intentionally auth-free so
     // clients can discover the authorization server before they have a token.
@@ -608,9 +608,12 @@ export function hostname(host: string): string {
 
 /**
  * Resolve the canonical host the request arrived on for multi-host
- * routing and per-host PRM / audience advertisement.
+ * routing and per-host PRM / audience advertisement. Same logic
+ * `serve()` uses internally — exported so callers writing their own
+ * host-dispatch middleware (e.g., behind `createExpressAdapter`) can
+ * match `serve()`'s semantics exactly instead of re-implementing them.
  *
- * When `trustForwardedHost: true`, consults in order:
+ * When `options.trustForwardedHost: true`, consults in order:
  *   1. `X-Forwarded-Host` (most common — Fly, Cloud Run, most ALBs).
  *   2. RFC 7239 `Forwarded: host=...` (spec-standard, less common).
  *   3. `Host`.
@@ -619,7 +622,7 @@ export function hostname(host: string): string {
  * attacker-controlled forwarded header can't flip the advertised OAuth
  * `resource` URL.
  *
- * **Proxy behavior matters when you opt in.** The framework trusts the
+ * **Proxy behavior matters when you opt in.** The helper trusts the
  * FIRST entry in a forwarded chain. That's safe when your proxy
  * OVERWRITES the header on ingress (rewriting the original value from
  * the client). It's UNSAFE when your proxy APPENDS — the attacker gets
@@ -629,9 +632,25 @@ export function hostname(host: string): string {
  *
  * Normalizes to lowercase and preserves port. Returns empty string when
  * no usable header is present (HTTP/1.1 requires `Host`, so this is
- * unusual — factories can branch on it to fail closed).
+ * unusual — callers can branch on it to fail closed).
+ *
+ * @example
+ * ```ts
+ * import express from 'express';
+ * import { resolveHost } from '@adcp/client/server';
+ *
+ * const routersByHost = new Map<string, express.Router>();
+ *
+ * function hostDispatch(req, res, next) {
+ *   const host = resolveHost(req, { trustForwardedHost: true });
+ *   const router = routersByHost.get(host);
+ *   if (!router) return res.status(404).end();
+ *   return router(req, res, next);
+ * }
+ * ```
  */
-function resolveHost(req: IncomingMessage, trustForwardedHost: boolean): string {
+export function resolveHost(req: IncomingMessage, options?: { trustForwardedHost?: boolean }): string {
+  const trustForwardedHost = options?.trustForwardedHost === true;
   if (trustForwardedHost) {
     const xfh = firstHeaderValue(req.headers['x-forwarded-host']);
     if (xfh) {

@@ -395,6 +395,55 @@ describe('serve() multi-host', () => {
     server.close();
   });
 
+  test('resolveHost() export matches serve()s internal resolution', () => {
+    const { resolveHost } = require('../../dist/lib/index.js');
+
+    // Default (no options) ignores X-Forwarded-Host.
+    assert.strictEqual(
+      resolveHost({ headers: { host: 'real.example.com', 'x-forwarded-host': 'attacker.example.com' } }),
+      'real.example.com'
+    );
+
+    // Options-bag, trustForwardedHost: false — same as default.
+    assert.strictEqual(
+      resolveHost(
+        { headers: { host: 'real.example.com', 'x-forwarded-host': 'attacker.example.com' } },
+        { trustForwardedHost: false }
+      ),
+      'real.example.com'
+    );
+
+    // Trust on: X-Forwarded-Host wins.
+    assert.strictEqual(
+      resolveHost(
+        { headers: { host: 'internal.fly', 'x-forwarded-host': 'snap.example.com' } },
+        { trustForwardedHost: true }
+      ),
+      'snap.example.com'
+    );
+
+    // Trust on: X-Forwarded-Host first-entry wins, lowercase, port preserved.
+    assert.strictEqual(
+      resolveHost(
+        { headers: { host: 'internal.fly', 'x-forwarded-host': 'SNAP.example.com:8443, cdn.example.com' } },
+        { trustForwardedHost: true }
+      ),
+      'snap.example.com:8443'
+    );
+
+    // Trust on: RFC 7239 Forwarded fallback.
+    assert.strictEqual(
+      resolveHost(
+        { headers: { host: 'internal.fly', forwarded: 'host=snap.example.com' } },
+        { trustForwardedHost: true }
+      ),
+      'snap.example.com'
+    );
+
+    // Empty on no Host header at all.
+    assert.strictEqual(resolveHost({ headers: {} }, { trustForwardedHost: true }), '');
+  });
+
   test('hostname() helper strips port (including IPv6 brackets)', () => {
     const { hostname } = require('../../dist/lib/index.js');
     assert.strictEqual(hostname('snap.example.com'), 'snap.example.com');
