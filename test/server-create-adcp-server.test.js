@@ -18,7 +18,7 @@ const { adcpError } = require('../dist/lib/server/errors');
 function createAdcpServer(config) {
   return _createAdcpServer({
     ...config,
-    validation: { responses: 'off', ...(config?.validation ?? {}) },
+    validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });
 }
 

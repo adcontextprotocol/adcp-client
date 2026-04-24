@@ -25,7 +25,7 @@ function startAgent(config) {
         name: 'Seed Test Agent',
         version: '1.0.0',
         ...config,
-        validation: { responses: 'off', ...(config?.validation ?? {}) },
+        validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
       }),
     { port: 0, onListening: () => {} }
   );

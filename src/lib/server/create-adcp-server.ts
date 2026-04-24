@@ -35,7 +35,7 @@
  * ```
  */
 
-import type { z } from 'zod';
+import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
@@ -1445,6 +1445,13 @@ const MUT: ToolAnnotation = { readOnlyHint: false, destructiveHint: false };
 const DEST: ToolAnnotation = { readOnlyHint: false, destructiveHint: true };
 const IDEMP: ToolAnnotation = { readOnlyHint: false, idempotentHint: true };
 
+// Passthrough schema for every framework-registered tool (#909). See
+// the comment at the registerTool call sites for rationale — short
+// version: makes our AJV validator authoritative on both transports
+// without destroying args on MCP when the SDK's tool dispatcher would
+// otherwise coerce `undefined` into the handler for schemaless tools.
+const PASSTHROUGH_INPUT_SCHEMA = z.object({}).passthrough();
+
 const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
   get_products: { wrap: productsResponse, annotations: RO },
@@ -1997,21 +2004,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
   } = config;
 
-  // Asymmetric defaults, gated on `process.env.NODE_ENV`:
+  // Defaults gated on `process.env.NODE_ENV`:
   //   - Production → both sides `'off'` (zero AJV overhead; trust the
   //     handler after its test suite has exercised it).
-  //   - Dev/test/CI → `requests: 'warn'` (log incoming payloads that don't
-  //     match the bundled AdCP schema but still dispatch, so upstream
-  //     schema tightenings surface as diagnostics rather than hard
-  //     breakage); `responses: 'strict'` (handler drift fails with
-  //     VALIDATION_ERROR and the offending field path — catches
-  //     sparse-response bugs at development time).
+  //   - Dev/test/CI → BOTH sides `'strict'`. Request validation is now
+  //     authoritative on both transports (#909) — we dropped the SDK
+  //     Zod from `registerTool` inputSchema, so if our framework validator
+  //     doesn't reject malformed payloads they reach the handler
+  //     unchecked over A2A. Matching responses' existing `'strict'`
+  //     default keeps behavior consistent across the wire in both
+  //     directions.
   // Explicit `validation: { requests, responses }` on the config always
   // wins. `process.env.NODE_ENV` matches the convention every other SDK
   // consumer already tunes (Express, React, etc.); containers/CI that
   // want prod-like behavior set NODE_ENV=production before start.
   const isProduction = process.env.NODE_ENV === 'production';
-  const requestValidationMode = validationConfig?.requests ?? (isProduction ? 'off' : 'warn');
+  const requestValidationMode = validationConfig?.requests ?? (isProduction ? 'off' : 'strict');
   const responseValidationMode = validationConfig?.responses ?? (isProduction ? 'off' : 'strict');
 
   // Enforce lock-step between the `signed-requests` specialism claim and the
@@ -2589,24 +2597,31 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
       };
 
-      // When idempotency is wired and the tool is mutating, relax
-      // `idempotency_key` to optional in the MCP-level input schema. The
-      // middleware is authoritative for this field and returns a properly-
-      // shaped `adcp_error` (with `code`, `field`, `recovery`) on missing
-      // or malformed keys. If we let the MCP SDK's schema validator
-      // reject the request first, buyers get a text-only `-32602` error
-      // instead of the structured compliance error — breaking the
-      // idempotency storyboard's `error_code` validation.
-      const registersAsMutating = isMutatingTask(toolName);
-      const idempKeyField = (schema.shape as any).idempotency_key;
-      const toolShape =
-        idempotency && registersAsMutating && typeof idempKeyField?.optional === 'function'
-          ? { ...(schema.shape as any), idempotency_key: idempKeyField.optional() }
-          : schema.shape;
+      // Register a PASSTHROUGH input schema (#909). The MCP SDK's Zod
+      // validator only fires on the MCP transport — A2A calls the
+      // handler via AdcpServer.invoke(), bypassing it. Registering the
+      // real per-tool Zod schema meant MCP and A2A produced different
+      // verdicts and different error shapes for the same malformed
+      // request. Our framework request validator (AJV, loaded from
+      // schemas/cache/<version>/) runs inside the handler closure on
+      // BOTH transports and produces a structured adcp_error envelope;
+      // make it authoritative.
+      //
+      // Passthrough (not omit): the SDK's `validateToolInput` returns
+      // `undefined` when `inputSchema` is absent (see @modelcontextprotocol/sdk
+      // server/mcp.js), and passes that `undefined` verbatim to the
+      // handler — destroying the actual arguments. `z.object({}).passthrough()`
+      // keeps every key intact, so args still reach the closure.
+      //
+      // Trade-off: MCP `tools/list` publishes `{ type: 'object' }` for
+      // every tool (no per-tool parameter schema). AdCP-native
+      // discovery via `get_adcp_capabilities` already works over both
+      // transports; upstream #3057 proposes a `get_schema` capability
+      // tool for per-tool shape discovery.
       server.registerTool(
         toolName,
         {
-          inputSchema: toolShape as Parameters<typeof server.registerTool>[1]['inputSchema'],
+          inputSchema: PASSTHROUGH_INPUT_SCHEMA,
           ...(meta?.annotations != null && { annotations: meta.annotations }),
         },
         toolHandler as Parameters<typeof server.registerTool>[2]
@@ -2766,11 +2781,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
   }
 
-  const capSchema = TOOL_REQUEST_SCHEMAS['get_adcp_capabilities'] as { shape: Record<string, unknown> } | undefined;
+  // Passthrough inputSchema — framework validation is authoritative on
+  // both transports (#909). Same rationale as the domain-tool loop above.
   server.registerTool(
     'get_adcp_capabilities',
     {
-      inputSchema: (capSchema?.shape ?? {}) as Parameters<typeof server.registerTool>[1]['inputSchema'],
+      inputSchema: PASSTHROUGH_INPUT_SCHEMA,
       annotations: { readOnlyHint: true },
     },
     (async (params: any) => {

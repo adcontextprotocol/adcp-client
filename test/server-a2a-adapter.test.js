@@ -13,7 +13,7 @@ function createAdcpServer(config) {
   return _createAdcpServer({
     ...config,
     stateStore: config?.stateStore ?? new InMemoryStateStore(),
-    validation: { responses: 'off', ...(config?.validation ?? {}) },
+    validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });
 }
 

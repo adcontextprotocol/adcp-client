@@ -31,6 +31,10 @@ function makeAgent(shape) {
       createAdcpServer({
         name: 'Uniform Error Test Agent',
         version: '1.0.0',
+        // These tests probe seller misbehavior (id echo, code-leak) — the
+        // framework must NOT short-circuit to VALIDATION_ERROR on the probe
+        // payload, or the invariant never sees the seller's response.
+        validation: { requests: 'off', responses: 'off' },
         governance: {
           getPropertyList: async (params, ctx) => {
             const token = ctx.authInfo?.token;
