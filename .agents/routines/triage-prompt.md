@@ -69,7 +69,23 @@ If > 0, another session beat you to this issue within 10 minutes.
 **Skip.** Don't apply `claude-triaged`. Don't spawn experts. Note
 the skip in the run summary.
 
+## Manual nudge — overrides the already-engaged check
+
+If the event context contains a `MANUAL NUDGE:` line, a repo member
+explicitly requested triage via `/claude-triage`. **Skip the
+already-engaged check** and proceed with full triage. The nudge is
+the explicit request.
+
+Modifiers after the command bias the outcome:
+- `/claude-triage execute` — lean toward Execute
+- `/claude-triage clarify` — force clarifying-question comment
+- `/claude-triage defer` — force defer
+
+Without a modifier, standard four-outcome logic applies.
+
 ## Already-engaged check — before any expert work
+
+(Skip if the event is a MANUAL NUDGE — see above.)
 
 You can't see Conductor workspaces, local drafts, or Slack. A human
 may be actively working on an issue without any GitHub signal.
