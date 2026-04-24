@@ -1,9 +1,10 @@
 /**
  * Schema drift detection for storyboard YAML validations.
  *
- * Catches when field_present / field_value paths in storyboard YAML
- * reference fields that don't exist in the corresponding Zod response
- * schemas, and when context extractors reference tasks without schemas.
+ * Catches when field_present / field_value / field_value_or_absent paths in
+ * storyboard YAML reference fields that don't exist in the corresponding
+ * Zod response schemas, and when context extractors reference tasks without
+ * schemas.
  */
 
 const { describe, it } = require('node:test');
@@ -136,7 +137,10 @@ function collectFieldValidations(storyboards) {
         const isErrorStep = step.validations.some(v => v.check === 'is_error');
         if (isErrorStep) continue;
         for (const v of step.validations) {
-          if ((v.check === 'field_present' || v.check === 'field_value') && v.path) {
+          if (
+            (v.check === 'field_present' || v.check === 'field_value' || v.check === 'field_value_or_absent') &&
+            v.path
+          ) {
             if (ENVELOPE_PATHS.has(v.path)) continue; // protocol-level, not per-schema
             entries.push({
               storyboard: sb.id,
@@ -166,7 +170,10 @@ describe('storyboard schema drift', () => {
   });
 
   it('found field validations to check', () => {
-    assert.ok(fieldValidations.length > 0, 'Expected at least one field_present or field_value validation');
+    assert.ok(
+      fieldValidations.length > 0,
+      'Expected at least one field_present, field_value, or field_value_or_absent validation'
+    );
   });
 
   // Drift entries cleared by upstream fixes that haven't shipped in the
@@ -230,6 +237,27 @@ describe('storyboard schema drift', () => {
     const valueValidations = fieldValidations.filter(v => v.check === 'field_value');
 
     for (const entry of valueValidations) {
+      const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
+      if (!schema) continue;
+
+      const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
+      const skip = skipReason(key);
+      it(`${entry.storyboard}/${entry.step}: ${entry.path} exists in ${entry.task} schema`, { skip }, () => {
+        const segments = parsePath(entry.path);
+        const reachable = isPathReachable(schema, segments);
+        assert.ok(
+          reachable,
+          `Path "${entry.path}" is not reachable in ${entry.task} response schema. ` +
+            `Segments: ${JSON.stringify(segments)}`
+        );
+      });
+    }
+  });
+
+  describe('field_value_or_absent paths are reachable in response schemas', () => {
+    const tolerantValidations = fieldValidations.filter(v => v.check === 'field_value_or_absent');
+
+    for (const entry of tolerantValidations) {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
       if (!schema) continue;
 

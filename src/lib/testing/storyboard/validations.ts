@@ -87,6 +87,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldPresent(validation, resolveTarget(ctx));
     case 'field_value':
       return validateFieldValue(validation, resolveTarget(ctx));
+    case 'field_value_or_absent':
+      return validateFieldValueOrAbsent(validation, resolveTarget(ctx));
     case 'status_code':
       return requireTaskResult(ctx, validation, tr => validateStatusCode(validation, tr));
     case 'error_code':
@@ -721,6 +723,89 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
     json_pointer: pointer,
     expected: validation.value,
     actual: actual ?? null,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// field_value_or_absent: envelope-tolerant variant of field_value
+//
+// Pass when the field is absent OR present-and-matching. Fail only when the
+// field is present with a disallowed value. Lets a storyboard keep positive
+// coverage on a spec-optional field without penalizing agents that omit it.
+// Spec: adcontextprotocol/adcp #3013 envelope `replayed` semantics.
+// ────────────────────────────────────────────────────────────
+
+function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  if (!validation.path) {
+    return {
+      check: 'field_value_or_absent',
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: 'No path specified for field_value_or_absent validation',
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const actual = resolvePath(taskResult.data, validation.path);
+  const pointer = toJsonPointer(validation.path);
+
+  // Absent → pass. The check only fires when the field is present.
+  if (actual === undefined) {
+    return {
+      check: 'field_value_or_absent',
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+
+  // Present → fall through to the same value / allowed_values semantics as field_value.
+  if (validation.allowed_values?.length) {
+    const passed = validation.allowed_values.some(v => valuesMatch(actual, v));
+    if (passed) {
+      return {
+        check: 'field_value_or_absent',
+        passed: true,
+        description: validation.description,
+        path: validation.path,
+        json_pointer: pointer,
+      };
+    }
+    return {
+      check: 'field_value_or_absent',
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Expected absent or one of ${JSON.stringify(validation.allowed_values)}, got ${JSON.stringify(actual)}`,
+      json_pointer: pointer,
+      expected: validation.allowed_values,
+      actual,
+    };
+  }
+
+  const passed = valuesMatch(actual, validation.value);
+  if (passed) {
+    return {
+      check: 'field_value_or_absent',
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+  return {
+    check: 'field_value_or_absent',
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `Expected absent or ${JSON.stringify(validation.value)}, got ${JSON.stringify(actual)}`,
+    json_pointer: pointer,
+    expected: validation.value,
+    actual,
   };
 }
 

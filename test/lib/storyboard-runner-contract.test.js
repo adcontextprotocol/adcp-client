@@ -71,6 +71,155 @@ describe('runner-output contract: validation_result', () => {
     assert.strictEqual(result.actual, 'canceled');
   });
 
+  describe('field_value_or_absent', () => {
+    test('passes when the field is absent', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'replayed',
+          allowed_values: [false],
+          description: 'replayed is either absent or false on fresh execution',
+        },
+        { taskResult: { success: true, data: {} } }
+      );
+      assert.strictEqual(result.passed, true);
+      assert.strictEqual(result.json_pointer, '/replayed');
+      assert.strictEqual(result.check, 'field_value_or_absent');
+    });
+
+    test('passes when present and in allowed_values', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'replayed',
+          allowed_values: [false],
+          description: 'replayed is either absent or false on fresh execution',
+        },
+        { taskResult: { success: true, data: { replayed: false } } }
+      );
+      assert.strictEqual(result.passed, true);
+    });
+
+    test('fails when present with a disallowed value', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'replayed',
+          allowed_values: [false],
+          description: 'replayed is either absent or false on fresh execution',
+        },
+        { taskResult: { success: true, data: { replayed: true } } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.json_pointer, '/replayed');
+      assert.deepStrictEqual(result.expected, [false]);
+      assert.strictEqual(result.actual, true);
+    });
+
+    test('with scalar value fails only on present-mismatch', () => {
+      const present = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'status',
+          value: 'active',
+          description: 'status is either absent or active',
+        },
+        { taskResult: { success: true, data: { status: 'paused' } } }
+      );
+      assert.strictEqual(present.passed, false);
+      assert.strictEqual(present.expected, 'active');
+      assert.strictEqual(present.actual, 'paused');
+
+      const absent = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'status',
+          value: 'active',
+          description: 'status is either absent or active',
+        },
+        { taskResult: { success: true, data: {} } }
+      );
+      assert.strictEqual(absent.passed, true);
+    });
+
+    test('with a null field fails (null is present, not absent)', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'replayed',
+          allowed_values: [false],
+          description: 'replayed is either absent or false',
+        },
+        { taskResult: { success: true, data: { replayed: null } } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.actual, null);
+    });
+
+    // `resolvePath` returns `undefined` whether the key is truly missing or
+    // present with an explicit `undefined` value (JSON cannot encode this case
+    // anyway, but native handlers can produce it). The matcher treats both
+    // the same — absent semantics win. Pinning this disambiguates for any
+    // implementor walking the runner against a non-JSON transport.
+    test('treats an explicit `undefined` value the same as a missing key', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'replayed',
+          allowed_values: [false],
+          description: 'replayed is either absent or false',
+        },
+        { taskResult: { success: true, data: { replayed: undefined } } }
+      );
+      assert.strictEqual(result.passed, true);
+    });
+
+    // A broken chain mid-path (intermediate segment missing) resolves to
+    // `undefined`, which the matcher routes to the absent-passes branch.
+    // Same outcome as the leaf being missing — the whole chain "is absent."
+    test('broken chain in the middle of the path is treated as absent', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'envelope.status.replayed',
+          allowed_values: [false],
+          description: 'envelope.status.replayed is either absent or false',
+        },
+        { taskResult: { success: true, data: { envelope: {} } } }
+      );
+      assert.strictEqual(result.passed, true);
+    });
+
+    // Empty `allowed_values` falls through to the scalar `value` branch, same
+    // as `field_value`. With neither set, the matcher compares against
+    // `undefined`. Storyboards shouldn't emit this shape, but pinning the
+    // behavior means a silent authoring bug surfaces as a failing check
+    // rather than silently passing.
+    test('empty allowed_values falls through to `value` comparison (same as field_value)', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'status',
+          allowed_values: [],
+          value: 'active',
+          description: 'status is either absent or active',
+        },
+        { taskResult: { success: true, data: { status: 'active' } } }
+      );
+      assert.strictEqual(result.passed, true);
+    });
+
+    test('missing `path` returns a structured error', () => {
+      const result = runOne(
+        { check: 'field_value_or_absent', allowed_values: [false], description: 'no path supplied' },
+        { taskResult: { success: true, data: {} } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.json_pointer, null);
+      assert.match(result.error, /No path specified for field_value_or_absent/);
+    });
+  });
+
   test('response_schema failure carries schema_id, schema_url, AJV-shaped actual', () => {
     const result = runOne(
       { check: 'response_schema', description: 'Response matches get-adcp-capabilities-response.json schema' },
