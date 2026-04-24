@@ -28,7 +28,7 @@ npx @adcp/client@latest storyboard run \
 
 If all five pass and your skill's specialism-specific checks below pass, you're conformant. The rest of this page explains why each check exists and how to debug failures.
 
-**Serving both transports (MCP + A2A)?** If your agent mounts MCP and A2A on the same process (via `serve()` + `createA2AAdapter`), run command sets 1–2 against both endpoints — storyboards and capability checks are protocol-independent. MCP validators target the `/mcp` sub-path; A2A validators target the base URL. See [BUILD-AN-AGENT.md § A2A transport](./BUILD-AN-AGENT.md#a2a-transport-preview) for the dual-mount setup.
+**Serving both transports (MCP + A2A)?** If your agent mounts MCP and A2A on the same process (via `serve()` + `createA2AAdapter`), run command sets 1–2 against both endpoints — storyboards and capability checks are protocol-independent. MCP validators target the `/mcp` sub-path; A2A validators target the base URL. See [BUILD-AN-AGENT.md § Exposing your agent over A2A](./BUILD-AN-AGENT.md#exposing-your-agent-over-a2a-preview) for the dual-mount setup.
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 

@@ -474,50 +474,6 @@ const httpServer = createServer(async (req, res) => {
 });
 ```
 
-### A2A transport (preview)
-
-To serve A2A alongside MCP from the same process, use `createA2AAdapter`. Both transports share the same `AdcpServer` instance — handlers, idempotency store, and `resolveAccount` are all shared; no duplication required.
-
-```typescript
-import express from 'express';
-import { createAdcpServer, serve, createA2AAdapter } from '@adcp/client';
-
-const adcp = createAdcpServer({
-  name: 'My Publisher',
-  version: '1.0.0',
-  mediaBuy: { /* handlers */ },
-});
-
-// MCP — as today
-serve(() => adcp);
-
-// A2A — preview, same handlers
-const a2a = createA2AAdapter({
-  server: adcp,
-  agentCard: {
-    name: 'My Publisher',
-    description: 'Display and video inventory',
-    url: 'https://publisher.example/a2a',
-    version: '1.0.0',
-    provider: { organization: 'My Co', url: 'https://publisher.example' },
-    securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
-  },
-  async authenticate(req) {
-    const token = req.headers.authorization?.replace(/^Bearer\s+/, '');
-    return token ? { token, clientId: 'buyer' } : null;
-  },
-});
-
-const app = express();
-app.use(express.json());
-// A2A spec requires the agent card at both the origin root and /.well-known/agent-card.json
-app.use('/.well-known/agent-card.json', a2a.agentCardHandler);
-app.use('/a2a', a2a.jsonRpcHandler);
-app.listen(3001);
-```
-
-`createA2AAdapter` seeds `skills[]`, `capabilities`, and `defaultInputModes` from `get_adcp_capabilities` automatically — supply only identity fields (`name`, `description`, `url`, `provider`, `securitySchemes`). Validators running `--protocol a2a` point at the base URL (`http://localhost:3001`), not the `/a2a` sub-path. For A2A validation, see [VALIDATE-YOUR-AGENT.md § Serving both transports](./VALIDATE-YOUR-AGENT.md#serving-both-transports-mcp--a2a).
-
 ## Testing Your Agent
 
 ### Tool Discovery
