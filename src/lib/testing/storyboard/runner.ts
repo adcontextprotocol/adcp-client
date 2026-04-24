@@ -488,11 +488,18 @@ async function executeStoryboardPass(
   // "everything passed".
   const hasExecutableSteps = storyboard.phases.some(p => p.steps.length > 0);
   if (!hasExecutableSteps) {
-    const detail = `Storyboard "${storyboard.id}" has no executable phases — populate \`phases[].steps\` or remove the storyboard.`;
+    const isScenarioComposed = (storyboard.requires_scenarios?.length ?? 0) > 0;
+    const detail = isScenarioComposed
+      ? `Storyboard "${storyboard.id}" has no local phases — its test surface is fully composed from the scenarios listed in \`requires_scenarios\`.`
+      : `Storyboard "${storyboard.id}" has no executable phases — populate \`phases[].steps\` or remove the storyboard.`;
     const syntheticStep: StoryboardStepResult = {
       storyboard_id: storyboard.id,
-      step_id: '__no_phases__',
-      phase_id: '__no_phases__',
+      // Synthetic sentinel. Functionally non-colliding because downstream
+      // consumers (CLI report, storyboard-tracks) key on `skip_reason`,
+      // not `phase_id`/`step_id`. Matches the documented `RunnerSkipReason`
+      // vocabulary in storyboard/types.ts.
+      step_id: 'no_phases',
+      phase_id: 'no_phases',
       title: 'Storyboard has no executable phases',
       task: '',
       passed: true,
@@ -506,9 +513,9 @@ async function executeStoryboardPass(
       extraction: { path: 'none' },
     };
     phaseResults.push({
-      phase_id: '__no_phases__',
+      phase_id: 'no_phases',
       phase_title: 'No phases',
-      passed: false,
+      passed: true, // skipped step is neutral — phase must not fail
       steps: [syntheticStep],
       duration_ms: 0,
     });
@@ -829,11 +836,19 @@ async function executeStoryboardPass(
   // required_tools filtered out everything) would pass vacuously. (c) makes
   // assertions gating — a run with all validations green but a cross-step
   // invariant broken is not conformant.
-  const requiredPhasesPassed = phaseResults.some((p, idx) => {
-    const phaseDef = storyboard.phases[idx];
-    if (!phaseDef || phaseDef.optional || !p.passed) return false;
-    return p.steps.some(s => !s.skipped && s.passed);
-  });
+  // When no phases had executable steps the storyboard result is a skip, not a
+  // failure. The index-aligned guard below would hit storyboard.phases[0] ===
+  // undefined for an empty-phases storyboard and force requiredPhasesPassed to
+  // false, flipping overall_passed to false. Short-circuit to true so the
+  // no-phases sentinel produces overall_passed: true (consistent with how
+  // buildNotApplicableStoryboardResult shapes its result in comply.ts).
+  const requiredPhasesPassed =
+    !hasExecutableSteps ||
+    phaseResults.some((p, idx) => {
+      const phaseDef = storyboard.phases[idx];
+      if (!phaseDef || phaseDef.optional || !p.passed) return false;
+      return p.steps.some(s => !s.skipped && s.passed);
+    });
   // Prepend the pre-flight seeding phase now that every consumer that
   // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
   // order matches execution order.
