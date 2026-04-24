@@ -187,6 +187,37 @@ describe('schema-driven validation', () => {
       assert.deepStrictEqual(err.details.issues, issues);
     });
 
+    test('oneOf rejections carry variant metadata', async () => {
+      // Malformed create_media_buy: account has account_id AND brand, matching
+      // neither variant. Enrichment should expose both variants' required[].
+      const res = validateRequest('create_media_buy', {
+        idempotency_key: '00000000-0000-0000-0000-000000000000',
+        account: { account_id: 'acme', brand: { domain: 'acme.com' } },
+        brand: { domain: 'acme.com' },
+        start_time: '2026-05-01T00:00:00Z',
+        end_time: '2026-05-31T23:59:59Z',
+        packages: [{ buyer_ref: 'p1', product_id: 'p1', budget: 10, pricing_option_id: 'po1' }],
+      });
+      assert.strictEqual(res.valid, false);
+      const oneOfIssue = res.issues.find(i => i.keyword === 'oneOf' && i.pointer === '/account');
+      assert.ok(oneOfIssue, 'oneOf issue on /account must be present');
+      assert.ok(Array.isArray(oneOfIssue.variants), 'variants must be enriched onto the oneOf issue');
+      assert.strictEqual(oneOfIssue.variants.length, 2, 'account has 2 variants in AdCP 3.0');
+      // Variant 0: account_id only
+      assert.deepStrictEqual(oneOfIssue.variants[0].required, ['account_id']);
+      // Variant 1: brand + operator (sandbox optional)
+      assert.deepStrictEqual(oneOfIssue.variants[1].required, ['brand', 'operator']);
+      // Non-oneOf issues must NOT carry variants (keeps envelope compact)
+      const nonOneOf = res.issues.filter(i => i.keyword !== 'oneOf' && i.keyword !== 'anyOf');
+      for (const issue of nonOneOf) {
+        assert.strictEqual(
+          issue.variants,
+          undefined,
+          `issue at ${issue.pointer} (keyword=${issue.keyword}) must not have variants`
+        );
+      }
+    });
+
     test('builds an L3 error payload for adcpError() with dual-location issues', () => {
       const issues = [
         { pointer: '/media_buy_id', message: 'is required', keyword: 'required', schemaPath: '#/required' },
