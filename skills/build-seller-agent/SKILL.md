@@ -1144,7 +1144,7 @@ Auth is not wired in the example — see [§ Protecting your agent](#protecting-
 Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in the factory, and turn on `trustForwardedHost` when a proxy terminates TLS:
 
 ```typescript
-import { serve, createAdcpServer, verifyBearer } from '@adcp/client';
+import { serve, createAdcpServer, verifyBearer, UnknownHostError } from '@adcp/client';
 
 // Host → adapter config. Whatever shape suits your deployment (DB, env, static).
 const adapters = new Map<string, { name: string; handlers: MediaBuyHandlers }>([
@@ -1156,7 +1156,9 @@ const adapters = new Map<string, { name: string; handlers: MediaBuyHandlers }>([
 serve(
   ctx => {
     const cfg = adapters.get(ctx.host);
-    if (!cfg) throw new Error(`Unknown host: ${ctx.host}`);
+    // UnknownHostError → 404 (generic body, routing table stays off the wire).
+    // Any other thrown error still surfaces as 500.
+    if (!cfg) throw new UnknownHostError(`No adapter configured for ${ctx.host}`);
     return createAdcpServer({
       name: cfg.name,
       version: '1.0.0',
@@ -1174,8 +1176,11 @@ serve(
     authenticate: verifyBearer({
       jwksUri: process.env.JWKS_URI,
       issuer: process.env.ISSUER,
-      // Per-host audience — reads `publicUrl(host)` back off the request.
-      audience: req => `https://${req.headers['x-forwarded-host'] ?? req.headers.host}/mcp`,
+      // Derive the JWT audience from the SAME publicUrl serve() advertises
+      // for this host. Never read X-Forwarded-Host here directly — ctx.host
+      // already respects trustForwardedHost, but publicUrl is better because
+      // the audience check and the PRM `resource` URL can't drift.
+      audience: (_req, { publicUrl }) => publicUrl!,
     }),
   }
 );
@@ -1183,7 +1188,11 @@ serve(
 
 Each unique host runs its resolver once and the result is cached. Every host advertises its own RFC 9728 `resource` URL, the 401 challenge carries the host's `resource_metadata` URL, and the factory sees the resolved host so it can return host-specific handlers. Auth, RFC 9421 signature verification, idempotency, and governance composition all stay inside `serve()` — nothing extra to re-own.
 
+**Audience binding: use the ctx-form callback.** `audience: (req, { publicUrl }) => publicUrl` is the safest shape — the JWT audience check is guaranteed to match what RFC 9728 PRM advertises for this host, and `publicUrl` already follows `serve()`'s host resolution. `audience: (req) => ...` also works but you own the security: don't read `X-Forwarded-Host` there directly (it bypasses `trustForwardedHost`), and don't string-concat the mount path (it breaks silently if the mount path changes).
+
 **Set `trustForwardedHost: true` only when upstream sanitizes `X-Forwarded-Host`.** Without the flag, the framework reads `Host` directly — an attacker-controlled `X-Forwarded-Host` can't influence which adapter handles the request or which audience the advertised PRM carries. With the flag, you're telling `serve()` that your proxy already filtered spoofed values.
+
+**Unknown hosts: throw `UnknownHostError` from the factory.** `serve()` catches it and responds 404 with a generic body (the routing table never crosses the wire). Throwing any other `Error` stays as a 500 so unrelated bugs remain loud.
 
 ### Express + OAuth Authorization Server in one process
 

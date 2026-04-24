@@ -546,6 +546,7 @@ export {
   InMemoryTaskStore,
   isTerminal,
   serve,
+  UnknownHostError,
   registerTestController,
   handleTestControllerRequest,
   TestControllerError,
@@ -586,6 +587,8 @@ export {
   IDEMPOTENCY_MIGRATION,
   cleanupExpiredIdempotency,
   hashPayload,
+  getServeRequestContext,
+  ADCP_SERVE_REQUEST_CONTEXT,
 } from './server';
 export type {
   AdcpErrorOptions,

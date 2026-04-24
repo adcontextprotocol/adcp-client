@@ -328,6 +328,73 @@ describe('serve() multi-host', () => {
     server.close();
   });
 
+  test('UnknownHostError from factory maps to 404 (not 500)', async () => {
+    const { UnknownHostError } = require('../../dist/lib/index.js');
+    const factory = ctx => {
+      if (ctx.host.startsWith('known.')) return new McpServer({ name: 'Test', version: '1.0.0' });
+      throw new UnknownHostError(`no adapter for ${ctx.host}`);
+    };
+    const server = serve(factory, { port: 0, onListening: () => {} });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    const res = await request(port, { host: `unknown.example.com:${port}` });
+    assert.strictEqual(res.status, 404, 'UnknownHostError must map to 404');
+    // Body is a generic "Not found" — the routing table never crosses the wire.
+    assert.ok(!res.body.includes('unknown.example.com'), 'host must not appear in 404 body');
+
+    server.close();
+  });
+
+  test('UnknownHostError from publicUrl resolver maps to 404 on PRM probe', async () => {
+    const { UnknownHostError } = require('../../dist/lib/index.js');
+    const factory = () => new McpServer({ name: 'Test', version: '1.0.0' });
+    const server = serve(factory, {
+      port: 0,
+      publicUrl: host => {
+        if (host.startsWith('known.')) return `https://${host.split(':')[0]}/mcp`;
+        throw new UnknownHostError(host);
+      },
+      protectedResource: { authorization_servers: ['https://auth.example.com'] },
+      onListening: () => {},
+    });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    const res = await request(port, {
+      method: 'GET',
+      path: '/.well-known/oauth-protected-resource/mcp',
+      host: `unknown.example.com:${port}`,
+    });
+    assert.strictEqual(res.status, 404);
+
+    server.close();
+  });
+
+  test('ServeRequestContext stamped on req before authenticate runs', async () => {
+    const { getServeRequestContext } = require('../../dist/lib/index.js');
+    const seen = [];
+    const factory = () => new McpServer({ name: 'Test', version: '1.0.0' });
+    const server = serve(factory, {
+      port: 0,
+      publicUrl: host => `https://${host.split(':')[0]}/mcp`,
+      authenticate: req => {
+        seen.push(getServeRequestContext(req));
+        return { principal: 'test' };
+      },
+      onListening: () => {},
+    });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    await request(port, { host: `snap.example.com:${port}` });
+    assert.strictEqual(seen.length, 1);
+    assert.strictEqual(seen[0].host, `snap.example.com:${port}`);
+    assert.strictEqual(seen[0].publicUrl, 'https://snap.example.com/mcp');
+
+    server.close();
+  });
+
   test('function-form publicUrl with no protectedResource is allowed', async () => {
     // publicUrl-only mode (no PRM advertising). Factory sees the host so
     // an adapter can pick a handler set without ever publishing OAuth.

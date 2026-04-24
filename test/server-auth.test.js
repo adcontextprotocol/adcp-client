@@ -603,3 +603,156 @@ describe('respondUnauthorized', () => {
     assert.strictEqual(status, 403);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cryptographic backstop: multi-host JWT audience isolation
+//
+// Named test for the invariant the entire multi-host surface rests on: a
+// token minted for host A, presented against the SAME Node process at host
+// B, MUST fail audience validation. Everything else (PRM per-host, factory
+// routing, trustForwardedHost) is compensating controls around this one
+// property. If it breaks, cross-tenant token replay is live.
+// ---------------------------------------------------------------------------
+
+describe('multi-host JWT audience isolation (cross-host replay)', () => {
+  let jose;
+  let keyPair;
+  let jwksServer;
+  let jwksPort;
+  let agentServer;
+  let agentPort;
+
+  before(async () => {
+    jose = await import('jose');
+    keyPair = await jose.generateKeyPair('RS256', { modulusLength: 2048, extractable: true });
+    const jwk = await jose.exportJWK(keyPair.publicKey);
+    jwk.kid = 'test-kid';
+    jwk.alg = 'RS256';
+    jwk.use = 'sig';
+    const http = require('http');
+    jwksServer = http.createServer((req, res) => {
+      if (req.url === '/jwks.json') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ keys: [jwk] }));
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    await new Promise(r => jwksServer.listen(0, r));
+    jwksPort = jwksServer.address().port;
+
+    // Multi-host serve() with a ctx-form audience callback: audience
+    // MUST be derived from serve()'s resolved publicUrl, NOT read off
+    // any header. This is the security-critical path we're validating.
+    await new Promise(resolve => {
+      const srv = serve(() => createAgent(), {
+        port: 0,
+        publicUrl: host => `https://${host.split(':')[0]}/mcp`,
+        protectedResource: host => ({
+          authorization_servers: [`https://${host.split(':')[0]}/oauth`],
+        }),
+        authenticate: verifyBearer({
+          jwksUri: `http://127.0.0.1:${jwksPort}/jwks.json`,
+          issuer: 'https://iss.example',
+          audience: (_req, { publicUrl }) => publicUrl,
+        }),
+        onListening: url => {
+          agentServer = srv;
+          agentPort = new URL(url).port;
+          resolve();
+        },
+      });
+    });
+  });
+
+  after(() => {
+    if (agentServer) agentServer.close();
+    if (jwksServer) jwksServer.close();
+  });
+
+  async function mintForAudience(audience) {
+    return new jose.SignJWT({ sub: 'user_1', scope: 'read' })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-kid' })
+      .setIssuer('https://iss.example')
+      .setAudience(audience)
+      .setExpirationTime('5m')
+      .setIssuedAt()
+      .sign(keyPair.privateKey);
+  }
+
+  // Node's fetch/undici rewrites the Host header from the URL — has to
+  // be raw http.request to exercise per-host routing end-to-end.
+  function rawRequest({ host, forwardedHost, authorization, method = 'POST' }) {
+    const http = require('http');
+    return new Promise((resolve, reject) => {
+      const headers = {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      };
+      if (host !== undefined) headers.host = host;
+      if (forwardedHost !== undefined) headers['x-forwarded-host'] = forwardedHost;
+      if (authorization !== undefined) headers.authorization = authorization;
+      const req = http.request({ hostname: '127.0.0.1', port: agentPort, path: '/mcp', method, headers }, res => {
+        let body = '';
+        res.on('data', chunk => {
+          body += chunk;
+        });
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }));
+    });
+  }
+
+  async function callAgent(hostHeader, token) {
+    return rawRequest({ host: hostHeader, authorization: `Bearer ${token}` });
+  }
+
+  it('token minted for host A is accepted at host A', async () => {
+    const token = await mintForAudience('https://snap.example.com/mcp');
+    const res = await callAgent(`snap.example.com:${agentPort}`, token);
+    // Not 401 — the audience check matched. (The MCP handshake itself
+    // may 200 or 406 depending on Accept negotiation, but it must not
+    // be an auth failure.)
+    assert.notStrictEqual(res.status, 401, 'matching audience must not be rejected');
+  });
+
+  it('token minted for host A is REJECTED at host B (cross-host replay blocked)', async () => {
+    const snapToken = await mintForAudience('https://snap.example.com/mcp');
+    const res = await callAgent(`meta.example.com:${agentPort}`, snapToken);
+    assert.strictEqual(
+      res.status,
+      401,
+      'token for snap.example.com/mcp MUST NOT authorize a request landing at meta.example.com — cross-host replay is the exact attack multi-host audience binding prevents'
+    );
+    // WWW-Authenticate carries the per-host resource_metadata URL so the
+    // buyer knows where to re-negotiate tokens for THIS host.
+    const wwwAuth = res.headers['www-authenticate'] || '';
+    assert.match(wwwAuth, /resource_metadata=/);
+    assert.match(wwwAuth, /meta\.example\.com/);
+  });
+
+  it('X-Forwarded-Host spoof does NOT flip the audience check (trustForwardedHost: false default)', async () => {
+    // Token minted for snap. Caller tries to trick the server into
+    // treating the request as snap's by spoofing X-Forwarded-Host, while
+    // actually hitting meta via the real Host header. Without
+    // trustForwardedHost: true, serve() ignores the forwarded header —
+    // publicUrl resolves to https://meta.example.com/mcp, audience check
+    // rejects the snap-audience token.
+    const snapToken = await mintForAudience('https://snap.example.com/mcp');
+    const res = await rawRequest({
+      host: `meta.example.com:${agentPort}`,
+      forwardedHost: 'snap.example.com',
+      authorization: `Bearer ${snapToken}`,
+    });
+    assert.strictEqual(res.status, 401, 'spoofed X-Forwarded-Host must not flip the audience check');
+  });
+
+  it('per-host 401 challenge advertises the host-specific resource_metadata URL', async () => {
+    const res = await callAgent(`snap.example.com:${agentPort}`, 'not-a-jwt');
+    assert.strictEqual(res.status, 401);
+    const wwwAuth = res.headers['www-authenticate'] || '';
+    assert.match(wwwAuth, /snap\.example\.com/);
+    assert.ok(!wwwAuth.includes('meta.example.com'));
+  });
+});

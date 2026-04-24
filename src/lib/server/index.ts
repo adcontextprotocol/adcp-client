@@ -96,7 +96,7 @@ export type {
   SeedFixtureCache,
 } from './test-controller';
 
-export { serve } from './serve';
+export { serve, UnknownHostError } from './serve';
 export type { ServeContext, ServeOptions, ProtectedResourceMetadata } from './serve';
 
 export { createExpressAdapter } from './express-adapter';
@@ -116,6 +116,8 @@ export {
   AUTH_PRESENCE_GATED,
   tagAuthenticatorPresenceGated,
   isAuthenticatorPresenceGated,
+  ADCP_SERVE_REQUEST_CONTEXT,
+  getServeRequestContext,
   DEFAULT_JWT_ALGORITHMS,
   DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
 } from './auth';
@@ -126,6 +128,7 @@ export type {
   VerifyApiKeyOptions,
   VerifyBearerOptions,
   RespondUnauthorizedOptions,
+  ServeRequestContext,
 } from './auth';
 
 export {

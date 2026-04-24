@@ -24,8 +24,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/interfaces.js';
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import type { AuthPrincipal, Authenticator } from './auth';
-import { AuthError, authenticatorNeedsRawBody, respondUnauthorized, signatureErrorCodeFromCause } from './auth';
+import type { AuthPrincipal, Authenticator, ServeRequestContext } from './auth';
+import {
+  ADCP_SERVE_REQUEST_CONTEXT,
+  AuthError,
+  authenticatorNeedsRawBody,
+  respondUnauthorized,
+  signatureErrorCodeFromCause,
+} from './auth';
 import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
 import type { AdcpServer } from './adcp-server';
 
@@ -54,6 +60,20 @@ export interface ServeContext {
    * `publicUrl` / `protectedResource` resolver functions.
    */
   host: string;
+}
+
+/**
+ * Thrown from an agent factory (or a `publicUrl` / `protectedResource`
+ * resolver) when the incoming request's host isn't configured. `serve()`
+ * catches it and responds 404 with a generic body — the adapter routing
+ * table never crosses the wire. Any other thrown error still surfaces
+ * as 500 so unrelated bugs stay loud.
+ */
+export class UnknownHostError extends Error {
+  constructor(message = 'Unknown host') {
+    super(message);
+    this.name = 'UnknownHostError';
+  }
 }
 
 /**
@@ -284,6 +304,14 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         resource = resolvePublicUrl(host);
         prm = resolveProtectedResource(host);
       } catch (err) {
+        if (err instanceof UnknownHostError) {
+          // Operator signalled "this host isn't in my routing table." 404
+          // lets the OAuth grader probe fall through cleanly and doesn't
+          // leak the configured host set across the wire.
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
         console.error('[adcp/serve] publicUrl/protectedResource resolver failed:', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Protected-resource metadata unavailable for this host.' }));
@@ -309,23 +337,44 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     }
 
     if (pathname === mountPath || pathname === `${mountPath}/`) {
-      // Resolve per-request `resource_metadata` URL for 401 challenges. For
-      // static PRM this is the same string every request (same as before the
-      // multi-host refactor); for function-form PRM it follows the host the
-      // request arrived on so the challenge points at the right discovery
-      // document.
+      // Resolve per-request `resource_metadata` URL for 401 challenges and
+      // the per-host `publicUrl` authenticators read via
+      // {@link getServeRequestContext}. Resolving both up front means
+      // the audience callback in `verifyBearer` can never diverge from
+      // what the framework advertises in `/.well-known/...`. For static
+      // PRM this is the same string every request (pre-multi-host
+      // behavior); for function-form PRM/URL it follows the host.
       let resourceMetadataUrl: string | undefined;
-      if (protectedResourceOption) {
-        try {
-          const hostOrigin = resolvePublicOrigin(host);
-          if (hostOrigin) resourceMetadataUrl = `${hostOrigin}${protectedResourcePath}`;
-        } catch (err) {
-          console.error('[adcp/serve] publicUrl resolver failed:', err);
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Protected-resource metadata unavailable for this host.' }));
+      let resolvedPublicUrl: string | undefined;
+      try {
+        resolvedPublicUrl = resolvePublicUrl(host);
+      } catch (err) {
+        if (err instanceof UnknownHostError) {
+          res.writeHead(404);
+          res.end('Not found');
           return;
         }
+        console.error('[adcp/serve] publicUrl resolver failed:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Protected-resource metadata unavailable for this host.' }));
+        return;
       }
+      if (protectedResourceOption) {
+        const hostOrigin = resolvePublicOrigin(host);
+        if (hostOrigin) resourceMetadataUrl = `${hostOrigin}${protectedResourcePath}`;
+      }
+
+      // Stamp the serve-resolved context on the request so authenticator
+      // callbacks (e.g. `verifyBearer`'s audience resolver) inherit the
+      // framework's host resolution — they MUST NOT re-derive host from
+      // raw headers, since that would diverge from what PRM advertises
+      // and let a spoofed `X-Forwarded-Host` flip the JWT audience check
+      // when `trustForwardedHost` is false.
+      const serveRequestContext: ServeRequestContext = resolvedPublicUrl
+        ? { host, publicUrl: resolvedPublicUrl }
+        : { host };
+      (req as IncomingMessage & { [ADCP_SERVE_REQUEST_CONTEXT]?: ServeRequestContext })[ADCP_SERVE_REQUEST_CONTEXT] =
+        serveRequestContext;
 
       // Body buffering happens at most once per request. An idempotent helper
       // lets the auth path (for signature authenticators) and the preTransport
@@ -413,7 +462,20 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       // explicit `options.preTransport` wins — it lets callers override the
       // default wiring (e.g., to add request logging or swap verifier
       // implementations).
-      const agentServer = createAgent({ taskStore, host });
+      let agentServer: AdcpServer | McpServer;
+      try {
+        agentServer = createAgent({ taskStore, host });
+      } catch (err) {
+        if (err instanceof UnknownHostError) {
+          // Factory signalled "this host isn't routable." 404 keeps the
+          // adapter table off the wire while giving ops a clean failure
+          // mode instead of the generic-500 confusion.
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        throw err;
+      }
       const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
       const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
       const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;
