@@ -1560,7 +1560,7 @@ async function executeStep(
   const stepFailed = !(passed && allValidationsPassed);
   const hints =
     stepFailed && runState.contextProvenance
-      ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance)
+      ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance, effectiveStep.task)
       : [];
 
   // Build next step preview
