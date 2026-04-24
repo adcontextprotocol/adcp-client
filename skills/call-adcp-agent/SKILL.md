@@ -1,9 +1,13 @@
 ---
 name: call-adcp-agent
-description: Use when calling an AdCP agent as a buyer — media buys, signal lookups, creative sync, delivery reports. Covers the wire contract, common payload shapes, async flow, and error recovery so you don't get stuck on oneOf or discriminated-union fields that schema-free tool discovery won't explain.
+description: Use when calling an AdCP agent as a buyer — media buys, signal lookups, creative sync, delivery reports. Covers the wire contract, minimal payload shapes, async flow (`status:'submitted'` + `task_id`), and error recovery from `adcp_error.issues[]`.
 ---
 
 # Call an AdCP agent
+
+## Overview
+
+AdCP (Ad Context Protocol) agents expose a fixed tool surface (`get_products`, `create_media_buy`, `get_signals`, …) over MCP or A2A. Tool names come from `get_adcp_capabilities`; exact request/response shapes live in the spec's bundled JSON Schemas at `schemas/cache/3.0.0/bundled/<protocol>/<tool>-{request,response}.json` (or via `get_schema` when the agent exposes it). This skill teaches the invariants that don't live cleanly in any schema: cross-tool patterns, async flow, error recovery.
 
 ## When to Use
 
@@ -19,7 +23,7 @@ Walk these in order on first contact:
 1. **Agent card** (A2A) or **`tools/list`** (MCP): returns tool NAMES. Post-`@adcp/client` [#915](https://github.com/adcontextprotocol/adcp-client/pull/915), `tools/list` no longer publishes per-tool parameter schemas — everything shows `{type: 'object', properties: {}}`. Don't try to infer shape from here.
 2. **`get_adcp_capabilities`**: returns supported protocols (`media_buy`, `signals`, `creative`, …), AdCP major versions, feature flags. Tells you WHICH tools this agent supports, not how to call them.
 3. **`get_schema(tool_name)`** *(when the agent exposes it — upstream [adcp#3057](https://github.com/adcontextprotocol/adcp/issues/3057))*: returns the JSON Schema for a tool's request/response. Preferred over reading bundled schemas when available.
-4. **Bundled schemas** (offline, authoritative): `schemas/cache/<version>/bundled/<protocol>/<tool>-request.json` and `-response.json`. The spec ships them; every AdCP version has them.
+4. **Bundled schemas** (offline, authoritative): `schemas/cache/3.0.0/bundled/<protocol>/<tool>-request.json` and `-response.json`. `npm run sync-schemas` in `@adcp/client` pulls them from the spec repo; substitute your target AdCP major version in the path.
 
 ## Non-obvious rules every buyer must follow
 
@@ -195,6 +199,7 @@ Both transports share: idempotency, error shape, schema enforcement, and handler
 3. **`brand.brand_id` instead of `brand.domain`**: spec uses `domain`.
 4. **Forgetting `idempotency_key`**: required on every mutating tool; see the list above.
 5. **Treating A2A `Task.state: 'completed'` as AdCP completion**: A2A task state = transport call lifecycle. AdCP-level completion is in the artifact's payload (`structuredContent.status` or `data.status`). A `completed` A2A task can still carry a `submitted` AdCP response.
+6. **`format_id` as a string**: `format_id` is always an object `{ agent_url, id }` (and sometimes `{ width, height, duration_ms }` for dimensions). Sending `"format_id": "video_1920x1080"` fails with an `additionalProperties` / `type` error — pass the object.
 
 ## If you get stuck
 
@@ -202,11 +207,11 @@ Priority order:
 
 1. Re-read the failure's `issues[]`. The pointer list plus this skill covers 80% of cases.
 2. Call `get_schema(tool_name)` if the agent exposes it (adcp#3057).
-3. Read the bundled JSON Schema at `schemas/cache/<version>/bundled/<protocol>/<tool>-request.json`.
+3. Read the bundled JSON Schema at `schemas/cache/3.0.0/bundled/<protocol>/<tool>-request.json`.
 4. Consult `docs/guides/VALIDATE-YOUR-AGENT.md` in `@adcp/client` for per-specialism patterns.
 
 ## Related
 
 - `skills/build-seller-agent/SKILL.md` — building agents on the other side of the call
 - `docs/guides/BUILD-AN-AGENT.md` — framework reference
-- `schemas/cache/<version>/` — canonical JSON Schemas (every tool, every version)
+- `schemas/cache/3.0.0/` — canonical JSON Schemas (every tool, pinned to the AdCP version `@adcp/client` bundles)
