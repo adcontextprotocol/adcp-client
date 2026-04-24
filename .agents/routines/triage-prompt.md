@@ -313,13 +313,49 @@ related fixes, or "items 1-5 after PR #N" — decide:
 A single cohesive PR is easier to review than three PRs with
 dependencies. The bot reduces maintainer clicks, not multiplies them.
 
+## Pre-PR expert review — mandatory before `gh pr create`
+
+After the branch is pushed but **before** opening the PR, run a
+second expert pass on the actual diff. The Step 4 synthesis
+reviewed the plan; this step reviews the code. They catch
+different things — protocol drift, broken tests, overlong files,
+wrong PR target, typos — before a human reviewer sees anything.
+
+1. Capture the diff: `git diff main...HEAD`.
+2. Spawn 2 experts **in parallel** via Task:
+   - `code-reviewer` — always
+   - The domain expert matching the bucket (same one from
+     Step 4; for cross-cutting diffs, pick the bucket the diff
+     primarily touches)
+3. Pass each expert: the diff + 2–3 sentences of intent ("Issue
+   #N asks for X; this PR does Y by touching Z"). Ask them to
+   classify each finding as **blocker**, **nit**, or **out of
+   scope**.
+4. **Fix blockers.** Re-run only the experts that flagged
+   blockers on the updated diff. Cap at **2 review→fix
+   iterations.** If blockers persist after two passes, abandon
+   the PR and Flag for human review instead.
+5. Surface nits in the PR body; don't fix them.
+6. If experts disagree on a blocker, do **not** resolve it
+   yourself — Flag for human review with both positions.
+7. Record both sign-offs in the PR body:
+
+   ```
+   **Pre-PR review:**
+   - code-reviewer: approved (1 nit noted)
+   - ad-tech-protocol-expert: approved — non-breaking per spec
+   ```
+
+**Never skip this step**, not even for one-line typo fixes.
+Cost is ~90 seconds of Task calls; benefit is two perspectives
+have read the diff before a human reviewer does.
+
 ## PR constraints
 
 - Branch: `claude/issue-<N>-<short-slug>`
 - Status: **draft**
 - Title: conventional-commits (`fix(client): …`, `docs(client): …`)
-- Body: `Closes #N`, summary, what-tested list, expert-consensus
-  note, `Session:` link
+- Body: `Closes #N`, summary, what-tested list, **Pre-PR review** block, `Session:` link
 - Run `npm run ci:quick` before pushing. If schemas/public API
   touched, also `npm run ci:schema-check` + `npm run ci:docs-check`.
 - Don't regenerate files unnecessarily — `npm run sync-schemas` only
