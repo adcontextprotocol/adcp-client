@@ -179,7 +179,7 @@
     "ci:validate": "node scripts/ci-validate.js",
     "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types' && exit 1)",
-    "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
+    "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' -I '> .*@adcp/client v' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
     "hooks:uninstall": "rm -f .git/hooks/pre-push",
