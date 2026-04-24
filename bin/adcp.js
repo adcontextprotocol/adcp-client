@@ -15,6 +15,7 @@
  */
 
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
+const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
 const { readFileSync, statSync } = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -1598,6 +1599,11 @@ async function handleStoryboardRun(args) {
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
+        if (step.hints?.length) {
+          for (const h of step.hints) {
+            console.log(`   Hint:  ${h.message}`);
+          }
+        }
         for (const v of step.validations) {
           const vIcon = v.passed ? '✅' : '❌';
           console.log(`   ${vIcon} ${v.description}`);
@@ -2314,80 +2320,6 @@ function aggregateStrictSummaries(summaries) {
   return out;
 }
 
-/**
- * Emit JUnit XML for a list of `StoryboardResult`. Each storyboard
- * becomes a `<testsuite>`; each step becomes a `<testcase>` with failures
- * attached as `<failure>` children. Matches the schema Jenkins, CircleCI,
- * and GitLab CI all consume without a plugin.
- */
-function formatStoryboardResultsAsJUnit(results) {
-  const xmlEscape = s =>
-    String(s ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
-
-  let totalTests = 0;
-  let totalFailures = 0;
-  let totalSkipped = 0;
-  let totalDuration = 0;
-  const suites = [];
-
-  for (const sb of results) {
-    const suiteCases = [];
-    for (const phase of sb.phases) {
-      for (const step of phase.steps) {
-        totalTests += 1;
-        const name = `${phase.phase_title} › ${step.title}`;
-        const time = ((step.duration_ms || 0) / 1000).toFixed(3);
-        if (step.skipped) {
-          totalSkipped += 1;
-          suiteCases.push(
-            `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
-              `      <skipped message="${xmlEscape(step.skip_reason || 'skipped')}"/>\n` +
-              `    </testcase>`
-          );
-          continue;
-        }
-        if (!step.passed) {
-          totalFailures += 1;
-          const failureDetails = [
-            step.error,
-            ...step.validations.filter(v => !v.passed).map(v => `${v.description}: ${v.error || 'failed'}`),
-          ]
-            .filter(Boolean)
-            .join('\n');
-          suiteCases.push(
-            `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
-              `      <failure message="${xmlEscape(step.error || 'validation failed')}" type="StoryboardFailure">${xmlEscape(failureDetails)}</failure>\n` +
-              `    </testcase>`
-          );
-          continue;
-        }
-        suiteCases.push(
-          `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}"/>`
-        );
-      }
-    }
-    totalDuration += sb.total_duration_ms || 0;
-    const suiteTests = sb.phases.reduce((n, p) => n + p.steps.length, 0);
-    suites.push(
-      `  <testsuite name="${xmlEscape(sb.storyboard_title)}" tests="${suiteTests}" failures="${sb.failed_count}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
-        suiteCases.join('\n') +
-        `\n  </testsuite>`
-    );
-  }
-
-  return (
-    `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<testsuites name="adcp-storyboards" tests="${totalTests}" failures="${totalFailures}" skipped="${totalSkipped}" time="${(totalDuration / 1000).toFixed(3)}">\n` +
-    suites.join('\n') +
-    `\n</testsuites>\n`
-  );
-}
-
 async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
 
@@ -2645,6 +2577,11 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
+          if (step.hints?.length) {
+            for (const h of step.hints) {
+              console.log(`   Hint:  ${h.message}`);
+            }
+          }
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
             console.log(`   ${vIcon} ${v.description}`);
@@ -2880,6 +2817,11 @@ async function handleStoryboardStepCmd(args) {
 
     if (result.error) {
       console.log(`Error: ${result.error}`);
+    }
+    if (result.hints?.length) {
+      for (const h of result.hints) {
+        console.log(`Hint:  ${h.message}`);
+      }
     }
 
     for (const v of result.validations) {

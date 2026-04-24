@@ -142,6 +142,9 @@ export { buildRequest, hasRequestBuilder } from './request-builder';
 // Validations
 export { runValidations } from './validations';
 
+// JUnit XML formatter (used by CLI; exported for testing)
+export { formatStoryboardResultsAsJUnit } from './junit';
+
 // Test-kit schema validation
 export { validateTestKit, TestKitValidationError, PROBE_TASK_ALLOWLIST } from './test-kit';
 
