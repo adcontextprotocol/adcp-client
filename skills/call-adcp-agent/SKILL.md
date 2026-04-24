@@ -91,18 +91,26 @@ Every validation failure produces:
     "recovery": "correctable",
     "field": "/first/offending/pointer",
     "issues": [
-      { "pointer": "/account",    "keyword": "oneOf", "message": "must match exactly one schema in oneOf" },
+      {
+        "pointer": "/account",
+        "keyword": "oneOf",
+        "message": "must match exactly one schema in oneOf",
+        "variants": [
+          { "index": 0, "required": ["account_id"],        "properties": ["account_id"] },
+          { "index": 1, "required": ["brand", "operator"], "properties": ["brand", "operator", "sandbox"] }
+        ]
+      },
       { "pointer": "/brand/domain", "keyword": "required", "message": "must have required property 'domain'" }
     ]
   }
 }
 ```
 
-- `issues[].pointer` is an RFC 6901 JSON Pointer to the field.
-- `issues[].keyword` is the AJV keyword (`required`, `type`, `oneOf`, `additionalProperties`, `format`, `enum`).
-- **On `oneOf` errors** the framework tells you the field is a union but NOT which variant to pick. This skill or the schema is how you know.
+- `issues[].pointer` — RFC 6901 JSON Pointer to the field.
+- `issues[].keyword` — AJV keyword (`required`, `type`, `oneOf`, `anyOf`, `additionalProperties`, `format`, `enum`).
+- `issues[].variants` — when the keyword is `oneOf` or `anyOf`, each entry lists one variant's `required` + declared `properties`. **Pick ONE variant**, send only its `required` fields. This is the fastest recovery path when you didn't know the field was a union.
 
-Patch the pointers, don't re-guess what the skill already told you, resend. Three attempts should cover every field.
+Patch the pointers, don't re-guess what the skill or the `variants` already told you, resend. Three attempts should cover every field.
 
 ## Minimal working examples
 
