@@ -327,6 +327,40 @@ Use before merging skill changes. ~60s per pair; matrix runs fan out.
 
 ---
 
+## Reading `💡 Hint:` lines (context-value rejections)
+
+When the storyboard runner prints output like this:
+
+```
+❌ Activate PII signal (412ms)
+   Task: activate_signal
+   Error: Pricing option not found: po_prism_abandoner_cpm
+   💡 Hint: Rejected `pricing_option_id: po_prism_abandoner_cpm` was extracted
+           from `$context.first_signal_pricing_option_id` (set by step
+           `search_by_spec` from response path
+           `signals[0].pricing_options[0].pricing_option_id`). Seller's
+           accepted values: [po_prism_cart_cpm].
+```
+
+…the failure is almost always **your catalog is inconsistent across tools**, not an SDK bug. The runner is telling you:
+
+1. Step `search_by_spec` wrote `po_prism_abandoner_cpm` into `$context.first_signal_pricing_option_id` — extracted from `signals[0].pricing_options[0].pricing_option_id` on your own `get_signals` response.
+2. Step `activate_signal` sent that id back to you.
+3. Your `activate_signal` handler rejected it with `available: [po_prism_cart_cpm]`.
+
+So `get_signals` advertised one id and `activate_signal` accepted a different one. Fix by unifying the catalog source — typically the two handlers should read from the same store instead of each returning independently-built lists.
+
+Hints only fire when the runner can trace the rejected value back to a prior-step `$context.*` write. If you see the rejection message with **no** `💡 Hint:` line, the mismatch came from somewhere else (hardcoded sample_request, stale fixture, user-provided `--request` override) and the fix lives closer to the storyboard itself.
+
+The hint is diagnostic-only; pass/fail is decided by the step result, not by the presence of hints. Hints also land in:
+
+- **JUnit XML** — appended to the `<failure>` body as `Hint (context_value_rejected): …`, and used as the `message=` attribute when `step.error` is empty (e.g. validation-only failures on 200-OK responses).
+- **JSON report** (`--format json`) — on `StoryboardStepResult.hints[]`.
+
+Each hint carries structured fields (`context_key`, `source_step_id`, `source_kind`, `response_path`, `rejected_value`, `accepted_values`, `error_code`) so CI dashboards can aggregate rejections by source step / context key to spot systemic catalog-drift.
+
+---
+
 ## When each check fails: debug first-lookups
 
 | Failure | First lookup |
@@ -334,6 +368,7 @@ Use before merging skill changes. ~60s per pair; matrix runs fan out.
 | `storyboard run` skips steps with "no webhook_receiver_runner" | Add `--webhook-receiver` |
 | `storyboard run` fails on `security_baseline` | You skipped `authenticate` in `serve()` — see [build-seller-agent/SKILL.md § signed-requests](../../skills/build-seller-agent/SKILL.md) |
 | `storyboard run` reports `Agent requires OAuth` / exits without running | Save tokens once with `adcp --save-auth <alias> <url> --oauth`, or pass `--oauth` to `storyboard run` to complete auth inline |
+| `storyboard run` prints `💡 Hint: Rejected …` below an error | Catalog inconsistency between the two tools — see [§ Reading hint lines](#reading--hint-lines-context-value-rejections) above |
 | `fuzz` reports `500` status with stack trace | Validate inputs and return `adcpError('REFERENCE_NOT_FOUND', ...)` instead |
 | `fuzz` reports `response_shape_mismatch` | Response drifted from schema — regen with `npm run sync-schemas` + check your handler |
 | Multi-instance fails with `NOT_FOUND` on read-after-write | State keyed by session ID instead of `(brand, account)` — see multi-instance guide |
