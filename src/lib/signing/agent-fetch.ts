@@ -1,10 +1,32 @@
 import type { AgentRequestSigningConfig } from '../types/adcp';
 import { createSigningFetch, type CoverContentDigestPredicate } from './fetch';
-import type { CachedCapability, CapabilityCache } from './capability-cache';
+import {
+  buildCapabilityCacheKey,
+  defaultCapabilityCache,
+  type CachedCapability,
+  type CapabilityCache,
+} from './capability-cache';
 import type { ContentDigestPolicy, VerifierCapability } from './types';
 import type { SignerKey } from './signer';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Resolve the default upstream fetch at call time rather than at module
+ * import so (a) polyfills / patches that run after this module loads still
+ * take effect, and (b) the helper throws a clear error on environments
+ * lacking global `fetch` instead of binding `undefined` at import time and
+ * failing cryptically on first request.
+ */
+function defaultUpstream(): FetchLike {
+  const f = (globalThis as { fetch?: FetchLike }).fetch;
+  if (typeof f !== 'function') {
+    throw new TypeError(
+      'buildAgentSigningFetch: no upstream fetch provided and globalThis.fetch is unavailable. Pass `upstream: yourFetch` explicitly.'
+    );
+  }
+  return f;
+}
 
 function bodyToUtf8(body: unknown): string | undefined {
   if (body === undefined || body === null) return undefined;
@@ -137,7 +159,12 @@ export function toSignerKey(config: AgentRequestSigningConfig): SignerKey {
 }
 
 export interface BuildAgentSigningFetchOptions {
-  upstream: FetchLike;
+  /**
+   * Upstream fetch to wrap. Defaults to `globalThis.fetch` when omitted —
+   * use a Node 18+ / browser / worker global, or pass a polyfill / a
+   * decorated fetch (retries, telemetry) to compose.
+   */
+  upstream?: FetchLike;
   signing: AgentRequestSigningConfig;
   /** Lazy accessor for the current cached capability — re-read on every call. */
   getCapability: () => CachedCapability | undefined;
@@ -154,7 +181,8 @@ export interface BuildAgentSigningFetchOptions {
  *   4. Delegate to `createSigningFetch` with the decision baked in.
  */
 export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): FetchLike {
-  const { upstream, signing, getCapability } = options;
+  const { signing, getCapability } = options;
+  const upstream = options.upstream ?? defaultUpstream();
   const key = toSignerKey(signing);
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
@@ -169,4 +197,81 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   };
 
   return createSigningFetch(upstream, key, { shouldSign, coverContentDigest });
+}
+
+export interface CreateAgentSignedFetchOptions {
+  /** This agent's RFC 9421 signing identity (kid, alg, private_key, agent_url). */
+  signing: AgentRequestSigningConfig;
+  /**
+   * Target seller's `agent_uri` — the base URL whose `get_adcp_capabilities`
+   * response gates whether each operation gets signed. The preset keys a
+   * capability-cache entry off this URL so repeat calls reuse the same
+   * advertisement.
+   *
+   * For multi-seller buyers, build one signed fetch per seller (or use
+   * {@link buildAgentSigningFetch} directly and supply your own
+   * `getCapability` that dispatches on the target URL).
+   */
+  sellerAgentUri: string;
+  /**
+   * Optional auth token the seller expects alongside the signing headers.
+   * Included in the capability cache key so a token rotation naturally
+   * invalidates the cached advertisement.
+   */
+  sellerAuthToken?: string;
+  /** Capability cache. Defaults to the shared {@link defaultCapabilityCache}. */
+  cache?: CapabilityCache;
+  /** Upstream fetch. Defaults to `globalThis.fetch`. */
+  upstream?: FetchLike;
+}
+
+/**
+ * One-call preset for the single-seller case: bundles
+ * {@link buildAgentSigningFetch} with a {@link CapabilityCache} lookup keyed
+ * by `sellerAgentUri`, so adapter authors don't have to wire the cache and
+ * capability accessor themselves.
+ *
+ * ```ts
+ * // fetch.ts
+ * import { createAgentSignedFetch } from '@adcp/client/signing';
+ *
+ * export const signedFetch = createAgentSignedFetch({
+ *   signing: {
+ *     kid: 'my-agent-2026',
+ *     alg: 'ed25519',
+ *     private_key: JSON.parse(process.env.ADCP_PRIV_KEY!),
+ *     agent_url: 'https://agent.example.com',
+ *   },
+ *   sellerAgentUri: 'https://seller.example.com',
+ * });
+ * ```
+ *
+ * ```ts
+ * // any other module
+ * import { signedFetch } from './fetch';
+ *
+ * await signedFetch('https://seller.example.com/mcp', {
+ *   method: 'POST',
+ *   headers: { 'Content-Type': 'application/json' },
+ *   body: JSON.stringify(payload),
+ * });
+ * ```
+ *
+ * Signing only happens on operations the seller advertises as
+ * `required_for` / `warn_for` (or `supported_for` when the buyer config
+ * opts in) — so the `get_adcp_capabilities` priming call itself is always
+ * unsigned, as the spec requires.
+ *
+ * For multi-seller adapters, construct one preset per seller, or use
+ * {@link buildAgentSigningFetch} directly with a request-dispatching
+ * `getCapability` callback.
+ */
+export function createAgentSignedFetch(options: CreateAgentSignedFetchOptions): FetchLike {
+  const cache = options.cache ?? defaultCapabilityCache;
+  const cacheKey = buildCapabilityCacheKey(options.sellerAgentUri, options.sellerAuthToken);
+  return buildAgentSigningFetch({
+    signing: options.signing,
+    upstream: options.upstream,
+    getCapability: () => cache.get(cacheKey),
+  });
 }

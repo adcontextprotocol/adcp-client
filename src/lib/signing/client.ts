@@ -46,11 +46,13 @@ export {
 } from './capability-cache';
 export {
   buildAgentSigningFetch,
+  createAgentSignedFetch,
   extractAdcpOperation,
   resolveCoverContentDigest,
   shouldSignOperation,
   toSignerKey,
   type BuildAgentSigningFetchOptions,
+  type CreateAgentSignedFetchOptions,
 } from './agent-fetch';
 export { buildAgentSigningContext, signingContextStorage, type AgentSigningContext } from './agent-context';
 export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';
