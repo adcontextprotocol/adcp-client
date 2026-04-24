@@ -74,7 +74,7 @@ When you see `status: 'submitted'`, the work is NOT complete. Poll via `tasks/ge
 ]
 ```
 
-`budget` is a **number** (not `{amount, currency}` — currency is implied by the pricing option). `pricing_option_id` and `buyer_ref` are required per package.
+`budget` is a **number** (not `{amount, currency}` — currency is implied by the pricing option). Required per package: `product_id`, `budget`, `pricing_option_id`. `buyer_ref` is optional but strongly recommended as a buyer-side correlation id across retries and reporting.
 
 ## Error envelope — read `issues[]` to recover
 
@@ -174,7 +174,7 @@ Returns `{ signals: [{ signal_agent_segment_id, match_rate, pricing, ... }] }`. 
   "idempotency_key": "<uuid>",
   "signal_agent_segment_id": "sig_premium_ctv_sports",
   "destinations": [
-    { "type": "platform", "platform": "trade_desk_us" }
+    { "type": "platform", "platform": "the-trade-desk" }
   ]
 }
 ```
