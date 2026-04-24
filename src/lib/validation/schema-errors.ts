@@ -84,16 +84,24 @@ export function buildAdcpValidationErrorPayload(
     first != null
       ? `${tool} ${side} failed schema validation at ${first.pointer}: ${first.message}`
       : `${tool} ${side} failed schema validation`;
-  // `exposeSchemaPath` gates BOTH `schemaPath` and `variants`. Same
-  // reasoning: they reveal the schema's internal branch shape (schemaPath
-  // the oneOf index; variants every variant's required/properties).
-  // Today AdCP validators only load from the canonical public spec, so
-  // the leak is theoretical — but if a future seller extends a core tool
-  // schema with private fields, gating keeps the policy simple. Prod
-  // deployments that want the richer envelope flip `exposeErrorDetails`.
-  const emittedIssues = options.exposeSchemaPath
-    ? issues
-    : issues.map(({ schemaPath: _schemaPath, variants: _variants, ...rest }) => rest);
+  // `exposeSchemaPath` gates `schemaPath` only. Not `variants`.
+  // Different sensitivity classes justify different defaults:
+  //   - `schemaPath` (e.g. `#/properties/account/oneOf/2`) encodes which
+  //     branch of the validator rejected first — an implementation
+  //     detail that can fingerprint the seller's handler ordering.
+  //   - `variants[]` summarizes the PUBLIC spec's union shape (each
+  //     variant's required / properties keys). The bundled AdCP
+  //     schemas are already npm-shipped with `@adcp/client` and
+  //     published at adcontextprotocol.org — a motivated buyer has
+  //     them offline anyway. Gating would only hurt naive LLM clients
+  //     in production, which is exactly the audience `variants[]` was
+  //     built for (#919).
+  // If a future AdCP version ever admits per-seller schema extensions
+  // into the validator (today's validator only loads canonical spec
+  // from `schemas/cache/<version>/`), revisit this — at that point
+  // `variants[]` could start to reflect seller-internal shapes and the
+  // gating argument would apply.
+  const emittedIssues = options.exposeSchemaPath ? issues : issues.map(({ schemaPath: _schemaPath, ...rest }) => rest);
   const payload: {
     message: string;
     field?: string;

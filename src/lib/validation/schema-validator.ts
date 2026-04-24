@@ -48,13 +48,15 @@ export interface ValidationIssue {
    * properties so a naive LLM client can recover without fetching the
    * full schema. Absent on non-union keywords.
    *
-   * On the wire (`adcp_error.issues[*]`), this field is gated behind
-   * `exposeSchemaPath` — same policy as {@link ValidationIssue.schemaPath}.
-   * Today the validator only loads canonical public spec schemas, so the
-   * leak is theoretical, but gating keeps the "internal branch shape
-   * doesn't cross to buyers by default" policy symmetric between the two
-   * schema-structural fields. Flip `exposeErrorDetails` to ship it in
-   * production.
+   * Unlike {@link ValidationIssue.schemaPath} (which is gated behind
+   * `exposeSchemaPath` because it encodes which branch the seller's
+   * handler rejected first — an implementation detail), `variants[]`
+   * ships on the wire by default. Rationale: it reflects the PUBLIC
+   * spec's union shape, which the bundled AdCP schemas under
+   * `schemas/cache/<version>/` already make available to anyone with
+   * `@adcp/client` installed. Gating would hurt naive LLM clients in
+   * production — exactly the audience this field was built to help
+   * (adcp-client#919).
    */
   variants?: ValidationIssueVariant[];
 }

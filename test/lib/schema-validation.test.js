@@ -245,9 +245,12 @@ describe('schema-driven validation', () => {
       }
     });
 
-    test('buildAdcpValidationErrorPayload strips variants when exposeSchemaPath=false', () => {
-      // Security parity with schemaPath: variants carry structural shape
-      // (branch required / properties) and are gated by the same flag.
+    test('variants ship by default; schemaPath stripped unless exposed', () => {
+      // Different sensitivity classes:
+      //   - schemaPath encodes seller handler branch ordering (impl detail) → gated
+      //   - variants reflects the PUBLIC spec's union shape (already in bundled
+      //     schemas shipped with @adcp/client) → NOT gated, so production LLMs
+      //     get the recovery info #919 was built to provide.
       const issues = [
         {
           pointer: '/account',
@@ -260,14 +263,13 @@ describe('schema-driven validation', () => {
           ],
         },
       ];
-      const stripped = buildAdcpValidationErrorPayload('create_media_buy', 'request', issues);
-      assert.strictEqual(stripped.issues[0].schemaPath, undefined, 'schemaPath must be stripped by default');
-      assert.strictEqual(
-        stripped.issues[0].variants,
-        undefined,
-        'variants must be stripped by default (same policy as schemaPath)'
+      const defaultShape = buildAdcpValidationErrorPayload('create_media_buy', 'request', issues);
+      assert.strictEqual(defaultShape.issues[0].schemaPath, undefined, 'schemaPath stripped by default');
+      assert.ok(
+        Array.isArray(defaultShape.issues[0].variants),
+        'variants ships by default — helps naive LLMs recover in production'
       );
-      assert.strictEqual(stripped.issues[0].keyword, 'oneOf', 'non-gated fields stay');
+      assert.strictEqual(defaultShape.issues[0].variants.length, 2);
       const exposed = buildAdcpValidationErrorPayload('create_media_buy', 'request', issues, {
         exposeSchemaPath: true,
       });
