@@ -42,6 +42,12 @@ export interface WrapEnvelopeOptions {
    * stamps `true` on replay. Sellers calling this helper directly may
    * pass `false` explicitly if they want the marker in-band. Dropped on
    * error codes whose allowlist excludes it (e.g. `IDEMPOTENCY_CONFLICT`).
+   *
+   * The asymmetry between the framework path (omits on fresh) and
+   * wrapEnvelope callers (round-trip explicit `false`) is intentional:
+   * the framework optimizes for spec-clean payloads, while wrapEnvelope
+   * respects the caller's explicit intent. Don't "fix" this by collapsing
+   * `false` to absent.
    */
   replayed?: boolean;
 
