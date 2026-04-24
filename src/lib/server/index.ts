@@ -142,6 +142,7 @@ export {
   verifySignatureAsAuthenticator,
   requireSignatureWhenPresent,
   requireAuthenticatedOrSigned,
+  mcpToolNameResolver,
 } from './auth-signature';
 export type {
   VerifySignatureAsAuthenticatorOptions,
