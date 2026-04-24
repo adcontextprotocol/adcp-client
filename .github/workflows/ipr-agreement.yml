@@ -28,7 +28,12 @@ jobs:
           branch: 'ipr-signatures'
           remote-organization-name: 'adcontextprotocol'
           remote-repository-name: 'adcp'
-          allowlist: 'bot*,dependabot*,renovate*,github-actions*'
+          # `claude` is the GitHub user the Claude triage routine commits as
+          # (`noreply@anthropic.com` resolves to user `claude`, id 81847).
+          # Triage-routine PRs are opened on behalf of a signed repo
+          # contributor (the `/triage` invoker or issue author), and we
+          # don't ask the Claude account to sign the IPR Policy itself.
+          allowlist: 'bot*,dependabot*,renovate*,github-actions*,claude'
 
           custom-notsigned-prcomment: |
             ## IPR Policy Agreement Required
