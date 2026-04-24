@@ -1,38 +1,28 @@
 /**
- * Runner-hint rendering helpers for the CLI (adcp-client#879).
+ * Human-console renderer for `StoryboardStepResult.hints[]` (adcp-client#879).
  *
- * Extracted from bin/adcp.js so the single-purpose formatting logic is
- * unit-testable without spawning the CLI. Consumers: the human console
- * printer (`printStepHints`) and the JUnit XML failure-body composer
- * (`formatHintsForFailureBody`).
+ * Extracted from bin/adcp.js so the formatting logic is unit-testable
+ * without spawning the CLI. The JUnit equivalent lives in
+ * `src/lib/testing/storyboard/junit.ts` — it emits structured XML rather
+ * than console lines, so the two surfaces don't share a helper.
  *
- * The runner populates `StoryboardStepResult.hints[]` when it can trace a
- * seller rejection back to a prior-step `$context.*` write. Rendering
- * them in CI output collapses the "SDK bug vs seller bug" triage to a
- * single line. See adcp-client#870 for the detection logic.
+ * The runner populates `hints[]` when it can trace a seller rejection
+ * back to a prior-step `$context.*` write (adcp-client#870). Surfacing
+ * them on the CLI collapses "SDK bug vs seller bug" triage to one line.
  */
 
 /**
- * Print each hint on its own line, prefixed with the hint icon and
- * indented to align with the step's `Error:` line. No-op when `hints`
- * is absent or empty.
+ * Print each hint on its own line, prefixed with the hint icon. `indent`
+ * should match the caller's `Error:` indent so hints group visually —
+ * 3 spaces for the full storyboard printer (which nests steps under
+ * phases), empty for the single-step printer (`adcp storyboard step`)
+ * that prints error/validation lines at column zero.
  */
-function printStepHints(hints) {
+function printStepHints(hints, indent = '   ') {
   if (!Array.isArray(hints) || hints.length === 0) return;
   for (const h of hints) {
-    console.log(`   💡 Hint: ${h.message}`);
+    console.log(`${indent}💡 Hint: ${h.message}`);
   }
 }
 
-/**
- * Format hints as plain-text lines suitable for appending to a JUnit
- * `<failure>` body. Mirrors `printStepHints` but returns an array of
- * strings so the caller can concatenate them with other failure detail
- * lines.
- */
-function formatHintsForFailureBody(hints) {
-  if (!Array.isArray(hints) || hints.length === 0) return [];
-  return hints.map(h => `Hint (${h.kind}): ${h.message}`);
-}
-
-module.exports = { printStepHints, formatHintsForFailureBody };
+module.exports = { printStepHints };

@@ -142,6 +142,10 @@ export { buildRequest, hasRequestBuilder } from './request-builder';
 // Validations
 export { runValidations } from './validations';
 
+// JUnit XML formatter (@internal — used by `bin/adcp.js` and its tests;
+// not a supported public API surface)
+export { formatStoryboardResultsAsJUnit } from './junit';
+
 // Test-kit schema validation
 export { validateTestKit, TestKitValidationError, PROBE_TASK_ALLOWLIST } from './test-kit';
 

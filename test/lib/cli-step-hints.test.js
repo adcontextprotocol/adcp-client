@@ -11,7 +11,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { printStepHints, formatHintsForFailureBody } = require('../../bin/adcp-step-hints.js');
+const { printStepHints } = require('../../bin/adcp-step-hints.js');
 
 const sampleHint = {
   kind: 'context_value_rejected',
@@ -81,24 +81,19 @@ describe('printStepHints', () => {
   });
 });
 
-describe('formatHintsForFailureBody', () => {
-  test('formats each hint as a prefixed line with its kind', () => {
-    const lines = formatHintsForFailureBody([sampleHint]);
-    assert.deepEqual(lines, [`Hint (context_value_rejected): ${sampleHint.message}`]);
+describe('printStepHints with custom indent', () => {
+  test('empty indent renders hints at column zero', () => {
+    // The `adcp storyboard step` printer prints Error/validations without
+    // the 3-space phase-nesting indent, so hints follow suit.
+    const [line] = captureLogs(() => printStepHints([sampleHint], ''));
+    assert.match(line, /^💡 Hint: /);
   });
 
-  test('returns empty array when hints is absent', () => {
-    assert.deepEqual(formatHintsForFailureBody(undefined), []);
-    assert.deepEqual(formatHintsForFailureBody(null), []);
-    assert.deepEqual(formatHintsForFailureBody([]), []);
-  });
-
-  test('returns one entry per hint (order preserved)', () => {
-    const second = { ...sampleHint, kind: 'context_value_rejected', message: 'B' };
-    const third = { ...sampleHint, kind: 'context_value_rejected', message: 'C' };
-    const lines = formatHintsForFailureBody([sampleHint, second, third]);
-    assert.equal(lines.length, 3);
-    assert.ok(lines[1].endsWith(': B'));
-    assert.ok(lines[2].endsWith(': C'));
+  test('custom indent is prepended to every line', () => {
+    const second = { ...sampleHint, message: 'second' };
+    const lines = captureLogs(() => printStepHints([sampleHint, second], '  › '));
+    assert.equal(lines.length, 2);
+    assert.match(lines[0], /^ {2}› 💡 Hint: /);
+    assert.match(lines[1], /^ {2}› 💡 Hint: second/);
   });
 });
