@@ -56,7 +56,7 @@ export const DEFAULT_ERROR_ENVELOPE_FIELDS: ReadonlySet<string> = Object.freeze(
  * `IDEMPOTENCY_CONFLICT` deliberately excludes `replayed`: the
  * conflict path in `create-adcp-server.ts` builds its error via
  * `finalize()`, which only echoes `context` and never calls
- * `injectReplayed`. The framework's own behavior is preserved.
+ * `stampReplayed`. The framework's own behavior is preserved.
  *
  * **Invariant**: every allowlist set MUST include `'context'`.
  * `ensureContextEcho` enforces this at module load so new error codes

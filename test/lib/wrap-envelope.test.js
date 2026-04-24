@@ -3,7 +3,7 @@
  *
  * Covers success and error envelope construction with the sibling
  * allowlist used for error codes like IDEMPOTENCY_CONFLICT. Parity with
- * `create-adcp-server.ts`'s internal `injectReplayed` + `finalize()` path
+ * `create-adcp-server.ts`'s internal `stampReplayed` + `finalize()` path
  * is asserted via behavioral tests — the implementations stay separate
  * for now, both satisfied by this suite.
  */
@@ -24,10 +24,12 @@ describe('wrapEnvelope: success envelopes', () => {
     assert.deepEqual(out, { media_buy_id: 'mb_1', replayed: true });
   });
 
-  it('attaches replayed:false when explicitly set (storyboard-required)', () => {
-    // replayed:false is a meaningful value — fresh-path mutations MUST
-    // emit it so conformance storyboards can assert the absence of a
-    // replay. The helper must not collapse false to absent.
+  it('attaches replayed:false when explicitly set (public API round-trip)', () => {
+    // The framework's internal idempotency path omits `replayed` on fresh
+    // execution (envelope spec permits both), but the public helper MUST
+    // round-trip an explicit `false` — sellers that want the marker
+    // in-band can opt in by passing it, and the helper must not collapse
+    // false to absent.
     const out = wrapEnvelope({ media_buy_id: 'mb_1' }, { replayed: false });
     assert.deepEqual(out, { media_buy_id: 'mb_1', replayed: false });
     assert.ok('replayed' in out, 'replayed key must be present');
@@ -117,7 +119,7 @@ describe('wrapEnvelope: error envelopes', () => {
 
   it('drops replayed on IDEMPOTENCY_CONFLICT (sibling allowlist)', () => {
     // A conflict is not a replay — the framework's `finalize()` path
-    // for IDEMPOTENCY_CONFLICT never calls `injectReplayed`. The helper
+    // for IDEMPOTENCY_CONFLICT never calls `stampReplayed`. The helper
     // mirrors that by honoring the ERROR_ENVELOPE_FIELD_ALLOWLIST entry
     // for IDEMPOTENCY_CONFLICT, which excludes `replayed`.
     const err = {

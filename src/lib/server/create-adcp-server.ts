@@ -1072,22 +1072,17 @@ function deepMergePlainObjects(target: unknown, source: unknown): unknown {
 }
 
 /**
- * Stamp `replayed` on the response envelope (MCP structuredContent) for
- * every idempotency-gated mutating tool.
- *
- * Per `protocol-envelope.json`, `replayed` MAY be omitted on fresh exec,
- * but every 3.0 mutating-tool response schema declares the property
- * explicitly with `additionalProperties: true`, so emitting `false` is
- * spec-legal AND unambiguous for buyers. The compliance
- * `idempotency.replay_same_payload` storyboard relies on an explicit
- * `false` on the fresh call to assert idempotency is wired — omission
- * fails the `field_value, allowed_values: [false]` assertion. Emit
- * explicitly.
+ * Stamp `replayed: true` on the response envelope (MCP structuredContent)
+ * for replay paths only. `protocol-envelope.json` permits the field to be
+ * "omitted when the request was executed fresh" — fresh-path responses
+ * therefore carry no `replayed` field, and the field's presence implies
+ * `true`. Buyers read the field to distinguish cached replays from new
+ * executions for billing and audit.
  */
-function injectReplayed(response: McpToolResponse, value: boolean): void {
+function stampReplayed(response: McpToolResponse): void {
   if (!response.structuredContent || typeof response.structuredContent !== 'object') return;
   const sc = response.structuredContent as Record<string, unknown>;
-  sc.replayed = value;
+  sc.replayed = true;
 }
 
 /**
@@ -1960,7 +1955,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // error cache entries (VALIDATION_ERROR from strict-mode
               // drift) are retry-storm guards, not spec replays.
               if (!isErrorResponse(cachedFormatted)) {
-                injectReplayed(cachedFormatted, true);
+                stampReplayed(cachedFormatted);
               }
               return finalize(cachedFormatted);
             }
@@ -2152,10 +2147,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   error: reason,
                 });
               }
-              // Stamp replayed:false AFTER caching so the cached copy has
-              // no pre-baked value. On replay we inject replayed:true
-              // from the replay path, overwriting anything.
-              injectReplayed(formatted, false);
+              // Fresh-path responses omit `replayed` — per envelope spec,
+              // absence signals fresh execution. The replay path stamps
+              // `replayed: true` on the cached copy at retrieval.
             } else {
               try {
                 await idempotency.release({

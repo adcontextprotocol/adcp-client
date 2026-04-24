@@ -30,15 +30,18 @@ import { DEFAULT_ERROR_ENVELOPE_FIELDS, ERROR_ENVELOPE_FIELD_ALLOWLIST } from '.
  * Every field is optional. When omitted, the corresponding envelope key is
  * NOT attached (as opposed to emitted with `undefined`). When `replayed`
  * is passed explicitly — including `replayed: false` — the value is
- * attached; the conformance storyboards require `replayed:false` on
- * fresh-path mutations so the field must round-trip when explicitly set.
+ * attached as-is, so sellers that want to emit an explicit marker on fresh
+ * execution can. The framework's own replay bookkeeping stamps `true` on
+ * replay and omits the field on fresh (envelope spec permits both).
  */
 export interface WrapEnvelopeOptions {
   /**
-   * Replay marker. Attached as-is when explicitly set. `false` is a
-   * meaningful value (fresh-path mutation) and MUST be emitted when
-   * passed. Dropped on error codes whose allowlist excludes it (e.g.
-   * `IDEMPOTENCY_CONFLICT`).
+   * Replay marker. Attached as-is when explicitly set. `protocol-envelope.json`
+   * permits the field to be "omitted when the request was executed fresh",
+   * so the framework's internal idempotency path omits it on fresh and
+   * stamps `true` on replay. Sellers calling this helper directly may
+   * pass `false` explicitly if they want the marker in-band. Dropped on
+   * error codes whose allowlist excludes it (e.g. `IDEMPOTENCY_CONFLICT`).
    */
   replayed?: boolean;
 
@@ -103,10 +106,9 @@ function isEchoableContext(value: unknown): boolean {
  * async function handleCreateMediaBuy(request) {
  *   try {
  *     const inner = await buyService.create(request.params);
- *     // Fresh-path success: emit replayed:false so storyboards can assert
- *     // the absence of a replay, and echo request.context for tracing.
+ *     // Fresh-path success: omit `replayed` — envelope spec reads absence
+ *     // as fresh execution. Echo request.context for correlation tracing.
  *     return wrapEnvelope(inner, {
- *       replayed: false,
  *       context: request.context,
  *       operationId: inner.operation_id,
  *     });
@@ -124,13 +126,22 @@ function isEchoableContext(value: unknown): boolean {
  * }
  * ```
  *
- * @example Success path
+ * @example Success path (fresh execution, no explicit replayed)
  * ```ts
  * const response = wrapEnvelope(
  *   { media_buy_id: 'mb_1', status: 'active' },
- *   { replayed: false, context: { correlation_id: 'abc' }, operationId: 'op_123' }
+ *   { context: { correlation_id: 'abc' }, operationId: 'op_123' }
  * );
- * // => { media_buy_id, status, replayed: false, context: {...}, operation_id: 'op_123' }
+ * // => { media_buy_id, status, context: {...}, operation_id: 'op_123' }
+ * ```
+ *
+ * @example Replay path (stamp true)
+ * ```ts
+ * const response = wrapEnvelope(
+ *   { media_buy_id: 'mb_1', status: 'active' },
+ *   { replayed: true, context: { correlation_id: 'abc' }, operationId: 'op_123' }
+ * );
+ * // => { media_buy_id, status, replayed: true, context: {...}, operation_id: 'op_123' }
  * ```
  *
  * @example Conflict error — `replayed` is dropped, `context` is echoed
