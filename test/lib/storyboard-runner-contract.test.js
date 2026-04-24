@@ -71,6 +71,90 @@ describe('runner-output contract: validation_result', () => {
     assert.strictEqual(result.actual, 'canceled');
   });
 
+  test('field_value_or_absent passes when the field is absent', () => {
+    const result = runOne(
+      {
+        check: 'field_value_or_absent',
+        path: 'replayed',
+        allowed_values: [false],
+        description: 'replayed is either absent or false on fresh execution',
+      },
+      { taskResult: { success: true, data: {} } }
+    );
+    assert.strictEqual(result.passed, true);
+    assert.strictEqual(result.json_pointer, '/replayed');
+    assert.strictEqual(result.check, 'field_value_or_absent');
+  });
+
+  test('field_value_or_absent passes when present and in allowed_values', () => {
+    const result = runOne(
+      {
+        check: 'field_value_or_absent',
+        path: 'replayed',
+        allowed_values: [false],
+        description: 'replayed is either absent or false on fresh execution',
+      },
+      { taskResult: { success: true, data: { replayed: false } } }
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  test('field_value_or_absent fails when present with a disallowed value', () => {
+    const result = runOne(
+      {
+        check: 'field_value_or_absent',
+        path: 'replayed',
+        allowed_values: [false],
+        description: 'replayed is either absent or false on fresh execution',
+      },
+      { taskResult: { success: true, data: { replayed: true } } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.json_pointer, '/replayed');
+    assert.deepStrictEqual(result.expected, [false]);
+    assert.strictEqual(result.actual, true);
+  });
+
+  test('field_value_or_absent with scalar value fails only on present-mismatch', () => {
+    const present = runOne(
+      {
+        check: 'field_value_or_absent',
+        path: 'status',
+        value: 'active',
+        description: 'status is either absent or active',
+      },
+      { taskResult: { success: true, data: { status: 'paused' } } }
+    );
+    assert.strictEqual(present.passed, false);
+    assert.strictEqual(present.expected, 'active');
+    assert.strictEqual(present.actual, 'paused');
+
+    const absent = runOne(
+      {
+        check: 'field_value_or_absent',
+        path: 'status',
+        value: 'active',
+        description: 'status is either absent or active',
+      },
+      { taskResult: { success: true, data: {} } }
+    );
+    assert.strictEqual(absent.passed, true);
+  });
+
+  test('field_value_or_absent with a null field fails (null is present, not absent)', () => {
+    const result = runOne(
+      {
+        check: 'field_value_or_absent',
+        path: 'replayed',
+        allowed_values: [false],
+        description: 'replayed is either absent or false',
+      },
+      { taskResult: { success: true, data: { replayed: null } } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.actual, null);
+  });
+
   test('response_schema failure carries schema_id, schema_url, AJV-shaped actual', () => {
     const result = runOne(
       { check: 'response_schema', description: 'Response matches get-adcp-capabilities-response.json schema' },

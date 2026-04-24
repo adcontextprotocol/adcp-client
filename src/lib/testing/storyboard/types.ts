@@ -371,6 +371,7 @@ export type StoryboardValidationCheck =
   | 'response_schema'
   | 'field_present'
   | 'field_value'
+  | 'field_value_or_absent'
   | 'status_code'
   | 'error_code'
   // HTTP-probe checks (for raw_probe tasks)
