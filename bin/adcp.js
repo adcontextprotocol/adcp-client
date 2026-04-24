@@ -1163,13 +1163,14 @@ OPTIONS:
                       becomes a testsuite, each step a testcase.
 
 OUTPUT:
-  Failing steps print a \`💡 Hint: …\` line below the \`Error:\` line
-  whenever the runner can trace the rejected request value back to a
-  prior-step \`\$context.*\` write — almost always seller-side catalog
-  drift between two of the agent's own tools, not an SDK bug. Hints
+  If you see a \`💡 Hint: …\` line in a failing step, the runner has
+  traced the rejection to seller-side catalog drift between two of the
+  agent's own tools — not an SDK bug. Fix the agent's catalog, not the
+  client. Hints fire only when the rejected value can be tied back to
+  a prior-step \`\$context.*\` write; otherwise they stay silent. They
   also land in JUnit XML \`<failure>\` bodies and on
-  \`StoryboardStepResult.hints[]\` in JSON output. The run summary
-  appends \`· N hints\` when any fired. See
+  \`StoryboardStepResult.hints[]\` in JSON output, and the run summary
+  appends \`· N hints\` when any fired. Full reader's guide:
   docs/guides/VALIDATE-YOUR-AGENT.md § Reading hint lines.
 
 NOTE: Storyboards are pulled from the compliance cache populated by
@@ -1610,7 +1611,6 @@ async function handleStoryboardRun(args) {
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
-        printStepHints(step.hints);
         for (const v of step.validations) {
           const vIcon = v.passed ? '✅' : '❌';
           console.log(`   ${vIcon} ${v.description}`);
@@ -1620,6 +1620,11 @@ async function handleStoryboardRun(args) {
           // passed or failed — a passing step can still carry a warning.
           if (v.warning) console.log(`      ⚠️  ${v.warning}`);
         }
+        // Hints land AFTER validations on a failing step so the
+        // "what to do next" line is visually adjacent to the next step's
+        // start — not pushed up the screen by passing validations the
+        // operator no longer needs to read.
+        printStepHints(step.hints);
       }
     }
 
@@ -2591,13 +2596,16 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
-          printStepHints(step.hints);
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
             console.log(`   ${vIcon} ${v.description}`);
             if (v.error) console.log(`      ${v.error}`);
             if (v.warning) console.log(`      ⚠️  ${v.warning}`);
           }
+          // Hint after validations so the operator's eye lands on the
+          // diagnostic at the bottom of the failing-step block — not
+          // pushed up the screen by passing validations.
+          printStepHints(step.hints);
         }
       }
     }

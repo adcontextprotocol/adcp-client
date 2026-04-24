@@ -35,65 +35,92 @@ function resolveWidth() {
 }
 
 /**
- * Word-wrap `text` at `bodyWidth` characters, preserving existing
- * whitespace runs and never breaking inside a `\`code\`` segment unless
- * the segment itself exceeds the line width. Returns an array of lines
- * (no leading whitespace; caller adds indent).
+ * Word-wrap `text` at `bodyWidth` characters. Preserves whitespace runs
+ * and tries to keep `\`code\`` segments on a single line when they fit.
+ * Always honors `bodyWidth` even inside a fenced run — splitting a fence
+ * is unfortunate but bounded; silent overflow is worse.
+ *
+ * Edge cases the algorithm handles explicitly:
+ *  - Stray unmatched backtick → up-front parity check disables fence-
+ *    aware glue entirely so the message can't fall into "openTick forever"
+ *    and produce one runaway line (adcp-client review on #925).
+ *  - Single token longer than `bodyWidth` (e.g. a 200-char URL) →
+ *    hard-break the token into bodyWidth-sized chunks so the wrap
+ *    invariant survives degenerate inputs.
+ *
+ * Returns an array of lines (no leading whitespace; caller adds indent).
  */
 function wrap(text, bodyWidth) {
   if (bodyWidth <= 0) return [text];
-  // Tokenize on word boundaries but keep adjacent backtick-fenced segments
-  // bound to their preceding word so a backtick run doesn't wrap mid-token.
-  // Simpler heuristic: split on spaces, but don't insert a break inside a
-  // run that's bounded by an unbalanced backtick — count backticks as we go.
+
+  // Up-front fence-parity check. If the message has unbalanced backticks,
+  // ignore them entirely for wrapping purposes — otherwise a stray ` puts
+  // the algorithm into permanent glue mode and the line blows past width.
+  const respectFences = (text.match(/`/g) ?? []).length % 2 === 0;
+
   const words = text.split(/(\s+)/).filter(s => s.length > 0);
   const lines = [];
   let line = '';
-  // Track whether the line *currently being built* has an unclosed
-  // backtick. If so, the next non-whitespace token glues to the line
-  // (closing the run) regardless of width — splitting an identifier
-  // mid-`backtick` would render as two unbalanced fragments.
   let openTickInLine = false;
+  const flipTickIf = tok => {
+    if (!respectFences) return;
+    if ((tok.match(/`/g) ?? []).length % 2 === 1) openTickInLine = !openTickInLine;
+  };
+  const flushLine = () => {
+    if (line.length > 0) lines.push(line.trimEnd());
+    line = '';
+  };
+
   for (const tok of words) {
     const isWS = /^\s+$/.test(tok);
     if (isWS) {
-      // Whitespace either continues the line, or — if we'd otherwise
-      // overshoot AND we're not in the middle of a fenced run — drops
-      // and forces a wrap. Keeping it on the line is fine when the next
-      // word fits.
+      // Whitespace either rides the current line or — if it'd push past
+      // the body width AND we're not mid-fence — forces a wrap.
       if (!openTickInLine && line.length + tok.length > bodyWidth) {
-        lines.push(line.trimEnd());
-        line = '';
+        flushLine();
         continue;
       }
       line += tok;
       continue;
     }
+    // Hard-break oversized single tokens. A 200-char URL with no internal
+    // whitespace would otherwise sit on one line and overflow regardless
+    // of all other heuristics. Chop it at body-width boundaries.
+    if (tok.length > bodyWidth) {
+      flushLine();
+      let rest = tok;
+      while (rest.length > bodyWidth) {
+        lines.push(rest.slice(0, bodyWidth));
+        rest = rest.slice(bodyWidth);
+      }
+      line = rest;
+      flipTickIf(tok);
+      continue;
+    }
     if (line.length === 0) {
       line = tok;
-      const ticks = (tok.match(/`/g) ?? []).length;
-      if (ticks % 2 === 1) openTickInLine = !openTickInLine;
+      flipTickIf(tok);
       continue;
     }
-    if (openTickInLine) {
-      // Glue to the current line until the fence closes.
+    if (openTickInLine && line.length + tok.length <= bodyWidth) {
+      // Inside a fence and the token fits — glue.
       line += tok;
-      const ticks = (tok.match(/`/g) ?? []).length;
-      if (ticks % 2 === 1) openTickInLine = !openTickInLine;
+      flipTickIf(tok);
       continue;
     }
+    // Either mid-fence-but-overflowing, or normal-mode-but-overflowing —
+    // either way wrap. Splitting a fence is acceptable; silent overflow is
+    // not (the operator's eye depends on the wrap invariant).
     if (line.length + tok.length > bodyWidth) {
-      lines.push(line.trimEnd());
+      flushLine();
       line = tok;
-      const ticks = (tok.match(/`/g) ?? []).length;
-      if (ticks % 2 === 1) openTickInLine = !openTickInLine;
+      flipTickIf(tok);
       continue;
     }
     line += tok;
-    const ticks = (tok.match(/`/g) ?? []).length;
-    if (ticks % 2 === 1) openTickInLine = !openTickInLine;
+    flipTickIf(tok);
   }
-  if (line.length > 0) lines.push(line.trimEnd());
+  flushLine();
   return lines;
 }
 

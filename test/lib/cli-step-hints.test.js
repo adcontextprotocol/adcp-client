@@ -34,8 +34,14 @@ function captureLogs(fn, { columns } = {}) {
   // run in TTY, non-TTY (CI piped to file), and CI matrix terminals with
   // wildly different widths. `COLUMNS` is the env-var hook
   // `resolveWidth()` falls back to when stdout isn't a TTY.
+  // `columns: null` explicitly clears COLUMNS for the duration of the
+  // test; `undefined` (default) leaves it as-is.
   const prevColumns = process.env.COLUMNS;
-  if (columns !== undefined) process.env.COLUMNS = String(columns);
+  const overrideColumns = arguments.length > 1 && Object.prototype.hasOwnProperty.call(arguments[1], 'columns');
+  if (overrideColumns) {
+    if (columns === null) delete process.env.COLUMNS;
+    else process.env.COLUMNS = String(columns);
+  }
   const lines = [];
   const original = console.log;
   console.log = (...args) => lines.push(args.join(' '));
@@ -43,7 +49,7 @@ function captureLogs(fn, { columns } = {}) {
     fn();
   } finally {
     console.log = original;
-    if (columns !== undefined) {
+    if (overrideColumns) {
       if (prevColumns === undefined) delete process.env.COLUMNS;
       else process.env.COLUMNS = prevColumns;
     }
@@ -122,19 +128,21 @@ describe('printStepHints: word-wrapping', () => {
     }
   });
 
-  test('preserves backtick-fenced segments across wraps (does not break inside `code`)', () => {
-    // The hint message uses `code` segments for identifiers — wrapping
-    // should never split a `\`xxx\`` token across two lines because
-    // readers parse the whole identifier as one unit.
-    const lines = captureLogs(() => printStepHints([sampleHint]), { columns: 60 });
-    const joined = lines.join('\n');
-    // Count opening/closing backticks per line — every line should have
-    // an even count (balanced) OR zero.
+  test('keeps short backtick fences intact when they fit on one line', () => {
+    // Width-invariant takes precedence over fence integrity. When a
+    // fenced run fits on the current line, the wrapper glues it; when
+    // it would push past bodyWidth, it gets split rather than blowing
+    // past the column. The integrity guarantee is therefore "fences
+    // that fit aren't split" — not "fences are never split."
+    const lines = captureLogs(() => printStepHints([sampleHint]), { columns: 100 });
+    // At 100 cols, body width = 100 - 3 - 9 = 88. The longest fenced
+    // run in sampleHint is 47 chars (`signals[0].pricing_options[0]…`).
+    // Every fence fits → every line has balanced ticks.
     for (const line of lines) {
       const ticks = (line.match(/`/g) ?? []).length;
       assert.ok(ticks % 2 === 0, `line has unbalanced backticks (${ticks}): ${JSON.stringify(line)}`);
     }
-    // Sanity: the message is intact when continuation lines are joined.
+    // Sanity: the message round-trips when continuation lines are joined.
     const stripped = lines
       .map(l => l.replace(/^ {3}💡 Hint: /, '').replace(/^ {12}/, ''))
       .join(' ')
@@ -143,12 +151,58 @@ describe('printStepHints: word-wrapping', () => {
     assert.match(stripped, /Rejected .* Seller's accepted values:/);
   });
 
+  test('total backtick count is preserved across all lines (no ticks added or dropped)', () => {
+    // Even when a fence splits across a wrap (because it would otherwise
+    // overflow the body width), the wrapper must not add or drop any
+    // backticks — readers reconstruct the message by joining lines and
+    // tick parity must survive the round trip.
+    const lines = captureLogs(() => printStepHints([sampleHint]), { columns: 60 });
+    const totalIn = (sampleHint.message.match(/`/g) ?? []).length;
+    const totalOut = lines.reduce((n, l) => n + (l.match(/`/g) ?? []).length, 0);
+    assert.equal(totalOut, totalIn, 'tick count survives wrapping');
+  });
+
   test('falls back to 100 columns when COLUMNS is unset and stdout is not a TTY', () => {
-    // No COLUMNS override → resolveWidth() falls through to FALLBACK_WIDTH.
-    delete process.env.COLUMNS;
-    const lines = captureLogs(() => printStepHints([sampleHint]));
+    // `columns: null` forces COLUMNS unset for the duration of the call —
+    // and restores it afterward, so this test doesn't leak state into
+    // sibling tests. resolveWidth() falls through to FALLBACK_WIDTH=100.
+    const lines = captureLogs(() => printStepHints([sampleHint]), { columns: null });
     // sampleHint is ~280 chars; 100-col fallback should produce 3+ lines.
     assert.ok(lines.length >= 2, `expected ≥2 lines on 100-col fallback, got ${lines.length}`);
+  });
+
+  test('stray unmatched backtick does not produce a runaway line', () => {
+    // Regression for code-reviewer finding on #925: an odd-tick message
+    // would put the wrapper into "openTick forever" glue mode and emit
+    // one line wider than bodyWidth. Up-front parity check disables
+    // fence-aware glue when ticks are unbalanced.
+    const stray = {
+      message: 'foo `bar baz qux corge grault garply waldo fred plugh xyzzy thud',
+    };
+    const lines = captureLogs(() => printStepHints([stray]), { columns: 60 });
+    for (const line of lines) {
+      const visible = line.replace('💡', ' ').length;
+      assert.ok(visible <= 60, `line exceeded width 60 with stray tick: ${JSON.stringify(line)}`);
+    }
+  });
+
+  test('hard-breaks a single token longer than the body width', () => {
+    // Regression for dx-expert finding on #925: a single 280-char URL
+    // with no internal whitespace would otherwise overflow. The wrap()
+    // function chops it at body-width boundaries.
+    const long = {
+      message: 'See ' + 'x'.repeat(200) + ' for details',
+    };
+    const lines = captureLogs(() => printStepHints([long]), { columns: 60 });
+    // bodyWidth = 60 - 3 (indent) - 9 (label) = 48
+    for (const line of lines) {
+      const visible = line.replace('💡', ' ').length;
+      assert.ok(visible <= 60, `line exceeded width 60 with oversize token: ${JSON.stringify(line)}`);
+    }
+    // The 200-x run should have produced multiple chunks; assert at
+    // least three lines of pure-x (sanity check the chop happened).
+    const xRuns = lines.filter(l => /^\s+x{20,}$/.test(l) || /^\s+xxxxxxxxxxxxxxxxxxxx/.test(l));
+    assert.ok(xRuns.length >= 3, `expected oversize token to chop into 3+ chunks; got ${xRuns.length}`);
   });
 });
 
