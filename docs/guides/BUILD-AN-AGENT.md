@@ -313,28 +313,18 @@ The same validator runs on the `AdcpClient` side — storyboards and third-party
 
 ### Request Signing
 
-If your agent receives signed requests from buyers, verify them using `requireSignatureWhenPresent()` to compose signature auth with existing bearer/API key authentication:
+If your agent receives signed requests from buyers, verify them using `requireAuthenticatedOrSigned()` — one call that bundles signature verification with credential fallback and `requiredFor` enforcement:
 
 ```typescript
 import { createAdcpServer, serve } from '@adcp/client';
-import { verifySignatureAsAuthenticator, verifyApiKey, requireSignatureWhenPresent } from '@adcp/client/server';
-import { BrandJsonJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } from '@adcp/client/signing/server';
-
-const signatureAuth = verifySignatureAsAuthenticator({
-  capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
-  jwks: new BrandJsonJwksResolver(),
-  replayStore: new InMemoryReplayStore(),
-  revocationStore: new InMemoryRevocationStore(),
-  resolveOperation: req => {
-    try {
-      const body = JSON.parse(req.rawBody ?? '');
-      if (body.method === 'tools/call') return body.params?.name;
-    } catch {}
-    return undefined;
-  },
-});
-
-const bearerAuth = verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } });
+import {
+  verifySignatureAsAuthenticator,
+  verifyApiKey,
+  requireAuthenticatedOrSigned,
+  mcpToolNameResolver,
+  MUTATING_TASKS,
+} from '@adcp/client/server';
+import { BrandJsonJwksResolver } from '@adcp/client/signing/server';
 
 serve(() => createAdcpServer({
   name: 'My Seller',
@@ -350,11 +340,20 @@ serve(() => createAdcpServer({
   },
   mediaBuy: { /* ... */ },
 }), {
-  authenticate: requireSignatureWhenPresent(signatureAuth, bearerAuth),
+  authenticate: requireAuthenticatedOrSigned({
+    signature: verifySignatureAsAuthenticator({
+      capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
+      jwks: new BrandJsonJwksResolver(),
+      resolveOperation: mcpToolNameResolver,
+    }),
+    fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
+    requiredFor: [...MUTATING_TASKS],
+    resolveOperation: mcpToolNameResolver,
+  }),
 });
 ```
 
-When signature headers are present, only signature auth runs. When absent, the fallback runs. This prevents bypass attacks where an invalid signature falls through to weaker auth.
+When signature headers are present, only signature auth runs (no fallback to bearer — that prevents bypass attacks). When absent, the credential authenticator runs as normal. `requiredFor` enforces the spec's `request_signature_required` 401 on mutating operations that arrive unsigned without other credentials. `replayStore` and `revocationStore` default to in-memory implementations — pass shared (e.g. Redis-backed) stores for horizontally scaled fleets.
 
 For outbound webhook signing, pass a `signerKey` to `createAdcpServer`:
 

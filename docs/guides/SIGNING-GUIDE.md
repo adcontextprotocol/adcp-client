@@ -169,41 +169,49 @@ await signingFetch('https://seller.example.com/mcp', {
 });
 ```
 
-### Agent-aware signing
+### Agent-aware signing (recommended)
 
-`buildAgentSigningFetch` adds capability detection — it checks whether the target seller supports `signed-requests` and only signs when supported. It requires three things: an upstream `fetch`, a signing config, and a capability accessor:
+For the common single-seller case, `createAgentSignedFetch` bundles capability detection, capability caching, and signing into one call. It only signs when the target seller advertises `signed-requests` support — so the `get_adcp_capabilities` priming call itself is always unsigned, as the spec requires.
 
 ```typescript
-import { buildAgentSigningFetch, CapabilityCache } from '@adcp/client/signing/client';
+import { createAgentSignedFetch } from '@adcp/client/signing';
 
-const capabilityCache = new CapabilityCache();
-
-const signingFetch = buildAgentSigningFetch({
-  upstream: fetch,
+const signedFetch = createAgentSignedFetch({
   signing: {
     kid: 'my-agent-2026',
     alg: 'ed25519',
     private_key: privateJwk,
     agent_url: 'https://agent.example.com',
-    sign_supported: true,
   },
-  getCapability: () => capabilityCache.get('https://seller.example.com'),
+  sellerAgentUri: 'https://seller.example.com',
+});
+
+await signedFetch('https://seller.example.com/mcp', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
 });
 ```
 
-This is the recommended approach for production — it avoids sending signatures to agents that don't expect them and caches capability lookups.
+For multi-seller adapters, construct one preset per seller, or drop down to `buildAgentSigningFetch` directly with a request-dispatching `getCapability` callback:
+
+```typescript
+import { buildAgentSigningFetch, CapabilityCache } from '@adcp/client/signing/client';
+
+const capabilityCache = new CapabilityCache();
+const signingFetch = buildAgentSigningFetch({
+  signing: { kid: 'my-agent-2026', alg: 'ed25519', private_key: privateJwk, agent_url: 'https://agent.example.com' },
+  getCapability: () => capabilityCache.get('https://seller.example.com'),
+});
+```
 
 ## Step 4: Verify Inbound Signatures (Seller)
 
 ### Express middleware
 
 ```typescript
-import {
-  createExpressVerifier,
-  StaticJwksResolver,
-  InMemoryReplayStore,
-  InMemoryRevocationStore,
-} from '@adcp/client/signing';
+import { createExpressVerifier, StaticJwksResolver } from '@adcp/client/signing';
+import { mcpToolNameResolver } from '@adcp/client/server';
 
 app.post(
   '/mcp',
@@ -215,47 +223,46 @@ app.post(
       required_for: ['create_media_buy', 'update_media_buy'],
     },
     jwks: new StaticJwksResolver(buyerPublicKeys),
-    replayStore: new InMemoryReplayStore(),
-    revocationStore: new InMemoryRevocationStore(),
-    resolveOperation: req => req.body?.method ?? 'unknown',
+    resolveOperation: mcpToolNameResolver,
   }),
   handler
 );
 ```
 
+`replayStore` and `revocationStore` default to in-memory implementations — fine for single-process deployments. Replace with a shared store (Redis-backed, etc.) for horizontally scaled fleets so replay detection works across instances.
+
 On successful verification, `req.verifiedSigner` contains `{ keyid, agent_url?, verified_at }`. On failure, the middleware returns `401` with `WWW-Authenticate: Signature error="<code>"`.
 
 ### Composing with bearer auth
 
-`requireSignatureWhenPresent` composes signature verification with existing authentication. When signature headers are present, only signature auth runs (no fallback to bearer). When absent, bearer auth runs as normal. This prevents bypass attacks.
-
-First, build an authenticator from your verifier config using `verifySignatureAsAuthenticator`:
+`requireAuthenticatedOrSigned` bundles signature verification with credential fallback in one call: when signature headers are present, only signature auth runs (no bearer fallback — that prevents bypass attacks); when absent, the credential authenticator runs as normal; and `requiredFor` enforces the spec's `request_signature_required` 401 on mutating operations that arrive unsigned without other credentials.
 
 ```typescript
-import { serve, verifyApiKey, requireSignatureWhenPresent } from '@adcp/client/server';
-import { verifySignatureAsAuthenticator } from '@adcp/client/server';
-import { BrandJsonJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } from '@adcp/client/signing/server';
-
-const signatureAuth = verifySignatureAsAuthenticator({
-  capability: { supported: true, required_for: ['create_media_buy'], covers_content_digest: 'either' },
-  jwks: new BrandJsonJwksResolver(),
-  replayStore: new InMemoryReplayStore(),
-  revocationStore: new InMemoryRevocationStore(),
-  resolveOperation: req => {
-    try {
-      const body = JSON.parse(req.rawBody ?? '');
-      if (body.method === 'tools/call') return body.params?.name;
-    } catch {}
-    return undefined;
-  },
-});
-
-const bearerAuth = verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } });
+import {
+  serve,
+  verifyApiKey,
+  verifySignatureAsAuthenticator,
+  requireAuthenticatedOrSigned,
+  mcpToolNameResolver,
+  MUTATING_TASKS,
+} from '@adcp/client/server';
+import { BrandJsonJwksResolver } from '@adcp/client/signing/server';
 
 serve(createAgent, {
-  authenticate: requireSignatureWhenPresent(signatureAuth, bearerAuth),
+  authenticate: requireAuthenticatedOrSigned({
+    signature: verifySignatureAsAuthenticator({
+      capability: { supported: true, required_for: ['create_media_buy'], covers_content_digest: 'either' },
+      jwks: new BrandJsonJwksResolver(),
+      resolveOperation: mcpToolNameResolver,
+    }),
+    fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
+    requiredFor: [...MUTATING_TASKS],
+    resolveOperation: mcpToolNameResolver,
+  }),
 });
 ```
+
+Pass `MUTATING_TASKS` (re-exported from `@adcp/client/server`) to `requiredFor` to require a signature on every mutating AdCP operation — matches the common production stance once 3.1 lands. For a narrower allowlist, pass an explicit `string[]` of tool names instead.
 
 ### JWKS resolution options
 
