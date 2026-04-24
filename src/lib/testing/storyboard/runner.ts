@@ -490,7 +490,7 @@ async function executeStoryboardPass(
   if (!hasExecutableSteps) {
     const isScenarioComposed = (storyboard.requires_scenarios?.length ?? 0) > 0;
     const detail = isScenarioComposed
-      ? `Storyboard "${storyboard.id}" has no local phases — its test surface is fully composed from the scenarios listed in \`requires_scenarios\`. Run via \`comply()\` to execute the composed scenarios.`
+      ? `Storyboard "${storyboard.id}" has no local phases — its test surface is fully composed from the scenarios listed in \`requires_scenarios\`.`
       : `Storyboard "${storyboard.id}" has no executable phases — populate \`phases[].steps\` or remove the storyboard.`;
     const syntheticStep: StoryboardStepResult = {
       storyboard_id: storyboard.id,
