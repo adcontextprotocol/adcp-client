@@ -10,14 +10,15 @@ import { getOrCreateClient, getOrDiscoverProfile, runStep, type TestClient } fro
 import { closeConnections } from '../../protocols';
 import { executeStoryboardTask } from './task-map';
 import {
-  extractContext,
+  extractContextWithProvenance,
   injectContext,
-  applyContextOutputs,
+  applyContextOutputsWithProvenance,
   applyContextInputs,
   forwardAliasCache,
   createRunnerVariables,
   type RunnerVariables,
 } from './context';
+import { detectContextRejectionHints } from './rejection-hints';
 import { runValidations, type ValidationContext } from './validations';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -53,6 +54,7 @@ interface PreSeededInput {
 import type {
   AssertionResult,
   BranchSetSpec,
+  ContextProvenanceEntry,
   HttpProbeResult,
   RunnerDetailedSkipReason,
   RunnerExtractionRecord,
@@ -416,6 +418,7 @@ async function executeStoryboardPass(
   const contributionSources = new Map<string, { phaseId: string; stepId: string }>();
   const priorStepResults = new Map<string, StoryboardStepResult>();
   const priorProbes = new Map<string, HttpProbeResult>();
+  const contextProvenance = new Map<string, ContextProvenanceEntry>();
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
@@ -686,6 +689,7 @@ async function executeStoryboardPass(
         agentUrl: assignment.agentUrl,
         webhookReceiver,
         runnerVars,
+        contextProvenance,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance) {
@@ -1133,6 +1137,7 @@ export async function runStoryboardStep(
     agentUrl,
     webhookReceiver,
     runnerVars,
+    contextProvenance: new Map(),
   });
 
   if (!options._client) {
@@ -1157,6 +1162,13 @@ interface ExecutionState {
   webhookReceiver?: WebhookReceiver;
   /** Shared runner-variable bag for `{{runner.*}}` substitution. */
   runnerVars?: RunnerVariables;
+  /**
+   * Context-key → write-provenance map, accumulated across the run so a
+   * later step's rejection can cite the step that wrote the value. Issue
+   * #870. Later writes shadow earlier ones under the same key, matching
+   * the shallow-merge semantics of the context itself.
+   */
+  contextProvenance?: Map<string, ContextProvenanceEntry>;
 }
 
 async function executeStep(
@@ -1175,6 +1187,7 @@ async function executeStep(
     priorStepResults: new Map(),
     priorProbes: new Map(),
     agentUrl: '',
+    contextProvenance: new Map(),
   };
 
   // HTTP probe tasks bypass the MCP client entirely.
@@ -1491,15 +1504,50 @@ async function executeStep(
 
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)
   if (passed && hasData && taskResult) {
-    const extracted = extractContext(step.task, taskResult.data);
-    Object.assign(updatedContext, extracted);
+    const extracted = extractContextWithProvenance(effectiveStep.task, taskResult.data, step.id);
+    Object.assign(updatedContext, extracted.values);
+    if (runState.contextProvenance) {
+      for (const [key, entry] of Object.entries(extracted.provenance)) {
+        runState.contextProvenance.set(key, entry);
+      }
+    }
   }
 
   // Explicit context_outputs (always applied when data exists)
   if (hasData && taskResult && step.context_outputs?.length) {
-    const explicit = applyContextOutputs(taskResult.data, step.context_outputs);
-    Object.assign(updatedContext, explicit);
+    const explicit = applyContextOutputsWithProvenance(
+      taskResult.data,
+      step.context_outputs,
+      step.id,
+      effectiveStep.task
+    );
+    Object.assign(updatedContext, explicit.values);
+    if (runState.contextProvenance) {
+      for (const [key, entry] of Object.entries(explicit.provenance)) {
+        runState.contextProvenance.set(key, entry);
+      }
+    }
   }
+
+  // Emit context-value-rejected hints when the seller's error lists the
+  // values it would have accepted and the rejected request value traces
+  // back to a prior-step $context.* write. Non-fatal: doesn't flip
+  // pass/fail; collapses "SDK bug vs seller bug" triage to one line.
+  //
+  // Gated on `!passed` (the task-level pass flag, pre-validations):
+  //   - Normal steps: hints fire only when the task reported a failure,
+  //     since that's where `errors[].available` would surface.
+  //   - `expect_error` steps: `passed` is inverted (true when the task
+  //     failed), so `!passed` means an expected error did NOT arrive —
+  //     hints stay silent, which matches intent (the caller asked for a
+  //     rejection; the runner doesn't second-guess whose fault it is).
+  // Hints trace to context that existed BEFORE this step's own writes,
+  // since the rejected value can't have come from this step's own
+  // extraction.
+  const hints =
+    !passed && runState.contextProvenance
+      ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance)
+      : [];
 
   // Build next step preview
   const next = getNextStepPreview(step.id, allSteps, updatedContext, runState.runnerVars);
@@ -1520,6 +1568,7 @@ async function executeStep(
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
     extraction: extractionFromTaskResult(taskResult),
+    ...(hints.length > 0 && { hints }),
   };
 }
 

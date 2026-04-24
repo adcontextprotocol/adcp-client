@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { StoryboardContext, ContextOutput, ContextInput } from './types';
+import type { StoryboardContext, ContextOutput, ContextInput, ContextProvenanceEntry } from './types';
 import { resolvePath, setPath } from './path';
 
 // ────────────────────────────────────────────────────────────
@@ -472,6 +472,64 @@ export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Re
     }
   }
   return result;
+}
+
+/**
+ * Result of a context write with per-key provenance. The runner consumes
+ * `provenance` to emit `context_value_rejected` hints when a later step's
+ * seller response rejects a value that traces back to one of these keys.
+ * `values` carries the same Record as the non-provenance call so the
+ * runner's downstream `Object.assign(updatedContext, values)` path is
+ * unchanged.
+ */
+export interface ContextWriteResult {
+  values: Record<string, unknown>;
+  provenance: Record<string, ContextProvenanceEntry>;
+}
+
+/**
+ * Like `extractContext`, but also returns provenance for each written key
+ * tagging it as a convention-based extraction. `response_path` is absent
+ * for convention extractors — they're hardcoded functions, not YAML paths.
+ */
+export function extractContextWithProvenance(taskName: string, data: unknown, stepId: string): ContextWriteResult {
+  const values = extractContext(taskName, data);
+  const provenance: Record<string, ContextProvenanceEntry> = {};
+  for (const key of Object.keys(values)) {
+    provenance[key] = {
+      source_step_id: stepId,
+      source_kind: 'convention',
+      source_task: taskName,
+    };
+  }
+  return { values, provenance };
+}
+
+/**
+ * Like `applyContextOutputs`, but also returns provenance for each written
+ * key carrying the YAML `response_path` so diagnostics can cite it verbatim.
+ */
+export function applyContextOutputsWithProvenance(
+  data: unknown,
+  outputs: ContextOutput[],
+  stepId: string,
+  taskName: string
+): ContextWriteResult {
+  const values: Record<string, unknown> = {};
+  const provenance: Record<string, ContextProvenanceEntry> = {};
+  for (const output of outputs) {
+    const value = resolvePath(data, output.path);
+    if (value !== undefined && value !== null) {
+      values[output.key] = value;
+      provenance[output.key] = {
+        source_step_id: stepId,
+        source_kind: 'context_outputs',
+        response_path: output.path,
+        source_task: taskName,
+      };
+    }
+  }
+  return { values, provenance };
 }
 
 // ────────────────────────────────────────────────────────────
