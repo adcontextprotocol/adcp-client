@@ -185,11 +185,23 @@ describe('cross-transport validation symmetry (#909)', () => {
       // Missing EVERYTHING except idempotency_key.
       const badArgs = { idempotency_key: '22222222-2222-2222-2222-222222222222' };
 
-      await mcpCall(baseUrl, 'create_media_buy', badArgs);
+      const mcpRes = await mcpCall(baseUrl, 'create_media_buy', badArgs);
       assert.strictEqual(handlerRan, false, 'MCP path must reject before handler');
+      // Additional assertion guards against a route-regression false-positive
+      // (e.g. a 404 on the MCP path would leave handlerRan=false too).
+      assert.strictEqual(
+        mcpAdcpError(mcpRes)?.code,
+        'VALIDATION_ERROR',
+        'MCP rejection must be the framework VALIDATION_ERROR, not a transport error'
+      );
 
-      await a2aCall(baseUrl, 'create_media_buy', badArgs);
+      const a2aRes = await a2aCall(baseUrl, 'create_media_buy', badArgs);
       assert.strictEqual(handlerRan, false, 'A2A path must reject before handler');
+      assert.strictEqual(
+        a2aAdcpError(a2aRes)?.code,
+        'VALIDATION_ERROR',
+        'A2A rejection must be the framework VALIDATION_ERROR'
+      );
     } finally {
       await new Promise(r => server.close(r));
     }

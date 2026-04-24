@@ -309,6 +309,8 @@ createAdcpServer({
 
 Modes per side: `'strict' | 'warn' | 'off'`. Default is `'off'` — enable explicitly. `VALIDATION_ERROR` envelopes carry the full issue list (pointer, message, keyword, schema path) at the top level `adcp_error.issues` (and mirrored at `details.issues` for spec-convention compatibility) so buyers can surface each offending field without drilling into nested metadata.
 
+**Note on MCP `tools/list` introspection**: `@adcp/client` agents register framework tools with a passthrough input schema so the framework AJV validator is authoritative on both MCP and A2A (see [#909](https://github.com/adcontextprotocol/adcp-client/issues/909)). One visible consequence: MCP `tools/list` publishes `{ type: 'object', properties: {}, additionalProperties: {} }` for every framework tool — not the per-tool parameter schema. Generic MCP discovery clients that lean on `tools/list` inputSchema for field-level introspection will see an untyped surface. AdCP-native discovery via `get_adcp_capabilities` is unaffected; upstream [adcp#3057](https://github.com/adcontextprotocol/adcp/issues/3057) proposes a `get_schema` capability tool for per-tool shape discovery across transports.
+
 The same validator runs on the `AdcpClient` side — storyboards and third-party clients configure it via `validation: { requests, responses }` on the client config. Request default is `warn` (so existing callers that send partial payloads still work); response default is `strict` in dev/test, `warn` in production. Set either side to `'off'` for zero overhead.
 
 ### createTaskCapableServer (Low-Level)
