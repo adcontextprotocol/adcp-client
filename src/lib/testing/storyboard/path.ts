@@ -97,7 +97,12 @@ export function resolvePath(obj: unknown, path: string): unknown {
       if (!Array.isArray(current)) return undefined;
       current = current[segment];
     } else {
+      if (FORBIDDEN_KEYS.has(segment)) return undefined;
       if (typeof current !== 'object') return undefined;
+      // Own-property gate keeps `Object.prototype` accessors (`toString`,
+      // `hasOwnProperty`, …) from surfacing into compliance reports as
+      // "agent returned X." Matches `resolvePathAll` / `setPath`.
+      if (!Object.prototype.hasOwnProperty.call(current, segment)) return undefined;
       current = (current as Record<string, unknown>)[segment];
     }
   }
