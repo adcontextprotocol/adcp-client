@@ -220,6 +220,79 @@ describe('runner-output contract: validation_result', () => {
     });
   });
 
+  // Prototype-key guard on the scalar resolver: `__proto__`, `constructor`,
+  // and `prototype` must not surface `Object.prototype` state into validation
+  // results. Asserting through `field_present` / `field_value` / the tolerant
+  // matcher exercises all three matchers' call into `resolvePath`, so a
+  // regression here would fail on any of them.
+  describe('resolvePath prototype-key guard', () => {
+    test('field_present on __proto__ returns not-found', () => {
+      const result = runOne(
+        { check: 'field_present', path: '__proto__', description: 'prototype must not surface' },
+        { taskResult: { success: true, data: {} } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.actual, null);
+    });
+
+    test('field_present on a nested __proto__ segment returns not-found', () => {
+      const result = runOne(
+        { check: 'field_present', path: 'accounts.__proto__.polluted', description: 'nested prototype' },
+        { taskResult: { success: true, data: { accounts: {} } } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.actual, null);
+    });
+
+    test('field_value on constructor returns not-found, not Object itself', () => {
+      const result = runOne(
+        { check: 'field_value', path: 'constructor', value: 'anything', description: 'constructor ≠ Object' },
+        { taskResult: { success: true, data: {} } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.actual, null);
+    });
+
+    test('field_value_or_absent on __proto__ passes (treated as absent)', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: '__proto__',
+          allowed_values: [false],
+          description: 'prototype chain is absent from the agent response',
+        },
+        { taskResult: { success: true, data: {} } }
+      );
+      assert.strictEqual(result.passed, true);
+    });
+
+    // Inherited-but-own-named keys (e.g. `hasOwnProperty` on a plain object)
+    // also must not surface — the guard is hasOwnProperty, not just the
+    // forbidden-list.
+    test('field_present on an inherited method name returns not-found', () => {
+      const result = runOne(
+        { check: 'field_present', path: 'hasOwnProperty', description: 'inherited methods must not surface' },
+        { taskResult: { success: true, data: {} } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.actual, null);
+    });
+
+    // Own properties named like prototype accessors are also blocked by
+    // FORBIDDEN_KEYS — the guard errs on the side of safety over an esoteric
+    // "I literally have a field named __proto__" storyboard.
+    test('field_value on an own-property `__proto__` is still blocked', () => {
+      const data = Object.create(null);
+      Object.defineProperty(data, '__proto__', { value: { x: 1 }, enumerable: true, configurable: true });
+      const result = runOne(
+        { check: 'field_value', path: '__proto__.x', value: 1, description: 'forbidden-key takes precedence' },
+        { taskResult: { success: true, data } }
+      );
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.actual, null);
+    });
+  });
+
   test('response_schema failure carries schema_id, schema_url, AJV-shaped actual', () => {
     const result = runOne(
       { check: 'response_schema', description: 'Response matches get-adcp-capabilities-response.json schema' },
