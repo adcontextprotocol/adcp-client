@@ -318,10 +318,15 @@ describe('verifyIntrospection — error handling', () => {
   });
 
   it('fails closed on timeout', async () => {
-    // Server that never responds.
-    const server = http.createServer((req, res) => {
-      // intentionally hang
+    // Server that never responds — forces the introspection call to abort
+    // via the AbortController. unref() so the hanging socket on the
+    // server side doesn't keep node:test's runner alive after the suite
+    // completes; closeAllConnections() before close() forces any
+    // already-accepted-but-aborted socket to drop so close() resolves.
+    const server = http.createServer(() => {
+      // intentionally hang — no res.end()
     });
+    server.unref();
     await new Promise(r => server.listen(0, r));
     try {
       const auth = verifyIntrospection({
@@ -335,10 +340,8 @@ describe('verifyIntrospection — error handling', () => {
         err => err instanceof AuthError
       );
     } finally {
-      // closeAllConnections BEFORE close — otherwise close() hangs waiting
-      // for the still-open (aborted-by-client) connection to drain.
       server.closeAllConnections?.();
-      server.close();
+      await new Promise(r => server.close(r));
     }
   });
 });
