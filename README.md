@@ -11,7 +11,7 @@ Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Bu
 
 ## For AI Agents
 
-Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). Building a server? See [`docs/guides/BUILD-AN-AGENT.md`](./docs/guides/BUILD-AN-AGENT.md). For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
+Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). Building a server? See [`docs/guides/BUILD-AN-AGENT.md`](./docs/guides/BUILD-AN-AGENT.md). **Calling** an AdCP agent as a buyer? Load [`skills/call-adcp-agent/SKILL.md`](./skills/call-adcp-agent/SKILL.md) — wire contract, async flow, and error-recovery priors that aren't in the type signatures. For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
 
 These docs are also available in `node_modules/@adcp/client/docs/` after install.
 
