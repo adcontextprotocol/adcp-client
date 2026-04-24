@@ -41,8 +41,8 @@ import type { IncomingMessage } from 'http';
 import type { RequestLike } from '../signing/canonicalize';
 import { RequestSignatureError } from '../signing/errors';
 import type { JwksResolver } from '../signing/jwks';
-import type { ReplayStore } from '../signing/replay';
-import type { RevocationStore } from '../signing/revocation';
+import { InMemoryReplayStore, type ReplayStore } from '../signing/replay';
+import { InMemoryRevocationStore, type RevocationStore } from '../signing/revocation';
 import type { VerifiedSigner, VerifierCapability, VerifyResult } from '../signing/types';
 import { verifyRequestSignature } from '../signing/verifier';
 import {
@@ -62,10 +62,21 @@ export interface VerifySignatureAsAuthenticatorOptions {
   capability: VerifierCapability;
   /** Resolves verification keys by `keyid`. */
   jwks: JwksResolver;
-  /** Stores `(keyid, signature-bytes, expires)` tuples for replay detection. */
-  replayStore: ReplayStore;
-  /** Consulted for revoked `kid` / `jti` before accepting a signature. */
-  revocationStore: RevocationStore;
+  /**
+   * Stores `(keyid, signature-bytes, expires)` tuples for replay detection.
+   * Defaults to a fresh {@link InMemoryReplayStore} — fine for single-process
+   * deployments. Wire a shared store (Redis, Postgres, etc.) for multi-replica
+   * setups where a signature accepted on one replica must be rejected on the
+   * others.
+   */
+  replayStore?: ReplayStore;
+  /**
+   * Consulted for revoked `kid` / `jti` before accepting a signature.
+   * Defaults to a fresh {@link InMemoryRevocationStore}. Most agents don't
+   * revoke at runtime; when you do, swap in a store backed by your secrets
+   * manager or admin tooling.
+   */
+  revocationStore?: RevocationStore;
   /** Override clock for tests. */
   now?: () => number;
   /**
@@ -110,6 +121,12 @@ export interface VerifySignatureAsAuthenticatorOptions {
  * same side-channel state as the Express-shaped middleware.
  */
 export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthenticatorOptions): Authenticator {
+  // Instantiate defaults once at wire-up time so every request on this
+  // authenticator shares the same replay/revocation state — lazy
+  // per-request construction would defeat replay detection entirely.
+  const replayStore = options.replayStore ?? new InMemoryReplayStore();
+  const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
+
   const authenticator: Authenticator = async req => {
     if (!hasSignatureHeader(req)) return null;
 
@@ -127,8 +144,8 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
       result = await verifyRequestSignature(requestLike, {
         capability: options.capability,
         jwks: options.jwks,
-        replayStore: options.replayStore,
-        revocationStore: options.revocationStore,
+        replayStore,
+        revocationStore,
         now: options.now,
         operation: options.resolveOperation(req as IncomingMessage & { rawBody?: string }),
         agentUrlForKeyid: options.agentUrlForKeyid,
