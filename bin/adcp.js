@@ -32,6 +32,7 @@ const {
 } = require('./adcp-config.js');
 const { handleRegistryCommand } = require('./adcp-registry.js');
 const { captureStdoutLogs, writeJsonOutput } = require('./adcp-json-stdout.js');
+const { printStepHints, formatHintsForFailureBody } = require('./adcp-step-hints.js');
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { LIBRARY_VERSION } = require('../dist/lib/version.js');
 const {
@@ -1598,6 +1599,7 @@ async function handleStoryboardRun(args) {
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
+        printStepHints(step.hints);
         for (const v of step.validations) {
           const vIcon = v.passed ? '✅' : '❌';
           console.log(`   ${vIcon} ${v.description}`);
@@ -2356,6 +2358,10 @@ function formatStoryboardResultsAsJUnit(results) {
           const failureDetails = [
             step.error,
             ...step.validations.filter(v => !v.passed).map(v => `${v.description}: ${v.error || 'failed'}`),
+            // Runner hints (adcp-client#870) are diagnostic, not fatal, but
+            // they're the piece that collapses triage from "SDK bug vs seller
+            // bug" to one line — worth propagating into the CI report body.
+            ...formatHintsForFailureBody(step.hints),
           ]
             .filter(Boolean)
             .join('\n');
@@ -2645,6 +2651,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
+          printStepHints(step.hints);
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
             console.log(`   ${vIcon} ${v.description}`);
