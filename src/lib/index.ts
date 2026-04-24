@@ -586,6 +586,8 @@ export {
   IDEMPOTENCY_MIGRATION,
   cleanupExpiredIdempotency,
   hashPayload,
+  createA2AAdapter,
+  A2AInvocationError,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -656,6 +658,9 @@ export type {
   IdempotencyCheckResult,
   MemoryBackendOptions,
   PgBackendOptions,
+  A2AAdapter,
+  A2AAdapterOptions,
+  A2AAgentCardOverrides,
 } from './server';
 
 // ====== ERROR HANDLING & RETRY ======

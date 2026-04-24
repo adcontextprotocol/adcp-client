@@ -98,6 +98,62 @@ serve(() => createAdcpServer({
 - **Warns on incoherent tool sets** — e.g., `create_media_buy` without `get_products`
 - **Narrows response unions** — a handler may return the Success arm *or* the full response union (`Success | Error | Submitted`). Adapter-style handlers that already produce `Result<CreateMediaBuyResponse, ...>` don't need to pre-narrow: the dispatcher detects the arm by shape and routes accordingly. Error arms surface as `{ isError: true, structuredContent: { errors: [...] } }`; Submitted arms surface as `{ structuredContent: { status: 'submitted', task_id, ... } }` without the Success-only `revision` / `confirmed_at` defaults. You can still call `adcpError('CODE', ...)` directly for framework-style error envelopes.
 
+### Exposing your agent over A2A (preview)
+
+MCP is the default transport (`serve({ server: adcp })`). To additionally expose the same `AdcpServer` over A2A JSON-RPC — so A2A-native buyers can discover and call your agent — mount `createA2AAdapter`:
+
+```typescript
+import express from 'express';
+import { createAdcpServer, serve, createA2AAdapter } from '@adcp/client';
+
+const adcp = createAdcpServer({
+  mediaBuy: { getProducts: async () => ({ products: [] }) },
+});
+
+// MCP (as today)
+serve(() => adcp);
+
+// A2A (new, preview)
+const a2a = createA2AAdapter({
+  server: adcp,
+  agentCard: {
+    name: 'Acme SSP',
+    description: 'Guaranteed + non-guaranteed display inventory',
+    url: 'https://ssp.acme.com/a2a',
+    version: '1.0.0',
+    provider: { organization: 'Acme', url: 'https://acme.com' },
+    securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
+  },
+  async authenticate(req) {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/, '');
+    return token ? { token, clientId: 'buyer_123', scopes: [] } : null;
+  },
+});
+
+const app = express();
+app.use(express.json());
+app.use('/.well-known/agent-card.json', a2a.agentCardHandler);
+app.use('/a2a', a2a.jsonRpcHandler);
+app.listen(3000);
+```
+
+Both transports share the same `AdcpServer` — handlers, idempotency store, state store, and `resolveAccount` all run the same pipeline regardless of which transport received the request. Changes to handlers are picked up by both at once.
+
+**Skill addressing.** A2A clients send a `Message` with a single `DataPart`: `{ kind: 'data', data: { skill: 'get_products', input: { brief: '...' } } }`. `skill` matches an AdCP tool name; `input` is the tool arguments.
+
+**Handler return → A2A `Task.state`:**
+
+| Handler returned… | A2A result |
+|---|---|
+| Success arm | `state: 'completed'` + DataPart artifact |
+| Submitted arm (`status:'submitted'`) | `state: 'submitted'` + `adcp_task_id` on the artifact |
+| Error arm (`errors: [...]`) | `state: 'failed'` + DataPart artifact |
+| `adcpError('CODE', ...)` | `state: 'failed'` + `adcp_error` artifact |
+
+**A2A `Task.id` vs AdCP `task_id`.** A2A owns its Task.id (SDK-generated per `message/send`). The AdCP-level `task_id` — if your handler returned a Submitted arm — rides on the DataPart artifact as `adcp_task_id`. A2A-native clients poll via `tasks/get` using the A2A Task.id.
+
+**v0 scope.** `message/send`, `tasks/get`, `tasks/cancel`, `GET /.well-known/agent-card.json`. Streaming (`message/stream`), push notifications, and `input-required` mid-flight interrupts are explicit "not yet" — tracked for v1. Pin a minor version while the surface stabilises.
+
 ### Reading tool results (client side)
 
 The framework emits responses with typed data in `structuredContent` (MCP L3) and a human-readable summary in `content[0].text` (L2). When calling an AdCP agent from client code, prefer `structuredContent`; only fall back to parsing the text block for pre-`structuredContent` servers. The SDK ships two helpers with different failure modes:

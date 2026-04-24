@@ -29,6 +29,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { McpToolResponse } from './responses';
 
 /**
  * Structural shape of an MCP transport the server can connect to.
@@ -89,23 +90,49 @@ export interface AdcpTestToolsCallRequest {
 export type AdcpTestResponse = unknown;
 
 /**
+ * Auth principal visible to handlers and `resolveAccount`. Mirrors the
+ * shape `serve()` produces from its `authenticate` hook, and what the
+ * A2A adapter's `authenticate` callback should return.
+ */
+export interface AdcpAuthInfo {
+  token: string;
+  clientId: string;
+  scopes: string[];
+  expiresAt?: number;
+  extra?: Record<string, unknown>;
+}
+
+/**
  * Optional per-call overrides for `dispatchTestRequest()`. Lets tests
  * simulate transport-level state — most importantly the `authInfo` that
  * `serve()` populates from its `authenticate` hook — without spinning up
  * a real HTTP transport.
  */
 export interface AdcpTestRequestExtras {
+  authInfo?: AdcpAuthInfo;
+}
+
+/**
+ * Arguments accepted by `AdcpServer.invoke()`. A transport adapter (MCP
+ * `serve()`, `createA2AAdapter()`, etc.) authenticates the incoming
+ * request, maps it to one of the registered AdCP tool names, then calls
+ * this surface to run the framework pipeline (idempotency, account
+ * resolution, validation, governance, response-union narrowing).
+ */
+export interface AdcpInvokeOptions {
+  /** AdCP tool name (`get_products`, `create_media_buy`, ...). */
+  toolName: string;
+  /** Tool arguments as received from the transport, pre-schema-validation. */
+  args: Record<string, unknown>;
   /**
-   * Auth principal visible to handlers and `resolveAccount`. Mirrors the
-   * shape `serve()` produces from its `authenticate` hook.
+   * Auth principal the transport produced from its `authenticate` hook.
+   * Handlers and `resolveAccount` see it as `ctx.authInfo`. Transports
+   * MUST verify the principal before calling `invoke()` — `invoke()`
+   * does NOT re-check the token.
    */
-  authInfo?: {
-    token: string;
-    clientId: string;
-    scopes: string[];
-    expiresAt?: number;
-    extra?: Record<string, unknown>;
-  };
+  authInfo?: AdcpAuthInfo;
+  /** Abort signal for cancellation; defaults to a fresh controller. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -200,6 +227,33 @@ export interface AdcpServer {
    */
   dispatchTestRequest(request: AdcpTestToolsCallRequest, extras?: AdcpTestRequestExtras): Promise<CallToolResult>;
   dispatchTestRequest(request: AdcpTestRequest, extras?: AdcpTestRequestExtras): Promise<AdcpTestResponse>;
+
+  /**
+   * Production-safe tool invocation surface for transport adapters.
+   *
+   * Runs the full framework pipeline against a registered tool:
+   * request schema validation → account resolution → idempotency →
+   * handler dispatch → response narrowing → response validation.
+   * Returns the same `McpToolResponse` envelope the MCP transport
+   * observes — a transport adapter layers its own protocol framing on
+   * top (JSON-RPC result for MCP, A2A `Task` artifact for A2A, etc.).
+   *
+   * **Auth is the caller's responsibility.** `invoke()` forwards the
+   * provided `authInfo` verbatim to handlers and `resolveAccount`
+   * without re-verifying. Mount it only behind a transport that has
+   * already authenticated the principal (e.g. `serve({ authenticate })`
+   * for MCP, `createA2AAdapter({ authenticate })` for A2A). Do not call
+   * it directly from an HTTP handler — that path skips auth.
+   *
+   * For in-process tests that want to synthesize an `authInfo` without
+   * running a transport, reach for {@link dispatchTestRequest} instead
+   * — it takes the same principal shape but is explicitly marked
+   * test-only in its docstring.
+   *
+   * Throws when `toolName` is not registered; schema errors round-trip
+   * as structured `VALIDATION_ERROR` envelopes inside the return value.
+   */
+  invoke(options: AdcpInvokeOptions): Promise<McpToolResponse>;
 }
 
 /**
@@ -299,6 +353,19 @@ function getRegisteredTool(server: McpServer, name: string): RegisteredTool | un
   return (server as unknown as McpServerPrivates)._registeredTools?.[name];
 }
 
+/**
+ * Enumerate the tool names registered on the underlying SDK server.
+ * Used by transport adapters that need to derive discovery metadata
+ * (agent cards, capability listings) from the registered surface
+ * without reaching into private SDK fields at every call site.
+ *
+ * @internal
+ */
+export function listRegisteredToolNames(server: McpServer): string[] {
+  const registered = (server as unknown as McpServerPrivates)._registeredTools ?? {};
+  return Object.keys(registered);
+}
+
 function getRequestHandler(
   server: McpServer,
   method: string
@@ -357,6 +424,17 @@ export function wrapMcpServer(
     }
     return handler({ method: request.method, params: request.params ?? {} }, extra);
   };
+  const invoke = async (options: AdcpInvokeOptions): Promise<McpToolResponse> => {
+    const tool = getRegisteredTool(mcp, options.toolName);
+    if (!tool) {
+      throw new Error(`AdcpServer.invoke: tool "${options.toolName}" is not registered`);
+    }
+    const extra: { signal: AbortSignal; authInfo?: AdcpAuthInfo } = {
+      signal: options.signal ?? new AbortController().signal,
+    };
+    if (options.authInfo) extra.authInfo = options.authInfo;
+    return (await tool.handler(options.args, extra)) as McpToolResponse;
+  };
   const wrapper: AdcpServerInternal = {
     [ADCP_SDK_SERVER]: mcp,
     connect(transport) {
@@ -371,6 +449,7 @@ export function wrapMcpServer(
     // Satisfies both overloads (typed tools/call + generic fallback) — the
     // runtime dispatcher is a single function that narrows by method.
     dispatchTestRequest: dispatch as AdcpServerInternal['dispatchTestRequest'],
+    invoke,
   };
   return wrapper;
 }
