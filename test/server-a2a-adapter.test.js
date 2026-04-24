@@ -158,6 +158,112 @@ describe('createA2AAdapter', () => {
     });
   });
 
+  describe('mount() helper', () => {
+    async function jsonRpcAt(app, path, body) {
+      const server = app.listen(0);
+      try {
+        const port = server.address().port;
+        const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        return { status: res.status, body: await res.json() };
+      } finally {
+        server.close();
+      }
+    }
+
+    async function cardAt(app, path) {
+      const server = app.listen(0);
+      try {
+        const port = server.address().port;
+        const res = await fetch(`http://127.0.0.1:${port}${path}`);
+        return { status: res.status, body: res.status === 200 ? await res.json() : null };
+      } finally {
+        server.close();
+      }
+    }
+
+    it('derives basePath from agent-card URL pathname and mounts all four routes', async () => {
+      const adcp = createAdcpServer({
+        mediaBuy: { getProducts: async () => ({ products: [{ product_id: 'p1' }] }) },
+      });
+      const a2a = createA2AAdapter({
+        server: adcp,
+        agentCard: baseCard({ url: 'https://example.com/a2a' }),
+      });
+      const app = express();
+      app.use(express.json());
+      a2a.mount(app);
+
+      // Agent card at both locations
+      const atBase = await cardAt(app, '/a2a/.well-known/agent-card.json');
+      assert.strictEqual(atBase.status, 200);
+      assert.strictEqual(atBase.body.name, 'Test Agent');
+      const atRoot = await cardAt(app, '/.well-known/agent-card.json');
+      assert.strictEqual(atRoot.status, 200);
+      assert.strictEqual(atRoot.body.name, 'Test Agent');
+
+      // JSON-RPC at the derived basePath
+      const rpc = await jsonRpcAt(app, '/a2a', messageSend(dataPartMessage('get_products', { brief: 'ctv' })));
+      assert.strictEqual(rpc.status, 200);
+      assert.strictEqual(rpc.body.result?.status?.state, 'completed');
+    });
+
+    it('wellKnownAtRoot: false omits origin-root mount', async () => {
+      const adcp = createAdcpServer({
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      const a2a = createA2AAdapter({
+        server: adcp,
+        agentCard: baseCard({ url: 'https://example.com/a2a' }),
+      });
+      const app = express();
+      app.use(express.json());
+      a2a.mount(app, { wellKnownAtRoot: false });
+
+      const atBase = await cardAt(app, '/a2a/.well-known/agent-card.json');
+      assert.strictEqual(atBase.status, 200, 'base-path card still mounted');
+      const atRoot = await cardAt(app, '/.well-known/agent-card.json');
+      assert.strictEqual(atRoot.status, 404, 'origin-root mount suppressed');
+    });
+
+    it('accepts explicit basePath override', async () => {
+      const adcp = createAdcpServer({
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      const a2a = createA2AAdapter({
+        server: adcp,
+        agentCard: baseCard({ url: 'https://example.com/a2a' }),
+      });
+      const app = express();
+      app.use(express.json());
+      a2a.mount(app, { basePath: '/agents/foo' });
+
+      const card = await cardAt(app, '/agents/foo/.well-known/agent-card.json');
+      assert.strictEqual(card.status, 200);
+      const missed = await cardAt(app, '/a2a/.well-known/agent-card.json');
+      assert.strictEqual(missed.status, 404, 'default basePath not used when overridden');
+    });
+
+    it('falls back to /a2a when agent-card URL has no pathname', async () => {
+      const adcp = createAdcpServer({
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      const a2a = createA2AAdapter({
+        server: adcp,
+        agentCard: baseCard({ url: 'https://example.com' }), // no path
+      });
+      const app = express();
+      app.use(express.json());
+      a2a.mount(app);
+
+      const card = await cardAt(app, '/a2a/.well-known/agent-card.json');
+      assert.strictEqual(card.status, 200, 'fallback basePath is /a2a');
+    });
+  });
+
   describe('message/send routing', () => {
     it('Success arm → Task.state=completed + DataPart artifact', async () => {
       const adcp = createAdcpServer({

@@ -185,18 +185,57 @@ export interface A2AAdapterOptions {
   logger?: AdcpLogger;
 }
 
+/** Minimal Express app surface the adapter's `mount()` helper needs. */
+export interface ExpressAppLike {
+  use(path: string, ...handlers: RequestHandler[]): unknown;
+}
+
+/** Options for {@link A2AAdapter.mount}. */
+export interface A2AMountOptions {
+  /**
+   * URL-path prefix for the JSON-RPC endpoint. Defaults to the pathname
+   * of the agent card's `url` field (so `url: 'https://host/a2a'` mounts
+   * JSON-RPC at `/a2a`). Override to mount under a different path.
+   */
+  basePath?: string;
+  /**
+   * When true (default), also mounts the agent card at the origin root
+   * (`/.well-known/agent-card.json`) so simple discovery probes targeting
+   * the host itself find the card. Some deployments disable this when an
+   * upstream proxy owns origin-root routes — set `false` to mount only
+   * at `{basePath}/.well-known/agent-card.json`.
+   */
+  wellKnownAtRoot?: boolean;
+}
+
 /**
- * Value returned by {@link createA2AAdapter}. `jsonRpcHandler` accepts
- * A2A JSON-RPC posts (`message/send`, `tasks/get`, `tasks/cancel`);
- * mount it on the path your agent card advertises. `agentCardHandler`
- * serves the discovery GET — mount it at
- * `/.well-known/agent-card.json`.
+ * Value returned by {@link createA2AAdapter}.
+ *
+ * For almost every seller, `adapter.mount(app)` is the right entry
+ * point — it wires all four routes (JSON-RPC at the agent-card's
+ * path, the agent card at both `{basePath}/.well-known/agent-card.json`
+ * for A2A discovery and `/.well-known/agent-card.json` for origin-root
+ * probes) with one call.
+ *
+ * The `jsonRpcHandler` and `agentCardHandler` fields stay exposed for
+ * deployments that need finer control (mounting behind a custom auth
+ * layer, serving the card from a CDN, testing).
  */
 export interface A2AAdapter {
+  /** The A2A JSON-RPC middleware (`message/send`, `tasks/get`, `tasks/cancel`). */
   jsonRpcHandler: RequestHandler;
+  /** The agent-card discovery GET middleware. */
   agentCardHandler: RequestHandler;
   /** Returns the merged, validated agent card. */
   getAgentCard(): Promise<AgentCard>;
+  /**
+   * Wire all A2A routes onto an Express-compatible app in one call.
+   * Eliminates the "card mounted at only one location" footgun: the
+   * A2A SDK derives `${agentCard.url}/.well-known/agent-card.json` for
+   * discovery, while many clients also probe origin root — this helper
+   * satisfies both. See {@link A2AMountOptions} to override paths.
+   */
+  mount(app: ExpressAppLike, options?: A2AMountOptions): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -691,13 +730,45 @@ export function createA2AAdapter(options: A2AAdapterOptions): A2AAdapter {
   };
 
   const jsonRpc = jsonRpcHandler({ requestHandler, userBuilder });
-  const agentCard = agentCardHandler({ agentCardProvider: requestHandler });
+  const agentCardMiddleware = agentCardHandler({ agentCardProvider: requestHandler });
+
+  // Derive the default basePath from the agent-card URL's pathname so
+  // `mount(app)` "just works" for the common case where the URL the
+  // seller advertised and the URL their app serves are aligned.
+  // Falls back to `/a2a` when the URL has no path (empty or `/`).
+  const defaultBasePath = (() => {
+    try {
+      const parsed = new URL(card.url);
+      const pathname = parsed.pathname.replace(/\/+$/, '');
+      return pathname.length > 0 ? pathname : '/a2a';
+    } catch {
+      // `agentCard.url` might be a relative path or otherwise unparseable
+      // — fall back to the conventional A2A mount point.
+      return '/a2a';
+    }
+  })();
+
+  const mount = (app: ExpressAppLike, mountOptions: A2AMountOptions = {}): void => {
+    const basePath = mountOptions.basePath ?? defaultBasePath;
+    const wellKnownAtRoot = mountOptions.wellKnownAtRoot ?? true;
+    // A2A SDK clients derive `${agentCard.url}/.well-known/agent-card.json`
+    // for discovery, so mount there first.
+    app.use(`${basePath}/.well-known/agent-card.json`, agentCardMiddleware);
+    if (wellKnownAtRoot) {
+      // Origin-root is where simple "what agent lives at this host?"
+      // probes look. Serving both locations matches what deployments
+      // already hand-roll; the helper just bakes it in.
+      app.use('/.well-known/agent-card.json', agentCardMiddleware);
+    }
+    app.use(basePath, jsonRpc);
+  };
 
   return {
     jsonRpcHandler: jsonRpc,
-    agentCardHandler: agentCard,
+    agentCardHandler: agentCardMiddleware,
     async getAgentCard() {
       return card;
     },
+    mount,
   };
 }

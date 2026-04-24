@@ -242,7 +242,13 @@ export type {
 } from './idempotency';
 
 export { createA2AAdapter, A2AInvocationError } from './a2a-adapter';
-export type { A2AAdapter, A2AAdapterOptions, A2AAgentCardOverrides } from './a2a-adapter';
+export type {
+  A2AAdapter,
+  A2AAdapterOptions,
+  A2AAgentCardOverrides,
+  A2AMountOptions,
+  ExpressAppLike,
+} from './a2a-adapter';
 
 export { createWebhookEmitter, memoryWebhookKeyStore } from './webhook-emitter';
 export type {

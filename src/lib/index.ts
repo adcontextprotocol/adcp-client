@@ -661,6 +661,8 @@ export type {
   A2AAdapter,
   A2AAdapterOptions,
   A2AAgentCardOverrides,
+  A2AMountOptions,
+  ExpressAppLike,
 } from './server';
 
 // ====== ERROR HANDLING & RETRY ======

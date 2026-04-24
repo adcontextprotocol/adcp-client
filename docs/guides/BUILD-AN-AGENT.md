@@ -132,8 +132,12 @@ const a2a = createA2AAdapter({
 
 const app = express();
 app.use(express.json());
-app.use('/.well-known/agent-card.json', a2a.agentCardHandler);
-app.use('/a2a', a2a.jsonRpcHandler);
+// mount() wires: JSON-RPC at the `agentCard.url` pathname (`/a2a` here),
+// the agent card at both `{basePath}/.well-known/agent-card.json` (A2A
+// SDK discovery derives this) AND `/.well-known/agent-card.json` (origin-
+// root probes). The `jsonRpcHandler` and `agentCardHandler` properties
+// stay exposed for deployments that need custom mounting.
+a2a.mount(app);
 app.listen(3000);
 ```
 
