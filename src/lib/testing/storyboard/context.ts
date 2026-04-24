@@ -492,11 +492,7 @@ export interface ContextWriteResult {
  * tagging it as a convention-based extraction. `response_path` is absent
  * for convention extractors — they're hardcoded functions, not YAML paths.
  */
-export function extractContextWithProvenance(
-  taskName: string,
-  data: unknown,
-  stepId: string
-): ContextWriteResult {
+export function extractContextWithProvenance(taskName: string, data: unknown, stepId: string): ContextWriteResult {
   const values = extractContext(taskName, data);
   const provenance: Record<string, ContextProvenanceEntry> = {};
   for (const key of Object.keys(values)) {

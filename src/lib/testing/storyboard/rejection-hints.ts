@@ -14,12 +14,7 @@
  * from an SDK bug.
  */
 import type { TaskResult } from '../types';
-import type {
-  ContextProvenanceEntry,
-  ContextValueRejectedHint,
-  StoryboardContext,
-  StoryboardStepHint,
-} from './types';
+import type { ContextProvenanceEntry, ContextValueRejectedHint, StoryboardContext, StoryboardStepHint } from './types';
 import { resolvePath } from './path';
 
 /**

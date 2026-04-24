@@ -9,9 +9,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  detectContextRejectionHints,
-} = require('../../dist/lib/testing/storyboard/rejection-hints');
+const { detectContextRejectionHints } = require('../../dist/lib/testing/storyboard/rejection-hints');
 const {
   extractContextWithProvenance,
   applyContextOutputsWithProvenance,
@@ -41,9 +39,7 @@ describe('detectContextRejectionHints', () => {
       },
     };
     const request = {
-      packages: [
-        { product_id: 'prd_prism', pricing_option_id: 'po_prism_abandoner_cpm' },
-      ],
+      packages: [{ product_id: 'prd_prism', pricing_option_id: 'po_prism_abandoner_cpm' }],
     };
     const context = { pricing_option_id: 'po_prism_abandoner_cpm' };
     const prov = provenance({
@@ -336,9 +332,7 @@ describe('detectContextRejectionHints', () => {
     const taskResult = {
       success: false,
       data: {
-        errors: [
-          { code: 'INTERNAL_ERROR', message: 'oops' },
-        ],
+        errors: [{ code: 'INTERNAL_ERROR', message: 'oops' }],
       },
     };
     const prov = provenance({
@@ -587,10 +581,7 @@ describe('detectContextRejectionHints', () => {
     };
     const request = { a: 'c' };
     const context = { a: 'c' };
-    assert.deepEqual(
-      detectContextRejectionHints(taskResult, request, context, new Map()),
-      []
-    );
+    assert.deepEqual(detectContextRejectionHints(taskResult, request, context, new Map()), []);
     const populated = detectContextRejectionHints(
       taskResult,
       request,

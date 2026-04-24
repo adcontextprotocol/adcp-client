@@ -62,12 +62,7 @@ describe('applyContextOutputsWithProvenance', () => {
     const outputs = [
       { key: 'first_signal_pricing_option_id', path: 'signals[0].pricing_options[0].pricing_option_id' },
     ];
-    const { provenance } = applyContextOutputsWithProvenance(
-      data,
-      outputs,
-      'search_by_spec',
-      'get_signals'
-    );
+    const { provenance } = applyContextOutputsWithProvenance(data, outputs, 'search_by_spec', 'get_signals');
     assert.equal(provenance.first_signal_pricing_option_id.source_step_id, 'search_by_spec');
     assert.equal(provenance.first_signal_pricing_option_id.source_kind, 'context_outputs');
     assert.equal(
@@ -100,12 +95,7 @@ describe('applyContextOutputsWithProvenance', () => {
       { key: 'present', path: 'a' },
       { key: 'missing', path: 'b' },
     ];
-    const { values, provenance } = applyContextOutputsWithProvenance(
-      { a: 'yes' },
-      outputs,
-      's',
-      't'
-    );
+    const { values, provenance } = applyContextOutputsWithProvenance({ a: 'yes' }, outputs, 's', 't');
     assert.deepEqual(values, { present: 'yes' });
     assert.equal(provenance.present.source_kind, 'context_outputs');
     assert.equal(provenance.missing, undefined);
