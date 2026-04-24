@@ -21,11 +21,59 @@ A seller agent receives briefs from buyers, returns products with pricing, accep
 - Serving audience segments → `skills/build-signals-agent/`
 - Rendering creatives from briefs → that's a creative agent
 
+## <a name="the-baseline-what-every-sales--agent-must-implement"></a>The baseline: what every sales-* agent MUST implement
+
+Every sales-* specialism (including `sales-social`, `sales-broadcast-tv`, `sales-retail-media`, `sales-catalog-driven`, etc.) is **additive on top of this baseline**. If you claim any `sales-*` specialism, you implement these tools regardless of the specialism-specific deltas below.
+
+**Required tools** (tested by the `media_buy_seller` storyboard bundle at `compliance/cache/3.0.0/protocols/media-buy/`):
+
+| Tool | Purpose | `createAdcpServer` group |
+|---|---|---|
+| `get_adcp_capabilities` | Declare protocols + specialisms + features | auto (framework) |
+| `sync_accounts` | Advertiser onboarding, per-tenant account creation | `accounts` |
+| `list_accounts` | Account lookup by brand/operator; buyers listing their accounts on your platform | `accounts` |
+| `get_products` | Product catalog discovery from a brief; returns `{ products: [...] }` | `mediaBuy` |
+| `list_creative_formats` | Formats your agent accepts | `mediaBuy` |
+| `create_media_buy` | Accept a campaign with packages, budget, flight dates | `mediaBuy` |
+| `update_media_buy` | Bid, budget, status, package mutations over the campaign lifecycle | `mediaBuy` |
+| `get_media_buys` | Read campaigns back with full state (status, budget, packages, targeting overlays) | `mediaBuy` |
+| `sync_creatives` | Accept creative assets and return per-asset status | `mediaBuy` |
+| `list_creatives` | Read the creative library back with pagination | `mediaBuy` |
+| `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows | `mediaBuy` |
+
+**Minimum handler skeleton** — every sales-* seller starts here, then adds specialism-specific behavior on top:
+
+```ts
+createAdcpServer({
+  name: 'my-seller',
+  version: '1.0.0',
+  stateStore,
+  idempotency: createIdempotencyStore({ backend: memoryBackend() }),
+  resolveSessionKey: ctx => ctx.account?.account_id,
+  accounts: {
+    syncAccounts: async (params, ctx) => { /* … */ },
+    listAccounts: async (params, ctx) => { /* … */ },
+  },
+  mediaBuy: {
+    getProducts: async (params, ctx) => { /* … */ },
+    listCreativeFormats: async () => ({ formats: [...] }),
+    createMediaBuy: async (params, ctx) => { /* … */ },
+    updateMediaBuy: async (params, ctx) => { /* … */ },
+    getMediaBuys: async (params, ctx) => { /* … */ },
+    syncCreatives: async (params, ctx) => { /* … */ },
+    listCreatives: async (params, ctx) => { /* … */ },
+    getMediaBuyDelivery: async (params, ctx) => { /* … */ },
+  },
+});
+```
+
+If a specialism's storyboard doesn't exercise one of these tools, the tool is **not optional** — the storyboard is just focused elsewhere (e.g. `sales-social` covers audience sync + DPA + events; the media buy flow itself is covered by `sales-non-guaranteed` or `sales-guaranteed` which you also claim). See § [Tools and Required Response Shapes](#tools-and-required-response-shapes) below for the exact response shape each tool must return.
+
 ## Specialisms This Skill Covers
 
 Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each specialism has a storyboard bundle at `compliance/cache/latest/specialisms/<id>/` that the AAO compliance runner executes. Pick one or more.
 
-**Specialisms are additive on top of the baseline media-buy flow** (`get_products` → `create_media_buy` → lifecycle + creative sync + delivery reporting). A specialism's storyboard exercises the ADDITIONAL behaviors it requires; it does not displace the baseline. If the storyboard skips a baseline tool (because that tool is already covered by `sales-non-guaranteed` / `sales-guaranteed`), that doesn't mean the tool is optional for your agent — it means the test is focused elsewhere. Check the storyboard's `agent.capabilities` — if it lists `sells_media` / `accepts_briefs`, the baseline still applies.
+**Specialisms are additive on top of [the baseline](#the-baseline-what-every-sales--agent-must-implement).** A specialism's storyboard exercises the ADDITIONAL behaviors it requires; it does not displace the baseline 11-tool surface above. If the storyboard skips a baseline tool (because that tool is already covered by `sales-non-guaranteed` / `sales-guaranteed`), that doesn't mean the tool is optional for your agent — it means the test is focused elsewhere. Check the storyboard's `agent.capabilities` — if it lists `sells_media` / `accepts_briefs`, the baseline still applies.
 
 **Claim multiple specialisms.** A typical social seller claims `sales-non-guaranteed` + `sales-social`. A typical broadcast seller claims `sales-guaranteed` + `sales-broadcast-tv`. A typical social seller doing audience sync claims `sales-non-guaranteed` + `sales-social` + `audience-sync`.
 
@@ -352,7 +400,7 @@ Non-guaranteed buys are always instant confirmation.
 - **Catalog-driven** — buyer syncs product catalog via `sync_catalogs`. Common for retail media.
 - **None** — creative handled out-of-band. Omit creative tools.
 
-## Tools and Required Response Shapes
+## <a name="tools-and-required-response-shapes"></a>Tools and Required Response Shapes
 
 > **Before writing any handler's return statement, fetch [`docs/llms.txt`](../../docs/llms.txt) and grep for `#### \`<tool_name>\``(e.g.`#### \`create_media_buy\``) to read the exact required + optional field list.** The schema-derived contract lives there; this skill covers patterns, gotchas, and domain-specific examples. Strict response validation is on by default in dev — it will tell you the exact field path if you drift, so write the obvious thing and trust the contract.
 >
@@ -1429,7 +1477,7 @@ Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 
 **`sales-social` is additive, not a replacement.** The storyboard's own metadata declares `interaction_model: media_buy_seller` with `capabilities: [sells_media, accepts_briefs, supports_non_guaranteed]` and lists Snap, Meta, TikTok, and Pinterest as example agents — all of which have product catalogs (ad formats, placements, audience offerings as products) AND accept media buys (campaigns with flights, budgets, ad sets). The storyboard only exercises the audience / catalog / native-creative / events / financials leg because the baseline buyer-flow is covered by `sales-non-guaranteed` (or `sales-guaranteed`). Claim BOTH specialisms and implement the full surface.
 
-**Baseline tools still apply** (these come from `sales-non-guaranteed` or `sales-guaranteed`):
+**Baseline tools still apply** — implement the full 11-tool [baseline surface](#the-baseline-what-every-sales--agent-must-implement). Highlights for social specifically:
 
 - `get_products` — return your platform's ad formats, placements, and audience-targeting products
 - `create_media_buy` — accept campaigns (ad sets / flights) with budgets, targeting, and package structure
