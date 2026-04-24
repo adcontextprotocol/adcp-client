@@ -333,10 +333,7 @@ export function wrapMcpServer(
       );
     },
   };
-  const dispatch = async (
-    request: AdcpTestRequest,
-    extras?: AdcpTestRequestExtras
-  ): Promise<AdcpTestResponse> => {
+  const dispatch = async (request: AdcpTestRequest, extras?: AdcpTestRequestExtras): Promise<AdcpTestResponse> => {
     const extra: { signal: AbortSignal; authInfo?: AdcpTestRequestExtras['authInfo'] } = {
       signal: new AbortController().signal,
     };
