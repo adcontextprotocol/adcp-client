@@ -187,6 +187,27 @@ describe('schema-driven validation', () => {
       assert.deepStrictEqual(err.details.issues, issues);
     });
 
+    test('anyOf rejections also carry variant metadata', async () => {
+      // `create_content_standards` has a top-level anyOf: pick policies OR
+      // registry_policy_ids. An empty payload matches neither, so we should
+      // see an enriched anyOf issue at `/` with both variants.
+      const res = validateRequest('create_content_standards', {
+        idempotency_key: '00000000-0000-0000-0000-000000000000',
+        account: { account_id: 'acme' },
+        scope: { kind: 'buyer' },
+      });
+      assert.strictEqual(res.valid, false);
+      const anyOfIssue = res.issues.find(i => i.keyword === 'anyOf');
+      assert.ok(anyOfIssue, 'anyOf issue must be present when neither variant matches');
+      assert.ok(Array.isArray(anyOfIssue.variants), 'variants must be enriched on anyOf issues');
+      assert.strictEqual(anyOfIssue.variants.length, 2);
+      const requiredSets = anyOfIssue.variants.map(v => v.required);
+      // The variants are symmetric (either policies OR registry_policy_ids) —
+      // order not guaranteed, so check both are represented.
+      assert.ok(requiredSets.some(r => r.includes('policies')), `policies variant missing: ${JSON.stringify(requiredSets)}`);
+      assert.ok(requiredSets.some(r => r.includes('registry_policy_ids')), `registry_policy_ids variant missing: ${JSON.stringify(requiredSets)}`);
+    });
+
     test('oneOf rejections carry variant metadata', async () => {
       // Malformed create_media_buy: account has account_id AND brand, matching
       // neither variant. Enrichment should expose both variants' required[].
