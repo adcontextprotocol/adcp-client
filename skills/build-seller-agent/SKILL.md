@@ -1131,9 +1131,13 @@ The quick-start uses `memoryBackend()` + `InMemoryStateStore` — both reset on 
 
 Auth is not wired in the example — see [§ Protecting your agent](#protecting-your-agent) below.
 
-## Multi-Host and Alternative Transports
+## Multi-Host, Express, and Alternative Transports
 
-`serve()` supports two shapes of deployment out of the box: single-host (the quickstart default) and multi-host (one process fronting many hostnames). Stdio is the only setup that needs a different entry point.
+`serve()` supports two shapes of deployment out of the box: single-host (the quickstart default) and multi-host (one process fronting many hostnames). Three cases need a different entry point:
+
+- **Mounting under an existing Express app** (especially alongside OAuth 2.1 Authorization Server routes like `mcpAuthRouter({ provider })`) — use `createExpressAdapter`.
+- **Stdio transport** — for CLI / desktop / local-subprocess agents.
+- **Hand-rolled HTTP** — when even `createExpressAdapter` doesn't fit; `createAdcpServer().connect(transport)` is the raw escape hatch.
 
 ### Multi-host HTTP
 
@@ -1180,6 +1184,71 @@ serve(
 Each unique host runs its resolver once and the result is cached. Every host advertises its own RFC 9728 `resource` URL, the 401 challenge carries the host's `resource_metadata` URL, and the factory sees the resolved host so it can return host-specific handlers. Auth, RFC 9421 signature verification, idempotency, and governance composition all stay inside `serve()` — nothing extra to re-own.
 
 **Set `trustForwardedHost: true` only when upstream sanitizes `X-Forwarded-Host`.** Without the flag, the framework reads `Host` directly — an attacker-controlled `X-Forwarded-Host` can't influence which adapter handles the request or which audience the advertised PRM carries. With the flag, you're telling `serve()` that your proxy already filtered spoofed values.
+
+### Express + OAuth Authorization Server in one process
+
+When your agent is *both* an OAuth 2.1 AS (issues tokens) and a protected resource (MCP endpoint), mount both on a single `express()` app using `createExpressAdapter`. This is the supported composition path — you re-own nothing vs. running `serve()`.
+
+```typescript
+import express from 'express';
+import { createAdcpServer, createExpressAdapter, verifyBearer, anyOf, verifyApiKey } from '@adcp/client/server';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+
+const agent = createAdcpServer({
+  name: 'Snap seller',
+  version: '1.0.0',
+  resolveAccount: async (ref, { authInfo }) => lookupAccount(ref, authInfo),
+  mediaBuy: { /* ... */ },
+});
+
+const adapter = createExpressAdapter({
+  mountPath: '/api/snap',
+  publicUrl: 'https://seller.example.com/api/snap/mcp',
+  prm: { authorization_servers: ['https://seller.example.com/oauth'] },
+  server: agent,
+});
+
+const app = express();
+
+// Raw-body capture so RFC 9421 signature verification hashes the bytes
+// the client signed — express.json() would consume the stream first.
+app.use(express.json({ limit: '5mb', verify: adapter.rawBodyVerify }));
+
+// RFC 9728 PRM lives at the origin root (where OAuth graders probe),
+// NOT inside the agent router.
+app.use(adapter.protectedResourceMiddleware);
+
+// OAuth 2.1 Authorization Server routes alongside the MCP endpoint.
+app.use('/oauth', mcpAuthRouter({
+  provider: myOAuthProvider,
+  issuerUrl: new URL('https://seller.example.com/oauth'),
+}));
+
+// MCP endpoint — per-request transport, agent is reused.
+const authenticate = verifyBearer({
+  jwksUri: 'https://seller.example.com/oauth/.well-known/jwks.json',
+  issuer: 'https://seller.example.com/oauth',
+  audience: 'https://seller.example.com/api/snap/mcp',
+});
+
+app.post('/api/snap/mcp', async (req, res) => {
+  const principal = await authenticate(req);
+  if (!principal) { res.status(401).end(); return; }
+  (req as any).auth = { token: principal.token, clientId: principal.principal, scopes: principal.scopes };
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  try {
+    await agent.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } finally {
+    transport.close();
+  }
+});
+
+app.listen(3001);
+```
+
+`createExpressAdapter` gives you four pieces `serve()` would otherwise handle: `rawBodyVerify` (for signed requests), `protectedResourceMiddleware` (RFC 9728 at origin root, not inside the router), `getUrl` (reconstructs the canonical URL with Express's stripped mount prefix — pass to `verifySignatureAsAuthenticator`), and `resetHook` (compliance state reset between storyboards). Scale it to many hostnames with one Express Router per host, dispatched by a Host-header middleware — the 13-adapter pattern.
 
 ### Stdio
 
