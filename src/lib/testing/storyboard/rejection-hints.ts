@@ -54,8 +54,16 @@ export function detectContextRejectionHints(
   if (!taskResult) return [];
   const data = taskResult.data as Record<string, unknown> | undefined;
   if (!data) return [];
-  const errors = data.errors;
-  if (!Array.isArray(errors)) return [];
+  // Normalize both envelope shapes the AdCP error surface produces:
+  //   - `errors: [{...}]` — plural array (AdCP core/error.json)
+  //   - `adcp_error: {...}` — singular object, what the canonical
+  //     `adcpError()` SDK helper emits. Most sellers use the helper, so
+  //     without this normalization the hint would silently never fire
+  //     against them (dogfood surfaced this; see adcp-client#907).
+  // Also accepts `adcp_error: [{...}]` defensively in case a seller
+  // ever emits the key with an array payload.
+  const errors = resolveErrorsList(data);
+  if (!errors) return [];
 
   const hints: StoryboardStepHint[] = [];
   // De-dupe: the same (context_key, rejected_value) shouldn't produce
@@ -231,6 +239,24 @@ function formatScalar(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * Normalize the response body's error envelope into a flat list for the
+ * hint detector. Recognizes:
+ *   - `errors: [{...}]` — AdCP core/error.json shape
+ *   - `adcp_error: {...}` — what `adcpError()` helper produces
+ *   - `adcp_error: [{...}]` — defensive; some sellers emit this
+ * Returns undefined when neither shape is present or the values aren't
+ * objects we can inspect.
+ */
+function resolveErrorsList(data: Record<string, unknown>): unknown[] | undefined {
+  const errors = data.errors;
+  if (Array.isArray(errors)) return errors;
+  const adcpError = data.adcp_error;
+  if (Array.isArray(adcpError)) return adcpError;
+  if (adcpError && typeof adcpError === 'object') return [adcpError];
+  return undefined;
 }
 
 function findAcceptedValues(
