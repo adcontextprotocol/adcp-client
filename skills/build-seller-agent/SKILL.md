@@ -1204,7 +1204,39 @@ Each unique host runs its resolver once and the result is cached. Every host adv
 
 **Unknown hosts: throw `UnknownHostError` from the factory.** `serve()` catches it and responds 404 with a generic body (the routing table never crosses the wire). Throwing any other `Error` stays as a 500 so unrelated bugs remain loud.
 
-**Factory runs per request.** `serve()` calls the factory on every incoming request (to avoid cross-request state bleed) and closes the returned server at the end. Keep the factory cheap: look up a pre-built adapter config from a module-scoped `Map`, and let `createAdcpServer(...)` build a fresh wrapper from that config. Do NOT cache the `AdcpServer` instance across requests — `serve()` closes it after each call, so the cache would be stale on request 2. If per-request `createAdcpServer` cost is a measurable bottleneck, track [#901](https://github.com/adcontextprotocol/adcp-client/issues/901) — a reuse mode is planned.
+**Factory runs per request.** `serve()` calls the factory on every incoming request (to avoid cross-request state bleed). By default it closes the returned server at the end of each request — so caching the `AdcpServer` from one call to the next is unsafe without opt-in. Keep the default-path factory cheap: look up a pre-built adapter config from a module-scoped `Map`, and let `createAdcpServer(...)` build a fresh wrapper from that config on every call.
+
+**Pass `reuseAgent: true` to cache `AdcpServer` instances per host.** When the tool-registration cost inside `createAdcpServer(...)` is a measurable part of request latency (common in multi-host deployments with many tools per host), flip the flag and cache the returned server in the factory:
+
+```typescript
+const agents = new Map<string, AdcpServer>();
+serve(
+  ctx => {
+    let agent = agents.get(ctx.host);
+    if (!agent) {
+      const cfg = adapters.get(ctx.host);
+      if (!cfg) throw new UnknownHostError(`No adapter for ${ctx.host}`);
+      agent = createAdcpServer({
+        name: cfg.name,
+        version: '1.0.0',
+        resolveAccount: cfg.resolveAccount,
+        mediaBuy: cfg.handlers,
+      });
+      agents.set(ctx.host, agent);
+    }
+    return agent;
+  },
+  { reuseAgent: true /* ...other options... */ }
+);
+
+// Cleanup on shutdown — reuseAgent mode doesn't auto-close.
+process.on('SIGTERM', async () => {
+  await Promise.all([...agents.values()].map(a => a.close()));
+  process.exit(0);
+});
+```
+
+The framework wraps the `connect → handleRequest → close-transport` cycle in a per-instance async mutex. Concurrent requests on the SAME cached server serialize (MCP's `Protocol.connect()` throws when a transport is already attached, so serialization is mandatory for safety); concurrent requests on DIFFERENT cached servers run in parallel. Trade-off: throughput per unique host drops to 1 in flight at a time. If a single host regularly serves concurrent requests where handler latency dominates, cache a small pool of servers per host and round-robin from the factory — the mutex is per-instance, so pool members don't serialize with each other.
 
 ### Express + OAuth Authorization Server in one process
 
@@ -1427,28 +1459,47 @@ The straightforward case. You own the IdP, issue JWTs with `aud` bound to `publi
 
 #### OAuth provider shape 2: pass-through upstream platform tokens
 
-Used when the adapter is a thin proxy over an external IdP (Snap OAuth, Meta OAuth, etc.) and the bearer clients present IS the upstream platform's access token. Your AS is an orchestrator, not an issuer.
+Used when the adapter is a thin proxy over an external IdP (Snap OAuth, Meta OAuth, etc.) and the Bearer clients present IS the upstream platform's access token. Your AS is an orchestrator, not an issuer — the `OAuthServerProvider` persists the upstream access/refresh token keyed by your auth code, and `exchangeAuthorizationCode()` returns the stored upstream token rather than a freshly-minted JWT.
+
+Bearer verification is NOT `verifyBearer({...})` — the token isn't your JWT. Use `verifyIntrospection` (RFC 7662) when the upstream exposes an introspection endpoint:
 
 ```typescript
-// cfg.createOAuthProvider() returns an OAuthServerProvider that:
-//  - authorize(): redirects to the upstream platform's authorize
-//    endpoint, captures the platform's callback, persists the
-//    platform's access/refresh token keyed by YOUR auth code
-//  - exchangeAuthorizationCode(): returns the stored UPSTREAM access
-//    token as the Bearer (not a freshly-minted JWT)
-// Bearer verification on the MCP endpoint is NOT `verifyBearer({...})`
-// — the token isn't your JWT. Options:
-//   a. Upstream JWKS: if the platform publishes one and signs JWTs,
-//      verifyBearer against THEIR JWKS + audience.
-//   b. Introspection (RFC 7662): POST the token to the platform's
-//      introspection endpoint, check `active: true` + scopes.
-//   c. Opaque-token cache: short-lived in-memory cache of verified
-//      tokens, keyed by hash(token), with a TTL.
-// Tracked as a follow-up — see #902 for a
-// `verifyIntrospection({ introspectionUrl })` helper.
+import { verifyIntrospection } from '@adcp/client/server';
+
+const authenticate = verifyIntrospection({
+  introspectionUrl: 'https://accounts.snapchat.com/oauth2/introspect',
+  // Introspection endpoints are ALWAYS client-authenticated (RFC 7662 §2.1);
+  // provision an introspection-capable client with the upstream IdP.
+  clientId: process.env.SNAP_INTROSPECTION_CLIENT_ID!,
+  clientSecret: process.env.SNAP_INTROSPECTION_CLIENT_SECRET!,
+  // Scopes to require on the upstream token. The introspection response's
+  // `scope` string must contain ALL of these.
+  requiredScopes: ['snapchat-marketing-api'],
+  // Cache positive responses to amortize the network round-trip across
+  // closely-spaced requests from the same buyer. TTL is capped at the
+  // token's own `exp` claim — the cache can't extend a token past its
+  // upstream-issued lifetime. Negative responses are NOT cached by
+  // default (a revoked token must be able to fail the next request);
+  // set `negativeTtlSeconds` if you accept the revocation-latency
+  // trade-off for DoS-amplification protection.
+  cache: { ttlSeconds: 60, max: 10_000 },
+  // Fail-closed timeout. Default 2000ms — a slow upstream can't bypass auth.
+  timeoutMs: 2000,
+});
+
+router.post(`/api/${cfg.slug}/mcp`, async (req, res) => {
+  const principal = await authenticate(req);
+  if (!principal) {
+    res.status(401).end();
+    return;
+  }
+  // ... rest as in shape 1
+});
 ```
 
-Both shapes compose with the multi-host Express scaffold above — swap the provider, the rest stays.
+When the upstream platform publishes a JWKS and signs access tokens as JWTs (Google, Auth0-backed IdPs, etc.), `verifyBearer({ jwksUri, issuer, audience })` against the upstream's endpoints avoids the per-request introspection round trip — stronger cryptographic verification and no upstream rate-limit exposure. Pick introspection only when the upstream uses opaque tokens.
+
+Both provider shapes compose with the multi-host Express scaffold above — swap the provider and the authenticator, the rest stays.
 
 #### Why this scaffold, not `serve()`
 

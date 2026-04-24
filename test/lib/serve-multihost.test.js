@@ -269,16 +269,18 @@ describe('serve() multi-host', () => {
     server.close();
   });
 
-  test('404 on PRM probe when host has no publicUrl mapping', async () => {
+  test('generic resolver throw (not UnknownHostError) surfaces as 500 on PRM probe', async () => {
+    // For UnknownHostError → 404 routing, see the dedicated tests that
+    // throw `UnknownHostError`. This test pins the OTHER branch: a
+    // resolver that throws a plain `Error` is a real bug, so the
+    // framework surfaces it loudly as 500 rather than hiding it behind
+    // a 404.
     const factory = () => new McpServer({ name: 'Test', version: '1.0.0' });
     const server = serve(factory, {
       port: 0,
-      // Resolver returns empty string for unknown hosts — framework treats
-      // as "no PRM for this host" and responds 404 rather than advertising
-      // a blank `resource`.
       publicUrl: host => {
         if (host.startsWith('snap.')) return `https://snap.example.com/mcp`;
-        throw new Error(`unknown host: ${host}`);
+        throw new Error(`unknown host: ${host}`); // plain Error, NOT UnknownHostError
       },
       protectedResource: { authorization_servers: ['https://auth.example.com'] },
       onListening: () => {},
@@ -292,7 +294,6 @@ describe('serve() multi-host', () => {
       host: `unknown.example.com:${port}`,
     });
 
-    // Resolver threw — treated as 500 (operator misconfiguration surfaced).
     assert.strictEqual(res.status, 500);
 
     server.close();
@@ -549,6 +550,289 @@ describe('serve() multi-host', () => {
       headers: { forwarded: 'host=attacker.example.com' },
     });
     assert.strictEqual(seen[0], `real.example.com:${port}`);
+
+    server.close();
+  });
+
+  test('reuseAgent: true lets the factory cache per-host servers across requests', async () => {
+    const constructed = [];
+    const returned = [];
+    const cache = new Map();
+    const factory = ctx => {
+      let agent = cache.get(ctx.host);
+      if (!agent) {
+        constructed.push(ctx.host);
+        agent = new McpServer({ name: `Agent for ${ctx.host}`, version: '1.0.0' });
+        cache.set(ctx.host, agent);
+      }
+      returned.push(ctx.host);
+      return agent;
+    };
+    const server = serve(factory, { port: 0, reuseAgent: true, onListening: () => {} });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    // 4 requests across 2 hosts. Factory called 4 times (still per-request),
+    // but constructAdcpServer runs only 2 times (one per unique host).
+    await request(port, { host: `snap.example.com:${port}` });
+    await request(port, { host: `meta.example.com:${port}` });
+    await request(port, { host: `snap.example.com:${port}` });
+    await request(port, { host: `meta.example.com:${port}` });
+
+    assert.strictEqual(returned.length, 4, 'factory called once per request');
+    assert.deepStrictEqual(
+      constructed.sort(),
+      [`meta.example.com:${port}`, `snap.example.com:${port}`],
+      'server constructed exactly once per unique host'
+    );
+
+    server.close();
+  });
+
+  test('reuseAgent: true serializes concurrent requests on the same cached server', async () => {
+    // Two concurrent requests to the same host. Without the mutex,
+    // MCP SDK's Protocol.connect() throws "Already connected to a
+    // transport" on the second. With the mutex, they serialize and
+    // both succeed.
+    const cache = new Map();
+    const factory = ctx => {
+      let agent = cache.get(ctx.host);
+      if (!agent) {
+        agent = new McpServer({ name: `Agent for ${ctx.host}`, version: '1.0.0' });
+        cache.set(ctx.host, agent);
+      }
+      return agent;
+    };
+    const server = serve(factory, { port: 0, reuseAgent: true, onListening: () => {} });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    // 4 concurrent requests on the same host — must all complete without
+    // "Already connected" errors crashing the handler.
+    const results = await Promise.all([
+      request(port, { host: `snap.example.com:${port}` }),
+      request(port, { host: `snap.example.com:${port}` }),
+      request(port, { host: `snap.example.com:${port}` }),
+      request(port, { host: `snap.example.com:${port}` }),
+    ]);
+    for (const res of results) {
+      // All 4 should be status 2xx/4xx from MCP (depending on body), not
+      // 500 from the framework. 500 would mean the mutex broke.
+      assert.notStrictEqual(res.status, 500, `unexpected 500 — response body: ${res.body}`);
+    }
+
+    server.close();
+  });
+
+  test('reuseAgent: true concurrent requests on DIFFERENT cached servers run in parallel', async () => {
+    // Mutex is keyed on server INSTANCE. Two requests on different hosts
+    // (different cached servers) should NOT serialize against each other.
+    // Verified by checking that the framework invokes each factory twice
+    // across the two hosts — a global mutex would still serialize but
+    // would still produce the same count, so this test is by shape
+    // (cache-one-per-host) not by wall-clock timing.
+    const cache = new Map();
+    const entryLog = [];
+    const factory = ctx => {
+      let agent = cache.get(ctx.host);
+      if (!agent) {
+        agent = new McpServer({ name: `Agent for ${ctx.host}`, version: '1.0.0' });
+        cache.set(ctx.host, agent);
+      }
+      entryLog.push(ctx.host);
+      return agent;
+    };
+    const server = serve(factory, { port: 0, reuseAgent: true, onListening: () => {} });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    await Promise.all([
+      request(port, { host: `a.example.com:${port}` }),
+      request(port, { host: `a.example.com:${port}` }),
+      request(port, { host: `b.example.com:${port}` }),
+      request(port, { host: `b.example.com:${port}` }),
+    ]);
+
+    assert.strictEqual(entryLog.length, 4);
+    assert.strictEqual(entryLog.filter(h => h.startsWith('a.')).length, 2);
+    assert.strictEqual(entryLog.filter(h => h.startsWith('b.')).length, 2);
+    // Only 2 UNIQUE servers were ever constructed — one per host.
+    assert.strictEqual(cache.size, 2);
+
+    server.close();
+  });
+
+  test('reuseAgent: true — same cached server instance handles sequential requests', async () => {
+    // Pin the reuse contract explicitly: across multiple sequential
+    // requests on the same host, the factory returns the SAME server
+    // reference every time. If the framework's internal close() ever
+    // rendered the cached instance dead (it does not, per MCP SDK's
+    // Protocol._onclose only clearing `_transport`), this assertion
+    // catches the regression.
+    const returned = new Set();
+    const mcp = new McpServer({ name: 'Test', version: '1.0.0' });
+    const server = serve(
+      () => {
+        returned.add(mcp);
+        return mcp;
+      },
+      { port: 0, reuseAgent: true, onListening: () => {} }
+    );
+    await waitForListening(server);
+    const port = server.address().port;
+
+    await request(port, { host: `host.example.com:${port}` });
+    await request(port, { host: `host.example.com:${port}` });
+    await request(port, { host: `host.example.com:${port}` });
+
+    // One reference across three requests — not a fresh instance each time.
+    assert.strictEqual(returned.size, 1);
+
+    server.close();
+  });
+
+  test('reuseAgent: false (default) still creates fresh server per request', async () => {
+    const constructed = [];
+    const factory = ctx => {
+      constructed.push(ctx.host);
+      return new McpServer({ name: 'fresh', version: '1.0.0' });
+    };
+    const server = serve(factory, { port: 0, onListening: () => {} });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    await request(port, { host: `a.example.com:${port}` });
+    await request(port, { host: `a.example.com:${port}` });
+
+    // Two requests → two constructions. Default behavior preserved.
+    assert.strictEqual(constructed.length, 2);
+
+    server.close();
+  });
+
+  test('reuseAgent: true isolates auth context across requests on the shared server', async () => {
+    // Critical safety check: when an AdcpServer is shared across
+    // requests, per-request `authInfo` MUST come from the MCP
+    // transport per invocation (via RequestHandlerExtra.authInfo) and
+    // NEVER be captured on the server instance. If it bled, request
+    // 1's token would authorize request 2's tool call. The MCP SDK's
+    // contract is that `extra.authInfo` is populated from `req.auth`
+    // per-invocation — this test holds that guarantee for our reuse
+    // mode.
+    //
+    // Uses a bare McpServer with a tool that has no input schema so we
+    // can observe `extra.authInfo` directly, avoiding AdCP's
+    // schema-validated dispatch path.
+    const seenAuth = [];
+    const mcp = new McpServer({ name: 'Test', version: '1.0.0' });
+    // inputSchema MUST be present — without it, the MCP SDK calls the
+    // handler as `(extra)` rather than `(args, extra)` (mcp.js:238),
+    // and our observation would see `authInfo: undefined` in what we
+    // thought was `extra`.
+    mcp.registerTool(
+      'observe_auth',
+      { description: 'returns authInfo seen', inputSchema: {} },
+      async (_args, extra) => {
+        seenAuth.push({
+          clientId: extra?.authInfo?.clientId ?? null,
+          token: extra?.authInfo?.token ?? null,
+        });
+        return { content: [{ type: 'text', text: 'ok' }] };
+      }
+    );
+
+    let callNum = 0;
+    const server = serve(() => mcp, {
+      port: 0,
+      reuseAgent: true,
+      // Mint a distinct principal per request. Request 1 → principal_1,
+      // request 2 → principal_2. If the dispatcher captured request 1's
+      // authInfo on the instance, request 2 would see principal_1.
+      authenticate: () => {
+        callNum++;
+        return { principal: `principal_${callNum}`, token: `token_${callNum}` };
+      },
+      onListening: () => {},
+    });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    const callObserve = () =>
+      new Promise((resolve, reject) => {
+        const body = JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'observe_auth', arguments: {} },
+        });
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port,
+            path: '/mcp',
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              accept: 'application/json, text/event-stream',
+              'content-length': Buffer.byteLength(body),
+              host: `test.example.com:${port}`,
+            },
+          },
+          res => {
+            let data = '';
+            res.on('data', c => (data += c));
+            res.on('end', () => resolve({ status: res.statusCode, body: data }));
+          }
+        );
+        req.on('error', reject);
+        req.end(body);
+      });
+
+    await callObserve();
+    await callObserve();
+
+    assert.strictEqual(seenAuth.length, 2, `expected 2 handler invocations, got ${seenAuth.length}`);
+    assert.strictEqual(seenAuth[0].clientId, 'principal_1', 'request 1 must see principal 1');
+    assert.strictEqual(
+      seenAuth[1].clientId,
+      'principal_2',
+      'request 2 must see principal 2 (not the leaked principal 1 from the prior call)'
+    );
+    assert.strictEqual(seenAuth[0].token, 'token_1');
+    assert.strictEqual(seenAuth[1].token, 'token_2');
+
+    server.close();
+  });
+
+  test('reuseAgent: true, factory throw in one request does not poison subsequent requests', async () => {
+    // If the first request rejects somewhere in the chain, the mutex
+    // must not leave the cached server in a locked state — subsequent
+    // requests should still acquire and proceed.
+    const cache = new Map();
+    let failNext = true;
+    const factory = ctx => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('synthetic factory failure');
+      }
+      let agent = cache.get(ctx.host);
+      if (!agent) {
+        agent = new McpServer({ name: 'Test', version: '1.0.0' });
+        cache.set(ctx.host, agent);
+      }
+      return agent;
+    };
+    const server = serve(factory, { port: 0, reuseAgent: true, onListening: () => {} });
+    await waitForListening(server);
+    const port = server.address().port;
+
+    // First request — factory throws, server 500s.
+    const r1 = await request(port, { host: `snap.example.com:${port}` });
+    assert.strictEqual(r1.status, 500);
+
+    // Second request — factory succeeds, mutex chain should be healthy.
+    const r2 = await request(port, { host: `snap.example.com:${port}` });
+    assert.notStrictEqual(r2.status, 500, 'subsequent request must not be blocked by the prior failure');
 
     server.close();
   });

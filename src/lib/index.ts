@@ -549,6 +549,7 @@ export {
   UnknownHostError,
   hostname,
   resolveHost,
+  verifyIntrospection,
   registerTestController,
   handleTestControllerRequest,
   TestControllerError,

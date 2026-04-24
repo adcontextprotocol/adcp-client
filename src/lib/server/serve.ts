@@ -158,6 +158,42 @@ export interface ServeOptions {
   protectedResource?: ProtectedResourceMetadata | ((host: string) => ProtectedResourceMetadata);
 
   /**
+   * Reuse the agent returned by the factory across requests instead of
+   * closing it after each. Default `false` (one fresh server per
+   * request — the pre-existing behavior).
+   *
+   * When `true`, `serve()` DOES NOT call `agentServer.close()` between
+   * requests. The factory is still called on every request; it's the
+   * caller's responsibility to cache `AdcpServer` instances (typically
+   * keyed on `ctx.host`) and return the cached instance when possible.
+   * Concurrent requests to the same cached server are serialized per
+   * instance — `McpServer.connect()` rejects when a transport is
+   * already attached, so the framework wraps the
+   * connect→handleRequest→release cycle in a per-instance async
+   * mutex. Requests for DIFFERENT cached servers still run in parallel.
+   *
+   * Use when `createAdcpServer(...)` setup cost (tool registration,
+   * handler wiring) is a measurable portion of request latency — common
+   * in multi-host deployments with many tools per host. Trade-off:
+   * throughput per unique host drops to 1 in flight at a time. For
+   * higher concurrency per host, cache a small pool of servers in the
+   * factory and round-robin.
+   *
+   * Cleanup is the caller's responsibility: listen for the process
+   * shutdown signal and call `close()` on every cached server to
+   * release MCP Tasks timers, HTTP keepalives, etc.
+   *
+   * **Incompatible with long-lived server→client streams.** MCP's
+   * `Protocol._onclose` aborts in-flight handlers and clears progress
+   * tokens when the transport closes. In stateless HTTP mode (the
+   * default this helper uses) each request is already single-response,
+   * so this is a no-op concern. Don't enable `reuseAgent` if you
+   * eventually wire a transport that keeps an SSE channel open across
+   * multiple logical requests.
+   */
+  reuseAgent?: boolean;
+
+  /**
    * Trust `X-Forwarded-Host` and RFC 7239 `Forwarded: host=...` for
    * host resolution and for reconstructing the public URL on 401
    * challenges. Default `false` — an attacker-controlled header can't
@@ -235,6 +271,17 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const mountPath = options?.path ?? '/mcp';
   const taskStore = options?.taskStore ?? new InMemoryTaskStore();
   const trustForwardedHost = options?.trustForwardedHost === true;
+  const reuseAgent = options?.reuseAgent === true;
+
+  // Per-instance mutex chain for `reuseAgent: true`. The MCP SDK's
+  // `Protocol.connect()` hard-throws when a transport is already
+  // attached (node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:215),
+  // so concurrent requests that land on the same cached server would
+  // race without this. WeakMap so agents GC normally when the caller
+  // drops references. Only used when `reuseAgent` is true — the
+  // default path still creates a fresh server per request and doesn't
+  // share any state across calls.
+  const reuseMutexes = new WeakMap<AdcpServer | McpServer, Promise<unknown>>();
 
   if (options?.protectedResource && !options.publicUrl) {
     throw new Error(
@@ -485,7 +532,16 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
           res.end('Not found');
           return;
         }
-        throw err;
+        // Unexpected factory failure — surface as 500 to the client and
+        // log server-side. Rethrowing would bubble to the createServer
+        // handler as an unhandled rejection (async callback), which
+        // could crash a node process with `--unhandled-rejections=strict`.
+        console.error('[adcp/serve] factory threw:', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+        return;
       }
       const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
       const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
@@ -515,28 +571,63 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         }
       }
 
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      });
-      try {
-        await agentServer.connect(transport);
-        // When preTransport already consumed the request stream, pass the
-        // parsed body through so the transport doesn't re-read (stream is
-        // drained). MCP SDK's `handleRequest(req, res, parsedBody)` accepts
-        // this shape.
-        if (parsedBody !== undefined) {
-          await transport.handleRequest(req, res, parsedBody);
-        } else {
-          await transport.handleRequest(req, res);
+      // In reuseAgent mode, serialize connect→handle→close per server
+      // instance. `McpServer.connect()` rejects when a transport is
+      // already attached (protocol.js:215), so concurrent requests on a
+      // cached server would race without this chain. Requests on
+      // DIFFERENT servers (different WeakMap keys) proceed in parallel.
+      // Outside reuseAgent mode the factory returns a fresh server per
+      // request — no shared instance, no lock needed.
+      const runTransportCycle = async (): Promise<void> => {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        try {
+          await agentServer.connect(transport);
+          // When preTransport already consumed the request stream, pass the
+          // parsed body through so the transport doesn't re-read (stream is
+          // drained). MCP SDK's `handleRequest(req, res, parsedBody)` accepts
+          // this shape.
+          if (parsedBody !== undefined) {
+            await transport.handleRequest(req, res, parsedBody);
+          } else {
+            await transport.handleRequest(req, res);
+          }
+        } catch (err) {
+          console.error('Server error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+          }
+        } finally {
+          // close() here releases the transport AND (in reuseAgent mode)
+          // resets `_transport = undefined` on the cached server so the
+          // next queued request can connect. The server's tools,
+          // handlers, and idempotency wiring survive — close() clears
+          // the transport, not the registration.
+          await agentServer.close();
         }
-      } catch (err) {
-        console.error('Server error:', err);
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Internal server error' }));
-        }
-      } finally {
-        await agentServer.close();
+      };
+
+      if (reuseAgent) {
+        const prev = reuseMutexes.get(agentServer) ?? Promise.resolve();
+        // `.then(runTransportCycle, runTransportCycle)` runs the cycle on
+        // EITHER prior outcome — we only care about sequencing, not the
+        // prior request's result. A plain `.then(runTransportCycle)`
+        // would skip this request when the prior rejected, leaving it
+        // stuck behind a poison-pill promise forever.
+        const current = prev.then(runTransportCycle, runTransportCycle);
+        // Swallow errors on the copy stored for sequencing so one
+        // rejection doesn't poison every subsequent request for this
+        // server instance. `current` itself is still awaited below and
+        // surfaces errors to THIS request.
+        reuseMutexes.set(
+          agentServer,
+          current.catch(() => {})
+        );
+        await current;
+      } else {
+        await runTransportCycle();
       }
     } else {
       res.writeHead(404);

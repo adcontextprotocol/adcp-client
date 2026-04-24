@@ -131,6 +131,13 @@ export type {
   ServeRequestContext,
 } from './auth';
 
+export { verifyIntrospection } from './auth-introspection';
+export type {
+  VerifyIntrospectionOptions,
+  IntrospectionCacheOptions,
+  IntrospectionResponse,
+} from './auth-introspection';
+
 export {
   verifySignatureAsAuthenticator,
   requireSignatureWhenPresent,
