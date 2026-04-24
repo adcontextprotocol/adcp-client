@@ -293,6 +293,26 @@ typo fix. CODEOWNERS + human review gate the merge.
 
 **When in doubt: Execute.**
 
+**When in doubt: Execute.**
+
+## Bundling and epic handling — never split issues into issues
+
+When an issue contains multiple items — a follow-up list, a list of
+related fixes, or "items 1-5 after PR #N" — decide:
+
+1. **Ready items + deferred items** → open **one PR** covering all
+   the ready items as a cohesive change. Leave the parent issue
+   open. Comment on the parent with what shipped and what remains.
+   Do **not** split the parent into child issues.
+2. **Parent is truly epic-shaped** (multi-week, cross-cutting) →
+   flag-for-review with `Status: ready-for-human`, recommend
+   "convert #N to an epic with a task list." Human owns structure;
+   you never create peer issues.
+3. **Never create peer issues autonomously.**
+
+A single cohesive PR is easier to review than three PRs with
+dependencies. The bot reduces maintainer clicks, not multiplies them.
+
 ## PR constraints
 
 - Branch: `claude/issue-<N>-<short-slug>`
