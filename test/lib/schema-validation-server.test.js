@@ -234,8 +234,15 @@ describe('createAdcpServer validation middleware', () => {
         });
         const res = await callTool(server, 'get_products', VALID_GET_PRODUCTS);
         assert.strictEqual(res.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
-        const issues = res.structuredContent.adcp_error.details.issues;
-        assert.ok(Array.isArray(issues) && issues.length > 0);
+        const issues = res.structuredContent.adcp_error.issues;
+        assert.ok(Array.isArray(issues) && issues.length > 0, 'issues must live at top level of adcp_error');
+        // Spec convention: issues also mirrored inside details for buyers that
+        // index details.issues today. See src/lib/validation/schema-errors.ts.
+        assert.deepStrictEqual(
+          res.structuredContent.adcp_error.details.issues,
+          issues,
+          'details.issues must mirror top-level issues'
+        );
         for (const issue of issues) {
           assert.strictEqual(issue.schemaPath, undefined, 'schemaPath must not leak when exposeErrorDetails is off');
           assert.ok(issue.pointer, 'pointer still present');
@@ -258,7 +265,7 @@ describe('createAdcpServer validation middleware', () => {
           mediaBuy: { getProducts: async () => ({ products: 'oops' }) },
         });
         const res = await callTool(server, 'get_products', VALID_GET_PRODUCTS);
-        const issues = res.structuredContent.adcp_error.details.issues;
+        const issues = res.structuredContent.adcp_error.issues;
         assert.ok(issues.some(i => typeof i.schemaPath === 'string' && i.schemaPath.length > 0));
       } finally {
         if (originalEnv === undefined) delete process.env.NODE_ENV;

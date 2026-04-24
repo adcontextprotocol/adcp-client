@@ -11,6 +11,7 @@ import {
   type StandardErrorCode,
   type ErrorRecovery,
 } from '../types/error-codes';
+import type { ValidationIssue } from '../validation/schema-validator';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 
 export interface AdcpErrorOptions {
@@ -50,6 +51,15 @@ export interface AdcpErrorOptions {
    * prior request payload or cached response body).
    */
   details?: Record<string, unknown>;
+  /**
+   * Schema validation issues surfaced at the top level of `adcp_error`
+   * so operators see JSON Pointers on the first render. Primary use is
+   * `VALIDATION_ERROR`; framework validation hooks populate this
+   * automatically and also mirror the same array to `details.issues`
+   * for buyers that already index into `details` per AdCP spec
+   * convention.
+   */
+  issues?: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
 }
 
 export interface AdcpErrorPayload {
@@ -68,6 +78,13 @@ export interface AdcpErrorPayload {
   suggestion?: string;
   retry_after?: number;
   details?: Record<string, unknown>;
+  /**
+   * Schema validation issues (`VALIDATION_ERROR`) exposed at the top
+   * level so the list is the first thing a reader sees when inspecting
+   * the envelope. Also mirrored at `details.issues` for spec-convention
+   * compatibility.
+   */
+  issues?: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
 }
 
 export interface AdcpErrorResponse {
@@ -124,6 +141,7 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
     ...(options.field != null && { field: options.field }),
     ...(options.suggestion != null && { suggestion: options.suggestion }),
     ...(options.retry_after != null && { retry_after: options.retry_after }),
+    ...(options.issues != null && { issues: options.issues }),
     ...(options.details != null && { details: options.details }),
   };
 

@@ -563,8 +563,9 @@ policy), or wrap with a response builder (`productsResponse`,
 
 `createAdcpServer({ validation: { responses } })` now defaults to
 `'strict'` when `NODE_ENV !== 'production'`. Handler-returned schema
-drift fails with `VALIDATION_ERROR` (field path in `details.issues`)
-instead of logging a warning you can silently ignore.
+drift fails with `VALIDATION_ERROR` (field path in `adcp_error.issues`,
+mirrored at `details.issues`) instead of logging a warning you can
+silently ignore.
 
 Production stays `'off'`. Pass `validation: { responses: 'warn' }` to
 restore the previous dev behavior; `'off'` opts out entirely.
@@ -576,10 +577,11 @@ server. **Node's test runner does not set `NODE_ENV`, so `node --test`
 suites fall into the dev/test bucket and start validating responses**
 — this is intentional.
 
-`VALIDATION_ERROR.details.issues[].schemaPath` is now gated behind
-`exposeErrorDetails` (same policy as `SERVICE_UNAVAILABLE.details.reason`).
-Production responses no longer leak `#/oneOf/<n>/properties/...` paths
-that fingerprint internal `oneOf` branch selection.
+`VALIDATION_ERROR.issues[].schemaPath` (and its `details.issues[].schemaPath`
+mirror) is now gated behind `exposeErrorDetails` (same policy as
+`SERVICE_UNAVAILABLE.details.reason`). Production responses no longer leak
+`#/oneOf/<n>/properties/...` paths that fingerprint internal `oneOf`
+branch selection.
 
 ### 4d. Request validation defaults to `'warn'` outside production
 
@@ -591,8 +593,8 @@ server to opt out.
 
 ### 4e. `exposeErrorDetails` defaults to `true` outside production
 
-`SERVICE_UNAVAILABLE.details.reason` and
-`VALIDATION_ERROR.details.issues[].schemaPath` ship to callers in
+`SERVICE_UNAVAILABLE.details.reason` and the per-issue `schemaPath` on
+`VALIDATION_ERROR.issues[]` (and `details.issues[]`) ship to callers in
 dev/test/CI. Production stays opted out.
 
 ### 4f. `McpServer.tool()` → `registerTool()` migration

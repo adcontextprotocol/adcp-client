@@ -187,15 +187,22 @@ describe('schema-driven validation', () => {
       assert.deepStrictEqual(err.details.issues, issues);
     });
 
-    test('builds an L3 error payload for adcpError()', () => {
+    test('builds an L3 error payload for adcpError() with dual-location issues', () => {
       const issues = [
         { pointer: '/media_buy_id', message: 'is required', keyword: 'required', schemaPath: '#/required' },
       ];
       const payload = buildAdcpValidationErrorPayload('create_media_buy', 'response', issues);
       assert.ok(payload.message.includes('/media_buy_id'));
       assert.strictEqual(payload.field, '/media_buy_id');
+      // Issues land at the top level AND inside details (spec-convention mirror).
+      assert.ok(Array.isArray(payload.issues), 'issues must be a top-level array');
+      assert.strictEqual(payload.issues.length, 1);
+      assert.strictEqual(payload.issues[0].pointer, '/media_buy_id');
+      assert.strictEqual(payload.issues[0].keyword, 'required');
       assert.strictEqual(payload.details.tool, 'create_media_buy');
       assert.strictEqual(payload.details.side, 'response');
+      assert.ok(Array.isArray(payload.details.issues), 'details.issues mirrors for spec compatibility');
+      assert.deepStrictEqual(payload.details.issues, payload.issues);
     });
   });
 

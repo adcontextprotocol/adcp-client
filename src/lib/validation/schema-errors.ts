@@ -36,10 +36,12 @@ export function buildValidationError(
 
 /**
  * Shape of `adcp_error.details` inside a server-side `VALIDATION_ERROR`
- * envelope. Shipped so buyers can index every pointer programmatically
- * instead of parsing the free-text message. `schemaPath` is optional
- * per-issue — the builder drops it by default in production so
- * `oneOf` branch selection doesn't leak to buyers.
+ * envelope. The issue list is ALSO promoted to the top level
+ * (`adcp_error.issues`) so operators see JSON Pointers on the first
+ * render; `details.issues` is kept as a spec-convention mirror for
+ * buyers that index into `details`. `schemaPath` is optional per-issue
+ * — the builder drops it by default in production so `oneOf` branch
+ * selection doesn't leak to buyers.
  */
 export interface AdcpValidationErrorDetails {
   tool: string;
@@ -50,28 +52,47 @@ export interface AdcpValidationErrorDetails {
 /**
  * Serialize issues for the server-side `adcpError('VALIDATION_ERROR', ...)` call.
  *
+ * Issues appear at BOTH `adcp_error.issues` (top level, so operators
+ * and debuggers see them on first render) AND `adcp_error.details.issues`
+ * (the spec-convention location, so buyers that already index into
+ * `details` continue to work). Future buyers should prefer
+ * `adcp_error.issues`; the `details.issues` mirror is maintained for
+ * compatibility across the AdCP ecosystem until a spec decision settles
+ * where issues should canonically live.
+ *
  * `exposeSchemaPath` controls whether each issue's AJV `schemaPath`
  * (e.g. `#/oneOf/2/properties/status/enum`) crosses the wire. When
- * false, schemaPath is stripped from the emitted details.issues[] —
- * buyers still get `pointer`, `message`, and `keyword`, which is
- * enough to fix their payload, but the internal branch shape of the
- * seller's handler isn't leaked. Defaults to the same policy as
- * `exposeErrorDetails`: on in dev/test, off in production.
+ * false, schemaPath is stripped from the emitted `issues` (both
+ * copies) — buyers still get `pointer`, `message`, and `keyword`,
+ * which is enough to fix their payload, but the internal branch
+ * shape of the seller's handler isn't leaked. Defaults to the same
+ * policy as `exposeErrorDetails`: on in dev/test, off in production.
  */
 export function buildAdcpValidationErrorPayload(
   tool: string,
   side: 'request' | 'response',
   issues: ValidationIssue[],
   options: { exposeSchemaPath?: boolean } = {}
-): { message: string; field?: string; details: Record<string, unknown> } {
+): {
+  message: string;
+  field?: string;
+  issues: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
+  details: Record<string, unknown>;
+} {
   const first = issues[0];
   const message =
     first != null
       ? `${tool} ${side} failed schema validation at ${first.pointer}: ${first.message}`
       : `${tool} ${side} failed schema validation`;
   const emittedIssues = options.exposeSchemaPath ? issues : issues.map(({ schemaPath: _schemaPath, ...rest }) => rest);
-  const payload: { message: string; field?: string; details: Record<string, unknown> } = {
+  const payload: {
+    message: string;
+    field?: string;
+    issues: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
+    details: Record<string, unknown>;
+  } = {
     message,
+    issues: emittedIssues,
     details: { tool, side, issues: emittedIssues } satisfies AdcpValidationErrorDetails as unknown as Record<
       string,
       unknown

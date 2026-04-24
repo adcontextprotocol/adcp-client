@@ -285,10 +285,22 @@ export type {
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
   CreateMediaBuyResponse,
+  CreateMediaBuySuccess,
+  CreateMediaBuyError,
+  CreateMediaBuySubmitted,
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
+  UpdateMediaBuySuccess,
+  UpdateMediaBuyError,
   SyncCreativesRequest,
   SyncCreativesResponse,
+  SyncCreativesSuccess,
+  SyncCreativesError,
+  SyncCreativesSubmitted,
+  SyncAudiencesRequest,
+  SyncAudiencesResponse,
+  SyncAudiencesSuccess,
+  SyncAudiencesError,
   ListCreativesRequest,
   ListCreativesResponse,
   CreativeFilters,
@@ -296,11 +308,15 @@ export type {
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
+  ProvidePerformanceFeedbackSuccess,
+  ProvidePerformanceFeedbackError,
   // Signals Domain
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  ActivateSignalSuccess,
+  ActivateSignalError,
   CpmPricing,
   PercentOfMediaPricing,
   FlatFeePricing,
@@ -326,6 +342,8 @@ export type {
   CreateContentStandardsResponse,
   UpdateContentStandardsRequest,
   UpdateContentStandardsResponse,
+  UpdateContentStandardsSuccess,
+  UpdateContentStandardsError,
   CalibrateContentRequest,
   CalibrateContentResponse,
   ValidateContentDeliveryRequest,
@@ -335,6 +353,10 @@ export type {
   // Governance Domain - Campaign Governance
   SyncPlansRequest,
   SyncPlansResponse,
+  SyncGovernanceRequest,
+  SyncGovernanceResponse,
+  SyncGovernanceSuccess,
+  SyncGovernanceError,
   CheckGovernanceRequest,
   CheckGovernanceResponse,
   ReportPlanOutcomeRequest,
@@ -367,8 +389,12 @@ export type {
   // Event Tracking Domain
   SyncEventSourcesRequest,
   SyncEventSourcesResponse,
+  SyncEventSourcesSuccess,
+  SyncEventSourcesError,
   LogEventRequest,
   LogEventResponse,
+  LogEventSuccess,
+  LogEventError,
   // Enums
   CanceledBy,
   // Core data structures used within requests and responses
@@ -413,6 +439,9 @@ export type {
   CreativeVariable,
   BuildCreativeRequest,
   BuildCreativeResponse,
+  BuildCreativeSuccess,
+  BuildCreativeMultiSuccess,
+  BuildCreativeError,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
   GetMediaBuysRequest,
@@ -446,6 +475,8 @@ export type {
   ListAccountsResponse,
   SyncAccountsRequest,
   SyncAccountsResponse,
+  SyncAccountsSuccess,
+  SyncAccountsError,
   GetAccountFinancialsRequest,
   GetAccountFinancialsResponse,
   GetAccountFinancialsSuccess,
@@ -548,6 +579,13 @@ export {
   requireSessionKey,
   structuredSerialize,
   structuredDeserialize,
+  createIdempotencyStore,
+  memoryBackend,
+  pgBackend,
+  getIdempotencyMigration,
+  IDEMPOTENCY_MIGRATION,
+  cleanupExpiredIdempotency,
+  hashPayload,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -611,6 +649,13 @@ export type {
   PatchWithRetryOptions,
   StateErrorCode,
   SessionKeyContext,
+  IdempotencyStore,
+  IdempotencyStoreConfig,
+  IdempotencyBackend,
+  IdempotencyCacheEntry,
+  IdempotencyCheckResult,
+  MemoryBackendOptions,
+  PgBackendOptions,
 } from './server';
 
 // ====== ERROR HANDLING & RETRY ======
@@ -745,6 +790,7 @@ export {
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
+export { extractResult, type ToolCallResultLike } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
 export { A2A_CARD_PATHS, isAgentCardPath, isWellKnownAgentCardUrl, buildCardUrls, stripAgentCardPath } from './utils';
