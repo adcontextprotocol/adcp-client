@@ -142,9 +142,10 @@ export { buildRequest, hasRequestBuilder } from './request-builder';
 // Validations
 export { runValidations } from './validations';
 
-// JUnit XML formatter (@internal — used by `bin/adcp.js` and its tests;
-// not a supported public API surface)
-export { formatStoryboardResultsAsJUnit } from './junit';
+// `./junit` is deliberately NOT re-exported. The CLI requires it
+// directly from `dist/lib/testing/storyboard/junit.js` and the function
+// is marked `@internal` (stripped from the generated `.d.ts`). Add a
+// re-export here only if/when we promote it to a public API surface.
 
 // Test-kit schema validation
 export { validateTestKit, TestKitValidationError, PROBE_TASK_ALLOWLIST } from './test-kit';

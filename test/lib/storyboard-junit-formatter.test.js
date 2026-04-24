@@ -73,6 +73,94 @@ describe('formatStoryboardResultsAsJUnit: basic shape', () => {
     assert.match(xml, /name="Phase 1 › Buy media"/);
   });
 
+  test('empty results produces a valid empty testsuites element', () => {
+    // Degenerate path the runner hits when every storyboard is filtered
+    // out by capability resolution. Must still be valid XML.
+    const xml = formatStoryboardResultsAsJUnit([]);
+    assert.ok(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'));
+    assert.match(
+      xml,
+      /<testsuites name="adcp-storyboards" tests="0" failures="0" skipped="0" time="0\.000">\s*<\/testsuites>/
+    );
+  });
+
+  test('aggregates totals across multiple storyboards + multi-phase steps', () => {
+    // Two storyboards, one with two phases (two steps total), the other
+    // with one phase / one step. Catches off-by-one bugs in the
+    // totalTests / totalFailures / totalDuration reducers and the
+    // per-storyboard suiteTests reducer.
+    const sbA = buildResult({
+      storyboardOverrides: {
+        storyboard_id: 'sb_a',
+        storyboard_title: 'SB A',
+        failed_count: 1,
+        passed_count: 1,
+        total_duration_ms: 50,
+        phases: [
+          {
+            phase_id: 'p1',
+            phase_title: 'Phase 1',
+            passed: false,
+            duration_ms: 20,
+            steps: [
+              {
+                step_id: 's1',
+                phase_id: 'p1',
+                title: 'Step A1',
+                task: 't',
+                passed: false,
+                skipped: false,
+                duration_ms: 20,
+                validations: [],
+                context: {},
+                extraction: { path: 'none' },
+                error: 'oops',
+              },
+            ],
+          },
+          {
+            phase_id: 'p2',
+            phase_title: 'Phase 2',
+            passed: true,
+            duration_ms: 30,
+            steps: [
+              {
+                step_id: 's2',
+                phase_id: 'p2',
+                title: 'Step A2',
+                task: 't',
+                passed: true,
+                skipped: false,
+                duration_ms: 30,
+                validations: [],
+                context: {},
+                extraction: { path: 'none' },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const sbB = buildResult({
+      stepOverrides: { passed: true },
+      storyboardOverrides: {
+        storyboard_id: 'sb_b',
+        storyboard_title: 'SB B',
+        failed_count: 0,
+        passed_count: 1,
+        total_duration_ms: 10,
+      },
+    });
+    sbB.phases[0].steps[0].duration_ms = 10;
+
+    const xml = formatStoryboardResultsAsJUnit([sbA, sbB]);
+    // 3 tests total (sbA has 2 steps, sbB has 1), 1 failure, 0 skipped, 0.060s.
+    assert.match(xml, /<testsuites name="adcp-storyboards" tests="3" failures="1" skipped="0" time="0\.060"/);
+    // Per-suite tests counts.
+    assert.match(xml, /<testsuite name="SB A" tests="2"/);
+    assert.match(xml, /<testsuite name="SB B" tests="1"/);
+  });
+
   test('reports passed steps as bare self-closing testcases', () => {
     const xml = formatStoryboardResultsAsJUnit([
       buildResult({ stepOverrides: { passed: true }, storyboardOverrides: { failed_count: 0, passed_count: 1 } }),
@@ -119,7 +207,7 @@ describe('formatStoryboardResultsAsJUnit: hint integration (#879)', () => {
     assert.match(xml, /<failure message="task-level error"/);
   });
 
-  test('falls back to first hint message when step.error is absent (#883 gate)', () => {
+  test('falls back to first hint message when step.error is undefined (#883 gate)', () => {
     // When the #883-widened hint gate fires on a validation-only failure
     // (task-level success + validation fail), step.error is empty but
     // hints carry the diagnosis. CI dashboards that only read the
@@ -135,18 +223,29 @@ describe('formatStoryboardResultsAsJUnit: hint integration (#879)', () => {
         },
       }),
     ]);
-    assert.match(
-      xml,
-      new RegExp(
-        `<failure message="${hint.message
-          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&apos;')}"`
-      )
-    );
+    // Assert on a distinctive substring of the hint that survives XML
+    // escaping — avoids the brittle escape-pipeline reconstruction the
+    // reviewer flagged. The opening `<failure message=` plus the escaped
+    // backticks in the hint (&quot;) is enough to pin attribute placement.
+    assert.match(xml, /<failure message="Rejected `pricing_option_id: po_a` was extracted from `\$context\.x`/);
+  });
+
+  test('falls back to first hint message when step.error is empty string', () => {
+    // Runner paths that set `error: ''` (not undefined) — the `||`
+    // operator at junit.ts:82 must treat them the same as undefined.
+    // The '.filter(Boolean)' in the body composition also correctly
+    // strips the empty string.
+    const xml = formatStoryboardResultsAsJUnit([
+      buildResult({
+        stepOverrides: {
+          error: '',
+          hints: [hint],
+        },
+      }),
+    ]);
+    assert.match(xml, /<failure message="Rejected/);
+    // Empty-string error should not introduce a blank line in the body.
+    assert.doesNotMatch(xml, /<failure[^>]*>\nHint /);
   });
 
   test('falls back to "validation failed" when neither error nor hints present', () => {
@@ -167,19 +266,33 @@ describe('formatStoryboardResultsAsJUnit: hint integration (#879)', () => {
 });
 
 describe('formatStoryboardResultsAsJUnit: XML escaping', () => {
-  test('escapes < > & " \' in messages', () => {
+  test('escapes < > & " in the failure body', () => {
     const xml = formatStoryboardResultsAsJUnit([
       buildResult({
         stepOverrides: {
           error: `<script>alert("x&y")</script>`,
-          hints: [{ ...hint, message: `it's <broken>` }],
         },
       }),
     ]);
+    // Raw <script> must never appear — that'd be an XML-injection vector.
     assert.doesNotMatch(xml, /<script>/);
     assert.match(xml, /&lt;script&gt;/);
     assert.match(xml, /&quot;/);
-    assert.match(xml, /&apos;/);
     assert.match(xml, /&amp;/);
+  });
+
+  test("escapes apostrophe in message= attribute (no injection via ')", () => {
+    // Scope the apostrophe assertion to the attribute where it matters —
+    // attribute-delimiter injection via unescaped `'` would break CI
+    // parsers that wrap with single-quoted attributes.
+    const xml = formatStoryboardResultsAsJUnit([
+      buildResult({
+        stepOverrides: {
+          error: "it's broken",
+        },
+      }),
+    ]);
+    assert.match(xml, /<failure message="it&apos;s broken"/);
+    assert.doesNotMatch(xml, /<failure message="it's /);
   });
 });

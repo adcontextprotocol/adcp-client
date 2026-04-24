@@ -1,20 +1,11 @@
-/**
- * JUnit XML formatter for `StoryboardResult[]`.
- *
- * Matches the schema Jenkins, CircleCI, and GitLab CI all consume without
- * a plugin — one `<testsuite>` per storyboard, one `<testcase>` per step,
- * failures/skips attached as children.
- *
- * Hints (`step.hints`) land inside the `<failure>` body AND, when
- * `step.error` is absent, in the `<failure message="…">` attribute — so
- * CI systems that only read the attribute still surface the diagnosis
- * (see adcp-client#870 / #883 for when steps fail without a task-level
- * error).
- *
- * @internal — CLI tooling; not part of the published `@adcp/client` API
- * surface. Exported from `./index` so the CLI (`bin/adcp.js`) and unit
- * tests can import it without re-reading it out of the CLI's require tree.
- */
+// JUnit XML formatter for `StoryboardResult[]`. CLI internal — exported
+// as a runtime module (the CLI `require`s it directly out of `dist/`)
+// but stripped from the public `.d.ts` surface via `@internal` on the
+// declaration itself (see stripInternal in tsconfig.lib.json). Don't
+// move the JSDoc above the imports — TypeScript binds JSDoc to the
+// next declaration, so the @internal tag would strip the import and
+// break the emitted d.ts (adcp-client#900 reviewer finding).
+
 import type { StoryboardResult, StoryboardStepResult, StoryboardStepHint } from './types';
 
 function xmlEscape(s: unknown): string {
@@ -39,6 +30,22 @@ function firstHintMessage(step: StoryboardStepResult): string | undefined {
   return step.hints?.[0]?.message;
 }
 
+/**
+ * Emit JUnit XML for a list of `StoryboardResult`. One `<testsuite>` per
+ * storyboard; one `<testcase>` per step. Matches the schema Jenkins,
+ * CircleCI, and GitLab CI all consume without a plugin.
+ *
+ * Hints (`step.hints`) land inside the `<failure>` body AND, when
+ * `step.error` is absent, in the `<failure message="…">` attribute — so
+ * CI systems that only read the attribute still surface the diagnosis
+ * (see adcp-client#870 / #883 for when steps fail without a task-level
+ * error).
+ *
+ * @internal — CLI tooling; not part of the published `@adcp/client` API
+ * surface. `stripInternal` removes this declaration from the generated
+ * `.d.ts`; the runtime module is still present in `dist/` for the CLI
+ * (`bin/adcp.js`) to `require()` directly.
+ */
 export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {
   let totalTests = 0;
   let totalFailures = 0;
