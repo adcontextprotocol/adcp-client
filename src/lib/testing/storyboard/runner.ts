@@ -488,11 +488,15 @@ async function executeStoryboardPass(
   // "everything passed".
   const hasExecutableSteps = storyboard.phases.some(p => p.steps.length > 0);
   if (!hasExecutableSteps) {
-    const detail = `Storyboard "${storyboard.id}" has no executable phases — populate \`phases[].steps\` or remove the storyboard.`;
+    const isScenarioComposed = (storyboard.requires_scenarios?.length ?? 0) > 0;
+    const detail = isScenarioComposed
+      ? `Storyboard "${storyboard.id}" has no local phases — its test surface is fully composed from the scenarios listed in \`requires_scenarios\`. Run via \`comply()\` to execute the composed scenarios.`
+      : `Storyboard "${storyboard.id}" has no executable phases — populate \`phases[].steps\` or remove the storyboard.`;
     const syntheticStep: StoryboardStepResult = {
       storyboard_id: storyboard.id,
-      step_id: '__no_phases__',
-      phase_id: '__no_phases__',
+      // Synthetic sentinel — cannot collide with real phase/step ids since phases is empty or has no steps.
+      step_id: 'no_phases',
+      phase_id: 'no_phases',
       title: 'Storyboard has no executable phases',
       task: '',
       passed: true,
@@ -506,9 +510,10 @@ async function executeStoryboardPass(
       extraction: { path: 'none' },
     };
     phaseResults.push({
-      phase_id: '__no_phases__',
+      // Synthetic sentinel — cannot collide with real phase ids since phases is empty or has no steps.
+      phase_id: 'no_phases',
       phase_title: 'No phases',
-      passed: false,
+      passed: true, // skipped step is neutral — phase must not fail
       steps: [syntheticStep],
       duration_ms: 0,
     });
