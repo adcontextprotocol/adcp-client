@@ -19,6 +19,9 @@ function xmlEscape(s: unknown): string {
  * `step.error` so CI failure annotations carry the context-rejection diagnosis.
  * When `step.error` is absent, the first hint message is used as the `message=`
  * attribute so systems that only read that attribute still surface the hint.
+ *
+ * @internal — CLI tooling; not part of the public `@adcp/client` API surface.
+ * Import directly from `dist/lib/testing/storyboard/junit.js` if needed.
  */
 export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {
   let totalTests = 0;

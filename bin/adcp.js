@@ -1599,6 +1599,9 @@ async function handleStoryboardRun(args) {
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
+        // Runner only emits hints on failed steps (runner.ts gates on !passed),
+        // so this block is safe unconditionally. If a future hint kind fires on
+        // a passing step, revisit the UX before shipping it.
         if (step.hints?.length) {
           for (const h of step.hints) {
             console.log(`   Hint:  ${h.message}`);
@@ -2577,6 +2580,8 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
+          // Runner only emits hints on failed steps; see comment in the
+          // single-storyboard printer above.
           if (step.hints?.length) {
             for (const h of step.hints) {
               console.log(`   Hint:  ${h.message}`);
