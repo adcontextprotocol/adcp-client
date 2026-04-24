@@ -31,7 +31,10 @@ export interface ExpressLike {
   [key: string]: unknown;
 }
 
-export interface ExpressMiddlewareOptions extends Omit<VerifyRequestOptions, 'operation' | 'replayStore' | 'revocationStore'> {
+export interface ExpressMiddlewareOptions extends Omit<
+  VerifyRequestOptions,
+  'operation' | 'replayStore' | 'revocationStore'
+> {
   /**
    * Stores `(keyid, signature-bytes, expires)` tuples for replay detection.
    * Defaults to a fresh {@link InMemoryReplayStore} — fine for single-process

@@ -16,11 +16,7 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { generateKeyPairSync } = require('node:crypto');
 
-const {
-  AuthError,
-  verifySignatureAsAuthenticator,
-  mcpToolNameResolver,
-} = require('../../dist/lib/server/index.js');
+const { AuthError, verifySignatureAsAuthenticator, mcpToolNameResolver } = require('../../dist/lib/server/index.js');
 const {
   signRequest,
   StaticJwksResolver,
