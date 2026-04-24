@@ -199,18 +199,36 @@ function ensureInit(): LoaderState {
 }
 
 /**
- * Lazily load `core/` and `enums/` schemas on first compile of a schema
- * that may $ref them. Async response variants and flat-tree domain schemas
- * (governance, brand, content-standards, account, property, collection)
- * both dereference into these shared trees; bundled/ pre-resolves its own
- * refs and doesn't need them. Deferring the load keeps cold-start cheap
- * for consumers that only touch bundled/ tools.
+ * Lazily pre-register every non-tool JSON schema shipped with the SDK so
+ * cross-domain `$ref`s compile. Async response variants and flat-tree
+ * domain schemas `$ref` out to three classes of building-block schemas:
+ *
+ *   - `core/` + `enums/` — shared primitives referenced by every domain.
+ *   - `pricing-options/`, `error-details/`, `extensions/` — stand-alone
+ *     fragment trees.
+ *   - Sibling fragments inside each domain directory — e.g.
+ *     `governance/audience-constraints.json` referenced by
+ *     `governance/sync-plans-request.json`, or `signals/*` fragments
+ *     referenced by `signals/activate-signal-*.json`.
+ *
+ * Walk every directory except `bundled/` (pre-resolved schemas with refs
+ * already inlined). Skip files that `buildFileIndex` registered as tool
+ * request/response — those compile via `getValidator` with
+ * `relaxResponseRoot` applied to the response variant, and pre-registering
+ * the raw schema would short-circuit the relaxation. The fileIndex check
+ * is stricter than a filename-suffix match: building-block fragments like
+ * `core/pagination-response.json` end in `-response.json` but aren't tools,
+ * so suffix-matching would wrongly exclude them.
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
-  for (const dir of ['core', 'enums']) {
-    const abs = path.join(s.root, dir);
+  const toolFiles = new Set(s.fileIndex.values());
+  for (const entry of readdirSync(s.root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === 'bundled') continue;
+    const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
+      if (toolFiles.has(file)) continue;
       const schema = loadJson(file);
       if (typeof schema.$id === 'string' && !s.ajv.getSchema(schema.$id)) {
         s.ajv.addSchema(schema);

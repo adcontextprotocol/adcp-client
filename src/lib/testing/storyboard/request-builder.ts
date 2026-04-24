@@ -75,6 +75,26 @@ const FIXTURE_AWARE_ENRICHERS = new Set<string>([
   'comply_test_controller', // forces account.sandbox: true regardless of fixture
 ]);
 
+/**
+ * Placeholder identifiers that the upstream universal compliance
+ * storyboards ship inside `create_media_buy.packages[0]` expecting the
+ * runner to substitute the seller's discovered identifiers. The fixtures
+ * live in `adcontextprotocol/adcp` and can't be rewritten from the SDK,
+ * so the enricher treats these literals as "defer to discovery" while
+ * real seller ids (e.g. `cpm_guaranteed`) win over discovery per the
+ * fixture-authoritative contract. If a future storyboard wants
+ * placeholder-then-discovery semantics for another value, author it as
+ * a `$context.<key>` substitution rather than a magic literal so the
+ * intent is explicit at the fixture level.
+ */
+const PRODUCT_ID_SENTINELS = new Set(['test-product']);
+const PRICING_OPTION_ID_SENTINELS = new Set(['test-pricing']);
+
+function asNonSentinel(value: unknown, sentinels: Set<string>): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return sentinels.has(value) ? undefined : value;
+}
+
 const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Account & Audience ─────────────────────────────────
 
@@ -201,32 +221,54 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     const startTime = sampleStart && Date.parse(sampleStart) >= now ? sampleStart : defaultStart;
     const endTime = sampleEnd && Date.parse(sampleEnd) >= now ? sampleEnd : defaultEnd;
 
-    // Merge any hand-authored package fields from sample_request (targeting_overlay,
+    // Merge hand-authored package fields from sample_request (targeting_overlay,
     // measurement_terms, creative_assignments, performance_standards, etc.) so
-    // scenario-specific behaviors are exercised. The first package receives
-    // context-derived identifiers (product_id, pricing_option_id) so single-
-    // package storyboards that test against arbitrary sellers still find a
-    // real discovered product. Additional packages pass through as-authored
-    // with context injection only — storyboards that ship multi-package
-    // sample_request blocks author specific product_ids on purpose.
+    // scenario-specific behaviors are exercised. The first package's
+    // identifiers (product_id, pricing_option_id) follow a two-tier rule:
+    //
+    //   - Real seller ids in the fixture win over discovery — storyboards
+    //     that name `cpm_guaranteed` (or any seller-specific identifier)
+    //     are asserting that specific id reaches the wire. Discovery must
+    //     not override.
+    //   - Well-known sentinel placeholders (`test-product`, `test-pricing`)
+    //     from the upstream universal compliance storyboards defer to
+    //     discovery. Those storyboards ship package fixtures with
+    //     `product_id: "test-product"` expecting the runner to substitute
+    //     the seller's discovered product — they'd fail against every
+    //     seller that doesn't literally ship a "test-product" catalog
+    //     entry if the fixture value survived to the wire.
+    //
+    // The sentinel list is conservative. If a future storyboard wants
+    // placeholder-then-discovery semantics for another field, author it
+    // as `$context.<key>` substitution instead of a magic literal.
     const samplePackages = (step.sample_request?.packages as Array<Record<string, unknown>> | undefined) ?? [];
     const baseSample = samplePackages[0]
       ? (injectContext({ ...samplePackages[0] }, context) as Record<string, unknown>)
       : {};
 
+    const fixtureProductId = asNonSentinel(baseSample.product_id, PRODUCT_ID_SENTINELS);
+    const fixturePricingOptionId = asNonSentinel(baseSample.pricing_option_id, PRICING_OPTION_ID_SENTINELS);
+
     const firstPkg: Record<string, unknown> = {
       ...baseSample,
-      product_id: product?.product_id ?? context.product_id ?? baseSample.product_id ?? 'test-product',
+      product_id: fixtureProductId ?? product?.product_id ?? context.product_id ?? 'test-product',
       budget:
         (baseSample.budget as number | undefined) ??
         options.budget ??
         Math.max(1000, (pricingOption?.min_spend_per_package as number) ?? 1000),
       pricing_option_id:
-        pricingOption?.pricing_option_id ?? context.pricing_option_id ?? baseSample.pricing_option_id ?? 'default',
+        fixturePricingOptionId ?? pricingOption?.pricing_option_id ?? context.pricing_option_id ?? 'default',
     };
 
-    // Add bid_price for auction-based pricing
-    if (pricingOption?.pricing_model === 'auction' || pricingOption?.pricing_model === 'cpm') {
+    // Synthesize a bid_price for auction/cpm pricing only when the fixture
+    // didn't author one. Storyboards that test auction flows (e.g.
+    // sales-non-guaranteed) author explicit bid_prices the seller validates
+    // against floor_price; discovery-synthesized values would silently
+    // override intentional bid-floor-boundary tests.
+    if (
+      baseSample.bid_price === undefined &&
+      (pricingOption?.pricing_model === 'auction' || pricingOption?.pricing_model === 'cpm')
+    ) {
       const floor = Number(pricingOption?.floor_price) || 5;
       firstPkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
     }

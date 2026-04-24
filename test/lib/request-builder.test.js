@@ -15,6 +15,13 @@ const DEFAULT_OPTIONS = {
   account: { brand: { domain: 'acmeoutdoor.example' }, operator: 'acmeoutdoor.example' },
 };
 
+// Fixture dates past the enricher's stale-date substitution boundary.
+// The create_media_buy enricher replaces past-dated sample_request.start_time
+// / end_time with dynamic defaults; these literals skip that path so
+// fixture-precedence tests stay deterministic across CI wall-clock drift.
+const FUTURE_START = '9999-01-01T00:00:00Z';
+const FUTURE_END = '9999-02-01T00:00:00Z';
+
 function step(task, overrides = {}) {
   return { id: `test-${task}`, title: `Test ${task}`, task, ...overrides };
 }
@@ -59,11 +66,10 @@ describe('Request Builder', () => {
       // sales_non_guaranteed) had packages[1+] dropped, which left
       // context_outputs like second_package_id unresolved and caused the
       // next step to be skipped with "unresolved context variables".
-      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const s = step('create_media_buy', {
         sample_request: {
-          start_time: future,
-          end_time: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString(),
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
           packages: [
             {
               product_id: 'sports_display_auction',
@@ -88,10 +94,9 @@ describe('Request Builder', () => {
     });
 
     test('injects context into additional packages', () => {
-      const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const s = step('create_media_buy', {
         sample_request: {
-          start_time: future,
+          start_time: FUTURE_START,
           packages: [
             { product_id: 'p1', budget: 1000, pricing_option_id: 'opt' },
             { product_id: '$context.secondary_product', budget: 2000, pricing_option_id: 'opt' },
@@ -101,6 +106,138 @@ describe('Request Builder', () => {
       const context = { secondary_product: 'resolved_product_id' };
       const result = buildRequest(s, context, DEFAULT_OPTIONS);
       assert.strictEqual(result.packages[1].product_id, 'resolved_product_id');
+    });
+
+    test('fixture pricing_option_id wins over discovered product pricing (regression #862)', () => {
+      // Storyboards that author an explicit pricing_option_id on the first
+      // package are asserting against a seller that ships that identifier.
+      // Discovery may return unrelated pricing_options[0] values — the
+      // enricher must not override the fixture's intent.
+      const context = {
+        products: [
+          {
+            product_id: 'discovered-product',
+            pricing_options: [{ pricing_option_id: 'discovered-pricing-id', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          packages: [{ product_id: 'fixture-product', pricing_option_id: 'cpm_guaranteed', budget: 5000 }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].pricing_option_id, 'cpm_guaranteed', 'fixture pricing_option_id wins');
+      assert.strictEqual(result.packages[0].product_id, 'fixture-product', 'fixture product_id wins');
+      assert.strictEqual(result.packages[0].budget, 5000, 'fixture budget wins');
+    });
+
+    test('fixture bid_price wins over discovered floor-based synthesis (regression #862)', () => {
+      // Storyboards that assert bid-floor boundary behavior author explicit
+      // bid_prices the seller validates. Discovery-derived floor math must
+      // not silently override those values.
+      const context = {
+        products: [
+          {
+            product_id: 'auction-product',
+            pricing_options: [{ pricing_option_id: 'opt', pricing_model: 'auction', floor_price: 10 }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          packages: [{ product_id: 'auction-product', pricing_option_id: 'opt', bid_price: 2.5 }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].bid_price, 2.5, 'fixture bid_price wins over floor * 1.5');
+    });
+
+    test('discovered pricing fills gaps when fixture omits the first package package-level ids', () => {
+      // Generic storyboards that ship a sample_request body without
+      // per-package identifiers rely on discovery — this behavior is what
+      // lets single-package storyboards run against arbitrary sellers.
+      const context = {
+        products: [
+          {
+            product_id: 'discovered',
+            pricing_options: [{ pricing_option_id: 'discovered-pricing', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          packages: [{ targeting_overlay: { geo_targets: { countries: ['US'] } } }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].product_id, 'discovered', 'discovery fills missing product_id');
+      assert.strictEqual(
+        result.packages[0].pricing_option_id,
+        'discovered-pricing',
+        'discovery fills missing pricing_option_id'
+      );
+      assert.deepStrictEqual(
+        result.packages[0].targeting_overlay,
+        { geo_targets: { countries: ['US'] } },
+        'fixture fields outside the id set pass through'
+      );
+    });
+
+    test('sentinel `test-product` / `test-pricing` fixture defers to discovery (upstream universal storyboards)', () => {
+      // The upstream compliance storyboards (adcontextprotocol/adcp:
+      // universal/deterministic-testing.yaml, error-compliance.yaml,
+      // idempotency.yaml, domains/media-buy/state-machine.yaml) ship
+      // fixture `packages[0]` with `product_id: "test-product"` and
+      // `pricing_option_id: "test-pricing"` expecting the runner to
+      // substitute the seller's discovered identifiers. Those fixtures
+      // live in the spec repo and can't be rewritten from the SDK —
+      // the enricher must recognize these sentinels and defer.
+      const context = {
+        products: [
+          {
+            product_id: 'real_seller_product',
+            pricing_options: [{ pricing_option_id: 'real_seller_cpm', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          packages: [{ product_id: 'test-product', budget: 5000, pricing_option_id: 'test-pricing' }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].product_id, 'real_seller_product', 'sentinel product_id → discovery');
+      assert.strictEqual(
+        result.packages[0].pricing_option_id,
+        'real_seller_cpm',
+        'sentinel pricing_option_id → discovery'
+      );
+      assert.strictEqual(result.packages[0].budget, 5000, 'non-sentinel fixture fields pass through');
+    });
+
+    test('empty fixture package object {} falls back to discovery cleanly', () => {
+      // Some storyboards ship `packages: [{}]` for defaults-only scenarios
+      // where every field should come from discovery / enricher synthesis.
+      const context = {
+        products: [
+          {
+            product_id: 'discovered',
+            pricing_options: [{ pricing_option_id: 'discovered-pricing', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: { start_time: FUTURE_START, packages: [{}] },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].product_id, 'discovered');
+      assert.strictEqual(result.packages[0].pricing_option_id, 'discovered-pricing');
+      assert.ok(result.packages[0].budget > 0, 'budget synthesized from min_spend_per_package or default');
     });
   });
 

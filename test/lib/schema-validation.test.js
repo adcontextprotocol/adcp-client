@@ -14,6 +14,7 @@ const {
   resolveValidationModes,
 } = require('../../dist/lib/validation');
 const { validateOutgoingRequest, validateIncomingResponse } = require('../../dist/lib/validation/client-hooks.js');
+const { _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
 const { ValidationError } = require('../../dist/lib/errors');
 
 describe('schema-driven validation', () => {
@@ -207,6 +208,100 @@ describe('schema-driven validation', () => {
         assert.ok(keys.includes(key), `missing ${key}`);
       }
     });
+  });
+
+  describe('ensureCoreLoaded ordering (regression #862)', () => {
+    // Belt-and-braces guard: when a flat-tree tool compile fires
+    // `ensureCoreLoaded` FIRST, every non-tool fragment across the whole
+    // schema tree gets pre-registered raw. That pre-registration must not
+    // accidentally short-circuit the later `relaxResponseRoot` compile for
+    // a bundled tool whose response has root-level `additionalProperties:
+    // false`. Path-normalization drift between `fileIndex.values()` (the
+    // tool-file skip list) and `walkJsonFiles` (the registration walker)
+    // would cause this silent strict-mode flip — `create_property_list`
+    // below would start rejecting `replayed` at the root instead of
+    // passing it through as envelope.
+    test('flat-tree compile before bundled compile still preserves relaxResponseRoot', () => {
+      _resetValidationLoader();
+      // Compile a flat-tree-only tool first; this fires `ensureCoreLoaded`
+      // and walks every non-bundled directory.
+      const flat = validateResponse('sync_plans', {
+        plans: [{ plan_id: 'p1', status: 'active', version: 1 }],
+      });
+      assert.notStrictEqual(flat.variant, 'skipped', 'sync_plans must have a compiled validator');
+      // Now compile a bundled tool whose root needs relaxation.
+      const bundled = validateResponse('create_property_list', { replayed: false });
+      const rootAdditional = bundled.issues.filter(
+        i => i.keyword === 'additionalProperties' && (i.pointer === '' || i.pointer === '/')
+      );
+      assert.deepStrictEqual(
+        rootAdditional,
+        [],
+        `relaxResponseRoot must still apply after ensureCoreLoaded pre-registers fragments: ${JSON.stringify(rootAdditional)}`
+      );
+    });
+  });
+
+  describe('cross-domain $ref resolution (regression #862)', () => {
+    // sync-plans-request.json lives in governance/ and $refs three sibling
+    // building-block fragments in the same directory:
+    //   - governance/audience-constraints.json
+    //   - governance/policy-entry.json
+    //   - enums/restricted-attribute.json
+    // Before the loader pre-registered flat-tree domain fragments, AJV could
+    // not resolve the governance/* siblings and threw at compile time. This
+    // guard compiles each validator and runs it against a minimal payload;
+    // a $ref resolution regression would show up as a thrown exception.
+    for (const tool of [
+      'sync_plans',
+      'check_governance',
+      'acquire_rights',
+      'update_rights',
+      'get_rights',
+      'create_content_standards',
+      'create_property_list',
+      'create_collection_list',
+      'activate_signal',
+    ]) {
+      test(`${tool} request schema compiles + runs without $ref errors`, () => {
+        let outcome;
+        assert.doesNotThrow(() => {
+          outcome = validateRequest(tool, {});
+        });
+        // Guard against silent-regression where a refactor drops the tool
+        // from the catalog and the doesNotThrow assertion becomes trivial.
+        assert.notStrictEqual(
+          outcome.variant,
+          'skipped',
+          `${tool} must have a compiled request validator — got variant:skipped`
+        );
+        // Even if AJV ever demoted unresolved-$ref to a soft error instead
+        // of throwing, the issue list would surface it.
+        for (const issue of outcome.issues) {
+          assert.ok(
+            !/can't resolve reference/i.test(issue.message),
+            `${tool} request compile leaked unresolved-$ref: ${issue.message}`
+          );
+        }
+      });
+      test(`${tool} response schema compiles + runs without $ref errors`, () => {
+        let outcome;
+        assert.doesNotThrow(() => {
+          outcome = validateResponse(tool, {});
+        });
+        assert.notStrictEqual(
+          outcome.variant,
+          'skipped',
+          `${tool} must have a compiled response validator — got variant:skipped`
+        );
+        for (const issue of outcome.issues) {
+          assert.ok(
+            !/can't resolve reference/i.test(issue.message),
+            `${tool} response compile leaked unresolved-$ref: ${issue.message}`
+          );
+        }
+      });
+    }
   });
 
   describe('client hooks', () => {
