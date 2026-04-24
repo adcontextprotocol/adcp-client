@@ -108,9 +108,10 @@ function isPathReachable(schema, segments) {
  * neither is a path through a `record` (any key) or a `union` branch that
  * omits the field.
  *
- * Conservative on unions: required only if ALL branches require it. Aggressive
- * on intersections: required if EITHER side requires it (matches
- * `isPathReachable` symmetry).
+ * Conservative on unions: required only if ALL branches require it. On
+ * intersections: required if EITHER side requires it — a value in
+ * `z.intersection(L, R)` must satisfy both sides, so the union of their
+ * requirements applies.
  *
  * Used to lint `field_value_or_absent` assertions: if the path the tolerant
  * matcher targets is already required by the schema, the tolerance is dead
@@ -355,7 +356,7 @@ describe('storyboard schema drift', () => {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
       if (!schema) continue;
 
-      it(`${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use field_value if it is)`, () => {
+      it(`${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`, () => {
         const segments = parsePath(entry.path);
         const required = isPathRequired(schema, segments);
         assert.ok(
