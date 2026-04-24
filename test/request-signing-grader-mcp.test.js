@@ -35,10 +35,13 @@ function ensureMcpAgentBuilt() {
   }
 }
 
-function startMcpAgent(port, overrides = {}) {
-  // Spread overrides first so `PORT` always wins — callers shouldn't be able
-  // to clobber the explicit `port` argument through the overrides bag.
-  const env = { ...process.env, ...overrides, PORT: String(port) };
+function startMcpAgent(overrides = {}) {
+  // PORT=0 asks the OS for a free ephemeral port so parallel test workers
+  // and leftover zombies from previous runs can't collide. The child
+  // process's `AdCP agent running at http://localhost:<port>/mcp` banner
+  // carries the actual bound port; we parse it and stash on `child.port`
+  // for the caller. Closes adcp-client#884 (rate-abuse subtest flake).
+  const env = { ...process.env, ...overrides, PORT: '0' };
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [MCP_AGENT_SCRIPT], {
       env,
@@ -51,8 +54,29 @@ function startMcpAgent(port, overrides = {}) {
       if (settled) return;
       const s = chunk.toString();
       stdoutTail.push(s);
-      if (s.includes(`listening`) || s.includes(`running at`)) {
+      // Parse the actual bound port from the banner — the banner line is
+      // authoritative because PORT=0 means the OS picked it. Fail the
+      // startup (rather than silently using port 0) if the banner arrives
+      // but we can't extract a port — that'd indicate a banner-format
+      // change the caller needs to hear about.
+      const portMatch = /running at https?:\/\/[^:]+:(\d+)/i.exec(stdoutTail.join(''));
+      if (s.includes('listening') || s.includes('running at')) {
+        if (!portMatch) {
+          settled = true;
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* already gone */
+          }
+          reject(
+            new Error(
+              `MCP agent signaled ready but startMcpAgent could not parse a port from the banner:\n${stdoutTail.join('')}`
+            )
+          );
+          return;
+        }
         settled = true;
+        child.port = Number(portMatch[1]);
         resolve(child);
       }
     };
@@ -124,17 +148,16 @@ function stopMcpAgent(child) {
 const CAPABILITY_PROFILE_VECTORS = ['007-missing-content-digest', '018-digest-covered-when-forbidden'];
 
 describe('request-signing grader — MCP transport vs. reference MCP agent', () => {
-  // Dynamic port so the test is safe to run in parallel; fallback to 3111.
-  // The rate-abuse subtest spins up a second agent on PORT+1, so parallel
-  // runs of this file MUST set ADCP_MCP_TEST_PORT values that differ by at
-  // least 2 (e.g. 3111 and 3113) to avoid the +1 sibling colliding.
-  const PORT = Number.parseInt(process.env.ADCP_MCP_TEST_PORT ?? '3111', 10);
-  const AGENT_URL = `http://127.0.0.1:${PORT}/mcp`;
+  // Ephemeral ports (PORT=0) eliminate the parallel-worker collision and
+  // zombie-port races that used to flake the rate-abuse subtest (#884).
+  // `agent.port` is populated from the startup banner in `startMcpAgent`.
   let agent;
+  let AGENT_URL;
 
   before(async () => {
     ensureMcpAgentBuilt();
-    agent = await startMcpAgent(PORT);
+    agent = await startMcpAgent();
+    AGENT_URL = `http://127.0.0.1:${agent.port}/mcp`;
   });
 
   after(async () => {
@@ -205,10 +228,13 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     // than 101. Needs `allowLiveSideEffects: true` because the reference
     // agent doesn't advertise `endpoint_scope: sandbox` — preflightSkip
     // otherwise refuses to run 020.
-    const rateAbusePort = PORT + 1;
-    const fresh = await startMcpAgent(rateAbusePort, { ADCP_REPLAY_CAP: '10' });
+    //
+    // Uses an ephemeral port (startMcpAgent binds PORT=0 and returns the
+    // OS-picked port on `child.port`) so this spawn can't collide with the
+    // `before()` agent or with a parallel test worker. Fixes #884.
+    const fresh = await startMcpAgent({ ADCP_REPLAY_CAP: '10' });
     try {
-      const report = await gradeRequestSigning(`http://127.0.0.1:${rateAbusePort}/mcp`, {
+      const report = await gradeRequestSigning(`http://127.0.0.1:${fresh.port}/mcp`, {
         allowPrivateIp: true,
         transport: 'mcp',
         onlyVectors: ['020-rate-abuse'],
