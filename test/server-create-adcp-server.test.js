@@ -464,9 +464,7 @@ describe('createAdcpServer', () => {
         version: '1.0.0',
         mediaBuy: {
           createMediaBuy: async () => ({
-            errors: [
-              { code: 'PRODUCT_NOT_FOUND', message: 'no such product', field: 'packages[0].product_id' },
-            ],
+            errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'no such product', field: 'packages[0].product_id' }],
           }),
         },
       });
@@ -658,8 +656,7 @@ describe('createAdcpServer', () => {
         name: 'Test',
         version: '1.0.0',
         mediaBuy: {
-          getProducts: async () =>
-            adcpError('RATE_LIMITED', { message: 'slow down', retry_after: 30 }),
+          getProducts: async () => adcpError('RATE_LIMITED', { message: 'slow down', retry_after: 30 }),
         },
       });
       const result = await callToolRaw(server, 'get_products', {
