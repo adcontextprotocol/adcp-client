@@ -72,14 +72,14 @@ the skip in the run summary.
 ## Manual nudge — overrides the already-engaged check
 
 If the event context contains a `MANUAL NUDGE:` line, a repo member
-explicitly requested triage via `@claude-triage`. **Skip the
+explicitly requested triage via `/triage`. **Skip the
 already-engaged check** and proceed with full triage. The nudge is
 the explicit request.
 
 Modifiers after the command bias the outcome:
-- `@claude-triage execute` — lean toward Execute
-- `@claude-triage clarify` — force clarifying-question comment
-- `@claude-triage defer` — force defer
+- `/triage execute` — lean toward Execute
+- `/triage clarify` — force clarifying-question comment
+- `/triage defer` — force defer
 
 Without a modifier, standard four-outcome logic applies.
 
