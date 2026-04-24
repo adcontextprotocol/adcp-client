@@ -13,22 +13,41 @@
  *
  * **Handler-return → A2A `Task.state` mapping:**
  *
- * | Handler returned…                   | A2A result                                         |
- * |-------------------------------------|----------------------------------------------------|
- * | Success arm                         | `Task.state = 'completed'` + DataPart artifact     |
- * | Submitted arm (`status:'submitted'`)| `Task.state = 'submitted'` + DataPart artifact[^1] |
- * | Error arm (`errors:[]`)             | `Task.state = 'failed'`    + DataPart artifact     |
- * | `adcpError()` envelope              | `Task.state = 'failed'`    + DataPart artifact     |
+ * | Handler returned…                   | A2A `Task.state`  | Artifact payload                                 |
+ * |-------------------------------------|-------------------|--------------------------------------------------|
+ * | Success arm                         | `completed`       | DataPart with the typed AdCP response            |
+ * | Submitted arm (`status:'submitted'`)| `completed` [^1]  | DataPart with AdCP response + `metadata.adcp_task_id` |
+ * | Error arm (`errors:[]`)             | `failed`          | DataPart with the AdCP Error arm payload         |
+ * | `adcpError()` envelope              | `failed`          | DataPart with `adcp_error`                       |
  *
- * [^1]: A2A owns `Task.id`. The AdCP-level `task_id` rides on the DataPart
- * artifact's `data.adcp_task_id` — buyers poll the A2A `Task.id` via
- * `tasks/get`; the `adcp_task_id` is the handle they'd use against AdCP
- * tool-task APIs if they were calling the agent over MCP directly.
+ * [^1]: A2A `submitted` is the INITIAL lifecycle state (before
+ * `working`); A2A `completed` marks the transport call as done.
+ * When the AdCP handler returns a Submitted arm the HTTP call itself
+ * has completed — the AdCP-level async work is queued and buyers
+ * resume it via `adcp_task_id` on `artifact.metadata`. The DataPart's
+ * `data` still carries `status: 'submitted'` from the AdCP response,
+ * so a buyer reading the artifact payload sees the ad-tech state
+ * directly; the A2A Task.state only mirrors whether the transport
+ * call itself terminated.
  *
- * **Message shape.** A client addresses a tool by sending a `Message` with
- * a single `DataPart`: `{ kind: 'data', data: { skill, input } }`. The
+ * **Message shape.** A client addresses a tool by sending a `Message`
+ * with a single `DataPart`: `{ kind: 'data', data: { skill, input } }`.
  * `skill` must match a registered AdCP tool name (e.g. `get_products`);
- * `input` becomes the tool arguments before AdCP schema validation runs.
+ * `input` becomes the tool arguments before AdCP schema validation
+ * runs. The older client convention `{ skill, parameters }` (used by
+ * `src/lib/protocols/a2a.ts`) is also accepted — `data.parameters` is
+ * treated as an alias for `data.input`; new callers should prefer
+ * `input` since A2A `DataPart.data` is free-form and `input` matches
+ * the AdCP tool's typed request shape.
+ *
+ * **Two lifecycles, one response.** A2A's `Task.state` tracks the
+ * TRANSPORT call (did the HTTP request complete?). AdCP's `status`
+ * inside the artifact tracks the WORK (submitted / completed /
+ * failed). Don't conflate them: a `completed` A2A task can carry a
+ * `submitted` AdCP response, meaning the call returned successfully
+ * but the ad-tech operation itself is still queued. Buyers resume the
+ * AdCP work via the `adcp_task_id` on the artifact's `metadata`, not
+ * by re-polling the A2A Task.
  *
  * @preview v0 surface — field semantics may shift while the ecosystem
  * converges on AdCP-over-A2A conventions. Pinning a minor version is
@@ -260,12 +279,18 @@ function extractInvocation(message: Message): ExtractedInvocation {
   }
   const payload = rawData as Record<string, unknown>;
   const skill = payload.skill;
-  const input = payload.input;
+  // Accept `parameters` as an alias for `input` — the in-tree A2A
+  // client (`src/lib/protocols/a2a.ts`) shipped first and uses
+  // `parameters`, so downstream agents already emit that key. Going
+  // forward prefer `input`: A2A `DataPart.data` is free-form JSON and
+  // `input` matches the AdCP tool's typed request shape. The alias
+  // stays for ecosystem compatibility; no deprecation timer in v0.
+  const input = payload.input ?? payload.parameters;
   if (typeof skill !== 'string' || skill.length === 0) {
     throw new A2AInvocationError('DataPart must include a non-empty string `skill` field naming the AdCP tool.');
   }
   if (input != null && (typeof input !== 'object' || Array.isArray(input))) {
-    throw new A2AInvocationError('DataPart `input` must be an object (or omitted).');
+    throw new A2AInvocationError('DataPart `input` (or legacy `parameters`) must be an object (or omitted).');
   }
   return { skill, input: (input as Record<string, unknown>) ?? {} };
 }
@@ -375,11 +400,19 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
 
       const classified = classifyResponse(response);
       this.publishArtifact(eventBus, taskId, contextId, classified);
+      // A2A Task.state maps the TRANSPORT call lifecycle, not the AdCP
+      // work. A `submitted` AdCP arm means the HTTP call itself
+      // completed — the ad-tech work is queued, resumed via
+      // `adcp_task_id` on the artifact metadata. Emitting A2A
+      // `state: 'submitted'` with `final: true` would be a
+      // non-conformant transition per A2A 0.3.0 (`submitted` is the
+      // INITIAL state before `working`, never terminal). Buyers read
+      // the AdCP-level status from the artifact's `data.status` field.
       this.publishStatus(
         eventBus,
         taskId,
         contextId,
-        classified.kind === 'success' ? 'completed' : classified.kind === 'submitted' ? 'submitted' : 'failed',
+        classified.kind === 'success' || classified.kind === 'submitted' ? 'completed' : 'failed',
         true
       );
     } finally {
@@ -454,18 +487,19 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
   ): void {
     const artifactName =
       classified.kind === 'success' ? 'result' : classified.kind === 'submitted' ? 'submitted' : 'error';
+    // DataPart `data` is the AdCP tool's typed response — no
+    // transport-level fields injected here so the payload still
+    // validates against the tool's AdCP response schema. AdCP
+    // transport metadata (`adcp_task_id` pointing at the async handle)
+    // rides on `artifact.metadata` per A2A 0.3.0's extension
+    // convention.
     const artifact: Artifact = {
       artifactId: randomUUID(),
       name: artifactName,
-      parts: [
-        {
-          kind: 'data',
-          data:
-            classified.kind === 'submitted'
-              ? { ...classified.data, adcp_task_id: classified.adcpTaskId }
-              : classified.data,
-        },
-      ],
+      parts: [{ kind: 'data', data: classified.data }],
+      ...(classified.kind === 'submitted' && {
+        metadata: { adcp_task_id: classified.adcpTaskId },
+      }),
     };
     const event: TaskArtifactUpdateEvent = {
       kind: 'artifact-update',
@@ -626,7 +660,7 @@ const DEFAULT_LOGGER: AdcpLogger = {
  * });
  *
  * app.use('/a2a', a2a.jsonRpcHandler);
- * app.get('/.well-known/agent-card.json', a2a.agentCardHandler);
+ * app.use('/.well-known/agent-card.json', a2a.agentCardHandler);
  * ```
  *
  * @preview — see the module docstring.

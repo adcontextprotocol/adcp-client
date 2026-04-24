@@ -139,18 +139,20 @@ app.listen(3000);
 
 Both transports share the same `AdcpServer` — handlers, idempotency store, state store, and `resolveAccount` all run the same pipeline regardless of which transport received the request. Changes to handlers are picked up by both at once.
 
-**Skill addressing.** A2A clients send a `Message` with a single `DataPart`: `{ kind: 'data', data: { skill: 'get_products', input: { brief: '...' } } }`. `skill` matches an AdCP tool name; `input` is the tool arguments.
+**Skill addressing.** A2A clients send a `Message` with a single `DataPart`: `{ kind: 'data', data: { skill: 'get_products', input: { brief: '...' } } }`. `skill` matches an AdCP tool name; `input` is the tool arguments. The legacy key `parameters` (shipped by `src/lib/protocols/a2a.ts` before the adapter landed) is accepted as an alias for `input` so same-SDK clients and servers talk cleanly.
 
-**Handler return → A2A `Task.state`:**
+**Two lifecycles, one response.** A2A's `Task.state` tracks the *transport call* (did the HTTP request complete?). AdCP's `status` inside the artifact tracks the *work* (submitted / completed / failed). Don't conflate them — a `completed` A2A task can carry a `submitted` AdCP response, meaning the call returned but the ad-tech operation is still queued.
 
-| Handler returned… | A2A result |
-|---|---|
-| Success arm | `state: 'completed'` + DataPart artifact |
-| Submitted arm (`status:'submitted'`) | `state: 'submitted'` + `adcp_task_id` on the artifact |
-| Error arm (`errors: [...]`) | `state: 'failed'` + DataPart artifact |
-| `adcpError('CODE', ...)` | `state: 'failed'` + `adcp_error` artifact |
+**Handler return → A2A `Task.state` + artifact:**
 
-**A2A `Task.id` vs AdCP `task_id`.** A2A owns its Task.id (SDK-generated per `message/send`). The AdCP-level `task_id` — if your handler returned a Submitted arm — rides on the DataPart artifact as `adcp_task_id`. A2A-native clients poll via `tasks/get` using the A2A Task.id.
+| Handler returned… | A2A `Task.state` | Artifact payload |
+|---|---|---|
+| Success arm | `completed` | DataPart with the typed AdCP response |
+| Submitted arm (`status:'submitted'`) | `completed` | DataPart with the AdCP response; `adcp_task_id` on `artifact.metadata` |
+| Error arm (`errors: [...]`) | `failed` | DataPart with the Error arm payload |
+| `adcpError('CODE', ...)` | `failed` | DataPart with `adcp_error` |
+
+**A2A `Task.id` vs AdCP `task_id`.** A2A owns its `Task.id` (SDK-generated per `message/send`). The AdCP-level `task_id` — present when the handler returned a Submitted arm — rides on `artifact.metadata.adcp_task_id`, off the DataPart's payload so the `data` still validates cleanly against the AdCP response schema. Buyers resuming the A2A side poll via `tasks/get` using the A2A `Task.id`; buyers reaching for AdCP-side async state use `adcp_task_id`.
 
 **v0 scope.** `message/send`, `tasks/get`, `tasks/cancel`, `GET /.well-known/agent-card.json`. Streaming (`message/stream`), push notifications, and `input-required` mid-flight interrupts are explicit "not yet" — tracked for v1. Pin a minor version while the surface stabilises.
 

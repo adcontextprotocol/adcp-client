@@ -176,7 +176,7 @@ describe('createA2AAdapter', () => {
       assert.deepStrictEqual(dataPart.data.products, [{ product_id: 'p1' }]);
     });
 
-    it('Submitted arm → Task.state=submitted + adcp_task_id on the artifact', async () => {
+    it('Submitted AdCP arm → A2A state=completed; adcp_task_id on artifact.metadata', async () => {
       const adcp = createAdcpServer({
         mediaBuy: {
           createMediaBuy: async () => ({
@@ -198,12 +198,23 @@ describe('createA2AAdapter', () => {
           })
         )
       );
-      assert.strictEqual(res.body.result.status.state, 'submitted');
-      const dataPart = res.body.result.artifacts[0].parts[0];
-      assert.strictEqual(dataPart.data.adcp_task_id, 'tk_async_1', 'AdCP task_id surfaced on artifact');
-      assert.strictEqual(dataPart.data.status, 'submitted');
+      // A2A Task.state tracks the transport call — completed means the HTTP
+      // call finished; the AdCP-level async state lives inside the artifact.
+      assert.strictEqual(res.body.result.status.state, 'completed');
+      const artifact = res.body.result.artifacts[0];
+      assert.strictEqual(
+        artifact.metadata?.adcp_task_id,
+        'tk_async_1',
+        'AdCP task_id lives on artifact.metadata (A2A extension convention), not in DataPart data'
+      );
+      const dataPart = artifact.parts[0];
+      assert.strictEqual(dataPart.data.status, 'submitted', 'AdCP response preserved in DataPart');
+      assert.strictEqual(dataPart.data.task_id, 'tk_async_1', 'AdCP task_id also on the wire payload per spec');
       // A2A task id is the SDK-generated one, not the AdCP task_id.
       assert.notStrictEqual(res.body.result.id, 'tk_async_1');
+      // Transport metadata must NOT leak into DataPart data — that shape
+      // is the AdCP tool's typed response and needs to validate cleanly.
+      assert.strictEqual(dataPart.data.adcp_task_id, undefined, 'transport metadata stays out of AdCP payload');
     });
 
     it('Error arm → Task.state=failed with errors[] preserved on artifact', async () => {
@@ -266,6 +277,37 @@ describe('createA2AAdapter', () => {
       const dataPart = res.body.result.artifacts[0].parts[0];
       assert.strictEqual(dataPart.data.reason, 'custom', 'hand-rolled structuredContent preserved');
       assert.strictEqual(dataPart.data.detail, 'hand-rolled');
+    });
+
+    it('accepts { skill, parameters } as an alias for { skill, input }', async () => {
+      // Backward-compat: the in-tree A2A client at src/lib/protocols/a2a.ts
+      // shipped first and uses `parameters`. The adapter tolerates both so
+      // same-SDK send/receive works end-to-end.
+      let sawBrief;
+      const adcp = createAdcpServer({
+        mediaBuy: {
+          getProducts: async params => {
+            sawBrief = params.brief;
+            return { products: [] };
+          },
+        },
+      });
+      const app = mountAdapter(createA2AAdapter({ server: adcp, agentCard: baseCard() }));
+      const res = await postJsonRpc(app, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'message/send',
+        params: {
+          message: {
+            kind: 'message',
+            messageId: randomUuid(),
+            role: 'user',
+            parts: [{ kind: 'data', data: { skill: 'get_products', parameters: { brief: 'premium' } } }],
+          },
+        },
+      });
+      assert.strictEqual(res.body.result.status.state, 'completed');
+      assert.strictEqual(sawBrief, 'premium', 'parameters alias threaded into handler args');
     });
 
     it('DataPart with null data surfaces as failed with INVALID_INVOCATION (not uncaught TypeError)', async () => {
