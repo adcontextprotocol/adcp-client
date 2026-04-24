@@ -3,6 +3,8 @@
  *
  *   - `verifySignatureAsAuthenticator` defaults `replayStore` and
  *     `revocationStore` to in-memory stores.
+ *   - `createExpressVerifier` defaults `replayStore` and `revocationStore`
+ *     to in-memory stores (symmetric with the authenticator shape).
  *   - `buildAgentSigningFetch` defaults `upstream` to `globalThis.fetch`.
  *   - `createAgentSignedFetch` bundles capability-cache wiring for the
  *     single-seller case.
@@ -26,6 +28,7 @@ const {
   defaultCapabilityCache,
   buildAgentSigningFetch,
   createAgentSignedFetch,
+  createExpressVerifier,
 } = require('../../dist/lib/signing/index.js');
 
 // ---------------------------------------------------------------------------
@@ -264,5 +267,127 @@ describe('createAgentSignedFetch preset', () => {
     const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri });
     assert.strictEqual(typeof signedFetch, 'function');
     assert.ok(defaultCapabilityCache, 'defaultCapabilityCache should be exported');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createExpressVerifier — default stores
+// ---------------------------------------------------------------------------
+
+describe('createExpressVerifier default stores', () => {
+  const now = 1_776_520_800;
+  const body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_media_buy","arguments":{}}}';
+  const url = 'https://seller.example.com/mcp';
+
+  function baseOptionsWithoutStores(overrides = {}) {
+    return {
+      jwks: new StaticJwksResolver([primaryPublic]),
+      capability: { supported: true, covers_content_digest: 'either', required_for: [] },
+      resolveOperation: req => {
+        try {
+          const parsed = JSON.parse(req.rawBody ?? '');
+          if (parsed.method === 'tools/call') return parsed.params?.name;
+        } catch {}
+        return undefined;
+      },
+      getUrl: req => `https://seller.example.com${req.originalUrl ?? req.url ?? '/mcp'}`,
+      now: () => now,
+      ...overrides,
+    };
+  }
+
+  function expressReq(signed, bodyStr) {
+    const headers = { host: 'seller.example.com' };
+    for (const [k, v] of Object.entries(signed.headers)) {
+      headers[k.toLowerCase()] = v;
+    }
+    return {
+      method: 'POST',
+      url: '/mcp',
+      originalUrl: '/mcp',
+      protocol: 'https',
+      headers,
+      rawBody: bodyStr,
+      get(name) {
+        return headers[name.toLowerCase()];
+      },
+    };
+  }
+
+  function sign(nonce, bodyStr) {
+    return signRequest(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body: bodyStr },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
+      { now: () => now, windowSeconds: 300, nonce }
+    );
+  }
+
+  function fakeRes() {
+    const state = { status: undefined, headers: {}, body: undefined };
+    const chain = {
+      set(k, v) {
+        state.headers[k] = v;
+        return chain;
+      },
+      json(b) {
+        state.body = b;
+        return chain;
+      },
+    };
+    return {
+      status(code) {
+        state.status = code;
+        return chain;
+      },
+      state,
+    };
+  }
+
+  it('accepts a valid signature when replayStore/revocationStore are omitted', async () => {
+    const middleware = createExpressVerifier(baseOptionsWithoutStores());
+    const req = expressReq(sign('express-default-stores-01', body), body);
+    const res = fakeRes();
+    let nextCalled = false;
+    await middleware(req, res, err => {
+      if (err) throw err;
+      nextCalled = true;
+    });
+    assert.strictEqual(nextCalled, true, 'next() should be called on verified request');
+    assert.ok(req.verifiedSigner, 'req.verifiedSigner should be populated');
+    assert.strictEqual(req.verifiedSigner.keyid, 'test-ed25519-2026');
+  });
+
+  it('the default replay store rejects replayed nonces', async () => {
+    const middleware = createExpressVerifier(baseOptionsWithoutStores());
+    const nonce = 'express-default-stores-replay-01';
+
+    const req1 = expressReq(sign(nonce, body), body);
+    const res1 = fakeRes();
+    await middleware(req1, res1, () => {});
+    assert.ok(req1.verifiedSigner, 'first request should verify');
+
+    const req2 = expressReq(sign(nonce, body), body);
+    const res2 = fakeRes();
+    await middleware(req2, res2, () => {});
+    assert.strictEqual(res2.state.status, 401, 'replay should yield 401');
+    assert.ok(
+      res2.state.headers['WWW-Authenticate']?.startsWith('Signature error="'),
+      'should carry Signature WWW-Authenticate challenge'
+    );
+  });
+
+  it('every new middleware instance gets its own default stores', async () => {
+    const mwA = createExpressVerifier(baseOptionsWithoutStores());
+    const mwB = createExpressVerifier(baseOptionsWithoutStores());
+    const nonce = 'express-default-stores-isolation-01';
+
+    const reqA = expressReq(sign(nonce, body), body);
+    await mwA(reqA, fakeRes(), () => {});
+    assert.ok(reqA.verifiedSigner, 'mwA should verify');
+
+    // Same nonce on an independent middleware instance must verify — default stores don't leak across instances.
+    const reqB = expressReq(sign(nonce, body), body);
+    await mwB(reqB, fakeRes(), () => {});
+    assert.ok(reqB.verifiedSigner, 'mwB should verify (independent default store)');
   });
 });

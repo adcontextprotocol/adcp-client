@@ -1,6 +1,8 @@
 import type { RequestLike } from './canonicalize';
 import { getHeaderValue } from './canonicalize';
 import { RequestSignatureError } from './errors';
+import { InMemoryReplayStore } from './replay';
+import { InMemoryRevocationStore } from './revocation';
 import { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 import type { VerifiedSigner } from './types';
 
@@ -29,7 +31,22 @@ export interface ExpressLike {
   [key: string]: unknown;
 }
 
-export interface ExpressMiddlewareOptions extends Omit<VerifyRequestOptions, 'operation'> {
+export interface ExpressMiddlewareOptions extends Omit<VerifyRequestOptions, 'operation' | 'replayStore' | 'revocationStore'> {
+  /**
+   * Stores `(keyid, signature-bytes, expires)` tuples for replay detection.
+   * Defaults to a fresh {@link InMemoryReplayStore} — fine for single-process
+   * deployments. Wire a shared store (Redis, Postgres, etc.) for multi-replica
+   * setups where a signature accepted on one replica must be rejected on the
+   * others.
+   */
+  replayStore?: VerifyRequestOptions['replayStore'];
+  /**
+   * Consulted for revoked `kid` / `jti` before accepting a signature.
+   * Defaults to a fresh {@link InMemoryRevocationStore}. Most agents don't
+   * revoke at runtime; when you do, swap in a store backed by your secrets
+   * manager or admin tooling.
+   */
+  revocationStore?: VerifyRequestOptions['revocationStore'];
   /**
    * Extract the AdCP operation name from the incoming request so the verifier
    * can consult `capability.required_for`. Return `undefined` for requests
@@ -58,6 +75,12 @@ export interface ExpressMiddlewareOptions extends Omit<VerifyRequestOptions, 'op
 type NextFn = (err?: unknown) => void;
 
 export function createExpressVerifier(options: ExpressMiddlewareOptions) {
+  // Instantiate defaults once at wire-up so every request on this middleware
+  // shares the same replay/revocation state — lazy per-request construction
+  // would defeat replay detection entirely.
+  const replayStore = options.replayStore ?? new InMemoryReplayStore();
+  const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
+
   return async function requestSignatureMiddleware(
     req: ExpressLike,
     res: { status: (code: number) => { set: (k: string, v: string) => { json: (body: unknown) => void } } },
@@ -74,6 +97,8 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
       };
       const result = await verifyRequestSignature(requestLike, {
         ...options,
+        replayStore,
+        revocationStore,
         operation: options.resolveOperation(req),
       });
       if (result.status === 'verified') {
