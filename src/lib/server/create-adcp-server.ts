@@ -1072,17 +1072,36 @@ function deepMergePlainObjects(target: unknown, source: unknown): unknown {
 }
 
 /**
- * Stamp `replayed: true` on the response envelope (MCP structuredContent)
- * for replay paths only. `protocol-envelope.json` permits the field to be
- * "omitted when the request was executed fresh" — fresh-path responses
- * therefore carry no `replayed` field, and the field's presence implies
- * `true`. Buyers read the field to distinguish cached replays from new
- * executions for billing and audit.
+ * Stamp `replayed: true` on the response envelope for replay paths only.
+ * `protocol-envelope.json` permits the field to be "omitted when the
+ * request was executed fresh" — fresh-path responses therefore carry no
+ * `replayed` field, and the field's presence implies `true`. Buyers read
+ * the field to distinguish cached replays from new executions for billing
+ * and audit.
+ *
+ * Mirrors the marker into both L3 `structuredContent` and the L2
+ * `content[0].text` JSON fallback so A2A/REST adapters that consume the
+ * text body see the same envelope MCP does — matching the lockstep
+ * pattern in `injectContextIntoResponse` / `sanitizeAdcpErrorEnvelope`.
  */
 function stampReplayed(response: McpToolResponse): void {
   if (!response.structuredContent || typeof response.structuredContent !== 'object') return;
   const sc = response.structuredContent as Record<string, unknown>;
   sc.replayed = true;
+  if (Array.isArray(response.content)) {
+    const first = response.content[0];
+    if (first && first.type === 'text' && typeof first.text === 'string') {
+      try {
+        const parsed = JSON.parse(first.text);
+        if (parsed && typeof parsed === 'object') {
+          parsed.replayed = true;
+          first.text = JSON.stringify(parsed);
+        }
+      } catch {
+        // Text isn't JSON — leave it alone (implausible for AdCP responses).
+      }
+    }
+  }
 }
 
 /**
