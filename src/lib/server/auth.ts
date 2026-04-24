@@ -247,8 +247,15 @@ export interface VerifyBearerOptions {
    * endpoint (e.g., `https://my-agent.example.com/mcp`). MUST match what
    * the token was issued for. If you advertise via
    * {@link ServeOptions.protectedResource}, set this to the same URL.
+   *
+   * For multi-host deployments pass a function that returns the expected
+   * audience for the incoming request (typically `publicUrl(host)`). The
+   * function must be deterministic for a given request — `jose` is called
+   * with the result on every token — and MUST NOT derive audience from
+   * attacker-controlled inputs. Use `X-Forwarded-Host` only when `serve()`
+   * is configured with `trustForwardedHost: true`.
    */
-  audience: string;
+  audience: string | ((req: IncomingMessage) => string);
   /** Optional: required scopes (all must be present in the `scope` / `scp` claim). */
   requiredScopes?: string[];
   /**
@@ -281,17 +288,34 @@ export interface VerifyBearerOptions {
  */
 export function verifyBearer(options: VerifyBearerOptions): Authenticator {
   const jwks = createRemoteJWKSet(new URL(options.jwksUri));
-  const verifyOptions: JWTVerifyOptions = {
+  const audienceIsFn = typeof options.audience === 'function';
+  const baseVerifyOptions: Omit<JWTVerifyOptions, 'audience'> = {
     algorithms: DEFAULT_JWT_ALGORITHMS.slice(),
     clockTolerance: DEFAULT_JWT_CLOCK_TOLERANCE_SECONDS,
     ...options.jwtOptions,
     issuer: options.issuer,
-    audience: options.audience,
   };
+  const staticVerifyOptions: JWTVerifyOptions | undefined = audienceIsFn
+    ? undefined
+    : { ...baseVerifyOptions, audience: options.audience as string };
   return async req => {
     const token = extractBearerToken(req);
     if (!token) return null;
     let payload: JWTPayload;
+    let verifyOptions: JWTVerifyOptions;
+    if (audienceIsFn) {
+      let audience: string;
+      try {
+        audience = (options.audience as (r: IncomingMessage) => string)(req);
+      } catch (err) {
+        // Resolver threw — surface as auth failure rather than 500 so the
+        // client sees a clean 401 and the operator sees the cause in the log.
+        throw new AuthError('Token validation failed.', { cause: err });
+      }
+      verifyOptions = { ...baseVerifyOptions, audience };
+    } else {
+      verifyOptions = staticVerifyOptions as JWTVerifyOptions;
+    }
     try {
       ({ payload } = await jwtVerify(token, jwks, verifyOptions));
     } catch (err) {

@@ -274,6 +274,52 @@ describe('verifyBearer', () => {
       'HS-family algorithms must not be default-allowed'
     );
   });
+
+  it('function-form audience resolves per-request (multi-host)', async () => {
+    const token = await new jose.SignJWT({ sub: 'user_1', scope: 'read' })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-kid' })
+      .setIssuer('https://iss.example')
+      .setAudience('https://snap.example.com/mcp')
+      .setExpirationTime('5m')
+      .sign(keyPair.privateKey);
+    const auth = verifyBearer(
+      buildOptions({
+        audience: req => `https://${req.headers.host}/mcp`,
+      })
+    );
+    const ok = await auth({
+      headers: { authorization: `Bearer ${token}`, host: 'snap.example.com' },
+    });
+    assert.strictEqual(ok.principal, 'user_1');
+
+    await assert.rejects(
+      () =>
+        auth({
+          headers: { authorization: `Bearer ${token}`, host: 'meta.example.com' },
+        }),
+      err => err instanceof AuthError && err.publicMessage === 'Token validation failed.'
+    );
+  });
+
+  it('function-form audience thrown errors map to AuthError (not 500)', async () => {
+    const token = await mint({ sub: 'u', scope: 'read' });
+    const auth = verifyBearer(
+      buildOptions({
+        audience: () => {
+          throw new Error('cannot resolve audience for this request');
+        },
+      })
+    );
+    await assert.rejects(
+      () => auth({ headers: { authorization: `Bearer ${token}`, host: 'svc.example' } }),
+      err => {
+        assert.ok(err instanceof AuthError);
+        // Public message stays sanitized; the thrown cause doesn't leak.
+        assert.strictEqual(err.publicMessage, 'Token validation failed.');
+        return true;
+      }
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

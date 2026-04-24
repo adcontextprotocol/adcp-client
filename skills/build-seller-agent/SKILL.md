@@ -1131,52 +1131,55 @@ The quick-start uses `memoryBackend()` + `InMemoryStateStore` — both reset on 
 
 Auth is not wired in the example — see [§ Protecting your agent](#protecting-your-agent) below.
 
-## Alternative Transports
+## Multi-Host and Alternative Transports
 
-`serve()` is the supported path for HTTP-hosted seller agents: one process, one `publicUrl`, one MCP mount. Two setups need something else:
-
-- **Multi-host routing on a single process.** Fronting many hostnames (white-label publishers, multi-brand operators) from one Fly machine or pod — one `publicUrl` per incoming host, resolved from `Host` / `Forwarded`.
-- **Stdio transport.** Running as a local subprocess of a buyer agent (CLI tools, desktop clients) instead of an HTTP server.
-
-The escape hatch for both is the same: `createAdcpServer()` returns a handle with a `connect(transport)` method. Skip `serve()` and drive the transport yourself.
+`serve()` supports two shapes of deployment out of the box: single-host (the quickstart default) and multi-host (one process fronting many hostnames). Stdio is the only setup that needs a different entry point.
 
 ### Multi-host HTTP
 
+Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in the factory, and turn on `trustForwardedHost` when a proxy terminates TLS:
+
 ```typescript
-import { createServer } from 'node:http';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createAdcpServer } from '@adcp/client/server';
+import { serve, createAdcpServer, verifyBearer } from '@adcp/client';
 
-// One AdcpServer per host — build lazily and cache.
-const servers = new Map<string, ReturnType<typeof createAdcpServer>>();
-function getServer(host: string) {
-  let s = servers.get(host);
-  if (!s) {
-    s = createAdcpServer({
-      name: `Seller for ${host}`,
+// Host → adapter config. Whatever shape suits your deployment (DB, env, static).
+const adapters = new Map<string, { name: string; handlers: MediaBuyHandlers }>([
+  ['snap.agentic-adapters.scope3.com', { name: 'Snap seller', handlers: snapHandlers }],
+  ['meta.agentic-adapters.scope3.com', { name: 'Meta seller', handlers: metaHandlers }],
+  // ... one entry per hostname you front
+]);
+
+serve(
+  ctx => {
+    const cfg = adapters.get(ctx.host);
+    if (!cfg) throw new Error(`Unknown host: ${ctx.host}`);
+    return createAdcpServer({
+      name: cfg.name,
       version: '1.0.0',
-      resolveAccount: async (ref, { authInfo }) => lookupAccount(host, ref, authInfo),
-      mediaBuy: { /* ... */ },
+      resolveAccount: async (ref, { authInfo }) => lookupAccount(ctx.host, ref, authInfo),
+      mediaBuy: cfg.handlers,
     });
-    servers.set(host, s);
+  },
+  {
+    trustForwardedHost: true, // behind Fly/Cloud Run/ALB that sets X-Forwarded-Host
+    publicUrl: host => `https://${host}/mcp`,
+    protectedResource: host => ({
+      authorization_servers: [`https://${host}/oauth`],
+      scopes_supported: ['read', 'write'],
+    }),
+    authenticate: verifyBearer({
+      jwksUri: process.env.JWKS_URI,
+      issuer: process.env.ISSUER,
+      // Per-host audience — reads `publicUrl(host)` back off the request.
+      audience: req => `https://${req.headers['x-forwarded-host'] ?? req.headers.host}/mcp`,
+    }),
   }
-  return s;
-}
-
-createServer(async (req, res) => {
-  const host = req.headers['x-forwarded-host'] ?? req.headers.host ?? '';
-  const server = getServer(String(host));
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  try {
-    await server.connect(transport);
-    await transport.handleRequest(req, res);
-  } finally {
-    transport.close();
-  }
-}).listen(3001);
+);
 ```
 
-Things `serve()` does that you now own: auth verification, RFC 9421 request-signature verification (if you claim `signed-requests`), `/.well-known/oauth-protected-resource/<path>` publishing, request-body buffering for signature hashing, and idempotency+governance composition. Most of those helpers are exported — see `verifyApiKey`, `verifyBearer`, `requireSignatureWhenPresent`, and `createExpressAdapter` if you want a partial shortcut. Only go this route if you genuinely need multi-host; a separate process per host with `serve()` is the simpler answer.
+Each unique host runs its resolver once and the result is cached. Every host advertises its own RFC 9728 `resource` URL, the 401 challenge carries the host's `resource_metadata` URL, and the factory sees the resolved host so it can return host-specific handlers. Auth, RFC 9421 signature verification, idempotency, and governance composition all stay inside `serve()` — nothing extra to re-own.
+
+**Set `trustForwardedHost: true` only when upstream sanitizes `X-Forwarded-Host`.** Without the flag, the framework reads `Host` directly — an attacker-controlled `X-Forwarded-Host` can't influence which adapter handles the request or which audience the advertised PRM carries. With the flag, you're telling `serve()` that your proxy already filtered spoofed values.
 
 ### Stdio
 
