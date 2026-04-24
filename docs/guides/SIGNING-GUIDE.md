@@ -1,0 +1,384 @@
+# Request Signing (RFC 9421)
+
+AdCP 3.0 supports [HTTP Message Signatures (RFC 9421)](https://www.rfc-editor.org/rfc/rfc9421) for cryptographic request authentication. A buyer signs outbound requests so the seller can verify who sent them and that the payload wasn't tampered with. A seller signs outbound webhooks so the buyer can verify authenticity.
+
+Signing is **optional in AdCP 3.0** and becomes **mandatory in 3.1+** for all mutating operations. Agents that don't sign yet must still tolerate signature headers (`Signature`, `Signature-Input`, `Content-Digest`) on inbound requests without breaking.
+
+## When You Need This
+
+| You are a... | You need to... | Why |
+|---|---|---|
+| **Buyer** (calls seller tools) | Sign outbound requests | Sellers may require proof that the request came from you |
+| **Buyer** (receives webhooks) | Verify inbound webhook signatures | Confirm the webhook came from the seller, not a spoofed source |
+| **Seller** (receives tool calls) | Verify inbound request signatures | Confirm the buyer is who they claim to be |
+| **Seller** (sends webhooks) | Sign outbound webhooks | Let buyers verify webhook authenticity |
+| **Orchestrator** (proxies to sellers) | Sign outbound requests + verify inbound webhooks | You're the buyer from the seller's perspective |
+
+## Concepts
+
+### Signature Coverage
+
+The AdCP signing profile covers these request components:
+
+- `@method` — HTTP method (POST)
+- `@target-uri` — full request URL
+- `@authority` — host header
+- `content-type` — media type (application/json)
+- `content-digest` — SHA-256 or SHA-512 hash of the request body
+
+If any covered component changes after signing, verification fails.
+
+### Key Separation
+
+Every agent needs **separate keys per purpose**:
+
+- `adcp_use: "request-signing"` — for signing outbound tool calls
+- `adcp_use: "webhook-signing"` — for signing outbound webhooks
+
+Reusing a key across purposes is forbidden by the spec. Each key has a unique `kid` (key ID) that verifiers use to look it up.
+
+### Discovery Chain
+
+Verifiers find your public key through a three-step chain:
+
+```
+Your domain (e.g., agent.example.com)
+  -> /.well-known/brand.json           # brand manifest with agent declarations
+     -> agents[].jwks_uri              # pointer to your key store
+        -> /.well-known/jwks.json      # JSON Web Key Set with public keys
+```
+
+`@adcp/client` provides `BrandJsonJwksResolver` which handles this entire chain automatically, with caching and refresh.
+
+## Step 1: Generate a Signing Key
+
+### CLI (recommended)
+
+```bash
+adcp signing generate-key --alg ed25519 --kid my-agent-2026 \
+  --private-out ./private.jwk --public-out ./public-jwks.json
+```
+
+This generates an Ed25519 keypair and writes:
+- `private.jwk` — the private key (JWK with `d` field). Keep this secret.
+- `public-jwks.json` — the public key in JWKS format. Publish this.
+
+### Programmatic
+
+```typescript
+import { generateKeyPair, exportJWK } from 'jose';
+
+const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519' });
+const publicJwk = await exportJWK(publicKey);
+const privateJwk = await exportJWK(privateKey);
+
+// Tag with metadata
+const kid = 'my-agent-2026';
+publicJwk.kid = kid;
+publicJwk.use = 'sig';
+publicJwk.key_ops = ['verify'];
+```
+
+### Supported Algorithms
+
+| Algorithm | `alg` value | Key type | Notes |
+|---|---|---|---|
+| Ed25519 | `ed25519` | `OKP` / `Ed25519` | Preferred. Fast, small signatures. |
+| ECDSA P-256 | `ecdsa-p256-sha256` | `EC` / `P-256` | Widely supported. GCP KMS recommended. |
+
+### Storing the Private Key
+
+The private key must be available to your application at runtime. Options:
+
+- **Environment variable**: `ADCP_SIGNING_PRIVATE_KEY='{"kid":"...","kty":"OKP",...}'`
+- **Secret manager** (GCP Secret Manager, AWS Secrets Manager, etc.): Load at boot, keep in memory for the process lifetime
+- **File**: For development only. Never commit to version control.
+
+## Step 2: Publish Your Public Keys
+
+### JWKS Endpoint
+
+Serve a JSON Web Key Set at a stable HTTPS URL:
+
+```
+GET https://agent.example.com/.well-known/jwks.json
+```
+
+```json
+{
+  "keys": [
+    {
+      "kid": "my-agent-2026",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "<base64url-encoded-public-key>",
+      "use": "sig",
+      "key_ops": ["verify"],
+      "adcp_use": "request-signing"
+    }
+  ]
+}
+```
+
+Only public keys go here — no `d` field. Set `Cache-Control: max-age=3600` or similar.
+
+If you serve both request-signing and webhook-signing keys, include both in the same JWKS with different `kid` values and `adcp_use` tags.
+
+### brand.json
+
+Serve at `/.well-known/brand.json` on your brand domain. This is the entry point for key discovery:
+
+```json
+{
+  "name": "My Company",
+  "domain": "example.com",
+  "agents": [
+    {
+      "url": "https://agent.example.com",
+      "jwks_uri": "https://agent.example.com/.well-known/jwks.json",
+      "capabilities": ["media-buy"],
+      "adcp_use": ["request-signing"]
+    }
+  ]
+}
+```
+
+## Step 3: Sign Outbound Requests (Buyer / Orchestrator)
+
+### Wrapping fetch
+
+`createSigningFetch` wraps any `fetch`-compatible function to sign outbound requests:
+
+```typescript
+import { createSigningFetch } from '@adcp/client/signing';
+
+const privateJwk = JSON.parse(process.env.ADCP_SIGNING_PRIVATE_KEY);
+
+const signingFetch = createSigningFetch(fetch, {
+  keyid: 'my-agent-2026',
+  alg: 'ed25519',
+  privateKey: privateJwk,
+});
+
+// Use signingFetch anywhere you'd use fetch.
+// Signature, Signature-Input, and Content-Digest headers are added automatically.
+await signingFetch('https://seller.example.com/mcp', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
+```
+
+### Agent-aware signing
+
+`buildAgentSigningFetch` adds capability detection — it checks whether the target seller supports `signed-requests` and only signs when supported. It requires three things: an upstream `fetch`, a signing config, and a capability accessor:
+
+```typescript
+import { buildAgentSigningFetch, CapabilityCache } from '@adcp/client/signing/client';
+
+const capabilityCache = new CapabilityCache();
+
+const signingFetch = buildAgentSigningFetch({
+  upstream: fetch,
+  signing: {
+    kid: 'my-agent-2026',
+    alg: 'ed25519',
+    private_key: privateJwk,
+    agent_url: 'https://agent.example.com',
+    sign_supported: true,
+  },
+  getCapability: () => capabilityCache.get('https://seller.example.com'),
+});
+```
+
+This is the recommended approach for production — it avoids sending signatures to agents that don't expect them and caches capability lookups.
+
+## Step 4: Verify Inbound Signatures (Seller)
+
+### Express middleware
+
+```typescript
+import {
+  createExpressVerifier,
+  StaticJwksResolver,
+  InMemoryReplayStore,
+  InMemoryRevocationStore,
+} from '@adcp/client/signing';
+
+app.post(
+  '/mcp',
+  rawBodyMiddleware(),
+  createExpressVerifier({
+    capability: {
+      supported: true,
+      covers_content_digest: 'required',
+      required_for: ['create_media_buy', 'update_media_buy'],
+    },
+    jwks: new StaticJwksResolver(buyerPublicKeys),
+    replayStore: new InMemoryReplayStore(),
+    revocationStore: new InMemoryRevocationStore(),
+    resolveOperation: req => req.body?.method ?? 'unknown',
+  }),
+  handler
+);
+```
+
+On successful verification, `req.verifiedSigner` contains `{ keyid, agent_url?, verified_at }`. On failure, the middleware returns `401` with `WWW-Authenticate: Signature error="<code>"`.
+
+### Composing with bearer auth
+
+`requireSignatureWhenPresent` composes signature verification with existing authentication. When signature headers are present, only signature auth runs (no fallback to bearer). When absent, bearer auth runs as normal. This prevents bypass attacks.
+
+First, build an authenticator from your verifier config using `verifySignatureAsAuthenticator`:
+
+```typescript
+import { serve, verifyApiKey, requireSignatureWhenPresent } from '@adcp/client/server';
+import { verifySignatureAsAuthenticator } from '@adcp/client/server';
+import { BrandJsonJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } from '@adcp/client/signing/server';
+
+const signatureAuth = verifySignatureAsAuthenticator({
+  capability: { supported: true, required_for: ['create_media_buy'], covers_content_digest: 'either' },
+  jwks: new BrandJsonJwksResolver(),
+  replayStore: new InMemoryReplayStore(),
+  revocationStore: new InMemoryRevocationStore(),
+  resolveOperation: req => {
+    try {
+      const body = JSON.parse(req.rawBody ?? '');
+      if (body.method === 'tools/call') return body.params?.name;
+    } catch {}
+    return undefined;
+  },
+});
+
+const bearerAuth = verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } });
+
+serve(createAgent, {
+  authenticate: requireSignatureWhenPresent(signatureAuth, bearerAuth),
+});
+```
+
+### JWKS resolution options
+
+| Resolver | Use case |
+|---|---|
+| `StaticJwksResolver` | Fixed set of known buyer keys. Good for dev/testing. |
+| `HttpsJwksResolver` | Fetches JWKS from a URL with caching and refresh. |
+| `BrandJsonJwksResolver` | Full discovery chain: brand.json -> jwks_uri -> JWKS. Production recommended. |
+
+## Step 5: Verify Inbound Webhooks (Buyer / Orchestrator)
+
+When sellers send webhooks, verify the signature to confirm authenticity:
+
+```typescript
+import {
+  verifyWebhookSignature,
+  BrandJsonJwksResolver,
+  InMemoryReplayStore,
+} from '@adcp/client/signing/server';
+
+const jwks = new BrandJsonJwksResolver();
+const replayStore = new InMemoryReplayStore();
+
+app.post('/webhook', async (req, res) => {
+  try {
+    await verifyWebhookSignature(req, { jwks, replayStore });
+  } catch (err) {
+    return res.status(401).json({ error: 'invalid webhook signature' });
+  }
+
+  // Process the verified webhook...
+});
+```
+
+## Step 6: Sign Outbound Webhooks (Seller)
+
+Configure `createAdcpServer` with a webhook signing key:
+
+```typescript
+serve(() => createAdcpServer({
+  name: 'My Seller',
+  version: '1.0.0',
+  webhooks: {
+    signerKey: {
+      keyid: 'my-seller-webhook-2026',
+      alg: 'ed25519',
+      privateKey: webhookPrivateJwk,
+    },
+  },
+  mediaBuy: { /* ... */ },
+}));
+```
+
+The framework signs every outbound webhook automatically using the configured key.
+
+## Step 7: Declare the Capability
+
+If your seller agent verifies inbound signatures, declare `signed-requests` in your capabilities so buyers know to sign:
+
+```typescript
+createAdcpServer({
+  capabilities: {
+    overrides: {
+      signed_requests: {
+        supported: true,
+        required_for: ['create_media_buy', 'update_media_buy'],
+        supported_for: ['sync_creatives', 'sync_audiences'],
+        covers_content_digest: 'either',
+      },
+    },
+  },
+  mediaBuy: { /* ... */ },
+});
+```
+
+## Key Rotation
+
+The JWKS endpoint supports multiple keys simultaneously, enabling zero-downtime rotation:
+
+1. Generate a new keypair with a new `kid`
+2. Add the new public key to JWKS (both old and new are published)
+3. Update signing configuration to use the new private key
+4. After 24-48 hours, remove the old public key from JWKS
+
+## Testing
+
+### Conformance vectors
+
+The library ships 39 test vectors in `compliance/cache/3.0.0/test-vectors/request-signing/`:
+
+- **12 positive vectors**: Valid signed requests your verifier must accept (non-4xx response)
+- **27 negative vectors**: Invalid requests your verifier must reject with `401` and the correct error code
+
+### Grading your verifier
+
+```bash
+adcp grade request-signing https://agent.example.com/mcp --auth-token $TOKEN
+```
+
+### Debugging a single vector
+
+```bash
+adcp signing verify-vector \
+  --vector compliance/cache/3.0.0/test-vectors/request-signing/positive/001-basic-post.json
+```
+
+### Error codes
+
+When verification fails, return `401` with `WWW-Authenticate: Signature error="<code>"`:
+
+| Code | Meaning |
+|---|---|
+| `missing_signature` | Signature headers not present when required |
+| `invalid_signature` | Signature doesn't verify against the public key |
+| `expired_signature` | Signature timestamp too old |
+| `replayed_nonce` | Nonce was already used |
+| `revoked_key` | Key has been revoked |
+| `unknown_key` | Key ID not found in JWKS |
+| `unsupported_algorithm` | Algorithm not in allowlist |
+
+## Related
+
+- [AdCP signing spec](https://adcontextprotocol.org/docs/building/implementation/security#signed-requests-transport-layer)
+- [VALIDATE-YOUR-AGENT.md](./VALIDATE-YOUR-AGENT.md) — full compliance validation including signing
+- [`examples/signals-agent.ts`](../../examples/signals-agent.ts) — agent example
+- [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) — HTTP Message Signatures specification

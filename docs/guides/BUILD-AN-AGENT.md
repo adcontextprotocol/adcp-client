@@ -311,6 +311,68 @@ Modes per side: `'strict' | 'warn' | 'off'`. Default is `'off'` — enable expli
 
 The same validator runs on the `AdcpClient` side — storyboards and third-party clients configure it via `validation: { requests, responses }` on the client config. Request default is `warn` (so existing callers that send partial payloads still work); response default is `strict` in dev/test, `warn` in production. Set either side to `'off'` for zero overhead.
 
+### Request Signing
+
+If your agent receives signed requests from buyers, verify them using `requireSignatureWhenPresent()` to compose signature auth with existing bearer/API key authentication:
+
+```typescript
+import { createAdcpServer, serve } from '@adcp/client';
+import { verifySignatureAsAuthenticator, verifyApiKey, requireSignatureWhenPresent } from '@adcp/client/server';
+import { BrandJsonJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } from '@adcp/client/signing/server';
+
+const signatureAuth = verifySignatureAsAuthenticator({
+  capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
+  jwks: new BrandJsonJwksResolver(),
+  replayStore: new InMemoryReplayStore(),
+  revocationStore: new InMemoryRevocationStore(),
+  resolveOperation: req => {
+    try {
+      const body = JSON.parse(req.rawBody ?? '');
+      if (body.method === 'tools/call') return body.params?.name;
+    } catch {}
+    return undefined;
+  },
+});
+
+const bearerAuth = verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } });
+
+serve(() => createAdcpServer({
+  name: 'My Seller',
+  version: '1.0.0',
+  capabilities: {
+    overrides: {
+      signed_requests: {
+        supported: true,
+        required_for: ['create_media_buy', 'update_media_buy'],
+        covers_content_digest: 'either',
+      },
+    },
+  },
+  mediaBuy: { /* ... */ },
+}), {
+  authenticate: requireSignatureWhenPresent(signatureAuth, bearerAuth),
+});
+```
+
+When signature headers are present, only signature auth runs. When absent, the fallback runs. This prevents bypass attacks where an invalid signature falls through to weaker auth.
+
+For outbound webhook signing, pass a `signerKey` to `createAdcpServer`:
+
+```typescript
+createAdcpServer({
+  webhooks: {
+    signerKey: {
+      keyid: 'my-webhook-key-2026',
+      alg: 'ed25519',
+      privateKey: webhookPrivateJwk,
+    },
+  },
+  // ...
+});
+```
+
+See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, and conformance testing.
+
 ### createTaskCapableServer (Low-Level)
 
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` uses this internally.
