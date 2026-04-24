@@ -1,0 +1,15 @@
+---
+'@adcp/client': minor
+---
+
+**Strict types and builders for `Format.assets[]`.** The codegen collapses the discriminated union under `Format.assets[]` to `BaseIndividualAsset` — no per-asset-type branches, no `requirements` field. That means a platform emitting a loose literal like `{ asset_type: 'image', requirements: { file_types: ['jpg'] } }` compiled clean but failed strict response validation, because the real spec field is `formats`, not `file_types`. `scope3data/agentic-adapters#118` hit this across five adapters (Pinterest, TikTok, UniversalAds, Criteo, CitrusAd) on four independent axes: `file_types` vs `formats`/`containers`, `min_duration_seconds` vs `min_duration_ms`, comma-joined `aspect_ratio`, and `min_count`/`max_count` placed on an individual asset instead of a `repeatable_group` wrapper.
+
+**New types** — per-asset-type slot shapes that wire the existing `ImageAssetRequirements` / `VideoAssetRequirements` / `AudioAssetRequirements` / `TextAssetRequirements` / `MarkdownAssetRequirements` / `HTMLAssetRequirements` / `CSSAssetRequirements` / `JavaScriptAssetRequirements` / `VASTAssetRequirements` / `DAASTAssetRequirements` / `URLAssetRequirements` / `WebhookAssetRequirements` / `CatalogRequirements` interfaces into a discriminated `IndividualAssetSlot` union, plus `RepeatableGroupSlot` and a top-level `FormatAssetSlot = IndividualAssetSlot | RepeatableGroupSlot`. `GroupAssetSlot` variants parallel the individual slots for use inside `RepeatableGroupSlot.assets[]`. Exported from `@adcp/client`.
+
+**New builders** — `imageAssetSlot`, `videoAssetSlot`, `audioAssetSlot`, `textAssetSlot`, `markdownAssetSlot`, `htmlAssetSlot`, `cssAssetSlot`, `javascriptAssetSlot`, `vastAssetSlot`, `daastAssetSlot`, `urlAssetSlot`, `webhookAssetSlot`, `briefAssetSlot`, `catalogAssetSlot`, `repeatableGroup`, and per-asset-type `*GroupAsset` helpers. Each injects `item_type` and `asset_type` so callers write the meaningful fields only. A `FormatAsset` namespace groups all of them for single-import use (`FormatAsset.image(...)`, `FormatAsset.group(...)`).
+
+**What this catches.** With the generated types, `{ requirements: { file_types: ['jpg'] } }` was `{ [k: string]: unknown }` and passed the compiler. With the new slot types, it fails at the authorship site — the compiler knows the spec's field names and closed enums. The type-test file `src/type-tests/format-asset-slots.type-test.ts` asserts via `@ts-expect-error` that `file_types`, `min_duration_seconds`, out-of-enum `containers`/`formats`, and `min_count`/`max_count` on an individual asset are all rejected — CI's typecheck fails if any of those regress.
+
+**Skills updated.** `skills/build-seller-agent/SKILL.md`, `skills/build-generative-seller-agent/SKILL.md`, and `skills/build-creative-agent/SKILL.md` each gained a "format asset slot" section with the four translation footguns and concrete builder-based examples framed for that audience (social/retail sales, generative DSPs, ad servers/CMPs).
+
+Additive change — existing `Format.assets[]` literals continue to compile; the new surface is available for authors who want compile-time protection for requirement shapes.
