@@ -280,8 +280,7 @@ describe('runner-output contract: validation_result', () => {
 
     // Own properties named like prototype accessors are also blocked by
     // FORBIDDEN_KEYS — the guard errs on the side of safety over an esoteric
-    // "I literally have a field named __proto__" storyboard (which wouldn't
-    // survive JSON round-tripping anyway).
+    // "I literally have a field named __proto__" storyboard.
     test('field_value on an own-property `__proto__` is still blocked', () => {
       const data = Object.create(null);
       Object.defineProperty(data, '__proto__', { value: { x: 1 }, enumerable: true, configurable: true });
