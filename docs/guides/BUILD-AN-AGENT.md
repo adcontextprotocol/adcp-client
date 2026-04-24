@@ -4,7 +4,7 @@
 
 This guide walks through building an AdCP agent (server) using `@adcp/client`. While most documentation covers the client side — calling existing agents — this guide covers the server side: implementing an agent that other clients can discover and call.
 
-We'll build a **signals agent** that serves audience segments via the `get_signals` tool. The same patterns apply to any AdCP tool (`get_products`, `create_media_buy`, etc.).
+We'll build a **signals agent** that serves audience segments via the `get_signals` tool. The same patterns apply to any AdCP tool (`get_products`, `create_media_buy`, etc.) — for mutating tools, see the `create_media_buy` example in the Calling Tools section below.
 
 ## Prerequisites
 
@@ -474,6 +474,50 @@ const httpServer = createServer(async (req, res) => {
 });
 ```
 
+### A2A transport (preview)
+
+To serve A2A alongside MCP from the same process, use `createA2AAdapter`. Both transports share the same `AdcpServer` instance — handlers, idempotency store, and `resolveAccount` are all shared; no duplication required.
+
+```typescript
+import express from 'express';
+import { createAdcpServer, serve, createA2AAdapter } from '@adcp/client';
+
+const adcp = createAdcpServer({
+  name: 'My Publisher',
+  version: '1.0.0',
+  mediaBuy: { /* handlers */ },
+});
+
+// MCP — as today
+serve(() => adcp);
+
+// A2A — preview, same handlers
+const a2a = createA2AAdapter({
+  server: adcp,
+  agentCard: {
+    name: 'My Publisher',
+    description: 'Display and video inventory',
+    url: 'https://publisher.example/a2a',
+    version: '1.0.0',
+    provider: { organization: 'My Co', url: 'https://publisher.example' },
+    securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
+  },
+  async authenticate(req) {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/, '');
+    return token ? { token, clientId: 'buyer' } : null;
+  },
+});
+
+const app = express();
+app.use(express.json());
+// A2A spec requires the agent card at both the origin root and /.well-known/agent-card.json
+app.use('/.well-known/agent-card.json', a2a.agentCardHandler);
+app.use('/a2a', a2a.jsonRpcHandler);
+app.listen(3001);
+```
+
+`createA2AAdapter` seeds `skills[]`, `capabilities`, and `defaultInputModes` from `get_adcp_capabilities` automatically — supply only identity fields (`name`, `description`, `url`, `provider`, `securitySchemes`). Validators running `--protocol a2a` point at the base URL (`http://localhost:3001`), not the `/a2a` sub-path. For A2A validation, see [VALIDATE-YOUR-AGENT.md § Serving both transports](./VALIDATE-YOUR-AGENT.md#serving-both-transports-mcp--a2a).
+
 ## Testing Your Agent
 
 ### Tool Discovery
@@ -498,6 +542,22 @@ npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"filters":{"cata
 
 # JSON output for scripting
 npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}' --json
+```
+
+```bash
+# Create a media buy (mutating tool — requires idempotency_key)
+# Schema traps: budget is a plain number (not {amount,currency}); brand uses {domain} (not {brand_id});
+# packages require buyer_ref and pricing_option_id
+npx @adcp/client@latest http://localhost:3001/mcp create_media_buy '{
+  "account": { "account_id": "acct_123" },
+  "brand": { "domain": "acme.example" },
+  "start_time": "2026-05-01T00:00:00Z",
+  "end_time": "2026-05-31T23:59:59Z",
+  "packages": [
+    { "buyer_ref": "pkg_1", "product_id": "p_sports_ctv", "budget": 10000, "pricing_option_id": "po_cpm_35" }
+  ],
+  "idempotency_key": "test-buy-001"
+}'
 ```
 
 ### Compliance Check
