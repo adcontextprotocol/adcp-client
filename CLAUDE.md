@@ -14,7 +14,7 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a server-side agent?** Read `docs/guides/BUILD-AN-AGENT.md`. Storyboards live at `https://adcontextprotocol.org/compliance/{version}/` (pulled into `compliance/cache/{version}/` by `npm run sync-schemas`).
 
-**Validating a server-side agent?** Read `docs/guides/VALIDATE-YOUR-AGENT.md` — the five-command checklist plus deep references for `adcp storyboard run`, `adcp fuzz` (T1/T2/T3), `adcp grade request-signing`, multi-instance testing, webhook conformance, schema-driven validation hooks, custom `--invariants`, the `npm run compliance:skill-matrix` dogfood harness, and how to read the runner's `💡 Hint: …` context-value-rejection diagnostics.
+**Validating a server-side agent?** Read `docs/guides/VALIDATE-YOUR-AGENT.md` — the five-command checklist plus deep references for `adcp storyboard run`, `adcp fuzz` (T1/T2/T3), `adcp grade request-signing`, multi-instance testing, webhook conformance, schema-driven validation hooks, custom `--invariants`, the `npm run compliance:skill-matrix` dogfood harness, and how to read the runner's `context_value_rejected` diagnostics (the `💡 Hint:` lines printed on failing storyboard steps).
 
 **Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` — covers guaranteed vs non-guaranteed, pricing, approval workflows, creative management.
 

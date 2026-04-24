@@ -329,7 +329,9 @@ Use before merging skill changes. ~60s per pair; matrix runs fan out.
 
 ## Reading `💡 Hint:` lines (context-value rejections)
 
-When the storyboard runner prints output like this:
+> **If you see a `💡 Hint:` line, the fix is almost always in your catalog, not the SDK.** The two tools named in the hint are returning inconsistent values — unify their source.
+
+Example output:
 
 ```
 ❌ Activate PII signal (412ms)
@@ -342,22 +344,34 @@ When the storyboard runner prints output like this:
            accepted values: [po_prism_cart_cpm].
 ```
 
-…the failure is almost always **your catalog is inconsistent across tools**, not an SDK bug. The runner is telling you:
+The runner is telling you:
 
 1. Step `search_by_spec` wrote `po_prism_abandoner_cpm` into `$context.first_signal_pricing_option_id` — extracted from `signals[0].pricing_options[0].pricing_option_id` on your own `get_signals` response.
 2. Step `activate_signal` sent that id back to you.
 3. Your `activate_signal` handler rejected it with `available: [po_prism_cart_cpm]`.
 
-So `get_signals` advertised one id and `activate_signal` accepted a different one. Fix by unifying the catalog source — typically the two handlers should read from the same store instead of each returning independently-built lists.
+So **`get_signals` advertised one id and `activate_signal` accepted a different one**. **Fix by unifying the catalog source** — typically both handlers should read from the same store ([build-seller-agent/SKILL.md](../../skills/build-seller-agent/SKILL.md) covers the shared-store pattern).
 
-Hints only fire when the runner can trace the rejected value back to a prior-step `$context.*` write. If you see the rejection message with **no** `💡 Hint:` line, the mismatch came from somewhere else (hardcoded sample_request, stale fixture, user-provided `--request` override) and the fix lives closer to the storyboard itself.
+The runner only prints a hint when it can trace the rejected value back to a prior-step `$context.*` write. **No hint?** The mismatch came from somewhere else — a hardcoded `sample_request` in the storyboard, a stale fixture, or a `--request` override. Fix the storyboard, not the handler.
 
-The hint is diagnostic-only; pass/fail is decided by the step result, not by the presence of hints. Hints also land in:
+Hints are diagnostic-only; pass/fail is decided by the step result, not by hint presence.
 
-- **JUnit XML** — appended to the `<failure>` body as `Hint (context_value_rejected): …`, and used as the `message=` attribute when `step.error` is empty (e.g. validation-only failures on 200-OK responses).
-- **JSON report** (`--format json`) — on `StoryboardStepResult.hints[]`.
+### For CI dashboards
 
-Each hint carries structured fields (`context_key`, `source_step_id`, `source_kind`, `response_path`, `rejected_value`, `accepted_values`, `error_code`) so CI dashboards can aggregate rejections by source step / context key to spot systemic catalog-drift.
+Hints also land in machine-readable output:
+
+- **JUnit XML** — appended to the `<failure>` body as `Hint (context_value_rejected): …`, and used as the `message=` attribute when `step.error` is empty (e.g. validation-only failures on 200-OK responses):
+
+  ```xml
+  <failure message="Rejected `pricing_option_id: po_prism_abandoner_cpm` …" type="StoryboardFailure">
+  Pricing option not found: po_prism_abandoner_cpm
+  Hint (context_value_rejected): Rejected `pricing_option_id: po_prism_abandoner_cpm` …
+  </failure>
+  ```
+
+- **JSON report** (`--format json`) — on `StoryboardStepResult.hints[]` as `ContextValueRejectedHint` objects. Fields: `kind`, `context_key`, `source_step_id`, `source_kind`, `response_path`, `source_task`, `rejected_value`, `request_field`, `accepted_values`, `error_code`, `message`. Dashboards can aggregate rejections by `source_step_id` or `context_key` to spot systemic catalog-drift. See `StoryboardStepHint` / `ContextValueRejectedHint` types exported from `@adcp/client/testing`.
+
+> The rejection-envelope shape (`errors[].details.available` etc.) is tracked in [adcontextprotocol/adcp#3049](https://github.com/adcontextprotocol/adcp/issues/3049); field names here may evolve as the spec pins a canonical key.
 
 ---
 
