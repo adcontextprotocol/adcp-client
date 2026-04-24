@@ -19,8 +19,8 @@ const DEFAULT_OPTIONS = {
 // The create_media_buy enricher replaces past-dated sample_request.start_time
 // / end_time with dynamic defaults; these literals skip that path so
 // fixture-precedence tests stay deterministic across CI wall-clock drift.
-const FUTURE_START = '2099-01-01T00:00:00Z';
-const FUTURE_END = '2099-02-01T00:00:00Z';
+const FUTURE_START = '9999-01-01T00:00:00Z';
+const FUTURE_END = '9999-02-01T00:00:00Z';
 
 function step(task, overrides = {}) {
   return { id: `test-${task}`, title: `Test ${task}`, task, ...overrides };
@@ -185,6 +185,59 @@ describe('Request Builder', () => {
         { geo_targets: { countries: ['US'] } },
         'fixture fields outside the id set pass through'
       );
+    });
+
+    test('sentinel `test-product` / `test-pricing` fixture defers to discovery (upstream universal storyboards)', () => {
+      // The upstream compliance storyboards (adcontextprotocol/adcp:
+      // universal/deterministic-testing.yaml, error-compliance.yaml,
+      // idempotency.yaml, domains/media-buy/state-machine.yaml) ship
+      // fixture `packages[0]` with `product_id: "test-product"` and
+      // `pricing_option_id: "test-pricing"` expecting the runner to
+      // substitute the seller's discovered identifiers. Those fixtures
+      // live in the spec repo and can't be rewritten from the SDK —
+      // the enricher must recognize these sentinels and defer.
+      const context = {
+        products: [
+          {
+            product_id: 'real_seller_product',
+            pricing_options: [{ pricing_option_id: 'real_seller_cpm', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          packages: [{ product_id: 'test-product', budget: 5000, pricing_option_id: 'test-pricing' }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].product_id, 'real_seller_product', 'sentinel product_id → discovery');
+      assert.strictEqual(
+        result.packages[0].pricing_option_id,
+        'real_seller_cpm',
+        'sentinel pricing_option_id → discovery'
+      );
+      assert.strictEqual(result.packages[0].budget, 5000, 'non-sentinel fixture fields pass through');
+    });
+
+    test('empty fixture package object {} falls back to discovery cleanly', () => {
+      // Some storyboards ship `packages: [{}]` for defaults-only scenarios
+      // where every field should come from discovery / enricher synthesis.
+      const context = {
+        products: [
+          {
+            product_id: 'discovered',
+            pricing_options: [{ pricing_option_id: 'discovered-pricing', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: { start_time: FUTURE_START, packages: [{}] },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].product_id, 'discovered');
+      assert.strictEqual(result.packages[0].pricing_option_id, 'discovered-pricing');
+      assert.ok(result.packages[0].budget > 0, 'budget synthesized from min_spend_per_package or default');
     });
   });
 

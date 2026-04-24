@@ -42,17 +42,27 @@ discovered product's `pricing_options[0]` — e.g. a seller's
 `pinnacle_news_video_premium_pricing_0` replaced the fixture's
 `cpm_guaranteed`, failing create-buy with `INVALID_REQUEST`.
 
-Fixture now wins on every per-package identifier. Discovery still
-gap-fills when the author omits per-package ids — the behavior
-generic single-package storyboards rely on. Auction/CPM `bid_price`
-synthesis only fires when the fixture didn't author one, so
-bid-floor-boundary tests keep their explicit values.
+Real seller ids in the fixture now win over discovery. Discovery
+still gap-fills when the author omits per-package ids — the
+behavior generic single-package storyboards rely on. Auction/CPM
+`bid_price` synthesis only fires when the fixture didn't author
+one, so bid-floor-boundary tests keep their explicit values.
 
-**Migration note.** If a storyboard was intentionally relying on
-discovery overriding an authored `product_id` / `pricing_option_id` /
-`bid_price` (e.g. `pricing_option_id: "placeholder"` expecting the
-enricher to rewrite it), remove the fixture value so gap-fill kicks
-in, or align the fixture value with the seller's catalog.
+**Sentinel placeholders pass through to discovery.** The upstream
+universal compliance storyboards (`adcontextprotocol/adcp`:
+`universal/deterministic-testing.yaml`, `error-compliance.yaml`,
+`idempotency.yaml`, `domains/media-buy/state-machine.yaml`) ship
+`packages[0]` fixtures with `product_id: "test-product"` and
+`pricing_option_id: "test-pricing"` expecting the runner to
+substitute the seller's discovered identifiers. The enricher
+recognizes those two literals as sentinels and defers to discovery
+when either appears. Real seller ids (`cpm_guaranteed`,
+`sports_display_auction`, any non-sentinel string) keep winning.
+
+If your storyboard wants placeholder-then-discovery semantics for a
+new field, author `$context.<key>` substitution rather than a magic
+literal — the intent is explicit at the fixture level and the
+sentinel allowlist stays small.
 
 ### Out of scope
 
@@ -62,7 +72,7 @@ enricher is not `FIXTURE_AWARE` — the outer merge lets the storyboard's
 and both resolve from the same `signals[0].pricing_options[0]`. The
 mismatch reporters saw (`po_prism_abandoner_cpm` sent,
 `po_prism_cart_cpm` accepted) traces to seller catalog inconsistency
-between `get_signals` and `activate_signal`, not SDK synthesis. A
-follow-up to have the storyboard runner emit a hint when a response's
-`available:` list excludes a context-derived `pricing_option_id` will
-land separately.
+between `get_signals` and `activate_signal`, not SDK synthesis.
+Follow-up in #870: have the storyboard runner emit a hint when a
+response's `available:` list excludes a context-derived value, so the
+reporter-facing symptom stops looking identical to an SDK bug.

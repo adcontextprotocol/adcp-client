@@ -14,6 +14,7 @@ const {
   resolveValidationModes,
 } = require('../../dist/lib/validation');
 const { validateOutgoingRequest, validateIncomingResponse } = require('../../dist/lib/validation/client-hooks.js');
+const { _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
 const { ValidationError } = require('../../dist/lib/errors');
 
 describe('schema-driven validation', () => {
@@ -206,6 +207,38 @@ describe('schema-driven validation', () => {
       for (const key of ['get_products::request', 'get_products::sync', 'create_media_buy::submitted']) {
         assert.ok(keys.includes(key), `missing ${key}`);
       }
+    });
+  });
+
+  describe('ensureCoreLoaded ordering (regression #862)', () => {
+    // Belt-and-braces guard: when a flat-tree tool compile fires
+    // `ensureCoreLoaded` FIRST, every non-tool fragment across the whole
+    // schema tree gets pre-registered raw. That pre-registration must not
+    // accidentally short-circuit the later `relaxResponseRoot` compile for
+    // a bundled tool whose response has root-level `additionalProperties:
+    // false`. Path-normalization drift between `fileIndex.values()` (the
+    // tool-file skip list) and `walkJsonFiles` (the registration walker)
+    // would cause this silent strict-mode flip — `create_property_list`
+    // below would start rejecting `replayed` at the root instead of
+    // passing it through as envelope.
+    test('flat-tree compile before bundled compile still preserves relaxResponseRoot', () => {
+      _resetValidationLoader();
+      // Compile a flat-tree-only tool first; this fires `ensureCoreLoaded`
+      // and walks every non-bundled directory.
+      const flat = validateResponse('sync_plans', {
+        plans: [{ plan_id: 'p1', status: 'active', version: 1 }],
+      });
+      assert.notStrictEqual(flat.variant, 'skipped', 'sync_plans must have a compiled validator');
+      // Now compile a bundled tool whose root needs relaxation.
+      const bundled = validateResponse('create_property_list', { replayed: false });
+      const rootAdditional = bundled.issues.filter(
+        i => i.keyword === 'additionalProperties' && (i.pointer === '' || i.pointer === '/')
+      );
+      assert.deepStrictEqual(
+        rootAdditional,
+        [],
+        `relaxResponseRoot must still apply after ensureCoreLoaded pre-registers fragments: ${JSON.stringify(rootAdditional)}`
+      );
     });
   });
 
