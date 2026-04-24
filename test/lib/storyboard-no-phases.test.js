@@ -85,6 +85,10 @@ describe('runStoryboard: empty-phases storyboard (regression for #921)', () => {
     assert.strictEqual(step.skip_reason, 'no_phases');
     const detail = step.skip?.detail ?? step.error ?? '';
     assert.match(detail, /requires_scenarios/, 'detail must reference the composition mechanism');
-    assert.doesNotMatch(detail, /populate `phases/, 'must not echo the placeholder hint when scenarios compose the surface');
+    assert.doesNotMatch(
+      detail,
+      /populate `phases/,
+      'must not echo the placeholder hint when scenarios compose the surface'
+    );
   });
 });
