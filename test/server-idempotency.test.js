@@ -11,7 +11,7 @@ const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/id
 function createAdcpServer(config) {
   return _createAdcpServer({
     ...config,
-    validation: { responses: 'off', ...(config?.validation ?? {}) },
+    validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });
 }
 

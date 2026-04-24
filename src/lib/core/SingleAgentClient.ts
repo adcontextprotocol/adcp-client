@@ -1180,11 +1180,15 @@ export class SingleAgentClient {
     // This handles partial implementations (agents that omit some fields)
     // and prevents unknown fields from causing validation errors on the
     // remote server.
-    // Fails open when no schema is cached — better to send unknown fields and
-    // let the agent respond than to silently drop data that might be required.
+    // Fails open when no schema is cached OR when the schema declares no
+    // properties (JSON Schema semantics: an object with no properties
+    // and no `additionalProperties: false` accepts any shape). Post-#909,
+    // framework-registered agents publish `{ type: 'object', properties: {} }`
+    // on tools/list — treating that as "strip everything" would silently
+    // drop every field the buyer sent.
     // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
     const toolSchema = this.cachedToolSchemas?.get(taskType);
-    if (!toolSchema) return adapted;
+    if (!toolSchema || Object.keys(toolSchema).length === 0) return adapted;
 
     const declaredFields = new Set(Object.keys(toolSchema));
 

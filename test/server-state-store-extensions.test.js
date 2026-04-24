@@ -289,10 +289,14 @@ describe('resolveSessionKey', () => {
       params: { name: toolName, arguments: params ?? {} },
     });
   }
+  // Sparse fixtures — opt out of strict request validation (#909 made
+  // it the default for correctness over the A2A path). These tests
+  // exercise session-key wiring, not schema compliance.
+  const newServer = config => createAdcpServer({ ...config, validation: { requests: 'off' } });
 
   it('populates ctx.sessionKey before the handler runs', async () => {
     let seenSessionKey;
-    const server = createAdcpServer({
+    const server = newServer({
       name: 'Test',
       version: '1.0.0',
       resolveSessionKey: ({ toolName }) => `tenant_${toolName}`,
@@ -310,7 +314,7 @@ describe('resolveSessionKey', () => {
 
   it('can derive sessionKey from resolved account', async () => {
     let seenSessionKey;
-    const server = createAdcpServer({
+    const server = newServer({
       name: 'Test',
       version: '1.0.0',
       resolveAccount: async () => ({ tenant_id: 'tnt_42' }),
@@ -337,7 +341,7 @@ describe('resolveSessionKey', () => {
     // so dev-mode matrix runs stop wasting hours on opaque internal errors;
     // production deployments that want the redaction still get it by default
     // (NODE_ENV=production) or by setting `exposeErrorDetails: false` explicitly.
-    const server = createAdcpServer({
+    const server = newServer({
       name: 'Test',
       version: '1.0.0',
       exposeErrorDetails: false,
@@ -354,7 +358,7 @@ describe('resolveSessionKey', () => {
   });
 
   it('includes details.reason when exposeErrorDetails: true', async () => {
-    const server = createAdcpServer({
+    const server = newServer({
       name: 'Test',
       version: '1.0.0',
       exposeErrorDetails: true,
@@ -374,7 +378,7 @@ describe('resolveSessionKey', () => {
     // buyers see the typed code (CREATIVE_NOT_FOUND) rather than the
     // opaque SERVICE_UNAVAILABLE: [object Object] that thrown objects
     // otherwise produce.
-    const server = createAdcpServer({
+    const server = newServer({
       name: 'Test',
       version: '1.0.0',
       exposeErrorDetails: false,
@@ -399,7 +403,7 @@ describe('resolveSessionKey', () => {
     // Guard: the unwrap path must only fire for actual `adcpError(...)`
     // envelopes. A TypeError or a bare object that happens to carry a
     // `structuredContent` field should still surface as SERVICE_UNAVAILABLE.
-    const server = createAdcpServer({
+    const server = newServer({
       name: 'Test',
       version: '1.0.0',
       exposeErrorDetails: true,
@@ -422,7 +426,7 @@ describe('resolveSessionKey', () => {
 
   it('leaves ctx.sessionKey undefined when resolver returns undefined', async () => {
     let seenSessionKey = 'sentinel';
-    const server = createAdcpServer({
+    const server = newServer({
       name: 'Test',
       version: '1.0.0',
       resolveSessionKey: () => undefined,
