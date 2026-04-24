@@ -187,6 +187,97 @@ describe('schema-driven validation', () => {
       assert.deepStrictEqual(err.details.issues, issues);
     });
 
+    test('anyOf rejections also carry variant metadata', async () => {
+      // `create_content_standards` has a top-level anyOf: pick policies OR
+      // registry_policy_ids. An empty payload matches neither, so we should
+      // see an enriched anyOf issue at `/` with both variants.
+      const res = validateRequest('create_content_standards', {
+        idempotency_key: '00000000-0000-0000-0000-000000000000',
+        account: { account_id: 'acme' },
+        scope: { kind: 'buyer' },
+      });
+      assert.strictEqual(res.valid, false);
+      const anyOfIssue = res.issues.find(i => i.keyword === 'anyOf');
+      assert.ok(anyOfIssue, 'anyOf issue must be present when neither variant matches');
+      assert.ok(Array.isArray(anyOfIssue.variants), 'variants must be enriched on anyOf issues');
+      assert.strictEqual(anyOfIssue.variants.length, 2);
+      const requiredSets = anyOfIssue.variants.map(v => v.required);
+      // The variants are symmetric (either policies OR registry_policy_ids) —
+      // order not guaranteed, so check both are represented.
+      assert.ok(
+        requiredSets.some(r => r.includes('policies')),
+        `policies variant missing: ${JSON.stringify(requiredSets)}`
+      );
+      assert.ok(
+        requiredSets.some(r => r.includes('registry_policy_ids')),
+        `registry_policy_ids variant missing: ${JSON.stringify(requiredSets)}`
+      );
+    });
+
+    test('oneOf rejections carry variant metadata', async () => {
+      // Malformed create_media_buy: account has account_id AND brand, matching
+      // neither variant. Enrichment should expose both variants' required[].
+      const res = validateRequest('create_media_buy', {
+        idempotency_key: '00000000-0000-0000-0000-000000000000',
+        account: { account_id: 'acme', brand: { domain: 'acme.com' } },
+        brand: { domain: 'acme.com' },
+        start_time: '2026-05-01T00:00:00Z',
+        end_time: '2026-05-31T23:59:59Z',
+        packages: [{ buyer_ref: 'p1', product_id: 'p1', budget: 10, pricing_option_id: 'po1' }],
+      });
+      assert.strictEqual(res.valid, false);
+      const oneOfIssue = res.issues.find(i => i.keyword === 'oneOf' && i.pointer === '/account');
+      assert.ok(oneOfIssue, 'oneOf issue on /account must be present');
+      assert.ok(Array.isArray(oneOfIssue.variants), 'variants must be enriched onto the oneOf issue');
+      assert.strictEqual(oneOfIssue.variants.length, 2, 'account has 2 variants in AdCP 3.0');
+      // Variant 0: account_id only
+      assert.deepStrictEqual(oneOfIssue.variants[0].required, ['account_id']);
+      // Variant 1: brand + operator (sandbox optional)
+      assert.deepStrictEqual(oneOfIssue.variants[1].required, ['brand', 'operator']);
+      // Non-oneOf issues must NOT carry variants (keeps envelope compact)
+      const nonOneOf = res.issues.filter(i => i.keyword !== 'oneOf' && i.keyword !== 'anyOf');
+      for (const issue of nonOneOf) {
+        assert.strictEqual(
+          issue.variants,
+          undefined,
+          `issue at ${issue.pointer} (keyword=${issue.keyword}) must not have variants`
+        );
+      }
+    });
+
+    test('variants ship by default; schemaPath stripped unless exposed', () => {
+      // Different sensitivity classes:
+      //   - schemaPath encodes seller handler branch ordering (impl detail) → gated
+      //   - variants reflects the PUBLIC spec's union shape (already in bundled
+      //     schemas shipped with @adcp/client) → NOT gated, so production LLMs
+      //     get the recovery info #919 was built to provide.
+      const issues = [
+        {
+          pointer: '/account',
+          message: 'must match exactly one schema in oneOf',
+          keyword: 'oneOf',
+          schemaPath: '#/properties/account/oneOf',
+          variants: [
+            { index: 0, required: ['account_id'], properties: ['account_id'] },
+            { index: 1, required: ['brand', 'operator'], properties: ['brand', 'operator', 'sandbox'] },
+          ],
+        },
+      ];
+      const defaultShape = buildAdcpValidationErrorPayload('create_media_buy', 'request', issues);
+      assert.strictEqual(defaultShape.issues[0].schemaPath, undefined, 'schemaPath stripped by default');
+      assert.ok(
+        Array.isArray(defaultShape.issues[0].variants),
+        'variants ships by default — helps naive LLMs recover in production'
+      );
+      assert.strictEqual(defaultShape.issues[0].variants.length, 2);
+      const exposed = buildAdcpValidationErrorPayload('create_media_buy', 'request', issues, {
+        exposeSchemaPath: true,
+      });
+      assert.strictEqual(exposed.issues[0].schemaPath, '#/properties/account/oneOf', 'schemaPath present when exposed');
+      assert.ok(Array.isArray(exposed.issues[0].variants), 'variants present when exposed');
+      assert.strictEqual(exposed.issues[0].variants.length, 2);
+    });
+
     test('builds an L3 error payload for adcpError() with dual-location issues', () => {
       const issues = [
         { pointer: '/media_buy_id', message: 'is required', keyword: 'required', schemaPath: '#/required' },
