@@ -6,10 +6,12 @@ Your checklist to get from "agent boots" to "agent ships." Every tool below is a
 
 ```bash
 # 1. Does it answer at all? (60s)
-npx @adcp/client@latest http://localhost:3001/mcp get_adcp_capabilities '{}'
+npx @adcp/client@latest http://localhost:3001/mcp get_adcp_capabilities '{}'              # MCP
+npx @adcp/client@latest --protocol a2a http://localhost:3001 get_adcp_capabilities '{}'   # A2A (preview)
 
 # 2. Does it walk the golden path? (2–5 min)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp --auth $TOKEN
+npx @adcp/client@latest storyboard run http://localhost:3001/mcp --auth $TOKEN            # MCP
+npx @adcp/client@latest storyboard run --protocol a2a http://localhost:3001 --auth $TOKEN # A2A (preview)
 
 # 3. Does it crash on weird inputs? (1–3 min)
 npx @adcp/client@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
@@ -25,6 +27,8 @@ npx @adcp/client@latest storyboard run \
 ```
 
 If all five pass and your skill's specialism-specific checks below pass, you're conformant. The rest of this page explains why each check exists and how to debug failures.
+
+**Serving both transports (MCP + A2A)?** If your agent mounts MCP and A2A on the same process (via `serve()` + `createA2AAdapter`), run command sets 1–2 against both endpoints — storyboards and capability checks are protocol-independent. MCP validators target the `/mcp` sub-path; A2A validators target the base URL. See [BUILD-AN-AGENT.md § Exposing your agent over A2A](./BUILD-AN-AGENT.md#exposing-your-agent-over-a2a-preview) for the dual-mount setup.
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
