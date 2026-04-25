@@ -10,13 +10,13 @@ const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert');
 
 describe('AgentClient.fromMCPClient — in-process transport', () => {
-  let McpServer, Client, InMemoryTransport, AgentClient, z;
+  let McpServer, Client, InMemoryTransport, AgentClient, ADCP_MAJOR_VERSION, z;
 
   before(() => {
     ({ McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js'));
     ({ Client } = require('@modelcontextprotocol/sdk/client/index.js'));
     ({ InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js'));
-    ({ AgentClient } = require('../../dist/lib/index.js'));
+    ({ AgentClient, ADCP_MAJOR_VERSION } = require('../../dist/lib/index.js'));
     z = require('zod');
   });
 
@@ -129,7 +129,11 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
       captured && typeof captured === 'object' && 'adcp_major_version' in captured,
       'adcp_major_version should be injected into in-process args'
     );
-    assert.strictEqual(typeof captured.adcp_major_version, 'number', 'adcp_major_version should be a number');
+    assert.strictEqual(
+      captured.adcp_major_version,
+      ADCP_MAJOR_VERSION,
+      `adcp_major_version should equal ADCP_MAJOR_VERSION (${ADCP_MAJOR_VERSION})`
+    );
 
     await mcpClient.close();
     await server.close();
@@ -149,18 +153,19 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
       validateFeatures: false,
     });
 
-    // createMediaBuy is a mutating call — SDK should auto-generate idempotency_key
-    await agent
-      .createMediaBuy({
-        brand: { domain: 'test.example' },
-        product_id: 'prod-1',
-        line_items: [],
-        start_time: '2026-06-01T00:00:00Z',
-        end_time: '2026-06-30T23:59:59Z',
-      })
-      .catch(() => {
-        // response may be an error envelope — that's fine for this assertion
-      });
+    // createMediaBuy is a mutating call — SDK should auto-generate idempotency_key.
+    // The fixture returns an error envelope (success=false), which the SDK must
+    // surface as a non-success TaskResult — it should NOT throw. If it throws,
+    // we'd be asserting against `captured` from a prior tool call, so let any
+    // unexpected throw fail the test rather than swallowing it.
+    const result = await agent.createMediaBuy({
+      brand: { domain: 'test.example' },
+      product_id: 'prod-1',
+      line_items: [],
+      start_time: '2026-06-01T00:00:00Z',
+      end_time: '2026-06-30T23:59:59Z',
+    });
+    assert.strictEqual(result.success, false, 'error envelope should surface as non-success TaskResult');
 
     assert.ok(
       captured && typeof captured === 'object' && typeof captured.idempotency_key === 'string',
@@ -199,7 +204,7 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
   it('fromMCPClient factory — agentName and agentId are reflected on the instance', () => {
     // Synchronous factory — no server needed for this assertion.
     // Stub listTools so the fake is safe if getAgentInfo() is ever called on this instance.
-    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
+    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }), transport: {} };
     const agent = AgentClient.fromMCPClient(fakeMcpClient, {
       agentName: 'my-in-process-agent',
       agentId: 'agent-42',
@@ -211,7 +216,7 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
   });
 
   it('fromMCPClient factory — omitting agentId generates a sentinel id', () => {
-    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
+    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }), transport: {} };
     const agent = AgentClient.fromMCPClient(fakeMcpClient);
 
     const id = agent.getAgentId();
@@ -223,7 +228,7 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
   });
 
   it('isSameAgentResolved — in-process agents compare by sentinel id, not URL', async () => {
-    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
+    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }), transport: {} };
     const a = AgentClient.fromMCPClient(fakeMcpClient, { agentId: 'same-id' });
     const b = AgentClient.fromMCPClient(fakeMcpClient, { agentId: 'same-id' });
     const c = AgentClient.fromMCPClient(fakeMcpClient, { agentId: 'different-id' });
@@ -236,7 +241,7 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
     let agent;
 
     before(() => {
-      const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
+      const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }), transport: {} };
       agent = AgentClient.fromMCPClient(fakeMcpClient, { agentName: 'guard-test' });
     });
 

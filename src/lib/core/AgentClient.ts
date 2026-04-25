@@ -1,6 +1,7 @@
 // Per-agent client wrapper with conversation context preservation
 
 import type { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { randomUUID } from 'node:crypto';
 import type { AgentConfig } from '../types';
 import type { MCPWebhookPayload } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
@@ -197,6 +198,11 @@ export class AgentClient {
    * an HTTP endpoint. Useful for in-process compliance testing without spinning
    * up a loopback HTTP server.
    *
+   * **MCP only.** This factory wraps an MCP `Client` from
+   * `@modelcontextprotocol/sdk`. There is no equivalent in-process bridge for
+   * A2A today — for A2A agents, run them on a loopback HTTP server and use the
+   * standard `AgentClient` constructor with the agent's `agent_uri`.
+   *
    * **What this gives you over `dispatchTestRequest`:**
    * All client-side pipeline stages still apply — idempotency key auto-injection,
    * request/response schema validation hooks, governance middleware, and the typed
@@ -231,8 +237,25 @@ export class AgentClient {
    * @param config - Optional narrowed config. HTTP-only fields are excluded.
    */
   static fromMCPClient(mcpClient: MCPClient, config: InProcessAgentClientConfig = {}): AgentClient {
+    // Reject pre-connect clients up front — MCP `Client.transport` is only set
+    // after `client.connect(transport)` resolves. A pre-connect client would
+    // fail later inside `listTools()`/`callTool()` with an opaque error; the
+    // up-front check produces a clean failure pointing at the construction site.
+    if ((mcpClient as { transport?: unknown }).transport === undefined) {
+      throw new Error(
+        'AgentClient.fromMCPClient: the supplied MCP Client is not connected. ' +
+          'Call `await client.connect(transport)` before passing it here.'
+      );
+    }
     const { agentName, agentId, ...rest } = config;
-    const id = agentId ?? `in-process-${Math.random().toString(36).slice(2, 10)}`;
+    // Use randomUUID for collision resistance — the agent ID feeds session
+    // routing so a debug-label collision (~65k via Math.random base36) could
+    // alias two distinct in-process agents in a concurrent test fleet.
+    const id = agentId ?? `in-process-${randomUUID()}`;
+    // The `adcp-in-process://` scheme is parseable as a URL so existing
+    // url-validation paths don't crash, but distinguishable from real http(s)
+    // so the SDK skips network discovery + SSRF checks. The protocol layer
+    // routes on the presence of `_inProcessMcpClient`, not the URI shape.
     const syntheticAgent: AgentConfig = {
       id,
       name: agentName ?? 'in-process',
