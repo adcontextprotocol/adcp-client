@@ -430,7 +430,8 @@ function mapA2ATaskToTaskInfo(task: {
     | { kind: 'data'; data: Record<string, unknown> }
     | undefined;
 
-  const adcpStatus = lastDataPart?.data?.status as string | undefined;
+  const rawStatus = lastDataPart?.data?.status;
+  const adcpStatus = typeof rawStatus === 'string' ? rawStatus : undefined;
   const a2aState = task.status.state;
 
   // Prefer the AdCP-level status embedded in the artifact payload; fall back to
