@@ -2117,6 +2117,59 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     );
   }
 
+  // Cross-domain specialism declaration check. When a domain handler group
+  // is wired, `capabilities.specialisms` SHOULD include at least one of that
+  // domain's specialisms — otherwise the conformance runner grades the agent
+  // as "No applicable tracks found for this agent" silently, even when every
+  // tool works. The matrix v18 run (issue #785) had this drift class account
+  // for ~30% of "agent built every tool but storyboard reports no applicable
+  // tracks" cases.
+  //
+  // Logged via `logger.error` (matching the idempotency-disabled precedent)
+  // rather than thrown because middleware-only test harnesses legitimately
+  // wire handlers without declaring specialisms — production agents will see
+  // the warning and conformance fail loudly, but tests stay passing.
+  //
+  // mediaBuy is intentionally excluded — its specialism choices
+  // (sales-non-guaranteed vs sales-guaranteed vs sales-broadcast-tv vs
+  // sales-social etc.) are commercially significant and an agent wiring
+  // `mediaBuy.getProducts` may legitimately defer the specialism
+  // declaration to a follow-up. The skill examples in build-seller-agent
+  // already cover the right declaration; the runtime guardrail floor is
+  // set at "if you wire creative/signals/brand handlers, you SHOULD
+  // claim a specialism."
+  const DOMAIN_SPECIALISM_REQUIREMENTS = [
+    {
+      domain: 'creative' as const,
+      wired: !!config.creative && Object.keys(config.creative).length > 0,
+      specialisms: ['creative-ad-server', 'creative-generative', 'creative-template'] as const,
+    },
+    {
+      domain: 'signals' as const,
+      wired: !!config.signals && Object.keys(config.signals).length > 0,
+      specialisms: ['signal-marketplace', 'signal-owned'] as const,
+    },
+    {
+      domain: 'brandRights' as const,
+      wired: !!config.brandRights && Object.keys(config.brandRights).length > 0,
+      specialisms: ['brand-rights'] as const,
+    },
+  ];
+
+  for (const req of DOMAIN_SPECIALISM_REQUIREMENTS) {
+    if (!req.wired) continue;
+    const claimedFromDomain = req.specialisms.filter(s => (specialismsClaimed as readonly string[]).includes(s));
+    if (claimedFromDomain.length === 0) {
+      logger.error(
+        `createAdcpServer: ${req.domain} handlers are wired but capabilities.specialisms ` +
+          `does not include any ${req.domain} specialism. Add at least one of ` +
+          `${req.specialisms.map(s => `'${s}'`).join(', ')} to capabilities.specialisms — ` +
+          `without it, the conformance runner reports "No applicable tracks found" and ` +
+          `the agent grades as failing despite working tools.`
+      );
+    }
+  }
+
   // Instantiate the emitter once — handler contexts expose its `emit`
   // bound method so per-request code calls `ctx.emitWebhook(...)` without
   // knowing about the emitter's construction or options.
