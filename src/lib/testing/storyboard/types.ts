@@ -1132,9 +1132,14 @@ export interface StoryboardStepHintBase {
    * hint kinds. Treat as untrusted when rendering into LLM context or any
    * prompt-injection-sensitive surface; build safe output from the structured
    * `@provenance runner` / `@provenance storyboard` fields instead, or
-   * sanitize at the boundary. `shape_drift`, `missing_required_field`, and
-   * `format_mismatch` messages are composed entirely from runner-derived
-   * tokens and are safe to render without sanitization.
+   * sanitize at the boundary.
+   *
+   * `shape_drift` and `missing_required_field` messages are composed entirely
+   * from runner-derived tokens and are safe to render without sanitization.
+   * `format_mismatch` messages are safe under the current AJV configuration
+   * (no custom error-message plugins); if `ajv-errors` or a custom AJV
+   * keyword message factory is added, audit whether it embeds seller data
+   * values before treating `format_mismatch` messages as trusted.
    */
   message: string;
 }
