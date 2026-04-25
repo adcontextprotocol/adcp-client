@@ -45,7 +45,10 @@ export function detectFormatMismatchHints(
     for (const issue of v.strict.issues ?? []) {
       if (issue.keyword !== 'format') continue;
       const instance_path = issue.instance_path;
-      const expected_format = extractFormatName(issue.message) ?? issue.keyword;
+      // Fallback to '(unknown)' rather than issue.keyword ('format') — the keyword
+      // filter already guarantees keyword === 'format', so using it as a fallback
+      // produces the confusing message `must match format "format"`.
+      const expected_format = extractFormatName(issue.message) ?? '(unknown)';
       const observed_value = extractObservedValue(data, instance_path);
       hints.push({
         kind: 'format_mismatch',
@@ -80,7 +83,7 @@ function pointerToDotPath(pointer: string): string {
   return pointer
     .slice(1)
     .split('/')
-    .map(seg => seg.replace(/~1/g, '/').replace(/~0/g, '~'))
+    .map(seg => seg.replace(/~1/g, '/').replace(/~0/g, '~')) // RFC 6901 §3: decode ~1 before ~0
     .map(seg => (/^\d+$/.test(seg) ? `[${seg}]` : seg))
     .join('.')
     .replace(/\.\[/g, '[');

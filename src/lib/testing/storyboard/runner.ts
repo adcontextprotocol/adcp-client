@@ -1698,6 +1698,9 @@ async function executeStep(
   // valuable when the step is green — AJV found a silent strictness gap the
   // step would otherwise surface only as a warning string. Gate is separate
   // from stepFailed so hints reach lenient-passing steps. Issue #947.
+  // No explicit guard needed: skipped / probe / webhook-assertion steps have
+  // empty `validations` arrays, so detectFormatMismatchHints returns [] for them
+  // without inspecting taskResult.
   const formatMismatchHints = detectFormatMismatchHints(validations, effectiveStep.task, taskResult?.data);
   const hints = [...contextRejectionHints, ...formatMismatchHints];
 
