@@ -404,7 +404,9 @@ unit tests pass.
 2. **If build or tests fail:** read the errors, fix the code,
    re-run. Cap at **2 build→fix iterations.** If still failing,
    abandon the PR and Flag for human review with the build log
-   in the comment.
+   in the comment. **Do not declare "approved" in the pre-PR
+   review block while build is red** — that's a trust-eroding
+   signal (per adcp#3121).
 3. Do **not** skip tests locally because "CI will run them." The
    point of this gate is to not ship known-broken code even as a
    draft, because (a) review noise, (b) a human reviewer may
@@ -456,7 +458,39 @@ have read the diff before a human reviewer does.
 - Branch: `claude/issue-<N>-<short-slug>`
 - Status: **draft**
 - Title: conventional-commits (`fix(client): …`, `docs(client): …`)
-- Body: `Closes #N`, summary, what-tested list, **Pre-PR review** block, `Session:` link
+- Body, in order:
+  - `Closes #N`
+  - One-paragraph summary
+  - What-tested list (build + lint commands run, with results)
+  - **Pre-PR review** block with both experts' one-line sign-off
+  - **Triage-managed PR block** — append this verbatim before the
+    `Session:` link so reviewers know the iteration policy:
+
+    ```
+    > **Triage-managed PR.** This bot does not currently iterate on
+    > review comments or PR conversation threads (only on the source
+    > issue). To unblock:
+    >
+    > - **Push fixup commits directly:** `gh pr checkout <num>` →
+    >   fix → push.
+    > - **Or re-trigger:** comment `/triage execute` on the source
+    >   issue.
+    >
+    > See [adcp#3121](https://github.com/adcontextprotocol/adcp/issues/3121)
+    > for context.
+    ```
+  - `Session: https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}`
+- **After `gh pr create` succeeds**, label the PR `claude-triaged`
+  so it's searchable from PR list views (mirrors the issue label):
+
+  ```
+  gh pr edit <PR#> --repo <owner>/<repo> --add-label claude-triaged
+  ```
+
+  (Don't apply `claude-triaging` to the PR — that label is the
+  routine's "I'm working on this **issue**" signal, not a PR
+  ownership marker.)
+
 - Run `npm run ci:quick` before pushing. If schemas/public API
   touched, also `npm run ci:schema-check` + `npm run ci:docs-check`.
 - Don't regenerate files unnecessarily — `npm run sync-schemas` only
