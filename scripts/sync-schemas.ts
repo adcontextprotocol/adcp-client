@@ -28,8 +28,10 @@ const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
 const REGISTRY_SPEC_PATH = path.join(REPO_ROOT, 'schemas/registry/registry.yaml');
 
 // Sigstore keyless identity used by the upstream release workflow (adcontextprotocol/adcp#2273).
+// Branch alternation must mirror release.yml's `on.push.branches` exactly — when a new release
+// line is added upstream (e.g. a future LTS branch), update both ends together.
 const COSIGN_IDENTITY_REGEX =
-  '^https://github\\.com/adcontextprotocol/adcp/\\.github/workflows/release\\.yml@refs/heads/.*$';
+  '^https://github\\.com/adcontextprotocol/adcp/\\.github/workflows/release\\.yml@refs/heads/(main|2\\.6\\.x)$';
 const COSIGN_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 
 function getTargetAdCPVersion(): string {
