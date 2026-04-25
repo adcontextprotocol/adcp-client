@@ -225,7 +225,32 @@ export interface CreateAgentSignedFetchOptions {
    * invalidates the cached advertisement.
    */
   sellerAuthToken?: string;
-  /** Capability cache. Defaults to the shared {@link defaultCapabilityCache}. */
+  /**
+   * Capability cache. Defaults to the shared {@link defaultCapabilityCache}.
+   *
+   * **The shared default is load-bearing.** `ProtocolClient` and
+   * `buildAgentSigningContext` write the seller's `get_adcp_capabilities`
+   * response into `defaultCapabilityCache`; this preset reads from the same
+   * instance so a single priming call serves every subsequent signing
+   * decision. Passing a fresh `new CapabilityCache()` here without also
+   * priming it will silently disable `required_for` enforcement: cold cache
+   * → `shouldSignOperation` returns `false` → every required op ships
+   * unsigned → seller rejects. The SDK emits no error on this path because
+   * "decided not to sign" is the spec-correct behavior on a cold cache.
+   *
+   * Pass an explicit cache only when you've also primed it — call
+   * {@link ensureCapabilityLoaded} against your cache instance after
+   * construction, or seed it via `cache.set(buildCapabilityCacheKey(uri,
+   * token), entry)` — or when you genuinely want each caller to re-fetch
+   * the seller's capability block.
+   *
+   * Note: the cache stores **public** seller capability advertisements
+   * (the contents of `get_adcp_capabilities` responses), not buyer
+   * credentials. The shared default is not a multi-tenant security
+   * boundary — different sellers, different auth tokens, and different
+   * signing keys already get separate entries via
+   * {@link buildCapabilityCacheKey}.
+   */
   cache?: CapabilityCache;
   /** Upstream fetch. Defaults to `globalThis.fetch`. */
   upstream?: FetchLike;
