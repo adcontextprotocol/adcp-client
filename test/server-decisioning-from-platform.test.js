@@ -332,6 +332,179 @@ describe('SalesPlatform — full surface dispatch', () => {
   });
 });
 
+describe('Task registry — ctx.startTask + handle.notify lifecycle', () => {
+  function buildPlatformWithTask(handlerImpl) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async () => ({ kind: 'sync', result: [] }),
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      statusMappers: {},
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: handlerImpl,
+        updateMediaBuy: async () => ({ kind: 'sync', result: { media_buy_id: 'mb_1' } }),
+        syncCreatives: async () => ({ kind: 'sync', result: [] }),
+        getMediaBuyDelivery: async () => ({ kind: 'sync', result: { media_buys: [] } }),
+      },
+    };
+  }
+
+  it('ctx.startTask returns a TaskHandle wired to the framework registry', async () => {
+    let capturedHandle;
+    const platform = buildPlatformWithTask(async (req, ctx) => {
+      const handle = ctx.startTask({ partialResult: { media_buy_id: 'mb_partial', status: 'pending_creatives' } });
+      capturedHandle = handle;
+      return { kind: 'submitted', taskHandle: handle, message: 'queued' };
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    const taskId = result.structuredContent.task_id;
+    assert.ok(taskId.startsWith('task_'), `expected framework-issued taskId, got ${taskId}`);
+    assert.strictEqual(capturedHandle.taskId, taskId);
+
+    // Task registry holds the initial submitted record with partial result.
+    const initial = server.getTaskState(taskId);
+    assert.ok(initial);
+    assert.strictEqual(initial.status, 'submitted');
+    assert.strictEqual(initial.tool, 'create_media_buy');
+    assert.strictEqual(initial.accountId, 'acc_1');
+    assert.deepStrictEqual(initial.partialResult, { media_buy_id: 'mb_partial', status: 'pending_creatives' });
+  });
+
+  it('handle.notify({ kind: "completed" }) writes terminal result to registry', async () => {
+    let capturedHandle;
+    const platform = buildPlatformWithTask(async (req, ctx) => {
+      const handle = ctx.startTask();
+      capturedHandle = handle;
+      return { kind: 'submitted', taskHandle: handle };
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+
+    capturedHandle.notify({ kind: 'completed', result: { media_buy_id: 'mb_final', status: 'active' } });
+
+    const finalRecord = server.getTaskState(capturedHandle.taskId);
+    assert.strictEqual(finalRecord.status, 'completed');
+    assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
+  });
+
+  it('handle.notify({ kind: "failed" }) writes terminal error to registry', async () => {
+    let capturedHandle;
+    const platform = buildPlatformWithTask(async (req, ctx) => {
+      const handle = ctx.startTask();
+      capturedHandle = handle;
+      return { kind: 'submitted', taskHandle: handle };
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+
+    capturedHandle.notify({
+      kind: 'failed',
+      error: { code: 'GOVERNANCE_DENIED', recovery: 'permanent', message: 'operator declined' },
+    });
+
+    const finalRecord = server.getTaskState(capturedHandle.taskId);
+    assert.strictEqual(finalRecord.status, 'failed');
+    assert.strictEqual(finalRecord.error.code, 'GOVERNANCE_DENIED');
+    assert.strictEqual(finalRecord.statusMessage, 'operator declined');
+  });
+
+  it('terminal-state lock-out: subsequent notify calls are no-ops', async () => {
+    let capturedHandle;
+    const platform = buildPlatformWithTask(async (req, ctx) => {
+      const handle = ctx.startTask();
+      capturedHandle = handle;
+      return { kind: 'submitted', taskHandle: handle };
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+
+    capturedHandle.notify({ kind: 'completed', result: { media_buy_id: 'first' } });
+    capturedHandle.notify({ kind: 'completed', result: { media_buy_id: 'second_should_be_ignored' } });
+
+    const finalRecord = server.getTaskState(capturedHandle.taskId);
+    assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'first' });
+  });
+});
+
 describe('CreativeTemplatePlatform + AudiencePlatform wiring', () => {
   it('build_creative dispatches through platform.creative.buildCreative', async () => {
     let sawReq;

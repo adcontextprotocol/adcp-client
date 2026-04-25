@@ -17,8 +17,17 @@
 import type { HandlerContext } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { TaskRegistry } from './task-registry';
 
-export function buildRequestContext<TAccount = unknown>(handlerCtx: HandlerContext<TAccount>): RequestContext<Account> {
+export interface BuildRequestContextOpts {
+  tool: string;
+  taskRegistry: TaskRegistry;
+}
+
+export function buildRequestContext<TAccount = unknown>(
+  handlerCtx: HandlerContext<TAccount>,
+  opts: BuildRequestContextOpts
+): RequestContext<Account> {
   const account = handlerCtx.account as Account | undefined;
   if (!account) {
     throw new Error('buildRequestContext: handler context missing resolved account');
@@ -42,5 +51,11 @@ export function buildRequestContext<TAccount = unknown>(handlerCtx: HandlerConte
         throw new Error('ctx.resolve.creativeFormat: not yet wired in v6.0 alpha');
       },
     },
+    startTask: <TResult>(taskOpts?: { partialResult?: TResult }) =>
+      opts.taskRegistry.startTask<TResult>({
+        tool: opts.tool,
+        accountId: account.id,
+        ...(taskOpts?.partialResult !== undefined && { partialResult: taskOpts.partialResult }),
+      }),
   };
 }

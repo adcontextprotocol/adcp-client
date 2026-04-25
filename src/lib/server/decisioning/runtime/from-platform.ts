@@ -21,11 +21,19 @@
  * propagation should track their async work on tools that DO have a
  * Submitted arm (`create_media_buy`, `sync_creatives`).
  *
- * Reserved for upcoming commits: `taskHandle.notify` integration with the
- * framework's task store + webhook emitter, `partialResult` projection
- * onto submitted envelopes, per-tenant `getCapabilitiesFor` runtime,
- * "framework always calls accounts.resolve(authPrincipal)" behavior for
- * `'derived'` and `'implicit'` resolution modes.
+ * `ctx.startTask()` is also wired: returns a framework-managed `TaskHandle`
+ * whose `notify(...)` persists lifecycle into the runtime's task registry.
+ * Adopters call `notify(update)` from any context; the framework records
+ * the update and exposes it via `server.getTaskState(taskId)`. `submitted`
+ * outcomes carry `partialResult` into the registry record so test harnesses
+ * (and the forthcoming `tasks/get` wire handler) can read it back.
+ *
+ * Reserved for upcoming commits: `tasks/get` wire integration so buyers
+ * polling the registered task receive lifecycle updates back over MCP / A2A;
+ * webhook emitter wiring so `notify` pushes a buyer-side
+ * `push_notification_config.url` callback; per-tenant `getCapabilitiesFor`
+ * runtime; "framework always calls accounts.resolve(authPrincipal)"
+ * behavior for `'derived'` and `'implicit'` resolution modes.
  *
  * Status: Preview / 6.0. Not yet exported from the public `./server`
  * subpath; reach in via `@adcp/client/server/decisioning/runtime` for
@@ -51,6 +59,7 @@ import type { CreativeTemplatePlatform } from '../specialisms/creative';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform } from './validate-platform';
 import { buildRequestContext } from './to-context';
+import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './task-registry';
 
 export interface CreateAdcpServerFromPlatformOptions extends Omit<
   AdcpServerConfig,
@@ -58,6 +67,21 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
 > {
   name: string;
   version: string;
+  /**
+   * Override the framework's task registry. Useful for tests that want to
+   * pre-seed task records or assert on them across multiple servers.
+   * Defaults to a fresh `createInMemoryTaskRegistry()` per server instance.
+   */
+  taskRegistry?: TaskRegistry;
+}
+
+/**
+ * Adcp server returned by `createAdcpServerFromPlatform`. Adds task-state
+ * accessors on top of the standard `AdcpServer` so test harnesses (and the
+ * forthcoming `tasks/get` wire handler) can inspect lifecycle.
+ */
+export interface DecisioningAdcpServer extends AdcpServer {
+  getTaskState<TResult = unknown>(taskId: string): TaskRecord<TResult> | null;
 }
 
 /**
@@ -68,8 +92,10 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
 export function createAdcpServerFromPlatform<P extends DecisioningPlatform>(
   platform: P & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>,
   opts: CreateAdcpServerFromPlatformOptions
-): AdcpServer {
+): DecisioningAdcpServer {
   validatePlatform(platform);
+
+  const taskRegistry = opts.taskRegistry ?? createInMemoryTaskRegistry();
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -81,36 +107,44 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform>(
         throw err;
       }
     },
-    mediaBuy: buildMediaBuyHandlers(platform),
-    creative: buildCreativeHandlers(platform),
-    eventTracking: buildEventTrackingHandlers(platform),
+    mediaBuy: buildMediaBuyHandlers(platform, taskRegistry),
+    creative: buildCreativeHandlers(platform, taskRegistry),
+    eventTracking: buildEventTrackingHandlers(platform, taskRegistry),
     accounts: buildAccountHandlers(platform),
   };
 
-  return createAdcpServer(config);
+  const server = createAdcpServer(config);
+
+  return Object.assign(server, {
+    getTaskState: <TResult = unknown>(taskId: string): TaskRecord<TResult> | null =>
+      taskRegistry.getTask<TResult>(taskId),
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Specialism → handler-map adapters
 // ---------------------------------------------------------------------------
 
-function buildMediaBuyHandlers<P extends DecisioningPlatform>(platform: P): MediaBuyHandlers<Account> | undefined {
+function buildMediaBuyHandlers<P extends DecisioningPlatform>(
+  platform: P,
+  taskRegistry: TaskRegistry
+): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
   return {
     getProducts: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'get_products', taskRegistry });
       return sales.getProducts(params, reqCtx);
     },
 
     createMediaBuy: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'create_media_buy', taskRegistry });
       const outcome = await sales.createMediaBuy(params, reqCtx);
       return projectMediaBuyOutcome(outcome);
     },
 
     updateMediaBuy: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'update_media_buy', taskRegistry });
       const buyId = (params as { media_buy_id?: string }).media_buy_id;
       if (!buyId) {
         return adcpError('INVALID_REQUEST', {
@@ -135,7 +169,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform>(platform: P): Medi
     },
 
     syncCreatives: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'sync_creatives', taskRegistry });
       const creatives = (params as { creatives?: unknown[] }).creatives ?? [];
       const outcome = await sales.syncCreatives(creatives as never[], reqCtx);
       if (outcome.kind === 'submitted') {
@@ -155,11 +189,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform>(platform: P): Medi
     },
 
     getMediaBuyDelivery: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'get_media_buy_delivery', taskRegistry });
       const outcome = await sales.getMediaBuyDelivery(params, reqCtx);
-      // get_media_buy_delivery wire spec has no Submitted arm. Async report
-      // jobs surface via the framework's task envelope flow elsewhere; for
-      // now, INVALID_STATE if the platform returns submitted.
       if (outcome.kind === 'submitted') {
         return adcpError('INVALID_STATE', {
           message:
@@ -173,15 +204,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform>(platform: P): Medi
   };
 }
 
-function buildCreativeHandlers<P extends DecisioningPlatform>(platform: P): CreativeHandlers<Account> | undefined {
+function buildCreativeHandlers<P extends DecisioningPlatform>(
+  platform: P,
+  taskRegistry: TaskRegistry
+): CreativeHandlers<Account> | undefined {
   const creative = platform.creative;
   if (!creative) return undefined;
   return {
     buildCreative: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'build_creative', taskRegistry });
       const outcome = await creative.buildCreative(params, reqCtx);
-      // BuildCreativeResponse has no Submitted arm in the wire spec — async
-      // generation completes asynchronously via separate task surfaces.
       if (outcome.kind === 'submitted') {
         return adcpError('INVALID_STATE', {
           message:
@@ -194,20 +226,19 @@ function buildCreativeHandlers<P extends DecisioningPlatform>(platform: P): Crea
     },
 
     previewCreative: async (params, ctx) => {
-      // previewCreative only exists on CreativeTemplatePlatform.
       if (!('previewCreative' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'preview_creative not supported by this platform',
           recovery: 'terminal',
         });
       }
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'preview_creative', taskRegistry });
       const outcome = await (creative as CreativeTemplatePlatform).previewCreative(params, reqCtx);
       return projectAsyncOutcome(outcome, preview => preview) as never;
     },
 
     syncCreatives: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'sync_creatives', taskRegistry });
       const creatives = (params as { creatives?: unknown[] }).creatives ?? [];
       const outcome = await creative.syncCreatives(creatives as never[], reqCtx);
       if (outcome.kind === 'submitted') {
@@ -229,13 +260,14 @@ function buildCreativeHandlers<P extends DecisioningPlatform>(platform: P): Crea
 }
 
 function buildEventTrackingHandlers<P extends DecisioningPlatform>(
-  platform: P
+  platform: P,
+  taskRegistry: TaskRegistry
 ): EventTrackingHandlers<Account> | undefined {
   const audiences = platform.audiences;
   if (!audiences) return undefined;
   return {
     syncAudiences: async (params, ctx) => {
-      const reqCtx = buildRequestContext(ctx);
+      const reqCtx = buildRequestContext(ctx, { tool: 'sync_audiences', taskRegistry });
       const audienceList = (params as { audiences?: unknown[] }).audiences ?? [];
       const outcome = await audiences.syncAudiences(audienceList as never[], reqCtx);
       // sync_audiences wire spec has no Submitted arm — async match-rate
