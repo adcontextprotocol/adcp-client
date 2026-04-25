@@ -238,15 +238,18 @@ export interface CreateAgentSignedFetchOptions {
    * unsigned → seller rejects. The SDK emits no error on this path because
    * "decided not to sign" is the spec-correct behavior on a cold cache.
    *
-   * Pass an explicit cache only when you've also primed it (test isolation,
-   * out-of-band capability discovery), or when you genuinely want each
-   * caller to re-fetch the seller's capability block.
+   * Pass an explicit cache only when you've also primed it — call
+   * {@link ensureCapabilityLoaded} against your cache instance after
+   * construction, or seed it via `cache.set(buildCapabilityCacheKey(uri,
+   * token), entry)` — or when you genuinely want each caller to re-fetch
+   * the seller's capability block.
    *
    * Note: the cache stores **public** seller capability advertisements
    * (the contents of `get_adcp_capabilities` responses), not buyer
    * credentials. The shared default is not a multi-tenant security
-   * boundary — different sellers and different auth tokens already get
-   * separate keys via {@link buildCapabilityCacheKey}.
+   * boundary — different sellers, different auth tokens, and different
+   * signing keys already get separate entries via
+   * {@link buildCapabilityCacheKey}.
    */
   cache?: CapabilityCache;
   /** Upstream fetch. Defaults to `globalThis.fetch`. */
