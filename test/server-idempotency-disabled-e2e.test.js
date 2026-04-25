@@ -10,9 +10,22 @@
  * advertisement, missing-key tolerance, and the shape gate.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+
+// Disabled-mode requires NODE_ENV in {'test', 'development'} or an explicit
+// ack env var. The test runner doesn't set NODE_ENV by default, so pin it
+// for this whole file and restore on teardown.
+let _prevNodeEnv;
+before(() => {
+  _prevNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+});
+after(() => {
+  if (_prevNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = _prevNodeEnv;
+});
 
 const lib = require('../dist/lib/index.js');
 const { serve, createAdcpServer: _createAdcpServer } = lib;

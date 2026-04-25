@@ -1,5 +1,4 @@
 // Generated const-array enum exports for AdCP string-literal unions
-// Generated at: 2026-04-25T01:18:01.027Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)

@@ -70,8 +70,13 @@ function extractFromSource(source: string, label: 'core' | 'tools'): ExtractedEn
 }
 
 function renderOutput(enums: ExtractedEnum[]): string {
+  // Intentionally no `// Generated at:` timestamp in the file body. Other
+  // generated files in this repo carry one, but those predate this script
+  // and pay diff noise on every regeneration. Git log + the
+  // `.generated.ts` suffix are sufficient signal that this file is
+  // tool-output. If we ever need a "last regenerated" stamp, add it as a
+  // separate workflow comment that the codegen rewrites independently.
   const header = `// Generated const-array enum exports for AdCP string-literal unions
-// Generated at: ${new Date().toISOString()}
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -116,12 +121,11 @@ function renderOutput(enums: ExtractedEnum[]): string {
 }
 
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
-  const stripTimestamp = (content: string) =>
-    content.replace(/\/\/ Generated at: .*?\n/, '// Generated at: [TIMESTAMP]\n');
-
+  // No timestamp in the rendered output, so byte-equality is the right
+  // check. Skipping the write avoids spurious mtime churn that other
+  // build steps key off.
   if (existsSync(filePath)) {
-    const existing = readFileSync(filePath, 'utf8');
-    if (stripTimestamp(existing) === stripTimestamp(newContent)) return false;
+    if (readFileSync(filePath, 'utf8') === newContent) return false;
   }
   writeFileSync(filePath, newContent);
   return true;

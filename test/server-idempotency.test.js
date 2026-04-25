@@ -1,4 +1,4 @@
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
@@ -624,15 +624,22 @@ describe('createAdcpServer config warnings', () => {
       warn: () => {},
       error: msg => messages.push(msg),
     };
-    createAdcpServer({
-      name: 'T',
-      version: '1.0.0',
-      logger,
-      idempotency: 'disabled',
-      mediaBuy: {
-        createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [] }),
-      },
-    });
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    try {
+      createAdcpServer({
+        name: 'T',
+        version: '1.0.0',
+        logger,
+        idempotency: 'disabled',
+        mediaBuy: {
+          createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [] }),
+        },
+      });
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
     assert.equal(messages.length, 0);
   });
 
@@ -665,25 +672,74 @@ describe('createAdcpServer config warnings', () => {
     );
   });
 
-  it("idempotency: 'disabled' throws under NODE_ENV=production", () => {
-    const prev = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
-    try {
-      assert.throws(
-        () =>
-          createAdcpServer({
-            name: 'T',
-            version: '1.0.0',
-            idempotency: 'disabled',
-            mediaBuy: {
-              createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [] }),
-            },
-          }),
-        /refuses to start under NODE_ENV=production/
-      );
-    } finally {
-      process.env.NODE_ENV = prev;
+  // The production-gate tests below mutate process.env.NODE_ENV and
+  // ADCP_IDEMPOTENCY_DISABLED_ACK. node:test runs files in parallel
+  // by default but tests within a file serially, so the
+  // save/restore-in-finally pattern is safe here. If --test-concurrency
+  // is ever raised at the file level, move these to a child process.
+  function withEnv(overrides, fn) {
+    const prev = {};
+    for (const k of Object.keys(overrides)) {
+      prev[k] = process.env[k];
+      if (overrides[k] === undefined) delete process.env[k];
+      else process.env[k] = overrides[k];
     }
+    try {
+      return fn();
+    } finally {
+      for (const k of Object.keys(prev)) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
+    }
+  }
+
+  function buildDisabled(extra) {
+    return createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency: 'disabled',
+      mediaBuy: { createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [] }) },
+      ...extra,
+    });
+  }
+
+  it("idempotency: 'disabled' throws under NODE_ENV=production", () => {
+    withEnv({ NODE_ENV: 'production', ADCP_IDEMPOTENCY_DISABLED_ACK: undefined }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV="production"/);
+    });
+  });
+
+  it("idempotency: 'disabled' throws when NODE_ENV is unset (raw Lambda / K8s)", () => {
+    // The earlier draft used `NODE_ENV === 'production'`, which silently
+    // accepted unset. Inverted gate must reject the dangerous defaults.
+    withEnv({ NODE_ENV: undefined, ADCP_IDEMPOTENCY_DISABLED_ACK: undefined }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV=<unset>/);
+    });
+  });
+
+  it("idempotency: 'disabled' throws under NODE_ENV=staging (custom env names)", () => {
+    withEnv({ NODE_ENV: 'staging', ADCP_IDEMPOTENCY_DISABLED_ACK: undefined }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV="staging"/);
+    });
+  });
+
+  it("idempotency: 'disabled' allows ADCP_IDEMPOTENCY_DISABLED_ACK=1 escape hatch under any NODE_ENV", () => {
+    const warns = [];
+    const logger = { debug: () => {}, info: () => {}, warn: msg => warns.push(msg), error: () => {} };
+    withEnv({ NODE_ENV: 'staging', ADCP_IDEMPOTENCY_DISABLED_ACK: '1' }, () => {
+      assert.doesNotThrow(() => buildDisabled({ logger }));
+    });
+    assert.ok(warns.some(m => /idempotency: 'disabled' is set/.test(m)));
+  });
+
+  it("idempotency: 'disabled' rejects truthy-but-not-1 ack values", () => {
+    // Be strict about the ack — only the literal '1' acknowledges. 'true',
+    // 'yes', and other truthy strings should NOT pass; this prevents
+    // operators from copying half-remembered env-var values.
+    withEnv({ NODE_ENV: 'staging', ADCP_IDEMPOTENCY_DISABLED_ACK: 'true' }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV="staging"/);
+    });
   });
 
   it('si_initiate_session: string request.context does not leak through replay', async () => {
@@ -746,6 +802,20 @@ describe('createAdcpServer config warnings', () => {
 });
 
 describe("createAdcpServer with idempotency: 'disabled'", () => {
+  // The disabled-mode gate refuses to start unless NODE_ENV is in
+  // {'test', 'development'} or ADCP_IDEMPOTENCY_DISABLED_ACK=1. The test
+  // runner doesn't set NODE_ENV by default, so pin it for this suite and
+  // restore on teardown.
+  let _prevNodeEnv;
+  before(() => {
+    _prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+  });
+  after(() => {
+    if (_prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = _prevNodeEnv;
+  });
+
   function makeDisabledServer({ validationOverride } = {}) {
     const calls = [];
     const handler = async (params, ctx) => {

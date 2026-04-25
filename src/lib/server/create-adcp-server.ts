@@ -2041,19 +2041,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const idempotencyDisabled = idempotencyConfig === 'disabled';
   const idempotency: IdempotencyStore | undefined = idempotencyDisabled ? undefined : idempotencyConfig;
   if (idempotencyDisabled) {
-    // Refuse the flag in production. AdCP 3.0 commits the agent to honoring
-    // idempotency_key replay on mutating requests; disabled mode silently
-    // re-executes handlers on retry, which double-books spend if any
-    // upstream proxy or buyer retries. `NODE_ENV` is the standard signal
-    // every other Node SDK respects for prod-vs-test gating, and refusing
-    // here turns a config typo from a money-flow incident into a startup
-    // crash. Outside production we log loudly so the choice is visible.
-    if (process.env.NODE_ENV === 'production') {
+    // Allowlist gate. The earlier draft refused the flag only when
+    // NODE_ENV === 'production', which is a footgun: NODE_ENV defaults to
+    // unset in raw Lambda, custom containers, and many K8s deployments,
+    // so the strict equality returned `false` in exactly the
+    // hard-to-debug environments where disabled mode is most dangerous.
+    // Inverted to an allowlist of dev/test environments; any other value
+    // (unset, 'production', 'staging', 'qa', custom names) requires the
+    // operator to explicitly acknowledge the risk via
+    // `ADCP_IDEMPOTENCY_DISABLED_ACK=1`. Hard to set by accident, makes
+    // the choice deliberate, and turns a missing-NODE_ENV config into a
+    // startup crash instead of a silent money-flow incident on retry.
+    const env = process.env.NODE_ENV;
+    const acknowledged = process.env.ADCP_IDEMPOTENCY_DISABLED_ACK === '1';
+    const isAllowlistedDevEnv = env === 'test' || env === 'development';
+    if (!isAllowlistedDevEnv && !acknowledged) {
       throw new Error(
-        "createAdcpServer: idempotency: 'disabled' refuses to start under NODE_ENV=production. " +
-          'Disabled mode skips replay enforcement and silently double-executes mutating handlers on retry — ' +
-          'production servers must wire a real store via `createIdempotencyStore({ backend, ttlSeconds })`. ' +
-          'For non-production test fleets, set NODE_ENV=test or unset NODE_ENV.'
+        "createAdcpServer: idempotency: 'disabled' refuses to start with NODE_ENV=" +
+          (env === undefined ? '<unset>' : JSON.stringify(env)) +
+          '. Disabled mode skips replay enforcement and silently double-executes mutating handlers on retry, ' +
+          'so the SDK only allows it under NODE_ENV=test or NODE_ENV=development by default. ' +
+          'Either: (a) wire a real store via `createIdempotencyStore({ backend, ttlSeconds })`, ' +
+          '(b) set NODE_ENV=test or NODE_ENV=development if this is a dev-only environment, or ' +
+          '(c) set ADCP_IDEMPOTENCY_DISABLED_ACK=1 to explicitly acknowledge the risk for non-standard environments.'
       );
     }
     logger.warn(
