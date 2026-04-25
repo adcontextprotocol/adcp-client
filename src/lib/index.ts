@@ -320,6 +320,20 @@ export type {
   CpmPricing,
   PercentOfMediaPricing,
   FlatFeePricing,
+  PerUnitPricing,
+  CustomPricing,
+  VendorPricing,
+  VendorPricingOption,
+  // Pricing variants for products (publisher rate cards in get_products etc.)
+  // PricingOption + CPAPricingOption are exported below near the other tool types.
+  CPMPricingOption,
+  VCPMPricingOption,
+  CPCPricingOption,
+  CPCVPricingOption,
+  CPVPricingOption,
+  CPPPricingOption,
+  FlatRatePricingOption,
+  TimeBasedPricingOption,
   // Governance Domain - Property Lists
   CreatePropertyListRequest,
   CreatePropertyListResponse,

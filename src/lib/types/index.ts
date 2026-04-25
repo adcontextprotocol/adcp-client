@@ -26,6 +26,18 @@ export type { FormatID } from './core.generated';
 // discriminated per-asset-type branches of Format.assets[]).
 export * from './format-asset-slots';
 
+// Discriminated union of creative asset INSTANCES (what a buyer delivers
+// inside `creative_manifest.assets`). Companion to format-asset-slots.ts
+// (which describes what a publisher SELLS in `Format.assets[]`). The
+// individual ImageAsset / VideoAsset / etc. interfaces are generated; this
+// file is the missing canonical union over them.
+export * from './asset-instances';
+
+// Strict per-row types for sync_* response success arms. The codegen
+// leaves these row shapes inline; named types make the discriminators
+// (e.g., SyncAccountsResponseRow.action) reachable to handler authors.
+export * from './sync-rows';
+
 // Re-export Zod schemas for runtime validation
 export * from './schemas.generated';
 
