@@ -125,6 +125,15 @@ function mapTasksGetResponseToTaskInfo(payload: unknown): TaskInfo {
     updatedAt: parseTimestamp(flat.updated_at ?? flat.updatedAt),
   };
   if (errorMessage !== undefined) taskInfo.error = errorMessage;
+  // Top-level `message` field: the AdCP envelope's human-readable
+  // status descriptor (advisory string accompanying any status —
+  // e.g. "Budget cap exceeded — task not started" on a `rejected`
+  // task). `pollTaskCompletion` falls back to this when the
+  // `error.message` block is absent on a terminal failure. Distinct
+  // from `error.message` (which lives under the structured `error`
+  // object).
+  const messageField = stringField(flat.message);
+  if (messageField !== undefined) taskInfo.message = messageField;
   // Result passthrough — see JSDoc on result-data ambiguity.
   const result = flat.result ?? flat.task_data;
   if (result !== undefined) taskInfo.result = result;
