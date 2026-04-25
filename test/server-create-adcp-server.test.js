@@ -1572,4 +1572,180 @@ describe('createAdcpServer', () => {
       assert.strictEqual(store.size('b'), 0);
     });
   });
+
+  describe('cross-domain specialism declaration', () => {
+    // Drift class from matrix issue #785: an agent wires creative/signals/
+    // brandRights handlers but forgets to claim the matching specialism in
+    // capabilities.specialisms. The conformance runner then reports "No
+    // applicable tracks found for this agent" silently. createAdcpServer
+    // logs an error so the mismatch surfaces in boot diagnostics — not
+    // thrown so middleware-only test harnesses keep working.
+
+    const noopHandler = async () => ({});
+
+    function captureLoggerErrors() {
+      const errors = [];
+      return {
+        logger: {
+          error: msg => errors.push(msg),
+          warn: () => {},
+          info: () => {},
+          debug: () => {},
+        },
+        errors,
+      };
+    }
+
+    it('logs error when creative handlers are wired without a creative specialism', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        creative: { listCreativeFormats: noopHandler },
+        capabilities: { specialisms: [] },
+      });
+      assert.ok(
+        errors.some(e => e.includes('creative handlers are wired but capabilities.specialisms does not include')),
+        `expected creative-specialism warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('does NOT log when creative handlers + creative-template claim are aligned', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        creative: { listCreativeFormats: noopHandler },
+        capabilities: { specialisms: ['creative-template'] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('creative handlers are wired')),
+        `did not expect creative-specialism warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('logs error when signals handlers are wired without a signals specialism', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        signals: { getSignals: noopHandler },
+        capabilities: { specialisms: ['creative-template'] },
+      });
+      assert.ok(
+        errors.some(e => e.includes('signals handlers are wired but capabilities.specialisms does not include')),
+        `expected signals-specialism warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('logs error when brandRights handlers are wired without brand-rights claimed', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        brandRights: { acquireRights: noopHandler },
+        capabilities: { specialisms: ['creative-template'] },
+      });
+      assert.ok(
+        errors.some(e => e.includes('brandRights handlers are wired but capabilities.specialisms does not include')),
+        `expected brandRights-specialism warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('does not warn on mediaBuy without a specialism (commercial-significance carve-out)', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        mediaBuy: { getProducts: noopHandler },
+        capabilities: { specialisms: [] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('mediaBuy handlers are wired')),
+        `mediaBuy should be exempt; got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('does not warn when no domain handlers are wired', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        capabilities: { specialisms: [] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('handlers are wired but')),
+        `no warning expected when no handlers wired; got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('logs error when governance handlers are wired without a governance specialism', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        governance: { getPropertyList: noopHandler },
+        capabilities: { specialisms: ['creative-template'] },
+      });
+      assert.ok(
+        errors.some(e => e.includes('governance handlers are wired but capabilities.specialisms does not include')),
+        `expected governance-specialism warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('accepts governance handlers when property-lists is claimed', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        governance: { getPropertyList: noopHandler },
+        capabilities: { specialisms: ['property-lists'] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('governance handlers are wired')),
+        `did not expect governance warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('does not warn for an empty domain handlers object', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        creative: {},
+        capabilities: { specialisms: [] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('creative handlers are wired')),
+        `empty creative {} should not trigger warning; got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('does not warn when handler keys are present but values are undefined', () => {
+      // Repro of the edge case where `{ ...maybeHandlers }` spreads in a key
+      // with an undefined value — Object.keys would count the key, but no
+      // real handler is wired. Filter to function-valued keys.
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        creative: { listCreativeFormats: undefined, buildCreative: undefined },
+        capabilities: { specialisms: [] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('creative handlers are wired')),
+        `undefined-value keys should not trigger warning; got: ${JSON.stringify(errors)}`
+      );
+    });
+  });
 });
