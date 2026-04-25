@@ -247,6 +247,78 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('get_media_buys (#983)', () => {
+    test('injects context.media_buy_id when present', () => {
+      const context = { media_buy_id: 'mb_123' };
+      const result = buildRequest(step('get_media_buys'), context, DEFAULT_OPTIONS);
+      assert.deepStrictEqual(result.media_buy_ids, ['mb_123']);
+    });
+
+    test('omits media_buy_ids when context lacks a real id (broad-list path)', () => {
+      // Pre-fix the enricher injected `[context.media_buy_id ?? 'unknown']`,
+      // which clobbered broad-list fixtures with a placeholder. Fix:
+      // when context has no real id, return an empty enricher object so
+      // the fixture's sample_request stays authoritative — including
+      // the broad-list path (no `media_buy_ids`) which the spec
+      // permits per `get-media-buys-request.json` (field optional with
+      // minItems: 1; omission returns a paginated set).
+      const result = buildRequest(step('get_media_buys'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.media_buy_ids, undefined, 'no `unknown` placeholder injected');
+    });
+
+    test('respects fixture sample_request media_buy_ids (fixture wins)', () => {
+      const fixture = { media_buy_ids: ['mb_explicit_1', 'mb_explicit_2'] };
+      const result = buildRequest(step('get_media_buys', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.deepStrictEqual(result.media_buy_ids, ['mb_explicit_1', 'mb_explicit_2']);
+    });
+
+    test('respects fixture broad-list intent (no media_buy_ids in fixture, no context id)', () => {
+      // The pagination-integrity storyboard pattern: fixture omits
+      // `media_buy_ids`, sets only `pagination` + `account`. Result
+      // must NOT carry an injected placeholder.
+      const fixture = { pagination: { max_results: 10 } };
+      const result = buildRequest(step('get_media_buys', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.media_buy_ids, undefined);
+      assert.deepStrictEqual(result.pagination, { max_results: 10 });
+    });
+
+    test('rejects empty-string context.media_buy_id (treated as missing)', () => {
+      const context = { media_buy_id: '' };
+      const result = buildRequest(step('get_media_buys'), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.media_buy_ids, undefined);
+    });
+  });
+
+  describe('get_media_buy_delivery (#983)', () => {
+    test('injects context.media_buy_id when present', () => {
+      const context = { media_buy_id: 'mb_456' };
+      const result = buildRequest(step('get_media_buy_delivery'), context, DEFAULT_OPTIONS);
+      assert.deepStrictEqual(result.media_buy_ids, ['mb_456']);
+    });
+
+    test('omits media_buy_ids when context lacks a real id (no `unknown` placeholder)', () => {
+      // The spec requires media_buy_ids on get_media_buy_delivery —
+      // unlike get_media_buys, there is no broad-list path. Without a
+      // real id, the prior `'unknown'` placeholder produced silent
+      // NOT_FOUND responses that masked authoring errors. The empty
+      // enricher surfaces them as INVALID_REQUEST instead, and lets
+      // an explicit fixture sample_request override.
+      const result = buildRequest(step('get_media_buy_delivery'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.media_buy_ids, undefined);
+    });
+
+    test('fixture sample_request wins over context injection', () => {
+      const context = { media_buy_id: 'mb_from_context' };
+      const fixture = { media_buy_ids: ['mb_from_fixture'] };
+      const result = buildRequest(
+        step('get_media_buy_delivery', { sample_request: fixture }),
+        context,
+        DEFAULT_OPTIONS
+      );
+      assert.deepStrictEqual(result.media_buy_ids, ['mb_from_fixture']);
+    });
+  });
+
   describe('get_brand_identity', () => {
     test('includes brand_id from options', () => {
       const result = buildRequest(step('get_brand_identity'), {}, DEFAULT_OPTIONS);

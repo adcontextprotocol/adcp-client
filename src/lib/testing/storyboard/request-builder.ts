@@ -318,15 +318,35 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   },
 
   get_media_buys(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+    // Inject only when a prior step extracted a real `media_buy_id`
+    // into context. Without one, the fixture's `sample_request` is
+    // authoritative — including the broad-list path (no `media_buy_ids`)
+    // which `get-media-buys-request.json` allows (the field is
+    // optional with `minItems: 1`; per the spec, omitting it
+    // returns "a paginated set of accessible media buys matching
+    // status_filter"). The previous `'unknown'` fallback clobbered
+    // broad-list fixtures with a placeholder id, blocking
+    // pagination-integrity storyboards. Closes adcp-client#983.
+    if (typeof context.media_buy_id === 'string' && context.media_buy_id.length > 0) {
+      return { media_buy_ids: [context.media_buy_id] };
+    }
+    return {};
   },
 
   get_media_buy_delivery(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+    // Same posture as `get_media_buys`: inject the prior-step
+    // `media_buy_id` when context has one; otherwise return empty
+    // and let the fixture's `sample_request` be authoritative.
+    // `get_media_buy_delivery` requires `media_buy_ids` per the
+    // spec — without context, the fixture must declare them
+    // explicitly. The previous `'unknown'` placeholder produced
+    // silent NOT_FOUND responses on storyboards that omitted the
+    // field, masking authoring errors; the empty-object behavior
+    // surfaces them as INVALID_REQUEST instead.
+    if (typeof context.media_buy_id === 'string' && context.media_buy_id.length > 0) {
+      return { media_buy_ids: [context.media_buy_id] };
+    }
+    return {};
   },
 
   // provide_performance_feedback intentionally has no builder — storyboard
