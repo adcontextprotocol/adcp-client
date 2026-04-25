@@ -60,17 +60,35 @@ function captureLogs(fn, { columns } = {}) {
 describe('printStepHints', () => {
   test('first line carries the hint marker at the configured indent', () => {
     const lines = captureLogs(() => printStepHints([sampleHint]), { columns: 9999 });
-    assert.equal(lines.length, 1, 'wide terminal — no wrap');
+    // Issue #935: every hint renders prose line + per-kind structured
+    // detail lines (key / from step / accepted values for
+    // `context_value_rejected`). The first line carries the hint marker;
+    // subsequent lines are continuation indent.
+    assert.ok(lines.length >= 1, 'at least the prose line is emitted');
     assert.match(lines[0], /^ {3}💡 Hint: /);
     assert.match(lines[0], /\$context\.first_signal_pricing_option_id/);
-    assert.match(lines[0], /po_prism_cart_cpm/);
+    // Accepted values appear on a structured detail line, not the prose
+    // line — but they must still be reachable for an operator scrolling
+    // the terminal output.
+    assert.ok(
+      lines.some(l => /po_prism_cart_cpm/.test(l)),
+      'accepted values rendered on prose or detail line'
+    );
   });
 
-  test('renders each hint as its own block', () => {
+  test('renders each hint as its own block (prose + per-kind detail lines)', () => {
     const second = { ...sampleHint, message: 'second hint body' };
     const lines = captureLogs(() => printStepHints([sampleHint, second]), { columns: 9999 });
-    assert.equal(lines.length, 2);
-    assert.match(lines[1], /second hint body/);
+    // Two hints × (1 prose + N detail lines). The exact line count is
+    // governed by `structuredDetailLines(kind)`; the contract under test
+    // is "each hint is visually demarcated", which we assert by finding
+    // two `💡 Hint:` markers.
+    const markerLines = lines.filter(l => /💡 Hint:/.test(l));
+    assert.equal(markerLines.length, 2, `expected two hint blocks, saw ${markerLines.length}`);
+    assert.ok(
+      lines.some(l => /second hint body/.test(l)),
+      'second hint body appears on its prose line'
+    );
   });
 
   test('no-op when hints is undefined', () => {
@@ -215,9 +233,169 @@ describe('printStepHints with custom indent', () => {
   test('custom indent is prepended to every line', () => {
     const second = { ...sampleHint, message: 'second' };
     const lines = captureLogs(() => printStepHints([sampleHint, second], '  › '), { columns: 9999 });
-    assert.equal(lines.length, 2);
-    assert.match(lines[0], /^ {2}› 💡 Hint: /);
-    assert.match(lines[1], /^ {2}› 💡 Hint: second/);
+    // The prose lines for the two hints both start with the custom indent
+    // + label; structured-detail continuation lines start with the custom
+    // indent + label-width whitespace (so they align under the message).
+    const markerLines = lines.filter(l => /💡 Hint:/.test(l));
+    assert.equal(markerLines.length, 2);
+    assert.match(markerLines[0], /^ {2}› 💡 Hint: /);
+    assert.match(markerLines[1], /^ {2}› 💡 Hint: second/);
+    // Every continuation line keeps the same custom-indent prefix so the
+    // visual block stays aligned.
+    for (const line of lines) {
+      assert.ok(line.startsWith('  › '), `line should start with the custom indent: ${JSON.stringify(line)}`);
+    }
+  });
+});
+
+describe('printStepHints: structured detail lines per `kind` (issue #935)', () => {
+  test('shape_drift: tool / observed / expected / at fields rendered', () => {
+    const lines = captureLogs(
+      () =>
+        printStepHints([
+          {
+            kind: 'shape_drift',
+            tool: 'list_creatives',
+            observed_variant: 'bare_array',
+            expected_variant: '{ creatives: [...] }',
+            instance_path: '',
+            message: 'list_creatives returned a bare array at the top level.',
+          },
+        ]),
+      { columns: 9999 }
+    );
+    assert.ok(
+      lines.some(l => /tool: list_creatives/.test(l)),
+      'tool line rendered'
+    );
+    assert.ok(
+      lines.some(l => /observed: bare_array/.test(l)),
+      'observed line rendered'
+    );
+    assert.ok(
+      lines.some(l => /expected: \{ creatives: \[\.\.\.\] \}/.test(l)),
+      'expected line rendered'
+    );
+    // instance_path "" → the `at:` line is suppressed.
+    assert.ok(!lines.some(l => /^\s+at:/.test(l)), 'no `at:` line for root-level drift');
+  });
+
+  test('missing_required_field: tool / at / missing fields rendered', () => {
+    const lines = captureLogs(
+      () =>
+        printStepHints([
+          {
+            kind: 'missing_required_field',
+            tool: 'create_media_buy',
+            instance_path: '/packages/0',
+            schema_path: '#/properties/packages/items/required',
+            missing_fields: ['creative_id', 'package_id'],
+            message: 'create_media_buy response missing required fields at /packages/0: creative_id, package_id.',
+          },
+        ]),
+      { columns: 9999 }
+    );
+    assert.ok(
+      lines.some(l => /tool: create_media_buy/.test(l)),
+      'tool line rendered'
+    );
+    assert.ok(
+      lines.some(l => /at: \/packages\/0/.test(l)),
+      'instance_path rendered'
+    );
+    assert.ok(
+      lines.some(l => /missing: creative_id, package_id/.test(l)),
+      'missing-field list rendered'
+    );
+  });
+
+  test('format_mismatch: tool / at / keyword fields rendered', () => {
+    const lines = captureLogs(
+      () =>
+        printStepHints([
+          {
+            kind: 'format_mismatch',
+            tool: 'list_creative_formats',
+            instance_path: '/formats/0/format_id/agent_url',
+            schema_path: '#/properties/formats/items/properties/format_id/properties/agent_url/format',
+            keyword: 'format',
+            message: 'list_creative_formats response failed strict format at /formats/0/format_id/agent_url',
+          },
+        ]),
+      { columns: 9999 }
+    );
+    assert.ok(lines.some(l => /tool: list_creative_formats/.test(l)));
+    assert.ok(lines.some(l => /at: \/formats\/0\/format_id\/agent_url/.test(l)));
+    assert.ok(lines.some(l => /keyword: format/.test(l)));
+  });
+
+  test('monotonic_violation: transition / from step / legal next states rendered', () => {
+    const lines = captureLogs(
+      () =>
+        printStepHints([
+          {
+            kind: 'monotonic_violation',
+            resource_type: 'media_buy',
+            resource_id: 'mb_123',
+            from_status: 'active',
+            to_status: 'pending_creatives',
+            from_step_id: 'create',
+            legal_next_states: ['paused', 'completed', 'canceled'],
+            enum_url: 'https://adcontextprotocol.org/schemas/3.0.0/enums/media-buy-status.json',
+            message: 'media_buy mb_123: active → pending_creatives is not in the lifecycle graph...',
+          },
+        ]),
+      { columns: 9999 }
+    );
+    assert.ok(
+      lines.some(l => /media_buy mb_123: active → pending_creatives/.test(l)),
+      'transition rendered on its own line'
+    );
+    assert.ok(
+      lines.some(l => /from step: create/.test(l)),
+      'anchor step rendered'
+    );
+    assert.ok(
+      lines.some(l => /legal next states: paused, completed, canceled/.test(l)),
+      'legal targets rendered'
+    );
+  });
+
+  test('monotonic_violation with empty legal_next_states → terminal-state label', () => {
+    const lines = captureLogs(
+      () =>
+        printStepHints([
+          {
+            kind: 'monotonic_violation',
+            resource_type: 'media_buy',
+            resource_id: 'mb_done',
+            from_status: 'completed',
+            to_status: 'active',
+            from_step_id: 'finalize',
+            legal_next_states: [],
+            enum_url: 'https://adcontextprotocol.org/schemas/3.0.0/enums/media-buy-status.json',
+            message: 'media_buy mb_done: completed → active (terminal state)',
+          },
+        ]),
+      { columns: 9999 }
+    );
+    assert.ok(
+      lines.some(l => /legal next states: \(none — terminal state\)/.test(l)),
+      'terminal state explicitly labeled'
+    );
+  });
+
+  test('unknown hint kind → prose-only fallback (no structured detail lines)', () => {
+    // Forward-compatibility: a renderer that doesn't know a future
+    // `kind` literal still surfaces the prose line, just without the
+    // structured detail it can't interpret.
+    const lines = captureLogs(
+      () =>
+        printStepHints([{ kind: 'auth_misconfiguration', message: 'agent advertised bearer but rejected our bearer' }]),
+      { columns: 9999 }
+    );
+    assert.equal(lines.length, 1, 'unknown kind renders just the prose line');
+    assert.match(lines[0], /agent advertised bearer/);
   });
 });
 

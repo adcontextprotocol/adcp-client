@@ -954,6 +954,60 @@ describe('default-invariants: status.monotonic', () => {
     assert.match(fail.error, /adcontextprotocol\.org\/schemas\/.+\/enums\/media-buy-status\.json/);
   });
 
+  test('failure carries a structured MonotonicViolationHint (issue #935)', () => {
+    // Issue #935: every cross-step assertion that has machine-readable
+    // fields exposes them through `AssertionResult.hint`, which the
+    // runner mirrors into `step.hints[]`. Renderers (CLI, JUnit, Addie)
+    // can then drive off the structured fields rather than re-parsing
+    // the prose `error` line.
+    const out = run([
+      step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') }),
+      step({ step_id: 'regress', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'pending_creatives')] } }),
+    ]);
+    const fail = out[1].output[0];
+    assert.ok(fail.hint, 'failed assertion result carries a structured hint');
+    assert.equal(fail.hint.kind, 'monotonic_violation');
+    assert.equal(fail.hint.resource_type, 'media_buy');
+    assert.equal(fail.hint.resource_id, 'mb-1');
+    assert.equal(fail.hint.from_status, 'active');
+    assert.equal(fail.hint.to_status, 'pending_creatives');
+    assert.equal(fail.hint.from_step_id, 'create');
+    assert.deepEqual(fail.hint.legal_next_states, ['canceled', 'completed', 'paused']);
+    assert.match(fail.hint.enum_url, /adcontextprotocol\.org\/schemas\/.+\/enums\/media-buy-status\.json/);
+    // The hint's `message` matches the assertion's `error` so prose-only
+    // renderers see the same content via either surface.
+    assert.equal(fail.hint.message, fail.error);
+  });
+
+  test('terminal-state violation hint carries empty legal_next_states', () => {
+    // Empty array is the structured equivalent of the prose's
+    // "(none — terminal state)" — renderers can branch on `length === 0`
+    // without parsing the message.
+    const out = run([
+      step({ step_id: 'done', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'completed')] } }),
+      step({ step_id: 'revive', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } }),
+    ]);
+    const fail = out[1].output[0];
+    assert.ok(fail.hint);
+    assert.equal(fail.hint.kind, 'monotonic_violation');
+    assert.deepEqual(fail.hint.legal_next_states, []);
+    assert.equal(fail.hint.from_status, 'completed');
+    assert.equal(fail.hint.to_status, 'active');
+  });
+
+  test('passing observations do NOT carry a hint (hint is only for violations)', () => {
+    // Forward transitions return `{ passed: true }` — no `hint` key, so
+    // the runner doesn't accidentally surface "everything's fine" entries
+    // in `step.hints[]`.
+    const out = run([
+      step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'pending_creatives') }),
+      step({ step_id: 'go_active', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } }),
+    ]);
+    const pass = out[1].output[0];
+    assert.equal(pass.passed, true);
+    assert.equal(pass.hint, undefined);
+  });
+
   test('media_buy terminal is terminal — error names "(none — terminal state)" and the enum URL', () => {
     const out = run([
       step({ step_id: 'done', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'completed')] } }),

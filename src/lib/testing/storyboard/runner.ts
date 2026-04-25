@@ -20,6 +20,8 @@ import {
   type RunnerVariables,
 } from './context';
 import { detectContextRejectionHints } from './rejection-hints';
+import { detectShapeDriftHints } from './shape-drift-hints';
+import { detectStrictValidationHints } from './strict-validation-hints';
 import { runValidations, type ValidationContext } from './validations';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -843,6 +845,15 @@ async function executeStoryboardPass(
             description: `${spec.id}: ${r.description}`,
             ...(r.error !== undefined && { error: r.error }),
           });
+          // Issue #935: assertions can attach a structured hint that the
+          // runner mirrors into the owning step's `hints[]`. Today only
+          // `status.monotonic` populates `hint`; the merge here keeps the
+          // taxonomy unified so a single CLI/JUnit/Addie renderer can drive
+          // off `step.hints[]` regardless of which subsystem produced it.
+          if (r.hint) {
+            const existing = result.hints ?? [];
+            result.hints = [...existing, r.hint];
+          }
           if (!r.passed) {
             result.passed = false;
             assertionsFailed = true;
@@ -1723,10 +1734,38 @@ async function executeStep(
   // since the rejected value can't have come from this step's own
   // extraction.
   const stepFailed = !(passed && allValidationsPassed);
-  const hints =
+  const contextRejectionHints =
     stepFailed && runState.contextProvenance
       ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance, effectiveStep.task)
       : [];
+
+  // Shape-drift and strict-AJV hints fire on any step that has a parsed
+  // payload, regardless of pass/fail — issue #935 widened the gate so
+  // these structured diagnostics surface alongside the runner's existing
+  // `ValidationResult.warning` prose without depending on Zod rejection.
+  // Pre-process identically to validateResponseSchema: bare-array payloads
+  // pass through; object payloads have the SDK-internal `_message` field
+  // stripped so the detector sees what AJV does.
+  const driftPayload = (() => {
+    if (!hasData || !taskResult) return undefined;
+    const raw = taskResult.data;
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') {
+      const { _message, ...rest } = raw as Record<string, unknown>;
+      return rest;
+    }
+    return raw;
+  })();
+  const shapeDriftHints = driftPayload === undefined ? [] : detectShapeDriftHints(effectiveStep.task, driftPayload);
+  const strictHints = detectStrictValidationHints(effectiveStep.task, validations);
+  // Same root cause MAY produce both a `shape_drift` hint and a
+  // `format_mismatch` (keyword: 'type') hint — e.g. `list_creatives`
+  // returning a bare array. That's intentional co-emission, not a bug:
+  // shape_drift carries the fix recipe ("use listCreativesResponse() to
+  // wrap"); format_mismatch carries the structured RFC 6901 pointer +
+  // AJV schema_path so renderers can deep-link into the schema.
+  // Complementary fix lenses on the same fault.
+  const hints = [...contextRejectionHints, ...shapeDriftHints, ...strictHints];
 
   // Build next step preview
   const next = getNextStepPreview(step.id, allSteps, updatedContext, runState.runnerVars);
