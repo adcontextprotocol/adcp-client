@@ -76,6 +76,14 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const d = data as Record<string, unknown> | undefined;
     const buys = d?.media_buys as Array<Record<string, unknown>> | undefined;
     if (!buys?.[0]) return {};
+    // Don't extract a single-resource ID from a broad-list page. When
+    // has_more: true the caller is mid-pagination walk and buys[0] is not
+    // the canonical buy — extracting it here causes the enricher to inject
+    // media_buy_ids: [that_id] on the next step, turning a continuation into
+    // an ID-lookup. Conservative: === true matches the codebase convention
+    // (absent has_more is treated as terminal, not as a list-in-progress).
+    const pagination = d?.pagination as Record<string, unknown> | undefined;
+    if (pagination?.has_more === true) return {};
     return {
       media_buy_id: buys[0].media_buy_id,
       media_buy_status: buys[0].status,
