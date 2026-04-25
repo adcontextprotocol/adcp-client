@@ -21,19 +21,32 @@ The fix mirrors how peer paginated-read enrichers
 (`list_creatives`, `list_creative_formats`, `list_accounts`,
 `get_signals`) already operate: don't fabricate IDs.
 
-For `get_media_buy_delivery` (which requires `media_buy_ids` per the
-spec), the same change converts the silent NOT_FOUND failure mode
-(when no real ID was in context) into a surfacing INVALID_REQUEST
-that authors can debug.
+`get-media-buy-delivery-request.json` likewise has no top-level
+`required[]` — `media_buy_ids` is optional there too. The pre-fix
+`'unknown'` placeholder produced phantom NOT_FOUND responses on
+storyboards that omitted the field (the seller's `x-entity:
+media_buy` resolution couldn't find the placeholder); the
+empty-enricher post-fix lets fixtures be authoritative. Storyboards
+that intend to filter delivery by id must now declare
+`media_buy_ids` explicitly in `sample_request`.
 
 **Behavior**:
 
 - Context has a real `media_buy_id` → enricher injects it (unchanged).
 - Context lacks one → enricher returns `{}`; fixture's `sample_request`
   is authoritative. If the fixture also omits the field, the
-  request goes out without `media_buy_ids` (broad-list path for
-  `get_media_buys`; spec violation for `get_media_buy_delivery` that
-  the agent rejects cleanly).
+  request goes out without `media_buy_ids` — both endpoints accept
+  this; the seller returns a broad result set or applies its own
+  default scoping.
+
+**Migration**:
+
+Storyboards that previously relied on `media_buy_ids: ['unknown']`
+being coerced into a NOT_FOUND must now supply a real id via prior-
+step context (e.g. via `context_outputs.media_buy_id` on a preceding
+`create_media_buy`) or declare an explicit invalid id in
+`sample_request`. The phantom-NOT_FOUND path was always a bug; any
+storyboard that depended on it was masking an authoring gap.
 
 **Tests** (`test/lib/request-builder.test.js`): 8 new cases
 covering injection, broad-list pass-through, fixture precedence,

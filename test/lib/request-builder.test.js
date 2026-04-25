@@ -287,6 +287,35 @@ describe('Request Builder', () => {
       const result = buildRequest(step('get_media_buys'), context, DEFAULT_OPTIONS);
       assert.strictEqual(result.media_buy_ids, undefined);
     });
+
+    test('fixture sample_request wins over context injection', () => {
+      // Parity with the get_media_buy_delivery fixture-wins test.
+      // Pins that fixture overrides take precedence over context-id
+      // injection on both enrichers, so a future regression that
+      // makes context override fixture is caught on either side.
+      const context = { media_buy_id: 'mb_from_context' };
+      const fixture = { media_buy_ids: ['mb_from_fixture'] };
+      const result = buildRequest(step('get_media_buys', { sample_request: fixture }), context, DEFAULT_OPTIONS);
+      assert.deepStrictEqual(result.media_buy_ids, ['mb_from_fixture']);
+    });
+
+    test('non-string context types are filtered through the empty-enricher branch', () => {
+      // StoryboardContext = Record<string, unknown> — context.media_buy_id
+      // can legitimately be anything. The guard
+      // `typeof === 'string' && length > 0` filters every non-string
+      // (null, number, array, object) into the broad-list path. Pin
+      // this so a future refactor that loosens the guard doesn't
+      // re-introduce the placeholder-id failure mode.
+      for (const value of [null, undefined, 42, ['mb_x'], { id: 'mb_x' }, false]) {
+        const context = { media_buy_id: value };
+        const result = buildRequest(step('get_media_buys'), context, DEFAULT_OPTIONS);
+        assert.strictEqual(
+          result.media_buy_ids,
+          undefined,
+          `non-string context.media_buy_id (${JSON.stringify(value)}) must take the broad-list path`
+        );
+      }
+    });
   });
 
   describe('get_media_buy_delivery (#983)', () => {

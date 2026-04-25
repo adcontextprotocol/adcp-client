@@ -327,6 +327,10 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // status_filter"). The previous `'unknown'` fallback clobbered
     // broad-list fixtures with a placeholder id, blocking
     // pagination-integrity storyboards. Closes adcp-client#983.
+    //
+    // Posture matches peer paginated-read enrichers (`list_creatives`,
+    // `list_creative_formats`, `list_accounts`, `get_signals`) — none
+    // fabricate ids when context lacks one.
     if (typeof context.media_buy_id === 'string' && context.media_buy_id.length > 0) {
       return { media_buy_ids: [context.media_buy_id] };
     }
@@ -337,12 +341,17 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // Same posture as `get_media_buys`: inject the prior-step
     // `media_buy_id` when context has one; otherwise return empty
     // and let the fixture's `sample_request` be authoritative.
-    // `get_media_buy_delivery` requires `media_buy_ids` per the
-    // spec — without context, the fixture must declare them
-    // explicitly. The previous `'unknown'` placeholder produced
-    // silent NOT_FOUND responses on storyboards that omitted the
-    // field, masking authoring errors; the empty-object behavior
-    // surfaces them as INVALID_REQUEST instead.
+    //
+    // `get-media-buy-delivery-request.json` does NOT mark
+    // `media_buy_ids` as required (no top-level `required[]`); the
+    // spec is silent on omission semantics. Pre-fix, the SDK
+    // injected `'unknown'` and the seller's `x-entity: media_buy`
+    // resolution produced phantom NOT_FOUND responses, masking
+    // authoring errors. Post-fix, a fixture that intends to filter
+    // by id but forgets to declare `media_buy_ids` surfaces as
+    // INVALID_REQUEST (or an empty result set, depending on seller
+    // implementation) — the author sees the gap immediately rather
+    // than tracking down a phantom-id mystery.
     if (typeof context.media_buy_id === 'string' && context.media_buy_id.length > 0) {
       return { media_buy_ids: [context.media_buy_id] };
     }
