@@ -1212,7 +1212,16 @@ export interface MissingRequiredFieldHint extends StoryboardStepHintBase {
   instance_path: string;
   /** Pointer into the JSON schema that named the requirement. */
   schema_path: string;
-  /** Field name(s) the parent object was required to carry. */
+  /**
+   * Field name(s) the parent object was required to carry. Every entry is a
+   * bare identifier extracted from the AJV error message (via the pattern
+   * `required property 'X'`). AJV issues whose message does not match that
+   * pattern — e.g. a reworded or locale-variant message from a future AJV
+   * major or a custom AJV instance — are omitted rather than included
+   * verbatim. Callers can rely on every entry being a plain field name.
+   * The raw AJV issue message may still appear in `ValidationResult.warning`
+   * prose for human readers.
+   */
   missing_fields: string[];
   /** Resolvable schema URL (when the runner could attribute one). */
   schema_url?: string;

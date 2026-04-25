@@ -93,7 +93,11 @@ function groupRequiredIssues(
   for (const issue of issues) {
     const at = issue.instance_path || '';
     const match = issue.message.match(/required property ['"]([^'"]+)['"]/);
-    const field = match?.[1] ?? issue.message;
+    // When the regex doesn't match (e.g. compound AJV messages), skip rather
+    // than falling back to raw AJV prose — missing_fields must contain only
+    // clean field identifiers per its documented contract.
+    if (!match) continue;
+    const field = match[1];
     const entry = grouped.get(at);
     if (entry) {
       entry.fields.push(field);
