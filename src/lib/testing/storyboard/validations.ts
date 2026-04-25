@@ -64,6 +64,23 @@ export interface ValidationContext {
    * those checks self-skip with `not_applicable`.
    */
   a2aEnvelope?: A2ATaskEnvelope;
+  /**
+   * Most recent A2A envelope captured by a PRIOR step in the same run.
+   * Cross-step checks (`a2a_context_continuity`) read this to compare
+   * the current step's `Task.contextId` against the prior step's
+   * `Task.contextId` — A2A 0.3.0 mandates the server echo the
+   * client-supplied `contextId` on follow-up sends. Absent on the
+   * first A2A step in a run, on non-A2A runs, and when no prior step
+   * captured an envelope (e.g. all priors were probe steps).
+   */
+  priorA2aEnvelope?: A2ATaskEnvelope;
+  /**
+   * Step id of the prior step whose A2A envelope `priorA2aEnvelope`
+   * came from. Used by cross-step diagnostics to point operators at
+   * the exact prior step the continuity assertion is comparing
+   * against.
+   */
+  priorA2aStepId?: string;
 }
 
 /**
@@ -115,6 +132,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateAnyOf(validation, ctx.contributions);
     case 'a2a_submitted_artifact':
       return validateA2ASubmittedArtifact(validation, ctx);
+    case 'a2a_context_continuity':
+      return validateA2AContextContinuity(validation, ctx);
     case 'refs_resolve':
       return validateRefsResolve(validation, ctx);
     default:
@@ -1386,6 +1405,95 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
 // ────────────────────────────────────────────────────────────
 // refs_resolve (cross-step integrity check)
 // ────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────
+// a2a_context_continuity (cross-step A2A session-binding guard)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Assert that the A2A `Task.contextId` on this step's response
+ * matches the prior step's response. A2A 0.3.0 §7.1 binds follow-up
+ * sends to a server-side conversation via `Message.contextId`; the
+ * server MUST echo it on the response Task. The `@a2a-js/sdk`'s
+ * `DefaultRequestHandler` does this automatically — `createA2AAdapter`
+ * passes through `requestContext.contextId`, so a passing seller built
+ * on the SDK won't trip a single-call check. The regression class is
+ * sellers that bypass the SDK's request handler and stamp their own
+ * `contextId` on the response, breaking buyer-side correlation across
+ * a multi-turn flow (proposal refinement, IO signing, async approval).
+ *
+ * The check compares the current step's
+ * `ctx.a2aEnvelope.result.contextId` against the prior step's
+ * `ctx.priorA2aEnvelope.result.contextId`. Skip semantics:
+ *
+ *   - Non-A2A run (`a2aEnvelope` undefined) → skip
+ *   - First A2A step in a run (`priorA2aEnvelope` undefined) → skip
+ *   - Either envelope had no extractable `contextId` → skip
+ *   - JSON-RPC error envelope (`envelope.error` present) → skip
+ *
+ * Skips emit a single observation noting which condition triggered so
+ * triage can distinguish "validator self-skipped" from "validator
+ * passed because contexts matched".
+ */
+function validateA2AContextContinuity(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const current = ctx.a2aEnvelope;
+  const prior = ctx.priorA2aEnvelope;
+  const passResult = (observation: string): ValidationResult => ({
+    check: 'a2a_context_continuity',
+    passed: true,
+    description: validation.description,
+    observations: [observation],
+  });
+
+  if (!current)
+    return passResult('a2a_envelope_not_captured: skipped on non-A2A transport (or capture-bypassing dispatch path)');
+  if (!prior) return passResult('first_a2a_step: no prior A2A envelope to compare against; skipped');
+  if (current.envelope.error !== undefined || prior.envelope.error !== undefined) {
+    return passResult('jsonrpc_error_envelope: skipped — continuity is undefined for transport-rejected calls');
+  }
+
+  const currentContextId = extractContextIdFromEnvelope(current);
+  const priorContextId = extractContextIdFromEnvelope(prior);
+
+  if (priorContextId == null)
+    return passResult('prior_contextId_absent: prior step did not surface a Task.contextId; skipped');
+  if (currentContextId == null) {
+    return {
+      check: 'a2a_context_continuity',
+      passed: false,
+      description: validation.description,
+      error:
+        `Current step's response Task is missing \`contextId\` (prior step had ${JSON.stringify(priorContextId)}). ` +
+        'A2A 0.3.0 requires the server to echo the client-supplied contextId on every follow-up send; an empty/missing ' +
+        'contextId on a non-first send breaks buyer-side session correlation.',
+      json_pointer: '/result/contextId',
+      expected: priorContextId,
+      actual: currentContextId,
+    };
+  }
+  if (currentContextId !== priorContextId) {
+    const priorStepNote = ctx.priorA2aStepId ? ` (prior step: ${ctx.priorA2aStepId})` : '';
+    return {
+      check: 'a2a_context_continuity',
+      passed: false,
+      description: validation.description,
+      error:
+        `A2A \`Task.contextId\` diverged across steps${priorStepNote}: expected ${JSON.stringify(priorContextId)}, got ${JSON.stringify(currentContextId)}. ` +
+        "Per A2A 0.3.0 §7.1 the server MUST echo the client-supplied contextId on follow-up sends. A divergent value indicates the seller bypassed the SDK's request handler and stamped its own contextId — buyer-side session correlation is broken.",
+      json_pointer: '/result/contextId',
+      expected: priorContextId,
+      actual: currentContextId,
+    };
+  }
+  return { check: 'a2a_context_continuity', passed: true, description: validation.description };
+}
+
+function extractContextIdFromEnvelope(envelope: A2ATaskEnvelope): string | undefined {
+  const result = envelope.result;
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return undefined;
+  const ctxId = (result as Record<string, unknown>).contextId;
+  return typeof ctxId === 'string' && ctxId.length > 0 ? ctxId : undefined;
+}
 
 /**
  * Assert every ref in a source set resolves to a member of a target set.

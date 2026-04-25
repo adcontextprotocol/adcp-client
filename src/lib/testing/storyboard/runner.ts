@@ -536,6 +536,7 @@ async function executeStoryboardPass(
   const priorStepResults = new Map<string, StoryboardStepResult>();
   const priorProbes = new Map<string, HttpProbeResult>();
   const contextProvenance = new Map<string, ContextProvenanceEntry>();
+  const priorA2aEnvelopes = new Map<string, A2ATaskEnvelope>();
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
@@ -814,6 +815,7 @@ async function executeStoryboardPass(
         webhookReceiver,
         runnerVars,
         contextProvenance,
+        priorA2aEnvelopes,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance) {
@@ -1283,6 +1285,7 @@ export async function runStoryboardStep(
     webhookReceiver,
     runnerVars,
     contextProvenance,
+    priorA2aEnvelopes: new Map(),
   });
 
   if (!options._client) {
@@ -1314,6 +1317,19 @@ interface ExecutionState {
    * the shallow-merge semantics of the context itself.
    */
   contextProvenance?: Map<string, ContextProvenanceEntry>;
+  /**
+   * Per-step A2A envelopes captured during the run, keyed by step id.
+   * Cross-step A2A validators (`a2a_context_continuity`) read this to
+   * compare consecutive `Task.contextId` values. The map is mutated
+   * by `executeStep` after each step's capture; reads pick the most
+   * recently inserted entry to seed `priorA2aEnvelope` on the
+   * ValidationContext for the next step. Issue adcp-client#962.
+   *
+   * Map shared by reference across `executeStep` invocations — like
+   * `priorStepResults`, this is the state that has to live one level
+   * up from the per-step `ExecutionState` literal.
+   */
+  priorA2aEnvelopes?: Map<string, A2ATaskEnvelope>;
 }
 
 async function executeStep(
@@ -1669,11 +1685,39 @@ async function executeStep(
       ...(responseRecord && { response: responseRecord }),
       storyboardContext: context,
       ...(a2aEnvelope && { a2aEnvelope }),
+      ...(() => {
+        // Walk back through the run's captured A2A envelopes and use
+        // the most recent prior step's envelope as the comparison
+        // baseline. The map preserves insertion order, so the last
+        // entry is the most recent prior step's capture.
+        const map = runState.priorA2aEnvelopes;
+        if (!map || map.size === 0) return {};
+        let priorStepId: string | undefined;
+        let priorEnv: A2ATaskEnvelope | undefined;
+        for (const [stepId, env] of map) {
+          priorStepId = stepId;
+          priorEnv = env;
+        }
+        return {
+          ...(priorEnv && { priorA2aEnvelope: priorEnv }),
+          ...(priorStepId && { priorA2aStepId: priorStepId }),
+        };
+      })(),
     };
     validations = runValidations(resolvedValidations, vctx);
   }
 
   const allValidationsPassed = validations.every(v => v.passed);
+
+  // Persist the captured A2A envelope keyed by step id so cross-step
+  // validators (`a2a_context_continuity`) on subsequent steps can
+  // compare against it. Only fires when this step actually captured
+  // an envelope — probe steps, MCP steps, and capture-bypass paths
+  // don't insert, so cross-step comparisons walk back to the most
+  // recent A2A step automatically via insertion-order iteration.
+  if (a2aEnvelope && runState.priorA2aEnvelopes) {
+    runState.priorA2aEnvelopes.set(step.id, a2aEnvelope);
+  }
 
   // Extract context from responses. Forward the alias cache so
   // `$generate:uuid_v4#<alias>` placeholders in subsequent steps resolve
