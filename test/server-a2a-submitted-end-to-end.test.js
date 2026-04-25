@@ -82,17 +82,11 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
       // tool over `message/send`. First two polls return working;
       // third returns completed with the result data.
     });
-    // Mount a `tasks/get` AdCP tool on the same server. The
-    // `createAdcpServer` builder doesn't wire arbitrary custom
-    // tools, so register one directly via the underlying SDK
-    // server. (Pattern mirrors how seller agents register custom
-    // tools in production.)
-    const server = require('../dist/lib/server/create-adcp-server');
-    const sdkServer = server.getSdkServer ? server.getSdkServer(fixture.adcp) : null;
-    // Fall back to driving polls via the protocol client mock
-    // (cleaner approach: monkey-patch ProtocolClient.callTool to
-    // intercept tasks/get without hooking into the seller's tool
-    // registration surface).
+    // Drive polls via a `ProtocolClient.callTool` monkey-patch
+    // rather than registering a `tasks/get` tool on the seller —
+    // we want to assert on the exact arguments the SDK dispatches
+    // (snake_case `task_id`), and a real seller-side tool
+    // registration would obscure that surface.
     const { ProtocolClient } = require('../dist/lib/index');
     const originalCallTool = ProtocolClient.callTool;
     ProtocolClient.callTool = async (agent, toolName, params, ...rest) => {
