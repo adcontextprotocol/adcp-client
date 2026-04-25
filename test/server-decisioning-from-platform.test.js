@@ -161,6 +161,277 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
   });
 });
 
+describe('SalesPlatform — full surface dispatch', () => {
+  function buildSalesPlatform(salesOverrides) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async () => ({ kind: 'sync', result: [] }),
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      statusMappers: {},
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ kind: 'sync', result: { media_buy_id: 'mb_1' } }),
+        updateMediaBuy: async () => ({ kind: 'sync', result: { media_buy_id: 'mb_1' } }),
+        syncCreatives: async () => ({ kind: 'sync', result: [] }),
+        getMediaBuyDelivery: async () => ({ kind: 'sync', result: { media_buys: [] } }),
+        ...salesOverrides,
+      },
+    };
+  }
+
+  function buildServer(platform) {
+    return createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+  }
+
+  it('createMediaBuy sync arm projects to wire success', async () => {
+    const platform = buildSalesPlatform({
+      createMediaBuy: async () => ({
+        kind: 'sync',
+        result: {
+          media_buy_id: 'mb_42',
+          status: 'pending_creatives',
+          packages: [],
+        },
+      }),
+    });
+    const server = buildServer(platform);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.media_buy_id, 'mb_42');
+  });
+
+  it('createMediaBuy submitted arm projects to wire submitted envelope', async () => {
+    const platform = buildSalesPlatform({
+      createMediaBuy: async () => ({
+        kind: 'submitted',
+        taskHandle: { taskId: 'task_pending_approval', notify: () => {} },
+        message: 'Awaiting trafficker approval',
+      }),
+    });
+    const server = buildServer(platform);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    assert.strictEqual(result.structuredContent.task_id, 'task_pending_approval');
+    assert.strictEqual(result.structuredContent.message, 'Awaiting trafficker approval');
+  });
+
+  it('createMediaBuy rejected arm projects to ADCP_ERROR envelope', async () => {
+    const platform = buildSalesPlatform({
+      createMediaBuy: async () => ({
+        kind: 'rejected',
+        error: { code: 'BUDGET_TOO_LOW', recovery: 'correctable', message: 'floor is $5 CPM' },
+      }),
+    });
+    const server = buildServer(platform);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'BUDGET_TOO_LOW');
+    assert.strictEqual(result.structuredContent.adcp_error.recovery, 'correctable');
+  });
+
+  it('updateMediaBuy submitted arm yields INVALID_STATE (no wire submitted arm)', async () => {
+    const platform = buildSalesPlatform({
+      updateMediaBuy: async () => ({
+        kind: 'submitted',
+        taskHandle: { taskId: 'task_reapproval', notify: () => {} },
+      }),
+    });
+    const server = buildServer(platform);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'update_media_buy',
+        arguments: {
+          media_buy_id: 'mb_1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_STATE');
+    assert.strictEqual(result.structuredContent.adcp_error.details.task_id, 'task_reapproval');
+  });
+
+  it('syncCreatives submitted arm projects to wire submitted envelope', async () => {
+    const platform = buildSalesPlatform({
+      syncCreatives: async () => ({
+        kind: 'submitted',
+        taskHandle: { taskId: 'task_creative_review', notify: () => {} },
+        message: '4-72h manual review queued',
+      }),
+    });
+    const server = buildServer(platform);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_creatives',
+        arguments: {
+          creatives: [],
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    assert.strictEqual(result.structuredContent.task_id, 'task_creative_review');
+  });
+});
+
+describe('CreativeTemplatePlatform + AudiencePlatform wiring', () => {
+  it('build_creative dispatches through platform.creative.buildCreative', async () => {
+    let sawReq;
+    const platform = {
+      capabilities: {
+        specialisms: ['creative-template'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async () => ({ kind: 'sync', result: [] }),
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      statusMappers: {},
+      creative: {
+        buildCreative: async req => {
+          sawReq = req;
+          return { kind: 'sync', result: { manifest_id: 'mf_1', assets: [] } };
+        },
+        previewCreative: async () => ({ kind: 'sync', result: { preview_url: 'https://example.com/p' } }),
+        syncCreatives: async () => ({ kind: 'sync', result: [] }),
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'build_creative',
+        arguments: {
+          format_id: { id: 'standard', agent_url: 'https://example.com/mcp' },
+          creative_manifest: { assets: [] },
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(sawReq, 'creative.buildCreative should be invoked');
+  });
+
+  it('sync_audiences dispatches through platform.audiences.syncAudiences', async () => {
+    let sawAudiences;
+    const platform = {
+      capabilities: {
+        specialisms: ['audience-sync'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async () => ({ kind: 'sync', result: [] }),
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      statusMappers: {},
+      audiences: {
+        syncAudiences: async audList => {
+          sawAudiences = audList;
+          return {
+            kind: 'sync',
+            result: audList.map(a => ({
+              audience_id: a.audience_id,
+              action: 'created',
+              status: 'matching',
+              match_rate: 0,
+            })),
+          };
+        },
+        getAudienceStatus: async () => 'matching',
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_audiences',
+        arguments: {
+          audiences: [{ audience_id: 'aud_1', identifiers: ['email1', 'email2'] }],
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(sawAudiences, 'audiences.syncAudiences should be invoked');
+    assert.strictEqual(sawAudiences[0].audience_id, 'aud_1');
+  });
+});
+
 describe('validatePlatform', () => {
   it('passes when claimed specialism has its required platform interface', () => {
     const platform = buildPlatform();
