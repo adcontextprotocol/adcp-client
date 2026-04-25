@@ -168,6 +168,7 @@
     "compliance:agent-skill": "tsx scripts/manual-testing/agent-skill-storyboard.ts",
     "compliance:skill-matrix": "tsx scripts/manual-testing/run-skill-matrix.ts",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
+    "check:skill-sync": "tsx scripts/check-skill-sync.ts",
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
     "lint": "eslint 'src/lib/testing/**/*.ts'",
