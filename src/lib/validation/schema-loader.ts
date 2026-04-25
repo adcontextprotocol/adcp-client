@@ -74,22 +74,15 @@ function loadJson(file: string): LoadedSchema {
 }
 
 /**
- * Clear `additionalProperties: false` at the response root so envelope
- * fields (`replayed`, `context`, `ext`, and future envelope additions)
- * can ride alongside the tool-specific body — per security.mdx the
- * envelope is always extensible. Upstream bundled schemas pin
- * `additionalProperties: false` at the root on a handful of mutating
- * tools (the property-list family), which rejects envelope fields like
- * `replayed` that aren't declared in the tool-specific body.
+ * Remove `additionalProperties: false` at the root of a JSON Schema object
+ * and at the root of each direct branch of a root-level `oneOf`/`anyOf`/`allOf`.
+ * Nested schemas are left untouched.
  *
- * Scope is deliberately narrow: only the top-level object, plus each
- * direct branch of a root-level `oneOf` / `anyOf` / `allOf`. Nested
- * bodies stay strict so response-side drift detection still catches
- * typos inside `Product`, `Package`, `MediaBuy` etc. Applied only to
- * response variants; request schemas stay strict so outgoing drift
- * fails at the edge.
+ * Used by both the response-validation path (to allow envelope fields like
+ * `replayed`, `context`, `ext`) and the MCP `tools/list` advertising path
+ * (to prevent the SDK from rejecting envelope fields if it validates).
  */
-function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
+function relaxAdditionalPropertiesFalse(schema: LoadedSchema): LoadedSchema {
   const clone = { ...schema };
   if (clone.additionalProperties === false) {
     clone.additionalProperties = true;
@@ -108,6 +101,26 @@ function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
     }
   }
   return clone;
+}
+
+/**
+ * Clear `additionalProperties: false` at the response root so envelope
+ * fields (`replayed`, `context`, `ext`, and future envelope additions)
+ * can ride alongside the tool-specific body — per security.mdx the
+ * envelope is always extensible. Upstream bundled schemas pin
+ * `additionalProperties: false` at the root on a handful of mutating
+ * tools (the property-list family), which rejects envelope fields like
+ * `replayed` that aren't declared in the tool-specific body.
+ *
+ * Scope is deliberately narrow: only the top-level object, plus each
+ * direct branch of a root-level `oneOf` / `anyOf` / `allOf`. Nested
+ * bodies stay strict so response-side drift detection still catches
+ * typos inside `Product`, `Package`, `MediaBuy` etc. Applied only to
+ * response variants; request schemas stay strict so outgoing drift
+ * fails at the edge.
+ */
+function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
+  return relaxAdditionalPropertiesFalse(schema);
 }
 
 /**
@@ -305,11 +318,8 @@ export function getRawRequestSchema(toolName: string): Record<string, unknown> |
     const file = s.fileIndex.get(`${toolName}::request`);
     if (!file) return null;
     if (!file.includes(`${path.sep}bundled${path.sep}`)) return null;
-    const raw = loadJson(file) as Record<string, unknown>;
-    if (raw.additionalProperties === false) {
-      return { ...raw, additionalProperties: true };
-    }
-    return raw;
+    const raw = loadJson(file);
+    return relaxAdditionalPropertiesFalse(raw) as Record<string, unknown>;
   } catch {
     return null;
   }

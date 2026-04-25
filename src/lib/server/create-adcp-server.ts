@@ -2710,6 +2710,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // root so the SDK does not reject envelope fields if it validates.
       // Falls back to the passthrough Zod schema for flat-tree tools and
       // when schemas are not yet synced.
+      // `AnySchema` (from @modelcontextprotocol/sdk/server/zod-compat.js) accepts
+      // both Zod objects and raw JSON Schema objects. The cast is safe: when a
+      // raw JSON Schema is passed, the SDK uses it for tools/list serialisation
+      // only and does not call .parse() on it — argument delivery falls through
+      // to the handler unchanged, same as the Zod passthrough path.
       const advertisedInputSchema =
         (getRawRequestSchema(toolName) as Parameters<typeof server.registerTool>[1]['inputSchema']) ??
         PASSTHROUGH_INPUT_SCHEMA;
