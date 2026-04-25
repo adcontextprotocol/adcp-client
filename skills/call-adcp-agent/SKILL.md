@@ -1,29 +1,31 @@
 ---
 name: call-adcp-agent
-description: Use when calling an AdCP agent as a buyer — media buys, signal lookups, creative sync, delivery reports. Covers the wire contract, minimal payload shapes, async flow (`status:'submitted'` + `task_id`), and error recovery from `adcp_error.issues[]`.
+description: Wire-level invariants for any AdCP buyer call — idempotency_key replay semantics, account `oneOf` variants, async `status:'submitted'`+`task_id` polling, error recovery from `adcp_error.issues[]`. Load before any per-protocol task skill (adcp-media-buy, adcp-creative, adcp-signals, adcp-governance, adcp-si, adcp-brand) when calling an AdCP agent as a buyer.
+adcp_version: "3.x"
+type: cross-cutting
 ---
 
 # Call an AdCP agent
 
 ## Overview
 
-AdCP (Ad Context Protocol) agents expose a fixed tool surface (`get_products`, `create_media_buy`, `get_signals`, …) over MCP or A2A. Tool names come from `get_adcp_capabilities`; exact request/response shapes live in the spec's bundled JSON Schemas at `schemas/cache/3.0.0/bundled/<protocol>/<tool>-{request,response}.json` (or via `get_schema` when the agent exposes it). This skill teaches the invariants that don't live cleanly in any schema: cross-tool patterns, async flow, error recovery.
+AdCP (Ad Context Protocol) agents expose a fixed tool surface (`get_products`, `create_media_buy`, `get_signals`, …) over MCP or A2A. Tool names come from `get_adcp_capabilities`; exact request/response shapes live in the spec's bundled JSON Schemas at `dist/schemas/<adcp-version>/bundled/<protocol>/<tool>-{request,response}.json` (or via `get_schema` when the agent exposes it). This skill teaches the invariants that don't live cleanly in any schema: cross-tool patterns, async flow, error recovery.
 
 ## When to Use
 
 - User wants to call a publisher / SSP / retail media network over AdCP
 - Tool names like `get_products`, `create_media_buy`, `sync_creatives`, `get_signals` appear in the available-tools list
 - Agent card advertises `protocolVersion: '0.3.0'` with `skills` listing AdCP tool names
-- **Not this skill:** building an AdCP seller agent (see `skills/build-seller-agent/`)
+- **Not this skill:** building an AdCP seller agent (see `@adcp/client/skills/build-seller-agent/` and analogous SDK skills)
 
 ## Discovery chain
 
 Walk these in order on first contact:
 
-1. **Agent card** (A2A) or **`tools/list`** (MCP): returns tool NAMES. Post-`@adcp/client` [#915](https://github.com/adcontextprotocol/adcp-client/pull/915), `tools/list` no longer publishes per-tool parameter schemas — everything shows `{type: 'object', properties: {}}`. Don't try to infer shape from here.
+1. **Agent card** (A2A) or **`tools/list`** (MCP): returns tool NAMES. AdCP MCP servers no longer publish per-tool parameter schemas in `tools/list` — everything shows `{type: 'object', properties: {}}`. Don't try to infer shape from here.
 2. **`get_adcp_capabilities`**: returns supported protocols (`media_buy`, `signals`, `creative`, …), AdCP major versions, feature flags. Tells you WHICH tools this agent supports, not how to call them.
-3. **`get_schema(tool_name)`** *(when the agent exposes it — upstream [adcp#3057](https://github.com/adcontextprotocol/adcp/issues/3057))*: returns the JSON Schema for a tool's request/response. Preferred over reading bundled schemas when available.
-4. **Bundled schemas** (offline, authoritative): `schemas/cache/3.0.0/bundled/<protocol>/<tool>-request.json` and `-response.json`. `npm run sync-schemas` in `@adcp/client` pulls them from the spec repo; substitute your target AdCP major version in the path.
+3. **`get_schema(tool_name)`** *(when the agent exposes it — pending standardization in [#3057](https://github.com/adcontextprotocol/adcp/issues/3057), not yet universal)*: returns the JSON Schema for a tool's request/response. Preferred over reading bundled schemas when available.
+4. **Bundled schemas** (offline, authoritative): `dist/schemas/<adcp-version>/bundled/<protocol>/<tool>-request.json` and `-response.json`. The adcp main repo publishes these; SDKs sync them (`npm run sync-schemas` in `@adcp/client`, equivalents in other SDKs). Substitute your target AdCP major version in the path.
 
 ## Non-obvious rules every buyer must follow
 
@@ -241,12 +243,13 @@ If your symptom isn't here, fall through to the next section.
 Priority order:
 
 1. Re-read the failure's `issues[]`. The pointer list plus this skill covers 80% of cases.
-2. Call `get_schema(tool_name)` if the agent exposes it (adcp#3057).
-3. Read the bundled JSON Schema at `schemas/cache/3.0.0/bundled/<protocol>/<tool>-request.json`.
-4. Consult `docs/guides/VALIDATE-YOUR-AGENT.md` in `@adcp/client` for per-specialism patterns.
+2. Call `get_schema(tool_name)` if the agent exposes it (see [#3057](https://github.com/adcontextprotocol/adcp/issues/3057) for the pending standard).
+3. Read the bundled JSON Schema at `dist/schemas/<adcp-version>/bundled/<protocol>/<tool>-request.json`.
+4. Consult the per-protocol skill in this repo (`skills/adcp-media-buy/`, `skills/adcp-creative/`, …) for specialism-specific patterns.
 
 ## Related
 
-- `skills/build-seller-agent/SKILL.md` — building agents on the other side of the call
-- `docs/guides/BUILD-AN-AGENT.md` — framework reference
-- `schemas/cache/3.0.0/` — canonical JSON Schemas (every tool, pinned to the AdCP version `@adcp/client` bundles)
+- [Calling an agent (docs)](https://adcontextprotocol.org/docs/protocol/calling-an-agent) — human-readable narrative form of this skill
+- `skills/adcp-media-buy/`, `skills/adcp-creative/`, `skills/adcp-signals/`, `skills/adcp-governance/`, `skills/adcp-si/`, `skills/adcp-brand/` — per-protocol task skills (layered on top of this one)
+- `@adcp/client/skills/build-seller-agent/SKILL.md` — building agents on the other side of the call
+- `dist/schemas/<adcp-version>/bundled/` — canonical JSON Schemas (every tool, pinned to the AdCP version)
