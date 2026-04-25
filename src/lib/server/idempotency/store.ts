@@ -114,6 +114,15 @@ export interface IdempotencyBackend {
    */
   delete(scopedKey: string): Promise<void>;
   /**
+   * Optional startup probe. Implementations that wrap an external store
+   * (e.g., `pgBackend`) should implement this to eagerly validate the
+   * connection before the server starts accepting traffic. Called by
+   * `probeIdempotencyStore()` and by `serve()` when `readinessCheck` is
+   * wired. Throws a descriptive error when the backend is unreachable or
+   * the required schema is missing.
+   */
+  probe?(): Promise<void>;
+  /**
    * Optional hook for implementations that need to release resources
    * (close pools, clear timers). Called by `store.close()`.
    */
@@ -256,6 +265,13 @@ export interface IdempotencyStore {
     extraScope?: string;
   }): Promise<void>;
   /**
+   * Probe the backend at server startup. Delegates to `backend.probe()` if
+   * the backend implements it; otherwise resolves immediately. Wire into
+   * `serve()` via `readinessCheck: () => store.probe()` so the server
+   * never accepts traffic with a broken pool.
+   */
+  probe?(): Promise<void>;
+  /**
    * Capability fragment for `get_adcp_capabilities` — tells buyers the
    * replay window so they can reason about retry safety. Pass to
    * `createAdcpServer` via `capabilities.idempotency`.
@@ -391,6 +407,10 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       await backend.put(scopedKey, { payloadHash, response, expiresAt });
     },
 
+    async probe() {
+      if (backend.probe) await backend.probe();
+    },
+
     capability() {
       return { replay_ttl_seconds: ttlSeconds };
     },
@@ -466,6 +486,23 @@ function scope(principal: string, key: string, extraScope?: string): string {
   return extraScope
     ? `${principal}${SCOPE_SEPARATOR}${extraScope}${SCOPE_SEPARATOR}${key}`
     : `${principal}${SCOPE_SEPARATOR}${key}`;
+}
+
+/**
+ * Escape-hatch for callers that manage their own lifecycle (Lambda, custom
+ * HTTP frameworks) and cannot use `serve({ readinessCheck })`. Delegates to
+ * `store.probe()`. For servers built with `serve()`, prefer:
+ *
+ * ```ts
+ * serve(createAgent, { readinessCheck: () => store.probe() });
+ * ```
+ *
+ * Resolves immediately when the backend has no `probe()` (e.g., `memoryBackend`).
+ * Throws with a descriptive error when the backend is unreachable or its
+ * required schema is missing.
+ */
+export async function probeIdempotencyStore(store: IdempotencyStore): Promise<void> {
+  if (store.probe) await store.probe();
 }
 
 function validateTtl(seconds: number): number {

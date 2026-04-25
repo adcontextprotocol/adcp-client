@@ -261,8 +261,9 @@ import {
   serve,
 } from '@adcp/client/server';
 
+// Development — in-process store, resets on restart:
 const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),       // or pgBackend(pool) — run getIdempotencyMigration() once
+  backend: memoryBackend(),
   ttlSeconds: 86400,              // 1h–7d, clamped to spec bounds
 });
 
@@ -278,6 +279,24 @@ serve(() => createAdcpServer({
     }),
   },
 }));
+```
+
+**Production (pgBackend).** `pg.Pool` is lazy — a bad `DATABASE_URL` lets the server boot, advertise `IdempotencySupported`, then silently fail every mutating call. Wire `readinessCheck` so the server never accepts traffic with a broken pool:
+
+```typescript
+import { createIdempotencyStore, pgBackend, getIdempotencyMigration, serve } from '@adcp/client/server';
+import { Pool } from 'pg';
+
+// Run getIdempotencyMigration() once before first boot to create the table —
+// readinessCheck below queries it to catch missing migrations, not just connectivity.
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+pool.on('error', (err) => console.error('pg pool error', err)); // prevent crash on idle-client errors
+const idempotency = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
+
+serve(createAdcpServer, {
+  readinessCheck: () => idempotency.probe(), // throws with a descriptive error if pool/table is broken
+});
 ```
 
 The framework auto-handles:

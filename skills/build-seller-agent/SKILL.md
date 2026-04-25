@@ -1193,6 +1193,16 @@ If the validation can only run after a partial write (rare), make the write itse
 
 The quick-start uses `memoryBackend()` + `InMemoryStateStore` — both reset on process restart and don't scale across replicas. Production swaps three pieces: `createIdempotencyStore({ backend: pgBackend(pool) })`, `PostgresStateStore(pool)`, `PostgresTaskStore(pool)`. Run the three migrations at boot (`getIdempotencyMigration()`, `getAdcpStateMigration()`, `MCP_TASKS_MIGRATION`), wire `cleanupExpiredIdempotency(pool)` on an hourly cron, and set `resolveAccount` to hit your real DB instead of `InMemoryStateStore`. Full worked example with Pool sizing and multi-tenant principal resolution lives in [`docs/guides/BUILD-AN-AGENT.md`](../../docs/guides/BUILD-AN-AGENT.md) § Going to Production.
 
+**Critical: probe the pool at boot.** `pg.Pool` is lazy — `new Pool({ connectionString })` does not validate the URL. A bad `DATABASE_URL` lets the server start, advertise `IdempotencySupported`, and then silently fail every mutating call. Wire `readinessCheck` on `serve()` so the server never accepts traffic with a broken pool:
+
+```ts
+const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
+pool.on('error', (err) => console.error('pg pool error', err)); // prevent crash on idle-client errors
+serve(createAgent, {
+  readinessCheck: () => store.probe(), // throws with a descriptive error if pool/table is broken
+});
+```
+
 Auth is not wired in the example — see [§ Protecting your agent](#protecting-your-agent) below.
 
 ## Deployment beyond single-host HTTP
