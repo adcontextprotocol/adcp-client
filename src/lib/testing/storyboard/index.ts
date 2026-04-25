@@ -82,6 +82,7 @@ export {
   getFirstStepPreview,
   summarizeStrictValidation,
   listStrictOnlyFailures,
+  resolveCapabilityPath,
 } from './runner';
 
 // Parser (single-file load for spec evolution / targeted testing)

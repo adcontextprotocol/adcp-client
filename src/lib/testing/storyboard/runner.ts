@@ -123,8 +123,13 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
  * intermediate value is not an object — the caller treats `undefined` as
  * "path absent" and does NOT skip the storyboard (absence means the agent
  * hasn't explicitly opted out, so failing the storyboard surfaces the gap).
+ *
+ * Exported for direct testing. Inline copies of this logic in test code
+ * silently drift from the runtime when edge cases (null prototypes,
+ * Symbol keys, prototype-chain access) get tightened — testing the real
+ * implementation forecloses that class of bug.
  */
-function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown {
+export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown {
   const keys = dottedPath.split('.');
   let current: unknown = raw;
   for (const key of keys) {
@@ -495,6 +500,15 @@ async function executeStoryboardPass(
     if (rawCaps !== undefined) {
       const { path, equals } = storyboard.requires_capability;
       const actual = resolveCapabilityPath(rawCaps, path);
+      // Absence semantics — load-bearing. `actual === undefined` means
+      // the agent didn't declare the capability at all (field missing
+      // from `get_adcp_capabilities` response). We deliberately RUN the
+      // storyboard in that case rather than skip it: an agent that
+      // pre-dates the capability field hasn't explicitly opted out, so
+      // the storyboard's failures surface a real spec-coverage gap
+      // (under-declared agent) rather than a behavior the agent
+      // affirmatively refused. Skip ONLY when the agent declared a
+      // value AND that value disagrees with the predicate.
       if (actual !== undefined && actual !== equals) {
         const detail =
           `Capability predicate \`${path} === ${JSON.stringify(equals)}\` not satisfied: ` +
