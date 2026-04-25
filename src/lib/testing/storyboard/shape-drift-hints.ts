@@ -42,6 +42,7 @@ export const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: st
   list_property_lists: { wrapperKey: 'lists', helper: 'listPropertyListsResponse' },
   list_collection_lists: { wrapperKey: 'lists', helper: 'listCollectionListsResponse' },
   list_content_standards: { wrapperKey: 'standards', helper: 'listContentStandardsResponse' },
+  get_plan_audit_logs: { wrapperKey: 'plans', helper: 'getPlanAuditLogsResponse' },
 };
 
 /**

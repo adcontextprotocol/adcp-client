@@ -29,6 +29,7 @@ export {
   listPropertyListsResponse,
   listCollectionListsResponse,
   listContentStandardsResponse,
+  getPlanAuditLogsResponse,
   syncCreativesResponse,
   getSignalsResponse,
   activateSignalResponse,

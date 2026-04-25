@@ -337,6 +337,17 @@ test('list_content_standards with bare array → hint suggests { standards: [...
   assert.match(hint, /listContentStandardsResponse/);
 });
 
+test('get_plan_audit_logs with bare array → hint suggests { plans: [...] }', () => {
+  // Wrapper key is `plans`, not `logs` — the schema bundles audit entries
+  // under each plan record (`plans[].entries[]`), and the response root
+  // exposes `plans`. Issue #856's body said `logs`; verified against
+  // schemas/cache/3.0.0/governance/get-plan-audit-logs-response.json.
+  const hint = detectShapeDriftHint('get_plan_audit_logs', [{ plan_id: 'plan1', plan_version: 1, status: 'active' }]);
+  assert.ok(hint);
+  assert.match(hint, /\{ plans: \[\.\.\.\] \}/);
+  assert.match(hint, /getPlanAuditLogsResponse/);
+});
+
 test('null / primitive payloads → no hint (detector exits cleanly)', () => {
   // Defensive: the detector must handle `null`, strings, numbers without
   // throwing — they're not a shape-drift pattern but they'd otherwise crash

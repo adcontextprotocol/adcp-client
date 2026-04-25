@@ -55,6 +55,7 @@ import type {
   ListPropertyListsResponse,
   ListCollectionListsResponse,
   ListContentStandardsResponse,
+  GetPlanAuditLogsResponse,
   ReportUsageRequest,
   ReportUsageResponse,
   SyncAccountsResponse,
@@ -375,6 +376,23 @@ export function listContentStandardsResponse(data: ListContentStandardsResponse,
       : 'Content standards lookup error';
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Build a get_plan_audit_logs response. Wraps the audit data array under
+ * the required `plans` key — handlers that return a bare array trip the
+ * storyboard runner's shape-drift hint.
+ */
+export function getPlanAuditLogsResponse(data: GetPlanAuditLogsResponse, summary?: string): McpToolResponse {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: summary ?? `Audit data for ${data.plans.length} plan${data.plans.length === 1 ? '' : 's'}`,
+      },
+    ],
     structuredContent: toStructuredContent(data),
   };
 }

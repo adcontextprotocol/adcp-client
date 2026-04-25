@@ -38,6 +38,21 @@ describe('detectShapeDriftHints: bare-array → list-tool wrapper', () => {
     assert.match(hint.message, /productsResponse/);
   });
 
+  test('get_plan_audit_logs bare array → expected_variant names the plans wrapper', () => {
+    // Schema wraps plan audit data under `plans`, not `logs` — issue #856
+    // body's `logs` claim is incorrect; the response shape is
+    // `{ plans: [{ plan_id, ..., entries: [...] }] }` per
+    // schemas/cache/3.0.0/governance/get-plan-audit-logs-response.json.
+    const [hint] = detectShapeDriftHints('get_plan_audit_logs', [{ plan_id: 'p1' }]);
+    assert.ok(hint, 'expected exactly one hint');
+    assert.equal(hint.kind, 'shape_drift');
+    assert.equal(hint.tool, 'get_plan_audit_logs');
+    assert.equal(hint.observed_variant, 'bare_array');
+    assert.equal(hint.expected_variant, '{ plans: [...] }');
+    assert.equal(hint.instance_path, '');
+    assert.match(hint.message, /getPlanAuditLogsResponse/);
+  });
+
   test('unknown tool with bare array → no hint (avoids false positives)', () => {
     const hints = detectShapeDriftHints('unknown_tool', [{ id: 1 }]);
     assert.deepEqual(hints, []);
