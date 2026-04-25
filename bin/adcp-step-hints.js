@@ -125,6 +125,63 @@ function wrap(text, bodyWidth) {
 }
 
 /**
+ * Build the per-kind structured detail line(s) appended after the prose
+ * `message` so renderers / operators / LLMs see the machine-readable
+ * fields without having to regex-parse the message text. Each detail
+ * is a single short line (`├─ <label>: <value>`) suitable for the
+ * console; dropping into JSON-line / JUnit consumers stays trivial
+ * because the same fields exist on the structured hint object.
+ *
+ * The function returns an array (zero or more lines). An unknown
+ * `kind` returns `[]` so the renderer falls back to the prose-only
+ * surface — issue #935's forward-contract for new hint kinds.
+ */
+function structuredDetailLines(hint) {
+  if (!hint || typeof hint !== 'object') return [];
+  switch (hint.kind) {
+    case 'context_value_rejected':
+      return [
+        `key: $context.${hint.context_key}`,
+        `from step: ${hint.source_step_id}${hint.source_task ? ` (${hint.source_task})` : ''}`,
+        ...(Array.isArray(hint.accepted_values) && hint.accepted_values.length > 0
+          ? [`seller accepted: ${formatList(hint.accepted_values)}`]
+          : []),
+      ];
+    case 'shape_drift':
+      return [
+        `tool: ${hint.tool}`,
+        `observed: ${hint.observed_variant}`,
+        `expected: ${hint.expected_variant}`,
+        ...(hint.instance_path ? [`at: ${hint.instance_path}`] : []),
+      ];
+    case 'missing_required_field':
+      return [
+        `tool: ${hint.tool}`,
+        `at: ${hint.instance_path || '/'}`,
+        `missing: ${formatList(hint.missing_fields ?? [])}`,
+      ];
+    case 'format_mismatch':
+      return [`tool: ${hint.tool}`, `at: ${hint.instance_path || '/'}`, `keyword: ${hint.keyword}`];
+    case 'monotonic_violation':
+      return [
+        `${hint.resource_type} ${hint.resource_id}: ${hint.from_status} → ${hint.to_status}`,
+        `from step: ${hint.from_step_id}`,
+        `legal next states: ${
+          Array.isArray(hint.legal_next_states) && hint.legal_next_states.length > 0
+            ? formatList(hint.legal_next_states)
+            : '(none — terminal state)'
+        }`,
+      ];
+    default:
+      return [];
+  }
+}
+
+function formatList(values) {
+  return values.map(v => (typeof v === 'string' ? v : JSON.stringify(v))).join(', ');
+}
+
+/**
  * Print each hint on its own block, prefixed with the hint icon. `indent`
  * should match the caller's `Error:` indent so hints group visually —
  * 3 spaces for the full storyboard printer (which nests steps under
@@ -133,13 +190,14 @@ function wrap(text, bodyWidth) {
  *
  * Long messages are word-wrapped to the terminal width (or 100 cols when
  * stdout isn't a TTY) with continuation lines aligned under the message
- * text, so a wrapped hint reads as a paragraph rather than a runaway line:
+ * text, so a wrapped hint reads as a paragraph rather than a runaway line.
+ * After the prose, structured detail lines for the hint's `kind` (issue
+ * #935) print one-per-line so the operator sees both surfaces:
  *
- *   💡 Hint: Rejected `pricing_option_id: po_x` was extracted from
- *           `$context.first_signal_pricing_option_id` (set by step
- *           `discover` from response path `signals[0]...`). Seller's
- *           accepted values: [po_y]. Check that the seller's
- *           `get_signals` and `activate_signal` catalogs agree.
+ *   💡 Hint: list_creatives returned a bare array at the top level...
+ *            tool: list_creatives
+ *            observed: bare_array
+ *            expected: { creatives: [...] }
  */
 function printStepHints(hints, indent = '   ') {
   if (!Array.isArray(hints) || hints.length === 0) return;
@@ -151,10 +209,20 @@ function printStepHints(hints, indent = '   ') {
   for (const h of hints) {
     const message = typeof h?.message === 'string' ? h.message : '';
     const lines = wrap(message, bodyWidth);
-    if (lines.length === 0) continue;
-    console.log(`${indent}${HINT_LABEL}${lines[0]}`);
-    for (let i = 1; i < lines.length; i++) {
-      console.log(`${continuationIndent}${lines[i]}`);
+    if (lines.length === 0 && structuredDetailLines(h).length === 0) continue;
+    if (lines.length > 0) {
+      console.log(`${indent}${HINT_LABEL}${lines[0]}`);
+      for (let i = 1; i < lines.length; i++) {
+        console.log(`${continuationIndent}${lines[i]}`);
+      }
+    }
+    for (const detail of structuredDetailLines(h)) {
+      // Wrap structured detail too — long accepted-values lists or schema
+      // fragments would otherwise blow past the terminal width.
+      const detailLines = wrap(detail, bodyWidth);
+      for (const dl of detailLines) {
+        console.log(`${continuationIndent}${dl}`);
+      }
     }
   }
 }

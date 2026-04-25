@@ -24,6 +24,7 @@ import type {
   ValidationResult,
 } from './types';
 import { resolvePath, resolvePathAll, toJsonPointer } from './path';
+import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
 /**
@@ -289,16 +290,11 @@ function validateResponseSchema(
   // overall pass/fail stays Zod-driven to preserve backwards compatibility.
   const strict = computeStrictVerdict(taskName, dataWithoutMessage);
 
-  // Shape-drift hint runs regardless of strict/lenient outcome — a
-  // platform-native `build_creative` response typically fails Zod, but the
-  // detector emits the same actionable recipe either way. Prepended to any
-  // strict-warning so the fix-recipe comes first.
-  const shapeDriftHint = detectShapeDriftHint(taskName, dataWithoutMessage);
-
-  const mergeWarnings = (...parts: Array<string | undefined>): string | undefined => {
-    const kept = parts.filter((p): p is string => Boolean(p));
-    return kept.length > 0 ? kept.join('; ') : undefined;
-  };
+  // Shape-drift no longer rides on `ValidationResult.warning` — issue #935
+  // moved that diagnostic to `StoryboardStepResult.hints[]` as a structured
+  // `ShapeDriftHint`. The runner emits the structured hint via
+  // `detectShapeDriftHints` directly; this layer focuses on the strict /
+  // variant-fallback signal that doesn't yet have a hint kind.
 
   if (parseResult.success) {
     const base: ValidationResult = {
@@ -308,11 +304,10 @@ function validateResponseSchema(
       schema_id,
       schema_url,
     };
-    // Surface strict-only / variant-fallback / shape-drift signal via
-    // `warning` so step-level output (and LLM-driven self-correction that
-    // scans `error`/`warning` fields) sees something without flipping
-    // `passed`.
-    const warning = mergeWarnings(shapeDriftHint, strict ? buildStrictWarning(strict) : undefined);
+    // Surface strict-only / variant-fallback signal via `warning` so step-
+    // level output (and LLM-driven self-correction that scans `error`/
+    // `warning` fields) sees something without flipping `passed`.
+    const warning = strict ? buildStrictWarning(strict) : undefined;
     if (!strict && !warning) return base;
     if (!strict) return { ...base, warning };
     return warning ? { ...base, strict, warning } : { ...base, strict };
@@ -337,11 +332,6 @@ function validateResponseSchema(
     schema_id,
     schema_url,
   };
-  // Shape-drift hint lives on `warning` even on failed validations so
-  // readers get the actionable fix-recipe next to the bare schema error.
-  if (shapeDriftHint) {
-    return strict ? { ...failed, strict, warning: shapeDriftHint } : { ...failed, warning: shapeDriftHint };
-  }
   return strict ? { ...failed, strict } : failed;
 }
 
@@ -436,35 +426,11 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
 }
 
 /**
- * List-shaped tools where handlers commonly return the bare inner array
- * (`[{...}]`) at the top level instead of wrapping it in the required
- * object envelope. Each entry names the wrapper key and the response
- * helper that builds the correct shape.
- *
- * Helper names aren't uniformly prefixed — `get_products` uses
- * `productsResponse` (no `get` prefix) while `get_media_buys` uses
- * `getMediaBuysResponse`. Names match the exports in
- * `src/lib/server/responses.ts` verbatim so a developer can grep
- * straight from the hint.
- */
-const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }> = {
-  list_creatives: { wrapperKey: 'creatives', helper: 'listCreativesResponse' },
-  list_creative_formats: { wrapperKey: 'formats', helper: 'listCreativeFormatsResponse' },
-  list_accounts: { wrapperKey: 'accounts', helper: 'listAccountsResponse' },
-  get_products: { wrapperKey: 'products', helper: 'productsResponse' },
-  get_media_buys: { wrapperKey: 'media_buys', helper: 'getMediaBuysResponse' },
-  get_signals: { wrapperKey: 'signals', helper: 'getSignalsResponse' },
-  list_property_lists: { wrapperKey: 'lists', helper: 'listPropertyListsResponse' },
-  list_collection_lists: { wrapperKey: 'lists', helper: 'listCollectionListsResponse' },
-  list_content_standards: { wrapperKey: 'standards', helper: 'listContentStandardsResponse' },
-};
-
-/**
- * Recognize common payload-shape mistakes and emit an actionable hint
- * alongside the generic schema-error message. Keeps the fix-recipe next
- * to the failure signal so implementors don't have to cross-reference
- * docs from a bare AJV pointer like `/ must have required property
- * 'creative_manifest'`.
+ * Recognize common payload-shape mistakes and return the human-readable
+ * fix-recipe — `string` form retained for direct unit-test callers and
+ * for any external consumer that imported the shim before issue #935
+ * moved the canonical detector to `shape-drift-hints.ts`. Both forms
+ * reuse the same detection logic; this shim returns `hints[0]?.message`.
  *
  * Covers four shape-inversion patterns observed in real integrations:
  *   - `build_creative` returning platform-native fields at the top level
@@ -480,131 +446,20 @@ const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }>
  *     `list_collection_lists`, `list_content_standards`) returning a bare
  *     array at the top level instead of the `{ <key>: [...] }` envelope
  *
- * The detector is a switch on taskName — narrow by design. Add an entry
- * to `LIST_WRAPPER_TOOLS` for a new list tool, or a new `if (taskName === ...)`
- * branch for a new object-shape drift pattern. A unified registry is NOT
- * planned: the table half is pure data; the object-branch half carries
- * per-tool logic (wrapper-alternative keys on `sync_creatives`, discriminator
- * exclusion on `preview_creative`, per-item key lists on `build_creative`)
- * that would hurt readability if forced through a common predicate shape.
- * Keep the two halves separate.
- *
- * Exported for direct unit testing; consumers should rely on the hint
- * reaching `ValidationResult.warning` through the normal run path rather
- * than calling this directly.
+ * Run-path callers should consume the structured hint via the runner's
+ * `step.hints[]` surface (issue #935) — the structured fields drive
+ * per-case fix plans without re-parsing the message.
  *
  * @param taskName — tool name (snake_case) the storyboard dispatched under
  * @param payload — raw response payload. `unknown` rather than
  *   `Record<string, unknown>` so bare-array payloads are recognizable at
- *   the top level. Object-path branches guard internally with
- *   `typeof payload === 'object' && payload !== null`.
+ *   the top level.
  */
 export function detectShapeDriftHint(taskName: string, payload: unknown): string | undefined {
-  // Bare array at the root — common list-shape drift. Fire a pointed hint
-  // only when the handler is a known list tool; an unknown tool with a
-  // bare array might be legitimate (some APIs do return top-level arrays)
-  // and we don't want a false positive.
-  if (Array.isArray(payload)) {
-    const listMeta = LIST_WRAPPER_TOOLS[taskName];
-    if (listMeta) {
-      return (
-        `${taskName} returned a bare array at the top level. ` +
-        `Required: { ${listMeta.wrapperKey}: [...] }. ` +
-        `Use ${listMeta.helper}() from @adcp/client/server.`
-      );
-    }
-    return undefined;
-  }
-
-  // Object branches — require a plain object. null and primitives exit here.
-  if (typeof payload !== 'object' || payload === null) return undefined;
-  const p = payload as Record<string, unknown>;
-  // Short and actionable — a developer hitting this is in their terminal
-  // looking for the fix, not reading docs. The @adcp/client/server
-  // breadcrumb is enough to lead them to the typed helpers.
-
-  if (taskName === 'build_creative') {
-    const hasManifest = 'creative_manifest' in p || 'creative_manifests' in p;
-    const platformNativeKeys = ['tag_url', 'creative_id', 'media_type', 'tag_type'];
-    const platformNativePresent = platformNativeKeys.filter(k => k in p);
-    if (!hasManifest && platformNativePresent.length > 0) {
-      return (
-        `build_creative returned platform-native fields at the top level (${platformNativePresent.join(', ')}). ` +
-        `Required: { creative_manifest: { format_id, assets } }. ` +
-        `Use buildCreativeResponse() from @adcp/client/server.`
-      );
-    }
-  }
-
-  if (taskName === 'sync_creatives') {
-    // sync_creatives has three valid branches (creatives-array success,
-    // errors-array failure, submitted task envelope). All three branches
-    // set `additionalProperties: true` — a seller MAY legitimately add a
-    // top-level vendor extension. The wrapper check (`creatives`/`errors`/
-    // `task_id`) deliberately short-circuits before we look at the per-
-    // item keys, so a response with BOTH a wrapper AND a top-level
-    // `creative_id` (valid, schema-additive extension) stays silent.
-    const hasValidWrapper = 'creatives' in p || 'errors' in p || 'task_id' in p;
-
-    // Drift A: per-item shape bubbled up to the top level — the handler
-    // forgot to wrap per-creative results in the `creatives` array.
-    const perItemKeys = ['creative_id', 'platform_id', 'action'];
-    const perItemPresent = perItemKeys.filter(k => k in p);
-    if (!hasValidWrapper && perItemPresent.length > 0) {
-      return (
-        `sync_creatives returned a single creative's inner shape at the top level (${perItemPresent.join(', ')}). ` +
-        `Required: { creatives: [{ creative_id, action, ... }] } (or { errors: [...] } / { status: 'submitted', task_id }). ` +
-        `Use syncCreativesResponse() from @adcp/client/server.`
-      );
-    }
-
-    // Drift B: wrong wrapper key — handler returned `{ results: [...] }`
-    // (copy-paste from preview_creative batch or a generic success envelope)
-    // instead of `{ creatives: [...] }`. Only fire when `results` contains
-    // per-item sync shapes, so a legitimate preview handler misrouted to
-    // sync_creatives doesn't spuriously trigger.
-    const results = p.results;
-    if (!hasValidWrapper && Array.isArray(results) && results.length > 0) {
-      const firstRow = results[0];
-      const looksLikeCreativeRow =
-        firstRow != null && typeof firstRow === 'object' && ('creative_id' in firstRow || 'action' in firstRow);
-      if (looksLikeCreativeRow) {
-        return (
-          `sync_creatives returned { results: [...] } instead of { creatives: [...] } — wrong wrapper key. ` +
-          `Required: { creatives: [{ creative_id, action, ... }] }. ` +
-          `Use syncCreativesResponse() from @adcp/client/server.`
-        );
-      }
-    }
-  }
-
-  if (taskName === 'preview_creative') {
-    // preview_creative has three valid branches via response_type discriminator
-    // (single, batch, variant). The drift pattern returns raw render fields
-    // at the top level instead of wrapping them in previews[].renders[].
-    //
-    // `creative_id` at the top level is legitimate on the variant branch
-    // (schema/3.0.0/creative/preview-creative-response.json — PreviewCreativeVariantResponse),
-    // so deliberately NOT a trigger key. We key only on render-shape fields
-    // that only belong inside previews[].renders[] entries.
-    const hasValidWrapper = 'response_type' in p || 'previews' in p || 'results' in p;
-    const rawRenderKeys = ['preview_url', 'preview_html', 'interactive_url'];
-    const rawRenderPresent = rawRenderKeys.filter(k => k in p);
-    // interactive_url is a legal top-level field on the single-variant branch,
-    // so it alone doesn't signal drift — only count it when no wrapper and at
-    // least one of the more-specific render fields is also present.
-    const driftSignal = rawRenderPresent.filter(k => k !== 'interactive_url');
-    if (!hasValidWrapper && driftSignal.length > 0) {
-      return (
-        `preview_creative returned raw render fields at the top level (${driftSignal.join(', ')}). ` +
-        `Required: { response_type: 'single', previews: [{ renders: [{ preview_url | preview_html }] }], expires_at }. ` +
-        `Use previewCreativeResponse() from @adcp/client/server.`
-      );
-    }
-  }
-
-  return undefined;
+  return detectShapeDriftHints(taskName, payload)[0]?.message;
 }
+
+export { LIST_WRAPPER_TOOLS } from './shape-drift-hints';
 
 // ────────────────────────────────────────────────────────────
 // field_present: check a path exists

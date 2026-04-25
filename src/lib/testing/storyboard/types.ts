@@ -1019,12 +1019,33 @@ export interface ContextProvenanceEntry {
 }
 
 /**
- * Non-fatal hint attached to a step result. Today the runner only emits
- * `context_value_rejected` — more kinds may be added over time. The
- * discriminator lives on `kind` so consumers that only know how to render
- * a subset can ignore the rest without losing them.
+ * Common shape every `StoryboardStepHint` member shares: the discriminator
+ * + a pre-formatted human-readable message. Renderers that don't know a
+ * specific `kind` can still display `message` verbatim; renderers that do
+ * know the `kind` can branch on it and read the structured fields each
+ * member adds. Issue #935: "every runner-side diagnostic with structured
+ * fields a renderer can consume" flows through this surface.
  */
-export type StoryboardStepHint = ContextValueRejectedHint;
+export interface StoryboardStepHintBase {
+  /** Discriminator. Each concrete hint kind sets its own literal value. */
+  kind: string;
+  /** Pre-formatted human-readable message suitable for a console line. */
+  message: string;
+}
+
+/**
+ * Non-fatal hint attached to a step result. The discriminator lives on
+ * `kind` so consumers that only know how to render a subset can ignore
+ * the rest without losing them; `message` is always present as a
+ * human-readable fallback (see `StoryboardStepHintBase`). More kinds
+ * may be added over time — issue #935 enumerated the canonical taxonomy.
+ */
+export type StoryboardStepHint =
+  | ContextValueRejectedHint
+  | ShapeDriftHint
+  | MissingRequiredFieldHint
+  | FormatMismatchHint
+  | MonotonicViolationHint;
 
 /**
  * A seller rejected a request value that the runner traced back to a
@@ -1033,10 +1054,8 @@ export type StoryboardStepHint = ContextValueRejectedHint;
  * identical to an SDK bug; with it, the caller can see the substitution
  * chain (step → context key → response path) and go talk to the seller.
  */
-export interface ContextValueRejectedHint {
+export interface ContextValueRejectedHint extends StoryboardStepHintBase {
   kind: 'context_value_rejected';
-  /** Pre-formatted human-readable message suitable for a console line. */
-  message: string;
   /** Context key whose value matched the rejected request field. */
   context_key: string;
   /** Step id that wrote the context key. */
@@ -1060,6 +1079,100 @@ export interface ContextValueRejectedHint {
   accepted_values: unknown[];
   /** Error code from the seller's error (if present). */
   error_code?: string;
+}
+
+/**
+ * The runner detected that the agent's response payload diverged from the
+ * expected shape for the tool — e.g. a list tool returned a bare array
+ * instead of `{ <wrapper_key>: [...] }`, or `build_creative` returned
+ * platform-native fields at the top level instead of `{ creative_manifest }`.
+ *
+ * Non-fatal: step pass/fail is unchanged. The runner emits this in place of
+ * the legacy `ValidationResult.warning` prose so downstream renderers (CLI,
+ * Addie, JUnit) can build per-case fix plans from the structured fields.
+ *
+ * `instance_path` uses RFC 6901 / `SchemaValidationError.instance_path`
+ * conventions: `""` for root-level drift, leading-slash + tokens for nested.
+ */
+export interface ShapeDriftHint extends StoryboardStepHintBase {
+  kind: 'shape_drift';
+  /** AdCP tool name (snake_case) that produced the drift. */
+  tool: string;
+  /** Short token describing the observed (wrong) shape variant. */
+  observed_variant: string;
+  /** Short token or schema fragment describing the expected shape. */
+  expected_variant: string;
+  /** RFC 6901 pointer to the drift site; `""` for root-level. */
+  instance_path: string;
+}
+
+/**
+ * Strict (AJV) JSON-schema validation reports a missing required field that
+ * the lenient Zod path didn't enforce. Mirrors the `SchemaValidationError`
+ * shape so a renderer can drive directly off the structured fields without
+ * re-parsing the prose `validation.warning`.
+ */
+export interface MissingRequiredFieldHint extends StoryboardStepHintBase {
+  kind: 'missing_required_field';
+  /** AdCP tool name (snake_case) the response was validated under. */
+  tool: string;
+  /** RFC 6901 pointer to the parent object missing the field. `""` for root. */
+  instance_path: string;
+  /** Pointer into the JSON schema that named the requirement. */
+  schema_path: string;
+  /** Field name(s) the parent object was required to carry. */
+  missing_fields: string[];
+  /** Resolvable schema URL (when the runner could attribute one). */
+  schema_url?: string;
+}
+
+/**
+ * Strict (AJV) JSON-schema validation rejected a value that the lenient Zod
+ * path accepted — a `format` keyword breach (uri / date-time / uuid / ...)
+ * or other strict-only delta the agent ships today that a strict dispatcher
+ * would block (issue #820). Carries enough structured detail for a renderer
+ * to write a verify-after-fix recipe.
+ */
+export interface FormatMismatchHint extends StoryboardStepHintBase {
+  kind: 'format_mismatch';
+  /** AdCP tool name (snake_case). */
+  tool: string;
+  /** RFC 6901 pointer to the failing field. */
+  instance_path: string;
+  /** Pointer into the JSON schema that named the constraint. */
+  schema_path: string;
+  /** AJV keyword that rejected (`format`, `pattern`, `enum`, `minLength`, ...). */
+  keyword: string;
+  /** Resolvable schema URL (when the runner could attribute one). */
+  schema_url?: string;
+}
+
+/**
+ * The `status.monotonic` invariant observed a resource transition that is
+ * not on the spec lifecycle graph for its resource type. Carries the
+ * structured fields a renderer needs to point the implementor at the
+ * canonical enum schema and the prior step that set the anchor state.
+ */
+export interface MonotonicViolationHint extends StoryboardStepHintBase {
+  kind: 'monotonic_violation';
+  /** Resource family (`media_buy`, `creative`, `account`, ...). */
+  resource_type: string;
+  /** Resource id observed transitioning. */
+  resource_id: string;
+  /** Status the resource was in at the anchor step. */
+  from_status: string;
+  /** Status the resource transitioned to at the current step. */
+  to_status: string;
+  /** Step id that recorded the previous status. */
+  from_step_id: string;
+  /**
+   * Legal next-state set per the lifecycle graph. Empty array means the
+   * `from_status` is terminal — the violation is "any forward transition
+   * from a terminal state".
+   */
+  legal_next_states: string[];
+  /** Canonical enum schema URL for the lifecycle graph. */
+  enum_url: string;
 }
 
 export interface StoryboardPhaseResult {
@@ -1178,6 +1291,15 @@ export interface AssertionResult {
   step_id?: string;
   /** Failure detail. Absent on pass. */
   error?: string;
+  /**
+   * Structured `StoryboardStepHint` the assertion can attach when it has
+   * machine-readable fields a renderer can consume. The runner mirrors this
+   * into the owning step's `hints[]` for `scope: "step"` results so the
+   * hint surfaces alongside `context_value_rejected` / `shape_drift` /
+   * strict-AJV hints under one taxonomy. Absent when the assertion only
+   * has prose to report.
+   */
+  hint?: StoryboardStepHint;
 }
 
 /**

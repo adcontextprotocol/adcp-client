@@ -921,16 +921,33 @@ registerOnce('status.monotonic', {
         const legalTargets = [...allowedTargets].sort();
         const legalDescription =
           legalTargets.length > 0 ? legalTargets.map(t => `"${t}"`).join(', ') : '(none — terminal state)';
+        const enumUrl = buildEnumSchemaUrl(ob.graph.enumFile);
+        const errorMessage =
+          `${ob.resource_type} ${ob.resource_id}: ${prev.status} → ${ob.status} ` +
+          `(step "${prev.stepId}" → step "${stepResult.step_id}") is not in the lifecycle graph. ` +
+          `Legal next states from "${prev.status}": ${legalDescription}. ` +
+          `See ${enumUrl} for the canonical lifecycle.`;
         return [
           {
             passed: false,
             description,
             step_id: stepResult.step_id,
-            error:
-              `${ob.resource_type} ${ob.resource_id}: ${prev.status} → ${ob.status} ` +
-              `(step "${prev.stepId}" → step "${stepResult.step_id}") is not in the lifecycle graph. ` +
-              `Legal next states from "${prev.status}": ${legalDescription}. ` +
-              `See ${buildEnumSchemaUrl(ob.graph.enumFile)} for the canonical lifecycle.`,
+            error: errorMessage,
+            // Issue #935: structured `MonotonicViolationHint` mirrored into
+            // the owning step's `hints[]` so renderers can branch on the
+            // discriminator and render the legal-target set in a per-kind
+            // template instead of regex-parsing the prose error string.
+            hint: {
+              kind: 'monotonic_violation',
+              message: errorMessage,
+              resource_type: ob.resource_type,
+              resource_id: ob.resource_id,
+              from_status: prev.status,
+              to_status: ob.status,
+              from_step_id: prev.stepId,
+              legal_next_states: legalTargets,
+              enum_url: enumUrl,
+            },
           },
         ];
       }
