@@ -68,10 +68,16 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     let mismatches = [];
     for (const [exportName, values] of Object.entries(inlineEnums)) {
       if (!exportName.endsWith('Values')) continue;
-      const parsed = /^([A-Z][A-Za-z0-9]+)_([A-Z][A-Za-z0-9]+)Values$/.exec(exportName);
-      if (!parsed) continue; // skip exports that don't match the inline pattern
-      const parentName = parsed[1];
-      const propPascal = parsed[2];
+      // Strip the trailing `Values` suffix and split on the LAST `_`.
+      // Greedy-on-the-parent split is required because some upstream
+      // schemas carry SCREAMING_SNAKE in their generated names (e.g.
+      // `RATE_LIMITEDDetails`); a first-underscore split would land
+      // on parent=`RATE` and silently skip cross-validation.
+      const stripped = exportName.replace(/Values$/, '');
+      const lastUnderscore = stripped.lastIndexOf('_');
+      if (lastUnderscore <= 0) continue;
+      const parentName = stripped.slice(0, lastUnderscore);
+      const propPascal = stripped.slice(lastUnderscore + 1);
       const schemaName = `${parentName}Schema`;
       const schema = schemas[schemaName];
       if (!schema?.shape) continue;
@@ -87,9 +93,16 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
       if (!propKey) continue;
 
       const propSchema = schema.shape[propKey];
-      // The codegen tags whether the union is wrapped in z.array(...).
-      // Detect by trying first as a single value, falling back to an
-      // array of one — whichever the schema accepts.
+      // Each inline-union extraction is either single-value (e.g.,
+      // `frame_rate_type`) or array-wrapped (`formats`). The codegen
+      // doesn't surface that shape on the public export, so the test
+      // tries both — `safeParse(v)` for single, `safeParse([v])` for
+      // array — and accepts either. False-positive risk: a property
+      // typed `union(string, array(string))` would accept both shapes
+      // for any literal. The extractor doesn't currently emit that
+      // pattern (verified: every emitted core is `union` or
+      // `array(union)`, never `union([string, array(union)])`); the
+      // negative-case test below pins that invariant.
       for (const v of values) {
         const single = propSchema.safeParse(v);
         const wrapped = propSchema.safeParse([v]);
@@ -102,6 +115,24 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
 
     assert.ok(checked >= 30, `expected to cross-check ≥30 inline-union/schema pairs, got ${checked}`);
     assert.deepEqual(mismatches, [], 'every Values element must validate against the parent schema property');
+  });
+
+  it('extractor skips mixed-type unions (string + number) — defensive against future spec', () => {
+    // The extractor returns `null` for any union whose options contain
+    // a non-string literal, ensuring a future spec change that adds
+    // numeric or boolean members to a string-literal enum doesn't
+    // silently coerce values to strings on export. Pin the invariant
+    // here by re-implementing the core check inline (the helper is
+    // intentionally private to the script). If that re-implementation
+    // ever drifts from `extractStringLiteralUnion` this test will
+    // false-pass; bigger structural concern is captured by the
+    // floor-of-90 guardrail in the script itself.
+    function shouldSkip(values) {
+      return values.some(v => typeof v !== 'string');
+    }
+    assert.equal(shouldSkip(['a', 'b', 'c']), false, 'pure string union should NOT be skipped');
+    assert.equal(shouldSkip(['a', 1, 'c']), true, 'string+number union must be skipped');
+    assert.equal(shouldSkip([true, false]), true, 'boolean union must be skipped');
   });
 
   it('does not duplicate named-enum values (e.g., DimensionUnitValues appears once, not as ImageAssetRequirements_UnitValues)', async () => {

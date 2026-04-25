@@ -222,11 +222,6 @@ export const JobItem_EmploymentTypeValues = ["full_time", "part_time", "contract
 /** single | JobItem.experience_level */
 export const JobItem_ExperienceLevelValues = ["entry_level", "mid_level", "senior", "director", "executive"] as const;
 
-// ====== ListAccountsRequest ======
-
-/** single | ListAccountsRequest.status */
-export const ListAccountsRequest_StatusValues = ["active", "pending_approval", "rejected", "payment_required", "suspended", "closed"] as const;
-
 // ====== ListCreativeFormatsRequestCreativeAgent ======
 
 /** array of | ListCreativeFormatsRequestCreativeAgent.asset_types */
@@ -311,11 +306,6 @@ export const ReferenceAsset_RoleValues = ["style_reference", "product_shot", "mo
 /** single | ReportingCapabilities.date_range_support */
 export const ReportingCapabilities_DateRangeSupportValues = ["date_range", "lifetime_only"] as const;
 
-// ====== ReportingWebhook ======
-
-/** single | ReportingWebhook.reporting_frequency */
-export const ReportingWebhook_ReportingFrequencyValues = ["hourly", "daily", "monthly"] as const;
-
 // ====== ReportPlanOutcomeResponse ======
 
 /** single | ReportPlanOutcomeResponse.status */
@@ -388,11 +378,6 @@ export const URLAssetRequirements_RoleValues = ["clickthrough", "landing_page", 
 /** single | ValidationResult.status */
 export const ValidationResult_StatusValues = ["compliant", "non_compliant", "not_covered", "unidentified"] as const;
 
-// ====== VASTAssetRequirements ======
-
-/** single | VASTAssetRequirements.vast_version */
-export const VASTAssetRequirements_VastVersionValues = ["2.0", "3.0", "4.0", "4.1", "4.2"] as const;
-
 // ====== VehicleItem ======
 
 /** single | VehicleItem.body_style */
@@ -441,8 +426,3 @@ export const VideoAssetRequirements_GopTypeValues = ["closed", "open"] as const;
 export const VideoAssetRequirements_MoovAtomPositionValues = ["start", "end"] as const;
 /** single | VideoAssetRequirements.scan_type */
 export const VideoAssetRequirements_ScanTypeValues = ["progressive", "interlaced"] as const;
-
-// ====== WebhookAssetRequirements ======
-
-/** array of | WebhookAssetRequirements.methods */
-export const WebhookAssetRequirements_MethodsValues = ["GET", "POST"] as const;

@@ -50,10 +50,20 @@ interface ExtractedInlineEnum {
 
 // Zod 4 internals — every schema instance carries `_def` with a
 // `type` field that names the Zod kind. `unwrap` removes the
-// `optional` / `nullable` / `nullish` / `default` / `readonly`
-// wrappers so the next descent (array element / union options)
-// looks at the substantive shape.
-const UNWRAP_TYPES = new Set(['optional', 'nullable', 'nullish', 'default', 'readonly', 'catch', 'pipe']);
+// `optional` / `nullable` / `nullish` / `default` / `readonly` /
+// `catch` wrappers so the next descent (array element / union
+// options) looks at the substantive shape.
+//
+// `pipe` is intentionally NOT in the set. `z.pipe(in, out)` chains
+// transforms — the inner `in` schema may not match the wire shape
+// after `out` runs, so unwrapping `pipe` and reading `in` would
+// silently extract the wrong half for `string → enum` style
+// transforms. The current `schemas.generated.ts` has zero
+// `z.pipe(...)` constructions; if a future codegen change adds
+// one, the extractor will bail at a non-`union` core (correct
+// failure mode) rather than emit a wrong literal set, and the
+// floor-of-90 guardrail catches the count collapse.
+const UNWRAP_TYPES = new Set(['optional', 'nullable', 'nullish', 'default', 'readonly', 'catch']);
 
 function getDef(schema: unknown): Record<string, unknown> | null {
   if (schema == null || typeof schema !== 'object') return null;
@@ -112,7 +122,27 @@ function extractStringLiteralUnion(schema: unknown): { values: string[]; isArray
   return literals.length > 0 ? { values: literals, isArray } : null;
 }
 
-function buildNamedEnumSchemaSet(allSchemas: Record<string, unknown>): Set<unknown> {
+interface NamedEnumGate {
+  /** Identity-based set of named-enum schema instances. Cheap and exact
+   *  when Zod re-uses the schema object on property access (the codegen
+   *  default: `unit: DimensionUnitSchema.optional()` → the literal union
+   *  inside `DimensionUnitSchema` is the same object reference both
+   *  here and in the property's unwrap path). */
+  byIdentity: Set<unknown>;
+  /** Fingerprint-based fallback keyed by sorted-literal-tuple. Catches
+   *  the case where Zod (or a future codegen change) clones a schema
+   *  on property access — identity breaks but values match. Belt-and-
+   *  suspenders against silent regressions to duplicate emission. */
+  byFingerprint: Set<string>;
+}
+
+function fingerprintLiterals(values: string[]): string {
+  // Sort to make order-insensitive; pipe-separator since literals
+  // can't contain '|' in practice (none of the spec enums do).
+  return [...values].sort().join('|');
+}
+
+function buildNamedEnumGate(allSchemas: Record<string, unknown>): NamedEnumGate {
   // Any named schema whose core is a string-literal union (or single
   // string literal) is already exported as a `${Name}Values` const by
   // `generate-enum-arrays.ts`. When an object property references one
@@ -121,17 +151,31 @@ function buildNamedEnumSchemaSet(allSchemas: Record<string, unknown>): Set<unkno
   // would duplicate authoritative values under a wrapped name and
   // create drift bait if a future spec change updates one but not
   // the other.
-  const set = new Set<unknown>();
+  //
+  // The identity check is exact and fast in the common case; the
+  // fingerprint check is the regression backstop for any future
+  // codegen path that clones schemas.
+  const byIdentity = new Set<unknown>();
+  const byFingerprint = new Set<string>();
   for (const [name, schema] of Object.entries(allSchemas)) {
     if (!name.endsWith('Schema')) continue;
     const core = unwrap(schema);
     const def = getDef(core);
     if (!def) continue;
     if (def.type === 'union' || def.type === 'literal') {
-      set.add(core);
+      byIdentity.add(core);
+      const extracted = extractStringLiteralUnion(schema);
+      if (extracted) byFingerprint.add(fingerprintLiterals(extracted.values));
     }
   }
-  return set;
+  return { byIdentity, byFingerprint };
+}
+
+function isNamedEnum(gate: NamedEnumGate, schema: unknown): boolean {
+  if (gate.byIdentity.has(schema)) return true;
+  const extracted = extractStringLiteralUnion(schema);
+  if (!extracted) return false;
+  return gate.byFingerprint.has(fingerprintLiterals(extracted.values));
 }
 
 function pascalCase(snake: string): string {
@@ -153,7 +197,7 @@ function extractFromAllSchemas(): ExtractedInlineEnum[] {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const allSchemas = require(SCHEMAS_SRC) as Record<string, unknown>;
 
-  const namedEnumCores = buildNamedEnumSchemaSet(allSchemas);
+  const namedEnumGate = buildNamedEnumGate(allSchemas);
   const result: ExtractedInlineEnum[] = [];
 
   for (const [exportName, schema] of Object.entries(allSchemas)) {
@@ -169,14 +213,16 @@ function extractFromAllSchemas(): ExtractedInlineEnum[] {
     for (const [propName, propSchema] of Object.entries(shape)) {
       // If the property's unwrapped core is itself a named enum
       // (referenced by symbol, e.g. `unit: DimensionUnitSchema...`),
-      // skip — the named export already covers it.
+      // skip — the named export already covers it. The gate checks
+      // both object identity (the common case) and a literal-set
+      // fingerprint (future-proof against codegen schema cloning).
       const propCore = unwrap(propSchema);
-      if (namedEnumCores.has(propCore)) continue;
+      if (isNamedEnum(namedEnumGate, propCore)) continue;
       // For arrays, also check if the element is a named enum.
       const propDef = getDef(propCore);
       if (propDef?.type === 'array') {
         const elementCore = unwrap(propDef.element);
-        if (namedEnumCores.has(elementCore)) continue;
+        if (isNamedEnum(namedEnumGate, elementCore)) continue;
       }
 
       const extracted = extractStringLiteralUnion(propSchema);
@@ -252,16 +298,17 @@ function main(): void {
 
   const items = extractFromAllSchemas();
 
-  // Guardrail: AdCP 3.0 GA produces ~30+ inline string-literal unions
-  // across the asset-requirements schemas (image/video/audio formats,
-  // codecs, channels, frame-rate-types, etc.) plus catalog/property
-  // helpers. A floor of 20 catches partial regression — if Zod renames
-  // `_def` or `unwrap` misses a wrapper type, the count collapses well
-  // below this. Bump the floor whenever the spec adds a major wave of
-  // new inline enums.
-  if (items.length < 20) {
+  // Guardrail: AdCP 3.0 GA produces ~104 inline string-literal unions
+  // across asset-requirements (image/video/audio formats, codecs,
+  // channels, frame-rate-types), account/billing schemas, catalog/
+  // property helpers, and discriminated-error details. A floor of 90
+  // catches partial regression — well below current 104 but high
+  // enough that losing 10+ entries to a Zod-internal change or a
+  // missed wrapper type fails fast. Bump whenever the spec adds a
+  // significant wave of new inline enums.
+  if (items.length < 90) {
     throw new Error(
-      `generate-inline-enum-arrays: extracted only ${items.length} inline enums — expected at least 20. ` +
+      `generate-inline-enum-arrays: extracted only ${items.length} inline enums — expected at least 90. ` +
         'Either Zod 4 internal API changed (check `unwrap` and `_def` access) or the schema layout shifted.'
     );
   }
