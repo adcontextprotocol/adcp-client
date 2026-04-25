@@ -1,5 +1,258 @@
 # Changelog
 
+## 5.17.0
+
+### Minor Changes
+
+- 0a0b802: **Fix MCP/A2A validation asymmetry (#909).** Before this change, the MCP SDK's Zod validator ran only on the MCP transport — A2A bypassed it via `AdcpServer.invoke()`, so the same malformed request could be rejected on MCP (with a raw `-32602` JSON-RPC error) while silently reaching the handler on A2A. The framework AJV validator now runs authoritatively on both transports, producing a single structured `adcp_error` envelope with the same pointer-level `issues[]` regardless of transport.
+
+  **Implementation:**
+  - Framework-registered tools (`create-adcp-server.ts`) now pass `z.object({}).passthrough()` as `inputSchema` instead of per-tool Zod shapes. The passthrough shape preserves handler arguments (the SDK's `validateToolInput` returns `undefined` when no schema is registered, which would have destroyed args on MCP); the empty declared-properties make the framework AJV validator the sole enforcer for both transports.
+  - `requests` validation mode default flipped from `'warn'` to `'strict'` outside production. Matches the existing `responses: 'strict'` default and ensures A2A malformed payloads are rejected before reaching handlers (previously the MCP SDK's Zod filled this role; that safety net is gone).
+  - Client-side field-stripping in `SingleAgentClient.adaptRequestForServerVersion` treats an empty-properties schema as "fail open" instead of "strip everything" (JSON Schema semantics). Required because the server's post-#909 `tools/list` publishes `{ type: 'object', properties: {} }` for every tool — the previous code would have stripped every buyer-supplied field.
+
+  **Wire format change:**
+  - MCP clients no longer receive raw `-32602 Input validation error: <Zod text>` on malformed requests. They receive the framework's structured `adcp_error` envelope (`code: 'VALIDATION_ERROR'`, `issues: [{ pointer, message, keyword }]`) — same shape A2A clients always get. Clients that parsed `-32602` text need to migrate to reading `structuredContent.adcp_error`.
+  - `tools/list` over MCP returns `{ type: 'object', properties: {} }` per tool (no per-tool parameter schemas). AdCP-native discovery (`get_adcp_capabilities`) already works over both transports; upstream [adcp#3057](https://github.com/adcontextprotocol/adcp/issues/3057) proposes `get_schema` as a capability tool for per-tool shape discovery.
+  - Test seller fixtures using sparse payloads now need explicit `validation: { requests: 'off' }` alongside `responses: 'off'`. The seven in-tree test helpers were updated accordingly.
+
+  **New test:** `test/server-validation-symmetry.test.js` sends the same malformed request to one `AdcpServer` over MCP and A2A; asserts `adcp_error.code`, `recovery`, and sorted issue-pointer lists match. Locks #909 against regression.
+
+- 42a66f3: **A2A serve adapter (preview).** `createA2AAdapter({ server, agentCard, authenticate, taskStore })` exposes the same `AdcpServer` that `serve()` mounts over MCP as a peer A2A JSON-RPC transport. Both transports share the dispatch pipeline — idempotency store, state store, `resolveAccount`, request/response validation, governance — so a handler change is picked up by both at once.
+
+  **Scope (v0):** `message/send`, `tasks/get`, `tasks/cancel`, `GET /.well-known/agent-card.json`. Streaming (`message/stream`), push notifications, and mid-flight `input-required` interrupts are explicit "not yet" — tracked for v1. The adapter is marked preview; pin a minor version while the AdCP-over-A2A conventions stabilise across the ecosystem.
+
+  **Handler return → A2A `Task.state` mapping (aligned with A2A 0.3.0 lifecycle):**
+  - Success arm → `completed` + DataPart artifact carrying the typed payload
+  - Submitted arm (`status:'submitted'`) → `completed` (the transport call itself completed; `submitted` is initial-only per A2A 0.3.0, not terminal) + DataPart artifact preserving the AdCP response; **`adcp_task_id` rides on `artifact.metadata`** so the AdCP payload still validates cleanly against the tool's response schema
+  - Error arm (`errors:[]`) → `failed` + DataPart artifact preserving the spec-defined error shape
+  - `adcpError('CODE', ...)` → `failed` + DataPart artifact with `adcp_error`
+
+  **Two lifecycles, one response.** A2A `Task.state` tracks the transport call (did the HTTP request complete?); AdCP `status` inside the artifact tracks the work (submitted / completed / failed). A `completed` A2A task can carry a `submitted` AdCP response — they're orthogonal state machines. Buyers resume async AdCP work via `artifact.metadata.adcp_task_id`.
+
+  **`mount(app)` convenience helper.** `adapter.mount(app)` wires all four routes from one call: JSON-RPC at the agent-card URL's pathname, the agent card at both `{basePath}/.well-known/agent-card.json` (A2A SDK discovery convention) and `/.well-known/agent-card.json` (origin-root probes). Eliminates the common 404 on first discovery when sellers mount the card at only one path. `A2AMountOptions` supports `basePath` override and `wellKnownAtRoot: false` for deployments where an upstream proxy owns origin-root routes.
+
+  **Skill addressing.** Clients send a `Message` with a single `DataPart` carrying `{ skill: '<tool_name>', input: { ... } }`. The legacy key `parameters` (emitted by `src/lib/protocols/a2a.ts` before the adapter landed) is accepted as an alias for `input` so same-SDK client/server pairs talk cleanly. Non-conforming messages surface as `Task.state='failed'` with `reason: 'INVALID_INVOCATION'`.
+
+  **New public surface.** `AdcpServer.invoke({ toolName, args, authInfo, signal })` — production-safe alias of the tool-call path both transports run through. Docstring makes auth the caller's responsibility; `dispatchTestRequest` stays the test-only sibling.
+
+  **New exports** (from `@adcp/client` and `@adcp/client/server`): `createA2AAdapter`, `A2AInvocationError`, `A2AAdapter`, `A2AAdapterOptions`, `A2AAgentCardOverrides`, `A2AMountOptions`, `ExpressAppLike`, plus `AdcpAuthInfo` and `AdcpInvokeOptions` for transport authors building custom adapters.
+
+  **Dependencies.** Uses `@a2a-js/sdk` (already a peer dep for the client-side caller) via its `/server` subpath export; no new peer deps required. `@types/express` added as a devDep so our types resolve when the SDK's express middleware returns `RequestHandler` from `express`.
+
+- d102262: **Strict types and builders for `Format.assets[]`.** The codegen collapses the discriminated union under `Format.assets[]` to `BaseIndividualAsset` — no per-asset-type branches, no `requirements` field. That means a platform emitting a loose literal like `{ asset_type: 'image', requirements: { file_types: ['jpg'] } }` compiled clean but failed strict response validation, because the real spec field is `formats`, not `file_types`. `scope3data/agentic-adapters#118` hit this across five adapters (Pinterest, TikTok, UniversalAds, Criteo, CitrusAd) on four independent axes: `file_types` vs `formats`/`containers`, `min_duration_seconds` vs `min_duration_ms`, comma-joined `aspect_ratio`, and `min_count`/`max_count` placed on an individual asset instead of a `repeatable_group` wrapper.
+
+  **New types** — per-asset-type slot shapes that wire the existing `ImageAssetRequirements` / `VideoAssetRequirements` / `AudioAssetRequirements` / `TextAssetRequirements` / `MarkdownAssetRequirements` / `HTMLAssetRequirements` / `CSSAssetRequirements` / `JavaScriptAssetRequirements` / `VASTAssetRequirements` / `DAASTAssetRequirements` / `URLAssetRequirements` / `WebhookAssetRequirements` / `CatalogRequirements` interfaces into a discriminated `IndividualAssetSlot` union, plus `RepeatableGroupSlot` and a top-level `FormatAssetSlot = IndividualAssetSlot | RepeatableGroupSlot`. `GroupAssetSlot` variants parallel the individual slots for use inside `RepeatableGroupSlot.assets[]`. Exported from `@adcp/client`.
+
+  **New builders** — `imageAssetSlot`, `videoAssetSlot`, `audioAssetSlot`, `textAssetSlot`, `markdownAssetSlot`, `htmlAssetSlot`, `cssAssetSlot`, `javascriptAssetSlot`, `vastAssetSlot`, `daastAssetSlot`, `urlAssetSlot`, `webhookAssetSlot`, `briefAssetSlot`, `catalogAssetSlot`, `repeatableGroup`, and per-asset-type `*GroupAsset` helpers. Each injects `item_type` and `asset_type` so callers write the meaningful fields only. A `FormatAsset` namespace groups all of them for single-import use (`FormatAsset.image(...)`, `FormatAsset.group(...)`).
+
+  **What this catches.** With the generated types, `{ requirements: { file_types: ['jpg'] } }` was `{ [k: string]: unknown }` and passed the compiler. With the new slot types, it fails at the authorship site — the compiler knows the spec's field names and closed enums. The type-test file `src/type-tests/format-asset-slots.type-test.ts` asserts via `@ts-expect-error` that `file_types`, `min_duration_seconds`, out-of-enum `containers`/`formats`, and `min_count`/`max_count` on an individual asset are all rejected — CI's typecheck fails if any of those regress.
+
+  **Skills updated.** `skills/build-seller-agent/SKILL.md`, `skills/build-generative-seller-agent/SKILL.md`, and `skills/build-creative-agent/SKILL.md` each gained a "format asset slot" section with the four translation footguns and concrete builder-based examples framed for that audience (social/retail sales, generative DSPs, ad servers/CMPs).
+
+  Additive change — existing `Format.assets[]` literals continue to compile; the new surface is available for authors who want compile-time protection for requirement shapes.
+
+- 942acda: **Add `idempotency: 'disabled'` mode and standalone enum value arrays.**
+
+  Two additive surfaces aimed at consumers who currently duplicate spec data or have to UUID-inject every test payload to satisfy AdCP 3.0's `idempotency_key` requirement.
+
+  **1. `idempotency: 'disabled'` for `createAdcpServer`.** The `idempotency` option on `AdcpServerConfig` now accepts the literal `'disabled'` in addition to an `IdempotencyStore`. When set:
+  - **`get_adcp_capabilities` flips to the spec's `IdempotencyUnsupported` branch** — the response advertises `adcp.idempotency: { supported: false }` with `replay_ttl_seconds` omitted, matching the `oneOf` discriminator in `get-adcp-capabilities-response.json`. Buyers reading capabilities can fall back to natural-key dedup before retrying spend-committing operations. (Earlier drafts of this change kept `supported: true`; that's a money-flow footgun and was caught in expert review.)
+  - The mutating-tool middleware (`INVALID_REQUEST` / `IDEMPOTENCY_CONFLICT` / `IDEMPOTENCY_EXPIRED`) is skipped.
+  - Schema validation (`validation.requests: 'strict'`) tolerates a missing `idempotency_key` on mutating tools — every other required field still produces `VALIDATION_ERROR`. The filter is surgical: only the `keyword: 'required', pointer: '/idempotency_key'` issue is dropped (top-level `instancePath`-based; nested fields would not match).
+  - A pre-middleware shape gate enforces `IDEMPOTENCY_KEY_PATTERN` (`^[A-Za-z0-9_.:-]{16,255}$`) whenever a key IS supplied, **regardless of disabled mode** — defense-in-depth so a malformed key never reaches handler logs even when validation is `'off'` and the replay middleware is skipped.
+  - The "mutating handlers without an idempotency store" startup error log is suppressed.
+  - **`createAdcpServer` throws at construction unless `NODE_ENV` is explicitly `'test'` or `'development'`** (or the operator sets `ADCP_IDEMPOTENCY_DISABLED_ACK=1` to acknowledge the risk). The earlier draft only refused under `NODE_ENV === 'production'`, but `NODE_ENV` is unset by default in raw Lambda, custom containers, and many K8s deployments — exactly the environments where a silent disabled-mode start is most dangerous. The inverted allowlist makes the safe defaults explicit: dev/test work without ceremony, anything else fails fast or requires deliberate ack. Inside the allowlist a `logger.warn` fires so the choice stays visible.
+
+  Production servers must still wire a real store via `createIdempotencyStore({ backend, ttlSeconds })` — `'disabled'` is for non-production test fleets that don't model replay behavior. The existing `idempotency: store` and `idempotency: undefined` paths are unchanged.
+
+  **Storyboard interaction.** The universal `compliance/.../universal/idempotency.yaml` storyboard explicitly states that sellers declaring `supported: false` MUST skip it. Auto-skip wiring in the runner is a follow-up; today, running this storyboard against a disabled-mode agent will fail (correctly, since the agent has no replay window to test).
+
+  **2. Standalone enum value arrays.** A new generated file `src/lib/types/enums.generated.ts` exports a `${TypeName}Values` const array for every named string-literal union in the AdCP TypeScript types — `MediaChannelValues`, `PacingValues`, `MediaBuyStatusValues`, `DeliveryTypeValues`, `AssetContentTypeValues`, etc. (122 enums total). Adapters can now import the spec's literal sets directly instead of duplicating them or re-deriving from Zod:
+
+  ```ts
+  import { MediaChannelValues } from '@adcp/client/types';
+  const channels = new Set<string>(MediaChannelValues);
+  if (!channels.has(input)) throw new Error('unknown channel');
+  ```
+
+  Codegen is wired into the existing pipeline (`generate-types` now also runs `generate-enum-arrays`), so `ci:schema-check` catches drift the same way it catches type drift. The new test `test/lib/enum-arrays.test.js` cross-validates that every `Values` array round-trips against its matching `Schema` Zod validator — if either side drifts, the test fails fast.
+
+  **Inline anonymous unions (e.g., `formats?: ('jpg' | 'jpeg' | ...)[]` inside `ImageAssetRequirements`) are out of scope** — they don't have a stable name in the generated TypeScript. Use the Zod schema's introspection if you need them. A follow-up may extract specific high-value inline enums to named exports.
+
+- b74a9ce: Add `mcpToolNameResolver` export on `@adcp/client/server` — a default `resolveOperation` for MCP agents wiring RFC 9421 signature auth. Parses the buffered JSON-RPC body on `req.rawBody` and returns `params.name` when `method === 'tools/call'`; returns `undefined` otherwise so the downstream handler produces a precise error instead of the pre-check rejecting every unsigned call.
+
+  Use directly as `resolveOperation` on `verifySignatureAsAuthenticator`, `requireSignatureWhenPresent`, or `requireAuthenticatedOrSigned` instead of hand-rolling the same JSON-RPC parser in every seller agent.
+
+- 7681396: feat(server): host-aware `serve()` for one-process multi-host deployments
+
+  `ServeOptions.publicUrl` and `protectedResource` now accept a `(host) => …`
+  function, and the factory's `ServeContext` carries the resolved `host` so one
+  process can front many hostnames (white-label sellers, multi-brand adapters)
+  without re-owning the HTTP plumbing. Set `trustForwardedHost: true` when
+  `serve()` sits behind a proxy that sanitizes `X-Forwarded-Host`. Per-host
+  resolver results are cached. Static `publicUrl: string` is unchanged.
+
+  `verifyBearer({ audience })` now also accepts `(req, ctx) => string` where
+  `ctx = { host, publicUrl }` comes from `serve()`'s host resolution — use
+  `audience: (_req, { publicUrl }) => publicUrl!` so the JWT audience check
+  and the RFC 9728 `resource` URL can never diverge. Reading `X-Forwarded-Host`
+  directly in the callback is a footgun when `trustForwardedHost` is off.
+
+  New `UnknownHostError` class — throw it from the factory (or `publicUrl`/
+  `protectedResource` resolvers) for unconfigured hosts; `serve()` maps to
+  404 with a generic body so the routing table never crosses the wire.
+
+  New `getServeRequestContext(req)` helper exposes the resolved
+  `{ host, publicUrl }` to custom authenticators wired outside `verifyBearer`.
+
+  New `resolveHost(req, { trustForwardedHost? })` and `hostname(host)` exports
+  — same logic `serve()` uses internally, so callers building their own
+  host-dispatch middleware behind `createExpressAdapter` don't re-implement the
+  X-Forwarded-Host / RFC 7239 Forwarded / overwrite-vs-append hardening.
+
+  New `reuseAgent: true` on `ServeOptions` — lets the factory cache
+  `AdcpServer` instances per host instead of reconstructing on every request.
+  The framework wraps connect→handleRequest→close in a per-instance async
+  mutex because MCP's `Protocol.connect()` rejects when a transport is
+  already attached. Concurrent requests on different cached servers still
+  run in parallel. Closes #901.
+
+  New `verifyIntrospection({ introspectionUrl, clientId, clientSecret, … })`
+  authenticator — RFC 7662 bearer validation for adapter agents that proxy
+  upstream platform OAuth (Snap, Meta, TikTok, …) rather than minting their
+  own JWTs. Matches `verifyBearer`'s shape (`null` on missing bearer, throws
+  `AuthError` on reject). Features: TTL-capped positive cache keyed on SHA-256
+  of the token, opt-in negative caching, RFC 6749 §2.3.1 form-urlencoded Basic
+  auth, fail-closed on upstream errors/timeouts, optional `requiredScopes` and
+  `audience` checks. Closes #902.
+
+  Closes #885.
+
+- 547080a: **Enrich `oneOf` / `anyOf` validation errors with variant metadata.** When AJV rejects a request because a discriminated-union field matched none of its variants, the emitted `ValidationIssue` now carries a `variants[]` array describing what each variant would accept — instead of the bare "must match exactly one schema in oneOf" that left naive LLM clients stuck.
+
+  Before:
+
+  ```json
+  { "pointer": "/account", "keyword": "oneOf", "message": "must match exactly one schema in oneOf" }
+  ```
+
+  After:
+
+  ```json
+  {
+    "pointer": "/account",
+    "keyword": "oneOf",
+    "message": "must match exactly one schema in oneOf",
+    "variants": [
+      { "index": 0, "required": ["account_id"], "properties": ["account_id"] },
+      { "index": 1, "required": ["brand", "operator"], "properties": ["brand", "operator", "sandbox"] }
+    ]
+  }
+  ```
+
+  A caller reading this knows exactly which combinations to try — pick one variant's `required` fields. Empirically, this unsticks the #1 naive-LLM stall point (discriminated `account` on `create_media_buy`, discriminated `destinations[]` on `activate_signal`, etc.).
+
+  **Scope:** applies to both `validateRequest` and `validateResponse`. Variants land on the same `issues[]` that ship at `adcp_error.issues` and `adcp_error.details.issues` on wire envelopes — no new field on the error envelope itself. Non-union keywords (`required`, `type`, `enum`, `additionalProperties`, …) are unchanged.
+
+  **Trade-off:** response payload grows slightly for schemas with many variants. Variants are derived from public `@adcp/client`/AdCP spec schemas — no seller-specific information leaks. `schemaPath` gating (production strip) is unchanged; `variants` is not gated because the information is already public in the canonical schemas under `schemas/cache/<version>/`.
+
+  **Related:** pairs with [#918](https://github.com/adcontextprotocol/adcp-client/pull/918) (buyer-side `call-adcp-agent` skill) and #915 (validation symmetry). Together these give naive LLMs two paths to recover: the skill carries priors about common variants; the enriched error carries them at runtime for variants the skill doesn't cover. Non-LLM buyers (programmatic clients) benefit regardless.
+
+- be61077: feat(testing): add rawA2aProbe for A2A transport-layer storyboard diagnostics
+
+  Adds `rawA2aProbe({ agentUrl, method, params?, headers?, allowPrivateIp? })` to
+  `src/lib/testing/storyboard/probes.ts`, mirroring `rawMcpProbe` for agents
+  exposed over the A2A transport. Returns `{ httpResult: HttpProbeResult;
+taskResult?: TaskResult }` so the storyboard `ValidationContext` can consume both
+  probes interchangeably. Surfaces raw JSON-RPC error codes (including A2A-specific
+  `-32002 TaskNotCancelable`) without protocol aliasing.
+
+- 6c626bd: `runStoryboardStep` now accepts and emits `context_provenance` so LLM-orchestrated step-by-step runs can thread rejection-hint provenance across calls the same way `context` already flows. Closes adcp-client#880. Before this, stateless step calls always initialized an empty provenance map and `context_value_rejected` hints never fired on that surface.
+  - `StoryboardRunOptions.context_provenance?: Record<string, ContextProvenanceEntry>` — seeds the map.
+  - `StoryboardStepResult.context_provenance?: Record<string, ContextProvenanceEntry>` — full accumulated map after this step's own writes are applied. Absent when empty.
+
+  Full `runStoryboard` behavior is unchanged (it builds the map internally; the field still surfaces on each step result for consumers reading compliance reports).
+
+- 7227b96: Four ergonomic upgrades to the RFC 9421 signing surface — all backwards compatible, all opt-in via omission:
+  - **`verifySignatureAsAuthenticator`** now defaults `replayStore` and `revocationStore` to fresh `InMemoryReplayStore` / `InMemoryRevocationStore` instances when omitted. Every authenticator instance gets its own default stores (no cross-talk). Wire explicit stores in multi-replica deployments where replay state must be shared.
+  - **`createExpressVerifier`** gets the same defaults — symmetric with `verifySignatureAsAuthenticator` so both the `serve()` and raw-Express paths have identical ergonomics.
+  - **`buildAgentSigningFetch`** now defaults `upstream` to `globalThis.fetch` when omitted. Throws a clear `TypeError` if `globalThis.fetch` isn't available, rather than binding `undefined` and failing cryptically on first request.
+  - **`createAgentSignedFetch(options)`** — new preset for the single-seller buyer case. Bundles `buildAgentSigningFetch` with a `CapabilityCache` lookup keyed by the target seller's `agent_uri`. One call replaces the four-object `buildAgentSigningFetch` + `CapabilityCache` + explicit `getCapability` wire-up:
+
+    ```typescript
+    // fetch.ts
+    export const signedFetch = createAgentSignedFetch({
+      signing: { kid, alg: 'ed25519', private_key: privateJwk, agent_url: 'https://agent.example.com' },
+      sellerAgentUri: 'https://seller.example.com',
+    });
+    ```
+
+    For multi-seller adapters, build one preset per seller or drop to `buildAgentSigningFetch` with a URL-dispatching `getCapability`.
+
+- 79abb02: Add `createWebhookVerifier` factory for secure-by-default webhook signature verification (issue #926).
+
+  `verifyWebhookSignature` requires callers to supply `replayStore` and `revocationStore` explicitly — callers who construct a new options object per request would silently receive no replay protection if stores were defaulted inside the per-call function. The new `createWebhookVerifier(options)` factory mirrors `createExpressVerifier`: stores are instantiated once at creation time and captured in closure scope, so all requests handled by the returned verifier share the same replay and revocation state. Pass an explicit shared store (Redis, Postgres, etc.) for multi-replica deployments. `verifyWebhookSignature` itself is unchanged — required stores remain required.
+
+### Patch Changes
+
+- 4035667: **Document why `createAgentSignedFetch.cache` defaults to the shared `defaultCapabilityCache` (#927).** The shared default is load-bearing: `ProtocolClient` / `buildAgentSigningContext` writes the seller's `get_adcp_capabilities` response into `defaultCapabilityCache`, and the signing fetch reads from the same instance so a single priming call serves every subsequent signing decision. Passing a fresh `new CapabilityCache()` without priming it silently disables `required_for` enforcement — cold cache → `shouldSignOperation` returns `false` → required ops ship unsigned → seller rejects, with no error from the SDK side. JSDoc on the `cache` field now spells this out, plus when an explicit cache is appropriate (primed in tests, out-of-band capability discovery), plus the security framing (cached entries are public seller advertisements, not buyer secrets).
+
+  No behavior change.
+
+- c9ddd63: **Resolve `globalThis.fetch` lazily in `buildAgentSigningFetch` (#927).** The previous implementation called `defaultUpstream()` at factory-call time and bound the result; a polyfill installed between factory creation and first request was silently ignored. The factory's docstring already promised "polyfills / patches that run after this module loads still take effect" — true at the import-vs-call axis, but not at the factory-call-vs-request axis. Resolution now happens per-request inside the returned closure when `upstream` is omitted, so a late-installed polyfill takes effect on its first request.
+
+  The error thrown when `globalThis.fetch` is unavailable now surfaces on the first outbound request (where it was always going to matter) rather than at factory construction. Callers passing an explicit `upstream` see no behavior change — the lazy path is taken only when the default is in use.
+
+- a7253a5: `skills/call-adcp-agent/SKILL.md`: two dx-driven additions for naive LLM callers.
+  1. **Replay semantics on `idempotency_key`.** The skill now spells out what "same key → cached response" actually means in practice — same `task_id`, same `media_buy_id`, byte-for-byte identical — and warns against the most common doubling pattern (generating a fresh UUID on retry). Async flows replay against the same `task_id`, so polling continues against the same task instead of forking.
+  2. **Symptom → fix table.** A quick lookup of the most common `adcp_error.issues[*]` shapes mapped to their one-line fix: merged `oneOf` variants, missing `idempotency_key`, `budget` as object, `format_id` as string, made-up `destinations[*].type`, async `status: 'submitted'`, the three `recovery` modes (`retryable` / `correctable` / `unsupported`), and HTTP 401. Designed to short-circuit the recovery loop before the caller has to read the whole envelope schema.
+
+  Docs-only — no library/CLI behavior change. Pairs with the `variants[]` enrichment shipped in [#919](https://github.com/adcontextprotocol/adcp-client/pull/919).
+
+- 998ed95: New skill: `skills/call-adcp-agent/SKILL.md` — buyer-side playbook for LLM clients calling an AdCP agent. Covers the wire contract, the `oneOf` account variants, idempotency invariants, async flow (`status:'submitted'` + `task_id`), error recovery from `adcp_error.issues[]`, and minimal payload examples for the top five tools (`get_products`, `create_media_buy`, `sync_creatives`, `get_signals`, `activate_signal`).
+
+  **Motivation**: [#915](https://github.com/adcontextprotocol/adcp-client/pull/915) made MCP `tools/list` schema-free (the trade-off for cross-transport validation symmetry). Empirical three-way comparison showed a naive LLM gets stuck on 5/5 common tools without priors; with this skill loaded, Claude-class clients land their first successful call in 1 hop on all five. Upstream [adcp#3057](https://github.com/adcontextprotocol/adcp/issues/3057) (`get_schema`) remains the longer-term spec path for programmatic schema discovery; this skill unblocks LLMs today.
+
+  Referenced from `CLAUDE.md`; ships alongside the existing `skills/build-*-agent/` set.
+
+- 3e86910: Three CLI DX wins for runner hints:
+  1. **Word-wrap.** Long hint messages (often 250–300 chars) now wrap to terminal width with continuation indent under the message text — first line carries `💡 Hint:`, follow-up lines align so the wrapped block reads as a paragraph, not a runaway line. Width comes from `process.stdout.columns` (TTY), `$COLUMNS` (env), or 100-col fallback. Backtick-fenced identifiers (e.g. `` `pricing_option_id` ``) never split across lines.
+  2. **Run-summary hint count.** The closing summary line on `adcp storyboard run` now appends `· N hints` when any fired (silent on zero). Single-storyboard, multi-storyboard, and multi-instance summaries all get the suffix. Surfaces diagnostic info without making the operator scroll back through every step.
+  3. **`adcp storyboard --help` discoverability.** New `OUTPUT:` block explains the `💡 Hint:` line, names the JUnit / JSON surfaces, and links to `docs/guides/VALIDATE-YOUR-AGENT.md § Reading hint lines`.
+
+- a2528cc: CLI now renders runner hints (`StoryboardStepResult.hints[]`) in both the human console output and JUnit `<failure>` body. Previously #875 added the detector and populated the field but the CLI was a no-op for the feature — triage output still looked identical to a bare seller error. Closes #879.
+
+  Console output prefixes each hint with `💡 Hint:` at the same 3-space indent as `Error:` and validations. JUnit failure bodies append `Hint (<kind>): <message>` lines so CI dashboards and test reporters pick them up.
+
+- 55e10a9: CI: `ci:docs-check` now ignores the `> @adcp/client v<version>` / `> Library: @adcp/client v<version>` header when diffing generated agent docs, matching how the `> Generated at:` header is already ignored. Closes #881 — previously every version bump forced a doc regeneration commit even when no real content changed.
+- e2c2969: Fix docs/guides/BUILD-AN-AGENT.md create_media_buy CLI example to match current schema: PackageRequest uses `product_id` + `budget` (plain number) + `pricing_option_id`; `brand` uses `{domain}` discriminator; `idempotency_key` is required. Adds `--protocol a2a` usage examples to VALIDATE-YOUR-AGENT.md.
+- 5732368: Runner hint detector now recognizes the `adcp_error` (singular object) response envelope — what the canonical `adcpError()` SDK helper emits — alongside the `errors[]` (plural array) shape it already handled. Closes adcp-client#907. Surfaced during dogfood: agents built on the helper (the recommended pattern) were silently missing `context_value_rejected` hints because the detector only read `errors[]`. Also accepts `adcp_error: [...]` defensively. When both shapes are present in one response, the plural `errors[]` wins (spec-canonical).
+- ddf9bd7: Runner hint gate now fires on any step-level failure (task-level OR validation-level), not just task failures. Closes adcp-client#883. Some sellers return 200 with an advisory `errors[]` + `available:` list (success envelope with warnings); the previous gate missed those because `passed` was true at the task level. `expect_error` semantics are unchanged — genuinely-failing expect_error steps still stay silent by design.
+- 0ae9200: Runner `context_value_rejected` hint closing sentence now cites the two tool names involved in the catalog drift (e.g. "Check that the seller's `get_signals` and `activate_signal` catalogs agree.") instead of deriving an identifier fragment from the context key. The previous phrasing ("Check that the seller's catalogs agree on the id for this `first_signal_pricing_option` across steps.") read awkwardly when the key was multi-word — surfaced during dogfood. Falls back to the single-task form when only the source tool is known, and to a generic closing when neither is known. The detector now accepts an optional `currentTask` argument; existing callers keep working unchanged (generic closing).
+- fd25ba1: Extracts the JUnit XML formatter out of `bin/adcp.js` into `src/lib/testing/storyboard/junit.ts` so the formatter is testable as a pure function. Closes three deltas salvaged from closed PR #894:
+  - **`adcp storyboard step` printer**: now renders `💡 Hint: …` below the `Error:` line (was dropped silently before). Matches the step printer's column-zero style.
+  - **`<failure message=…>` attribute fallback**: when `step.error` is absent (e.g. the #883-widened hint gate fires on a validation-only failure), the first hint's message is used so CI dashboards that only read the attribute still surface the diagnosis.
+  - **`formatStoryboardResultsAsJUnit` exported as `@internal`** on `@adcp/client/testing` — the CLI imports it from there; consumers that want to emit JUnit themselves can, but the module isn't a supported public API.
+
+  Also drops the unused `formatHintsForFailureBody` helper from `bin/adcp-step-hints.js` now that the JUnit formatter owns its own hint rendering, and parameterizes `printStepHints` with an `indent` argument so both printers (phase-nested 3-space and column-zero) can share it.
+
+- e0e0674: Hardened `resolvePath` in the storyboard runner to apply the same `FORBIDDEN_KEYS` + `hasOwnProperty` guard that `resolvePathAll` and `setPath` already use. A storyboard path like `__proto__.polluted`, `constructor`, or `hasOwnProperty` now resolves to `undefined` (not-found) instead of projecting `Object.prototype` state into validation results. No call site relied on the permissive behavior. Surfaced by the security review on #876.
+- 137e887: **Fix: storyboard runner no longer fails agents on empty-phases storyboards.**
+
+  When a storyboard had `phases: []` (e.g., a placeholder or a `requires_scenarios:`-composed storyboard), the runner emitted a synthetic phase with `passed: false` even though its only step was `skipped: true`. This caused agents to appear to fail on that storyboard in the compliance report, producing a confusing `__no_phases__` entry in the output — a string not in the storyboard-schema's documented grading vocabulary.
+
+  Changes:
+  - Synthetic phase `passed` corrected from `false` → `true` (a skipped step is neutral, not a failure).
+  - Internal sentinel strings `'__no_phases__'` replaced with `'no_phases'` in `step_id` and `phase_id`, consistent with the documented `RunnerSkipReason` vocabulary.
+  - When `storyboard.requires_scenarios` is populated, the detail message now explains the structural reason (scenario composition) rather than the generic placeholder message.
+
+  Fixes #921.
+
+- 6ad6450: **Add request signing guide (`docs/guides/SIGNING-GUIDE.md`).** End-to-end RFC 9421 walkthrough: key generation, JWKS publication, brand.json discovery, buyer-side signing via `createAgentSignedFetch`, seller-side verification via `requireAuthenticatedOrSigned` + `mcpToolNameResolver`, capability declaration on `request_signing`, key rotation, conformance vectors, and the full `request_signature_*` error code table cross-referenced against `compliance/cache/3.0.0/test-vectors/request-signing/`. README and `BUILD-AN-AGENT.md` cross-link to the new guide; the inline Request Signing snippet in `BUILD-AN-AGENT.md` is updated to match.
+
+  **Widen `mcpToolNameResolver` parameter type.** Previously typed against `IncomingMessage & { rawBody?: string }`, which prevented passing it as `resolveOperation` on `createExpressVerifier` (`ExpressLike` request type). The function only reads `req.rawBody`, so the parameter is now typed as `{ rawBody?: string }` — both call sites typecheck without casts. No runtime change.
+
 ## 5.16.0
 
 ### Minor Changes
