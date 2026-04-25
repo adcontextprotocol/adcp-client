@@ -79,7 +79,7 @@ For campaign governance, how should the agent decide?
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['governance-spend-authority', 'property-lists']`), NOT `[{id, version}]` objects.
+> - **Declare `capabilities: { specialisms: ['governance-spend-authority', 'property-lists'] }` on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 > - Every mutating-tool response (`create_property_list`, `create_collection_list`, `create_content_standards`, etc.) has `additionalProperties: false` — don't add extra fields. Return exactly what the schema declares.
 
 ### Campaign Governance

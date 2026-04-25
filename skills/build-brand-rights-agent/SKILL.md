@@ -88,7 +88,7 @@ Upstream tracking for the two schema gaps: https://github.com/adcontextprotocol/
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['brand-rights']`), NOT `[{id, version}]` objects.
+> - **Declare `capabilities: { specialisms: ['brand-rights'] }` on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 
 **`get_brand_identity`** — returns brand identity matching `brand/get-brand-identity-response.json`
 
