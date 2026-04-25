@@ -326,6 +326,54 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
   });
 
   describe('Timing and Polling Mocking', () => {
+    test('pollTaskCompletion uses server-assigned task ID, not the local UUID (#966)', async () => {
+      // Regression guard: the initial submitted response carries a server-assigned
+      // task_id. The SDK must poll tasks/get with that ID, not the local UUID it
+      // minted internally. A conformant seller returns NOT_FOUND for an unknown ID.
+      const SERVER_TASK_ID = 'server-task-abc-123';
+      const polledIds = [];
+
+      ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
+        if (taskName === 'tasks/get') {
+          polledIds.push(params.taskId);
+          return {
+            task: {
+              status: 'completed',
+              result: { done: true },
+              taskType: 'pollIdTask',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          };
+        }
+        // Initial submission response carries the server-assigned task ID.
+        return { status: 'submitted', task_id: SERVER_TASK_ID };
+      });
+
+      const executor = new TaskExecutor({ workingTimeout: 10000 });
+      const result = await executor.executeTask(mockAgent, 'pollIdTask', {});
+
+      assert.strictEqual(result.status, 'submitted');
+      assert(result.submitted, 'Expected submitted continuation');
+      // The buyer-facing taskId must be the server-assigned ID.
+      assert.strictEqual(
+        result.submitted.taskId,
+        SERVER_TASK_ID,
+        'submitted.taskId must be server-assigned, not local UUID'
+      );
+
+      await result.submitted.waitForCompletion(0);
+
+      assert(polledIds.length > 0, 'Expected at least one tasks/get call');
+      for (const polled of polledIds) {
+        assert.strictEqual(
+          polled,
+          SERVER_TASK_ID,
+          `tasks/get was called with local UUID instead of server task ID: ${polled}`
+        );
+      }
+    });
+
     test('should control polling intervals with submitted task polling', async () => {
       // Since working status is returned immediately (no polling), this test uses
       // the submitted pattern where polling happens via waitForCompletion.

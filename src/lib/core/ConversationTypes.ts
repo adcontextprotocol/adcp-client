@@ -232,8 +232,19 @@ export interface DeferredContinuation<T> {
  * Continuation for submitted server tasks (server needs time)
  */
 export interface SubmittedContinuation<T> {
-  /** Task ID for tracking */
+  /**
+   * Server-assigned task ID — the handle the seller uses to identify this task.
+   * Pass this to the seller's `tasks/get` endpoint for manual status polling.
+   * Distinct from the SDK-internal operation ID (`operationId`) which is a
+   * local UUID used for webhook URL macros and the `activeTasks` bookkeeping map.
+   */
   taskId: string;
+  /**
+   * SDK-internal operation ID — the local UUID minted by the client for this
+   * call's lifecycle tracking. Used in `{operation_id}` webhook URL macros and
+   * `activity` event payloads. Not meaningful to the seller.
+   */
+  operationId: string;
   /** Webhook URL where server will notify completion */
   webhookUrl?: string;
   /** Get current task status */

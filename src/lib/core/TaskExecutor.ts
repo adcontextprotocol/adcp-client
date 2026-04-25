@@ -912,11 +912,17 @@ export class TaskExecutor {
       await this.config.webhookManager.registerWebhook(agent, taskId, webhookUrl);
     }
 
+    // Use the server-assigned task ID for polling. The local `taskId` is an
+    // SDK-internal UUID the server has never seen — passing it to tasks/get
+    // returns NOT_FOUND on any spec-conformant seller (#966).
+    const serverTaskId = this.responseParser.getTaskId(response) ?? taskId;
+
     const submitted: SubmittedContinuation<T> = {
-      taskId,
+      taskId: serverTaskId,
+      operationId: taskId,
       webhookUrl,
-      track: () => this.getTaskStatus(agent, taskId),
-      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, taskId, pollInterval),
+      track: () => this.getTaskStatus(agent, serverTaskId),
+      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval),
     };
 
     return {
@@ -1125,12 +1131,12 @@ export class TaskExecutor {
     }
   }
 
-  async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
+  async getTaskStatus(agent: AgentConfig, serverTaskId: string): Promise<TaskInfo> {
     // Use MCP Tasks protocol method when available
     if (agent.protocol === 'mcp') {
       const authToken = getAuthToken(agent);
       try {
-        return await getMCPTaskStatus(agent.agent_uri, taskId, authToken);
+        return await getMCPTaskStatus(agent.agent_uri, serverTaskId, authToken);
       } catch (err) {
         if (is401Error(err)) throw err;
         // Fall through to tool call if protocol method is not supported
@@ -1139,7 +1145,7 @@ export class TaskExecutor {
     const response = (await ProtocolClient.callTool(
       agent,
       'tasks/get',
-      { taskId },
+      { taskId: serverTaskId },
       [],
       undefined,
       undefined,
@@ -1149,9 +1155,9 @@ export class TaskExecutor {
     return (response.task as TaskInfo) || (response as unknown as TaskInfo);
   }
 
-  async pollTaskCompletion<T>(agent: AgentConfig, taskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
+  async pollTaskCompletion<T>(agent: AgentConfig, serverTaskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
     while (true) {
-      const status = await this.getTaskStatus(agent, taskId);
+      const status = await this.getTaskStatus(agent, serverTaskId);
 
       if (status.status === ADCP_STATUS.COMPLETED) {
         const pollSuccess = this.isOperationSuccess(status.result);
@@ -1162,7 +1168,7 @@ export class TaskExecutor {
             status: 'completed' as const,
             data: status.result,
             metadata: this.buildMetadata({
-              taskId,
+              taskId: serverTaskId,
               taskName: status.taskType,
               agent,
               responseTimeMs: Date.now() - status.createdAt,
@@ -1178,10 +1184,10 @@ export class TaskExecutor {
           data: status.result,
           error: this.extractOperationError(status.result),
           adcpError: asyncResultErr,
-          errorInstance: this.buildErrorInstance(taskId, asyncResultErr),
+          errorInstance: this.buildErrorInstance(serverTaskId, asyncResultErr),
           correlationId: extractCorrelationId(status.result),
           metadata: this.buildMetadata({
-            taskId,
+            taskId: serverTaskId,
             taskName: status.taskType,
             agent,
             responseTimeMs: Date.now() - status.createdAt,
@@ -1199,10 +1205,10 @@ export class TaskExecutor {
           data: status.result,
           error: status.error || `Task ${status.status}`,
           adcpError: asyncFailedErr,
-          errorInstance: this.buildErrorInstance(taskId, asyncFailedErr),
+          errorInstance: this.buildErrorInstance(serverTaskId, asyncFailedErr),
           correlationId: extractCorrelationId(status.result),
           metadata: this.buildMetadata({
-            taskId,
+            taskId: serverTaskId,
             taskName: status.taskType,
             agent,
             responseTimeMs: Date.now() - status.createdAt,
