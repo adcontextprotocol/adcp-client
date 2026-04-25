@@ -95,7 +95,12 @@ export type {
 // New conversation-aware clients with input handler pattern
 export { SingleAgentClient, createSingleAgentClient, UnsupportedFeatureError } from './core/SingleAgentClient';
 export type { SingleAgentClientConfig } from './core/SingleAgentClient';
-export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
+export {
+  AgentClient,
+  type TaskResponseTypeMap,
+  type AdcpTaskName,
+  type InProcessAgentClientConfig,
+} from './core/AgentClient';
 export { ADCPMultiAgentClient, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
 export {

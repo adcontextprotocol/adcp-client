@@ -423,6 +423,17 @@ export interface AgentConfig {
    * by the client). See {@link AgentRequestSigningConfig}.
    */
   request_signing?: AgentRequestSigningConfig;
+
+  /**
+   * Pre-connected MCP `Client` for in-process testing without an HTTP loopback server.
+   * When present, tool calls are dispatched directly to this client, bypassing URL
+   * validation, OAuth refresh, and the connection cache. All client-side pipeline
+   * stages (idempotency injection, schema validation, governance middleware) still apply.
+   *
+   * Do not set this field directly — use `AgentClient.fromMCPClient()` instead.
+   * @internal
+   */
+  _inProcessMcpClient?: import('@modelcontextprotocol/sdk/client/index.js').Client;
 }
 
 // Testing Types
