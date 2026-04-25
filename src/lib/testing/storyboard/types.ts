@@ -402,6 +402,7 @@ export type StoryboardValidationCheck =
   | 'any_of'
   // A2A wire-shape checks (transport-specific; skipped on non-A2A runs)
   | 'a2a_submitted_artifact'
+  | 'a2a_context_continuity'
   // Cross-step checks
   | 'refs_resolve';
 
