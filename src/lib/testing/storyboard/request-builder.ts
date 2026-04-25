@@ -407,7 +407,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       usage: [
         {
           account: context.account ?? resolveAccount(options),
-          creative_id: context.creative_id ?? 'test-creative',
+          creative_id: context.creative_id ?? 'unknown',
           impressions: 10000,
           vendor_cost: 500,
           currency: 'USD',
@@ -561,6 +561,11 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   },
 
   get_content_standards(_step, context, _options) {
+    // `standards_id` is required by GetContentStandardsRequestSchema (no optional()).
+    // Unlike `get_media_buys` / `get_media_buy_delivery` (where the id field is
+    // optional), we cannot return {} here — that would fail the schema round-trip
+    // test. `'unknown'` triggers a clean NOT_FOUND when context lacks a real id,
+    // surfacing the authoring gap ("wire context_outputs from create_content_standards").
     return {
       standards_id: context.content_standards_id ?? 'unknown',
     };
@@ -571,7 +576,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       standards_id: context.content_standards_id ?? 'unknown',
       artifact: {
         property_rid: 'test-publisher.example',
-        artifact_id: context.creative_id ?? 'test-creative',
+        artifact_id: context.creative_id ?? 'unknown',
         assets: [],
       },
     };
@@ -662,7 +667,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
           record_id: 'delivery_001',
           artifact: {
             property_rid: 'test-publisher.example',
-            artifact_id: context.creative_id ?? 'test-creative',
+            artifact_id: context.creative_id ?? 'unknown',
             assets: [],
           },
         },
@@ -698,7 +703,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   creative_approval(step, context, _options) {
     return {
       rights_id: context.rights_id ?? 'unknown',
-      creative_id: context.creative_id ?? 'test-creative',
+      creative_id: context.creative_id ?? 'unknown',
       creative_url:
         (context.creative_url as string | undefined) ??
         'https://test-assets.adcontextprotocol.org/acme-outdoor/hero-master.jpg',
