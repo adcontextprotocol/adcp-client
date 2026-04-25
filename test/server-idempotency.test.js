@@ -805,7 +805,7 @@ describe("createAdcpServer with idempotency: 'disabled'", () => {
     assert.notEqual(second.replayed, true);
   });
 
-  it("get_adcp_capabilities advertises idempotency.supported: false (no replay_ttl_seconds)", async () => {
+  it('get_adcp_capabilities advertises idempotency.supported: false (no replay_ttl_seconds)', async () => {
     // Wire-honesty: the spec discriminated union has IdempotencySupported
     // (`true` + replay_ttl_seconds) and IdempotencyUnsupported (`false`,
     // no TTL). Disabled mode MUST flip to the Unsupported branch so a

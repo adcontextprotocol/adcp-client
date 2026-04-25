@@ -56,7 +56,7 @@ const basePayload = {
 };
 
 describe('idempotency: disabled — MCP wire roundtrip', () => {
-  it("get_adcp_capabilities advertises {supported: false, no replay_ttl_seconds} over real HTTP", async () => {
+  it('get_adcp_capabilities advertises {supported: false, no replay_ttl_seconds} over real HTTP', async () => {
     const httpServer = serve(makeFactory(), { port: 0, onListening: () => {} });
     await waitForListening(httpServer);
     const port = httpServer.address().port;
@@ -79,7 +79,7 @@ describe('idempotency: disabled — MCP wire roundtrip', () => {
     }
   });
 
-  it("create_media_buy without idempotency_key succeeds over real HTTP (strict request validation enabled)", async () => {
+  it('create_media_buy without idempotency_key succeeds over real HTTP (strict request validation enabled)', async () => {
     const calls = [];
     const httpServer = serve(makeFactory({ calls }), { port: 0, onListening: () => {} });
     await waitForListening(httpServer);
@@ -91,11 +91,7 @@ describe('idempotency: disabled — MCP wire roundtrip', () => {
 
       const result = await client.callTool({ name: 'create_media_buy', arguments: basePayload });
       const body = result.structuredContent;
-      assert.equal(
-        body.adcp_error,
-        undefined,
-        `expected success, got error: ${JSON.stringify(body.adcp_error)}`
-      );
+      assert.equal(body.adcp_error, undefined, `expected success, got error: ${JSON.stringify(body.adcp_error)}`);
       assert.equal(calls.length, 1, 'handler ran once');
       assert.equal(body.media_buy_id, 'mb_1');
       await client.close();
@@ -202,7 +198,7 @@ describe('idempotency: disabled — A2A wire roundtrip', () => {
     }
   }
 
-  it("A2A: create_media_buy succeeds without idempotency_key under strict validation", async () => {
+  it('A2A: create_media_buy succeeds without idempotency_key under strict validation', async () => {
     const calls = [];
     const adcp = makeFactory({ calls })();
     const a2a = createA2AAdapter({
