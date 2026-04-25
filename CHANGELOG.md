@@ -1,5 +1,590 @@
 # Changelog
 
+## 5.18.0
+
+### Minor Changes
+
+- af01482: Storyboard runner: add the `a2a_context_continuity` validation check
+  plus cross-step A2A envelope tracking. Closes #962.
+
+  A2A 0.3.0 §7.1 binds follow-up `message/send` calls to a server-side
+  conversation via `Message.contextId`; the server MUST echo it on the
+  response Task. The `@a2a-js/sdk`'s `DefaultRequestHandler` does this
+  automatically — `createA2AAdapter` (#899) passes through
+  `requestContext.contextId`, so a passing seller built on the SDK
+  won't trip a single-call check. The regression class is sellers that
+  bypass the SDK's request handler and stamp their own `contextId` on
+  the response, breaking buyer-side correlation across multi-turn flows
+  (proposal refinement, IO signing, async approval). This kind of bug
+  is only surface-able on **multi-step** storyboards where step N+1
+  sends with the contextId returned by step N.
+
+  The new check runs at step N+1 and compares
+  `a2aEnvelope.result.contextId` against the most recent prior step's
+  captured envelope. Skip semantics:
+  - Non-A2A run (no envelope captured) → skip with `not_applicable`
+    observation
+  - First A2A step in a run (no prior to compare) → skip
+  - Either envelope has no extractable `contextId` → skip
+  - JSON-RPC error envelope (transport rejection) → skip — continuity
+    is undefined when the call didn't reach the work layer
+  - Skip cases tag the observation so triage can distinguish
+    "validator self-skipped" from "validator passed because contexts
+    matched"
+
+  Failure cases:
+  - Current step's response has no `contextId` (empty/missing) on a
+    non-first send → fail with a pointer to `/result/contextId`
+  - Current step's response `contextId` differs from prior step's →
+    fail with both values surfaced and the prior step id named in
+    the diagnostic
+
+  **Runner-side plumbing**: per-step A2A envelopes are now tracked in
+  a long-lived `priorA2aEnvelopes` map on `ExecutionState`, populated
+  after each capture. The validator reads the most recent insertion-
+  order entry as the comparison baseline. Probe steps, MCP steps, and
+  capture-bypass paths don't insert, so cross-step comparisons walk
+  back to the most recent A2A step automatically.
+
+  Suggested by the ad-tech-protocol-expert review on #952. Filed as
+  #962, scoped as a separate validator since the failure mode and
+  fix surface are distinct from `a2a_submitted_artifact`'s single-call
+  wire-shape check.
+
+  **Coverage**:
+  - 10 unit tests against `validateA2AContextContinuity` (synthetic
+    envelopes covering match, divergence, missing contextId, every
+    skip path)
+  - 2 integration tests against `runStoryboard` driving multi-step
+    storyboards: one against a conformant `createA2AAdapter` (passes),
+    one against a hand-rolled regressed adapter that stamps a fresh
+    contextId per send (fails)
+
+- 6124deb: Storyboard runner: capture A2A wire shape on `protocol: 'a2a'` runs and
+  add the `a2a_submitted_artifact` validation check. Closes the regression
+  class from adcp-client#904 — pre-#899 A2A adapters that emitted
+  `Task.state: 'submitted'` with `final: true` and `adcp_task_id` inside
+  `artifact.parts[0].data` instead of `artifact.metadata` would otherwise
+  pass the storyboard suite despite being non-conformant per A2A 0.3.0.
+
+  The check asserts the wire-shape invariants for AdCP `submitted` arms
+  over A2A:
+  1. `Task.state === 'completed'` — A2A Task.state tracks the HTTP
+     transport call; `'submitted'` is the INITIAL state per A2A 0.3.0
+     and forbidden as a terminal value.
+  2. `Task.id` and `Task.contextId` non-empty — required by A2A 0.3.0
+     for `tasks/get` addressability and follow-up correlation.
+  3. `artifact.artifactId` non-empty — required for chunked-artifact
+     resumption and buyer-side caching.
+  4. `artifact.metadata.adcp_task_id` carries the AdCP-level handle
+     (per A2A 0.3.0 metadata-extension convention).
+  5. `artifact.parts[0]` is a DataPart with `data.status === 'submitted'`
+     — the AdCP payload preserves its native discriminator.
+  6. If `data.adcp_task_id` is also present (forward-compatibility for
+     a future AdCP tool whose response schema legitimately includes
+     it), it MUST equal `metadata.adcp_task_id` — divergent or
+     solo-payload writes are the regression class.
+
+  JSON-RPC error envelopes fail the check with a distinct
+  `error_code: 'a2a_jsonrpc_error_envelope'` so dashboards can separate
+  transport rejections from submitted-arm shape drift.
+
+  The check self-skips with a `not_applicable` observation on non-A2A
+  runs (MCP, raw-probe dispatch path) so storyboards can include it
+  alongside MCP-shape assertions without forcing the runner to know
+  which transport ran.
+
+  Wires `withRawResponseCapture` around the SDK-driven A2A dispatch in
+  the runner so the JSON-RPC envelope is observable for validation;
+  captured response bodies pass through `redactSecrets` before landing
+  in `ValidationContext.a2aEnvelope` so AdCP-style secret-shaped fields
+  in DataPart payloads (`api_key`, `client_secret`, etc.) don't reach
+  persisted compliance reports. `withRawResponseCapture` now surfaces
+  partial captures on rejection (attached as `error.captures`) so
+  storyboard validators get a wire-shape envelope even when the SDK
+  threw mid-parse. Adds `A2ATaskEnvelope` to the public testing types
+  and exports `getCapturesFromError` from the protocols module.
+
+  The companion compliance scenario (adcontextprotocol/adcp#3083 — the
+  `create_media_buy_async_submitted` storyboard) drives this check.
+  Closes the runner-side half of adcp-client#904.
+
+- c085911: Brand `AdcpServer` as nominal + lint `as any` in skill examples.
+
+  Two complementary defenses against the API-drift class that landed PR #945 (the creative skill teaching `server.registerTool`):
+  - **`AdcpServer` is now a branded (nominal) type.** A phantom symbol-keyed property (`[ADCP_SERVER_BRAND]?: never`) makes `(plainObject as AdcpServer)` casts from structurally-similar objects fail at compile time. A real `AdcpServer` is only obtainable by calling `createAdcpServer()`. Closes the door on `(somePlainObject as AdcpServer).registerTool(...)` patterns that tried to reach for an MCP-SDK method the framework intentionally doesn't expose. Type-only change — no runtime behavior, no breaking change for any caller passing a value produced by `createAdcpServer()`.
+  - **`scripts/typecheck-skill-examples.ts` now flags `as any` in extracted skill blocks.** The pattern hides the API drift that strict types would otherwise catch — every legitimate cast has a typed alternative (typed factories like `htmlAsset()`, named discriminated unions like `AssetInstance`, response builders like `buildCreativeResponse()`). New `as any` in a skill block fails the harness; existing uses in `skills/build-seller-agent/deployment.md` (Express middleware boundary code, 2 occurrences) are baselined as known. Authors who genuinely need the escape hatch can use `// @ts-expect-error` against a specific known issue instead — greppable and self-documenting.
+
+  Type-level test in `src/lib/server/adcp-server.type-checks.ts` locks the brand against regression — if a future change accidentally removes the brand, `tsc --noEmit` fails because the negative assertions stop firing.
+
+  This is dx-expert priority #4 from the matrix-v18 review (CI defenses #1–#3 shipped in #945, #957, #961).
+
+- 1158429: **Add `${Parent}_${Property}Values` const arrays for inline anonymous string-literal unions** (closes #932).
+
+  Companion to the named-enum exports landed in 5.17 (PR #931). The earlier shipment covered every spec enum that has a stable named type (`MediaChannelValues`, `PacingValues`, etc., 122 total). This release adds the inline anonymous unions that don't have stable named types in the generated TypeScript — exactly the cases where consumers were re-declaring spec literal sets in their own validation code:
+
+  ```ts
+  // Before — drift bait, hand-maintained on the consumer side.
+  const VALID_IMAGE_FORMATS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'avif', 'tiff', 'pdf', 'eps']);
+  const VALID_VIDEO_CONTAINERS = new Set(['mp4', 'webm', 'mov', 'avi', 'mkv']);
+
+  // After — authoritative, drift-detected.
+  import { ImageAssetRequirements_FormatsValues, VideoAssetRequirements_ContainersValues } from '@adcp/client/types';
+  ```
+
+  **Naming convention.** Every `z.union([z.literal(...), ...])` (or its `z.array(...)`-wrapped variant) inside a named object schema gets a corresponding export named `${ParentSchema}_${PropertyName}Values`, where the property name is PascalCased. Property paths that reference a named enum (e.g. `unit: DimensionUnitSchema.optional()`) are intentionally skipped — use the matching `${TypeName}Values` from `enums.generated.ts`.
+
+  **Coverage.** 104 inline-union arrays exported across 51 parent schemas. User-flagged cases all included: `ImageAssetRequirements_FormatsValues`, `VideoAssetRequirements_FormatsValues` / `_ContainersValues` / `_CodecsValues`, `AudioAssetRequirements_FormatsValues` / `_ChannelsValues`, plus video frame-rate/scan-type/GOP-type discriminators, audio channel layouts, account scopes, payment terms, and many more.
+
+  **Implementation.** New script `scripts/generate-inline-enum-arrays.ts` walks the compiled Zod schemas via runtime introspection (Zod 4 `_def`) rather than regex on the generated TS — cleaner and future-proofs against codegen output format changes. Output goes to `src/lib/types/inline-enums.generated.ts`. Wired into the existing `generate-zod-schemas` script (runs after Zod codegen, since it depends on Zod schemas being current). The new test `test/lib/inline-enum-arrays.test.js` cross-validates every emitted array against the parent Zod schema property — if either side drifts, the test fails fast.
+
+  **Behavior unchanged for existing consumers.** Pure addition; no public-API rename, no breaking change to `enums.generated.ts`. Adapters can drop their hand-maintained `VALID_IMAGE_FORMATS`-style constants in a follow-up.
+
+- df80e85: feat(testing,server): shape-drift hint + response helper for `get_plan_audit_logs`
+
+  The storyboard runner's `LIST_WRAPPER_TOOLS` table now covers `get_plan_audit_logs`, so a handler that returns a bare `[{plan_id, …}]` array instead of `{ plans: [...] }` gets the targeted hint (`Use getPlanAuditLogsResponse() from @adcp/client/server`) alongside the AJV error.
+
+  `getPlanAuditLogsResponse(data, summary?)` is now exported from `@adcp/client/server` and `@adcp/client`, mirroring the existing list-tool helpers (`listPropertyListsResponse`, `listContentStandardsResponse`, …).
+
+  Note: the wrapper key is `plans`, not `logs` as issue #856's body claimed. Verified against `schemas/cache/3.0.0/governance/get-plan-audit-logs-response.json` and `tools.generated.ts:11542` — audit entries are bundled under each `plans[].entries[]` record. Closes #856.
+
+- 24e9569: feat(server): PostgresTaskStore.createTask accepts optional caller-supplied taskId
+
+  Compliance storyboard controller scenarios (`force_create_media_buy_arm`,
+  `force_task_completion`) need to inject buyer-supplied task IDs for storyboard
+  determinism. `PostgresTaskStore.createTask` now accepts an optional `taskId`
+  field on its first argument: when supplied, the ID is used verbatim; when
+  omitted, a random hex ID is generated as before. Throws if the supplied ID is
+  empty, longer than 128 characters, or already exists (the collision is detected
+  via PG uniqueness constraint, not a pre-check race).
+
+  **Caveats and follow-ups:**
+  - `InMemoryTaskStore` (re-exported from the upstream MCP SDK) does NOT honor
+    caller-supplied `taskId` — sellers running without `DATABASE_URL` (e.g., test
+    paths) get random IDs even when one is supplied. Filing an upstream MCP SDK
+    issue to add `taskId?: string` to `CreateTaskOptions` so both stores can honor
+    it cleanly is the right durable fix; this PR is the Postgres-only shim until
+    upstream lands.
+  - The `task_id` namespace on `PostgresTaskStore` is process-global today (no
+    tenant scoping in the schema). Callers using caller-supplied IDs are
+    responsible for namespace isolation. A future migration to a composite
+    `(tenant_id, task_id)` key would close this for production use.
+  - The storyboard runner does not yet send caller-supplied IDs through to the
+    controller tool's input schema. That wiring (runner → tool input → task
+    store) is a separate change tracked in the parent issue.
+
+- efb2fa6: feat(conformance): add `requires_capability` storyboard-level skip gate
+
+  Storyboard runner now evaluates a `requires_capability: { path, equals }` predicate before running any phase. When the predicate is false (agent declared the capability unsupported), the runner emits a single `{ skipped: true, skip_reason: 'capability_unsupported' }` storyboard result instead of a cascade of misleading per-phase failures. This fixes the idempotency universal storyboard running against agents that declare `adcp.idempotency.supported: false` (added in PR #931). The same mechanism applies to any future capability-gated storyboard.
+
+- a085f4a: Cross-domain specialism-declaration runtime check on `createAdcpServer`.
+
+  When a domain handler group (`creative`, `signals`, `brandRights`) is wired but `capabilities.specialisms` doesn't include any of that domain's specialisms, `createAdcpServer` now logs an error via the configured logger:
+
+  ```
+  createAdcpServer: creative handlers are wired but capabilities.specialisms
+  does not include any creative specialism. Add at least one of
+  'creative-ad-server', 'creative-generative', 'creative-template' to
+  capabilities.specialisms — without it, the conformance runner reports
+  "No applicable tracks found" and the agent grades as failing despite
+  working tools.
+  ```
+
+  The matrix v18 run (issue #785) had this drift class account for ~30% of "agent built every tool but storyboard reports no applicable tracks" cases. The conformance runner gates tracks on the `capabilities.specialisms` claim, so an agent with working tools but no claim grades as failing silently.
+
+  Logged via `logger.error` (matching the idempotency-disabled precedent) rather than thrown — middleware-only test harnesses legitimately wire handlers without declaring specialisms, and a hard throw would create more friction than it removes. Production agents will see the warning in boot logs and conformance failure in the matrix.
+
+  `mediaBuy` is intentionally exempt from the check. Its specialism choices (sales-non-guaranteed vs sales-guaranteed vs sales-broadcast-tv vs sales-social etc.) are commercially significant and an agent may legitimately defer the declaration to a follow-up. The `build-seller-agent` skill cross-cutting pitfalls section already covers the right declaration.
+
+  Tests in `test/server-create-adcp-server.test.js` lock the new behavior:
+  - Throws-equivalent: error logged when handlers wired without specialism
+  - No-error: handlers + matching specialism aligned
+  - No-error: no domain handlers wired
+  - No-error: mediaBuy without specialism (commercial-significance carve-out)
+
+  This is dx-expert priority #5 from the matrix-v18 review (CI defenses #1–#4 shipped in #945, #957, #961, #970). With this, the cheap-CI-defense ladder is complete.
+
+- df9d7bd: **Extend `StoryboardStepHint` taxonomy: `shape_drift`, `missing_required_field`, `format_mismatch`, `monotonic_violation`** (closes #935; supersedes #937).
+
+  Issue #935 proposed making `StoryboardStepHint` the canonical surface for **every** runner-side diagnostic that has structured fields a renderer can consume. PR #937 shipped the first member (`shape_drift`) but left the broader vision unfinished — the structured fields were added in parallel to the existing `ValidationResult.warning` prose, and no consumer rendered the structured fields. This release closes the loop:
+
+  **1. Base type + four new hint kinds.** New `StoryboardStepHintBase` constrains every hint to `{ kind, message }`; the union now includes `ShapeDriftHint` (PR #937), `MissingRequiredFieldHint`, `FormatMismatchHint`, and `MonotonicViolationHint`. Each kind carries machine-readable fields so renderers don't regex-parse the prose:
+
+  | `kind`                   | When it fires                                                                                                    | Structured fields                                                                                             |
+  | ------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+  | `shape_drift`            | Bare-array list responses, platform-native `build_creative`, wrong-wrapper `sync_creatives` / `preview_creative` | `tool`, `observed_variant`, `expected_variant`, `instance_path`                                               |
+  | `missing_required_field` | Strict AJV reports `keyword: "required"` issues (lenient Zod accepted)                                           | `tool`, `instance_path`, `schema_path`, `missing_fields[]`, `schema_url?`                                     |
+  | `format_mismatch`        | Strict AJV rejected a `format` / `pattern` / other non-required keyword that lenient Zod accepted                | `tool`, `instance_path`, `schema_path`, `keyword`, `schema_url?`                                              |
+  | `monotonic_violation`    | `status.monotonic` invariant catches an off-graph transition                                                     | `resource_type`, `resource_id`, `from_status`, `to_status`, `from_step_id`, `legal_next_states[]`, `enum_url` |
+
+  **2. De-duplication.** Shape-drift detection moved to `shape-drift-hints.ts` as the canonical surface; the legacy `detectShapeDriftHint` (string) in `validations.ts` now delegates to it so the two surfaces can't drift apart, and the redundant shape-drift prose was removed from `ValidationResult.warning` (it lives only on `step.hints[]` going forward). Strict-AJV `warning` prose is **kept for one minor** for back-compat with consumers that scrape it; new code should consume `step.hints[]`.
+
+  **3. Assertion → hint plumbing.** `AssertionResult` gained an optional `hint?: StoryboardStepHint` that the runner mirrors into the owning step's `hints[]` for `scope: "step"` results. `status.monotonic` is the first user — it now emits a `MonotonicViolationHint` alongside the existing prose `error`. The hint surfaces under the same taxonomy regardless of which subsystem (validation, assertion, runner-internal detector) produced it.
+
+  **4. CLI renders structured fields.** `bin/adcp-step-hints.js` branches on `hint.kind` and prints per-kind detail lines under each prose hint:
+
+  ```
+     💡 Hint: media_buy mb-1: active → pending_creatives (step "create" → step "regress")...
+              media_buy mb-1: active → pending_creatives
+              from step: create
+              legal next states: canceled, completed, paused
+  ```
+
+  Renderers that don't recognize a `kind` literal still display the prose `message` verbatim (forward-compat per `StoryboardStepHintBase`).
+
+  **Wire-format compatibility.** Adding union members is non-breaking — the JSDoc on `StoryboardStepHint` already said "more kinds may be added over time," and existing consumers that only render `message` keep working. The `ValidationResult.warning` prose for shape-drift is removed (its content lives on `step.hints[*].message` instead), so consumers that scraped specifically `warning` for shape-drift recipes need to switch surfaces.
+
+  **Spec alignment.** None required — `StoryboardStepHint` is a runner-internal diagnostic surface defined by the runner-output contract. The structured fields mirror existing taxonomies the spec already uses (`SchemaValidationError.instance_path` / RFC 6901, `enums/*-status.json` URLs).
+
+- d059760: Strict discriminator types for creative assets, vendor pricing, and sync rows.
+
+  The codegen produces strict per-variant interfaces (`ImageAsset`, `CpmPricing`, etc.) but doesn't emit canonical discriminated unions over them. This release adds three hand-authored unions on top of the generated bases so handler authors can opt into compile-time discriminator checking instead of runtime schema validation:
+  - **`AssetInstance`** — discriminated union of every creative asset instance (`ImageAsset | VideoAsset | AudioAsset | TextAsset | HTMLAsset | URLAsset | CSSAsset | JavaScriptAsset | MarkdownAsset | VASTAsset | DAASTAsset | BriefAsset | CatalogAsset | WebhookAsset`), keyed on `asset_type`. Use as the value type for `creative_manifest.assets[<key>]`. Omitting `asset_type` or returning a plain `{ url, width, height }` against this type fails to compile.
+  - **`AssetInstanceType`** — the `asset_type` discriminator value union (`'image' | 'video' | …`). Useful for exhaustive switch-case helpers.
+  - **`SyncAccountsResponseRow`** — extracted named type for one row in `SyncAccountsSuccess.accounts[]`. Forces the `action` literal-union discriminator (`'created' | 'updated' | 'unchanged' | 'failed'`) and the `status` enum on every row at compile time.
+  - **`SyncGovernanceResponseRow`** — same pattern for `SyncGovernanceSuccess.accounts[]`. Forces the `status: 'synced' | 'failed'` discriminator.
+  - **Vendor-pricing exports completed** — `PerUnitPricing`, `CustomPricing`, `VendorPricing`, `VendorPricingOption` are now re-exported from `@adcp/client` (previously only `CpmPricing`, `PercentOfMediaPricing`, `FlatFeePricing` were).
+  - **Product-pricing exports completed** — `CPMPricingOption`, `VCPMPricingOption`, `CPCPricingOption`, `CPCVPricingOption`, `CPVPricingOption`, `CPPPricingOption`, `FlatRatePricingOption`, `TimeBasedPricingOption` re-exported (the union type `PricingOption` and `CPAPricingOption` were already exported).
+
+  Type tests in `src/lib/types/asset-instances.type-checks.ts` use `// @ts-expect-error` to lock in the constraints — if a future codegen regression loosens any discriminator (e.g., makes `asset_type` optional), `tsc --noEmit` fails on a now-unexpected error. The file uses the `.type-checks.ts` suffix (not `.test.ts`) so it participates in the project's normal `npm run typecheck` pass; explicitly excluded from `tsconfig.lib.json` so it doesn't ship in `dist/`.
+
+  Drift class this catches at compile time:
+
+  ```ts
+  // Before: this slipped past TS, was caught only by runtime validator.
+  const asset: Record<string, unknown> = { url: '...', width: 1920, height: 1080 };
+  return { creative_manifest: { format_id, assets: { hero: asset } } };
+
+  // After: typed as AssetInstance, missing asset_type is a compile error.
+  const asset: AssetInstance = { url: '...', width: 1920, height: 1080 };
+  //                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  // error TS2353: Object literal may only specify known properties, and
+  // 'url' does not exist in type 'AssetInstance'. Property 'asset_type'
+  // is missing.
+  ```
+
+  This is dx-expert priority #3 from the matrix-v18 review (CI defenses #1 and #2 shipped in #945 and #957).
+
+- fcc9b5b: feat(sync): pull canonical agent skills from the protocol tarball
+
+  `scripts/sync-schemas.ts` now extracts protocol-managed skills (`call-adcp-agent`, `adcp-media-buy`, `adcp-creative`, `adcp-signals`, `adcp-governance`, `adcp-si`, `adcp-brand`) from the published `/protocol/<version>.tgz` bundle alongside schemas and compliance, into `@adcp/client/skills/<name>/`. The sync is **manifest-driven and per-name** — only directories enumerated in `manifest.contents.skills` are overwritten, so SDK-local skills (`build-seller-agent`, `build-creative-agent`, etc.) stay untouched.
+
+  The buyer-side `call-adcp-agent` skill is now sourced from the spec repo (adcontextprotocol/adcp#3097) rather than maintained as a local copy — version-pinned to `ADCP_VERSION`, Sigstore-verified via the same cosign path as schemas, no manual sync.
+
+  Adds an `ADCP_BASE_URL` env override (defaults to `https://adcontextprotocol.org`) so CI / local-dev can point sync at a fake CDN for testing.
+
+### Patch Changes
+
+- 62beb82: **Fix storyboard runner injecting `brand`/`account` into tools whose request schemas declare `additionalProperties: false` (#940).** The storyboard runner's `applyBrandInvariant` helper unconditionally injected `brand` (and a synthetic `account` when none was present) into every outgoing request. Tools like `sync_plans`, `list_property_lists`, and `delete_property_list` have strict request schemas that do not include these fields. Before v5.17.0 this was silently tolerated (request validation defaulted to `'warn'`); PR #909 flipped the default to `'strict'`, causing 11 storyboards to regress with `VALIDATION_ERROR: must NOT have additional properties`.
+
+  `applyBrandInvariant` now accepts an optional `taskName` and consults the raw request schema JSON to decide which fields are safe to inject. It skips top-level `brand` injection when the schema declares `additionalProperties: false` and does not list `brand` in `properties`; similarly for the synthetic `account` construction. Tools that do declare these fields (e.g. `get_products`, `create_media_buy`) are unaffected. Fails open when schemas are unavailable (not synced) or `taskName` is omitted, preserving backwards compatibility.
+
+  A new exported helper `schemaAllowsTopLevelField(toolName, field)` is added to `schema-loader.ts` for this purpose; it reads raw JSON without touching AJV internals.
+
+  The runner now also leaves storyboard-authored `account: { account_id }` payloads untouched. `AccountReference` is `oneOf` of `{account_id}` (closed via `additionalProperties:false`) or `{brand, operator, sandbox?}`. The previous code merged `brand` into any plain-object `account`, producing `{account_id, brand}` payloads that match neither `oneOf` branch under strict AJV — an issue latent for tools like `list_creatives` whose schemas use AccountReference. Brand is now merged only when the existing `account` carries `brand` or `operator` (the natural-key variant).
+
+- 153945b: Fix `ProtocolResponseParser.getStatus` and `getTaskId` to read AdCP
+  work-layer fields from A2A wrapped Task responses instead of the
+  transport-layer fields. Closes #973.
+
+  Per #899's two-lifecycle contract, A2A `Task.state` reflects the
+  HTTP-call lifecycle (always `'completed'` for AdCP submitted arms —
+  the call returned with a queued AdCP task), and `Task.id` is the
+  SDK-generated transport handle (pinned to one HTTP call). The AdCP
+  work lifecycle and work handle live on the artifact:
+  `artifact.parts[0].data.status` and `artifact.metadata.adcp_task_id`
+  respectively.
+
+  **Pre-fix behavior**:
+  - `getStatus` for an A2A submitted-arm response returned
+    `'completed'` (read from `result.status.state`), preventing
+    `TaskExecutor.handleAsyncResponse` from ever entering the
+    SUBMITTED branch. Buyers thought async operations finished
+    synchronously — `result.submitted` was undefined; no
+    `SubmittedContinuation` was issued.
+  - `getTaskId` returned the A2A Task.id, which the seller's AdCP
+    `tasks/get` tool would not recognize (the seller knows the AdCP
+    task handle, not the transport id).
+
+  **Fix**: when `result.kind === 'task'` AND the artifact's first
+  DataPart carries an AdCP payload, prefer the AdCP-layer fields:
+  - `getStatus`: read `artifact.parts[0].data.status` if it's an
+    `ADCP_STATUS` enum value; fall back to `result.status.state`.
+  - `getTaskId`: read `artifact.metadata.adcp_task_id` if present and
+    passes the session-id safety guard; fall back to `result.id`.
+
+  Non-AdCP A2A responses (no artifact, no DataPart, or `data.status`
+  not in the AdCP enum) keep the previous behavior — the transport-
+  layer fields are authoritative.
+
+  **End-to-end consequence**: combined with #966 (server-task-id
+  plumbing) and #967 (AdCP `tasks/get` request/response shape), A2A
+  submitted-arm polling now works end-to-end against any
+  `createA2AAdapter`-backed seller. Probe before this PR:
+
+  ```
+  result.status = completed   ← WRONG, treated as sync completion
+  result.submitted = undefined
+  result.metadata.serverTaskId = <random A2A UUID>
+  ```
+
+  After:
+
+  ```
+  result.status = submitted
+  result.submitted.taskId = tk_seller_handle_99   ← AdCP work handle
+  ```
+
+  **Tests**:
+  - `test/lib/protocol-response-parser-a2a-submitted.test.js` — 15
+    unit tests covering AdCP-layer reads (submitted/working/failed),
+    fallback paths (no artifact, no DataPart, malformed status, no
+    metadata), interaction with MCP `structuredContent` (untouched),
+    and session-id safety guards.
+  - `test/server-a2a-submitted-end-to-end.test.js` — full submitted →
+    working → working → completed roundtrip against a real
+    `createA2AAdapter`. Asserts (1) SDK classifies as submitted,
+    (2) `SubmittedContinuation.taskId` is the AdCP handle, (3)
+    polling dispatches `tasks/get` with snake_case `task_id`, (4)
+    the spec-shape `tasks/get` response resolves
+    `waitForCompletion()` with `result.media_buy_id`.
+
+  This is the third and final landmark of the A2A submitted-arm
+  polling story (#966 → #967 → #973). With it, A2A buyers can drive
+  guaranteed-buy / IO-signing / governance-review / batch-processing
+  flows end-to-end through the SDK without webhook-only fallbacks.
+
+- fbc36cb: Fix `TaskExecutor.getTaskStatus` to dispatch the AdCP `tasks/get` tool
+  spec-conformantly. Closes #967.
+
+  **Pre-fix bugs**:
+  1. **Wrong request param**: SDK passed `{ taskId }` (camelCase). AdCP
+     3.0 schema (`schemas/cache/3.0.0/bundled/core/tasks-get-request.json`)
+     requires `{ task_id }` (snake_case). Conformant sellers reject as
+     INVALID_PARAMS.
+  2. **Wrong response shape mapping**: SDK read `(response.task as TaskInfo)` —
+     expects a non-spec nested wrapper with camelCase fields. AdCP-spec
+     responses are flat snake_case (`{ task_id, task_type, status,
+created_at, updated_at, ... }`); real spec-conformant responses
+     produced `taskId: undefined` everywhere on the polled `TaskInfo`.
+  3. **Wrong primary path**: SDK tried MCP `experimental.tasks.getTask`
+     first for MCP agents and fell through to the AdCP tool on
+     capability-missing. The MCP-experimental path tracks
+     transport-call lifecycle (the MCP analog of A2A `Task.state`),
+     not AdCP work lifecycle. For polling submitted-arm tasks (which
+     is what `pollTaskCompletion` does) we need work status; the two
+     interfaces are not substitutes (per protocol-expert review on
+     #966/#967).
+
+  **Fix**:
+  - Drop the MCP-experimental.tasks first attempt. Always dispatch the
+    AdCP `tasks/get` tool over the agent's transport.
+  - Pass the request param as `task_id` (snake_case).
+  - Map the response via a new `mapTasksGetResponseToTaskInfo` helper
+    that walks the transport-level wrappers (MCP `structuredContent`,
+    A2A `result.artifacts[0].parts[0].data`, legacy `{ task: ... }`
+    nested wrapper) and the AdCP-spec flat shape, then projects to the
+    internal `TaskInfo`.
+  - Bypass `extractResponseData` for `tasks/get` — the generic
+    AdCP-error-arm detection misinterprets the spec's informational
+    `error: { code, message }` block as an error envelope and shreds
+    the response into `{ errors: [...] }`. The new helper handles
+    unwrapping directly.
+  - Pass through `result` / `task_data` from `additionalProperties: true`
+    so completion data round-trips when sellers add it. (Note: AdCP
+    3.0 doesn't define a typed completion-payload field on `tasks/get`;
+    see adcp#3123 for the upstream clarification issue. Forward-compat
+    with all three possible spec resolutions.)
+
+  **Behavior change**: MCP sellers that supported `experimental.tasks`
+  but did NOT register an AdCP `tasks/get` tool will now see polling
+  fail rather than silently use the wrong-lifecycle interface. This is
+  deliberate — the previous behavior was incorrect (returned transport
+  status, not work status). Sellers should register `tasks/get` as an
+  AdCP tool to support buyer-side polling.
+
+  Adds `test/server-tasks-get-spec-shape.test.js` with six regression
+  tests:
+  - Request param naming (snake_case `task_id`, no camelCase `taskId`)
+  - AdCP-spec flat response mapping (incl. ISO 8601 timestamps)
+  - Result-data passthrough via additionalProperties
+  - Error-block mapping (failed status with `error: { code, message }`)
+  - Legacy `{ task: ... }` nested-shape backward compat
+  - No MCP-experimental.tasks first attempt
+
+  Companion of #966 (server-task-id plumbing). With both PRs landed,
+  MCP submitted-arm polling works end-to-end against spec-conformant
+  sellers. A2A submitted-arm polling still has additional bugs at the
+  parser layer (`getStatus` reads transport state, `getTaskId` extracts
+  A2A Task.id instead of `artifact.metadata.adcp_task_id`); tracked in
+  adcp-client#973.
+
+- 4b02028: Audit storyboard request-builder enrichers for placeholder-id clobber
+  pattern (closes #989).
+
+  **Findings from the 12-site audit:**
+
+  `get_content_standards` keeps `'unknown'` — `standards_id` is required
+  by `GetContentStandardsRequestSchema` (no `.optional()`), so returning
+  `{}` would violate the schema round-trip invariant. The `'unknown'`
+  placeholder correctly triggers a clean NOT_FOUND when context lacks a
+  real id, surfacing the authoring gap. This differs from `get_media_buys`
+  (fixed in #983/#988) where `media_buy_ids` is optional.
+
+  All other `'unknown'` placeholders in mutating writes (`update_media_buy`,
+  `calibrate_content`, `check_governance`, `update_content_standards`,
+  `validate_content_delivery`, `acquire_rights`, `update_rights`,
+  `creative_approval`, `si_send_message`, `si_terminate_session`) are
+  correct: they produce a clean NOT_FOUND, surfacing "wire context_outputs
+  from the create step."
+
+  **Code change:** Four mutating-write enrichers used `'test-creative'` as
+  the creative/artifact-id fallback. Unlike `'unknown'`, `'test-creative'`
+  could be silently accepted by a pre-seeded test agent, masking an
+  authoring error. Standardised all four to `'unknown'` for consistency:
+  - `report_usage` — `creative_id`
+  - `calibrate_content` — `artifact_id`
+  - `validate_content_delivery` — `artifact_id`
+  - `creative_approval` — `creative_id`
+
+  **Tests:** Added 3 unit tests for `get_content_standards` to
+  `test/lib/request-builder.test.js` (unknown fallback, context injection,
+  fixture wins).
+
+- fc70b9a: **Fix `get_media_buys` and `get_media_buy_delivery` storyboard enrichers injecting `media_buy_ids: ["unknown"]` when no context ID is present (#983).** Both enrichers unconditionally built `media_buy_ids: [context.media_buy_id ?? 'unknown']`. When a storyboard tests the broad-list/pagination path (no IDs in `sample_request`), the fixture-wins merge (`{ ...enriched, ...fixture }`) could not clear the injected placeholder because the fixture simply omitted the key. Agents received `media_buy_ids: ["unknown"]`, returned 0 matches, and storyboard `pagination.has_more` assertions failed.
+
+  Both enrichers now omit `media_buy_ids` entirely when `context.media_buy_id` is absent, matching the pattern used by `list_creatives` and `list_accounts`. When a real ID is present the behavior is unchanged. This unblocks the `get-media-buys-pagination-integrity` storyboard in `adcontextprotocol/adcp#3122` from upgrading to its intended multi-page seeded walk.
+
+- 72b3f87: `verifyIntrospection`: drop the `as Record<string, unknown>` cast on the
+  introspection response stored in `AuthPrincipal.claims`. `JWTPayload`'s
+  `[propName: string]: unknown` index signature already accepts the RFC 7662
+  response shape structurally, so the cast was hiding the real relationship
+  between the two types. Adds a JSDoc callout on `AuthPrincipal.claims` that
+  the field carries either a decoded JWT (verifyBearer) or an RFC 7662
+  introspection response (verifyIntrospection), and that adapter handlers
+  passing claim values (`sub`, `username`, `client_id`) into an LLM context
+  must narrow and validate — an upstream IdP that controls those fields can
+  inject prompt content otherwise.
+- 5d788bc: `TaskExecutor.pollTaskCompletion`: handle every non-progressing AdCP
+  task status. Closes #977 (both halves).
+
+  **Pre-fix**: `pollTaskCompletion` only exited on `completed`, `failed`,
+  and `canceled`. Three non-progressing statuses caused the loop to spin
+  until the caller's timeout:
+  - **`rejected`** — definitively terminal per the AdCP `task-status`
+    enum ("Task was rejected by the agent and was not started"). Now
+    collapses onto the same `failed`/`canceled` exit branch with
+    `{ success: false, status: 'failed' }`.
+  - **`input-required`** — paused state. Polling alone can't advance it;
+    the buyer must satisfy the paused condition (supply input) and
+    retry the original tool call. Now returns a
+    `TaskResultIntermediate` with `status: 'input-required'`,
+    `success: true` (mirrors the synchronous `handleInputRequired`
+    no-handler path).
+  - **`auth-required`** — paused state. Same handling as
+    `input-required`. Also added to `TaskResultIntermediate`'s status
+    union and the `TaskStatus` type.
+
+  **Error fallback**: the polling path now checks `status.message`
+  before the generic `Task <status>` template, matching the
+  synchronous dispatch path. `TaskInfo` gains an optional `message`
+  field; the `tasks/get` response mapper preserves the top-level
+  `message` field through to it.
+
+  **Side fixes** caught by review:
+  - `mcp-tasks.mapMCPTaskToTaskInfo`: the `statusMessage → error`
+    projection now checks against the AdCP-mapped status (post-
+    `mapMCPTaskStatus`) instead of the MCP-side raw status. The prior
+    check used `['failed', 'rejected', 'canceled']` against the
+    pre-mapping string — but MCP Tasks emits `'cancelled'` (British)
+    and never `'rejected'` as a standard status, so MCP-cancelled
+    tasks weren't surfacing `statusMessage` as `error`.
+  - `onTaskEvents`: `'canceled'` was falling through to
+    `onTaskUpdated`. Now joins `'failed'` and `'rejected'` on the
+    `onTaskFailed` branch.
+  - `TaskStatus` union: adds `'rejected'`, `'canceled'`, and
+    `'auth-required'` for metadata fidelity.
+
+  **Tests**: `test/lib/poll-task-completion-terminal-states.test.js`
+  covers all three new exit paths plus regressions for `failed` /
+  `canceled`. 9 tests; mocks dispatch via `protocol: 'a2a'` so polls
+  route directly through `ProtocolClient.callTool` without the MCP
+  Tasks protocol fast path.
+
+  **adcp#3126 alignment** (typed `tasks/get` result field):
+  adcontextprotocol/adcp#3126 closed the spec ambiguity flagged in
+  adcp#3123 by adding a typed `result` field on `tasks/get` responses
+  (gated by `include_result: true` on the request, populated when
+  `status: 'completed'`). The SDK now sets `include_result: true` on
+  every polling request so spec-conformant 3.1.0+ sellers populate
+  the typed field; pre-3.1.0 sellers ignore the unknown request
+  field, and the response mapper continues to read `result` (the
+  typed and informal paths share the same field name). Dropped the
+  informal `task_data` alias from the mapper — `result` is the
+  canonical name.
+
+- fbc36cb: Fix `SubmittedContinuation.taskId` and the polling cycle to use the
+  server-assigned task handle instead of the SDK's runner-side
+  correlation UUID. Closes #966.
+
+  Pre-fix bug: `setupSubmittedTask` plumbed the local UUID generated at
+  request time (`TaskState.taskId`, used for the `activeTasks` map and
+  the `{operation_id}` webhook URL macro) through to the
+  `SubmittedContinuation`. `track()` and `waitForCompletion()` then
+  addressed `tasks/get` calls with that local UUID — which the seller
+  has never seen, so any spec-conformant seller would respond with
+  NOT_FOUND. Existing mock tests masked this because they ignored the
+  `taskId` parameter when stubbing the polling response.
+
+  Post-fix: `setupSubmittedTask` extracts the server-assigned handle via
+  `responseParser.getTaskId(response)` (which already walks both the
+  flat AdCP `response.task_id` shape and the A2A `result.kind === 'task'`
+  → `result.id` shape) and uses it for both the buyer-facing
+  `SubmittedContinuation.taskId` field and the closures' polling calls.
+  The local UUID stays internal for `activeTasks` bookkeeping and the
+  webhook URL macro.
+
+  When a seller violates the spec and omits the task handle entirely,
+  the SDK falls back to the local UUID so callers still get a non-
+  undefined `taskId` field — pollers won't be able to locate the work,
+  but this matches the historical (broken) behavior surface and avoids
+  introducing a hard fail at a code path that's been silently wrong.
+
+  Updates `SubmittedContinuation.taskId` JSDoc to document that it
+  carries the server handle and is distinct from the runner-side
+  correlation id.
+
+  Adds `test/server-task-id-plumbing.test.js` — five regression tests
+  covering the conformant path, polling/track invocations addressing the
+  right id, the spec-violation fallback, and the A2A `result.kind: 'task'`
+  branch of `responseParser.getTaskId`.
+
+  Companion follow-up: #967 — fix the AdCP `tasks/get` request param
+  naming (`taskId` → `task_id`) and the response-shape mapping. This PR
+  plumbs the right ID; #967 wires it into a spec-conformant request and
+  parses the spec-conformant response.
+
+- d62da47: Skill drift fixes (caught by `npm run typecheck:skill-examples`):
+  - 8 SKILL.md files imported `verifyApiKey`, `verifyBearer`, `anyOf`, `bridgeFromTestControllerStore` from `@adcp/client` (top-level) — these symbols only exist under `@adcp/client/server`. Agents copy-pasting the example would get `Module has no exported member` at compile time. Fixed across all affected skills (`build-creative-agent`, `build-generative-seller-agent`, `build-governance-agent`, `build-retail-media-agent`, `build-seller-agent`, `build-si-agent`, `build-signals-agent`, `build-seller-agent/deployment.md`).
+
+  Plus `scripts/typecheck-skill-examples.ts` — extracts every fenced TS block from `skills/**/*.md`, compiles each as a standalone module against the published `@adcp/client` types, and fails on new typecheck errors. Baseline mode (`scripts/skill-examples.baseline.json`) records the 142 known documentation-pattern errors (placeholder identifiers, untyped `ctx.store.list` returns) so the script ships green on day one and ratchets down over time. Run with `npm run typecheck:skill-examples`.
+
+- ea54d16: Skill drift fixes surfaced by matrix conformance harness:
+  - **build-creative-agent**: replace non-existent `server.registerTool('preview_creative', ...)` with the `creative.previewCreative` domain handler that has existed since `createAdcpServer` first shipped. Agents following the previous skill text wrote `TypeError: server.registerTool is not a function` into `serve()`, the factory threw, no tools registered, and the agent returned 401 on every request.
+  - **build-creative-agent**: vendor-pricing pitfall added — `list_creatives.creatives[].pricing_options[]` uses field name `model` (not `pricing_model` like products), and each model has its own required fields. Includes the `flat_fee` `period` requirement that the schema enforces but earlier skill text omitted.
+  - **All skills**: cross-cutting pitfall callout — `capabilities.specialisms` on `createAdcpServer` is required for storyboard track resolution. Agents that wire every tool but don't claim their specialism fail conformance with "No applicable tracks found" silently.
+  - **build-seller-agent**: split into `SKILL.md` (95 KB, was 136 KB) plus `deployment.md` and 6 specialism-delta files under `specialisms/`. Reduces the single-file budget Claude has to process when building a sales-non-guaranteed agent.
+  - **build-brand-rights-agent / build-generative-seller-agent / build-governance-agent / build-retail-media-agent**: `sync_accounts` response per-row `action` field clarified (`'created' | 'updated' | 'unchanged' | 'failed'` enum required by schema; previously skill examples omitted it).
+
+  Plus `scripts/conformance-replay.ts` — deterministic in-process schema-conformance harness covering creative-template (6/6 steps pass in ~2s). Not user-facing; ships in the published package because `scripts/**` is published. v0; expansion to other specialisms in follow-ups.
+
+- 4d91c11: **Docs (in-source): clarify why `tools/list` publishes empty `inputSchema`.** The framework intentionally registers tools with `PASSTHROUGH_INPUT_SCHEMA` so MCP `tools/list` returns `{ type: 'object', properties: {} }` per tool — full per-tool schemas would balloon the context window for LLM consumers, who are the primary readers of MCP discovery. Tool shapes live in `docs/llms.txt`, the SKILL.md files, and `schemas/cache/`. Comment-only change at `create-adcp-server.ts` (registration + `PASSTHROUGH_INPUT_SCHEMA` definition) and `SingleAgentClient.adaptRequestForServerVersion` (consumer side) so future engineers don't try to "fix" the empty schemas by inlining them. Points downstream consumers at `schema-loader.ts` / `schemaAllowsTopLevelField` (#940) as the canonical pattern when they need a tool's shape.
+- ce4d1ce: **Fix `version.ts` drift on release.** Changesets bumps `package.json` for the Release PR but doesn't know about `src/lib/version.ts`, so every release left the in-repo `version.ts` stale (e.g., `package.json: 5.17.0` while `version.ts: 5.16.0`). The npm tarball was always correct because `build:lib` runs `sync-version` on the CI runner — but the git tree drifted.
+
+  Fix: chain `npm run sync-version` after `changeset version` so the Release PR includes the synced `version.ts`. When merged, both files stay in lockstep.
+
+  No runtime behavior change. The published package's `LIBRARY_VERSION` was already correct via the build-time sync; this just keeps the git source-of-truth honest.
+
 ## 5.17.0
 
 ### Minor Changes
