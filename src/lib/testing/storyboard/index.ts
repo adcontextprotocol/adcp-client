@@ -17,6 +17,7 @@ import './default-invariants';
 
 // Types
 export type {
+  A2ATaskEnvelope,
   Storyboard,
   StoryboardInvariants,
   StoryboardInvariantsObject,
