@@ -2633,7 +2633,10 @@ export class SingleAgentClient {
 
     if (hasCapabilitiesTool) {
       try {
-        // Call get_adcp_capabilities tool
+        // ensureEndpointDiscovered is a no-op for in-process agents (_needsDiscovery is false
+        // because normalizeAgentConfig returns early when _inProcessMcpClient is set). The
+        // executor then hits ProtocolClient.callTool which reads _inProcessMcpClient directly,
+        // so the sentinel adcp-in-process:// URI never reaches validateAgentUrl.
         const agent = await this.ensureEndpointDiscovered();
         const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined);
 

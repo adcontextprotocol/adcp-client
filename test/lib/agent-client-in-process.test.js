@@ -197,8 +197,9 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
   });
 
   it('fromMCPClient factory — agentName and agentId are reflected on the instance', () => {
-    // Synchronous factory — no server needed for this assertion
-    const fakeMcpClient = { callTool: async () => ({}) };
+    // Synchronous factory — no server needed for this assertion.
+    // Stub listTools so the fake is safe if getAgentInfo() is ever called on this instance.
+    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
     const agent = AgentClient.fromMCPClient(fakeMcpClient, {
       agentName: 'my-in-process-agent',
       agentId: 'agent-42',
@@ -209,11 +210,33 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
     assert.strictEqual(agent.getProtocol(), 'mcp');
   });
 
+  it('fromMCPClient factory — omitting agentId generates a sentinel id', () => {
+    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
+    const agent = AgentClient.fromMCPClient(fakeMcpClient);
+
+    const id = agent.getAgentId();
+    assert.ok(
+      typeof id === 'string' && id.startsWith('in-process-'),
+      `Expected id to start with "in-process-", got: ${id}`
+    );
+    assert.ok(id.length > 'in-process-'.length, 'Generated id should have a non-empty random suffix');
+  });
+
+  it('isSameAgentResolved — in-process agents compare by sentinel id, not URL', async () => {
+    const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
+    const a = AgentClient.fromMCPClient(fakeMcpClient, { agentId: 'same-id' });
+    const b = AgentClient.fromMCPClient(fakeMcpClient, { agentId: 'same-id' });
+    const c = AgentClient.fromMCPClient(fakeMcpClient, { agentId: 'different-id' });
+
+    assert.strictEqual(await a.isSameAgentResolved(b), true, 'Same id should match');
+    assert.strictEqual(await a.isSameAgentResolved(c), false, 'Different id should not match');
+  });
+
   describe('in-process guards — HTTP-only methods throw descriptively', () => {
     let agent;
 
     before(() => {
-      const fakeMcpClient = { callTool: async () => ({}) };
+      const fakeMcpClient = { callTool: async () => ({}), listTools: async () => ({ tools: [] }) };
       agent = AgentClient.fromMCPClient(fakeMcpClient, { agentName: 'guard-test' });
     });
 

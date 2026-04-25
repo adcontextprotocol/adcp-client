@@ -1011,6 +1011,13 @@ export class AgentClient {
    * Async version that resolves canonical URLs first for more accurate comparison
    */
   async isSameAgentResolved(other: AgentConfig | AgentClient): Promise<boolean> {
+    const otherIsInProcess = other instanceof AgentClient && other._isInProcess;
+    if (this._isInProcess || otherIsInProcess) {
+      // In-process agents have no canonical URL to resolve — compare sentinel IDs instead.
+      const thisId = this.getAgentId();
+      const otherId = other instanceof AgentClient ? other.getAgentId() : other.id;
+      return thisId === otherId;
+    }
     if (other instanceof AgentClient) {
       // Resolve both sides first
       await this.resolveCanonicalUrl();
