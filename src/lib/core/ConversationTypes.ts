@@ -110,8 +110,11 @@ export type TaskStatus =
   | 'working'
   | 'needs_input'
   | 'input-required'
+  | 'auth-required'
   | 'completed'
   | 'failed'
+  | 'rejected'
+  | 'canceled'
   | 'deferred'
   | 'aborted'
   | 'submitted'
@@ -212,6 +215,8 @@ export interface TaskInfo {
   result?: any;
   /** Error message (if failed) */
   error?: string;
+  /** Human-readable message from agent (alternative to error field) */
+  message?: string;
   /** Webhook URL (if applicable) */
   webhookUrl?: string;
 }
@@ -390,7 +395,14 @@ export interface TaskResultCompleted<T> extends TaskResultBase<T> {
 /** Task is still progressing (working, submitted, input-required, deferred). */
 export interface TaskResultIntermediate<T> extends TaskResultBase<T> {
   success: true;
-  status: 'working' | 'submitted' | 'input-required' | 'deferred';
+  /**
+   * Task is progressing but not yet final. `'auth-required'` and
+   * `'input-required'` are paused states surfaced by the polling
+   * cycle (`pollTaskCompletion`) — the buyer must satisfy the
+   * paused condition (refresh auth / supply input) and retry the
+   * original tool call. Polling alone won't advance them.
+   */
+  status: 'working' | 'submitted' | 'input-required' | 'auth-required' | 'deferred';
   data?: T;
   error?: undefined;
   adcpError?: undefined;
