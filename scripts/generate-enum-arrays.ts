@@ -100,7 +100,15 @@ function renderOutput(enums: ExtractedEnum[]): string {
       body += `// ====== ${e.source.toUpperCase()} ENUMS ======\n\n`;
       lastSource = e.source;
     }
-    const literals = e.values.map(v => `'${v.replace(/'/g, "\\'")}'`).join(', ');
+    // JSON.stringify produces a TS-valid double-quoted string literal with
+    // every special char (backslash, quote, control chars, surrogates)
+    // escaped correctly. Using a hand-rolled `'...'` template with a
+    // single-quote replace is incomplete — it doesn't escape backslashes,
+    // so a value like `it\'s` would render as `'it\\'s'` which is two
+    // tokens. Spec enums today are all simple alphanumerics so the bug
+    // never fires, but JSON.stringify is the boring correct choice and
+    // future-proofs against any spec value that ever contains punctuation.
+    const literals = e.values.map(v => JSON.stringify(v)).join(', ');
     body += `export const ${e.name}Values = [${literals}] as const;\n`;
   }
 
