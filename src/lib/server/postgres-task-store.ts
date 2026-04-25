@@ -155,27 +155,59 @@ export class PostgresTaskStore implements TaskStore {
     }
   }
 
+  /**
+   * Create a new task. Pass `taskParams.taskId` to use a caller-supplied ID verbatim
+   * (useful for compliance-controller scenarios where the runner needs deterministic
+   * task IDs). If omitted, a random hex ID is generated. Throws if the supplied ID
+   * is empty / longer than 128 chars, or already exists. The 128-char ceiling is an
+   * SDK policy (matches typical request-id / session-id field lengths and keeps
+   * the task_id index efficient) — Postgres TEXT itself imposes no limit.
+   *
+   * The `task_id` namespace on this store is global (no tenant scoping in the schema
+   * today). Callers using caller-supplied IDs are responsible for namespace isolation;
+   * cross-tenant collisions surface as `already exists`. Track the schema fix
+   * (composite key on tenant + task_id) in a future SDK migration if production paths
+   * ever wire caller-supplied IDs.
+   */
   async createTask(
-    taskParams: CreateTaskOptions,
+    taskParams: CreateTaskOptions & { taskId?: string },
     requestId: RequestId,
     request: Request,
     _sessionId?: string
   ): Promise<Task> {
-    const taskId = randomBytes(16).toString('hex');
+    if (taskParams.taskId !== undefined) {
+      if (typeof taskParams.taskId !== 'string' || taskParams.taskId.length === 0) {
+        throw new Error('taskId must be a non-empty string when supplied');
+      }
+      if (taskParams.taskId.length > 128) {
+        throw new Error(`taskId must be 128 characters or fewer (got ${taskParams.taskId.length})`);
+      }
+    }
+    const taskId = taskParams.taskId ?? randomBytes(16).toString('hex');
     const ttl = taskParams.ttl ?? null;
     const pollInterval = taskParams.pollInterval ?? 1000;
 
-    const { rows } = await this.db.query(
-      `INSERT INTO ${this.table} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
-       VALUES ($1, 'working', $2, $3, $4, $5,
-               CASE WHEN $2::integer IS NOT NULL
-                    THEN NOW() + ($2::integer || ' milliseconds')::interval
-                    ELSE NULL END)
-       RETURNING *`,
-      [taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)]
-    );
+    try {
+      const { rows } = await this.db.query(
+        `INSERT INTO ${this.table} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
+         VALUES ($1, 'working', $2, $3, $4, $5,
+                 CASE WHEN $2::integer IS NOT NULL
+                      THEN NOW() + ($2::integer || ' milliseconds')::interval
+                      ELSE NULL END)
+         RETURNING *`,
+        [taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)]
+      );
 
-    return rowToTask(rows[0] as unknown as TaskRow);
+      return rowToTask(rows[0] as unknown as TaskRow);
+    } catch (err) {
+      // Unique constraint violation — a task with this ID already exists.
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505') {
+        throw new Error(
+          `Task with ID ${taskId} already exists. Use a different taskId or retrieve the existing task via getTask().`
+        );
+      }
+      throw err;
+    }
   }
 
   async getTask(taskId: string, _sessionId?: string): Promise<Task | null> {
