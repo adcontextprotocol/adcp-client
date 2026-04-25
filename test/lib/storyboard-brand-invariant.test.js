@@ -89,8 +89,10 @@ describe('applyBrandInvariant', () => {
 
   // ── Schema-aware injection (#940) ──────────────────────────
   // When taskName is omitted, the function fails open (injects as before).
-  // When taskName is provided and schemas are synced, it respects
-  // additionalProperties:false on governance tools.
+  // When taskName is provided, it consults the request schema to decide
+  // which fields to inject. Tests below assert both directions (allowed
+  // and forbidden) against tools whose schemas are stable and ship in the
+  // package.
 
   test('fails open (injects brand and account) when taskName is omitted — backwards compat', () => {
     const result = applyBrandInvariant({ plans: [] }, { brand: BRAND });
@@ -98,42 +100,98 @@ describe('applyBrandInvariant', () => {
     assert.ok('account' in result, 'synthetic account should be injected when no taskName');
   });
 
-  test('skips top-level brand and synthetic account for sync_plans when schemas are available', async () => {
-    // sync_plans schema: { additionalProperties: false, properties: { adcp_major_version, idempotency_key, plans, context, ext } }
-    // Neither brand nor account is in the allowed set.
-    const { schemaAllowsTopLevelField } =
-      (await import('../../dist/lib/validation/schema-loader.js').catch(() => null)) ?? {};
-    if (!schemaAllowsTopLevelField) {
-      // Schemas not built — skip gracefully
-      return;
-    }
-    // Verify the helper sees the expected schema shape before asserting runner behavior
-    const brandOk = schemaAllowsTopLevelField('sync_plans', 'brand');
-    const accountOk = schemaAllowsTopLevelField('sync_plans', 'account');
-    if (brandOk || accountOk) {
-      // Schema says brand or account IS allowed — either schema changed or
-      // schemas are not synced (fail-open returned true). Skip.
-      return;
-    }
-    const result = applyBrandInvariant({ idempotency_key: 'k', plans: [] }, { brand: BRAND }, 'sync_plans');
-    assert.strictEqual(result.brand, undefined, 'brand must not be injected for sync_plans');
-    assert.strictEqual(result.account, undefined, 'synthetic account must not be injected for sync_plans');
-    assert.deepStrictEqual(result.idempotency_key, 'k', 'original fields must be preserved');
-    assert.deepStrictEqual(result.plans, [], 'original fields must be preserved');
+  describe('with synced schemas', () => {
+    let schemaAllowsTopLevelField;
+    test('preconditions: schema-loader exports schemaAllowsTopLevelField', async () => {
+      const mod = await import('../../dist/lib/validation/schema-loader.js');
+      schemaAllowsTopLevelField = mod.schemaAllowsTopLevelField;
+      assert.strictEqual(typeof schemaAllowsTopLevelField, 'function');
+    });
+
+    // Pin the schema invariants this test suite depends on. If a schema
+    // drifts (e.g. `sync_plans` adds `brand` or `get_products` removes it),
+    // these assertions fail loudly rather than silently disarm the
+    // behavior tests below.
+    test('preconditions: schema shapes match expectations', () => {
+      assert.strictEqual(
+        schemaAllowsTopLevelField('sync_plans', 'brand'),
+        false,
+        'sync_plans must declare additionalProperties:false and exclude brand'
+      );
+      assert.strictEqual(
+        schemaAllowsTopLevelField('sync_plans', 'account'),
+        false,
+        'sync_plans must declare additionalProperties:false and exclude account'
+      );
+      assert.strictEqual(
+        schemaAllowsTopLevelField('list_property_lists', 'brand'),
+        false,
+        'list_property_lists must declare additionalProperties:false and exclude brand'
+      );
+      assert.strictEqual(
+        schemaAllowsTopLevelField('list_property_lists', 'account'),
+        true,
+        'list_property_lists must declare account at the request root'
+      );
+      assert.strictEqual(
+        schemaAllowsTopLevelField('get_products', 'brand'),
+        true,
+        'get_products must declare brand at the request root (positive control)'
+      );
+    });
+
+    test('skips top-level brand and synthetic account for sync_plans', () => {
+      const result = applyBrandInvariant({ idempotency_key: 'k', plans: [] }, { brand: BRAND }, 'sync_plans');
+      assert.strictEqual(result.brand, undefined, 'brand must not be injected for sync_plans');
+      assert.strictEqual(result.account, undefined, 'synthetic account must not be injected for sync_plans');
+      assert.deepStrictEqual(result.idempotency_key, 'k', 'original fields must be preserved');
+      assert.deepStrictEqual(result.plans, [], 'original fields must be preserved');
+    });
+
+    test('skips top-level brand but keeps synthetic account for list_property_lists', () => {
+      const result = applyBrandInvariant({}, { brand: BRAND }, 'list_property_lists');
+      assert.strictEqual(result.brand, undefined, 'brand must not be injected for list_property_lists');
+      assert.ok('account' in result, 'synthetic account IS allowed for list_property_lists');
+    });
+
+    test('injects top-level brand for get_products (positive control)', () => {
+      const result = applyBrandInvariant({}, { brand: BRAND }, 'get_products');
+      assert.deepStrictEqual(result.brand, BRAND, 'brand must be injected for get_products');
+    });
   });
 
-  test('skips top-level brand but keeps synthetic account for list_property_lists when schemas are available', async () => {
-    // list_property_lists schema: { additionalProperties: false, properties: { ..., account?, ... } } — no brand.
-    const { schemaAllowsTopLevelField } =
-      (await import('../../dist/lib/validation/schema-loader.js').catch(() => null)) ?? {};
-    if (!schemaAllowsTopLevelField) return; // schemas not built
-    const brandOk = schemaAllowsTopLevelField('list_property_lists', 'brand');
-    const accountOk = schemaAllowsTopLevelField('list_property_lists', 'account');
-    if (brandOk) return; // schema changed or not synced — skip
-    if (!accountOk) return; // schema changed or not synced — skip
-    const result = applyBrandInvariant({}, { brand: BRAND }, 'list_property_lists');
-    assert.strictEqual(result.brand, undefined, 'brand must not be injected for list_property_lists');
-    assert.ok('account' in result, 'synthetic account IS allowed for list_property_lists');
+  // ── AccountReference oneOf safety ──────────────────────────
+  // AccountReference is `oneOf` of `{account_id}` (closed) or
+  // `{brand, operator, sandbox?}`. Merging brand into an `{account_id}`
+  // payload produces an object that matches neither branch under strict
+  // AJV validation. Storyboards (e.g. creative-ad-server/list_creatives)
+  // legitimately address accounts via `account_id`, so the runner must
+  // leave those payloads untouched.
+
+  test('leaves an {account_id}-branch account untouched (no brand merge)', () => {
+    const result = applyBrandInvariant(
+      { account: { account_id: 'acct_acme_creative' }, include_pricing: true },
+      { brand: BRAND }
+    );
+    assert.deepStrictEqual(
+      result.account,
+      { account_id: 'acct_acme_creative' },
+      'must not inject brand into a closed {account_id} AccountReference'
+    );
+  });
+
+  test('merges brand into a natural-key account that carries operator only', () => {
+    const result = applyBrandInvariant({ account: { operator: 'pinnacle-agency.example' } }, { brand: BRAND });
+    assert.deepStrictEqual(result.account, { operator: 'pinnacle-agency.example', brand: BRAND });
+  });
+
+  test('merges brand into a natural-key account that already carries brand', () => {
+    const result = applyBrandInvariant(
+      { account: { brand: { domain: 'other.example' }, operator: 'pinnacle-agency.example' } },
+      { brand: BRAND }
+    );
+    assert.deepStrictEqual(result.account.brand, BRAND, 'natural-key brand should be overridden');
+    assert.strictEqual(result.account.operator, 'pinnacle-agency.example');
   });
 });
 

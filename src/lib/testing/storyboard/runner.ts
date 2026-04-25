@@ -2022,9 +2022,12 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
  *     tools like `sync_plans` do not declare `brand` at the request root
  *     (brand belongs inside each `Plan` object) — injecting it would fail
  *     the framework's strict AJV validation (#940).
- *   - `account.brand` — merged into an existing `account` object when
- *     `account` is present and is a plain object (AccountReference always
- *     allows `brand`).
+ *   - `account.brand` — merged into an existing `account` object only when
+ *     it uses the natural-key variant (`{brand, operator, sandbox?}`). The
+ *     `{account_id}` variant is closed (`additionalProperties: false`); merging
+ *     `brand` into it produces a payload that matches neither `oneOf` branch
+ *     and is rejected by AJV strict request validation. Detect the natural-key
+ *     variant by looking for an existing `brand` or `operator` key.
  *   - Synthetic `account` — constructed only when the request has no
  *     `account` AND the tool's schema declares `account` (e.g. `get_media_buys`,
  *     `list_creatives`). Tools like `sync_plans` that declare neither
@@ -2033,10 +2036,6 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
  * When `taskName` is omitted or the schema is unavailable (not synced yet),
  * the function fails open and injects as before. Schema checks use raw JSON
  * reads, not AJV internals.
- *
- * `AccountReference` is a union of `{account_id}` or `{brand, operator, sandbox?}`.
- * Injecting `brand` into an `{account_id}`-branch account still passes schema
- * validation but is semantically redundant.
  */
 export function applyBrandInvariant(
   request: Record<string, unknown>,
@@ -2060,12 +2059,20 @@ export function applyBrandInvariant(
   if (topBrandOk) result.brand = brand;
 
   if ('account' in request) {
-    // Caller sent an account — merge brand in when it's a plain object.
-    // Leave non-object values (null, array) alone so intentionally malformed
-    // requests aren't silently "corrected."
+    // Caller sent an account — merge brand in only when it's a plain object
+    // using AccountReference's natural-key variant (`{brand, operator, sandbox?}`).
+    // The `{account_id}` variant is a closed object; merging `brand` would
+    // produce a payload that matches neither `oneOf` branch under strict AJV.
+    // Leave non-object values (null, array) and `{account_id}`-only payloads
+    // alone so intentionally narrow or malformed requests aren't silently
+    // "corrected."
     const existingAccount = request.account;
     if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
-      result.account = { ...(existingAccount as Record<string, unknown>), brand };
+      const acct = existingAccount as Record<string, unknown>;
+      const isNaturalKeyVariant = 'brand' in acct || 'operator' in acct;
+      if (isNaturalKeyVariant) {
+        result.account = { ...acct, brand };
+      }
     }
   } else if (topAccountOk) {
     // No account on the request — construct one so tools whose schema
