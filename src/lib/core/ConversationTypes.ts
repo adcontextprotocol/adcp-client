@@ -112,6 +112,8 @@ export type TaskStatus =
   | 'input-required'
   | 'completed'
   | 'failed'
+  | 'rejected'
+  | 'canceled'
   | 'deferred'
   | 'aborted'
   | 'submitted'
@@ -212,6 +214,8 @@ export interface TaskInfo {
   result?: any;
   /** Error message (if failed) */
   error?: string;
+  /** Human-readable message from agent (alternative to error field) */
+  message?: string;
   /** Webhook URL (if applicable) */
   webhookUrl?: string;
 }

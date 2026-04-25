@@ -1370,13 +1370,17 @@ export class TaskExecutor {
         });
       }
 
-      if (status.status === ADCP_STATUS.FAILED || status.status === ADCP_STATUS.CANCELED) {
+      if (
+        status.status === ADCP_STATUS.FAILED ||
+        status.status === ADCP_STATUS.CANCELED ||
+        status.status === ADCP_STATUS.REJECTED
+      ) {
         const asyncFailedErr = extractAdcpErrorInfo(status.result);
         return attachMatch({
           success: false as const,
           status: 'failed' as const,
           data: status.result,
-          error: status.error || `Task ${status.status}`,
+          error: status.error || status.message || `Task ${status.status}`,
           adcpError: asyncFailedErr,
           errorInstance: this.buildErrorInstance(taskId, asyncFailedErr),
           correlationId: extractCorrelationId(status.result),
