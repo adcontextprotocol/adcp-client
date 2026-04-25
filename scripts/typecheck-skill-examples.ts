@@ -409,12 +409,32 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Multiset comparison: a `LINT-as-any` rule (or any TS error) can fire
+  // multiple times in the same file with the same message. Treat the
+  // baseline as "I expect at most N occurrences of [key]" so a third
+  // identical error fails CI even when the first two are baselined.
+  // Set-based dedup would silently swallow it.
   const baseline = await loadBaseline();
-  const baselineKeys = new Set(baseline.map(entryKey));
-  const currentKeys = new Set(currentEntries.map(entryKey));
-
-  const newErrors = diagnostics.filter((_, i) => !baselineKeys.has(entryKey(currentEntries[i])));
-  const fixedKeys = [...baselineKeys].filter(k => !currentKeys.has(k));
+  const baselineCounts = new Map<string, number>();
+  for (const e of baseline) {
+    const k = entryKey(e);
+    baselineCounts.set(k, (baselineCounts.get(k) ?? 0) + 1);
+  }
+  const remainingBudget = new Map(baselineCounts);
+  const newErrors: typeof diagnostics = [];
+  for (let i = 0; i < diagnostics.length; i++) {
+    const k = entryKey(currentEntries[i]);
+    const budget = remainingBudget.get(k) ?? 0;
+    if (budget > 0) {
+      remainingBudget.set(k, budget - 1);
+    } else {
+      newErrors.push(diagnostics[i]);
+    }
+  }
+  const fixedKeys: string[] = [];
+  for (const [k, count] of remainingBudget) {
+    if (count > 0) fixedKeys.push(`${k} (${count} fewer than baselined)`);
+  }
   const knownErrorCount = diagnostics.length - newErrors.length;
 
   if (newErrors.length === 0 && diagnostics.length === 0) {
