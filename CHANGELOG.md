@@ -1,5 +1,62 @@
 # Changelog
 
+## 5.19.0
+
+### Minor Changes
+
+- af944a1: feat(AgentClient): add `AgentClient.fromMCPClient()` factory for in-process MCP transport
+
+  Adds a new static factory method that accepts a pre-connected `@modelcontextprotocol/sdk` `Client` instance instead of a URL-based agent config. This enables compliance test fleets to wire up a full `AgentClient` against an `InMemoryTransport` pair without an HTTP loopback server.
+
+  **MCP only.** This factory wraps an MCP `Client` from `@modelcontextprotocol/sdk`. There is no equivalent in-process bridge for A2A today — for A2A agents, run them on a loopback HTTP server and use the standard `AgentClient` constructor with the agent's `agent_uri`.
+
+  Key behaviors preserved over the in-process path:
+  - `adcp_major_version` is injected on every tool call
+  - `idempotency_key` is auto-generated for mutating tasks
+  - `isError` envelopes surface as `TaskResult<{ success: false }>`
+  - HTTP-only methods (`resolveCanonicalUrl`, `getWebhookUrl`, `registerWebhook`, `unregisterWebhook`) throw descriptive `in-process` guard errors
+  - Endpoint discovery and SSRF validation are bypassed for the sentinel URI
+
+  Exports the new `InProcessAgentClientConfig` type for typed factory usage.
+
+- efbe785: Add `pgBackend.probe()` and `serve({ readinessCheck })` for fail-fast pool validation
+
+  Sellers wiring `createIdempotencyStore({ backend: pgBackend(pool) })` from a `DATABASE_URL` env var previously got a silent failure mode: a bad URL (typo, deprovisioned DB, missing creds) lets the server boot successfully, advertise `IdempotencySupported`, then fail every mutating call indefinitely.
+
+  This release adds:
+  - **`pgBackend.probe()`** — runs `SELECT 1 FROM "<table>" LIMIT 0` at startup, validating both connectivity and that the idempotency table has been migrated. Throws a descriptive error naming the table, root cause, and remediation steps.
+  - **`IdempotencyStore.probe()`** — delegates to `backend.probe()` when the backend implements it; no-ops for `memoryBackend`.
+  - **`probeIdempotencyStore(store)`** — convenience export for callers that manage their own lifecycle (Lambda, custom HTTP frameworks).
+  - **`ServeOptions.readinessCheck?: () => Promise<void>`** — called before `httpServer.listen()`. The server never accepts connections if the check throws, so a misconfigured pool crashes the process at deploy time rather than silently failing live traffic.
+
+  Wire the probe in `serve()`:
+
+  ```ts
+  const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
+  pool.on('error', err => console.error('pg pool error', err)); // prevent crash on idle-client errors
+  serve(createAgent, {
+    readinessCheck: () => store.probe(),
+  });
+  ```
+
+  `readinessCheck` is general-purpose — use it for any startup dependency check, not just idempotency.
+
+  **Non-breaking.** `createIdempotencyStore` remains synchronous. Existing callers require no changes. Option A (async constructor) is tracked separately as a future major-version enhancement.
+
+- a26db16: Storyboard runner: add `$generate:opaque_id` substitution and `context_outputs[generate]` for threading runner-minted task IDs through multi-step lifecycle storyboards.
+
+  `$generate:opaque_id` and `$generate:opaque_id#<alias>` work identically to `$generate:uuid_v4` / `$generate:uuid_v4#<alias>` but carry explicit task-ID semantics. Both share the same alias cache namespace.
+
+  `context_outputs` entries now accept `generate: "opaque_id" | "uuid_v4"` as an alternative to `path:`. When `generate` is set the runner mints (or reuses, via alias-cache coherence) a UUID at post-step time and writes it into `$context.<key>` for subsequent steps. If an inline `$generate:opaque_id#<key>` substitution already ran in the same step's `sample_request`, the generator reuses that value — the two forms are alias-coherent.
+
+  `ContextProvenanceEntry.source_kind` and `ContextValueRejectedHint.source_kind` gain a `'generator'` variant for accurate diagnostic attribution. `ContextOutput.path` is now optional (mutually exclusive with the new `generate` field).
+
+### Patch Changes
+
+- c58ff99: **Fix `get_media_buys` convention extractor poisoning context during multi-page pagination walks (#998).** The extractor unconditionally captured `media_buys[0].media_buy_id` from every successful `get_media_buys` response. When a storyboard walks multi-page results, the page-1 response carries `pagination.has_more: true` — buys[0] is not the canonical buy, it is just the first item in a list slice. The captured ID was then picked up by the request-builder enricher on step 2 and injected as `media_buy_ids: [that_id]`, turning the pagination continuation into a single-ID lookup. The agent returned one buy with `has_more: false, total_count: 1`, failing `total_count: 3` storyboard assertions.
+
+  The extractor now skips extraction when `pagination.has_more === true`, matching the conservative `=== true` convention used elsewhere in the codebase (`hasMorePages()` in `validations.ts`). When `has_more` is absent or `false` — i.e., a terminal or single-page response — extraction proceeds as before. This unblocks `get-media-buys-pagination-integrity` in `adcontextprotocol/adcp#3122` from upgrading to the seeded multi-page walk model used by `list_creatives` and other paginated storyboards.
+
 ## 5.18.0
 
 ### Minor Changes
