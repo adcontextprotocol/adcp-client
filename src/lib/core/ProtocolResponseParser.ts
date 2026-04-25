@@ -87,6 +87,57 @@ function isSafeSessionId(v: unknown): v is string {
   return SESSION_ID_PATTERN.test(v);
 }
 
+/**
+ * Extract the AdCP work-layer status from an A2A wrapped Task result,
+ * if present. The AdCP `submitted` / `working` / `completed` lifecycle
+ * lives on `artifact.parts[0].data.status` (per adcp-client#899's
+ * two-lifecycle contract); the transport-layer `result.status.state`
+ * tracks the HTTP-call lifecycle and is `'completed'` for AdCP
+ * submitted arms.
+ *
+ * Returns `undefined` for non-AdCP A2A responses (no artifact, no
+ * DataPart, or `data.status` not in the AdCP enum) so callers can
+ * fall back to the transport-layer status.
+ */
+function extractAdcpStatusFromA2aTaskResult(result: any): ADCPStatus | undefined {
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return undefined;
+  if (result.kind !== 'task') return undefined;
+  const artifacts = result.artifacts;
+  if (!Array.isArray(artifacts) || artifacts.length === 0) return undefined;
+  const artifact = artifacts[0];
+  if (artifact == null || typeof artifact !== 'object') return undefined;
+  const parts = artifact.parts;
+  if (!Array.isArray(parts) || parts.length === 0) return undefined;
+  const firstPart = parts[0];
+  if (firstPart == null || typeof firstPart !== 'object' || firstPart.kind !== 'data') return undefined;
+  const data = firstPart.data;
+  if (data == null || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const status = (data as Record<string, unknown>).status;
+  if (typeof status === 'string' && (Object.values(ADCP_STATUS) as string[]).includes(status)) {
+    return status as ADCPStatus;
+  }
+  return undefined;
+}
+
+/**
+ * Extract the AdCP task handle from an A2A wrapped Task result. The
+ * handle lives on `artifact.metadata.adcp_task_id` (per
+ * adcp-client#899). Returns `undefined` for non-AdCP A2A responses or
+ * when the metadata extension wasn't emitted, so callers fall back
+ * to the transport-layer `result.id`.
+ */
+function extractAdcpTaskIdFromA2aTaskResult(result: any): string | undefined {
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return undefined;
+  if (result.kind !== 'task') return undefined;
+  const artifacts = result.artifacts;
+  if (!Array.isArray(artifacts) || artifacts.length === 0) return undefined;
+  const artifact = artifacts[0];
+  if (artifact == null || typeof artifact !== 'object') return undefined;
+  const metadata = artifact.metadata;
+  if (metadata == null || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+  return firstSafeSessionId((metadata as Record<string, unknown>).adcp_task_id);
+}
+
 /** Return the first argument that passes {@link isSafeSessionId}, else `undefined`. */
 function firstSafeSessionId(...candidates: unknown[]): string | undefined {
   for (const c of candidates) {
@@ -145,7 +196,20 @@ export class ProtocolResponseParser {
    * Get ADCP status from response
    */
   getStatus(response: any): ADCPStatus | null {
-    // Check A2A JSON-RPC wrapped status (result.status.state)
+    // For A2A wrapped Task responses (`result.kind === 'task'`), the
+    // transport-layer `result.status.state` reflects the HTTP-call
+    // lifecycle (always `'completed'` for AdCP submitted arms per
+    // adcp-client#899), NOT the AdCP work lifecycle. Prefer the AdCP
+    // status surfaced on the artifact's DataPart when it's set —
+    // that's the layer the buyer cares about for polling decisions.
+    // See adcp-client#973 for the regression class this catches.
+    const adcpStatusFromArtifact = extractAdcpStatusFromA2aTaskResult(response?.result);
+    if (adcpStatusFromArtifact) return adcpStatusFromArtifact;
+
+    // Check A2A JSON-RPC wrapped status (result.status.state) — used
+    // when the artifact didn't surface an AdCP status (non-AdCP A2A
+    // responses, or sync-completed responses where transport state is
+    // authoritative).
     if (response?.result?.status?.state && Object.values(ADCP_STATUS).includes(response.result.status.state)) {
       return response.result.status.state as ADCPStatus;
     }
@@ -268,9 +332,17 @@ export class ProtocolResponseParser {
     if (response == null) return undefined;
 
     if (response.result) {
-      // A2A Task result carries its own id; Message results carry `taskId`
-      // when bound to a task.
+      // A2A wrapped Task with AdCP payload — `artifact.metadata.adcp_task_id`
+      // is the AdCP work handle (what the buyer polls with via AdCP
+      // `tasks/get`). The transport-layer `result.id` is the A2A
+      // Task.id (always pinned to one HTTP call per adcp-client#899's
+      // two-lifecycle contract); using it as a polling key would
+      // address the wrong thing. Prefer the AdCP handle when present;
+      // fall back to `result.id` for non-AdCP A2A responses where no
+      // artifact metadata was emitted. See adcp-client#973.
       if (response.result.kind === 'task') {
+        const adcpHandle = extractAdcpTaskIdFromA2aTaskResult(response.result);
+        if (adcpHandle) return adcpHandle;
         const taskKindId = firstSafeSessionId(response.result.id);
         if (taskKindId) return taskKindId;
       }
