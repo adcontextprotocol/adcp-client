@@ -93,7 +93,7 @@ function mapMCPTaskToTaskInfo(
     taskType: toolName ?? 'unknown',
     createdAt: new Date(task.createdAt).getTime(),
     updatedAt: new Date(task.lastUpdatedAt).getTime(),
-    error: task.status === 'failed' ? task.statusMessage : undefined,
+    error: ['failed', 'rejected', 'canceled'].includes(task.status) ? task.statusMessage : undefined,
   };
 }
 

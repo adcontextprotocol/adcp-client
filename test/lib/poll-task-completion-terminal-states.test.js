@@ -20,11 +20,13 @@ describe('pollTaskCompletion terminal state handling', () => {
     ProtocolClient = lib.ProtocolClient;
     originalCallTool = ProtocolClient.callTool;
 
+    // Use 'a2a' protocol so getTaskStatus goes directly to ProtocolClient.callTool
+    // (the 'mcp' path tries getMCPTaskStatus first, which requires a live server).
     mockAgent = {
       id: 'test-agent',
       name: 'Test Agent',
       agent_uri: 'https://test.example.com',
-      protocol: 'mcp',
+      protocol: 'a2a',
     };
   });
 
