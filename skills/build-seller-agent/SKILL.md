@@ -686,7 +686,8 @@ productRepo.upsert(merged.product_id, merged);
 **2. `bridgeFromTestControllerStore`** — wires your seeded `Map` into `get_products` responses automatically. Sandbox requests see seeded + handler products merged (with seeded winning collisions); production traffic (no sandbox marker, or resolved non-sandbox account) skips the bridge entirely.
 
 ```ts
-import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/client';
+import { createAdcpServer } from '@adcp/client';
+import { bridgeFromTestControllerStore } from '@adcp/client/server';
 
 const seedStore = new Map<string, unknown>();
 

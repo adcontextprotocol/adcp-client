@@ -416,7 +416,8 @@ Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempote
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+import { serve } from '@adcp/client';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {

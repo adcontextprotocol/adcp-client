@@ -15,7 +15,8 @@ Companion to [`SKILL.md`](./SKILL.md). Read this only when you need deployment s
 Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in the factory, and turn on `trustForwardedHost` when a proxy terminates TLS:
 
 ```typescript
-import { serve, createAdcpServer, verifyBearer, UnknownHostError, hostname } from '@adcp/client';
+import { serve, createAdcpServer, UnknownHostError, hostname } from '@adcp/client';
+import { verifyBearer } from '@adcp/client/server';
 
 // Host → adapter config. Whatever shape suits your deployment (DB, env, static).
 // Cache the CONFIG (not the AdcpServer). serve() still instantiates the
