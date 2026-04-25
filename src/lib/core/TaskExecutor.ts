@@ -906,17 +906,38 @@ export class TaskExecutor {
 
     let webhookUrl = response.webhookUrl;
 
-    // If no webhook URL provided by server, generate one
+    // If no webhook URL provided by server, generate one. The webhook URL
+    // macro path uses the local `taskId` (the runner-side correlation id
+    // that doubles as the `{operation_id}` macro value), not the server
+    // handle — webhook URLs identify the buyer-side request, not the
+    // seller-side task.
     if (!webhookUrl && this.config.webhookManager) {
       webhookUrl = this.config.webhookManager.generateUrl(taskId);
       await this.config.webhookManager.registerWebhook(agent, taskId, webhookUrl);
     }
 
+    // Polling and the buyer-facing `SubmittedContinuation.taskId` use the
+    // SERVER-assigned task handle, not the runner's local UUID. The local
+    // UUID is the `activeTasks` map key and the `{operation_id}` webhook
+    // macro value — it never reaches the seller. The server handle comes
+    // from `response.task_id` (AdCP submitted-arm wire field) or, for A2A
+    // responses, the same handle surfaced via `result.id` / `taskId`.
+    // `responseParser.getTaskId` walks both shapes.
+    //
+    // When the seller violated the spec and didn't include a task handle
+    // we fall back to the local UUID so the buyer at least gets a
+    // non-undefined `taskId` field. This also matches the historical
+    // (broken) behavior on a wire where the server doesn't know the
+    // local UUID, so the polling cycle was already misaligned — better
+    // to keep the surface area stable than to introduce a hard fail at
+    // a place that's been silently wrong.
+    const serverTaskId = this.responseParser.getTaskId(response) ?? taskId;
+
     const submitted: SubmittedContinuation<T> = {
-      taskId,
+      taskId: serverTaskId,
       webhookUrl,
-      track: () => this.getTaskStatus(agent, taskId),
-      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, taskId, pollInterval),
+      track: () => this.getTaskStatus(agent, serverTaskId),
+      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval),
     };
 
     return {

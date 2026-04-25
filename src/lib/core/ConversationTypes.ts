@@ -229,10 +229,31 @@ export interface DeferredContinuation<T> {
 }
 
 /**
- * Continuation for submitted server tasks (server needs time)
+ * Continuation for submitted server tasks (server needs time).
+ *
+ * Returned in `TaskResult.submitted` when the seller signals an AdCP
+ * `submitted` arm (long-running work that won't complete inside the
+ * transport call). The buyer either polls via {@link waitForCompletion}
+ * / {@link track} or waits for the seller's webhook callback at
+ * {@link webhookUrl}.
  */
 export interface SubmittedContinuation<T> {
-  /** Task ID for tracking */
+  /**
+   * Server-assigned task handle — the value the seller emitted in
+   * `response.task_id` (AdCP submitted-arm wire field) or surfaced via
+   * the A2A response Task. This is the identifier the seller knows; it
+   * is what the SDK passes to subsequent `tasks/get` polling calls.
+   *
+   * NOT the same as the SDK's runner-side correlation id (`TaskState.taskId`,
+   * a local UUID generated at request time and used internally for
+   * `activeTasks` map indexing and the `{operation_id}` webhook URL macro).
+   * The runner-side id never reaches the seller.
+   *
+   * If the seller violated the spec and didn't include a task handle on
+   * the submitted-arm response, this falls back to the runner-side
+   * correlation id — pollers won't be able to locate the work, but
+   * callers at least get a non-undefined value to log.
+   */
   taskId: string;
   /** Webhook URL where server will notify completion */
   webhookUrl?: string;
