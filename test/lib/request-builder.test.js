@@ -740,6 +740,36 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('get_media_buys', () => {
+    test('omits media_buy_ids when context.media_buy_id is absent (broad-list path)', () => {
+      const result = buildRequest(step('get_media_buys'), {}, DEFAULT_OPTIONS);
+      assert.ok(
+        !Object.prototype.hasOwnProperty.call(result, 'media_buy_ids'),
+        'media_buy_ids must be absent so agent receives a broad-list request'
+      );
+    });
+
+    test('injects media_buy_ids when context.media_buy_id is present', () => {
+      const result = buildRequest(step('get_media_buys'), { media_buy_id: 'buy-42' }, DEFAULT_OPTIONS);
+      assert.deepStrictEqual(result.media_buy_ids, ['buy-42']);
+    });
+  });
+
+  describe('get_media_buy_delivery', () => {
+    test('omits media_buy_ids when context.media_buy_id is absent', () => {
+      const result = buildRequest(step('get_media_buy_delivery'), {}, DEFAULT_OPTIONS);
+      assert.ok(
+        !Object.prototype.hasOwnProperty.call(result, 'media_buy_ids'),
+        'media_buy_ids must be absent when no context ID is available'
+      );
+    });
+
+    test('injects media_buy_ids when context.media_buy_id is present', () => {
+      const result = buildRequest(step('get_media_buy_delivery'), { media_buy_id: 'buy-99' }, DEFAULT_OPTIONS);
+      assert.deepStrictEqual(result.media_buy_ids, ['buy-99']);
+    });
+  });
+
   describe('hasRequestBuilder', () => {
     test('returns true for tasks with builders', () => {
       const tasks = [

@@ -318,15 +318,18 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   },
 
   get_media_buys(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+    // Omit media_buy_ids when no context ID is present so storyboards that
+    // test the broad-list/pagination path receive a spec-conformant request
+    // (media_buy_ids is optional per the schema; omitting it returns all
+    // accessible media buys). Injecting ["unknown"] breaks pagination
+    // assertions — agents return 0 results for the placeholder ID.
+    if (!context.media_buy_id) return {};
+    return { media_buy_ids: [context.media_buy_id] };
   },
 
   get_media_buy_delivery(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+    if (!context.media_buy_id) return {};
+    return { media_buy_ids: [context.media_buy_id] };
   },
 
   // provide_performance_feedback intentionally has no builder — storyboard
