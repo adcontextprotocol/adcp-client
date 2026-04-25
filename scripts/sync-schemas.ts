@@ -20,10 +20,11 @@ import { spawnSync } from 'child_process';
 import path from 'path';
 import * as tar from 'tar';
 
-const ADCP_BASE_URL = 'https://adcontextprotocol.org';
+const ADCP_BASE_URL = process.env.ADCP_BASE_URL || 'https://adcontextprotocol.org';
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
+const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
 const REGISTRY_SPEC_PATH = path.join(REPO_ROOT, 'schemas/registry/registry.yaml');
 
 // Sigstore keyless identity used by the upstream release workflow (adcontextprotocol/adcp#2273).
@@ -211,6 +212,85 @@ async function verifyCosignSignature(tgzPath: string, version: string): Promise<
 }
 
 /**
+ * Copy a skill directory tree into the SDK, replacing the destination but
+ * skipping nested `schemas/` subdirs (duplicates of `schemas/cache/<version>/`).
+ */
+function copySkillTree(srcDir: string, destDir: string): void {
+  if (existsSync(destDir)) {
+    // Snapshot the outgoing tree the same way replaceTree does so the
+    // schema-diff helper can pick up changes between syncs.
+    const previous = `${destDir}.previous`;
+    if (existsSync(previous)) rmSync(previous, { recursive: true, force: true });
+    renameSync(destDir, previous);
+  }
+  mkdirSync(destDir, { recursive: true });
+  copyTreeFiltered(srcDir, destDir);
+}
+
+function copyTreeFiltered(srcDir: string, destDir: string): void {
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    const src = path.join(srcDir, entry.name);
+    const dst = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      // The spec repo's per-protocol skills bundle a copy of the AdCP schemas
+      // for self-contained agent consumption; the SDK has them in
+      // `schemas/cache/` already, so this would just duplicate ~1.4MB per
+      // protocol. Skip.
+      if (entry.name === 'schemas') continue;
+      mkdirSync(dst, { recursive: true });
+      copyTreeFiltered(src, dst);
+    } else {
+      copyFileSync(src, dst);
+    }
+  }
+}
+
+/**
+ * Sync protocol-managed skills from the extracted bundle into the SDK's
+ * top-level `skills/` tree. Driven by `manifest.contents.skills` (a list of
+ * skill directory names) so we only overwrite the entries the spec repo
+ * publishes — leaves SDK-local skills (`build-seller-agent/`, etc.) alone.
+ */
+function syncSkillsFromBundle(extractRoot: string): void {
+  const skillsInBundle = path.join(extractRoot, 'skills');
+  const manifestPath = path.join(extractRoot, 'manifest.json');
+  if (!existsSync(skillsInBundle) || !existsSync(manifestPath)) {
+    return;
+  }
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch (err) {
+    console.warn(`⚠️  Skill sync skipped: manifest unparseable (${err instanceof Error ? err.message : err}).`);
+    return;
+  }
+  const skillNames = (manifest as { contents?: { skills?: unknown } }).contents?.skills;
+  if (!Array.isArray(skillNames)) {
+    // Older tarballs predate manifest.contents.skills enumeration. Skip silently.
+    return;
+  }
+  let synced = 0;
+  for (const name of skillNames) {
+    if (typeof name !== 'string' || name.includes('/') || name.includes('..')) {
+      continue;
+    }
+    const src = path.join(skillsInBundle, name);
+    const dst = path.join(SKILLS_DIR, name);
+    if (!existsSync(src) || !statSync(src).isDirectory()) continue;
+    // Skip nested `schemas/` subdirs — those duplicate `schemas/cache/<version>/`
+    // already extracted from the same tarball. Per-protocol skills in the spec
+    // repo bundle them for self-contained agent consumption; the SDK has them
+    // in `schemas/cache/` already, so re-copying inflates the package by ~1.4MB
+    // per protocol with no functional gain.
+    copySkillTree(src, dst);
+    synced++;
+  }
+  if (synced > 0) {
+    console.log(`📁 Skills:     ${SKILLS_DIR} (${synced} protocol-managed)`);
+  }
+}
+
+/**
  * Fetch /protocol/{version}.tgz, verify sha256, and extract schemas + compliance
  * into their cache directories. Returns true on success.
  *
@@ -257,6 +337,13 @@ async function syncFromTarball(version: string): Promise<boolean> {
 
     replaceTree(path.join(extractRoot, 'schemas'), path.join(SCHEMA_CACHE_DIR, version));
     replaceTree(path.join(extractRoot, 'compliance'), path.join(COMPLIANCE_CACHE_DIR, version));
+
+    // Skills sync is manifest-driven and per-name. SDK-local skills like
+    // build-seller-agent/ stay untouched; protocol-canonical ones (the
+    // call-adcp-agent buyer skill plus per-protocol skills) are kept aligned
+    // with the pinned spec version. Older tarballs (no manifest.contents.skills
+    // array) are silently skipped — the SDK-local copies stay as-is.
+    syncSkillsFromBundle(extractRoot);
 
     // Refs inside the tarball point to /schemas/latest/; rewrite for pinned versions.
     const schemaDest = path.join(SCHEMA_CACHE_DIR, version);

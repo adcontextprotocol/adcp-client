@@ -137,3 +137,6 @@ IMPLEMENTATION_PLAN.md
 
 # Claude Code runtime artifacts (.claude/skills/ is tracked on purpose)
 .claude/scheduled_tasks.lock
+
+# Snapshot artifacts created by sync-schemas replaceTree
+skills/*.previous/
