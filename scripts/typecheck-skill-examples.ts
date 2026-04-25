@@ -365,6 +365,35 @@ async function main(): Promise<void> {
     });
   }
 
+  // Lint pass: forbid `as any` in skill examples. The pattern hides API
+  // drift the typed surface would otherwise catch — every legitimate cast
+  // has a typed alternative (typed factories like `htmlAsset()`, named
+  // discriminated unions like `AssetInstance`, helper response builders
+  // like `buildCreativeResponse()`). Skill authors who want the escape
+  // hatch can use `// @ts-expect-error` against a specific known issue
+  // instead, which is greppable and self-documenting.
+  const asAnyRe = /\bas\s+any\b/g;
+  for (const entry of manifest) {
+    const cachePath = join(CACHE_DIR, entry.file);
+    const content = await readFile(cachePath, 'utf8');
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      let m: RegExpExecArray | null;
+      asAnyRe.lastIndex = 0;
+      while ((m = asAnyRe.exec(lines[i])) !== null) {
+        diagnostics.push({
+          source: entry.source,
+          // Line 1 is the `// source:` marker; offset matches the tsc path.
+          sourceLine: entry.startLine + i,
+          column: String(m.index + 1),
+          blockIndex: entry.index,
+          errorCode: 'LINT-as-any',
+          message: '`as any` hides API drift; use a typed factory or // @ts-expect-error instead',
+        });
+      }
+    }
+  }
+
   const currentEntries: BaselineEntry[] = diagnostics.map(d => ({
     source: d.source,
     errorCode: d.errorCode,

@@ -168,6 +168,22 @@ export interface AdcpServerComplianceApi {
 }
 
 /**
+ * Phantom brand for {@link AdcpServer}. Makes the type nominal — a plain
+ * object that has the same methods structurally cannot be assigned to
+ * `AdcpServer` because it lacks this symbol-keyed property. Closes the
+ * door on `(plainObject as AdcpServer).registerTool(...)` patterns that
+ * tried to reach for an MCP-SDK method the framework intentionally
+ * doesn't expose.
+ *
+ * The brand is opaque (`never`-valued) and never set at runtime — only
+ * the wrapper produced by `createAdcpServer()` carries the type-level
+ * signature, via the `as AdcpServerInternal` cast in `wrapMcpServer()`.
+ *
+ * @internal
+ */
+export declare const ADCP_SERVER_BRAND: unique symbol;
+
+/**
  * Opaque handle returned by `createAdcpServer()`.
  *
  * Pass to `serve()` to mount on an HTTP transport, or use
@@ -175,6 +191,14 @@ export interface AdcpServerComplianceApi {
  * in-process without opening a socket.
  */
 export interface AdcpServer {
+  /**
+   * Phantom brand — type-level only, never present at runtime. See
+   * {@link ADCP_SERVER_BRAND}. Tagged `never` so `(x as AdcpServer)`
+   * casts from structurally-similar objects fail; a real `AdcpServer`
+   * is only obtainable via `createAdcpServer()`.
+   */
+  readonly [ADCP_SERVER_BRAND]?: never;
+
   /**
    * Connect the server to an MCP transport.
    *
