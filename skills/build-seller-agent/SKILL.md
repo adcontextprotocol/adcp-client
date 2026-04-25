@@ -411,6 +411,7 @@ Non-guaranteed buys are always instant confirmation.
 > - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows are strict: each requires `package_id`, `spend` (number), `pricing_model`, `rate` (number), and `currency`. A mock that returns `{package_id, impressions, clicks}` fails validation — include the billing quintet on every package row.
 > - `get_media_buy_delivery /reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`YYYY-MM-DDTHH:MM:SS.sssZ` via `new Date().toISOString()`), not date-only. A mock that returns `'2026-04-21'` fails the format check in GA.
 > - `get_media_buys /media_buys[i]` rows require **`media_buy_id`, `status`, `currency`, `total_budget`, `packages`**. When you persist a buy in `create_media_buy`, save `currency` and `total_budget` so the `get_media_buys` response can echo them verbatim — reconstructing later drops one of the required fields in ~every Claude build we've tested.
+> - `sync_accounts` response: each row in `accounts[]` requires **`action: 'created' | 'updated' | 'unchanged' | 'failed'`** (not just `account_id`, `status`). Compare to sync_creatives — same pattern. Omitting `action` fails schema validation at `/accounts/0/action` and blocks every downstream stateful step in the storyboard.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 

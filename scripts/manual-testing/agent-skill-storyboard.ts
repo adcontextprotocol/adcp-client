@@ -87,10 +87,16 @@ function printUsage(): void {
   );
 }
 
-function buildPrompt(skill: string, storyboardId: string, port: number): string {
+function buildPrompt(skill: string, storyboardId: string, port: number, skillAbsDir: string): string {
   return `You are building a minimal AdCP agent that will be graded by the compliance storyboard \`${storyboardId}\`.
 
 ## The skill you're following
+
+The skill content is inlined below. Some skills reference companion files by relative path (e.g. \`./specialisms/sales-guaranteed.md\`, \`./deployment.md\`) or repo-rooted paths (\`docs/llms.txt\`). When you need to follow those links:
+- Skill companion files are under: **${skillAbsDir}**
+- Repo root (for \`docs/llms.txt\`, schemas/, etc.) is: **${REPO_ROOT}**
+
+Read them with absolute paths.
 
 ${skill}
 
@@ -301,7 +307,9 @@ function log(msg: string): void {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const skillContent = await readFile(resolve(args.skill), 'utf8');
+  const skillPath = resolve(args.skill);
+  const skillContent = await readFile(skillPath, 'utf8');
+  const skillDir = skillPath.substring(0, skillPath.lastIndexOf('/'));
   const workDir = args.workDir ? resolve(args.workDir) : await mkdtemp(join(tmpdir(), 'adcp-agent-'));
 
   log(`workspace: ${workDir}`);
@@ -312,7 +320,7 @@ async function main(): Promise<void> {
   let agent: ChildProcess | undefined;
   try {
     await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
-    await runClaude(buildPrompt(skillContent, args.storyboard, args.port), workDir, args.timeoutMs);
+    await runClaude(buildPrompt(skillContent, args.storyboard, args.port, skillDir), workDir, args.timeoutMs);
 
     log(`starting agent`);
     agent = await startAgent(workDir, args.port);

@@ -90,6 +90,7 @@ Brands should be registered dynamically through `sync_accounts` — when a buyer
 > - `reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only — `'2026-04-21'` fails GA validation.
 > - `videoAsset({...})` requires `width` + `height` in GA (previously optional). Omitting them fails validation at `/creative_manifest/assets/<name>/width` when the asset is constructed from video content.
 > - `get_media_buys /media_buys[i]` rows require `media_buy_id`, `status`, `currency`, `total_budget`, `packages`. Persist `currency` + `total_budget` from the `create_media_buy` request so they can be echoed back verbatim.
+> - `sync_accounts` response: each `accounts[]` row requires `action: 'created' | 'updated' | 'unchanged' | 'failed'` (same shape as `sync_creatives`). Omitting `action` fails schema validation and blocks every downstream stateful step.
 
 Everything from the standard seller skill applies. The delta is in `list_creative_formats` and `sync_creatives`.
 

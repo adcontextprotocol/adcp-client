@@ -298,6 +298,7 @@ serve(() =>
             operator: account.operator,
             account_id: `acct_${account.brand.domain}:${account.operator}`,
             status: 'active' as const,
+            action: 'created' as const, // required — one of 'created'|'updated'|'unchanged'|'failed'
           })),
         };
       },

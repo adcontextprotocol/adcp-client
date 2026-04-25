@@ -78,6 +78,7 @@ Does the buyer send performance metrics back for optimization?
 > - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows require `package_id`, `spend`, `pricing_model`, `rate`, `currency`. Mock handlers that return `{package_id, impressions, clicks}` fail validation — include the billing quintet on every package row.
 > - `get_media_buy_delivery /reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only. `'2026-04-21'` fails the GA format check.
 > - `get_media_buys /media_buys[i]` rows require `media_buy_id`, `status`, `currency`, `total_budget`, `packages`. Persist `currency` + `total_budget` from `create_media_buy` so they can be echoed back verbatim.
+> - `sync_accounts` response: each `accounts[]` row requires `action: 'created' | 'updated' | 'unchanged' | 'failed'` (same shape as `sync_creatives`). Omitting `action` fails schema validation and blocks every downstream stateful step.
 
 All standard seller tools apply (see `skills/build-seller-agent/SKILL.md`). The additional tools:
 
