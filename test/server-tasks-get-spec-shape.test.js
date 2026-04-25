@@ -161,6 +161,150 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     assert.strictEqual(completion.status, 'failed');
   });
 
+  test('maps canceled status (peer terminal state to failed)', async () => {
+    // `pollTaskCompletion` collapses `failed` and `canceled` onto the
+    // same `TaskResult.status: 'failed'` branch (TaskExecutor.ts:1194).
+    // Pre-fix mapping bug could have regressed on `canceled` while
+    // `failed` passed; pin both branches.
+    const SERVER_TASK_ID = 'tk_canceled_test';
+
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get') {
+        return {
+          task_id: SERVER_TASK_ID,
+          task_type: 'create_media_buy',
+          protocol: 'media-buy',
+          status: 'canceled',
+          created_at: '2026-04-25T10:00:00Z',
+          updated_at: '2026-04-25T10:05:00Z',
+        };
+      }
+      return { status: 'submitted', task_id: SERVER_TASK_ID };
+    });
+
+    const executor = new TaskExecutor({ pollingInterval: 5 });
+    const result = await executor.executeTask(mockAgent, 'canceledStatusTest', {});
+    const completion = await result.submitted.waitForCompletion(5);
+    assert.strictEqual(completion.success, false, 'canceled task surfaces as completion.success === false');
+    assert.strictEqual(
+      completion.status,
+      'failed',
+      'SDK collapses canceled and failed onto the same TaskResult.status'
+    );
+  });
+
+  test('unwraps MCP `structuredContent` envelope around the AdCP-spec flat shape', async () => {
+    // Real MCP `tasks/get` responses arrive wrapped in
+    // `{ structuredContent: <AdCP payload> }` (the SDK's MCP transport
+    // surfaces the typed payload under that field). The mapper must
+    // walk past the wrapper before applying the AdCP-spec mapping.
+    const SERVER_TASK_ID = 'tk_mcp_wrapped';
+
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get') {
+        return {
+          structuredContent: {
+            task_id: SERVER_TASK_ID,
+            task_type: 'create_media_buy',
+            protocol: 'media-buy',
+            status: 'completed',
+            created_at: '2026-04-25T10:00:00Z',
+            updated_at: '2026-04-25T10:05:00Z',
+          },
+        };
+      }
+      return { status: 'submitted', task_id: SERVER_TASK_ID };
+    });
+
+    const executor = new TaskExecutor({ pollingInterval: 5 });
+    const result = await executor.executeTask(mockAgent, 'mcpWrappedTest', {});
+    const status = await result.submitted.track();
+    assert.strictEqual(status.taskId, SERVER_TASK_ID, 'mapper walks past structuredContent wrapper');
+    assert.strictEqual(status.status, 'completed');
+    assert.strictEqual(status.taskType, 'create_media_buy');
+  });
+
+  test('unwraps A2A `result.kind:"task".artifacts[0].parts[0].data` envelope around the AdCP-spec flat shape', async () => {
+    // A2A `tasks/get` responses arrive as a JSON-RPC envelope
+    // wrapping a Task whose first artifact carries the AdCP payload
+    // on its first DataPart (per #899). The mapper must walk past
+    // both the JSON-RPC envelope and the artifact wrapping.
+    const SERVER_TASK_ID = 'tk_a2a_wrapped';
+
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get') {
+        return {
+          jsonrpc: '2.0',
+          id: 1,
+          result: {
+            kind: 'task',
+            id: 'a2a-task-uuid',
+            contextId: 'a2a-context-uuid',
+            status: { state: 'completed', timestamp: '2026-04-25T10:05:00Z' },
+            artifacts: [
+              {
+                artifactId: 'artifact-uuid',
+                name: 'tasks_get_result',
+                parts: [
+                  {
+                    kind: 'data',
+                    data: {
+                      task_id: SERVER_TASK_ID,
+                      task_type: 'create_media_buy',
+                      protocol: 'media-buy',
+                      status: 'completed',
+                      created_at: '2026-04-25T10:00:00Z',
+                      updated_at: '2026-04-25T10:05:00Z',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      return { status: 'submitted', task_id: SERVER_TASK_ID };
+    });
+
+    const executor = new TaskExecutor({ pollingInterval: 5 });
+    const result = await executor.executeTask(mockAgent, 'a2aWrappedTest', {});
+    const status = await result.submitted.track();
+    assert.strictEqual(
+      status.taskId,
+      SERVER_TASK_ID,
+      'mapper walks past JSON-RPC + Task + artifact wrappers to find the AdCP payload'
+    );
+    assert.strictEqual(status.status, 'completed');
+  });
+
+  test('passes through `task_data` alias for completion payload', async () => {
+    // Some sellers use `task_data` instead of `result` for the
+    // completion payload (both via additionalProperties since neither
+    // is in the spec). The mapper accepts either name.
+    const SERVER_TASK_ID = 'tk_task_data_alias';
+    const COMPLETION_DATA = { foo: 'bar' };
+
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get') {
+        return {
+          task_id: SERVER_TASK_ID,
+          task_type: 'create_media_buy',
+          protocol: 'media-buy',
+          status: 'completed',
+          created_at: '2026-04-25T10:00:00Z',
+          updated_at: '2026-04-25T10:05:00Z',
+          task_data: COMPLETION_DATA, // alias for `result`
+        };
+      }
+      return { status: 'submitted', task_id: SERVER_TASK_ID };
+    });
+
+    const executor = new TaskExecutor({ pollingInterval: 5 });
+    const result = await executor.executeTask(mockAgent, 'taskDataAliasTest', {});
+    const completion = await result.submitted.waitForCompletion(5);
+    assert.deepStrictEqual(completion.data, COMPLETION_DATA);
+  });
+
   test('continues to handle the legacy { task: {...} } nested shape for backward compat', async () => {
     // Some pre-3.0 sellers and existing test fixtures emit a non-spec
     // wrapper. Until those migrate, we keep handling both shapes so
@@ -191,41 +335,49 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     assert.deepStrictEqual(completion.data, { ok: true });
   });
 
-  test('does NOT try MCP experimental.tasks.getTask before the AdCP tool', async () => {
+  test('does NOT call MCP experimental.tasks.getTask before the AdCP tool', async () => {
     // The previous implementation tried `getMCPTaskStatus` first and
     // fell through to the AdCP tool on capability-missing. The two
     // interfaces track different lifecycles (MCP-experimental =
     // transport, AdCP tasks/get = work). For submitted-arm polling
-    // we always want work status — pin it.
-    let callCount = 0;
-    let observedToolNames = [];
-
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      callCount++;
-      observedToolNames.push(taskName);
-      if (taskName === 'tasks/get') {
-        return {
-          task_id: 'tk_no_experimental',
-          task_type: 'create_media_buy',
-          protocol: 'media-buy',
-          status: 'completed',
-          created_at: '2026-04-25T10:00:00Z',
-          updated_at: '2026-04-25T10:05:00Z',
-        };
-      }
-      return { status: 'submitted', task_id: 'tk_no_experimental' };
+    // we always want work status — pin it by spying directly on the
+    // experimental-path module export. If the experimental call ever
+    // fires, the spy throws.
+    const mcpTasks = require('../dist/lib/protocols/mcp-tasks');
+    const originalGetMCPTaskStatus = mcpTasks.getMCPTaskStatus;
+    let experimentalCalls = 0;
+    mcpTasks.getMCPTaskStatus = mock.fn(async () => {
+      experimentalCalls++;
+      throw new Error(
+        'experimental.tasks.getTask must NOT be called from getTaskStatus — it tracks transport-call lifecycle, not AdCP work lifecycle'
+      );
     });
 
-    const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'noExperimentalTest', {});
-    await result.submitted.waitForCompletion(5);
+    try {
+      ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+        if (taskName === 'tasks/get') {
+          return {
+            task_id: 'tk_no_experimental',
+            task_type: 'create_media_buy',
+            protocol: 'media-buy',
+            status: 'completed',
+            created_at: '2026-04-25T10:00:00Z',
+            updated_at: '2026-04-25T10:05:00Z',
+          };
+        }
+        return { status: 'submitted', task_id: 'tk_no_experimental' };
+      });
 
-    // Two callTool invocations expected: the initial task + one tasks/get poll
-    const tasksGetCalls = observedToolNames.filter(name => name === 'tasks/get');
-    assert.ok(tasksGetCalls.length >= 1, 'tasks/get was called for polling');
-    // No experimental.tasks.getTask reached ProtocolClient.callTool —
-    // the experimental path bypasses callTool entirely (uses the SDK's
-    // experimental subsystem), so its absence here proves the new
-    // dispatch path skipped it.
+      const executor = new TaskExecutor({ pollingInterval: 5 });
+      const result = await executor.executeTask(mockAgent, 'noExperimentalTest', {});
+      await result.submitted.waitForCompletion(5);
+      assert.strictEqual(
+        experimentalCalls,
+        0,
+        'getMCPTaskStatus (experimental.tasks.getTask) must not be invoked from the polling cycle'
+      );
+    } finally {
+      mcpTasks.getMCPTaskStatus = originalGetMCPTaskStatus;
+    }
   });
 });

@@ -135,12 +135,22 @@ function stringField(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function unwrapTasksGetEnvelope(obj: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Cap on the wrapper-unwrap recursion depth. Real-world responses
+ * have at most two layers (MCP `structuredContent` OR A2A JSON-RPC →
+ * Task → artifact → DataPart). The cap is a defense against a
+ * malformed or hostile seller emitting a deeply-nested wrapper that
+ * would otherwise stack-overflow the buyer.
+ */
+const TASKS_GET_UNWRAP_MAX_DEPTH = 8;
+
+function unwrapTasksGetEnvelope(obj: Record<string, unknown>, depth = 0): Record<string, unknown> {
+  if (depth >= TASKS_GET_UNWRAP_MAX_DEPTH) return obj;
   // MCP: `tools/call` response carries the typed payload at
   // `structuredContent`.
   const sc = obj.structuredContent;
   if (sc != null && typeof sc === 'object' && !Array.isArray(sc)) {
-    return unwrapTasksGetEnvelope(sc as Record<string, unknown>);
+    return unwrapTasksGetEnvelope(sc as Record<string, unknown>, depth + 1);
   }
   // A2A: `message/send` response is a JSON-RPC envelope wrapping a
   // Task; the AdCP payload sits on the first artifact's first
@@ -158,12 +168,15 @@ function unwrapTasksGetEnvelope(obj: Record<string, unknown>): Record<string, un
       ) {
         const firstPart = artifact.parts[0] as Record<string, unknown> | null;
         if (firstPart?.kind === 'data' && firstPart.data != null && typeof firstPart.data === 'object') {
-          return unwrapTasksGetEnvelope(firstPart.data as Record<string, unknown>);
+          return unwrapTasksGetEnvelope(firstPart.data as Record<string, unknown>, depth + 1);
         }
       }
     }
   }
   // Legacy nested wrapper from pre-3.0 sellers and existing mocks.
+  // TODO(adcp-client#967): remove once mock fixtures in
+  // `test/lib/task-executor*.test.js` migrate to the AdCP-spec flat
+  // shape. No real seller emits this; verified at PR review time.
   if (obj.task != null && typeof obj.task === 'object' && !Array.isArray(obj.task)) {
     return obj.task as Record<string, unknown>;
   }
@@ -1285,6 +1298,14 @@ export class TaskExecutor {
     // The request param is `task_id` (snake_case per AdCP 3.0); the
     // response is the spec's flat shape, mapped to `TaskInfo` via
     // {@link mapTasksGetResponseToTaskInfo}.
+    //
+    // **Known limitation (#973)**: A2A submitted-arm responses still
+    // misclassify because `responseParser.getStatus`/`getTaskId` read
+    // the transport-level `Task.state` and `Task.id` instead of the
+    // AdCP work status (`artifact.parts[0].data.status`) and AdCP
+    // work handle (`artifact.metadata.adcp_task_id`). The polling
+    // cycle never starts for A2A submitted arms in current code; the
+    // parser fix is tracked separately.
     const response = (await ProtocolClient.callTool(
       agent,
       'tasks/get',
