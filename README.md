@@ -11,7 +11,7 @@ Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Bu
 
 ## For AI Agents
 
-Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). Building a server? See [`docs/guides/BUILD-AN-AGENT.md`](./docs/guides/BUILD-AN-AGENT.md). **Calling** an AdCP agent as a buyer? Load [`skills/call-adcp-agent/SKILL.md`](./skills/call-adcp-agent/SKILL.md) — wire contract, async flow, and error-recovery priors that aren't in the type signatures. For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
+Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). Building a server? See [`docs/guides/BUILD-AN-AGENT.md`](./docs/guides/BUILD-AN-AGENT.md). **Calling** an AdCP agent as a buyer? Load [`skills/call-adcp-agent/SKILL.md`](./skills/call-adcp-agent/SKILL.md) — wire contract, async flow, and error-recovery priors that aren't in the type signatures. Setting up request signing? See [`docs/guides/SIGNING-GUIDE.md`](./docs/guides/SIGNING-GUIDE.md). For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
 
 These docs are also available in `node_modules/@adcp/client/docs/` after install.
 
@@ -370,79 +370,67 @@ const client = new ADCPMultiAgentClient(agents, {
 // Returns 401 if signature invalid
 ```
 
-### Request Signing (RFC 9421, AdCP 3.0 optional)
+### Request Signing (RFC 9421)
 
-`@adcp/client/signing` implements the [AdCP request-signing transport profile](https://adcontextprotocol.org/docs/building/implementation/security#signed-requests-transport-layer)
-— HTTP Message Signatures (RFC 9421) with Ed25519 (default) or ES256, a `adcp/request-signing/v1` tag,
-and content-digest support. Conformance is verified against all 28 vectors shipped in the spec repo
-(see `compliance/cache/latest/test-vectors/request-signing/`).
+AdCP 3.0 supports [HTTP Message Signatures (RFC 9421)](https://www.rfc-editor.org/rfc/rfc9421) for cryptographic request authentication. A buyer signs outbound requests so the seller can verify who sent them and that nothing was tampered with. A seller signs outbound webhooks so the buyer can verify authenticity. Optional in 3.0, mandatory in 3.1+ for mutating operations.
 
-**Generate a signing key + JWKS for publication:**
+**Generate a signing key:**
 
 ```bash
-adcp signing generate-key --alg ed25519 --kid my-buyer-2026 \
-  --private-out ./buyer.pem --public-out ./buyer-jwks.json
-# Publish buyer-jwks.json at the jwks_uri of your brand.json agents[] entry.
+adcp signing generate-key --alg ed25519 --kid my-agent-2026 \
+  --private-out ./private.jwk --public-out ./public-jwks.json
+# Publish public-jwks.json at your /.well-known/jwks.json endpoint.
+# Point to it from your /.well-known/brand.json agents[].jwks_uri.
 ```
 
-**Signer (client-side) — wraps `fetch` to sign outbound requests:**
+**Sign outbound requests (buyer):**
 
 ```typescript
 import { createSigningFetch } from '@adcp/client/signing';
 
 const signingFetch = createSigningFetch(fetch, {
-  keyid: 'my-buyer-2026',
+  keyid: 'my-agent-2026',
   alg: 'ed25519',
-  privateKey: buyerPrivateJwk, // JWK with `d` field
+  privateKey: privateJwk, // JWK with `d` field
 });
 
-await signingFetch('https://seller.example.com/adcp/create_media_buy', {
+await signingFetch('https://seller.example.com/mcp', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ plan_id: 'plan_001' }),
+  body: JSON.stringify(payload),
 });
-// Signature, Signature-Input, and (optionally) Content-Digest headers
-// are attached per RFC 9421 before the upstream fetch is called.
+// Signature, Signature-Input, and Content-Digest headers added automatically.
 ```
 
-**Verifier (server-side) — middleware runs the 12-step checklist:**
+**Verify inbound signatures (seller):**
 
 ```typescript
 import {
   createExpressVerifier,
-  InMemoryReplayStore,
-  InMemoryRevocationStore,
   StaticJwksResolver,
+  InMemoryReplayStore,
 } from '@adcp/client/signing';
 
 app.post(
-  '/adcp/create_media_buy',
-  rawBodyMiddleware(), // req.rawBody must hold the byte-exact body
+  '/mcp',
+  rawBodyMiddleware(),
   createExpressVerifier({
     capability: {
       supported: true,
-      covers_content_digest: 'required', // 'required' | 'forbidden' | 'either'
+      covers_content_digest: 'required',
       required_for: ['create_media_buy'],
     },
-    jwks: new StaticJwksResolver(publishedBuyerKeys),
+    jwks: new StaticJwksResolver(buyerPublicKeys),
     replayStore: new InMemoryReplayStore(),
-    revocationStore: new InMemoryRevocationStore(),
-    resolveOperation: req => 'create_media_buy',
+    resolveOperation: req => req.body?.method ?? 'unknown',
   }),
   handler
 );
-// On verify, req.verifiedSigner = { keyid, agent_url?, verified_at }.
-// On reject, the middleware returns 401 with
-//   WWW-Authenticate: Signature error="<code>"
-// and JSON { error, message, failed_step }.
+// On verify: req.verifiedSigner = { keyid, agent_url?, verified_at }.
+// On reject: 401 with WWW-Authenticate: Signature error="<code>".
 ```
 
-**Running a single vector for debugging:**
-
-```bash
-adcp signing verify-vector \
-  --vector compliance/cache/latest/test-vectors/request-signing/positive/001-basic-post.json
-```
+Full guide covering key generation, JWKS publication, brand.json setup, webhook signing, capability declaration, key rotation, and conformance testing: **[docs/guides/SIGNING-GUIDE.md](./docs/guides/SIGNING-GUIDE.md)**.
 
 ### Authentication
 

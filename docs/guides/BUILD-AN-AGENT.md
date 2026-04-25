@@ -313,6 +313,66 @@ Modes per side: `'strict' | 'warn' | 'off'`. Default is `'off'` — enable expli
 
 The same validator runs on the `AdcpClient` side — storyboards and third-party clients configure it via `validation: { requests, responses }` on the client config. Request default is `warn` (so existing callers that send partial payloads still work); response default is `strict` in dev/test, `warn` in production. Set either side to `'off'` for zero overhead.
 
+### Request Signing
+
+If your agent receives signed requests from buyers, verify them using `requireAuthenticatedOrSigned()` — one call that bundles signature verification with credential fallback and `requiredFor` enforcement:
+
+```typescript
+import { createAdcpServer, serve } from '@adcp/client';
+import {
+  verifySignatureAsAuthenticator,
+  verifyApiKey,
+  requireAuthenticatedOrSigned,
+  mcpToolNameResolver,
+} from '@adcp/client/server';
+import { BrandJsonJwksResolver } from '@adcp/client/signing/server';
+
+serve(() => createAdcpServer({
+  name: 'My Seller',
+  version: '1.0.0',
+  capabilities: {
+    overrides: {
+      request_signing: {
+        supported: true,
+        required_for: ['create_media_buy', 'update_media_buy'],
+        covers_content_digest: 'either',
+      },
+    },
+  },
+  mediaBuy: { /* ... */ },
+}), {
+  authenticate: requireAuthenticatedOrSigned({
+    signature: verifySignatureAsAuthenticator({
+      capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
+      jwks: new BrandJsonJwksResolver(),
+      resolveOperation: mcpToolNameResolver,
+    }),
+    fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
+    requiredFor: ['create_media_buy', 'update_media_buy'],
+    resolveOperation: mcpToolNameResolver,
+  }),
+});
+```
+
+When signature headers are present, only signature auth runs (no fallback to bearer — that prevents bypass attacks). When absent, the credential authenticator runs as normal. `requiredFor` enforces the spec's `request_signature_required` 401 on operations that arrive unsigned without other credentials — start narrow and widen as your counterparties roll out signing. `replayStore` and `revocationStore` default to in-memory implementations — pass shared (e.g. Redis-backed) stores for horizontally scaled fleets. The capability key is `request_signing`; `signed_requests` is silently dropped (the `AdcpCapabilitiesOverrides` shape is what `get_adcp_capabilities` advertises).
+
+For outbound webhook signing, pass a `signerKey` to `createAdcpServer`:
+
+```typescript
+createAdcpServer({
+  webhooks: {
+    signerKey: {
+      keyid: 'my-webhook-key-2026',
+      alg: 'ed25519',
+      privateKey: webhookPrivateJwk,
+    },
+  },
+  // ...
+});
+```
+
+See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, and conformance testing.
+
 ### createTaskCapableServer (Low-Level)
 
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` uses this internally.

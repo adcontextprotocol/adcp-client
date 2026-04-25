@@ -474,7 +474,8 @@ export function requireAuthenticatedOrSigned(options: RequireAuthenticatedOrSign
  * uses.
  *
  * Pass directly as `resolveOperation` on {@link verifySignatureAsAuthenticator},
- * {@link requireSignatureWhenPresent}, or {@link requireAuthenticatedOrSigned}:
+ * {@link requireSignatureWhenPresent}, {@link requireAuthenticatedOrSigned},
+ * or `createExpressVerifier` from `@adcp/client/signing`:
  *
  * ```ts
  * serve(createAgent, {
@@ -492,7 +493,7 @@ export function requireAuthenticatedOrSigned(options: RequireAuthenticatedOrSign
  *
  * A2A agents use a different envelope — write a bespoke resolver there.
  */
-export function mcpToolNameResolver(req: IncomingMessage & { rawBody?: string }): string | undefined {
+export function mcpToolNameResolver(req: { rawBody?: string }): string | undefined {
   const raw = req.rawBody;
   if (!raw) return undefined;
   try {
