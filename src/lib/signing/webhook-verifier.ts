@@ -28,8 +28,8 @@ import { RequestSignatureError, WebhookSignatureError } from './errors';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
 import { jwkToPublicKey, verifySignature } from './crypto';
 import type { JwksResolver } from './jwks';
-import type { ReplayStore } from './replay';
-import type { RevocationStore } from './revocation';
+import { InMemoryReplayStore, type ReplayStore } from './replay';
+import { InMemoryRevocationStore, type RevocationStore } from './revocation';
 import { ALLOWED_ALGS, CLOCK_SKEW_TOLERANCE_SECONDS, MAX_SIGNATURE_WINDOW_SECONDS } from './types';
 
 export const WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
@@ -392,4 +392,61 @@ function isLoopbackHost(hostname: string): boolean {
   if (!hostname) return false;
   const normalized = hostname.toLowerCase();
   return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.');
+}
+
+/**
+ * Options for {@link createWebhookVerifier}. Identical to
+ * {@link VerifyWebhookOptions} except `replayStore` and `revocationStore` are
+ * optional — the factory defaults them once at creation time so replay state
+ * is shared across every request the returned verifier handles.
+ */
+export interface CreateWebhookVerifierOptions extends Omit<VerifyWebhookOptions, 'replayStore' | 'revocationStore'> {
+  /**
+   * Stores `(keyid, scope, nonce)` tuples for replay detection.
+   * Defaults to a fresh {@link InMemoryReplayStore} — suitable for single-process
+   * deployments only. **Multi-replica deployments MUST pass an explicit shared
+   * store** (Redis, Postgres, etc.) — the default in-memory store does not
+   * survive process boundaries, so a signature accepted on replica A is
+   * invisible to replica B and can be replayed there within the signature window.
+   */
+  replayStore?: ReplayStore;
+  /**
+   * Consulted for revoked `kid` before accepting a signature.
+   * Defaults to a fresh {@link InMemoryRevocationStore}, which starts empty
+   * and does not poll for updates. The default is sufficient when you don't
+   * revoke keys at runtime; when you do, pass a store backed by your secrets
+   * manager or admin tooling so revocations take effect without redeployment.
+   */
+  revocationStore?: RevocationStore;
+}
+
+/**
+ * Create a bound webhook-signature verifier with shared replay and revocation
+ * stores. Mirrors {@link createExpressVerifier} for the webhook profile.
+ *
+ * The returned function is the per-request entry point: call it with each
+ * inbound webhook's {@link RequestLike} representation.
+ *
+ * **Why a factory?** Replay detection requires the same store instance to be
+ * consulted across every request. Constructing stores inside a per-request
+ * call would silently defeat replay dedup — each call would start with an
+ * empty store and always accept the nonce. The factory pattern captures the
+ * store instances in closure scope at wire-up time, guaranteeing they are
+ * shared across calls for the lifetime of the verifier.
+ *
+ * **Multi-replica deployments MUST pass an explicit `replayStore`** backed by
+ * a shared persistence layer (Redis, Postgres, etc.) — the default
+ * `InMemoryReplayStore` does not survive process boundaries. A nonce accepted
+ * on replica A is invisible to replica B; replaying the webhook to B succeeds
+ * silently within the signature window.
+ */
+export function createWebhookVerifier(
+  options: CreateWebhookVerifierOptions
+): (request: RequestLike) => Promise<VerifyWebhookResult> {
+  // Instantiate defaults once at creation time so every request handled by
+  // this verifier shares the same replay / revocation state. Per-request
+  // construction would defeat replay detection entirely.
+  const replayStore = options.replayStore ?? new InMemoryReplayStore();
+  const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
+  return (request: RequestLike) => verifyWebhookSignature(request, { ...options, replayStore, revocationStore });
 }
