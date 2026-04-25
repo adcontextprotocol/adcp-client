@@ -38,6 +38,13 @@ export const rawResponseCaptureStorage = new AsyncLocalStorage<CaptureSlot>();
 /**
  * Run `fn` with a raw-response capture slot active. Every HTTP request made
  * through the wrapped fetch inside `fn` is recorded.
+ *
+ * When `fn` rejects, the rejection propagates and the partial captures
+ * are attached to the thrown error as `error.captures`. Callers that
+ * need to inspect partial captures on failure can read that property;
+ * callers that don't can ignore it. This lets storyboard validators
+ * surface "the SDK threw before the wire shape parsed" diagnostics
+ * with the actual bytes that arrived before the throw.
  */
 export async function withRawResponseCapture<T>(
   fn: () => Promise<T>,
@@ -47,8 +54,33 @@ export async function withRawResponseCapture<T>(
     captures: [],
     maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
   };
-  const result = await rawResponseCaptureStorage.run(slot, fn);
-  return { result, captures: slot.captures };
+  try {
+    const result = await rawResponseCaptureStorage.run(slot, fn);
+    return { result, captures: slot.captures };
+  } catch (err) {
+    if (err && typeof err === 'object') {
+      try {
+        Object.defineProperty(err, 'captures', {
+          value: slot.captures,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      } catch {
+        // Frozen / sealed errors won't accept the property — drop the
+        // captures rather than crash on a defineProperty TypeError.
+      }
+    }
+    throw err;
+  }
+}
+
+/** Type guard for errors carrying partial captures from `withRawResponseCapture`. */
+export function getCapturesFromError(err: unknown): RawHttpCapture[] | undefined {
+  if (err && typeof err === 'object' && Array.isArray((err as { captures?: unknown }).captures)) {
+    return (err as { captures: RawHttpCapture[] }).captures;
+  }
+  return undefined;
 }
 
 /**

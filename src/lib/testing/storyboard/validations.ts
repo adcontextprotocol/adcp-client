@@ -14,6 +14,7 @@ import { validateResponse, type ValidationIssue } from '../../validation/schema-
 import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
 import type {
+  A2ATaskEnvelope,
   HttpProbeResult,
   RunnerRequestRecord,
   RunnerResponseRecord,
@@ -54,6 +55,14 @@ export interface ValidationContext {
    * in the run. Single-step checks ignore it.
    */
   storyboardContext?: StoryboardContext;
+  /**
+   * Captured A2A wire shape — populated by the runner when the protocol
+   * is `a2a` and the SDK fetch was wrapped with `withRawResponseCapture`.
+   * `a2a_submitted_artifact` and other wire-shape checks read this to
+   * assert on the JSON-RPC envelope; non-A2A runs leave it undefined and
+   * those checks self-skip with `not_applicable`.
+   */
+  a2aEnvelope?: A2ATaskEnvelope;
 }
 
 /**
@@ -103,6 +112,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return requireHttpResult(ctx, validation, hr => validateResourceEqualsAgentUrl(validation, hr, ctx.agentUrl));
     case 'any_of':
       return validateAnyOf(validation, ctx.contributions);
+    case 'a2a_submitted_artifact':
+      return validateA2ASubmittedArtifact(validation, ctx);
     case 'refs_resolve':
       return validateRefsResolve(validation, ctx);
     default:
@@ -1220,6 +1231,300 @@ function validateAnyOf(validation: StoryboardValidation, contributions: Set<stri
     json_pointer: null,
     expected: flags,
     actual: Array.from(contributions),
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// a2a_submitted_artifact (A2A wire-shape regression guard)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Assert the A2A `Task` envelope produced by the seller for an AdCP
+ * `submitted` arm matches the cross-transport contract established in
+ * adcp-client#899:
+ *
+ *   1. `Task.state === 'completed'` — A2A Task.state tracks the HTTP
+ *      transport call, not the AdCP work. The HTTP request returned
+ *      successfully with a queued AdCP task; emitting `'submitted'`
+ *      here would be a non-conformant terminal transition per A2A
+ *      0.3.0 (`submitted` is the INITIAL state, never terminal).
+ *
+ *   2. `artifact.metadata.adcp_task_id` is a non-empty string — the
+ *      AdCP-level async handle rides on the artifact's metadata field,
+ *      not buried in `data.adcp_task_id`. Buyers resume the AdCP task
+ *      by reading metadata; conflating it into the AdCP payload
+ *      pollutes the typed response shape.
+ *
+ *   3. `artifact.parts[0].data.status === 'submitted'` — the AdCP
+ *      payload preserves its native `status` discriminator so buyers
+ *      can read the ad-tech state without parsing transport metadata.
+ *
+ * The check is A2A-specific: when no `a2aEnvelope` was captured (MCP
+ * runs, or A2A runs where the SDK fetch was bypassed), the result
+ * passes with `not_applicable: true` so the validation doesn't fail
+ * the step on transports that don't carry the envelope.
+ *
+ * Failure messages name the offending field so an agent that
+ * regressed to the pre-#899 shape (`Task.state: 'submitted'` with
+ * `final: true`, `adcp_task_id` in `data` instead of `metadata`) gets
+ * a specific diagnostic, not a generic "wire-shape rejected".
+ */
+function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const envelope = ctx.a2aEnvelope;
+  if (!envelope) {
+    // Non-A2A transport (MCP), or A2A path where the SDK fetch wasn't
+    // wrapped. Skip without failing — the storyboard step still grades
+    // on its other validations (e.g. MCP `field_value status === submitted`).
+    return {
+      check: 'a2a_submitted_artifact',
+      passed: true,
+      description: validation.description,
+      observations: [
+        'a2a_envelope_not_captured: no JSON-RPC envelope recorded (non-A2A transport, or A2A dispatch threw before envelope was parsed)',
+      ],
+    };
+  }
+
+  const failures: Array<{ pointer: string; expected: unknown; actual: unknown; detail: string }> = [];
+
+  // JSON-RPC error envelopes never satisfy the submitted-artifact
+  // contract. We fail the check (skipping would silently hide a
+  // server-side regression where submitted arms 500 instead of
+  // returning Tasks), but emit a distinct error_code so dashboards
+  // can separate transport rejections from submitted-arm shape drift.
+  if (envelope.envelope.error !== undefined) {
+    return {
+      check: 'a2a_submitted_artifact',
+      passed: false,
+      description: validation.description,
+      error: 'Expected a JSON-RPC success envelope carrying an A2A Task; observed an error envelope.',
+      json_pointer: '/error',
+      expected: { result: { kind: 'task', status: { state: 'completed' } } },
+      actual: { error_code: 'a2a_jsonrpc_error_envelope', error: envelope.envelope.error },
+    };
+  }
+
+  const result = envelope.result;
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) {
+    return {
+      check: 'a2a_submitted_artifact',
+      passed: false,
+      description: validation.description,
+      error: 'JSON-RPC `result` is not an object — A2A `message/send` must return a Task.',
+      json_pointer: '/result',
+      expected: 'object (A2A Task)',
+      actual: result,
+    };
+  }
+  const task = result as Record<string, unknown>;
+
+  if (task.kind !== 'task') {
+    failures.push({
+      pointer: '/result/kind',
+      expected: 'task',
+      actual: task.kind,
+      detail: `Expected result.kind === 'task'; got ${JSON.stringify(task.kind)}.`,
+    });
+  }
+
+  // Task.id non-empty — buyers can't address `tasks/get` or
+  // `tasks/cancel` without it, so an empty / missing id is a
+  // wire-shape regression even if the transport call succeeded.
+  if (typeof task.id !== 'string' || task.id.length === 0) {
+    failures.push({
+      pointer: '/result/id',
+      expected: 'non-empty string',
+      actual: task.id,
+      detail:
+        'A2A `Task.id` must be a non-empty string — buyers address follow-up `tasks/get` / `tasks/cancel` calls by this id.',
+    });
+  }
+
+  // Task.contextId non-empty — A2A 0.3.0 binds follow-ups (subsequent
+  // sends, status streams) to the context; an empty contextId
+  // breaks correlation across calls.
+  if (typeof task.contextId !== 'string' || task.contextId.length === 0) {
+    failures.push({
+      pointer: '/result/contextId',
+      expected: 'non-empty string',
+      actual: task.contextId,
+      detail:
+        'A2A `Task.contextId` must be a non-empty string — A2A 0.3.0 requires it on every Task to correlate follow-up sends and status streams.',
+    });
+  }
+
+  // Invariant 1 — A2A `Task.state` for a submitted AdCP arm is
+  // `'completed'` (the HTTP call completed). Pre-#899 emitted
+  // `'submitted'` with `final: true`, which is the regression we want
+  // to catch.
+  const status = task.status;
+  const state =
+    status != null && typeof status === 'object' && !Array.isArray(status)
+      ? (status as Record<string, unknown>).state
+      : undefined;
+  if (state !== 'completed') {
+    failures.push({
+      pointer: '/result/status/state',
+      expected: 'completed',
+      actual: state,
+      detail:
+        `Expected Task.state === 'completed' (HTTP-call lifecycle); got ${JSON.stringify(state)}. ` +
+        "A2A 0.3.0 forbids 'submitted' as a terminal state — for AdCP submitted arms the transport call has completed; the AdCP task lives on artifact metadata.",
+    });
+  }
+
+  // Invariants 2 + 3 — artifact.metadata.adcp_task_id placement and
+  // artifact.parts[0].data.status preservation. Walk the artifact
+  // chain, collecting failures rather than short-circuiting so the
+  // error block names every divergence at once.
+  const artifacts = task.artifacts;
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    failures.push({
+      pointer: '/result/artifacts',
+      expected: 'non-empty array',
+      actual: artifacts,
+      detail: 'A2A submitted arm must produce at least one artifact carrying the AdCP response.',
+    });
+  } else {
+    const artifact = artifacts[0] as Record<string, unknown> | null;
+    if (artifact == null || typeof artifact !== 'object' || Array.isArray(artifact)) {
+      failures.push({
+        pointer: '/result/artifacts/0',
+        expected: 'object',
+        actual: artifact,
+        detail: 'First artifact must be an object.',
+      });
+    } else {
+      // artifact.artifactId non-empty — needed for chunked-artifact
+      // resumption and for buyers that key local state by artifact
+      // id (e.g. caching the AdCP payload while the task continues).
+      if (typeof artifact.artifactId !== 'string' || artifact.artifactId.length === 0) {
+        failures.push({
+          pointer: '/result/artifacts/0/artifactId',
+          expected: 'non-empty string',
+          actual: artifact.artifactId,
+          detail:
+            'A2A `Artifact.artifactId` must be a non-empty string — chunked-artifact resumption and buyer-side caching key off this id.',
+        });
+      }
+
+      // Invariant 2 — adcp_task_id on artifact.metadata.
+      const metadata = artifact.metadata;
+      const metadataTaskId =
+        metadata != null && typeof metadata === 'object' && !Array.isArray(metadata)
+          ? (metadata as Record<string, unknown>).adcp_task_id
+          : undefined;
+      if (typeof metadataTaskId !== 'string' || metadataTaskId.length === 0) {
+        failures.push({
+          pointer: '/result/artifacts/0/metadata/adcp_task_id',
+          expected: 'non-empty string',
+          actual: metadataTaskId,
+          detail:
+            'Expected `adcp_task_id` on `artifact.metadata` (per A2A 0.3.0 metadata-extension convention). Pre-#899 placed this in `artifact.parts[0].data.adcp_task_id` — that path is non-conformant; transport metadata pollutes the typed AdCP payload shape.',
+        });
+      }
+
+      // Invariant 3 — artifact.parts[0].data.status === 'submitted'.
+      const parts = artifact.parts;
+      if (!Array.isArray(parts) || parts.length === 0) {
+        failures.push({
+          pointer: '/result/artifacts/0/parts',
+          expected: 'non-empty array with a DataPart',
+          actual: parts,
+          detail: 'A2A submitted arm must include a DataPart carrying the AdCP response.',
+        });
+      } else {
+        const firstPart = parts[0] as Record<string, unknown> | null;
+        if (firstPart == null || typeof firstPart !== 'object' || Array.isArray(firstPart)) {
+          failures.push({
+            pointer: '/result/artifacts/0/parts/0',
+            expected: 'object',
+            actual: firstPart,
+            detail: 'First artifact part must be an object.',
+          });
+        } else {
+          if (firstPart.kind !== 'data') {
+            failures.push({
+              pointer: '/result/artifacts/0/parts/0/kind',
+              expected: 'data',
+              actual: firstPart.kind,
+              detail: `Expected the first artifact part to be a DataPart (kind === 'data'); got ${JSON.stringify(firstPart.kind)}.`,
+            });
+          }
+          const data = firstPart.data;
+          const dataStatus =
+            data != null && typeof data === 'object' && !Array.isArray(data)
+              ? (data as Record<string, unknown>).status
+              : undefined;
+          if (dataStatus !== 'submitted') {
+            failures.push({
+              pointer: '/result/artifacts/0/parts/0/data/status',
+              expected: 'submitted',
+              actual: dataStatus,
+              detail:
+                `Expected the AdCP payload's status to round-trip as 'submitted'; got ${JSON.stringify(dataStatus)}. ` +
+                'The DataPart must carry the AdCP tool response verbatim — buyers read the ad-tech state from `data.status`, not from `Task.state`.',
+            });
+          }
+          // Dual-write detection: catches the pre-#899 regression
+          // where the agent leaked the transport handle into the
+          // payload. A future AdCP tool whose response schema
+          // legitimately includes `adcp_task_id` is allowed to
+          // surface it inside `data` AS LONG AS it equals the
+          // metadata value — a divergent or solo-payload write is
+          // still the regression class issue #904 catches.
+          const dataAdcpTaskId =
+            data != null && typeof data === 'object' && !Array.isArray(data)
+              ? (data as Record<string, unknown>).adcp_task_id
+              : undefined;
+          if (dataAdcpTaskId !== undefined) {
+            const equalsMetadata =
+              typeof metadataTaskId === 'string' &&
+              typeof dataAdcpTaskId === 'string' &&
+              dataAdcpTaskId === metadataTaskId;
+            if (!equalsMetadata) {
+              failures.push({
+                pointer: '/result/artifacts/0/parts/0/data/adcp_task_id',
+                expected: 'absent OR equal to artifact.metadata.adcp_task_id',
+                actual: dataAdcpTaskId,
+                detail:
+                  typeof metadataTaskId === 'string'
+                    ? `Pre-#899 dual-write detected: \`data.adcp_task_id\` (${JSON.stringify(dataAdcpTaskId)}) diverges from \`artifact.metadata.adcp_task_id\` (${JSON.stringify(metadataTaskId)}).`
+                    : 'Pre-#899 shape detected: `adcp_task_id` appeared inside `artifact.parts[0].data` without a matching `artifact.metadata.adcp_task_id`. Transport metadata belongs on `artifact.metadata`.',
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (failures.length === 0) {
+    return {
+      check: 'a2a_submitted_artifact',
+      passed: true,
+      description: validation.description,
+    };
+  }
+
+  // Surface every failure at once. The first one anchors json_pointer /
+  // expected / actual for tools that read those scalar fields; the full
+  // list lands in `actual.failures` so all regressions are visible in
+  // a single grading run. Multi-failure runs prepend the first detail
+  // to the error string so consumers reading only `error` still get a
+  // pointer to the most-actionable diagnostic.
+  const first = failures[0]!;
+  return {
+    check: 'a2a_submitted_artifact',
+    passed: false,
+    description: validation.description,
+    error:
+      failures.length === 1
+        ? first.detail
+        : `${failures.length} A2A wire-shape invariants failed; first: ${first.detail}`,
+    json_pointer: first.pointer,
+    expected: first.expected,
+    actual: { failures },
   };
 }
 

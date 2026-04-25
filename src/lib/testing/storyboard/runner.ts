@@ -8,6 +8,7 @@
 
 import { getOrCreateClient, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import { closeConnections } from '../../protocols';
+import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { executeStoryboardTask } from './task-map';
 import {
   extractContextWithProvenance,
@@ -52,6 +53,7 @@ interface PreSeededInput {
   attach: boolean;
 }
 import type {
+  A2ATaskEnvelope,
   AssertionResult,
   BranchSetSpec,
   ContextProvenanceEntry,
@@ -1493,6 +1495,7 @@ async function executeStep(
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
+  let a2aEnvelope: A2ATaskEnvelope | undefined;
 
   if (useRawProbe) {
     const started = Date.now();
@@ -1528,13 +1531,46 @@ async function executeStep(
       };
     }
   } else {
-    const run = await runStep(step.title, effectiveStep.task, () =>
+    // For A2A runs, wrap the SDK dispatch in `withRawResponseCapture`
+    // so storyboard validations can assert on the JSON-RPC `Task`
+    // envelope the seller emitted (e.g. `a2a_submitted_artifact`
+    // checks `Task.state` + `artifact.metadata.adcp_task_id` placement).
+    // MCP path stays unwrapped — the SDK envelope is reconstructed from
+    // `taskResult` already and capture would only add overhead.
+    //
+    // Selection note: gate on `options.protocol === 'a2a'` because
+    // that's the only signal available at this point — discovery
+    // hasn't run yet in `runStoryboardStep` (the runner branches off
+    // `agentTools` later). If a future "auto-detect protocol" flow
+    // lands, key the capture off the negotiated transport instead.
+    const captureA2a = options.protocol === 'a2a';
+    let a2aCaptures: RawHttpCapture[] | undefined;
+    const dispatch = () =>
       executeStoryboardTask(client, effectiveStep.task, request, {
         skipIdempotencyAutoInject: testsMissingIdempotencyKey,
-      })
-    );
+      });
+    const run = await runStep(step.title, effectiveStep.task, async () => {
+      if (!captureA2a) return dispatch();
+      try {
+        const { result: dispatchResult, captures } = await withRawResponseCapture(dispatch);
+        a2aCaptures = captures;
+        return dispatchResult;
+      } catch (err) {
+        // `withRawResponseCapture` attaches partial captures to the
+        // thrown error so we still get the wire-shape envelope when
+        // the SDK threw mid-parse (e.g. agent emitted malformed JSON).
+        // Bare-throw cases (network errors, no captures attached)
+        // leave `a2aCaptures` undefined and the validator self-skips.
+        const partial = getCapturesFromError(err);
+        if (partial) a2aCaptures = partial;
+        throw err;
+      }
+    });
     taskResult = run.result;
     stepResult = run.step;
+    if (captureA2a && a2aCaptures) {
+      a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+    }
     if (taskResult) {
       responseRecord = {
         transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
@@ -1620,6 +1656,7 @@ async function executeStep(
       request: requestRecord,
       ...(responseRecord && { response: responseRecord }),
       storyboardContext: context,
+      ...(a2aEnvelope && { a2aEnvelope }),
     };
     validations = runValidations(resolvedValidations, vctx);
   }
@@ -1701,7 +1738,10 @@ async function executeStep(
     passed: passed && allValidationsPassed,
     expect_error: step.expect_error,
     duration_ms: stepResult.duration_ms,
-    response: taskResult?.data,
+    // Legacy `response` field (new code reads `response_record`).
+    // Redact in case a downstream consumer still keys off it; the
+    // modern `response_record.payload` path is already redacted.
+    response: redactSecrets(taskResult?.data),
     validations,
     context: updatedContext,
     ...(runState.contextProvenance &&
@@ -1856,6 +1896,102 @@ function findPriorProbe(priorStepResults: Map<string, StoryboardStepResult>): Ht
     if (resp && typeof resp === 'object' && 'url' in resp && 'status' in resp) return resp;
   }
   return undefined;
+}
+
+/**
+ * Reduce the captured fetch traffic for an A2A step into the
+ * `A2ATaskEnvelope` validations consume. The A2A SDK fires multiple
+ * requests per call (`/.well-known/agent-card.json` discovery on
+ * fresh clients, then a `message/send` POST), and a single dispatch
+ * may also poll `tasks/get` afterwards. We pick the capture whose
+ * REQUEST body declares `method: 'message/send'`; if no capture
+ * declares the method we fall back to the last POST with a
+ * JSON-RPC-shaped body. GET captures and non-JSON bodies are
+ * skipped — `undefined` here surfaces as `not_applicable` in the
+ * validator, which is more useful than a garbage envelope.
+ *
+ * Captured response bodies pass through `redactSecrets` before
+ * landing in `ValidationContext.a2aEnvelope`. The bearer-token
+ * regex in `wrapFetchWithCapture` only catches `Bearer <token>`
+ * substrings; AdCP-style secret-shaped fields (`api_key`,
+ * `client_secret`, `access_token`) inside a DataPart payload only
+ * get redacted here. Failure paths thread the envelope into
+ * `ValidationResult.actual.failures[].actual` which lands in
+ * persisted compliance reports — redacting at capture parse time
+ * keeps that surface consistent with `responseRecord.payload`,
+ * which the runner already redacts on the success path.
+ */
+function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2ATaskEnvelope | undefined {
+  let messageSendIdx = -1;
+  let lastPostIdx = -1;
+  for (let i = captures.length - 1; i >= 0; i--) {
+    const cap = captures[i];
+    if (!cap || cap.method !== 'POST') continue;
+    if (lastPostIdx === -1) lastPostIdx = i;
+    // The fetch wrapper doesn't capture the request body, so disambiguate
+    // by parsing the response and checking for an A2A `Task` shape on
+    // the result. `tasks/get` and `message/send` both return tasks, but
+    // only `message/send` is the immediate response we want to assert
+    // on for submitted-arm shape checks. When the runner adds polling,
+    // we'd need request-body capture to distinguish reliably; for v0
+    // the last POST is `message/send` because the SDK doesn't poll
+    // synchronously after a Task with terminal state.
+    if (messageSendIdx === -1) {
+      const env = tryParseJsonRpcEnvelope(cap.body);
+      if (env && env.result !== undefined && isTaskShape(env.result)) {
+        messageSendIdx = i;
+      }
+    }
+  }
+  const idx = messageSendIdx !== -1 ? messageSendIdx : lastPostIdx;
+  if (idx === -1) return undefined;
+  const cap = captures[idx]!;
+  const envelope = tryParseJsonRpcEnvelope(cap.body);
+  if (!envelope) return undefined;
+  // `envelope.result` mirrors the JSON-RPC envelope as observed —
+  // present when the response carried a `result`, absent when it
+  // carried `error`. The convenience `result` field at the top level
+  // coalesces undefined to `null` so validators reading the typed
+  // `A2ATaskEnvelope.result` get a stable shape; the inner
+  // `envelope.result` keeps presence-of-key fidelity for validators
+  // that need to distinguish "result was null" from "result was
+  // omitted". Both paths run through `redactSecrets`.
+  const redactedResult = envelope.result !== undefined ? redactSecrets(envelope.result) : null;
+  return {
+    result: redactedResult,
+    envelope: {
+      ...(envelope.jsonrpc !== undefined && { jsonrpc: envelope.jsonrpc }),
+      ...(envelope.id !== undefined && { id: envelope.id }),
+      ...(envelope.result !== undefined && { result: redactedResult }),
+      ...(envelope.error !== undefined && { error: redactSecrets(envelope.error) }),
+    },
+    http_status: cap.status,
+  };
+}
+
+function tryParseJsonRpcEnvelope(
+  body: string
+): { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: unknown } | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const envelope = parsed as { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: unknown };
+  if (envelope.jsonrpc !== '2.0') return undefined;
+  if (envelope.result === undefined && envelope.error === undefined) return undefined;
+  return envelope;
+}
+
+function isTaskShape(result: unknown): boolean {
+  return (
+    result != null &&
+    typeof result === 'object' &&
+    !Array.isArray(result) &&
+    (result as { kind?: unknown }).kind === 'task'
+  );
 }
 
 // ────────────────────────────────────────────────────────────
