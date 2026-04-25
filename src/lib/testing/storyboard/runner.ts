@@ -845,6 +845,16 @@ async function executeStoryboardPass(
             assertionsFailed = true;
           }
         }
+        // Collect non-fatal structured hints from the assertion (e.g.
+        // MonotonicViolationHint from status.monotonic). Called after onStep
+        // so assertions can populate ctx.state during onStep and drain it here.
+        // Respects the same per-step disable opt-out as onStep above.
+        if (spec.getStepHints) {
+          const assertionHints = spec.getStepHints(assertionContexts.get(spec.id)!, result);
+          if (assertionHints.length > 0) {
+            result.hints = [...(result.hints ?? []), ...assertionHints];
+          }
+        }
       }
 
       // PRM presence accounting — must happen after the step result lands so

@@ -36,6 +36,7 @@
 import { ADCP_VERSION } from '../../version';
 import { CONFLICT_ADCP_ERROR_ALLOWLIST } from '../../server/envelope-allowlist';
 import { registerAssertion } from './assertions';
+import type { MonotonicViolationHint } from './types';
 
 // Register only once per process. `registerAssertion` throws on duplicates —
 // consumers who import `@adcp/client/testing` multiple times would hit that.
@@ -860,9 +861,19 @@ function pushAudience(obs: StatusObservation[], record: Record<string, unknown>)
   }
 }
 
-interface MonotonicState {
+interface MonotonicObservationState {
   stepId: string;
   status: string;
+}
+
+interface MonotonicAssertionState {
+  history: Map<string, MonotonicObservationState>;
+  /** Hint from the most recent violation detected in `onStep`. Cleared by `getStepHints`. */
+  pendingHint: MonotonicViolationHint | undefined;
+}
+
+function getMonotonicState(ctx: { state: Record<string, unknown> }): MonotonicAssertionState {
+  return ctx.state as unknown as MonotonicAssertionState;
 }
 
 registerOnce('status.monotonic', {
@@ -873,7 +884,9 @@ registerOnce('status.monotonic', {
   onStart: ctx => {
     // `${resource_type}:${resource_id}` → last-observed state. Tuple key
     // disambiguates the unlikely `media_buy_id` / `creative_id` collision.
-    ctx.state.history = new Map<string, MonotonicState>();
+    const s = getMonotonicState(ctx);
+    s.history = new Map<string, MonotonicObservationState>();
+    s.pendingHint = undefined;
   },
   onStep: (ctx, stepResult) => {
     // Skip error / skipped / negative-path steps. An errored read doesn't
@@ -886,15 +899,16 @@ registerOnce('status.monotonic', {
     if (!body || typeof body !== 'object') return [];
     if (extractAdcpError(stepResult)) return [];
 
-    const history = ctx.state.history as Map<string, MonotonicState>;
+    const s = getMonotonicState(ctx);
+    s.pendingHint = undefined;
     const observations = extractStatusObservations(stepResult.task, body as Record<string, unknown>);
     const description = 'Resource statuses transition only along spec lifecycle edges';
 
     for (const ob of observations) {
       const key = `${ob.resource_type}:${ob.resource_id}`;
-      const prev = history.get(key);
+      const prev = s.history.get(key);
       if (!prev) {
-        history.set(key, { stepId: stepResult.step_id, status: ob.status });
+        s.history.set(key, { stepId: stepResult.step_id, status: ob.status });
         continue;
       }
       if (prev.status === ob.status) {
@@ -908,7 +922,7 @@ registerOnce('status.monotonic', {
         // Unknown previous status (enum drift or we missed a state in the
         // table). Don't fail — `response_schema` catches enum violations;
         // reset the anchor so downstream transitions still get checked.
-        history.set(key, { stepId: stepResult.step_id, status: ob.status });
+        s.history.set(key, { stepId: stepResult.step_id, status: ob.status });
         continue;
       }
       if (!allowedTargets.has(ob.status)) {
@@ -921,24 +935,46 @@ registerOnce('status.monotonic', {
         const legalTargets = [...allowedTargets].sort();
         const legalDescription =
           legalTargets.length > 0 ? legalTargets.map(t => `"${t}"`).join(', ') : '(none — terminal state)';
+        const enumSchemaUrl = buildEnumSchemaUrl(ob.graph.enumFile);
+        const errorMsg =
+          `${ob.resource_type} ${ob.resource_id}: ${prev.status} → ${ob.status} ` +
+          `(step "${prev.stepId}" → step "${stepResult.step_id}") is not in the lifecycle graph. ` +
+          `Legal next states from "${prev.status}": ${legalDescription}. ` +
+          `See ${enumSchemaUrl} for the canonical lifecycle.`;
+        // Store structured hint for `getStepHints`. First violation per step wins;
+        // subsequent violations in the same step do not overwrite (assertion already
+        // short-circuits via return so only one violation fires per onStep call).
+        s.pendingHint = {
+          kind: 'monotonic_violation',
+          message: errorMsg,
+          task: stepResult.task,
+          step_id: stepResult.step_id,
+          resource_type: ob.resource_type,
+          resource_id: ob.resource_id,
+          previous_status: prev.status,
+          observed_status: ob.status,
+          enum_schema_url: enumSchemaUrl,
+        };
         return [
           {
             passed: false,
             description,
             step_id: stepResult.step_id,
-            error:
-              `${ob.resource_type} ${ob.resource_id}: ${prev.status} → ${ob.status} ` +
-              `(step "${prev.stepId}" → step "${stepResult.step_id}") is not in the lifecycle graph. ` +
-              `Legal next states from "${prev.status}": ${legalDescription}. ` +
-              `See ${buildEnumSchemaUrl(ob.graph.enumFile)} for the canonical lifecycle.`,
+            error: errorMsg,
           },
         ];
       }
-      history.set(key, { stepId: stepResult.step_id, status: ob.status });
+      s.history.set(key, { stepId: stepResult.step_id, status: ob.status });
     }
 
     if (observations.length === 0) return [];
     return [{ passed: true, description, step_id: stepResult.step_id }];
+  },
+  getStepHints: ctx => {
+    const s = getMonotonicState(ctx);
+    const hint = s.pendingHint;
+    s.pendingHint = undefined;
+    return hint ? [hint] : [];
   },
 });
 

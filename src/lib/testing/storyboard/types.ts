@@ -1049,12 +1049,11 @@ export interface ContextProvenanceEntry {
 }
 
 /**
- * Non-fatal hint attached to a step result. Today the runner only emits
- * `context_value_rejected` — more kinds may be added over time. The
- * discriminator lives on `kind` so consumers that only know how to render
- * a subset can ignore the rest without losing them.
+ * Non-fatal hint attached to a step result. The discriminator lives on `kind`
+ * so consumers that only know how to render a subset can ignore unknown kinds
+ * and display `message` verbatim as a fallback.
  */
-export type StoryboardStepHint = ContextValueRejectedHint;
+export type StoryboardStepHint = ContextValueRejectedHint | MonotonicViolationHint;
 
 /**
  * A seller rejected a request value that the runner traced back to a
@@ -1090,6 +1089,41 @@ export interface ContextValueRejectedHint {
   accepted_values: unknown[];
   /** Error code from the seller's error (if present). */
   error_code?: string;
+}
+
+/**
+ * The status-monotonic invariant observed a lifecycle regression: a resource
+ * transitioned along an edge not in the spec's lifecycle graph. Emitted
+ * alongside the failing `AssertionResult` (which already sets `passed: false`)
+ * so renderers can build a deterministic fix plan from structured fields
+ * instead of parsing the prose `AssertionResult.error` string.
+ *
+ * `message` preserves the human-readable prose surface so renderers that do
+ * not recognise `kind: 'monotonic_violation'` can still display it verbatim.
+ */
+export interface MonotonicViolationHint {
+  kind: 'monotonic_violation';
+  /** Human-readable summary of the violation. */
+  message: string;
+  /** AdCP task name (snake_case) dispatched at the step where the violation was observed. */
+  task: string;
+  /** Storyboard step id where the violation was observed. */
+  step_id: string;
+  /** Resource type scoping the status observation (e.g. `'media_buy'`, `'creative'`). */
+  resource_type: string;
+  /** Resource id scoping the status observation. */
+  resource_id: string;
+  /** The resource's status at the last valid observation (transition source). */
+  previous_status: string;
+  /** The resource's status observed at this step (the illegal transition target). */
+  observed_status: string;
+  /**
+   * Canonical enum schema URL for this resource type's lifecycle.
+   * Points at `https://adcontextprotocol.org/schemas/<version>/enums/<file>`
+   * so renderers can deep-link to the spec lifecycle table without re-deriving
+   * the URL from `resource_type`.
+   */
+  enum_schema_url: string;
 }
 
 export interface StoryboardPhaseResult {

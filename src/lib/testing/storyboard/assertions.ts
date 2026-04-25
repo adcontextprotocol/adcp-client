@@ -26,6 +26,7 @@ import type {
   Storyboard,
   StoryboardInvariants,
   StoryboardRunOptions,
+  StoryboardStepHint,
   StoryboardStepResult,
   StepInvariantsObject,
 } from './types';
@@ -87,6 +88,23 @@ export interface AssertionSpec {
   onEnd?(
     ctx: AssertionContext
   ): Omit<AssertionResult, 'assertion_id' | 'scope'>[] | Promise<Omit<AssertionResult, 'assertion_id' | 'scope'>[]>;
+  /**
+   * Optional hook called by the runner immediately after `onStep` to collect
+   * non-fatal `StoryboardStepHint`s. Unlike `onStep` results (which gate
+   * pass/fail), hints are advisory — they survive even when the assertion
+   * marks the step as failed, giving renderers structured fields to build
+   * fix plans without parsing the prose `AssertionResult.error`.
+   *
+   * Implementations typically store pending hints in `ctx.state` during
+   * `onStep` and retrieve + clear them here. The runner merges returned hints
+   * into `StoryboardStepResult.hints[]` so they reach the same surface as
+   * the `context_value_rejected` hints emitted by the rejection-hint detector.
+   *
+   * Called only when the assertion's `onStep` was also called for this step
+   * (respects per-step `invariants.disable` opt-outs). Synchronous-only —
+   * hint collection must be a pure state read, not an async operation.
+   */
+  getStepHints?(ctx: AssertionContext, stepResult: StoryboardStepResult): StoryboardStepHint[];
 }
 
 // ────────────────────────────────────────────────────────────

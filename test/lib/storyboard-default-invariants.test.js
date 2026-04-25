@@ -1365,3 +1365,152 @@ describe('default-invariants: status.monotonic', () => {
     assert.ok(out[1].output.every(o => o.passed));
   });
 });
+
+// ────────────────────────────────────────────────────────────
+// status.monotonic — MonotonicViolationHint emission (issue #948)
+// ────────────────────────────────────────────────────────────
+
+describe('default-invariants: status.monotonic — MonotonicViolationHint', () => {
+  const spec = getAssertion('status.monotonic');
+
+  function makeCtx() {
+    return { storyboard: {}, agentUrl: 'x', options: {}, state: {} };
+  }
+
+  function step(overrides) {
+    return {
+      step_id: 's1',
+      phase_id: 'p',
+      title: 't',
+      task: 'get_media_buys',
+      passed: true,
+      duration_ms: 0,
+      validations: [],
+      context: {},
+      extraction: { path: 'none' },
+      ...overrides,
+    };
+  }
+
+  function mb(id, status) {
+    return { media_buy_id: id, status, packages: [] };
+  }
+
+  test('getStepHints returns empty array when no violation occurred', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const s1 = step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') });
+    spec.onStep(ctx, s1);
+    const hints = spec.getStepHints(ctx, s1);
+    assert.deepStrictEqual(hints, []);
+  });
+
+  test('getStepHints returns MonotonicViolationHint on backward transition', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const s1 = step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') });
+    const s2 = step({
+      step_id: 'regress',
+      task: 'get_media_buys',
+      response: { media_buys: [mb('mb-1', 'pending_creatives')] },
+    });
+    spec.onStep(ctx, s1);
+    const assertionResults = spec.onStep(ctx, s2);
+    assert.strictEqual(assertionResults[0].passed, false, 'assertion must have failed');
+
+    const hints = spec.getStepHints(ctx, s2);
+    assert.strictEqual(hints.length, 1);
+    const hint = hints[0];
+    assert.strictEqual(hint.kind, 'monotonic_violation');
+    assert.strictEqual(hint.task, 'get_media_buys');
+    assert.strictEqual(hint.step_id, 'regress');
+    assert.strictEqual(hint.resource_type, 'media_buy');
+    assert.strictEqual(hint.resource_id, 'mb-1');
+    assert.strictEqual(hint.previous_status, 'active');
+    assert.strictEqual(hint.observed_status, 'pending_creatives');
+    assert.ok(
+      hint.enum_schema_url.includes('media-buy-status.json'),
+      `expected enum URL to include media-buy-status.json, got: ${hint.enum_schema_url}`
+    );
+    assert.ok(typeof hint.message === 'string' && hint.message.length > 0, 'message must be a non-empty string');
+    assert.ok(hint.message.includes('active → pending_creatives'), 'message must describe the transition');
+  });
+
+  test('getStepHints clears pendingHint after first call (no double-emit)', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const s1 = step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') });
+    const s2 = step({
+      step_id: 'regress',
+      task: 'get_media_buys',
+      response: { media_buys: [mb('mb-1', 'pending_creatives')] },
+    });
+    spec.onStep(ctx, s1);
+    spec.onStep(ctx, s2);
+    const first = spec.getStepHints(ctx, s2);
+    const second = spec.getStepHints(ctx, s2);
+    assert.strictEqual(first.length, 1, 'first call must return the hint');
+    assert.strictEqual(second.length, 0, 'second call must return empty — hint already consumed');
+  });
+
+  test('getStepHints returns empty when previous step had violation but current step is clean', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const s1 = step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') });
+    const s2 = step({
+      step_id: 'regress',
+      task: 'get_media_buys',
+      response: { media_buys: [mb('mb-1', 'pending_creatives')] },
+    });
+    // Run a third step that makes a valid forward observation on a different resource
+    // (so onStep runs but produces no violation) — pendingHint must be clear.
+    const s3 = step({
+      step_id: 'ok',
+      task: 'create_media_buy',
+      response: mb('mb-2', 'pending_creatives'),
+    });
+    spec.onStep(ctx, s1);
+    spec.onStep(ctx, s2);
+    // Consume s2's hint so state is clean
+    spec.getStepHints(ctx, s2);
+    spec.onStep(ctx, s3);
+    const hints = spec.getStepHints(ctx, s3);
+    assert.deepStrictEqual(hints, []);
+  });
+
+  test('terminal-state violation hint carries correct enum URL', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const s1 = step({ step_id: 'done', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'completed')] } });
+    const s2 = step({ step_id: 'revive', task: 'get_media_buys', response: { media_buys: [mb('mb-1', 'active')] } });
+    spec.onStep(ctx, s1);
+    spec.onStep(ctx, s2);
+    const hints = spec.getStepHints(ctx, s2);
+    assert.strictEqual(hints.length, 1);
+    assert.strictEqual(hints[0].previous_status, 'completed');
+    assert.strictEqual(hints[0].observed_status, 'active');
+    assert.ok(hints[0].enum_schema_url.includes('media-buy-status.json'));
+  });
+
+  test('creative violation hint carries creative-status enum URL', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const creativeOf = (id, status) => ({ creative_id: id, status });
+    const s1 = step({
+      step_id: 's1',
+      task: 'sync_creatives',
+      response: { creatives: [creativeOf('cr-1', 'approved')] },
+    });
+    const s2 = step({
+      step_id: 's2',
+      task: 'sync_creatives',
+      response: { creatives: [creativeOf('cr-1', 'processing')] },
+    });
+    spec.onStep(ctx, s1);
+    spec.onStep(ctx, s2);
+    const hints = spec.getStepHints(ctx, s2);
+    assert.strictEqual(hints.length, 1);
+    assert.strictEqual(hints[0].resource_type, 'creative');
+    assert.ok(hints[0].enum_schema_url.includes('creative-status.json'));
+  });
+});

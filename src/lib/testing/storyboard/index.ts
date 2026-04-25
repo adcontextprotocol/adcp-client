@@ -32,6 +32,7 @@ export type {
   ContextInput,
   ContextProvenanceEntry,
   ContextValueRejectedHint,
+  MonotonicViolationHint,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,
