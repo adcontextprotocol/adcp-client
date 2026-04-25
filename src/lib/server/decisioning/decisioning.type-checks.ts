@@ -21,7 +21,7 @@ import type {
   SalesPlatform,
   AudiencePlatform,
 } from './index';
-import { ok, submitted, rejected, AccountNotFoundError } from './index';
+import { ok, submitted, rejected, unimplemented, aggregateRejected, AccountNotFoundError } from './index';
 
 // ── AsyncOutcome construction helpers ─────────────────────────────────
 
@@ -178,6 +178,36 @@ function _new_codes_compile(): AsyncOutcome<{ id: string }> {
   return ok({ id: 'mb_1' });
 }
 
+// ── submitted() carries partialResult for buy-pending-review pattern ──
+
+function _submitted_with_partial_result(): AsyncOutcome<{ id: string; status: string }> {
+  // Stub TaskHandle for the type test.
+  const handle = { taskId: 'task_1', notify: () => {} };
+  return submitted(handle, {
+    estimatedCompletion: new Date(Date.now() + 4 * 3600_000),
+    message: 'pending operator approval',
+    partialResult: { id: 'mb_1', status: 'pending_start' },
+  });
+}
+
+// ── unimplemented + aggregateRejected helpers compile cleanly ─────────
+
+function _unimplemented_helper(): AsyncOutcome<{ id: string }> {
+  return unimplemented('audience-sync not yet wired');
+}
+
+function _aggregate_rejected_with_errors(): AsyncOutcome<{ id: string }> {
+  return aggregateRejected([
+    { code: 'INVALID_REQUEST', recovery: 'correctable', message: 'budget too low', field: 'total_budget' },
+    {
+      code: 'UNSUPPORTED_FEATURE',
+      recovery: 'correctable',
+      message: 'pricing model "vcpm" not supported',
+      field: 'packages[0].pricing.model',
+    },
+  ]);
+}
+
 // ── RequiredPlatformsFor surfaces a legible "missing field" error ─────
 
 interface _PlatformWithoutSales {
@@ -215,5 +245,8 @@ export const _references = [
   _structured_error_with_wire_fields,
   _structured_error_retry_after_for_transient,
   _new_codes_compile,
+  _submitted_with_partial_result,
+  _unimplemented_helper,
+  _aggregate_rejected_with_errors,
   _check_sales_required,
 ] as const;

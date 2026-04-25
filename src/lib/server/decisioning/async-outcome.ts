@@ -91,6 +91,17 @@ export interface AsyncOutcomeSubmitted<TResult, TError extends AdcpStructuredErr
   estimatedCompletion?: Date;
   /** Human-readable status note. Optional. */
   message?: string;
+  /**
+   * Partial result available immediately, before the async workflow completes.
+   * Use when the platform creates a real entity that the buyer should see
+   * NOW — e.g., GAM creates an Order in `PENDING_APPROVAL` state and the
+   * buyer should see the buy with `status: pending_start` while a trafficker
+   * reviews. Framework projects this onto the wire so MCP buyers see
+   * `structuredContent.partial_result` and A2A buyers see it in the artifact
+   * data alongside `adcp_task_id`. The terminal value (the same shape) flows
+   * through `taskHandle.notify({ kind: 'completed', result })`.
+   */
+  partialResult?: TResult;
 }
 
 export interface AsyncOutcomeRejected<TError extends AdcpStructuredError = AdcpStructuredError> {
@@ -198,16 +209,20 @@ export function ok<TResult>(result: TResult): AsyncOutcome<TResult> {
  * generates the task envelope; buyer can poll `tasks/get` or wait for the
  * completion webhook to push_notification_config.url. The platform calls
  * `taskHandle.notify(...)` when its backend learns the task completes.
+ *
+ * Pass `partialResult` when the platform has already created a real entity
+ * the buyer should see immediately (e.g., GAM Order in PENDING_APPROVAL).
  */
 export function submitted<TResult>(
   taskHandle: TaskHandle<TResult>,
-  options?: { estimatedCompletion?: Date; message?: string }
+  options?: { estimatedCompletion?: Date; message?: string; partialResult?: TResult }
 ): AsyncOutcome<TResult> {
   return {
     kind: 'submitted',
     taskHandle,
     estimatedCompletion: options?.estimatedCompletion,
     message: options?.message,
+    partialResult: options?.partialResult,
   };
 }
 
@@ -229,5 +244,45 @@ export function unimplemented<TResult>(message = 'Method not implemented'): Asyn
     code: 'UNSUPPORTED_FEATURE',
     recovery: 'terminal',
     message,
+  });
+}
+
+/**
+ * Multi-error pre-flight rejection. Use when the platform validates the
+ * request shape before any platform write and has multiple errors to surface
+ * at once (Prebid's `validate_media_buy_request` returns `list[str]`).
+ *
+ * The first error becomes the canonical envelope (its `code` and `recovery`
+ * drive buyer behavior); the rest land in `details.errors` for the buyer to
+ * consume. The aggregate is conventionally `INVALID_REQUEST` /
+ * `recovery: 'correctable'` because pre-flight errors are by definition
+ * fixable on the buyer side.
+ *
+ * ```ts
+ * const errors = this.preflight(req);
+ * if (errors.length > 0) return aggregateRejected(errors);
+ * ```
+ */
+export function aggregateRejected<TResult>(
+  errors: ReadonlyArray<AdcpStructuredError>,
+  options?: { code?: ErrorCode | (string & {}); recovery?: AdcpStructuredError['recovery']; message?: string }
+): AsyncOutcome<TResult> {
+  const head = errors[0];
+  if (!head) {
+    return rejected({
+      code: options?.code ?? 'INVALID_REQUEST',
+      recovery: options?.recovery ?? 'correctable',
+      message: options?.message ?? 'Request rejected (no specific errors supplied)',
+    });
+  }
+  const rest = errors.slice(1);
+  return rejected({
+    code: options?.code ?? head.code,
+    recovery: options?.recovery ?? head.recovery,
+    message: options?.message ?? head.message,
+    field: head.field,
+    suggestion: head.suggestion,
+    retry_after: head.retry_after,
+    details: { ...head.details, errors: rest },
   });
 }

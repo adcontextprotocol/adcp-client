@@ -140,9 +140,11 @@ serve(platform, {
 
 `mapMcpResponse` / `mapA2aArtifact` run AFTER the framework's default projection. Receive the framework's projected response; return a transformed one. The framework re-validates the result against the spec's response schema before sending; adopters can't drift the wire shape.
 
-## Idempotency, signing, validation
+## Idempotency, signing, validation, sandbox
 
 Already framework-owned today; carries unchanged. Idempotency middleware runs before dispatch on both transports. RFC 9421 signing verification runs before dispatch on both transports (when the platform claims `signed-requests` or `requireSignatureWhenPresent` is on). Strict validation runs before dispatch on both transports. Capability gating runs before dispatch (the spec's `VERSION_UNSUPPORTED` envelope is emitted by the framework when the buyer requests an unsupported `adcp_major_version`).
+
+**Sandbox**, not `dry_run`. AdCP 3.0 expresses "validate against real platform without writing to production" via `AccountReference.sandbox: true`. Framework resolves the buyer's sandbox account through `accounts.resolve()`; the platform sees a normal `Account` and is responsible for routing reads/writes to its sandbox backend. There is no separate framework-level dry-run mode. Tool-specific `dry_run` flags (`sync_catalogs`, `sync_creatives`) are wire fields the platform receives and honors locally.
 
 The platform never sees a request that's been dropped at any of these gates.
 

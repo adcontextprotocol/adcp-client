@@ -27,6 +27,7 @@ export {
   submitted,
   rejected,
   unimplemented,
+  aggregateRejected,
 } from './async-outcome';
 
 // Cursor pagination

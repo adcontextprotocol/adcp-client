@@ -26,4 +26,15 @@ After expert review (round 3 — protocol, product, DX, code-reviewer in paralle
 - Helpers shipped: `unimplemented<T>()` for stubbing methods (returns `rejected({ code: 'UNSUPPORTED_FEATURE', recovery: 'terminal' })`); `identityStatusMappers` for platforms whose native statuses already match AdCP enums.
 - `platform.ts` JSDoc clarifies the "framework owns X" claims are forward-looking design intent for v6.0 wiring, not current behavior.
 
-Status: Preview / 6.0. Wiring lands in a follow-up PR with the framework refactor. Companion design doc for MCP+A2A unified serving in `docs/proposals/mcp-a2a-unified-serving.md`.
+After adopter feedback (Prebid `salesagent` + Scope3 `agentic-adapters` teams), additional fixes:
+
+- `AsyncOutcomeSubmitted.partialResult?: TResult` — preserves the "buy created in PENDING_APPROVAL state, buyer should see it now" pattern. Framework projects to `structuredContent.partial_result` (MCP) and artifact data (A2A).
+- `aggregateRejected(errors[], opts?)` helper — multi-error pre-flight rejection (Prebid's `validate_media_buy_request → list[str]` pattern). First error becomes the canonical envelope; rest land in `details.errors`. Adopters extract a `preflight()` method and call from each entry-method body, preserving DRY.
+- `dry_run` framework-interception language removed. AdCP 3.0 expresses "validate against real platform without writing to production" via `AccountReference.sandbox: true` — framework resolves the buyer's sandbox account through `accounts.resolve()`; platform routes reads/writes to its sandbox backend. Tool-specific `dry_run` flags on `sync_catalogs` and `sync_creatives` remain wire fields the platform receives and honors locally.
+
+Companion docs added:
+- `docs/proposals/mcp-a2a-unified-serving.md` — locks how `serve(platform)` projects one DecisioningPlatform onto MCP and A2A transports
+- `docs/proposals/decisioning-platform-python-port.md` — cross-language port plan (`__init_subclass__` runtime check + Pydantic generics ergonomics in lieu of TS compile-time gates)
+- `docs/proposals/decisioning-platform-adopter-questions.md` — round-3 review answers (per-call context schemas → v1.1; migration coexistence → rip-and-replace per-server; comply_test_controller → framework-owned by default in v6; wiring PR phasing through alpha.2 → rc.1 → rc.2 → GA)
+
+Status: Preview / 6.0. Wiring lands in a follow-up PR with the framework refactor.

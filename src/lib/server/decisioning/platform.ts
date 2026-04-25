@@ -33,9 +33,14 @@ import type { AdCPSpecialism } from '../../types/tools.generated';
  * - Authentication + auth-principal extraction; `accounts.resolve()` is the only
  *   place the platform translates auth into its tenant model
  * - Idempotency: dedupe + replay handled before dispatch; platforms see clean traffic
- * - `dry_run`: framework intercepts `dry_run: true`, validates schema + capability,
- *   echoes the validated request shape back without dispatching to the platform.
- *   Platform implementations never see dry-run traffic.
+ * - `sandbox` boundary: when `AccountReference.sandbox === true`, framework
+ *   resolves the buyer's sandbox account via `accounts.resolve()`. The platform
+ *   sees the resolved sandbox `Account` like any other and is responsible for
+ *   routing reads/writes to its sandbox backend. There is no separate
+ *   "dry-run" mode — sandbox subsumes "validate against real platform without
+ *   writing to production." Tool-specific `dry_run` flags on `sync_catalogs`
+ *   and `sync_creatives` are wire fields the platform receives and honors;
+ *   they are NOT a framework-level mode.
  * - `context` echo: framework round-trips `context` on every response
  * - Task envelopes: `submitted` outcomes are wrapped into A2A Task envelopes /
  *   MCP polling responses; `taskHandle.notify` calls dedupe + retry
