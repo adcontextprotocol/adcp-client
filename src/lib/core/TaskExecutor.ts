@@ -4,7 +4,7 @@
 import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
-import { getMCPTaskStatus, listMCPTasks } from '../protocols/mcp-tasks';
+import { listMCPTasks } from '../protocols/mcp-tasks';
 import { getAuthToken } from '../auth';
 import { is401Error, adcpErrorToTypedError } from '../errors';
 import type { ADCPError } from '../errors';
@@ -70,6 +70,114 @@ export class InputRequiredError extends Error {
     super(`Server requires input but no handler provided. Question: ${question}`);
     this.name = 'InputRequiredError';
   }
+}
+
+/**
+ * Map an AdCP `tasks/get` response (post-unwrap) to the SDK's internal
+ * `TaskInfo` shape. The AdCP 3.0 schema
+ * (`schemas/cache/3.0.0/bundled/core/tasks-get-response.json`) is flat
+ * snake_case: `{ task_id, task_type, protocol, status, created_at,
+ * updated_at, error?, progress?, history?, completed_at?, has_webhook?,
+ * context?, ext? }`. The internal `TaskInfo` is camelCase with a
+ * superset of legacy fields some pre-3.0 sellers still emit.
+ *
+ * **Result-data passthrough.** AdCP `tasks/get` doesn't define a
+ * completion-payload field — the spec leaves the result-extraction
+ * layer ambiguous (see adcp#3123 for the upstream clarification
+ * issue). Sellers MAY surface the completed task's data via
+ * `additionalProperties: true` (`result` or `task_data` are the de
+ * facto names). We pass it through so `pollTaskCompletion` can
+ * surface it on the resolved `TaskResult.data`. When the spec
+ * clarifies, this mapping refines.
+ *
+ * **Legacy nested shape.** Some pre-3.0 sellers and existing test
+ * mocks emit `{ task: { ...TaskInfo } }` — a non-spec wrapper. We
+ * unwrap it before the spec-shape mapping so the SDK stays
+ * compatible with both surfaces during the transition.
+ */
+function mapTasksGetResponseToTaskInfo(payload: unknown): TaskInfo {
+  if (payload == null || typeof payload !== 'object') {
+    return { taskId: '', status: 'unknown', taskType: 'unknown', createdAt: Date.now(), updatedAt: Date.now() };
+  }
+  const obj = payload as Record<string, unknown>;
+  // Walk the transport-level wrappers in priority order:
+  //   1. MCP `structuredContent` — the typed AdCP payload from `tools/call`
+  //   2. A2A `result.artifacts[0].parts[0].data` — the AdCP payload
+  //      surfaced via the artifact (per #899)
+  //   3. Legacy nested `{ task: TaskInfo }` — pre-3.0 sellers and
+  //      existing test mocks
+  //   4. Flat AdCP-spec shape — what AdCP 3.0 sellers emit directly
+  const flat = unwrapTasksGetEnvelope(obj);
+  const errorRaw = flat.error;
+  const errorMessage =
+    typeof errorRaw === 'string'
+      ? errorRaw
+      : errorRaw != null &&
+          typeof errorRaw === 'object' &&
+          typeof (errorRaw as { message?: unknown }).message === 'string'
+        ? (errorRaw as { message: string }).message
+        : undefined;
+  const taskInfo: TaskInfo = {
+    taskId: stringField(flat.task_id) ?? stringField(flat.taskId) ?? '',
+    status: stringField(flat.status) ?? 'unknown',
+    taskType: stringField(flat.task_type) ?? stringField(flat.taskType) ?? 'unknown',
+    createdAt: parseTimestamp(flat.created_at ?? flat.createdAt),
+    updatedAt: parseTimestamp(flat.updated_at ?? flat.updatedAt),
+  };
+  if (errorMessage !== undefined) taskInfo.error = errorMessage;
+  // Result passthrough — see JSDoc on result-data ambiguity.
+  const result = flat.result ?? flat.task_data;
+  if (result !== undefined) taskInfo.result = result;
+  return taskInfo;
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function unwrapTasksGetEnvelope(obj: Record<string, unknown>): Record<string, unknown> {
+  // MCP: `tools/call` response carries the typed payload at
+  // `structuredContent`.
+  const sc = obj.structuredContent;
+  if (sc != null && typeof sc === 'object' && !Array.isArray(sc)) {
+    return unwrapTasksGetEnvelope(sc as Record<string, unknown>);
+  }
+  // A2A: `message/send` response is a JSON-RPC envelope wrapping a
+  // Task; the AdCP payload sits on the first artifact's first
+  // DataPart.
+  const result = obj.result;
+  if (result != null && typeof result === 'object' && !Array.isArray(result)) {
+    const r = result as Record<string, unknown>;
+    if (r.kind === 'task' && Array.isArray(r.artifacts) && r.artifacts.length > 0) {
+      const artifact = r.artifacts[0] as Record<string, unknown> | null;
+      if (
+        artifact != null &&
+        typeof artifact === 'object' &&
+        Array.isArray(artifact.parts) &&
+        artifact.parts.length > 0
+      ) {
+        const firstPart = artifact.parts[0] as Record<string, unknown> | null;
+        if (firstPart?.kind === 'data' && firstPart.data != null && typeof firstPart.data === 'object') {
+          return unwrapTasksGetEnvelope(firstPart.data as Record<string, unknown>);
+        }
+      }
+    }
+  }
+  // Legacy nested wrapper from pre-3.0 sellers and existing mocks.
+  if (obj.task != null && typeof obj.task === 'object' && !Array.isArray(obj.task)) {
+    return obj.task as Record<string, unknown>;
+  }
+  // Flat AdCP-spec shape — return as-is.
+  return obj;
+}
+
+function parseTimestamp(value: unknown): number {
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return Date.now();
 }
 
 /**
@@ -1158,27 +1266,45 @@ export class TaskExecutor {
   }
 
   async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
-    // Use MCP Tasks protocol method when available
-    if (agent.protocol === 'mcp') {
-      const authToken = getAuthToken(agent);
-      try {
-        return await getMCPTaskStatus(agent.agent_uri, taskId, authToken);
-      } catch (err) {
-        if (is401Error(err)) throw err;
-        // Fall through to tool call if protocol method is not supported
-      }
-    }
+    // AdCP `tasks/get` is the cross-protocol work-status interface
+    // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
+    // Dispatched as a buyer-callable tool over the agent's transport
+    // — `ProtocolClient.callTool` selects MCP `tools/call` or A2A
+    // `message/send` per `agent.protocol`.
+    //
+    // The previous implementation tried MCP's `experimental.tasks.getTask`
+    // first for MCP agents and fell through to the AdCP tool path on
+    // capability-missing. The native MCP path tracks the TRANSPORT-call
+    // lifecycle (MCP analog of A2A `Task.state`) — not AdCP work
+    // lifecycle. For submitted-arm polling we need work status; the
+    // two interfaces are not substitutes, so we always use the AdCP
+    // tool here. MCP sellers that haven't registered `tasks/get` as
+    // an AdCP tool will surface a tool-not-found error rather than
+    // silently polling the wrong lifecycle.
+    //
+    // The request param is `task_id` (snake_case per AdCP 3.0); the
+    // response is the spec's flat shape, mapped to `TaskInfo` via
+    // {@link mapTasksGetResponseToTaskInfo}.
     const response = (await ProtocolClient.callTool(
       agent,
       'tasks/get',
-      { taskId },
+      { task_id: taskId },
       [],
       undefined,
       undefined,
       undefined,
       this.lastKnownServerVersion
     )) as Record<string, unknown>;
-    return (response.task as TaskInfo) || (response as unknown as TaskInfo);
+    // We don't run `extractResponseData` here: that helper's
+    // generic AdCP-error-arm detection treats any top-level
+    // `error: { code, message }` as an error envelope and shreds the
+    // response into `{ errors: [...] }`. For `tasks/get` the `error`
+    // block is informational (the failed task's reason, not a
+    // request rejection), so we map the raw response directly. The
+    // mapper handles the AdCP-spec flat shape, the legacy
+    // `{ task: ... }` nested wrapper, and MCP `structuredContent` /
+    // A2A `result.artifacts[0].parts[0].data` envelopes.
+    return mapTasksGetResponseToTaskInfo(response);
   }
 
   async pollTaskCompletion<T>(agent: AgentConfig, taskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
