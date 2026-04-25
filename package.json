@@ -148,7 +148,7 @@
     "test:e2e": "node test/e2e/adcp-e2e.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
     "changeset": "changeset",
-    "version": "changeset version",
+    "version": "changeset version && npm run sync-version",
     "release": "changeset publish",
     "test:protocol-compliance": "node test/run-protocol-tests.js --only compliance",
     "test:protocol-schema": "node test/run-protocol-tests.js --only schema",
