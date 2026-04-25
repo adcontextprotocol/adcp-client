@@ -447,7 +447,7 @@ function buildStrictWarning(strict: StrictValidationVerdict): string | undefined
  * `src/lib/server/responses.ts` verbatim so a developer can grep
  * straight from the hint.
  */
-const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }> = {
+export const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }> = {
   list_creatives: { wrapperKey: 'creatives', helper: 'listCreativesResponse' },
   list_creative_formats: { wrapperKey: 'formats', helper: 'listCreativeFormatsResponse' },
   list_accounts: { wrapperKey: 'accounts', helper: 'listAccountsResponse' },

@@ -19,6 +19,7 @@ import {
   type RunnerVariables,
 } from './context';
 import { detectContextRejectionHints } from './rejection-hints';
+import { detectShapeDriftHints } from './shape-drift-hints';
 import { runValidations, type ValidationContext } from './validations';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -1573,10 +1574,28 @@ async function executeStep(
   // since the rejected value can't have come from this step's own
   // extraction.
   const stepFailed = !(passed && allValidationsPassed);
-  const hints =
+  const contextRejectionHints =
     stepFailed && runState.contextProvenance
       ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance, effectiveStep.task)
       : [];
+  // Shape-drift hints fire unconditionally (same gate as ValidationResult.warning)
+  // — they're informational even on passing steps (a drift may be accepted by
+  // lenient Zod but indicate a shape the agent should fix before strict mode).
+  // Pre-process identically to validateResponseSchema: strip the SDK-internal
+  // `_message` field from object payloads so the detector's output matches the
+  // warning already on ValidationResult for the same step.
+  const shapeDriftHints = (() => {
+    if (!hasData || !taskResult) return [];
+    const raw = taskResult.data;
+    const payload = Array.isArray(raw)
+      ? raw
+      : (() => {
+          const { _message, ...rest } = raw as Record<string, unknown>;
+          return rest;
+        })();
+    return detectShapeDriftHints(effectiveStep.task, payload);
+  })();
+  const hints = [...contextRejectionHints, ...shapeDriftHints];
 
   // Build next step preview
   const next = getNextStepPreview(step.id, allSteps, updatedContext, runState.runnerVars);

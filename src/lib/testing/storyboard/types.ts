@@ -1019,12 +1019,12 @@ export interface ContextProvenanceEntry {
 }
 
 /**
- * Non-fatal hint attached to a step result. Today the runner only emits
- * `context_value_rejected` — more kinds may be added over time. The
- * discriminator lives on `kind` so consumers that only know how to render
- * a subset can ignore the rest without losing them.
+ * Non-fatal hint attached to a step result. More kinds may be added over
+ * time. The discriminator lives on `kind` so consumers that only know how
+ * to render a subset can ignore the rest; `message` is always present as a
+ * human-readable fallback.
  */
-export type StoryboardStepHint = ContextValueRejectedHint;
+export type StoryboardStepHint = ContextValueRejectedHint | ShapeDriftHint;
 
 /**
  * A seller rejected a request value that the runner traced back to a
@@ -1060,6 +1060,34 @@ export interface ContextValueRejectedHint {
   accepted_values: unknown[];
   /** Error code from the seller's error (if present). */
   error_code?: string;
+}
+
+/**
+ * The runner detected that the agent's response payload diverged from the
+ * expected shape for the tool — e.g. a list tool returned a bare array
+ * instead of `{ <wrapper_key>: [...] }`, or `build_creative` returned
+ * platform-native fields at the top level instead of `{ creative_manifest }`.
+ *
+ * Non-fatal: step pass/fail is unchanged. The runner already surfaces this
+ * via `ValidationResult.warning`; this hint carries the same diagnosis in
+ * machine-readable fields so downstream renderers (Addie, CLI, JUnit) can
+ * build per-case fix plans.
+ *
+ * `instance_path` uses RFC 6901 / `SchemaValidationError.instance_path`
+ * conventions: `""` for root-level drift, dotted for nested.
+ */
+export interface ShapeDriftHint {
+  kind: 'shape_drift';
+  /** Pre-formatted human-readable message (same text as ValidationResult.warning). */
+  message: string;
+  /** AdCP tool name (snake_case) that produced the drift. */
+  tool: string;
+  /** Short token describing the observed (wrong) shape variant. */
+  observed_variant: string;
+  /** Short token or schema fragment describing the expected shape. */
+  expected_variant: string;
+  /** RFC 6901-style path to the drift site; `""` for root-level. */
+  instance_path: string;
 }
 
 export interface StoryboardPhaseResult {
