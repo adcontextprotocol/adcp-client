@@ -705,6 +705,12 @@ export { normalizeRequestParams, normalizePackageParams } from './utils/request-
 // Re-export all Zod schemas for user validation needs
 export * from './types/schemas.generated';
 
+// ====== ENUM VALUE ARRAYS ======
+// `${TypeName}Values` const arrays for every named string-literal union in
+// the spec. Consumers can enumerate or validate against these without
+// duplicating literal lists from the Zod unions.
+export * from './types/enums.generated';
+
 // PreviewCreativeRequestSchema is now a flat z.object() with request_type discriminant.
 // The old variant exports (PreviewCreativeSingleRequestSchema, etc.) are no longer needed —
 // use PreviewCreativeRequestSchema.shape directly with server.registerTool().
