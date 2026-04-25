@@ -82,7 +82,7 @@ Brands should be registered dynamically through `sync_accounts` — when a buyer
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['creative-generative']`), NOT `[{id, version}]` objects.
+> - **Declare `capabilities: { specialisms: ['creative-generative'] }` on `createAdcpServer`.** The value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 > - `build_creative` response is `{ creative_manifest: { format_id, assets } }` — NOT `{ creative_id, status, quality, preview_url }`. Those are `sync_creatives` fields; don't leak them in.
 > - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator — use the typed factories (`imageAsset({...})`, `videoAsset({...})`, `htmlAsset({...})`, `urlAsset({...})`) instead of writing the literal; discriminator is injected for you.
 > - `preview_creative` renders have the same pattern: use `urlRender({...})` / `htmlRender({...})` / `bothRender({...})` — they inject `output_format` and enforce the matching `preview_url` / `preview_html` at the type level.
@@ -90,6 +90,7 @@ Brands should be registered dynamically through `sync_accounts` — when a buyer
 > - `reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only — `'2026-04-21'` fails GA validation.
 > - `videoAsset({...})` requires `width` + `height` in GA (previously optional). Omitting them fails validation at `/creative_manifest/assets/<name>/width` when the asset is constructed from video content.
 > - `get_media_buys /media_buys[i]` rows require `media_buy_id`, `status`, `currency`, `total_budget`, `packages`. Persist `currency` + `total_budget` from the `create_media_buy` request so they can be echoed back verbatim.
+> - `sync_accounts` response: each `accounts[]` row requires `action: 'created' | 'updated' | 'unchanged' | 'failed'` (same shape as `sync_creatives`). Omitting `action` fails schema validation and blocks every downstream stateful step.
 
 Everything from the standard seller skill applies. The delta is in `list_creative_formats` and `sync_creatives`.
 

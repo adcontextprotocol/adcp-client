@@ -32,7 +32,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { connect } from 'node:net';
 
 interface Args {
@@ -87,10 +87,16 @@ function printUsage(): void {
   );
 }
 
-function buildPrompt(skill: string, storyboardId: string, port: number): string {
+function buildPrompt(skill: string, storyboardId: string, port: number, skillAbsDir: string): string {
   return `You are building a minimal AdCP agent that will be graded by the compliance storyboard \`${storyboardId}\`.
 
 ## The skill you're following
+
+The skill content is inlined below. Some skills reference companion files by relative path (e.g. \`./specialisms/sales-guaranteed.md\`, \`./deployment.md\`) or repo-rooted paths (\`docs/llms.txt\`). When you need to follow those links:
+- Skill companion files are under: **${skillAbsDir}**
+- Repo root (for \`docs/llms.txt\`, schemas/, etc.) is: **${REPO_ROOT}**
+
+Read them with absolute paths.
 
 ${skill}
 
@@ -283,10 +289,11 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);
-    if (typeof parsed.overall_passed === 'boolean') {
-      passed = parsed.overall_passed;
-    } else if (Array.isArray(parsed.results)) {
-      passed = parsed.results.every((r: { overall_passed?: boolean }) => r.overall_passed);
+    if (typeof parsed.overall_status === 'string') {
+      passed = parsed.overall_status === 'passing';
+    } else if (parsed.summary && typeof parsed.summary === 'object') {
+      const s = parsed.summary as { tracks_passed?: number; tracks_failed?: number };
+      passed = (s.tracks_failed ?? 0) === 0 && (s.tracks_passed ?? 0) > 0;
     }
   } catch {
     // stdout wasn't clean JSON — the CLI printed an error to stderr and
@@ -302,7 +309,9 @@ function log(msg: string): void {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const skillContent = await readFile(resolve(args.skill), 'utf8');
+  const skillPath = resolve(args.skill);
+  const skillContent = await readFile(skillPath, 'utf8');
+  const skillDir = dirname(skillPath);
   const workDir = args.workDir ? resolve(args.workDir) : await mkdtemp(join(tmpdir(), 'adcp-agent-'));
 
   log(`workspace: ${workDir}`);
@@ -313,7 +322,7 @@ async function main(): Promise<void> {
   let agent: ChildProcess | undefined;
   try {
     await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
-    await runClaude(buildPrompt(skillContent, args.storyboard, args.port), workDir, args.timeoutMs);
+    await runClaude(buildPrompt(skillContent, args.storyboard, args.port, skillDir), workDir, args.timeoutMs);
 
     log(`starting agent`);
     agent = await startAgent(workDir, args.port);
