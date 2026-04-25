@@ -520,12 +520,15 @@ export function extractContextWithProvenance(taskName: string, data: unknown, st
  * Like `applyContextOutputs`, but also returns provenance for each written
  * key carrying the YAML `response_path` so diagnostics can cite it verbatim.
  *
- * Pass `context` to enable `generate:` entries. When an output declares
- * `generate`, the runner mints a UUID v4 (or reuses the value already cached
- * under `output.key` if an inline `$generate:…#<alias>` substitution ran
- * in the same step). Passing `context` is required for alias coherence: the
- * generated value is written into the alias cache so that any later step
- * referencing `$generate:opaque_id#<key>` resolves to the same UUID.
+ * Pass `context` to enable `generate:` entries with alias-cache coherence.
+ * When an output declares `generate`, the runner mints a UUID v4 (or reuses
+ * the value already cached under `output.key` if an inline `$generate:…#<alias>`
+ * substitution ran in the same step). The generated value is written back into
+ * the alias cache so that any later step referencing `$generate:opaque_id#<key>`
+ * resolves to the same UUID.
+ *
+ * Omitting `context` disables alias-cache coherence: each generator entry mints
+ * an independent UUID that cannot be matched by an inline `$generate:…` form.
  *
  * Generator entries fire regardless of whether `data` is present; path
  * entries are silently skipped when the resolved value is null/undefined.
