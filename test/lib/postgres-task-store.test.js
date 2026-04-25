@@ -143,6 +143,27 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     assert.notStrictEqual(t1.taskId, t2.taskId);
   });
 
+  test('createTask rejects empty-string taskId', async () => {
+    await assert.rejects(
+      () => store.createTask({ taskId: '' }, '1', fakeRequest),
+      /non-empty string/,
+    );
+  });
+
+  test('createTask rejects taskId longer than 128 characters', async () => {
+    const tooLong = 'x'.repeat(129);
+    await assert.rejects(
+      () => store.createTask({ taskId: tooLong }, '1', fakeRequest),
+      /128 characters or fewer/,
+    );
+  });
+
+  test('createTask accepts taskId at the 128-character boundary', async () => {
+    const boundary = 'x'.repeat(128);
+    const task = await store.createTask({ taskId: boundary }, '1', fakeRequest);
+    assert.strictEqual(task.taskId, boundary);
+  });
+
   test('getTask returns created task', async () => {
     const created = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
     const fetched = await store.getTask(created.taskId);

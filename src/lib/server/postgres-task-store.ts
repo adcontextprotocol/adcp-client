@@ -159,7 +159,13 @@ export class PostgresTaskStore implements TaskStore {
    * Create a new task. Pass `taskParams.taskId` to use a caller-supplied ID verbatim
    * (useful for compliance-controller scenarios where the runner needs deterministic
    * task IDs). If omitted, a random hex ID is generated. Throws if the supplied ID
-   * already exists.
+   * is empty / longer than 128 chars, or already exists.
+   *
+   * The `task_id` namespace on this store is global (no tenant scoping in the schema
+   * today). Callers using caller-supplied IDs are responsible for namespace isolation;
+   * cross-tenant collisions surface as `already exists`. Track the schema fix
+   * (composite key on tenant + task_id) in a future SDK migration if production paths
+   * ever wire caller-supplied IDs.
    */
   async createTask(
     taskParams: CreateTaskOptions & { taskId?: string },
@@ -167,6 +173,14 @@ export class PostgresTaskStore implements TaskStore {
     request: Request,
     _sessionId?: string
   ): Promise<Task> {
+    if (taskParams.taskId !== undefined) {
+      if (typeof taskParams.taskId !== 'string' || taskParams.taskId.length === 0) {
+        throw new Error('taskId must be a non-empty string when supplied');
+      }
+      if (taskParams.taskId.length > 128) {
+        throw new Error(`taskId must be 128 characters or fewer (got ${taskParams.taskId.length})`);
+      }
+    }
     const taskId = taskParams.taskId ?? randomBytes(16).toString('hex');
     const ttl = taskParams.ttl ?? null;
     const pollInterval = taskParams.pollInterval ?? 1000;
