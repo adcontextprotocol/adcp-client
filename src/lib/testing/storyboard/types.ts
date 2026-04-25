@@ -834,8 +834,9 @@ export type RunnerDetailedSkipReason =
    * the agent explicitly declared it does not support the capability this
    * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
    * storyboard is skipped before any phase runs. Maps to canonical
-   * `not_applicable`: the storyboard simply does not apply to this agent's
-   * self-declared profile.
+   * `unsatisfied_contract`: the agent's self-declared capability profile
+   * does not satisfy the storyboard's preconditions — consistent with peer
+   * skip reasons `rate_abuse_opt_out` and `missing_test_kit_contract`.
    */
   | 'capability_unsupported';
 
