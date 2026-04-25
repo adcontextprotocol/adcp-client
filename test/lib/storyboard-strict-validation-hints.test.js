@@ -193,7 +193,7 @@ describe('detectStrictValidationHints', () => {
             instance_path: '/products/0',
             schema_path: '#/properties/products/items/required',
             keyword: 'required',
-            message: "must have required 'foo'",  // missing the word "property" — regex won't match
+            message: "must have required 'foo'", // missing the word "property" — regex won't match
           },
         ],
       })

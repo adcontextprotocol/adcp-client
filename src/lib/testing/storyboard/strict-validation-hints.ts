@@ -98,6 +98,10 @@ function groupRequiredIssues(
     // clean field identifiers per its documented contract.
     if (!match) continue;
     const field = match[1];
+    // TypeScript noUncheckedIndexedAccess types `match[1]` as `string |
+    // undefined` even though a successful regex match with one capture
+    // group always has it. Narrow defensively rather than assert.
+    if (field === undefined) continue;
     const entry = grouped.get(at);
     if (entry) {
       entry.fields.push(field);
