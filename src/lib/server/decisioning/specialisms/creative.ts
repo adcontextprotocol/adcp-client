@@ -16,6 +16,7 @@
 
 import type { AsyncOutcome } from '../async-outcome';
 import type { Account } from '../account';
+import type { RequestContext } from '../context';
 import type { CursorPage, CursorRequest } from '../pagination';
 import type {
   CreativeAsset,
@@ -27,6 +28,7 @@ import type {
 
 // Re-alias for clarity in the platform interface (the wire type is `CreativeAsset`).
 type Creative = CreativeAsset;
+type Ctx = RequestContext<Account>;
 
 // ---------------------------------------------------------------------------
 // CreativeTemplatePlatform — stateless transform
@@ -42,12 +44,12 @@ export interface CreativeTemplatePlatform {
    * Build a rendered creative from inline manifest + target format.
    * Mostly synchronous; platforms with TTS / audio mixing pipelines may submit.
    */
-  buildCreative(req: BuildCreativeRequest, account: Account): Promise<AsyncOutcome<CreativeManifest>>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<AsyncOutcome<CreativeManifest>>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires.
    */
-  previewCreative(req: PreviewCreativeRequest, account: Account): Promise<AsyncOutcome<PreviewCreativeResponse>>;
+  previewCreative(req: PreviewCreativeRequest, ctx: Ctx): Promise<AsyncOutcome<PreviewCreativeResponse>>;
 
   /**
    * Unified review surface. Framework normalizes both wire paths
@@ -58,7 +60,7 @@ export interface CreativeTemplatePlatform {
    * Stateless template platforms typically accept any well-formed manifest;
    * the review usually returns sync.
    */
-  syncCreatives(creatives: Creative[], account: Account): Promise<AsyncOutcome<CreativeReviewResult[]>>;
+  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<AsyncOutcome<CreativeReviewResult[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,20 +76,16 @@ export interface CreativeGenerativePlatform {
    * Generate a new creative from brief. Almost always returns
    * `{ kind: 'submitted' }` for real generation pipelines.
    */
-  buildCreative(req: BuildCreativeRequest, account: Account): Promise<AsyncOutcome<CreativeManifest>>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<AsyncOutcome<CreativeManifest>>;
 
   /**
    * Refine an in-flight or completed generation. `taskId` references
    * a prior buildCreative submission. Framework threads task continuity.
    */
-  refineCreative(
-    taskId: string,
-    refinement: RefinementMessage,
-    account: Account
-  ): Promise<AsyncOutcome<CreativeManifest>>;
+  refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx): Promise<AsyncOutcome<CreativeManifest>>;
 
   /** Same unified review surface as CreativeTemplatePlatform. */
-  syncCreatives(creatives: Creative[], account: Account): Promise<AsyncOutcome<CreativeReviewResult[]>>;
+  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<AsyncOutcome<CreativeReviewResult[]>>;
 }
 
 // ---------------------------------------------------------------------------

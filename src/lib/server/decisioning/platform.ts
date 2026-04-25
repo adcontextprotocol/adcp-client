@@ -11,7 +11,7 @@
  */
 
 import type { DecisioningCapabilities } from './capabilities';
-import type { AccountStore } from './account';
+import type { Account, AccountStore } from './account';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform } from './specialisms/sales';
 import type { CreativeTemplatePlatform, CreativeGenerativePlatform } from './specialisms/creative';
@@ -21,6 +21,12 @@ import type { AdCPSpecialism } from '../../types/tools.generated';
 /**
  * Top-level platform interface. Adopters implement this; framework wires
  * the wire protocol around it.
+ *
+ * The "framework owns X" claims below are the v6.0 wiring contract — the
+ * runtime guarantees the framework will provide once this surface is wired.
+ * They are NOT yet enforced; this module is preview-only as of the scaffold
+ * landing. Treat them as the design contract a v6.0 reviewer should hold
+ * the framework refactor to, not as a description of existing behavior.
  *
  * **What the framework owns** (platform implementations DON'T see these):
  * - Wire-shape mapping (MCP tools/list, A2A skill manifest, request/response envelopes)
@@ -53,6 +59,22 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   /** Native-status mappers (account, mediaBuy, creative, plan). All optional. */
   statusMappers: StatusMappers;
 
+  /**
+   * Per-tenant capability override. Multi-tenant SaaS adopters (Prebid-style
+   * deployments where one server hosts many advertisers, each with different
+   * `manualApprovalOperations` / pricing tiers / channel mixes) implement this
+   * to scope capabilities per resolved Account. When absent, the framework
+   * uses `capabilities` for every request.
+   *
+   * The framework calls this AFTER `accounts.resolve()` and uses the returned
+   * capabilities to gate the rest of the request. The static `agent-card.json`
+   * AND `tools/list` shape is derived from `capabilities` (the union) — per-tenant
+   * differences are runtime-only.
+   */
+  getCapabilitiesFor?(
+    account: Account<TMeta>
+  ): DecisioningCapabilities<TConfig> | Promise<DecisioningCapabilities<TConfig>>;
+
   // Per-specialism sub-interfaces — optional at the type level; required at the
   // call site by RequiredPlatformsFor<S>. v1.0 ships these four:
   sales?: SalesPlatform;
@@ -75,13 +97,25 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
  * Drop a method, fail compile.
  * Claim a specialism without an implementation, fail compile.
  *
+ * The nested-conditional encoding (rather than a union of `S extends X ? {} : never`)
+ * is deliberate: when a specialism is claimed without its required platform
+ * interface, TypeScript surfaces "Property 'sales' is missing in type 'P'"
+ * rather than the unactionable "Type 'P' does not satisfy the constraint 'never'."
+ *
  * v1.0 covers the 4 specialisms shipping in v1.0; extended in v1.1+.
+ * Unknown specialisms (v1.1+ when this module hasn't been updated yet)
+ * resolve to an empty requirement — the framework's runtime check is the
+ * fallback gate.
  */
-export type RequiredPlatformsFor<S extends AdCPSpecialism> =
-  | (S extends 'creative-template' ? { creative: CreativeTemplatePlatform } : never)
-  | (S extends 'creative-generative' ? { creative: CreativeGenerativePlatform } : never)
-  | (S extends 'sales-non-guaranteed' ? { sales: SalesPlatform } : never)
-  | (S extends 'audience-sync' ? { audiences: AudiencePlatform } : never);
+export type RequiredPlatformsFor<S extends AdCPSpecialism> = S extends 'creative-template'
+  ? { creative: CreativeTemplatePlatform }
+  : S extends 'creative-generative'
+    ? { creative: CreativeGenerativePlatform }
+    : S extends 'sales-non-guaranteed'
+      ? { sales: SalesPlatform }
+      : S extends 'audience-sync'
+        ? { audiences: AudiencePlatform }
+        : Record<string, never>;
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to

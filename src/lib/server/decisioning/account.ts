@@ -27,6 +27,18 @@ export interface Account<TMeta = Record<string, unknown>> {
   operator?: string;
 
   /**
+   * Settlement boundary for operator-billed retail-media platforms.
+   * `'agent'` = pass-through (buyer's agent settles directly with the platform).
+   * `'operator'` = retail-media model (operator pays publisher, bills brand).
+   * `BrandReference` = invoice routes to a third party (Amazon DSP returning
+   * a different invoice principal than the requester is the canonical case).
+   *
+   * Optional — most platforms don't need this; comply storyboards use it to
+   * assert the right party is billed.
+   */
+  billing?: { invoicedTo: 'agent' | 'operator' | BrandReference };
+
+  /**
    * Platform-specific extension. Framework doesn't read this. GAM puts
    * `{ networkId, advertiserId }`; Spotify puts `{ brandId, businessId }`;
    * Criteo puts `{ customerId }`. Each platform's choice.
@@ -59,24 +71,26 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *   resolved from the auth principal's pre-synced linkage (LinkedIn, some
    *   retail-media operators). Framework refuses inline `account_id` references
    *   for these platforms.
+   * - `'derived'` — single-tenant agents where there is no account_id on the
+   *   wire at all and the auth principal alone identifies the tenant. Most
+   *   self-hosted broadcasters and retail-media operators in proxy mode.
    *
    * Defaults to `'explicit'` when omitted.
    */
-  readonly resolution?: 'explicit' | 'implicit';
+  readonly resolution?: 'explicit' | 'implicit' | 'derived';
 
   /**
    * Resolve buyer's AccountReference into the platform's tenant model.
    *
    * Two failure shapes:
-   * - **Unknown / cross-tenant reference**: return `null`. Framework emits
-   *   the spec's fixed `ACCOUNT_NOT_FOUND` envelope. The buyer learns no
-   *   detail beyond "not found" — guarding against principal-enumeration.
+   * - **Unknown / cross-tenant reference**: return `null` (canonical) — OR
+   *   throw `AccountNotFoundError` if your codebase already throws a
+   *   not-found exception class. Framework emits the spec's fixed
+   *   `ACCOUNT_NOT_FOUND` envelope either way. The buyer learns no detail
+   *   beyond "not found" — guarding against principal-enumeration.
    * - **Transient upstream failure** (DB outage, identity-provider 5xx):
-   *   throw. Framework maps to `SERVICE_UNAVAILABLE` so the buyer can retry.
-   *
-   * Adopters MUST NOT throw `AccountNotFoundError` for upstream-API outages,
-   * env-var misconfiguration, or schema-validation failures. Those go out
-   * as generic throws and become `SERVICE_UNAVAILABLE`.
+   *   throw a generic exception. Framework maps to `SERVICE_UNAVAILABLE`
+   *   so the buyer can retry.
    */
   resolve(ref: AccountReference): Promise<Account<TMeta> | null>;
 
@@ -94,13 +108,16 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
 }
 
 /**
- * Narrow signal that a supplied account reference doesn't exist or can't be
- * resolved for the authenticated caller. Adopters who prefer throw-based
- * error flow over `null` returns can throw this from `AccountStore.resolve`;
- * framework catches it and emits the same fixed `ACCOUNT_NOT_FOUND` envelope.
+ * Optional throw-class for `AccountStore.resolve` not-found signaling. Returning
+ * `null` from `resolve` is canonical and equivalent; throw this only if your
+ * codebase already throws a typed not-found exception elsewhere.
  *
- * The constructor's `message` is for server-side operator diagnostics only —
- * the framework emits a fixed `ACCOUNT_NOT_FOUND` envelope regardless, so the
+ * **Throwable only from `AccountStore.resolve()`.** Throwing it from a
+ * specialism method (`createMediaBuy`, `getProducts`, etc.) bypasses the
+ * framework's not-found mapping and surfaces as `SERVICE_UNAVAILABLE`.
+ *
+ * The constructor's `message` is for server-side operator diagnostics only.
+ * The framework emits a fixed `ACCOUNT_NOT_FOUND` envelope regardless; the
  * message never reaches the buyer. Operator-side log pipelines may aggregate
  * this string, so MUST NOT include caller-supplied identifiers (echoed account
  * refs, request args) — those leak across operator / buyer trust boundaries.

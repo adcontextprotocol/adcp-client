@@ -102,8 +102,12 @@ function _account_store_resolution_implicit(): Pick<AccountStore<GAMAccountMeta>
   return { resolution: 'implicit' };
 }
 
+function _account_store_resolution_derived(): Pick<AccountStore<GAMAccountMeta>, 'resolution'> {
+  return { resolution: 'derived' };
+}
+
 function _account_store_resolution_invalid_value(): Pick<AccountStore<GAMAccountMeta>, 'resolution'> {
-  // @ts-expect-error — only 'explicit' | 'implicit' allowed.
+  // @ts-expect-error — only 'explicit' | 'implicit' | 'derived' allowed.
   return { resolution: 'auto' };
 }
 
@@ -140,6 +144,55 @@ function _targeting_capabilities_rejects_unknown_geo_metro(): TargetingCapabilit
   };
 }
 
+// ── AdcpStructuredError carries field/suggestion/retry_after ──────────
+
+function _structured_error_with_wire_fields(): AsyncOutcome<{ id: string }> {
+  return rejected({
+    code: 'INVALID_REQUEST',
+    recovery: 'correctable',
+    message: 'targeting.geo[0] is not a known DMA',
+    field: 'packages[0].targeting.geo[0]',
+    suggestion: 'Use a 3-digit Nielsen DMA code',
+    retry_after: undefined, // optional; only required on RATE_LIMITED / SERVICE_UNAVAILABLE
+  });
+}
+
+function _structured_error_retry_after_for_transient(): AsyncOutcome<{ id: string }> {
+  return rejected({
+    code: 'RATE_LIMITED',
+    recovery: 'transient',
+    message: 'too many concurrent get_products calls',
+    retry_after: 60,
+  });
+}
+
+// ── ErrorCode covers the 45 spec codes (sample the new ones) ──────────
+
+function _new_codes_compile(): AsyncOutcome<{ id: string }> {
+  // These codes weren't in the v1.0 scaffold pre-must-fixes.
+  void rejected({ code: 'INVALID_STATE', recovery: 'correctable', message: '' });
+  void rejected({ code: 'MEDIA_BUY_NOT_FOUND', recovery: 'terminal', message: '' });
+  void rejected({ code: 'NOT_CANCELLABLE', recovery: 'terminal', message: '' });
+  void rejected({ code: 'REQUOTE_REQUIRED', recovery: 'correctable', message: '' });
+  void rejected({ code: 'CREATIVE_DEADLINE_EXCEEDED', recovery: 'terminal', message: '' });
+  return ok({ id: 'mb_1' });
+}
+
+// ── RequiredPlatformsFor surfaces a legible "missing field" error ─────
+
+interface _PlatformWithoutSales {
+  capabilities: { specialisms: ['sales-non-guaranteed'] };
+  // Note: no `sales` field.
+}
+
+// Negative: the conditional should resolve to `{ sales: SalesPlatform }` when
+// the specialism is `sales-non-guaranteed`. A platform missing `sales`
+// fails to satisfy the requirement — error reads "Property 'sales' is missing"
+// rather than the unactionable "does not satisfy constraint 'never'".
+type _missing_sales_required =
+  RequiredPlatformsFor<'sales-non-guaranteed'> extends infer R ? (R extends { sales: unknown } ? true : false) : false;
+const _check_sales_required: _missing_sales_required = true;
+
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
   _ok_returns_sync_kind,
@@ -153,9 +206,14 @@ export const _references = [
   _account_typed_meta_rejects_wrong_field,
   _account_not_found_throw_pattern,
   _account_store_resolution_implicit,
+  _account_store_resolution_derived,
   _account_store_resolution_invalid_value,
   _capabilities_supported_billings_operator,
   _capabilities_supported_billings_invalid,
   _targeting_capabilities_nested,
   _targeting_capabilities_rejects_unknown_geo_metro,
+  _structured_error_with_wire_fields,
+  _structured_error_retry_after_for_transient,
+  _new_codes_compile,
+  _check_sales_required,
 ] as const;

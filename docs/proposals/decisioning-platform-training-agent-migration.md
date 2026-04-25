@@ -100,18 +100,18 @@ class TrainingAgentPlatform
   };
 
   sales: SalesPlatform = {
-    getProducts: async (req, account) => {
-      const products = await this.db.products.search(req.brief, account.metadata.advertiser_id);
+    getProducts: async (req, ctx) => {
+      const products = await this.db.products.search(req.brief, ctx.account.metadata.advertiser_id);
       return { products };
     },
 
-    createMediaBuy: async (req, account) => {
+    createMediaBuy: async (req, ctx) => {
       // Governance is auto-threaded by the framework; we just consult result.
       // (See blocker #10.)
       try {
         const buy = await this.db.mediaBuys.create({
           ...req,
-          advertiserId: account.metadata.advertiser_id,
+          advertiserId: ctx.account.metadata.advertiser_id,
         });
         return ok(this.toMediaBuy(buy));
       } catch (e) {
@@ -126,23 +126,23 @@ class TrainingAgentPlatform
       }
     },
 
-    updateMediaBuy: async (id, patch, account) => {
-      const updated = await this.db.mediaBuys.update(id, patch, account.metadata.advertiser_id);
+    updateMediaBuy: async (id, patch, ctx) => {
+      const updated = await this.db.mediaBuys.update(id, patch, ctx.account.metadata.advertiser_id);
       return ok(this.toMediaBuy(updated));
     },
 
-    syncCreatives: async (creatives, account) => {
+    syncCreatives: async (creatives, ctx) => {
       const results = await Promise.all(
         creatives.map(async (c) => ({
           creative_id: c.creative_id,
-          status: await this.db.creatives.review(c, account.metadata.advertiser_id),
+          status: await this.db.creatives.review(c, ctx.account.metadata.advertiser_id),
         }))
       );
       return ok(results);
     },
 
-    getMediaBuyDelivery: async (filter, account) => {
-      const actuals = await this.db.reporting.run(filter, account.metadata.network_id);
+    getMediaBuyDelivery: async (filter, ctx) => {
+      const actuals = await this.db.reporting.run(filter, ctx.account.metadata.network_id);
       return ok(actuals);
     },
   };
@@ -198,7 +198,7 @@ class TrainingAgentPlatform
 | Custom capabilities block | hand-rolled | `config: TrainingAgentConfig` (typed) |
 | Account hierarchy | scattered | `Account<TrainingAgentMeta>` |
 
-5x line reduction. All 10 documented blockers resolved or replaced.
+5x line reduction for the training-agent specifically (its 2000 LOC includes hand-rolled idempotency, error envelopes, ALS, and state-machine routing — all of which dissolve into framework code). New adopters with full per-tool API translation (GAM ~2400 LOC, Meta ~1500 LOC) will see ~25-50% reduction — the platform-API boilerplate is irreducible. The right framing is **boilerplate dissolution**, not total LOC reduction. All 10 documented blockers resolved or replaced.
 
 ## What's NOT covered yet
 

@@ -16,6 +16,7 @@
 
 import type { AsyncOutcome } from '../async-outcome';
 import type { Account } from '../account';
+import type { RequestContext } from '../context';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -26,6 +27,7 @@ import type {
 } from '../../../types/tools.generated';
 
 type Creative = CreativeAsset;
+type Ctx = RequestContext<Account>;
 import type { CreativeReviewResult } from './creative';
 
 export interface SalesPlatform {
@@ -37,7 +39,7 @@ export interface SalesPlatform {
    * get_products(refine) calls and create_media_buy without the platform
    * re-resolving them.
    */
-  getProducts(req: GetProductsRequest, account: Account): Promise<GetProductsResponse>;
+  getProducts(req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
 
   /**
    * Single-shot media-buy creation. Returns one of three outcomes:
@@ -53,7 +55,7 @@ export interface SalesPlatform {
    * paused / completed / rejected / canceled) carries the wire status from
    * the spec verbatim; outcome.kind is orthogonal (sync vs async completion).
    */
-  createMediaBuy(req: CreateMediaBuyRequest, account: Account): Promise<AsyncOutcome<MediaBuy>>;
+  createMediaBuy(req: CreateMediaBuyRequest, ctx: Ctx): Promise<AsyncOutcome<MediaBuy>>;
 
   /**
    * Mutate an existing buy: bid, budget, dates, status, packages.
@@ -65,9 +67,9 @@ export interface SalesPlatform {
    * Prebid's action-string convention) dispatch locally on the patch fields:
    *
    * ```ts
-   * updateMediaBuy: async (buyId, patch, account) => {
-   *   if (patch.active === false) return this.pause(buyId, account);
-   *   if (patch.active === true)  return this.resume(buyId, account);
+   * updateMediaBuy: async (buyId, patch, ctx) => {
+   *   if (patch.active === false) return this.pause(buyId, ctx);
+   *   if (patch.active === true)  return this.resume(buyId, ctx);
    *   // ... fall through to a generic patch apply
    * };
    * ```
@@ -75,7 +77,7 @@ export interface SalesPlatform {
    * Don't ask the framework for an action-based convenience surface — it
    * would duplicate the wire shape and drift as the spec evolves.
    */
-  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, account: Account): Promise<AsyncOutcome<MediaBuy>>;
+  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<AsyncOutcome<MediaBuy>>;
 
   /**
    * Unified creative review. Framework normalizes both wire paths
@@ -86,7 +88,7 @@ export interface SalesPlatform {
    * TV approval) take 4-72 hours; platform returns submitted, framework polls
    * or accepts notify pushes.
    */
-  syncCreatives(creatives: Creative[], account: Account): Promise<AsyncOutcome<CreativeReviewResult[]>>;
+  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<AsyncOutcome<CreativeReviewResult[]>>;
 
   /**
    * Delivery + spend reporting.
@@ -96,7 +98,7 @@ export interface SalesPlatform {
    * mapping (top-level currency, billing-quintet on package rows, ISO 8601
    * date-time on reporting_period).
    */
-  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, account: Account): Promise<AsyncOutcome<DeliveryActuals>>;
+  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx): Promise<AsyncOutcome<DeliveryActuals>>;
 }
 
 // ---------------------------------------------------------------------------

@@ -13,12 +13,14 @@
  */
 
 /**
- * Error code vocabulary. Mirrors `schemas/cache/3.0.0/enums/error-code.json`
+ * Error code vocabulary mirroring `schemas/cache/3.0.0/enums/error-code.json`
  * (45 standard codes). Adopters can return platform-specific codes too —
- * agents fall back to the `recovery` classification on unknowns.
+ * agents fall back to the `recovery` classification on unknowns via the
+ * `(string & {})` escape hatch on `AdcpStructuredError.code`.
  *
  * TODO(6.0): generate this from `schemas/cache/<version>/enums/error-code.json`
- * via the same codegen pipeline as the rest of `tools.generated.ts`.
+ * via the same codegen pipeline as the rest of `tools.generated.ts`. The
+ * hand-maintained list rots; codegen pins it to spec.
  */
 export type ErrorCode =
   | 'INVALID_REQUEST'
@@ -28,9 +30,15 @@ export type ErrorCode =
   | 'POLICY_VIOLATION'
   | 'PRODUCT_NOT_FOUND'
   | 'PRODUCT_UNAVAILABLE'
+  | 'PRODUCT_EXPIRED'
   | 'PROPOSAL_EXPIRED'
+  | 'PROPOSAL_NOT_COMMITTED'
   | 'BUDGET_TOO_LOW'
+  | 'BUDGET_EXHAUSTED'
+  | 'BUDGET_EXCEEDED'
   | 'CREATIVE_REJECTED'
+  | 'CREATIVE_DEADLINE_EXCEEDED'
+  | 'CREATIVE_NOT_FOUND'
   | 'UNSUPPORTED_FEATURE'
   | 'AUDIENCE_TOO_SMALL'
   | 'ACCOUNT_NOT_FOUND'
@@ -40,15 +48,24 @@ export type ErrorCode =
   | 'ACCOUNT_SUSPENDED'
   | 'COMPLIANCE_UNSATISFIED'
   | 'GOVERNANCE_DENIED'
-  | 'BUDGET_EXHAUSTED'
-  | 'BUDGET_EXCEEDED'
+  | 'GOVERNANCE_UNAVAILABLE'
+  | 'CAMPAIGN_SUSPENDED'
   | 'CONFLICT'
   | 'IDEMPOTENCY_CONFLICT'
-  | 'IDEMPOTENCY_REQUIRED'
   | 'IDEMPOTENCY_EXPIRED'
-  | 'TERMS_REJECTED'
+  | 'INVALID_STATE'
+  | 'IO_REQUIRED'
+  | 'MEDIA_BUY_NOT_FOUND'
+  | 'NOT_CANCELLABLE'
+  | 'PACKAGE_NOT_FOUND'
   | 'PERMISSION_DENIED'
-  | 'NOT_FOUND'
+  | 'PLAN_NOT_FOUND'
+  | 'REFERENCE_NOT_FOUND'
+  | 'REQUOTE_REQUIRED'
+  | 'SESSION_NOT_FOUND'
+  | 'SESSION_TERMINATED'
+  | 'SIGNAL_NOT_FOUND'
+  | 'TERMS_REJECTED'
   | 'VALIDATION_ERROR'
   | 'VERSION_UNSUPPORTED';
 
@@ -82,17 +99,31 @@ export interface AsyncOutcomeRejected<TError extends AdcpStructuredError = AdcpS
 }
 
 /**
- * Structured error envelope. The wire schema permits unknown codes but the
- * spec posture is "use the standard vocabulary; agents fall back to recovery
- * classification on unknowns." `ErrorCode | (string & {})` gives autocomplete
- * for the 45 standard codes plus an escape hatch for adapter-specific codes.
+ * Structured error envelope. Mirrors `schemas/cache/3.0.0/core/error.json`.
+ * The wire schema permits unknown codes but the spec posture is "use the
+ * standard vocabulary; agents fall back to recovery classification on
+ * unknowns." `ErrorCode | (string & {})` gives autocomplete for the 45
+ * standard codes plus an escape hatch for adapter-specific codes.
  *
- * `recovery` is the field that drives buyer behavior — never omit it.
+ * `recovery` is REQUIRED at this interface level. The wire schema makes it
+ * optional; we tighten because every adopter needs to declare buyer-recovery
+ * intent on every rejection — implicit "terminal" by absence has historically
+ * caused buyers to misroute retries.
  */
 export interface AdcpStructuredError {
   code: ErrorCode | (string & {});
   recovery: 'transient' | 'correctable' | 'terminal';
   message: string;
+  /** Field path associated with the error (e.g., `'packages[0].targeting'`). */
+  field?: string;
+  /** Suggested fix surfaced to the buyer. */
+  suggestion?: string;
+  /**
+   * Seconds to wait before retrying. REQUIRED by the spec for `RATE_LIMITED`
+   * and `SERVICE_UNAVAILABLE`; the framework auto-fills a default if the
+   * platform omits it. Adopters MUST clamp to [1, 3600] per spec.
+   */
+  retry_after?: number;
   details?: Record<string, unknown>;
 }
 
@@ -183,4 +214,20 @@ export function submitted<TResult>(
 /** Terminal rejection. `recovery` field guides buyer behavior. */
 export function rejected<TResult>(error: AdcpStructuredError): AsyncOutcome<TResult> {
   return { kind: 'rejected', error };
+}
+
+/**
+ * Stub-shape rejection for methods the platform hasn't implemented yet.
+ * Returns `rejected({ code: 'UNSUPPORTED_FEATURE', recovery: 'terminal' })`
+ * so the buyer learns the feature is unavailable and stops retrying.
+ *
+ * Useful while standing up a new adapter — implement methods incrementally
+ * and `unimplemented()` everything else without leaving handlers undefined.
+ */
+export function unimplemented<TResult>(message = 'Method not implemented'): AsyncOutcome<TResult> {
+  return rejected({
+    code: 'UNSUPPORTED_FEATURE',
+    recovery: 'terminal',
+    message,
+  });
 }

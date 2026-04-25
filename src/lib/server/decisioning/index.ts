@@ -17,6 +17,7 @@ export {
   type AsyncOutcomeSubmitted,
   type AsyncOutcomeRejected,
   type AdcpStructuredError,
+  type ErrorCode,
   type TaskHandle,
   type TaskUpdate,
   type TaskUpdateProgress,
@@ -25,6 +26,7 @@ export {
   ok,
   submitted,
   rejected,
+  unimplemented,
 } from './async-outcome';
 
 // Cursor pagination
@@ -52,6 +54,7 @@ export { AccountNotFoundError } from './account';
 
 // Native status mapping
 export type { StatusMappers, AdcpMediaBuyStatus, AdcpCreativeStatus, AdcpPlanStatus } from './status-mappers';
+export { identityStatusMappers } from './status-mappers';
 
 // Request context (state + resolve)
 export type {

@@ -43,3 +43,30 @@ export type AdcpMediaBuyStatus =
 export type AdcpCreativeStatus = 'pending_review' | 'approved' | 'rejected' | 'archived';
 
 export type AdcpPlanStatus = 'active' | 'exhausted' | 'expired' | 'paused';
+
+/**
+ * Identity mappers — when the platform's native status strings already match
+ * AdCP's typed enums (most modern platforms do for `active` / `paused`),
+ * adopters use this instead of writing the obvious passthrough functions.
+ *
+ * Falls back to the AdCP default for unknown native values:
+ *   - mediaBuy: `'pending_creatives'`
+ *   - creative: `'pending_review'`
+ *   - account:  `'active'`
+ *   - plan:     `'active'`
+ */
+export const identityStatusMappers: StatusMappers = {
+  mediaBuy: native =>
+    (['pending_creatives', 'pending_start', 'active', 'paused', 'completed', 'rejected', 'canceled'].includes(native)
+      ? native
+      : 'pending_creatives') as AdcpMediaBuyStatus,
+  creative: native =>
+    (['pending_review', 'approved', 'rejected', 'archived'].includes(native)
+      ? native
+      : 'pending_review') as AdcpCreativeStatus,
+  account: native =>
+    (['active', 'pending_approval', 'rejected', 'payment_required', 'suspended', 'closed'].includes(native)
+      ? native
+      : 'active') as AdcpAccountStatus,
+  plan: native => (['active', 'exhausted', 'expired', 'paused'].includes(native) ? native : 'active') as AdcpPlanStatus,
+};

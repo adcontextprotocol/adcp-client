@@ -13,7 +13,10 @@
 
 import type { AsyncOutcome } from '../async-outcome';
 import type { Account } from '../account';
+import type { RequestContext } from '../context';
 import type { SyncAudiencesRequest } from '../../../types/tools.generated';
+
+type Ctx = RequestContext<Account>;
 
 /**
  * The wire schema doesn't export a top-level `Audience` type; the shape lives
@@ -32,14 +35,14 @@ export interface AudiencePlatform {
    * computation against the identity graph takes minutes; the platform's
    * webhook ingress (via taskHandle.notify) pushes the terminal result.
    */
-  syncAudiences(audiences: Audience[], account: Account): Promise<AsyncOutcome<AudienceSyncResult[]>>;
+  syncAudiences(audiences: Audience[], ctx: Ctx): Promise<AsyncOutcome<AudienceSyncResult[]>>;
 
   /**
    * Read current audience status. Sync — this is a state-read, not a
    * mutating operation. Useful for buyer-side polling outside the framework's
    * task envelope (e.g., querying long-lived audiences).
    */
-  getAudienceStatus(audienceId: string, account: Account): Promise<AudienceStatus>;
+  getAudienceStatus(audienceId: string, ctx: Ctx): Promise<AudienceStatus>;
 }
 
 export interface AudienceSyncResult {
