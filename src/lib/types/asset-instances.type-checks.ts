@@ -9,6 +9,12 @@
 // becomes an error and the project's `tsc --noEmit` fails. That's the
 // regression alarm.
 //
+// Pattern: each negative test uses an arrow function returning the value.
+// TS reports the error on the `return` line, so the directive directly
+// above is what catches it. Bare-const-assignment placement is fragile —
+// TS reports object-literal-required-property errors at varying line/col
+// positions depending on the type structure.
+//
 // Run with `npm run typecheck`.
 
 import type {
@@ -21,12 +27,12 @@ import type {
 
 // ── AssetInstance: discriminator narrowing works ─────────────────────────
 
-function describe(asset: AssetInstance): string {
+function describeAsset(asset: AssetInstance): string {
   switch (asset.asset_type) {
     case 'image':
       return `${asset.width}x${asset.height} @ ${asset.url}`;
     case 'video':
-      return `video ${asset.format ?? ''}`;
+      return `video ${asset.container_format ?? ''} ${asset.duration_ms ?? 0}ms`;
     case 'audio':
       return `audio ${asset.codec}`;
     case 'text':
@@ -46,36 +52,31 @@ function describe(asset: AssetInstance): string {
       return asset.asset_type;
   }
 }
-void describe;
+void describeAsset;
 
 // ── AssetInstance: omitting asset_type is rejected ───────────────────────
 
-// @ts-expect-error — `asset_type` is the discriminator and required.
-const _missing_discriminator: AssetInstance = {
-  url: 'https://x.test/img.png',
-  width: 300,
-  height: 250,
-};
-void _missing_discriminator;
+function _assetInstance_missingDiscriminator(): AssetInstance {
+  // @ts-expect-error — `asset_type` is the discriminator and required.
+  return { url: 'https://x.test/img.png', width: 300, height: 250 };
+}
+void _assetInstance_missingDiscriminator;
 
 // ── AssetInstance: image variant requires width and height ───────────────
 
-// @ts-expect-error — ImageAsset requires `width` (per AdCP 3.0 GA).
-const _image_missing_width: AssetInstance = {
-  asset_type: 'image',
-  url: 'https://x.test/img.png',
-  height: 250,
-};
-void _image_missing_width;
+function _imageAsset_missingWidth(): AssetInstance {
+  // @ts-expect-error — ImageAsset requires `width` (per AdCP 3.0 GA).
+  return { asset_type: 'image', url: 'https://x.test/img.png', height: 250 };
+}
+void _imageAsset_missingWidth;
 
 // ── AssetInstance: html instance carries `content`, not `html` ───────────
 
-// @ts-expect-error — HTMLAsset has `content`, not `html`. Common drift.
-const _wrong_html_field: AssetInstance = {
-  asset_type: 'html',
-  html: '<div>...</div>',
-};
-void _wrong_html_field;
+function _htmlAsset_wrongFieldName(): AssetInstance {
+  // @ts-expect-error — HTMLAsset has `content`, not `html`. Common drift.
+  return { asset_type: 'html', html: '<div>...</div>' };
+}
+void _htmlAsset_wrongFieldName;
 
 // ── AssetInstanceType: enumerates every variant's discriminator ──────────
 
@@ -97,9 +98,11 @@ const _all_types: AssetInstanceType[] = [
 ];
 void _all_types;
 
-// @ts-expect-error — 'banner' is not a valid asset_type.
-const _bogus: AssetInstanceType = 'banner';
-void _bogus;
+function _assetType_bogusValue(): AssetInstanceType {
+  // @ts-expect-error — 'banner' is not a valid asset_type.
+  return 'banner';
+}
+void _assetType_bogusValue;
 
 // ── CommonAssetInstance: narrower union, accepts only common variants ────
 
@@ -111,13 +114,11 @@ const _common_image: CommonAssetInstance = {
 };
 void _common_image;
 
-// @ts-expect-error — 'vast' is in AssetInstance but not CommonAssetInstance.
-const _common_rejects_vast: CommonAssetInstance = {
-  asset_type: 'vast',
-  content: '<VAST></VAST>',
-  format: 'vast',
-};
-void _common_rejects_vast;
+function _common_rejectsVast(): CommonAssetInstance {
+  // @ts-expect-error — 'vast' is in AssetInstance but not CommonAssetInstance.
+  return { asset_type: 'vast', content: '<VAST></VAST>' };
+}
+void _common_rejectsVast;
 
 // ── SyncAccountsResponseRow: action discriminator is required ────────────
 
@@ -130,24 +131,28 @@ const _row_ok: SyncAccountsResponseRow = {
 };
 void _row_ok;
 
-// @ts-expect-error — `action` is required on every row.
-const _row_missing_action: SyncAccountsResponseRow = {
-  account_id: 'acct_1',
-  brand: { domain: 'example.com' },
-  operator: 'agency.example',
-  status: 'active',
-};
-void _row_missing_action;
+function _row_missingAction(): SyncAccountsResponseRow {
+  // @ts-expect-error — `action` is required on every row.
+  return {
+    account_id: 'acct_1',
+    brand: { domain: 'example.com' },
+    operator: 'agency.example',
+    status: 'active',
+  };
+}
+void _row_missingAction;
 
-// @ts-expect-error — 'archived' is not a valid action enum value.
-const _row_bad_action: SyncAccountsResponseRow = {
-  account_id: 'acct_1',
-  brand: { domain: 'example.com' },
-  operator: 'agency.example',
-  action: 'archived',
-  status: 'active',
-};
-void _row_bad_action;
+function _row_badAction(): SyncAccountsResponseRow {
+  return {
+    account_id: 'acct_1',
+    brand: { domain: 'example.com' },
+    operator: 'agency.example',
+    // @ts-expect-error — 'archived' is not a valid action enum value.
+    action: 'archived',
+    status: 'active',
+  };
+}
+void _row_badAction;
 
 // ── SyncGovernanceResponseRow: status discriminator is required ──────────
 
@@ -157,8 +162,8 @@ const _gov_row_ok: SyncGovernanceResponseRow = {
 };
 void _gov_row_ok;
 
-// @ts-expect-error — `status` is required.
-const _gov_row_missing_status: SyncGovernanceResponseRow = {
-  account: { account_id: 'acct_1' },
-};
-void _gov_row_missing_status;
+function _gov_row_missingStatus(): SyncGovernanceResponseRow {
+  // @ts-expect-error — `status` is required.
+  return { account: { account_id: 'acct_1' } };
+}
+void _gov_row_missingStatus;

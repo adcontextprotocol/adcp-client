@@ -47,7 +47,7 @@ import type {
  *     case 'image':
  *       return `${asset.width}x${asset.height} @ ${asset.url}`;
  *     case 'video':
- *       return `${asset.duration_ms}ms ${asset.format ?? ''}`;
+ *       return `${asset.duration_ms ?? 0}ms ${asset.container_format ?? ''}`;
  *     case 'html':
  *       return `${asset.content.length}B inline HTML`;
  *     // ...all branches required — exhaustiveness is enforced
