@@ -14,12 +14,14 @@ import type {
   AsyncOutcome,
   Account,
   AccountStore,
+  DecisioningCapabilities,
+  TargetingCapabilities,
   StatusMappers,
   CreativeTemplatePlatform,
   SalesPlatform,
   AudiencePlatform,
 } from './index';
-import { ok, submitted, rejected } from './async-outcome';
+import { ok, submitted, rejected, AccountNotFoundError } from './index';
 
 // ── AsyncOutcome construction helpers ─────────────────────────────────
 
@@ -86,6 +88,58 @@ function _account_typed_meta_rejects_wrong_field(account: Account<GAMAccountMeta
   return account.metadata.googleAdvertiserId;
 }
 
+// ── AccountNotFoundError is a class adopters can throw from resolve() ─
+
+function _account_not_found_throw_pattern(): Promise<Account<GAMAccountMeta> | null> {
+  // Adopters who prefer throw-based error flow over null returns can throw
+  // this; framework catches and emits ACCOUNT_NOT_FOUND.
+  throw new AccountNotFoundError();
+}
+
+// ── AccountStore.resolution is 'explicit' | 'implicit' (or absent) ────
+
+function _account_store_resolution_implicit(): Pick<AccountStore<GAMAccountMeta>, 'resolution'> {
+  return { resolution: 'implicit' };
+}
+
+function _account_store_resolution_invalid_value(): Pick<AccountStore<GAMAccountMeta>, 'resolution'> {
+  // @ts-expect-error — only 'explicit' | 'implicit' allowed.
+  return { resolution: 'auto' };
+}
+
+// ── DecisioningCapabilities.supportedBillings is a closed enum ────────
+
+function _capabilities_supported_billings_operator(): Pick<DecisioningCapabilities, 'supportedBillings'> {
+  return { supportedBillings: ['operator'] as const };
+}
+
+function _capabilities_supported_billings_invalid(): Pick<DecisioningCapabilities, 'supportedBillings'> {
+  // @ts-expect-error — only 'operator' | 'agent' allowed.
+  return { supportedBillings: ['publisher'] as const };
+}
+
+// ── TargetingCapabilities — nested geo systems compile cleanly ────────
+
+function _targeting_capabilities_nested(): TargetingCapabilities {
+  return {
+    geo_countries: true,
+    geo_metros: { nielsen_dma: true, eurostat_nuts2: true },
+    geo_postal_areas: { us_zip: true, gb_outward: true },
+    keyword_targets: { supported_match_types: ['broad', 'exact'] as const },
+    age_restriction: {
+      supported: true,
+      verification_methods: ['credit_card', 'id_document'] as const,
+    },
+  };
+}
+
+function _targeting_capabilities_rejects_unknown_geo_metro(): TargetingCapabilities {
+  return {
+    // @ts-expect-error — 'made_up_geo_system' is not a known metro identifier.
+    geo_metros: { made_up_geo_system: true },
+  };
+}
+
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
   _ok_returns_sync_kind,
@@ -97,4 +151,11 @@ export const _references = [
   _check_audience_sync,
   _account_with_typed_meta,
   _account_typed_meta_rejects_wrong_field,
+  _account_not_found_throw_pattern,
+  _account_store_resolution_implicit,
+  _account_store_resolution_invalid_value,
+  _capabilities_supported_billings_operator,
+  _capabilities_supported_billings_invalid,
+  _targeting_capabilities_nested,
+  _targeting_capabilities_rejects_unknown_geo_metro,
 ] as const;

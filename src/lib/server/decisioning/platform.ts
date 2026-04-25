@@ -22,6 +22,23 @@ import type { AdCPSpecialism } from '../../types/tools.generated';
  * Top-level platform interface. Adopters implement this; framework wires
  * the wire protocol around it.
  *
+ * **What the framework owns** (platform implementations DON'T see these):
+ * - Wire-shape mapping (MCP tools/list, A2A skill manifest, request/response envelopes)
+ * - Authentication + auth-principal extraction; `accounts.resolve()` is the only
+ *   place the platform translates auth into its tenant model
+ * - Idempotency: dedupe + replay handled before dispatch; platforms see clean traffic
+ * - `dry_run`: framework intercepts `dry_run: true`, validates schema + capability,
+ *   echoes the validated request shape back without dispatching to the platform.
+ *   Platform implementations never see dry-run traffic.
+ * - `context` echo: framework round-trips `context` on every response
+ * - Task envelopes: `submitted` outcomes are wrapped into A2A Task envelopes /
+ *   MCP polling responses; `taskHandle.notify` calls dedupe + retry
+ * - Schema validation: requests fail before reaching the platform; responses are
+ *   shape-validated against the wire schema after the platform returns
+ *
+ * **What the platform owns**: the business decisions in each `SalesPlatform` /
+ * `CreativeTemplatePlatform` / `AudiencePlatform` method. Nothing else.
+ *
  * @template TConfig Platform-specific config typed at the call site.
  *                   Example: `class GAM implements DecisioningPlatform<{ networkId: string }>`.
  * @template TMeta   Platform-specific Account.metadata typed at the call site.

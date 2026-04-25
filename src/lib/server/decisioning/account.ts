@@ -52,9 +52,31 @@ export interface AuthPrincipal {
 
 export interface AccountStore<TMeta = Record<string, unknown>> {
   /**
+   * How buyers reference accounts on this platform.
+   * - `'explicit'` — buyer passes `account_id` inline on every request (Snap,
+   *   Meta, GAM via Network/Company id). The default.
+   * - `'implicit'` — buyer must `sync_accounts` first; subsequent requests are
+   *   resolved from the auth principal's pre-synced linkage (LinkedIn, some
+   *   retail-media operators). Framework refuses inline `account_id` references
+   *   for these platforms.
+   *
+   * Defaults to `'explicit'` when omitted.
+   */
+  readonly resolution?: 'explicit' | 'implicit';
+
+  /**
    * Resolve buyer's AccountReference into the platform's tenant model.
-   * Returns null for unknown / cross-tenant references — framework responds
-   * `ACCOUNT_NOT_FOUND`. Platform-side enforce tenant isolation here.
+   *
+   * Two failure shapes:
+   * - **Unknown / cross-tenant reference**: return `null`. Framework emits
+   *   the spec's fixed `ACCOUNT_NOT_FOUND` envelope. The buyer learns no
+   *   detail beyond "not found" — guarding against principal-enumeration.
+   * - **Transient upstream failure** (DB outage, identity-provider 5xx):
+   *   throw. Framework maps to `SERVICE_UNAVAILABLE` so the buyer can retry.
+   *
+   * Adopters MUST NOT throw `AccountNotFoundError` for upstream-API outages,
+   * env-var misconfiguration, or schema-validation failures. Those go out
+   * as generic throws and become `SERVICE_UNAVAILABLE`.
    */
   resolve(ref: AccountReference): Promise<Account<TMeta> | null>;
 
@@ -69,6 +91,29 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    * list_accounts API surface. Framework wraps with cursor envelope.
    */
   list(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TMeta>>>;
+}
+
+/**
+ * Narrow signal that a supplied account reference doesn't exist or can't be
+ * resolved for the authenticated caller. Adopters who prefer throw-based
+ * error flow over `null` returns can throw this from `AccountStore.resolve`;
+ * framework catches it and emits the same fixed `ACCOUNT_NOT_FOUND` envelope.
+ *
+ * The constructor's `message` is for server-side operator diagnostics only —
+ * the framework emits a fixed `ACCOUNT_NOT_FOUND` envelope regardless, so the
+ * message never reaches the buyer. Operator-side log pipelines may aggregate
+ * this string, so MUST NOT include caller-supplied identifiers (echoed account
+ * refs, request args) — those leak across operator / buyer trust boundaries.
+ *
+ * Use ONLY for the narrow not-found case. Upstream-API outages, misconfigured
+ * env vars, and schema-validation failures should propagate as generic
+ * exceptions and surface to the buyer as `SERVICE_UNAVAILABLE`.
+ */
+export class AccountNotFoundError extends Error {
+  readonly name = 'AccountNotFoundError' as const;
+  constructor(message = 'Account not found') {
+    super(message);
+  }
 }
 
 export interface AccountFilter {

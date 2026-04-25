@@ -59,6 +59,21 @@ export interface SalesPlatform {
    * Mutate an existing buy: bid, budget, dates, status, packages.
    * Async-eligible because some patches trigger approval workflows
    * (e.g., increasing total_budget past a credit-line threshold).
+   *
+   * The patch is the wire shape. Adopters whose underlying platform exposes
+   * action verbs (GAM's `PauseLineItems` / `ResumeLineItems` / `ArchiveLineItems`,
+   * Prebid's action-string convention) dispatch locally on the patch fields:
+   *
+   * ```ts
+   * updateMediaBuy: async (buyId, patch, account) => {
+   *   if (patch.active === false) return this.pause(buyId, account);
+   *   if (patch.active === true)  return this.resume(buyId, account);
+   *   // ... fall through to a generic patch apply
+   * };
+   * ```
+   *
+   * Don't ask the framework for an action-based convenience surface — it
+   * would duplicate the wire shape and drift as the spec evolves.
    */
   updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, account: Account): Promise<AsyncOutcome<MediaBuy>>;
 

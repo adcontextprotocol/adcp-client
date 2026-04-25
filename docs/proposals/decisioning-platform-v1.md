@@ -314,3 +314,16 @@ Production 5.x adopters migrate in a single window.
 Companion file `src/lib/server/decisioning/index.ts` (full TypeScript). Then training-agent migration sketch. Then this scaffold PR.
 
 The locked architecture goes into the type system. That's where the next round of review happens.
+
+## Post-validation amendments
+
+Three migration sketches against real adapter codebases (training-agent, GAM, `scope3data/agentic-adapters`, `prebid/salesagent`) surfaced convergent gaps. The following amendments have been applied to the type scaffold without changing the architecture:
+
+- **`TargetingCapabilities`** (`capabilities.ts`) — placeholder replaced with the per-geo-system shape Scope3 and Prebid both shipped independently. Includes `geo_metros`, `geo_postal_areas`, `geo_proximity`, `age_restriction.verification_methods`, `keyword_targets.supported_match_types`, `negative_keywords.supported_match_types`. Two independent peer codebases converged on this — strong signal.
+- **`ReportingCapabilities.availableDimensions`** — added typed enum (`'geo' | 'device_type' | 'audience' | 'placement' | 'creative' | 'keyword' | 'catalog_item' | 'device_platform'`).
+- **`AccountStore.resolution`** — added `'explicit' | 'implicit'` flag. LinkedIn requires pre-sync (`'implicit'`); GAM/Snap/Meta accept inline `account_id` (`'explicit'`). Defaults to `'explicit'`.
+- **`AccountNotFoundError`** (`account.ts`) — added throw-class for adopters who prefer throw-based not-found signaling. Framework catches and emits the same fixed `ACCOUNT_NOT_FOUND` envelope. Documented narrow-use semantics: never use for upstream-API outages or schema-validation failures.
+- **`DecisioningCapabilities.supportedBillings` + `requireOperatorAuth`** — added for operator-billed retail-media platforms (Criteo, Amazon).
+- **JSDoc clarifications**: `TaskUpdate` is monotonic (bounce-back becomes `failed` + `recovery: 'correctable'` + new task envelope on the buyer's retry); `StatusMappers` is wire-status decoder, not rollup engine; `updateMediaBuy` patches dispatch locally to action verbs in adapter code; framework intercepts `dry_run` and platforms never see dry-run traffic.
+
+Pricing-model enum already covers all 9 AdCP values (`cpm | vcpm | cpc | cpcv | cpv | cpp | cpa | flat_rate | time`); no change needed.

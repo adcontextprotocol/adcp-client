@@ -5,6 +5,14 @@
  * per AdCP-typed status; framework calls them where wire responses need
  * the AdCP-typed value.
  *
+ * **Scope**: each mapper is a wire-status decoder for a single native
+ * status string. Rollup logic — taking N native statuses across multiple
+ * objects (GAM Order + LineItems, Criteo campaign + line items + creatives)
+ * and computing one AdCP-typed status — is platform-specific and lives in
+ * adapter code, NOT here. The mapper answers "what does GAM's `READY` mean
+ * in AdCP terms?"; the adapter answers "if any LineItem is `DISAPPROVED`,
+ * the buy is `rejected`; if all are `DELIVERING`, the buy is `active`".
+ *
  * Status: Preview / 6.0.
  *
  * @public

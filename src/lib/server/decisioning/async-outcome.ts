@@ -115,6 +115,20 @@ export interface TaskHandle<TResult = unknown, TError extends AdcpStructuredErro
   notify(update: TaskUpdate<TResult, TError>): void;
 }
 
+/**
+ * Task lifecycle: monotonic. A task transitions `progress*` → `completed | failed`,
+ * and `completed` / `failed` are terminal.
+ *
+ * Bounce-back workflows (e.g., GAM `PENDING_APPROVAL → DRAFT` after a trafficker
+ * rejects the line item, then re-submitted) are NOT modeled as a non-terminal
+ * rejection here. The platform should emit `failed` with `recovery: 'correctable'`
+ * carrying the rejection reason; the buyer issues a fresh `createMediaBuy` (or
+ * `updateMediaBuy`) with the corrected payload, which receives a new task envelope.
+ *
+ * This keeps the type-level contract simple at the cost of losing platform-side
+ * task-id correlation on bounce-back. Revisit at v1.1 if other platforms
+ * (broadcast TV, DOOH) report the same idiom.
+ */
 export type TaskUpdate<TResult = unknown, TError extends AdcpStructuredError = AdcpStructuredError> =
   | TaskUpdateProgress
   | TaskUpdateCompleted<TResult>

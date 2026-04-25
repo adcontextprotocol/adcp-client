@@ -48,6 +48,8 @@ export type {
   AdcpAccountStatus,
 } from './account';
 
+export { AccountNotFoundError } from './account';
+
 // Native status mapping
 export type { StatusMappers, AdcpMediaBuyStatus, AdcpCreativeStatus, AdcpPlanStatus } from './status-mappers';
 
