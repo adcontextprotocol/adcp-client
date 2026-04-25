@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import { getMCPTaskStatus, listMCPTasks } from '../protocols/mcp-tasks';
+import { getA2ATaskStatus } from '../protocols/a2a';
 import { getAuthToken } from '../auth';
 import { is401Error, adcpErrorToTypedError } from '../errors';
 import type { ADCPError } from '../errors';
@@ -912,11 +913,19 @@ export class TaskExecutor {
       await this.config.webhookManager.registerWebhook(agent, taskId, webhookUrl);
     }
 
+    // For A2A agents, `tasks/get` is a native JSON-RPC method keyed on the
+    // server-assigned Task.id — not the client-minted correlation UUID. Extract
+    // it from the initial message/send response so the polling closures below
+    // can pass it to getA2ATaskStatus.
+    const a2aServerTaskId =
+      agent.protocol === 'a2a' ? (this.responseParser.getTaskId(response) ?? undefined) : undefined;
+
     const submitted: SubmittedContinuation<T> = {
       taskId,
       webhookUrl,
-      track: () => this.getTaskStatus(agent, taskId),
-      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, taskId, pollInterval),
+      track: () => this.getTaskStatus(agent, taskId, a2aServerTaskId),
+      waitForCompletion: (pollInterval = 60000) =>
+        this.pollTaskCompletion<T>(agent, taskId, pollInterval, a2aServerTaskId),
     };
 
     return {
@@ -1125,7 +1134,7 @@ export class TaskExecutor {
     }
   }
 
-  async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
+  async getTaskStatus(agent: AgentConfig, taskId: string, a2aServerTaskId?: string): Promise<TaskInfo> {
     // Use MCP Tasks protocol method when available
     if (agent.protocol === 'mcp') {
       const authToken = getAuthToken(agent);
@@ -1135,6 +1144,20 @@ export class TaskExecutor {
         if (is401Error(err)) throw err;
         // Fall through to tool call if protocol method is not supported
       }
+    }
+    // Use the native A2A tasks/get JSON-RPC method for A2A agents. The A2A
+    // protocol's tasks/get is distinct from the AdCP tool of the same name —
+    // routing it through callTool/message/send causes conformant sellers to
+    // reject with A2AInvocationError (no such AdCP tool registered).
+    if (agent.protocol === 'a2a') {
+      if (!a2aServerTaskId) {
+        throw new Error(
+          `A2A polling requires the server-assigned Task.id from the initial message/send response. ` +
+            `Ensure the A2A seller returns a Task with a non-empty id on the submitted arm. ` +
+            `(client task id: ${taskId})`
+        );
+      }
+      return await getA2ATaskStatus(agent.agent_uri, a2aServerTaskId, getAuthToken(agent));
     }
     const response = (await ProtocolClient.callTool(
       agent,
@@ -1149,9 +1172,14 @@ export class TaskExecutor {
     return (response.task as TaskInfo) || (response as unknown as TaskInfo);
   }
 
-  async pollTaskCompletion<T>(agent: AgentConfig, taskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
+  async pollTaskCompletion<T>(
+    agent: AgentConfig,
+    taskId: string,
+    pollInterval = 60000,
+    a2aServerTaskId?: string
+  ): Promise<TaskResult<T>> {
     while (true) {
-      const status = await this.getTaskStatus(agent, taskId);
+      const status = await this.getTaskStatus(agent, taskId, a2aServerTaskId);
 
       if (status.status === ADCP_STATUS.COMPLETED) {
         const pollSuccess = this.isOperationSuccess(status.result);

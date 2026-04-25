@@ -16,7 +16,7 @@ export async function closeConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise
   }
 }
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
-export { callA2ATool } from './a2a';
+export { callA2ATool, getA2ATaskStatus } from './a2a';
 export {
   callMCPToolWithTasks,
   getMCPTaskStatus,

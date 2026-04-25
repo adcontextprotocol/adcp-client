@@ -13,6 +13,7 @@ import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
+import type { TaskInfo } from '../core/ConversationTypes';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
@@ -372,4 +373,78 @@ async function callA2AToolImpl(
 
     throw error;
   }
+}
+
+/**
+ * Poll an A2A task's current state via the native `tasks/get` JSON-RPC method.
+ * Parallel to `getMCPTaskStatus`. Intentionally not signed — `tasks/get` is a
+ * read-only lifecycle method, matching the convention in `getMCPTaskStatus`.
+ *
+ * The `a2aTaskId` must be the server-assigned A2A `Task.id` from the initial
+ * `message/send` response — NOT the client-minted correlation UUID.
+ */
+export async function getA2ATaskStatus(
+  agentUrl: string,
+  a2aTaskId: string,
+  authToken: string | undefined
+): Promise<TaskInfo> {
+  if (!a2aTaskId || typeof a2aTaskId !== 'string' || a2aTaskId.length > 256) {
+    throw new Error(`Invalid a2aTaskId: expected non-empty string (max 256 chars)`);
+  }
+  const client = await getOrCreateA2AClient(agentUrl, authToken);
+  try {
+    const task = await client.getTask({ id: a2aTaskId });
+    return mapA2ATaskToTaskInfo(task);
+  } catch (error: unknown) {
+    if (is401Error(error)) {
+      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken));
+      const oauthMetadata = await discoverOAuthMetadata(agentUrl);
+      throw new AuthenticationRequiredError(agentUrl, oauthMetadata || undefined);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Map an A2A `Task` returned by `tasks/get` to the AdCP `TaskInfo` shape.
+ *
+ * Key invariant: A2A `Task.status.state` is always `'completed'` for submitted
+ * AdCP arms because the adapter marks the transport call as done while the AdCP
+ * work is queued (see a2a-adapter.ts commentary). The real AdCP lifecycle status
+ * lives in `artifact.parts[last-data-part].data.status`; `Task.state` is only
+ * reliable for distinguishing terminal transport failures (`'failed'`/`'canceled'`).
+ */
+function mapA2ATaskToTaskInfo(task: {
+  id: string;
+  status: { state: string; timestamp?: string };
+  artifacts?: Array<{
+    parts: Array<{ kind: string; data?: Record<string, unknown> }>;
+    metadata?: Record<string, unknown>;
+  }>;
+}): TaskInfo {
+  const lastArtifact = task.artifacts?.[task.artifacts.length - 1];
+  const lastDataPart = lastArtifact?.parts.filter(p => p.kind === 'data').slice(-1)[0] as
+    | { kind: 'data'; data: Record<string, unknown> }
+    | undefined;
+
+  const adcpStatus = lastDataPart?.data?.status as string | undefined;
+  const a2aState = task.status.state;
+
+  // Prefer the AdCP-level status embedded in the artifact payload; fall back to
+  // the A2A transport state (working, submitted, failed, canceled, etc.) when
+  // no artifact payload is present yet.
+  const status = adcpStatus ?? a2aState;
+
+  const timestampMs = task.status.timestamp ? new Date(task.status.timestamp).getTime() : Date.now();
+
+  return {
+    taskId: task.id,
+    status,
+    // A2A tasks/get does not carry the originating AdCP tool name.
+    taskType: 'unknown',
+    createdAt: timestampMs,
+    updatedAt: Date.now(),
+    result: lastDataPart?.data,
+    error: a2aState === 'failed' || a2aState === 'rejected' ? `A2A task ${task.id} ${a2aState}` : undefined,
+  };
 }
