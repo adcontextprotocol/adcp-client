@@ -1049,6 +1049,18 @@ export interface ContextProvenanceEntry {
 }
 
 /**
+ * Shared contract for every StoryboardStepHint discriminated-union member.
+ * Renderers that don't recognise a `kind` should still display `message` verbatim.
+ * Pass `StoryboardStepHintBase<string>` when you need a supertype that accepts any kind.
+ */
+export interface StoryboardStepHintBase<K extends string> {
+  /** Discriminator. Always a string literal at the kind-interface level. */
+  kind: K;
+  /** Human-readable summary. Always present so unknown-kind renderers still work. */
+  message: string;
+}
+
+/**
  * Non-fatal hint attached to a step result. Today the runner only emits
  * `context_value_rejected` — more kinds may be added over time. The
  * discriminator lives on `kind` so consumers that only know how to render
@@ -1063,10 +1075,7 @@ export type StoryboardStepHint = ContextValueRejectedHint;
  * identical to an SDK bug; with it, the caller can see the substitution
  * chain (step → context key → response path) and go talk to the seller.
  */
-export interface ContextValueRejectedHint {
-  kind: 'context_value_rejected';
-  /** Pre-formatted human-readable message suitable for a console line. */
-  message: string;
+export interface ContextValueRejectedHint extends StoryboardStepHintBase<'context_value_rejected'> {
   /** Context key whose value matched the rejected request field. */
   context_key: string;
   /** Step id that wrote the context key. */

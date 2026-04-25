@@ -263,6 +263,7 @@ export {
   type StoryboardStepPreview,
   type StoryboardStepResult,
   type StoryboardStepHint,
+  type StoryboardStepHintBase,
   type ContextValueRejectedHint,
   type ContextProvenanceEntry,
   type StoryboardPhaseResult,

@@ -32,6 +32,7 @@ export type {
   ContextInput,
   ContextProvenanceEntry,
   ContextValueRejectedHint,
+  StoryboardStepHintBase,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,
