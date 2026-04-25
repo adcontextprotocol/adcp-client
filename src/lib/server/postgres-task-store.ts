@@ -155,27 +155,43 @@ export class PostgresTaskStore implements TaskStore {
     }
   }
 
+  /**
+   * Create a new task. Pass `taskParams.taskId` to use a caller-supplied ID verbatim
+   * (useful for compliance-controller scenarios where the runner needs deterministic
+   * task IDs). If omitted, a random hex ID is generated. Throws if the supplied ID
+   * already exists.
+   */
   async createTask(
-    taskParams: CreateTaskOptions,
+    taskParams: CreateTaskOptions & { taskId?: string },
     requestId: RequestId,
     request: Request,
     _sessionId?: string
   ): Promise<Task> {
-    const taskId = randomBytes(16).toString('hex');
+    const taskId = taskParams.taskId ?? randomBytes(16).toString('hex');
     const ttl = taskParams.ttl ?? null;
     const pollInterval = taskParams.pollInterval ?? 1000;
 
-    const { rows } = await this.db.query(
-      `INSERT INTO ${this.table} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
-       VALUES ($1, 'working', $2, $3, $4, $5,
-               CASE WHEN $2::integer IS NOT NULL
-                    THEN NOW() + ($2::integer || ' milliseconds')::interval
-                    ELSE NULL END)
-       RETURNING *`,
-      [taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)]
-    );
+    try {
+      const { rows } = await this.db.query(
+        `INSERT INTO ${this.table} (task_id, status, ttl, poll_interval, request_id, request, expires_at)
+         VALUES ($1, 'working', $2, $3, $4, $5,
+                 CASE WHEN $2::integer IS NOT NULL
+                      THEN NOW() + ($2::integer || ' milliseconds')::interval
+                      ELSE NULL END)
+         RETURNING *`,
+        [taskId, ttl, pollInterval, String(requestId), JSON.stringify(request)]
+      );
 
-    return rowToTask(rows[0] as unknown as TaskRow);
+      return rowToTask(rows[0] as unknown as TaskRow);
+    } catch (err) {
+      // Unique constraint violation — a task with this ID already exists.
+      if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505') {
+        throw new Error(
+          `Task with ID ${taskId.slice(0, 256)} already exists. Use a different taskId or retrieve the existing task via getTask().`
+        );
+      }
+      throw err;
+    }
   }
 
   async getTask(taskId: string, _sessionId?: string): Promise<Task | null> {

@@ -119,6 +119,30 @@ describe('PostgresTaskStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' },
     assert.strictEqual(task.pollInterval, 1000);
   });
 
+  test('createTask accepts caller-supplied taskId', async () => {
+    const suppliedId = 'storyboard-deterministic-id-001';
+    const task = await store.createTask({ taskId: suppliedId, ttl: 60000 }, '1', fakeRequest);
+
+    assert.strictEqual(task.taskId, suppliedId);
+    assert.strictEqual(task.status, 'working');
+
+    const fetched = await store.getTask(suppliedId);
+    assert.strictEqual(fetched.taskId, suppliedId);
+  });
+
+  test('createTask throws on duplicate caller-supplied taskId', async () => {
+    const suppliedId = 'duplicate-id-test';
+    await store.createTask({ taskId: suppliedId }, '1', fakeRequest);
+
+    await assert.rejects(() => store.createTask({ taskId: suppliedId }, '2', fakeRequest), /already exists/);
+  });
+
+  test('createTask with no taskId generates a random id each call', async () => {
+    const t1 = await store.createTask({}, '1', fakeRequest);
+    const t2 = await store.createTask({}, '2', fakeRequest);
+    assert.notStrictEqual(t1.taskId, t2.taskId);
+  });
+
   test('getTask returns created task', async () => {
     const created = await store.createTask({ ttl: 60000 }, '1', fakeRequest);
     const fetched = await store.getTask(created.taskId);
