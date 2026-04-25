@@ -1459,6 +1459,8 @@ const IDEMP: ToolAnnotation = { readOnlyHint: false, idempotentHint: true };
 // version: makes our AJV validator authoritative on both transports
 // without destroying args on MCP when the SDK's tool dispatcher would
 // otherwise coerce `undefined` into the handler for schemaless tools.
+// This also keeps `tools/list` payloads small for LLM consumers (full
+// schemas live in `docs/llms.txt`, SKILL.md files, and `schemas/cache/`).
 const PASSTHROUGH_INPUT_SCHEMA = z.object({}).passthrough();
 
 const TOOL_META: Record<string, ToolMeta> = {
@@ -2702,10 +2704,23 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // keeps every key intact, so args still reach the closure.
       //
       // Trade-off: MCP `tools/list` publishes `{ type: 'object' }` for
-      // every tool (no per-tool parameter schema). AdCP-native
-      // discovery via `get_adcp_capabilities` already works over both
-      // transports; upstream #3057 proposes a `get_schema` capability
-      // tool for per-tool shape discovery.
+      // every tool (no per-tool parameter schema). This is intentional,
+      // not a wiring gap — inlining ~50 full request schemas in
+      // `tools/list` would balloon the context window for LLM consumers,
+      // who are the primary readers of MCP discovery. Tool shapes live
+      // in `docs/llms.txt`, the SKILL.md files, and `schemas/cache/`,
+      // which curated agents read on demand instead of paying the cost
+      // every connection. AdCP-native discovery via `get_adcp_capabilities`
+      // already works over both transports; upstream #3057 proposes a
+      // `get_schema` capability tool for programmatic per-tool shape
+      // discovery.
+      //
+      // Implication for downstream consumers: if you need a tool's shape
+      // (cross-version field-stripping, gating, validation), read raw
+      // JSON from `schemas/cache/{version}/` via `schema-loader.ts` —
+      // see `schemaAllowsTopLevelField` for the canonical pattern (#940).
+      // Don't try to recover the shape from `tools/list`; it's empty by
+      // design and will fail open.
       server.registerTool(
         toolName,
         {
