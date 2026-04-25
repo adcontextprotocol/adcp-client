@@ -328,6 +328,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   },
 
   get_media_buy_delivery(_step, context, _options) {
+    // Same as get_media_buys: omit media_buy_ids when absent so storyboards
+    // that don't provide a context ID don't reach the agent with ["unknown"].
     if (!context.media_buy_id) return {};
     return { media_buy_ids: [context.media_buy_id] };
   },
