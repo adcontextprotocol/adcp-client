@@ -12,11 +12,12 @@ import type { SignerKey } from './signer';
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /**
- * Resolve the default upstream fetch at call time rather than at module
- * import so (a) polyfills / patches that run after this module loads still
- * take effect, and (b) the helper throws a clear error on environments
- * lacking global `fetch` instead of binding `undefined` at import time and
- * failing cryptically on first request.
+ * Resolve `globalThis.fetch` at the moment of each outbound request — not at
+ * module import, and not at factory call. Late resolution lets a polyfill
+ * installed after `buildAgentSigningFetch` returns (but before first request)
+ * still take effect. The helper throws a clear error on environments lacking
+ * global `fetch` instead of binding `undefined` and failing cryptically inside
+ * the signing pipeline.
  */
 function defaultUpstream(): FetchLike {
   const f = (globalThis as { fetch?: FetchLike }).fetch;
@@ -182,7 +183,12 @@ export interface BuildAgentSigningFetchOptions {
  */
 export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): FetchLike {
   const { signing, getCapability } = options;
-  const upstream = options.upstream ?? defaultUpstream();
+  // Resolve `globalThis.fetch` per-call when no explicit upstream was passed
+  // so a polyfill installed between factory creation and first request still
+  // takes effect. Eager resolution would freeze whatever was global at
+  // factory-call time.
+  const explicitUpstream = options.upstream;
+  const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
   const key = toSignerKey(signing);
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
