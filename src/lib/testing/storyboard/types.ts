@@ -49,7 +49,7 @@ export interface Storyboard {
    * When `raw_capabilities` is not available (e.g. the agent doesn't expose
    * `get_adcp_capabilities`), the gate is a no-op and the storyboard runs.
    */
-  requires_capability?: { path: string; equals: unknown };
+  requires_capability?: { path: string; equals: boolean | string | number | null };
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
   requires_scenarios?: string[];
   agent: {
@@ -850,7 +850,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   grader_skipped: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
-  capability_unsupported: 'not_applicable',
+  capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
   live_side_effect_opt_in_required: 'unsatisfied_contract',

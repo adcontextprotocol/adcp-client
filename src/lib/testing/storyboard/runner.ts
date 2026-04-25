@@ -411,7 +411,7 @@ function buildCapabilityUnsupportedResult(
     passed: true,
     skipped: true,
     skip_reason: 'capability_unsupported',
-    skip: { reason: 'not_applicable', detail },
+    skip: { reason: 'unsatisfied_contract', detail },
     duration_ms: 0,
     validations: [],
     context: {},

@@ -88,7 +88,7 @@ describe('requires_capability storyboard skip gate (#933)', () => {
 
     // Structured skip block: canonical spec reason + human-readable detail
     assert.ok(step.skip, 'step.skip block present');
-    assert.equal(step.skip.reason, 'not_applicable', 'canonical spec reason');
+    assert.equal(step.skip.reason, 'unsatisfied_contract', 'canonical spec reason');
     assert.ok(
       step.skip.detail.includes('adcp.idempotency.supported'),
       `detail must mention the capability path: ${step.skip.detail}`
@@ -168,11 +168,11 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     assert.equal(resolveCapabilityPath({}, 'adcp.idempotency.supported'), undefined);
   });
 
-  test('DETAILED_SKIP_TO_CANONICAL maps capability_unsupported to not_applicable', () => {
+  test('DETAILED_SKIP_TO_CANONICAL maps capability_unsupported to unsatisfied_contract', () => {
     const { DETAILED_SKIP_TO_CANONICAL } = require('../../dist/lib/testing/storyboard/types.js');
     assert.equal(
       DETAILED_SKIP_TO_CANONICAL['capability_unsupported'],
-      'not_applicable',
+      'unsatisfied_contract',
       'canonical spec reason for capability_unsupported'
     );
   });
