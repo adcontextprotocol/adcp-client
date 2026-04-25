@@ -400,8 +400,56 @@ export type StoryboardValidationCheck =
   // Cross-cutting
   | 'resource_equals_agent_url'
   | 'any_of'
+  // A2A wire-shape checks (transport-specific; skipped on non-A2A runs)
+  | 'a2a_submitted_artifact'
   // Cross-step checks
   | 'refs_resolve';
+
+/**
+ * Captured A2A wire shape from a `message/send` JSON-RPC response. The
+ * runner records this when the protocol is `a2a` and a step's tool
+ * dispatch went through the SDK client; A2A wire-shape validations
+ * (`a2a_submitted_artifact`) consume it. Absent on MCP runs and on A2A
+ * runs where the capture didn't fire (raw probe path, fetch error).
+ *
+ * The `result` field is typed as `unknown` because the JSON-RPC
+ * envelope is observed at the wire — the validation engine narrows it
+ * (e.g. asserting `kind === 'task'`) and reports specific failures
+ * when the shape doesn't match. Doing the narrowing in the type would
+ * lock callers into a specific A2A SDK version; doing it in the
+ * validator preserves the runner's "report what you saw" contract.
+ *
+ * **Redaction posture.** The runner runs `redactSecrets` over `result`
+ * and `envelope` before populating this struct, matching the
+ * redaction the runner applies to `RunnerResponseRecord.payload` on
+ * the success path. AdCP-style secret-shaped fields inside the
+ * DataPart payload (`api_key`, `client_secret`, `access_token`, etc.)
+ * are replaced with `[redacted]`; bearer-token substrings in raw
+ * bodies were already redacted at fetch-capture time. Custom
+ * validators reading this field don't need to re-redact, but SHOULD
+ * avoid logging it through other channels (LLM context, debug sinks,
+ * third-party telemetry) without confirming the same redaction
+ * posture is acceptable for that channel.
+ */
+export interface A2ATaskEnvelope {
+  /**
+   * Parsed JSON-RPC `result` field — typically an A2A `Task`
+   * (`{ kind: 'task', id, status: { state }, artifacts: [...] }`) on
+   * success. Absent (set to `null`) when the JSON-RPC response was an
+   * error envelope; consumers should also inspect `envelope.error`.
+   */
+  result: unknown;
+  /**
+   * Full JSON-RPC envelope (`{ jsonrpc, id, result?, error? }`).
+   * Useful for assertions that need to distinguish a JSON-RPC error
+   * from a success-with-failure-task (e.g. `Task.state === 'failed'`
+   * is success-with-failure; `error.code === -32602` is a JSON-RPC
+   * error).
+   */
+  envelope: { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: unknown };
+  /** HTTP status of the captured response (200 on JSON-RPC success). */
+  http_status: number;
+}
 
 /**
  * Set of references for `refs_resolve`. `from` picks the root object —

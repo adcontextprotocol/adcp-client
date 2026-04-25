@@ -8,6 +8,7 @@
 
 import { getOrCreateClient, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import { closeConnections } from '../../protocols';
+import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { executeStoryboardTask } from './task-map';
 import {
   extractContextWithProvenance,
@@ -25,6 +26,7 @@ import { runValidations, type ValidationContext } from './validations';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
+import { schemaAllowsTopLevelField } from '../../validation/schema-loader';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -54,6 +56,7 @@ interface PreSeededInput {
   attach: boolean;
 }
 import type {
+  A2ATaskEnvelope,
   AssertionResult,
   BranchSetSpec,
   ContextProvenanceEntry,
@@ -1438,7 +1441,7 @@ async function executeStep(
   // match the options. Enforcing this here (after builder + sample_request)
   // prevents session-key divergence across create/get/update/delete steps
   // when individual builders or sample_request YAML omit brand.
-  request = applyBrandInvariant(request, options);
+  request = applyBrandInvariant(request, options, effectiveStep.task);
 
   // Mutating AdCP requests require idempotency_key per spec. Storyboard
   // yamls generally omit it so authors don't have to remember it on every
@@ -1504,6 +1507,7 @@ async function executeStep(
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
+  let a2aEnvelope: A2ATaskEnvelope | undefined;
 
   if (useRawProbe) {
     const started = Date.now();
@@ -1539,13 +1543,46 @@ async function executeStep(
       };
     }
   } else {
-    const run = await runStep(step.title, effectiveStep.task, () =>
+    // For A2A runs, wrap the SDK dispatch in `withRawResponseCapture`
+    // so storyboard validations can assert on the JSON-RPC `Task`
+    // envelope the seller emitted (e.g. `a2a_submitted_artifact`
+    // checks `Task.state` + `artifact.metadata.adcp_task_id` placement).
+    // MCP path stays unwrapped — the SDK envelope is reconstructed from
+    // `taskResult` already and capture would only add overhead.
+    //
+    // Selection note: gate on `options.protocol === 'a2a'` because
+    // that's the only signal available at this point — discovery
+    // hasn't run yet in `runStoryboardStep` (the runner branches off
+    // `agentTools` later). If a future "auto-detect protocol" flow
+    // lands, key the capture off the negotiated transport instead.
+    const captureA2a = options.protocol === 'a2a';
+    let a2aCaptures: RawHttpCapture[] | undefined;
+    const dispatch = () =>
       executeStoryboardTask(client, effectiveStep.task, request, {
         skipIdempotencyAutoInject: testsMissingIdempotencyKey,
-      })
-    );
+      });
+    const run = await runStep(step.title, effectiveStep.task, async () => {
+      if (!captureA2a) return dispatch();
+      try {
+        const { result: dispatchResult, captures } = await withRawResponseCapture(dispatch);
+        a2aCaptures = captures;
+        return dispatchResult;
+      } catch (err) {
+        // `withRawResponseCapture` attaches partial captures to the
+        // thrown error so we still get the wire-shape envelope when
+        // the SDK threw mid-parse (e.g. agent emitted malformed JSON).
+        // Bare-throw cases (network errors, no captures attached)
+        // leave `a2aCaptures` undefined and the validator self-skips.
+        const partial = getCapturesFromError(err);
+        if (partial) a2aCaptures = partial;
+        throw err;
+      }
+    });
     taskResult = run.result;
     stepResult = run.step;
+    if (captureA2a && a2aCaptures) {
+      a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+    }
     if (taskResult) {
       responseRecord = {
         transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
@@ -1631,6 +1668,7 @@ async function executeStep(
       request: requestRecord,
       ...(responseRecord && { response: responseRecord }),
       storyboardContext: context,
+      ...(a2aEnvelope && { a2aEnvelope }),
     };
     validations = runValidations(resolvedValidations, vctx);
   }
@@ -1733,7 +1771,10 @@ async function executeStep(
     passed: passed && allValidationsPassed,
     expect_error: step.expect_error,
     duration_ms: stepResult.duration_ms,
-    response: taskResult?.data,
+    // Legacy `response` field (new code reads `response_record`).
+    // Redact in case a downstream consumer still keys off it; the
+    // modern `response_record.payload` path is already redacted.
+    response: redactSecrets(taskResult?.data),
     validations,
     context: updatedContext,
     ...(runState.contextProvenance &&
@@ -1888,6 +1929,102 @@ function findPriorProbe(priorStepResults: Map<string, StoryboardStepResult>): Ht
     if (resp && typeof resp === 'object' && 'url' in resp && 'status' in resp) return resp;
   }
   return undefined;
+}
+
+/**
+ * Reduce the captured fetch traffic for an A2A step into the
+ * `A2ATaskEnvelope` validations consume. The A2A SDK fires multiple
+ * requests per call (`/.well-known/agent-card.json` discovery on
+ * fresh clients, then a `message/send` POST), and a single dispatch
+ * may also poll `tasks/get` afterwards. We pick the capture whose
+ * REQUEST body declares `method: 'message/send'`; if no capture
+ * declares the method we fall back to the last POST with a
+ * JSON-RPC-shaped body. GET captures and non-JSON bodies are
+ * skipped — `undefined` here surfaces as `not_applicable` in the
+ * validator, which is more useful than a garbage envelope.
+ *
+ * Captured response bodies pass through `redactSecrets` before
+ * landing in `ValidationContext.a2aEnvelope`. The bearer-token
+ * regex in `wrapFetchWithCapture` only catches `Bearer <token>`
+ * substrings; AdCP-style secret-shaped fields (`api_key`,
+ * `client_secret`, `access_token`) inside a DataPart payload only
+ * get redacted here. Failure paths thread the envelope into
+ * `ValidationResult.actual.failures[].actual` which lands in
+ * persisted compliance reports — redacting at capture parse time
+ * keeps that surface consistent with `responseRecord.payload`,
+ * which the runner already redacts on the success path.
+ */
+function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2ATaskEnvelope | undefined {
+  let messageSendIdx = -1;
+  let lastPostIdx = -1;
+  for (let i = captures.length - 1; i >= 0; i--) {
+    const cap = captures[i];
+    if (!cap || cap.method !== 'POST') continue;
+    if (lastPostIdx === -1) lastPostIdx = i;
+    // The fetch wrapper doesn't capture the request body, so disambiguate
+    // by parsing the response and checking for an A2A `Task` shape on
+    // the result. `tasks/get` and `message/send` both return tasks, but
+    // only `message/send` is the immediate response we want to assert
+    // on for submitted-arm shape checks. When the runner adds polling,
+    // we'd need request-body capture to distinguish reliably; for v0
+    // the last POST is `message/send` because the SDK doesn't poll
+    // synchronously after a Task with terminal state.
+    if (messageSendIdx === -1) {
+      const env = tryParseJsonRpcEnvelope(cap.body);
+      if (env && env.result !== undefined && isTaskShape(env.result)) {
+        messageSendIdx = i;
+      }
+    }
+  }
+  const idx = messageSendIdx !== -1 ? messageSendIdx : lastPostIdx;
+  if (idx === -1) return undefined;
+  const cap = captures[idx]!;
+  const envelope = tryParseJsonRpcEnvelope(cap.body);
+  if (!envelope) return undefined;
+  // `envelope.result` mirrors the JSON-RPC envelope as observed —
+  // present when the response carried a `result`, absent when it
+  // carried `error`. The convenience `result` field at the top level
+  // coalesces undefined to `null` so validators reading the typed
+  // `A2ATaskEnvelope.result` get a stable shape; the inner
+  // `envelope.result` keeps presence-of-key fidelity for validators
+  // that need to distinguish "result was null" from "result was
+  // omitted". Both paths run through `redactSecrets`.
+  const redactedResult = envelope.result !== undefined ? redactSecrets(envelope.result) : null;
+  return {
+    result: redactedResult,
+    envelope: {
+      ...(envelope.jsonrpc !== undefined && { jsonrpc: envelope.jsonrpc }),
+      ...(envelope.id !== undefined && { id: envelope.id }),
+      ...(envelope.result !== undefined && { result: redactedResult }),
+      ...(envelope.error !== undefined && { error: redactSecrets(envelope.error) }),
+    },
+    http_status: cap.status,
+  };
+}
+
+function tryParseJsonRpcEnvelope(
+  body: string
+): { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: unknown } | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const envelope = parsed as { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: unknown };
+  if (envelope.jsonrpc !== '2.0') return undefined;
+  if (envelope.result === undefined && envelope.error === undefined) return undefined;
+  return envelope;
+}
+
+function isTaskShape(result: unknown): boolean {
+  return (
+    result != null &&
+    typeof result === 'object' &&
+    !Array.isArray(result) &&
+    (result as { kind?: unknown }).kind === 'task'
+  );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -2046,43 +2183,66 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
  * created by earlier steps.
  *
  * This helper runs after builder / sample_request resolution and writes the
- * run-scoped brand into both addressing forms:
+ * run-scoped brand into the addressing forms the tool's schema allows:
  *
- *   - Top-level `brand` — for tools whose schema declares it (e.g.
- *     `get_products`, `create_media_buy`, signal tools).
- *   - `account.brand` — for tools whose schema declares `account` but not
- *     top-level `brand` (e.g. `get_media_buys`, `get_media_buy_delivery`,
- *     `list_creatives`). When the incoming request has no `account`, we
- *     construct one from `resolveAccount(options)` so the scoping survives
- *     `adaptRequestForServerVersion`'s schema-aware field stripping.
+ *   - Top-level `brand` — only when the tool's request schema declares it
+ *     (e.g. `get_products`, `create_media_buy`, signal tools). Governance
+ *     tools like `sync_plans` do not declare `brand` at the request root
+ *     (brand belongs inside each `Plan` object) — injecting it would fail
+ *     the framework's strict AJV validation (#940).
+ *   - `account.brand` — merged into an existing `account` object only when
+ *     it uses the natural-key variant (`{brand, operator, sandbox?}`). The
+ *     `{account_id}` variant is closed (`additionalProperties: false`); merging
+ *     `brand` into it produces a payload that matches neither `oneOf` branch
+ *     and is rejected by AJV strict request validation. Detect the natural-key
+ *     variant by looking for an existing `brand` or `operator` key.
+ *   - Synthetic `account` — constructed only when the request has no
+ *     `account` AND the tool's schema declares `account` (e.g. `get_media_buys`,
+ *     `list_creatives`). Tools like `sync_plans` that declare neither
+ *     `brand` nor `account` at the root are left unchanged.
  *
- * For any given tool, only one of the two addressing forms is declared in
- * its schema; the other is stripped downstream. Setting both here lets the
- * helper stay tool-agnostic.
- *
- * `AccountReference` is a union of `{account_id}` or `{brand, operator, sandbox?}`.
- * Injecting `brand` into an `{account_id}`-branch account still passes schema
- * validation but is semantically redundant.
+ * When `taskName` is omitted or the schema is unavailable (not synced yet),
+ * the function fails open and injects as before. Schema checks use raw JSON
+ * reads, not AJV internals.
  */
 export function applyBrandInvariant(
   request: Record<string, unknown>,
-  options: StoryboardRunOptions
+  options: StoryboardRunOptions,
+  taskName?: string
 ): Record<string, unknown> {
   // Only force the invariant when the caller has actually supplied a brand.
   // Storyboards that don't exercise brand-scoped tools (e.g. security
   // probes) legitimately run without one and should pass through unchanged.
   if (!options.brand && !options.brand_manifest) return request;
   const brand = resolveBrand(options);
-  const result: Record<string, unknown> = { ...request, brand };
+
+  // Gate brand/account injection on the tool's request schema. Tools that
+  // declare `additionalProperties: false` without listing the field will fail
+  // the framework's strict AJV validator if we inject it (#940). Fails open
+  // when taskName is absent or the schema isn't available.
+  const topBrandOk = !taskName || schemaAllowsTopLevelField(taskName, 'brand');
+  const topAccountOk = !taskName || schemaAllowsTopLevelField(taskName, 'account');
+
+  const result: Record<string, unknown> = { ...request };
+  if (topBrandOk) result.brand = brand;
+
   if ('account' in request) {
-    // Caller sent an account — merge brand in when it's a plain object.
-    // Leave non-object values (null, array) alone so intentionally malformed
-    // requests aren't silently "corrected."
+    // Caller sent an account — merge brand in only when it's a plain object
+    // using AccountReference's natural-key variant (`{brand, operator, sandbox?}`).
+    // The `{account_id}` variant is a closed object; merging `brand` would
+    // produce a payload that matches neither `oneOf` branch under strict AJV.
+    // Leave non-object values (null, array) and `{account_id}`-only payloads
+    // alone so intentionally narrow or malformed requests aren't silently
+    // "corrected."
     const existingAccount = request.account;
     if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
-      result.account = { ...(existingAccount as Record<string, unknown>), brand };
+      const acct = existingAccount as Record<string, unknown>;
+      const isNaturalKeyVariant = 'brand' in acct || 'operator' in acct;
+      if (isNaturalKeyVariant) {
+        result.account = { ...acct, brand };
+      }
     }
-  } else {
+  } else if (topAccountOk) {
     // No account on the request — construct one so tools whose schema
     // declares `account` but not top-level `brand` (e.g. get_media_buys,
     // list_creatives) still carry the run-scoped brand on the wire.
