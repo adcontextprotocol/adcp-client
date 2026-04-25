@@ -1404,6 +1404,31 @@ export class TaskExecutor {
         });
       }
 
+      // Paused states: `input-required` and `auth-required`. Polling
+      // alone can't advance these — the buyer must satisfy the paused
+      // condition (supply input / refresh auth) and retry the
+      // original tool call. Return a `TaskResultIntermediate` so the
+      // caller can branch on `result.status`; this mirrors the
+      // synchronous `handleInputRequired` no-handler path
+      // (`success: true` because the task is progressing, not failed).
+      // Without this branch the loop would spin until timeout — the
+      // paused-state regression class flagged by adcp-client#977.
+      if (status.status === ADCP_STATUS.INPUT_REQUIRED || status.status === ADCP_STATUS.AUTH_REQUIRED) {
+        return attachMatch({
+          success: true as const,
+          status: status.status,
+          data: status.result as T,
+          metadata: this.buildMetadata({
+            taskId,
+            taskName: status.taskType,
+            agent,
+            responseTimeMs: Date.now() - status.createdAt,
+            status: status.status,
+            response: status.result,
+          }),
+        });
+      }
+
       await this.sleep(pollInterval);
     }
   }
@@ -1662,7 +1687,8 @@ export class TaskExecutor {
           break;
         case 'failed':
         case 'rejected':
-          callbacks.onTaskFailed?.(task, task.error || 'Task failed');
+        case 'canceled':
+          callbacks.onTaskFailed?.(task, task.error || `Task ${task.status}`);
           break;
         default:
           callbacks.onTaskUpdated?.(task);

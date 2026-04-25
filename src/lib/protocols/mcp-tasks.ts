@@ -87,13 +87,23 @@ function mapMCPTaskToTaskInfo(
   },
   toolName?: string
 ): TaskInfo {
+  // Project `statusMessage → TaskInfo.error` against the
+  // POST-MAPPING AdCP status (not the raw MCP-side status). MCP
+  // Tasks emits `'cancelled'` (British) and never `'rejected'` as a
+  // standard status; checking against the AdCP set after mapping
+  // catches all terminal failures uniformly. Sellers that extend
+  // MCP with custom statuses (e.g. emit `'rejected'` via spec
+  // extension) flow through unchanged via the `default` arm of
+  // {@link mapMCPTaskStatus}.
+  const adcpStatus = mapMCPTaskStatus(task.status);
+  const isTerminalFailure = adcpStatus === 'failed' || adcpStatus === 'rejected' || adcpStatus === 'canceled';
   return {
     taskId: task.taskId,
-    status: mapMCPTaskStatus(task.status),
+    status: adcpStatus,
     taskType: toolName ?? 'unknown',
     createdAt: new Date(task.createdAt).getTime(),
     updatedAt: new Date(task.lastUpdatedAt).getTime(),
-    error: ['failed', 'rejected', 'canceled'].includes(task.status) ? task.statusMessage : undefined,
+    error: isTerminalFailure ? task.statusMessage : undefined,
   };
 }
 
