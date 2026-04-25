@@ -265,6 +265,8 @@ export {
   type StoryboardStepHint,
   type ContextValueRejectedHint,
   type ShapeDriftHint,
+  type ShapeDriftObservedVariant,
+  type StoryboardStepHintBase,
   type ContextProvenanceEntry,
   type StoryboardPhaseResult,
   type StoryboardResult,

@@ -1019,10 +1019,25 @@ export interface ContextProvenanceEntry {
 }
 
 /**
+ * Shared contract every `StoryboardStepHint` discriminated-union member
+ * extends. Renderers that don't recognise a `kind` should still display
+ * `message` verbatim — this base interface enforces that invariant at
+ * compile time so future kinds (#946 / #947 / #948 / #949) can't drop it.
+ *
+ * The `K` type parameter pins each kind's discriminator literal at the
+ * declaration site (e.g. `extends StoryboardStepHintBase<'shape_drift'>`).
+ */
+export interface StoryboardStepHintBase<K extends string> {
+  /** Discriminator. Always a string literal at the kind-interface level. */
+  kind: K;
+  /** Human-readable summary. Always present so unknown-kind renderers still work. */
+  message: string;
+}
+
+/**
  * Non-fatal hint attached to a step result. More kinds may be added over
- * time. The discriminator lives on `kind` so consumers that only know how
- * to render a subset can ignore the rest; `message` is always present as a
- * human-readable fallback.
+ * time (tracked in #935). The discriminator lives on `kind`; consumers that
+ * only know how to render a subset can fall back to `message` for the rest.
  */
 export type StoryboardStepHint = ContextValueRejectedHint | ShapeDriftHint;
 
@@ -1033,10 +1048,8 @@ export type StoryboardStepHint = ContextValueRejectedHint | ShapeDriftHint;
  * identical to an SDK bug; with it, the caller can see the substitution
  * chain (step → context key → response path) and go talk to the seller.
  */
-export interface ContextValueRejectedHint {
-  kind: 'context_value_rejected';
-  /** Pre-formatted human-readable message suitable for a console line. */
-  message: string;
+export interface ContextValueRejectedHint
+  extends StoryboardStepHintBase<'context_value_rejected'> {
   /** Context key whose value matched the rejected request field. */
   context_key: string;
   /** Step id that wrote the context key. */
@@ -1063,6 +1076,20 @@ export interface ContextValueRejectedHint {
 }
 
 /**
+ * Short tokens enumerating every shape-drift variant the runner currently
+ * detects. Open-ended via the trailing `(string & {})` so adding a detector
+ * doesn't require a coordinated type bump, while consumers that switch over
+ * the known cases still get exhaustiveness checks.
+ */
+export type ShapeDriftObservedVariant =
+  | 'bare_array'
+  | 'platform_native_fields'
+  | 'per_item_shape'
+  | 'wrong_wrapper_key'
+  | 'raw_render_fields'
+  | (string & {});
+
+/**
  * The runner detected that the agent's response payload diverged from the
  * expected shape for the tool — e.g. a list tool returned a bare array
  * instead of `{ <wrapper_key>: [...] }`, or `build_creative` returned
@@ -1076,15 +1103,22 @@ export interface ContextValueRejectedHint {
  * `instance_path` uses RFC 6901 / `SchemaValidationError.instance_path`
  * conventions: `""` for root-level drift, dotted for nested.
  */
-export interface ShapeDriftHint {
-  kind: 'shape_drift';
-  /** Pre-formatted human-readable message (same text as ValidationResult.warning). */
-  message: string;
+export interface ShapeDriftHint extends StoryboardStepHintBase<'shape_drift'> {
   /** AdCP tool name (snake_case) that produced the drift. */
   tool: string;
-  /** Short token describing the observed (wrong) shape variant. */
-  observed_variant: string;
-  /** Short token or schema fragment describing the expected shape. */
+  /**
+   * Short token describing the observed (wrong) shape variant — one of the
+   * known detectors, or any string for forward compatibility. Switch over
+   * the known cases for exhaustiveness; fall back to `message` for the rest.
+   */
+  observed_variant: ShapeDriftObservedVariant;
+  /**
+   * Schema-fragment string describing the expected shape (e.g.
+   * `"{ creatives: [{ creative_id, action, ... }] }"`). Intended for human
+   * display; renderers that need structured access should match on
+   * `observed_variant` and look up the canonical wrapper key / response
+   * helper from the SDK rather than parsing this string.
+   */
   expected_variant: string;
   /** RFC 6901-style path to the drift site; `""` for root-level. */
   instance_path: string;
