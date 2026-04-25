@@ -544,14 +544,24 @@ export function applyContextOutputsWithProvenance(
   const provenance: Record<string, ContextProvenanceEntry> = {};
   for (const output of outputs) {
     if (output.generate !== undefined) {
-      // Generator entry: reuse alias-cache value or mint fresh.
-      const cache = context ? getAliasCache(context) : undefined;
+      // Generator entries require a context — without one the alias cache
+      // can't be populated, so a later step's `$generate:opaque_id#<key>` would
+      // mint an independent UUID that doesn't match the value stored here.
+      // Loud error beats silent divergence.
+      if (!context) {
+        throw new Error(
+          `applyContextOutputsWithProvenance: context_outputs entry '${output.key}' ` +
+            `declares generate='${output.generate}' but no context was provided. ` +
+            `Generator entries require a context for alias-cache coherence.`
+        );
+      }
+      const cache = getAliasCache(context);
       let value: string;
-      if (cache && output.key in cache) {
+      if (output.key in cache) {
         value = cache[output.key]!;
       } else {
         value = randomUUID();
-        if (cache) cache[output.key] = value;
+        cache[output.key] = value;
       }
       values[output.key] = value;
       provenance[output.key] = {

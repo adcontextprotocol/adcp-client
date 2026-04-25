@@ -237,11 +237,11 @@ export interface ContextOutput {
    * Generator name. When set, the runner mints a fresh opaque value
    * once per run (or reuses a value already minted for the same `key`
    * alias via an inline `$generate:…#<alias>` substitution in the same
-   * step's `sample_request`). Mutually exclusive with `path`.
-   *
-   * Supported values: `"uuid_v4"`, `"opaque_id"` (both produce a UUID v4).
+   * step's `sample_request`). Mutually exclusive with `path`. The loader
+   * rejects unknown values at storyboard-load time so typos fail loud
+   * before the first run.
    */
-  generate?: string;
+  generate?: 'uuid_v4' | 'opaque_id';
   /** Key to store the extracted or generated value under in context */
   key: string;
 }

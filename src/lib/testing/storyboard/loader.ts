@@ -129,6 +129,16 @@ function validateContextOutputs(
           `'${output.key}' sets both 'path' and 'generate' — they are mutually exclusive.`
       );
     }
+    // Validate generator name. The runtime resolver also checks but the loader
+    // catches typos at storyboard-load time so authors see the failure on
+    // build, not on the first run.
+    if (hasGenerate && output.generate !== 'uuid_v4' && output.generate !== 'opaque_id') {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': context_outputs entry ` +
+          `'${output.key}' has unknown generate value '${output.generate}'. ` +
+          `Supported: 'uuid_v4', 'opaque_id'.`
+      );
+    }
   }
 }
 
