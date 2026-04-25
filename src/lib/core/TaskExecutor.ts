@@ -1219,7 +1219,11 @@ export class TaskExecutor {
         });
       }
 
-      if (status.status === ADCP_STATUS.FAILED || status.status === ADCP_STATUS.CANCELED) {
+      if (
+        status.status === ADCP_STATUS.FAILED ||
+        status.status === ADCP_STATUS.CANCELED ||
+        status.status === ADCP_STATUS.REJECTED
+      ) {
         const asyncFailedErr = extractAdcpErrorInfo(status.result);
         return attachMatch({
           success: false as const,

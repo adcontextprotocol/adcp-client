@@ -148,6 +148,15 @@ describe('getA2ATaskStatus', () => {
     assert.ok(info.error?.includes('rejected'));
   });
 
+  test('maps A2A canceled state to status: canceled with no error field', async () => {
+    stub.enqueue(makeA2ATask({ state: 'canceled', artifacts: [] }));
+
+    const info = await getA2ATaskStatus(AGENT_URL, SERVER_TASK_ID, undefined);
+
+    assert.strictEqual(info.status, 'canceled');
+    assert.ok(!info.error, 'canceled is a deliberate stop, not an error');
+  });
+
   test('converts ISO timestamp to epoch milliseconds in createdAt', async () => {
     stub.enqueue(makeA2ATask({ state: 'completed', artifacts: completedArtifact() }));
 

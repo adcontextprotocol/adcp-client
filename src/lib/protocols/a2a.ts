@@ -397,7 +397,10 @@ export async function getA2ATaskStatus(
     return mapA2ATaskToTaskInfo(task);
   } catch (error: unknown) {
     if (is401Error(error)) {
+      // Evict both the unsigned entry (used by this call) and any signed entry
+      // that may exist from a prior callA2ATool call for the same agent.
       a2aClientCache.delete(a2aCacheKey(agentUrl, authToken));
+      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken, signingContextStorage.getStore()?.cacheKey));
       const oauthMetadata = await discoverOAuthMetadata(agentUrl);
       throw new AuthenticationRequiredError(agentUrl, oauthMetadata || undefined);
     }
@@ -445,6 +448,8 @@ function mapA2ATaskToTaskInfo(task: {
     createdAt: timestampMs,
     updatedAt: Date.now(),
     result: lastDataPart?.data,
+    // 'canceled' is omitted: it's a deliberate stop, not an unexpected failure, so
+    // TaskResult callers can surface it via status without treating it as an error.
     error: a2aState === 'failed' || a2aState === 'rejected' ? `A2A task ${task.id} ${a2aState}` : undefined,
   };
 }
