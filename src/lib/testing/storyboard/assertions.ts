@@ -103,6 +103,14 @@ export interface AssertionSpec {
    * Called only when the assertion's `onStep` was also called for this step
    * (respects per-step `invariants.disable` opt-outs). Synchronous-only —
    * hint collection must be a pure state read, not an async operation.
+   *
+   * **Implementations MUST clear any pending hint state from `ctx.state` on
+   * every `onStep` call** (both on violation and on clean passes) — not only
+   * when a violation is detected. Failing to clear on a passing `onStep` would
+   * leave stale state that `getStepHints` would then drain on the NEXT step,
+   * emitting a hint that belongs to a prior step's violation. The `status.monotonic`
+   * implementation clears `s.pendingHint = undefined` at the top of every
+   * `onStep` call as the reference pattern.
    */
   getStepHints?(ctx: AssertionContext, stepResult: StoryboardStepResult): StoryboardStepHint[];
 }
