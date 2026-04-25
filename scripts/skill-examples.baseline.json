@@ -1,0 +1,712 @@
+[
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS18046",
+    "messagePrefix": "'acc.account.brand' is of type 'unknown'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'AGENT_URL'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'AGENT_URL'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'randomUUID'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; brand_id: string; adcp_major_version?: nu"
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; accounts: { [x: "
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '{ role: string; id: any; }' is not assignable to type 'string'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'brand' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'brand' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'length' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'operator' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'operator' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'status' does not exist on type 'GovernanceCallResult'."
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS2353",
+    "messagePrefix": "Object literal may only specify known properties, and 'findings' does not exist "
+  },
+  {
+    "source": "skills/build-brand-rights-agent/SKILL.md",
+    "errorCode": "TS7053",
+    "messagePrefix": "Element implicitly has an 'any' type because expression of type '0' can't be use"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'creativeRepo'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'creativeRepo'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'issuer'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupKey'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'server'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; adcp_major_version?: number | undefined; "
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; adcp_major_versi"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; request_type: \"single\" | \"batch\" | \"varia"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'id' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'id' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'sandbox' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'FORMATS'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'issuer'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupKey'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'PRODUCTS'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAdcpServer'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'issuer'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupKey'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; plans: Record<st"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'unknown' is not assignable to parameter of type 'string'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS18048",
+    "messagePrefix": "'params.catalogs' is possibly 'undefined'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS18048",
+    "messagePrefix": "'params.event_sources' is possibly 'undefined'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'issuer'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupKey'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'PRODUCTS'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS1309",
+    "messagePrefix": "The current file is a CommonJS module and cannot use 'await' at the top level."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'AdapterConfig'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupAccount'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupAccount'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupAccount'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'MediaBuyHandlers'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'metaConfig'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'metaHandlers'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'myOAuthProvider'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'snapConfig'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'snapHandlers'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'string | undefined' is not assignable to type 'string'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'string | undefined' is not assignable to type 'string'."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2769",
+    "messagePrefix": "No overload matches this call."
+  },
+  {
+    "source": "skills/build-seller-agent/deployment.md",
+    "errorCode": "TS2769",
+    "messagePrefix": "No overload matches this call."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'accountRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'AGENT_URL'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'AGENT_URL'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'budgetRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'creativeRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'creativeRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'DEFAULT_REPORTING_CAPABILITIES'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'deliveryRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'executeBuy'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'executeBuy'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'handleGetProducts'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'humanReviewQueue'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'issuer'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupApiKey'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'mediaBuyRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'mediaBuyRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'planRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'productRepo'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'PRODUCTS'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'queueIoReview'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'resolveOperation'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'server'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; adcp_major_version?: number | undefined; "
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; adcp_major_version?: number | undefined; "
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; adcp_major_version?: number | undefined; "
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; accounts: { [x: "
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '{ kid: string; alg: string; adcp_use: string; key_ops: string[]; crv?: str"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '{}' is not assignable to type 'string'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'map' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'sandbox' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type '{ field: string; }' is not assignable to parameter of type 'Ad"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type '{ field: string; }' is not assignable to parameter of type 'Ad"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type '{ mediaBuy: { getProducts: any; }; testController: TestControl"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'outcome' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'issuer'."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupKey'."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; session_id: stri"
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'createAgent'."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'db'."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'issuer'."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'lookupKey'."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS7005",
+    "messagePrefix": "Variable 'signals' implicitly has an 'any[]' type."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS7005",
+    "messagePrefix": "Variable 'signals' implicitly has an 'any[]' type."
+  },
+  {
+    "source": "skills/build-signals-agent/SKILL.md",
+    "errorCode": "TS7034",
+    "messagePrefix": "Variable 'signals' implicitly has type 'any[]' in some locations where its type "
+  }
+]
