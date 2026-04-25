@@ -159,7 +159,9 @@ export class PostgresTaskStore implements TaskStore {
    * Create a new task. Pass `taskParams.taskId` to use a caller-supplied ID verbatim
    * (useful for compliance-controller scenarios where the runner needs deterministic
    * task IDs). If omitted, a random hex ID is generated. Throws if the supplied ID
-   * is empty / longer than 128 chars, or already exists.
+   * is empty / longer than 128 chars, or already exists. The 128-char ceiling is an
+   * SDK policy (matches typical request-id / session-id field lengths and keeps
+   * the task_id index efficient) — Postgres TEXT itself imposes no limit.
    *
    * The `task_id` namespace on this store is global (no tenant scoping in the schema
    * today). Callers using caller-supplied IDs are responsible for namespace isolation;
@@ -201,7 +203,7 @@ export class PostgresTaskStore implements TaskStore {
       // Unique constraint violation — a task with this ID already exists.
       if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505') {
         throw new Error(
-          `Task with ID ${taskId.slice(0, 256)} already exists. Use a different taskId or retrieve the existing task via getTask().`
+          `Task with ID ${taskId} already exists. Use a different taskId or retrieve the existing task via getTask().`
         );
       }
       throw err;
