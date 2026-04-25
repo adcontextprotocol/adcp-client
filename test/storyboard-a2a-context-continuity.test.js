@@ -46,10 +46,7 @@ describe('a2a_context_continuity', () => {
   });
 
   it('passes with not_applicable when no outboundA2aContextId (first A2A step)', () => {
-    const [result] = runValidations(
-      [VALIDATION],
-      ctx({ envelope: makeEnvelope(), outboundA2aContextId: undefined })
-    );
+    const [result] = runValidations([VALIDATION], ctx({ envelope: makeEnvelope(), outboundA2aContextId: undefined }));
     assert.strictEqual(result.passed, true);
     assert.ok(Array.isArray(result.observations));
     assert.ok(result.observations[0].includes('no_prior_a2a_context_id'));
@@ -64,10 +61,7 @@ describe('a2a_context_continuity', () => {
   });
 
   it('passes with not_applicable when envelope absent but outboundA2aContextId set (capture miss)', () => {
-    const [result] = runValidations(
-      [VALIDATION],
-      ctx({ envelope: undefined, outboundA2aContextId: PRIOR_CTX_ID })
-    );
+    const [result] = runValidations([VALIDATION], ctx({ envelope: undefined, outboundA2aContextId: PRIOR_CTX_ID }));
     assert.strictEqual(result.passed, true);
     assert.ok(Array.isArray(result.observations));
     assert.ok(result.observations[0].includes('a2a_envelope_not_captured'));
@@ -92,10 +86,7 @@ describe('a2a_context_continuity', () => {
   it('fails when response Task.contextId is absent (continuity break — seller dropped it)', () => {
     const env = makeEnvelope();
     delete env.result.contextId;
-    const [result] = runValidations(
-      [VALIDATION],
-      ctx({ envelope: env, outboundA2aContextId: PRIOR_CTX_ID })
-    );
+    const [result] = runValidations([VALIDATION], ctx({ envelope: env, outboundA2aContextId: PRIOR_CTX_ID }));
     assert.strictEqual(result.passed, false);
     assert.strictEqual(result.json_pointer, '/result/contextId');
     assert.strictEqual(result.expected, PRIOR_CTX_ID);
@@ -121,10 +112,7 @@ describe('a2a_context_continuity', () => {
       envelope: { jsonrpc: '2.0', id: 1, error: { code: -32600, message: 'Invalid Request' } },
       http_status: 200,
     };
-    const [result] = runValidations(
-      [VALIDATION],
-      ctx({ envelope: env, outboundA2aContextId: PRIOR_CTX_ID })
-    );
+    const [result] = runValidations([VALIDATION], ctx({ envelope: env, outboundA2aContextId: PRIOR_CTX_ID }));
     assert.strictEqual(result.passed, true);
     assert.ok(Array.isArray(result.observations));
     assert.ok(result.observations[0].includes('a2a_jsonrpc_error_envelope'));
@@ -136,10 +124,7 @@ describe('a2a_context_continuity', () => {
       envelope: { jsonrpc: '2.0', id: 1, result: 'not-an-object' },
       http_status: 200,
     };
-    const [result] = runValidations(
-      [VALIDATION],
-      ctx({ envelope: env, outboundA2aContextId: PRIOR_CTX_ID })
-    );
+    const [result] = runValidations([VALIDATION], ctx({ envelope: env, outboundA2aContextId: PRIOR_CTX_ID }));
     assert.strictEqual(result.passed, false);
     assert.strictEqual(result.json_pointer, '/result');
     assert.match(result.error, /not an object/);

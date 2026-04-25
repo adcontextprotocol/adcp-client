@@ -1577,10 +1577,7 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
  * - Response Task.contextId ≠ outbound contextId (seller stamped new id).
  * - Response Task.contextId absent/empty on follow-up (continuity break).
  */
-function validateA2AContextContinuity(
-  validation: StoryboardValidation,
-  ctx: ValidationContext
-): ValidationResult {
+function validateA2AContextContinuity(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
   // Skip when there is no prior contextId to forward (first step or non-A2A).
   if (!ctx.outboundA2aContextId) {
     return {
@@ -1637,9 +1634,8 @@ function validateA2AContextContinuity(
     };
   }
   const task = result as Record<string, unknown>;
-  const responseContextId = typeof task.contextId === 'string' && task.contextId.length > 0
-    ? task.contextId
-    : undefined;
+  const responseContextId =
+    typeof task.contextId === 'string' && task.contextId.length > 0 ? task.contextId : undefined;
   const outbound = ctx.outboundA2aContextId;
 
   if (responseContextId === outbound) {
