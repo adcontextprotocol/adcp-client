@@ -1049,12 +1049,12 @@ export interface ContextProvenanceEntry {
 }
 
 /**
- * Non-fatal hint attached to a step result. Today the runner only emits
- * `context_value_rejected` — more kinds may be added over time. The
- * discriminator lives on `kind` so consumers that only know how to render
- * a subset can ignore the rest without losing them.
+ * Non-fatal hint attached to a step result. More kinds may be added over
+ * time. The discriminator lives on `kind` so consumers that only know how
+ * to render a subset can ignore the rest; `message` is always present as a
+ * human-readable fallback.
  */
-export type StoryboardStepHint = ContextValueRejectedHint;
+export type StoryboardStepHint = ContextValueRejectedHint | MissingRequiredFieldHint;
 
 /**
  * A seller rejected a request value that the runner traced back to a
@@ -1090,6 +1090,34 @@ export interface ContextValueRejectedHint {
   accepted_values: unknown[];
   /** Error code from the seller's error (if present). */
   error_code?: string;
+}
+
+/**
+ * The runner detected that the agent's response is missing a field the
+ * spec marks as `required` — surfaced via the strict AJV verdict that runs
+ * alongside the lenient Zod check in `validateResponseSchema`.
+ *
+ * Non-fatal: step pass/fail is unchanged (driven by the Zod path).
+ * `message` is always present as a human-readable fallback; renderers that
+ * understand the structured fields (`field_path`, `tool`) can build per-field
+ * fix plans (locate → fill → verify) instead of parsing the warning string.
+ *
+ * `field_path` uses RFC 6901 JSON Pointer conventions with a leading slash
+ * pointing at the missing field itself — e.g. `/field_name` for a root-level
+ * field, `/nested/field_name` for a nested one. Contrast with
+ * `ShapeDriftHint.instance_path` which points at the drift site (parent
+ * object), so root drift is `""`.
+ */
+export interface MissingRequiredFieldHint {
+  kind: 'missing_required_field';
+  /** Pre-formatted human-readable message (same text as ValidationResult.warning). */
+  message: string;
+  /** AdCP tool name (snake_case) that produced the missing-field failure. */
+  tool: string;
+  /** RFC 6901 JSON Pointer to the missing field; e.g. `/field_name` for root-level. */
+  field_path: string;
+  /** Optional `$ref` or schema id naming the schema that flagged it. */
+  schema_ref?: string;
 }
 
 export interface StoryboardPhaseResult {

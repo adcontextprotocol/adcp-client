@@ -19,6 +19,7 @@ import {
   type RunnerVariables,
 } from './context';
 import { detectContextRejectionHints } from './rejection-hints';
+import { detectMissingRequiredHints } from './missing-required-hints';
 import { runValidations, type ValidationContext } from './validations';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -1685,10 +1686,15 @@ async function executeStep(
   // since the rejected value can't have come from this step's own
   // extraction.
   const stepFailed = !(passed && allValidationsPassed);
-  const hints =
+  const contextRejectionHints =
     stepFailed && runState.contextProvenance
       ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance, effectiveStep.task)
       : [];
+  // Missing-required-field hints fire unconditionally (same gate as
+  // ValidationResult.warning) — strict-only violations don't flip `passed`,
+  // but builders still need the per-field pointer to locate the fix.
+  const missingRequiredHints = detectMissingRequiredHints(effectiveStep.task, validations);
+  const hints = [...contextRejectionHints, ...missingRequiredHints];
 
   // Build next step preview
   const next = getNextStepPreview(step.id, allSteps, updatedContext, runState.runnerVars);
