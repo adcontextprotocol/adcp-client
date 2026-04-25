@@ -805,11 +805,7 @@ describe('Request Builder', () => {
     });
 
     test('uses context.creative_id for records[].artifact.artifact_id when present', () => {
-      const result = buildRequest(
-        step('validate_content_delivery'),
-        { creative_id: 'cr-real-abc' },
-        DEFAULT_OPTIONS
-      );
+      const result = buildRequest(step('validate_content_delivery'), { creative_id: 'cr-real-abc' }, DEFAULT_OPTIONS);
       assert.strictEqual(result.records[0].artifact.artifact_id, 'cr-real-abc');
     });
   });
