@@ -224,7 +224,7 @@ export function verifyIntrospection(options: VerifyIntrospectionOptions): Authen
             : 'unknown',
       token,
       scopes,
-      claims: response as Record<string, unknown>,
+      claims: response,
     };
     if (typeof response.exp === 'number') principal.expiresAt = response.exp;
 

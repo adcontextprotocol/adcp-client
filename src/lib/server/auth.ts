@@ -59,6 +59,19 @@ export interface AuthPrincipal {
   /** Raw credential that authenticated the request. Propagated into `req.auth.token` for MCP tool handlers. */
   token?: string;
   scopes?: string[];
+  /**
+   * Parsed identity claims. Source depends on the authenticator:
+   * - {@link verifyBearer} populates the decoded JWT payload (RFC 7519).
+   * - {@link verifyIntrospection} populates the RFC 7662 introspection response
+   *   — same shape for the overlap fields (`iss`, `sub`, `aud`, `exp`, `iat`,
+   *   `nbf`, `jti`), plus introspection-only fields (`active`, `client_id`,
+   *   `username`, `scope`, `token_type`) typed as `unknown` via the index
+   *   signature. Narrow with a type guard before passing to an LLM context —
+   *   an upstream IdP that controls `sub`, `username`, `client_id`, or
+   *   `scope` can inject prompt content if those values reach a model
+   *   unvalidated (adapters often reflect granted scopes into UI / system
+   *   prompts, so the scope string is a real injection surface).
+   */
   claims?: JWTPayload;
   /** Token expiry (seconds since epoch) when known — propagated to MCP `AuthInfo.expiresAt`. */
   expiresAt?: number;
