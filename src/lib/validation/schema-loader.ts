@@ -52,6 +52,7 @@ interface LoaderState {
   ajv: Ajv;
   fileIndex: Map<string, string>;
   validators: Map<string, ValidateFunction>;
+  rawSchemas: Map<string, Record<string, unknown>>;
   root: string;
   coreLoaded: boolean;
 }
@@ -192,6 +193,7 @@ function ensureInit(): LoaderState {
     ajv,
     fileIndex: buildFileIndex(root),
     validators: new Map(),
+    rawSchemas: new Map(),
     root,
     coreLoaded: false,
   };
@@ -279,4 +281,44 @@ export { SCHEMA_FILENAME_SUFFIX };
 /** Test hook: reset cached state so a fresh init runs. */
 export function _resetValidationLoader(): void {
   state = undefined;
+}
+
+/**
+ * Returns true when `field` is a declared top-level property in the request
+ * schema for `toolName`, or when no schema is available (fail-open). Used by
+ * the storyboard runner to decide whether to inject envelope fields that aren't
+ * universally present across tools (e.g. `brand`, `account`).
+ *
+ * Reads the raw JSON schema file without compiling — avoids coupling to AJV
+ * internals. Only inspects the top-level `properties` / `additionalProperties`
+ * pair; nested sub-schemas are not traversed. Results are memoized in
+ * `LoaderState.rawSchemas` so multi-step storyboard runs don't re-read the
+ * same file on each step.
+ *
+ * Fails open (returns `true`) when:
+ * - No schema file is indexed for the tool (custom tool, schema not synced)
+ * - The schema root is not reachable (schemas not built/synced yet)
+ * - The schema does not set `additionalProperties: false` (permissive schema)
+ *
+ * @internal — not part of the public API surface; may change without a major bump.
+ */
+export function schemaAllowsTopLevelField(toolName: string, field: string): boolean {
+  try {
+    const s = ensureInit();
+    const cacheKey = `${toolName}::request`;
+    const file = s.fileIndex.get(cacheKey);
+    if (!file) return true;
+    let schema = s.rawSchemas.get(cacheKey);
+    if (!schema) {
+      schema = loadJson(file) as Record<string, unknown>;
+      s.rawSchemas.set(cacheKey, schema);
+    }
+    if (schema.additionalProperties === false) {
+      const props = schema.properties as Record<string, unknown> | undefined;
+      return props !== undefined && field in props;
+    }
+    return true;
+  } catch {
+    return true;
+  }
 }

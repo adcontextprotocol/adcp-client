@@ -24,6 +24,7 @@ import { runValidations, type ValidationContext } from './validations';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
+import { schemaAllowsTopLevelField } from '../../validation/schema-loader';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -1429,7 +1430,7 @@ async function executeStep(
   // match the options. Enforcing this here (after builder + sample_request)
   // prevents session-key divergence across create/get/update/delete steps
   // when individual builders or sample_request YAML omit brand.
-  request = applyBrandInvariant(request, options);
+  request = applyBrandInvariant(request, options, effectiveStep.task);
 
   // Mutating AdCP requests require idempotency_key per spec. Storyboard
   // yamls generally omit it so authors don't have to remember it on every
@@ -2150,43 +2151,66 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
  * created by earlier steps.
  *
  * This helper runs after builder / sample_request resolution and writes the
- * run-scoped brand into both addressing forms:
+ * run-scoped brand into the addressing forms the tool's schema allows:
  *
- *   - Top-level `brand` — for tools whose schema declares it (e.g.
- *     `get_products`, `create_media_buy`, signal tools).
- *   - `account.brand` — for tools whose schema declares `account` but not
- *     top-level `brand` (e.g. `get_media_buys`, `get_media_buy_delivery`,
- *     `list_creatives`). When the incoming request has no `account`, we
- *     construct one from `resolveAccount(options)` so the scoping survives
- *     `adaptRequestForServerVersion`'s schema-aware field stripping.
+ *   - Top-level `brand` — only when the tool's request schema declares it
+ *     (e.g. `get_products`, `create_media_buy`, signal tools). Governance
+ *     tools like `sync_plans` do not declare `brand` at the request root
+ *     (brand belongs inside each `Plan` object) — injecting it would fail
+ *     the framework's strict AJV validation (#940).
+ *   - `account.brand` — merged into an existing `account` object only when
+ *     it uses the natural-key variant (`{brand, operator, sandbox?}`). The
+ *     `{account_id}` variant is closed (`additionalProperties: false`); merging
+ *     `brand` into it produces a payload that matches neither `oneOf` branch
+ *     and is rejected by AJV strict request validation. Detect the natural-key
+ *     variant by looking for an existing `brand` or `operator` key.
+ *   - Synthetic `account` — constructed only when the request has no
+ *     `account` AND the tool's schema declares `account` (e.g. `get_media_buys`,
+ *     `list_creatives`). Tools like `sync_plans` that declare neither
+ *     `brand` nor `account` at the root are left unchanged.
  *
- * For any given tool, only one of the two addressing forms is declared in
- * its schema; the other is stripped downstream. Setting both here lets the
- * helper stay tool-agnostic.
- *
- * `AccountReference` is a union of `{account_id}` or `{brand, operator, sandbox?}`.
- * Injecting `brand` into an `{account_id}`-branch account still passes schema
- * validation but is semantically redundant.
+ * When `taskName` is omitted or the schema is unavailable (not synced yet),
+ * the function fails open and injects as before. Schema checks use raw JSON
+ * reads, not AJV internals.
  */
 export function applyBrandInvariant(
   request: Record<string, unknown>,
-  options: StoryboardRunOptions
+  options: StoryboardRunOptions,
+  taskName?: string
 ): Record<string, unknown> {
   // Only force the invariant when the caller has actually supplied a brand.
   // Storyboards that don't exercise brand-scoped tools (e.g. security
   // probes) legitimately run without one and should pass through unchanged.
   if (!options.brand && !options.brand_manifest) return request;
   const brand = resolveBrand(options);
-  const result: Record<string, unknown> = { ...request, brand };
+
+  // Gate brand/account injection on the tool's request schema. Tools that
+  // declare `additionalProperties: false` without listing the field will fail
+  // the framework's strict AJV validator if we inject it (#940). Fails open
+  // when taskName is absent or the schema isn't available.
+  const topBrandOk = !taskName || schemaAllowsTopLevelField(taskName, 'brand');
+  const topAccountOk = !taskName || schemaAllowsTopLevelField(taskName, 'account');
+
+  const result: Record<string, unknown> = { ...request };
+  if (topBrandOk) result.brand = brand;
+
   if ('account' in request) {
-    // Caller sent an account — merge brand in when it's a plain object.
-    // Leave non-object values (null, array) alone so intentionally malformed
-    // requests aren't silently "corrected."
+    // Caller sent an account — merge brand in only when it's a plain object
+    // using AccountReference's natural-key variant (`{brand, operator, sandbox?}`).
+    // The `{account_id}` variant is a closed object; merging `brand` would
+    // produce a payload that matches neither `oneOf` branch under strict AJV.
+    // Leave non-object values (null, array) and `{account_id}`-only payloads
+    // alone so intentionally narrow or malformed requests aren't silently
+    // "corrected."
     const existingAccount = request.account;
     if (existingAccount && typeof existingAccount === 'object' && !Array.isArray(existingAccount)) {
-      result.account = { ...(existingAccount as Record<string, unknown>), brand };
+      const acct = existingAccount as Record<string, unknown>;
+      const isNaturalKeyVariant = 'brand' in acct || 'operator' in acct;
+      if (isNaturalKeyVariant) {
+        result.account = { ...acct, brand };
+      }
     }
-  } else {
+  } else if (topAccountOk) {
     // No account on the request — construct one so tools whose schema
     // declares `account` but not top-level `brand` (e.g. get_media_buys,
     // list_creatives) still carry the run-scoped brand on the wire.
