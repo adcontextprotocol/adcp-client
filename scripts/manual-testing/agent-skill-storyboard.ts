@@ -32,7 +32,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { connect } from 'node:net';
 
 interface Args {
@@ -296,6 +296,8 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
       passed = (s.tracks_failed ?? 0) === 0 && (s.tracks_passed ?? 0) > 0;
     }
   } catch {
+    // stdout wasn't clean JSON — the CLI printed an error to stderr and
+    // exited non-zero. Treat as fail.
     passed = false;
   }
   return { passed, raw };
@@ -309,7 +311,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const skillPath = resolve(args.skill);
   const skillContent = await readFile(skillPath, 'utf8');
-  const skillDir = skillPath.substring(0, skillPath.lastIndexOf('/'));
+  const skillDir = dirname(skillPath);
   const workDir = args.workDir ? resolve(args.workDir) : await mkdtemp(join(tmpdir(), 'adcp-agent-'));
 
   log(`workspace: ${workDir}`);
