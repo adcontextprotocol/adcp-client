@@ -48,9 +48,24 @@ to be careful."
 3. **Execute PR** — experts agree, change is **non-breaking**. Open
    a draft PR. No scope cap, no classification gate, no author
    gate. CODEOWNERS + human review still gate merge.
-4. **Defer** — well-formed but post-current-cycle or blocked on
-   prereq. Apply `claude-triaged` + labels; comment only if author
-   is `NONE` / `FIRST_TIME_CONTRIBUTOR`; otherwise silent.
+4. **Defer** — well-formed but post-cycle or blocked on prereq.
+   Apply `claude-triaged` + labels. Three flavors:
+
+   - **Out of cycle (no specific blocker).** Silent for
+     MEMBER/COLLABORATOR/OWNER; courtesy ack for NONE /
+     FIRST_TIME_CONTRIBUTOR.
+   - **Blocked on a specific open PR/issue.** Always post a
+     `Blocked-on: #N — resurfaces on merge` comment on the issue,
+     regardless of author tier — the comment is the audit trail
+     and the resurfacing trigger (a future sweep can search
+     `in:comments "Blocked-on: #N"` after #N closes).
+   - **Fold candidate.** Same as Blocked-on, *plus* the parent PR
+     is still iterating, by the same author or active contributor,
+     and the issue's scope would naturally extend the parent's
+     diff (file overlap, generated-output overlap). Additionally
+     comment on the parent PR suggesting the scope be folded
+     before merge. Skip if parent is approved/awaiting-merge or
+     large enough that scope expansion would materially delay it.
 
 **When in doubt between Execute and Flag: Execute.** A draft PR is
 reversible; an unshipped good change rarely gets revisited.
@@ -116,10 +131,17 @@ Skip auto-PR for:
 - **Epic** — label `epic`, title "Epic:", or body with task list of
   **GitHub issue references** (`- [ ] #1234`; >8 checkboxes)
 - **Tracking / meta** — label `tracking`, `meta`, `roadmap`
-- **Child of an open parent** — `Fixes #N`/`Closes #N` pointing at
-  an open issue/PR
+- **Child of an open parent** — any of:
+  - `Fixes #N` / `Closes #N` references an open issue/PR
+  - Body text references an open PR as a prerequisite ("after #N",
+    "follow-up to #N", "depends on #N", "extends #N")
+  - Acceptance criteria reference files that exist in an open PR's
+    diff but not on `main`. Confirm via `gh pr list --state open
+    --search "<file slug>"` then `gh pr view <N> --json files`.
 
-These proceed to relevance check.
+These proceed to relevance check, then to the **Defer** outcome
+(typically the *Fold candidate* or *Blocked-on* flavor — see
+outcome 4 above) rather than Execute.
 
 ### Step 2 — Relevance check: in-cycle?
 
@@ -312,6 +334,22 @@ related fixes, or "items 1-5 after PR #N" — decide:
 
 A single cohesive PR is easier to review than three PRs with
 dependencies. The bot reduces maintainer clicks, not multiplies them.
+
+### Linkage rule for partial-rollout PRs
+
+When the issue proposes multiple items and you're shipping a subset,
+the PR body uses `Refs #N`, **not** `Closes #N`. `Closes` is reserved
+for PRs that fulfill the entire issue scope (even if delivered
+incrementally — only the *last* PR in the sequence carries `Closes`).
+
+Applies to multi-item issues (numbered lists, taxonomies with multiple
+`kind`s, follow-up bundles), issues with explicit "ship X first, then
+Y" guidance, or any case where PR scope is narrower than issue scope.
+
+In addition to using `Refs`, post a status comment on the parent issue
+listing what shipped and what remains, so a future triage sweep can
+find queued work. `Closes` here would be a quiet bug — the issue
+auto-closes on merge and remaining items lose their tracking surface.
 
 ## Pre-PR build + test gate — mandatory before expert review
 
