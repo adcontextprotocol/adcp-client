@@ -264,6 +264,7 @@ export {
   type StoryboardStepResult,
   type StoryboardStepHint,
   type ContextValueRejectedHint,
+  type FormatMismatchHint,
   type ContextProvenanceEntry,
   type StoryboardPhaseResult,
   type StoryboardResult,

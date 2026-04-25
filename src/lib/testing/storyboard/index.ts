@@ -32,6 +32,7 @@ export type {
   ContextInput,
   ContextProvenanceEntry,
   ContextValueRejectedHint,
+  FormatMismatchHint,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,
@@ -136,6 +137,9 @@ export type { ContextWriteResult } from './context';
 
 // Rejection-hint detection (issue #870)
 export { detectContextRejectionHints } from './rejection-hints';
+
+// Format-mismatch hint detection (issue #947)
+export { detectFormatMismatchHints } from './format-mismatch-hints';
 
 // Request builder
 export { buildRequest, hasRequestBuilder } from './request-builder';

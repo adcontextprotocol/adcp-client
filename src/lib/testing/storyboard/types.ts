@@ -1049,12 +1049,46 @@ export interface ContextProvenanceEntry {
 }
 
 /**
- * Non-fatal hint attached to a step result. Today the runner only emits
- * `context_value_rejected` — more kinds may be added over time. The
- * discriminator lives on `kind` so consumers that only know how to render
- * a subset can ignore the rest without losing them.
+ * Non-fatal hint attached to a step result. More kinds may be added over
+ * time. The discriminator lives on `kind` so consumers that only know how
+ * to render a subset can ignore the rest without losing them.
  */
-export type StoryboardStepHint = ContextValueRejectedHint;
+export type StoryboardStepHint = ContextValueRejectedHint | FormatMismatchHint;
+
+/**
+ * A response field passed the lenient Zod check but failed strict JSON-schema
+ * (AJV) validation on a `format` keyword (`date-time`, `uuid`, `uri`, `email`,
+ * etc.). Fires only on strict_only_failure validations — lenient passed, strict
+ * failed — so it adds signal on top of a green step without obscuring hard
+ * failures that already surface via `ValidationResult.error`.
+ *
+ * Non-fatal: does not flip the step's pass/fail. `message` carries a
+ * human-readable summary renderers can display without needing to understand
+ * the structured fields.
+ */
+export interface FormatMismatchHint {
+  kind: 'format_mismatch';
+  /** Pre-formatted human-readable summary suitable for a console line. */
+  message: string;
+  /** AdCP tool name (snake_case) whose response contained the violation. */
+  tool: string;
+  /**
+   * RFC 6901 JSON Pointer to the offending field in the agent's response.
+   * Matches `SchemaValidationError.instance_path` — `FormatMismatchHint` is
+   * a typed projection of a `SchemaValidationError` filtered by
+   * `keyword === 'format'`.
+   */
+  instance_path: string;
+  /** JSON Schema `format` keyword value that rejected the field (e.g. `'date-time'`, `'uuid'`, `'uri'`). */
+  expected_format: string;
+  /**
+   * The value the runner observed at `instance_path`. Present only when the
+   * value is a string — non-string values (objects, arrays, numbers) are not
+   * echoed into hints. Truncated at 200 characters so binary blobs and
+   * unexpectedly long strings don't inflate the hint payload.
+   */
+  observed_value?: string;
+}
 
 /**
  * A seller rejected a request value that the runner traced back to a

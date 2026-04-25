@@ -19,6 +19,7 @@ import {
   type RunnerVariables,
 } from './context';
 import { detectContextRejectionHints } from './rejection-hints';
+import { detectFormatMismatchHints } from './format-mismatch-hints';
 import { runValidations, type ValidationContext } from './validations';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -1685,10 +1686,20 @@ async function executeStep(
   // since the rejected value can't have come from this step's own
   // extraction.
   const stepFailed = !(passed && allValidationsPassed);
-  const hints =
+  // context_value_rejected hints: fire only on step failure (the seller's
+  // error response carries the accepted-values list we trace back to a
+  // prior-step context write). Gate unchanged from pre-#947 behavior.
+  const contextRejectionHints =
     stepFailed && runState.contextProvenance
       ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance, effectiveStep.task)
       : [];
+  // format_mismatch hints: fire on strict_only_failure validations (lenient
+  // Zod passed, strict AJV rejected on a format keyword). These are most
+  // valuable when the step is green — AJV found a silent strictness gap the
+  // step would otherwise surface only as a warning string. Gate is separate
+  // from stepFailed so hints reach lenient-passing steps. Issue #947.
+  const formatMismatchHints = detectFormatMismatchHints(validations, effectiveStep.task, taskResult?.data);
+  const hints = [...contextRejectionHints, ...formatMismatchHints];
 
   // Build next step preview
   const next = getNextStepPreview(step.id, allSteps, updatedContext, runState.runnerVars);
