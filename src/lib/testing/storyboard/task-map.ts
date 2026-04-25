@@ -81,13 +81,19 @@ export async function executeStoryboardTask(
   client: any,
   taskName: string,
   params: Record<string, unknown>,
-  opts: { skipIdempotencyAutoInject?: boolean } = {}
+  opts: { skipIdempotencyAutoInject?: boolean; contextId?: string } = {}
 ): Promise<TaskResult> {
   const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.
-  const taskOptions = opts.skipIdempotencyAutoInject ? { skipIdempotencyAutoInject: true } : undefined;
+  const taskOptions =
+    opts.skipIdempotencyAutoInject || opts.contextId
+      ? {
+          ...(opts.skipIdempotencyAutoInject && { skipIdempotencyAutoInject: true }),
+          ...(opts.contextId && { contextId: opts.contextId }),
+        }
+      : undefined;
 
   let result;
   const invoke = async () => {

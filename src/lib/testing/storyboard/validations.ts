@@ -63,6 +63,19 @@ export interface ValidationContext {
    * those checks self-skip with `not_applicable`.
    */
   a2aEnvelope?: A2ATaskEnvelope;
+  /**
+   * The `contextId` that was forwarded on the outbound A2A `message/send`
+   * for this step — i.e., the value the runner passed as
+   * `TaskOptions.contextId`, which rode on `params.message.contextId` on
+   * the wire. Populated only when a prior A2A step returned a contextId
+   * that the runner carried forward. `a2a_context_continuity` uses this
+   * to confirm the seller echoed the buyer-supplied id rather than
+   * stamping a new one.
+   *
+   * Absent on the first A2A step (no prior contextId to forward), on MCP
+   * runs, and on runs where the prior step's envelope carried no contextId.
+   */
+  outboundA2aContextId?: string;
 }
 
 /**
@@ -114,6 +127,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateAnyOf(validation, ctx.contributions);
     case 'a2a_submitted_artifact':
       return validateA2ASubmittedArtifact(validation, ctx);
+    case 'a2a_context_continuity':
+      return validateA2AContextContinuity(validation, ctx);
     case 'refs_resolve':
       return validateRefsResolve(validation, ctx);
     default:
@@ -1525,6 +1540,128 @@ function validateA2ASubmittedArtifact(validation: StoryboardValidation, ctx: Val
     json_pointer: first.pointer,
     expected: first.expected,
     actual: { failures },
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// a2a_context_continuity (multi-step A2A session guard)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Assert that the seller echoes the buyer-supplied `contextId` on every
+ * follow-up `message/send` — confirming A2A session continuity per
+ * A2A 0.3.0 §7.1.
+ *
+ * A2A 0.3.0 §7.1 lets buyers bind follow-up sends to an existing server-
+ * side context by setting `params.message.contextId`; the server MUST
+ * echo the same value on the response Task. The `@a2a-js/sdk`
+ * `DefaultRequestHandler` does this automatically (via
+ * `createA2AAdapter`'s `requestContext.contextId` forwarding), so SDK-
+ * based sellers pass transparently. Sellers that bypass the SDK and stamp
+ * their own contextId only fail on multi-step storyboards — this check
+ * is that multi-step gate.
+ *
+ * The check runs at step N+1: the runner captured contextId from step N's
+ * response, forwarded it as `TaskOptions.contextId` on the step N+1
+ * dispatch (which rides on `params.message.contextId` on the wire), and
+ * now verifies the response Task echoes the same value.
+ *
+ * Self-skips with `not_applicable` when:
+ * - No `outboundA2aContextId` — first A2A step, non-A2A run, or prior
+ *   step had no contextId to forward.
+ * - No `a2aEnvelope` — capture didn't fire (raw probe path, SDK error).
+ *
+ * Hard-fails when:
+ * - JSON-RPC error envelope (can't verify contextId; distinct error_code
+ *   so dashboards separate transport errors from continuity breaks).
+ * - Response Task.contextId ≠ outbound contextId (seller stamped new id).
+ * - Response Task.contextId absent/empty on follow-up (continuity break).
+ */
+function validateA2AContextContinuity(
+  validation: StoryboardValidation,
+  ctx: ValidationContext
+): ValidationResult {
+  // Skip when there is no prior contextId to forward (first step or non-A2A).
+  if (!ctx.outboundA2aContextId) {
+    return {
+      check: 'a2a_context_continuity',
+      passed: true,
+      description: validation.description,
+      observations: [
+        'no_prior_a2a_context_id: no contextId was forwarded on this send (first A2A step, non-A2A run, or prior step carried no contextId)',
+      ],
+    };
+  }
+
+  const envelope = ctx.a2aEnvelope;
+  if (!envelope) {
+    return {
+      check: 'a2a_context_continuity',
+      passed: true,
+      description: validation.description,
+      observations: [
+        'a2a_envelope_not_captured: no JSON-RPC envelope recorded (non-A2A transport, or A2A dispatch threw before envelope was parsed)',
+      ],
+    };
+  }
+
+  // JSON-RPC error envelopes carry no Task, so there is no contextId to
+  // check. Skip with not_applicable rather than hard-failing — the seller
+  // may have rejected the request for reasons entirely unrelated to context
+  // binding (auth, rate-limit, schema error, business logic), and flagging
+  // that as a "continuity break" would produce false positives. Contrast
+  // with a2a_submitted_artifact, which hard-fails error envelopes because
+  // the submitted-arm shape check is specifically about the Task payload;
+  // here the invariant is only meaningful when a Task was returned.
+  if (envelope.envelope.error !== undefined) {
+    return {
+      check: 'a2a_context_continuity',
+      passed: true,
+      description: validation.description,
+      observations: [
+        `a2a_jsonrpc_error_envelope: server returned a JSON-RPC error; contextId continuity check skipped (no Task to verify)`,
+      ],
+    };
+  }
+
+  const result = envelope.result;
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) {
+    return {
+      check: 'a2a_context_continuity',
+      passed: false,
+      description: validation.description,
+      error: 'JSON-RPC `result` is not an object — A2A `message/send` must return a Task.',
+      json_pointer: '/result',
+      expected: 'object (A2A Task)',
+      actual: result,
+    };
+  }
+  const task = result as Record<string, unknown>;
+  const responseContextId = typeof task.contextId === 'string' && task.contextId.length > 0
+    ? task.contextId
+    : undefined;
+  const outbound = ctx.outboundA2aContextId;
+
+  if (responseContextId === outbound) {
+    return {
+      check: 'a2a_context_continuity',
+      passed: true,
+      description: validation.description,
+    };
+  }
+
+  const detail = responseContextId
+    ? `A2A Task.contextId '${responseContextId}' does not match the forwarded contextId '${outbound}' — seller must echo the buyer-supplied contextId per A2A 0.3.0 §7.1.`
+    : `A2A Task.contextId was absent or empty on a follow-up send — seller must echo the buyer-supplied contextId '${outbound}' per A2A 0.3.0 §7.1.`;
+
+  return {
+    check: 'a2a_context_continuity',
+    passed: false,
+    description: validation.description,
+    error: detail,
+    json_pointer: '/result/contextId',
+    expected: outbound,
+    actual: task.contextId ?? null,
   };
 }
 

@@ -1303,6 +1303,15 @@ interface ExecutionState {
    * the shallow-merge semantics of the context itself.
    */
   contextProvenance?: Map<string, ContextProvenanceEntry>;
+  /**
+   * A2A contextId from the most recent step that returned a non-empty
+   * Task.contextId. Forwarded as `TaskOptions.contextId` on the next
+   * A2A dispatch so multi-step storyboards bind follow-up sends to the
+   * same server-side context. `a2a_context_continuity` reads the value
+   * that was forwarded (i.e. what existed BEFORE a step ran) to confirm
+   * the seller echoed it back. Issue #962.
+   */
+  lastA2aContextId?: string;
 }
 
 async function executeStep(
@@ -1497,6 +1506,7 @@ async function executeStep(
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
+  let outboundA2aContextId: string | undefined;
 
   if (useRawProbe) {
     const started = Date.now();
@@ -1545,10 +1555,17 @@ async function executeStep(
     // `agentTools` later). If a future "auto-detect protocol" flow
     // lands, key the capture off the negotiated transport instead.
     const captureA2a = options.protocol === 'a2a';
+    // Snapshot the contextId we are about to forward on this step's outbound
+    // A2A request. Captured BEFORE dispatch so `a2a_context_continuity` can
+    // compare it against the response — the runner updates `lastA2aContextId`
+    // AFTER dispatch (with the response's contextId), so reading it here
+    // gives us "what was sent", not "what came back".
+    outboundA2aContextId = captureA2a ? runState.lastA2aContextId : undefined;
     let a2aCaptures: RawHttpCapture[] | undefined;
     const dispatch = () =>
       executeStoryboardTask(client, effectiveStep.task, request, {
         skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+        ...(outboundA2aContextId && { contextId: outboundA2aContextId }),
       });
     const run = await runStep(step.title, effectiveStep.task, async () => {
       if (!captureA2a) return dispatch();
@@ -1571,6 +1588,19 @@ async function executeStep(
     stepResult = run.step;
     if (captureA2a && a2aCaptures) {
       a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+    }
+    // Update the session contextId from the response so the NEXT step
+    // forwards it. Only update when the response Task carried a non-empty
+    // string — preserves the existing contextId on error paths or when
+    // the seller omitted the field.
+    if (captureA2a && a2aEnvelope) {
+      const responseTask = a2aEnvelope.result;
+      if (responseTask != null && typeof responseTask === 'object' && !Array.isArray(responseTask)) {
+        const responseCtxId = (responseTask as Record<string, unknown>).contextId;
+        if (typeof responseCtxId === 'string' && responseCtxId.length > 0) {
+          runState.lastA2aContextId = responseCtxId;
+        }
+      }
     }
     if (taskResult) {
       responseRecord = {
@@ -1658,6 +1688,7 @@ async function executeStep(
       ...(responseRecord && { response: responseRecord }),
       storyboardContext: context,
       ...(a2aEnvelope && { a2aEnvelope }),
+      ...(outboundA2aContextId && { outboundA2aContextId }),
     };
     validations = runValidations(resolvedValidations, vctx);
   }
