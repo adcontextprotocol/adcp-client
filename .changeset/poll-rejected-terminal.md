@@ -49,3 +49,15 @@ covers all three new exit paths plus regressions for `failed` /
 `canceled`. 9 tests; mocks dispatch via `protocol: 'a2a'` so polls
 route directly through `ProtocolClient.callTool` without the MCP
 Tasks protocol fast path.
+
+**adcp#3126 alignment** (typed `tasks/get` result field):
+adcontextprotocol/adcp#3126 closed the spec ambiguity flagged in
+adcp#3123 by adding a typed `result` field on `tasks/get` responses
+(gated by `include_result: true` on the request, populated when
+`status: 'completed'`). The SDK now sets `include_result: true` on
+every polling request so spec-conformant 3.1.0+ sellers populate
+the typed field; pre-3.1.0 sellers ignore the unknown request
+field, and the response mapper continues to read `result` (the
+typed and informal paths share the same field name). Dropped the
+informal `task_data` alias from the mapper — `result` is the
+canonical name.

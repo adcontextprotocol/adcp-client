@@ -81,14 +81,15 @@ export class InputRequiredError extends Error {
  * context?, ext? }`. The internal `TaskInfo` is camelCase with a
  * superset of legacy fields some pre-3.0 sellers still emit.
  *
- * **Result-data passthrough.** AdCP `tasks/get` doesn't define a
- * completion-payload field — the spec leaves the result-extraction
- * layer ambiguous (see adcp#3123 for the upstream clarification
- * issue). Sellers MAY surface the completed task's data via
- * `additionalProperties: true` (`result` or `task_data` are the de
- * facto names). We pass it through so `pollTaskCompletion` can
- * surface it on the resolved `TaskResult.data`. When the spec
- * clarifies, this mapping refines.
+ * **Result-data extraction.** AdCP 3.1.0 defines a typed `result`
+ * field on `tasks/get` responses (per adcontextprotocol/adcp#3126,
+ * which closed adcp#3123). Sellers populate it when the buyer's
+ * request set `include_result: true` and the task reached
+ * `completed`. The mapper reads it directly into `TaskInfo.result`
+ * so `pollTaskCompletion` surfaces it on the resolved
+ * `TaskResult.data`. Pre-3.1.0 sellers that emitted `result` via
+ * `additionalProperties: true` continue to work — the typed and
+ * informal paths share the same field name.
  *
  * **Legacy nested shape.** Some pre-3.0 sellers and existing test
  * mocks emit `{ task: { ...TaskInfo } }` — a non-spec wrapper. We
@@ -134,9 +135,11 @@ function mapTasksGetResponseToTaskInfo(payload: unknown): TaskInfo {
   // object).
   const messageField = stringField(flat.message);
   if (messageField !== undefined) taskInfo.message = messageField;
-  // Result passthrough — see JSDoc on result-data ambiguity.
-  const result = flat.result ?? flat.task_data;
-  if (result !== undefined) taskInfo.result = result;
+  // Result extraction — see JSDoc. AdCP 3.1.0 defines `result` as
+  // the canonical typed field; pre-3.1.0 sellers using
+  // `additionalProperties: true` shared the same field name, so the
+  // mapping is unchanged across versions.
+  if (flat.result !== undefined) taskInfo.result = flat.result;
   return taskInfo;
 }
 
@@ -1308,17 +1311,17 @@ export class TaskExecutor {
     // response is the spec's flat shape, mapped to `TaskInfo` via
     // {@link mapTasksGetResponseToTaskInfo}.
     //
-    // **Known limitation (#973)**: A2A submitted-arm responses still
-    // misclassify because `responseParser.getStatus`/`getTaskId` read
-    // the transport-level `Task.state` and `Task.id` instead of the
-    // AdCP work status (`artifact.parts[0].data.status`) and AdCP
-    // work handle (`artifact.metadata.adcp_task_id`). The polling
-    // cycle never starts for A2A submitted arms in current code; the
-    // parser fix is tracked separately.
+    //
+    // Request includes `include_result: true` so spec-conformant
+    // sellers (AdCP 3.1.0+) populate the typed `result` field on
+    // `completed` responses (per adcontextprotocol/adcp#3126). Older
+    // sellers ignore the unknown request field; the response mapper
+    // falls back to the informal `additionalProperties` passthrough
+    // for those.
     const response = (await ProtocolClient.callTool(
       agent,
       'tasks/get',
-      { task_id: taskId },
+      { task_id: taskId, include_result: true },
       [],
       undefined,
       undefined,

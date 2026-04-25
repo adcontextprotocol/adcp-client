@@ -277,15 +277,19 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     assert.strictEqual(status.status, 'completed');
   });
 
-  test('passes through `task_data` alias for completion payload', async () => {
-    // Some sellers use `task_data` instead of `result` for the
-    // completion payload (both via additionalProperties since neither
-    // is in the spec). The mapper accepts either name.
-    const SERVER_TASK_ID = 'tk_task_data_alias';
-    const COMPLETION_DATA = { foo: 'bar' };
+  test('polling request includes `include_result: true` (adcp#3126)', async () => {
+    // AdCP 3.1.0 (adcontextprotocol/adcp#3126) makes `result` a typed
+    // optional field on `tasks/get` responses, gated by an
+    // `include_result: true` flag on the request. The SDK always sets
+    // it on polling so spec-conformant sellers populate the typed
+    // field on `completed` responses; older sellers ignore the
+    // unknown request field.
+    const SERVER_TASK_ID = 'tk_include_result';
+    let observedParams;
 
-    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
       if (taskName === 'tasks/get') {
+        observedParams = params;
         return {
           task_id: SERVER_TASK_ID,
           task_type: 'create_media_buy',
@@ -293,16 +297,21 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
           status: 'completed',
           created_at: '2026-04-25T10:00:00Z',
           updated_at: '2026-04-25T10:05:00Z',
-          task_data: COMPLETION_DATA, // alias for `result`
         };
       }
       return { status: 'submitted', task_id: SERVER_TASK_ID };
     });
 
     const executor = new TaskExecutor({ pollingInterval: 5 });
-    const result = await executor.executeTask(mockAgent, 'taskDataAliasTest', {});
-    const completion = await result.submitted.waitForCompletion(5);
-    assert.deepStrictEqual(completion.data, COMPLETION_DATA);
+    const result = await executor.executeTask(mockAgent, 'includeResultTest', {});
+    await result.submitted.waitForCompletion(5);
+
+    assert.strictEqual(
+      observedParams?.include_result,
+      true,
+      'request must include `include_result: true` per adcp#3126'
+    );
+    assert.strictEqual(observedParams?.task_id, SERVER_TASK_ID);
   });
 
   test('continues to handle the legacy { task: {...} } nested shape for backward compat', async () => {
