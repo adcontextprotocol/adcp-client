@@ -14,15 +14,22 @@
 // that surfaced PR #945 caught this drift class at the runtime validator;
 // having the named type closes the gap statically.
 //
-// Source of truth: schemas/cache/{version}/bundled/account/sync-accounts-response.json,
-// schemas/cache/{version}/bundled/governance/sync-governance-response.json.
+// Source of truth: schemas/cache/{version}/account/sync-accounts-response.json,
+// schemas/cache/{version}/account/sync-governance-response.json.
 
 import type { SyncAccountsSuccess, SyncGovernanceSuccess } from './tools.generated';
 
 /**
  * One result row in a `sync_accounts` response. Carries the `action`
  * discriminator (`created` / `updated` / `unchanged` / `failed`) the
- * spec requires. Use as the element type when assembling the response:
+ * spec requires. Use as the element type when assembling the response.
+ *
+ * Field-level documentation lives on the inline shape in
+ * `SyncAccountsSuccess.accounts[]` — TS indexed-access types don't
+ * propagate per-field JSDoc into the consumer's IDE. Hover the
+ * underlying interface to read the spec text on each field.
+ *
+ * Use:
  *
  * ```ts
  * const rows: SyncAccountsResponseRow[] = upstream.map((u) => ({
@@ -40,8 +47,11 @@ import type { SyncAccountsSuccess, SyncGovernanceSuccess } from './tools.generat
 export type SyncAccountsResponseRow = SyncAccountsSuccess['accounts'][number];
 
 /**
- * One result row in a `sync_governance` response. Mirrors the
- * {@link SyncAccountsResponseRow} pattern; carries whatever discriminator
- * the spec requires for governance-agent registration outcomes.
+ * One result row in a `sync_governance` response. Carries the
+ * `status` discriminator (`synced` / `failed`) the spec requires.
+ *
+ * Field-level documentation lives on the inline shape in
+ * `SyncGovernanceSuccess.accounts[]` — see {@link SyncAccountsResponseRow}
+ * for the same caveat on indexed-access JSDoc propagation.
  */
 export type SyncGovernanceResponseRow = SyncGovernanceSuccess['accounts'][number];

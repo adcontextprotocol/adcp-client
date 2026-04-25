@@ -1,5 +1,5 @@
 ---
-"@adcp/client": minor
+'@adcp/client': minor
 ---
 
 Strict discriminator types for creative assets, vendor pricing, and sync rows.
@@ -7,14 +7,13 @@ Strict discriminator types for creative assets, vendor pricing, and sync rows.
 The codegen produces strict per-variant interfaces (`ImageAsset`, `CpmPricing`, etc.) but doesn't emit canonical discriminated unions over them. This release adds three hand-authored unions on top of the generated bases so handler authors can opt into compile-time discriminator checking instead of runtime schema validation:
 
 - **`AssetInstance`** — discriminated union of every creative asset instance (`ImageAsset | VideoAsset | AudioAsset | TextAsset | HTMLAsset | URLAsset | CSSAsset | JavaScriptAsset | MarkdownAsset | VASTAsset | DAASTAsset | BriefAsset | CatalogAsset | WebhookAsset`), keyed on `asset_type`. Use as the value type for `creative_manifest.assets[<key>]`. Omitting `asset_type` or returning a plain `{ url, width, height }` against this type fails to compile.
-- **`CommonAssetInstance`** — narrower convenience union covering the six common variants (image, video, audio, text, html, url). Useful when you want to narrow without enumerating every esoteric type.
 - **`AssetInstanceType`** — the `asset_type` discriminator value union (`'image' | 'video' | …`). Useful for exhaustive switch-case helpers.
 - **`SyncAccountsResponseRow`** — extracted named type for one row in `SyncAccountsSuccess.accounts[]`. Forces the `action` literal-union discriminator (`'created' | 'updated' | 'unchanged' | 'failed'`) and the `status` enum on every row at compile time.
 - **`SyncGovernanceResponseRow`** — same pattern for `SyncGovernanceSuccess.accounts[]`. Forces the `status: 'synced' | 'failed'` discriminator.
 - **Vendor-pricing exports completed** — `PerUnitPricing`, `CustomPricing`, `VendorPricing`, `VendorPricingOption` are now re-exported from `@adcp/client` (previously only `CpmPricing`, `PercentOfMediaPricing`, `FlatFeePricing` were).
 - **Product-pricing exports completed** — `CPMPricingOption`, `VCPMPricingOption`, `CPCPricingOption`, `CPCVPricingOption`, `CPVPricingOption`, `CPPPricingOption`, `FlatRatePricingOption`, `TimeBasedPricingOption` re-exported (the union type `PricingOption` and `CPAPricingOption` were already exported).
 
-Type tests in `src/lib/types/asset-instances.test.ts` use `// @ts-expect-error` to lock in the constraints — if a future codegen regression loosens any discriminator (e.g., makes `asset_type` optional), `tsc --noEmit` fails on a now-unexpected error.
+Type tests in `src/lib/types/asset-instances.type-checks.ts` use `// @ts-expect-error` to lock in the constraints — if a future codegen regression loosens any discriminator (e.g., makes `asset_type` optional), `tsc --noEmit` fails on a now-unexpected error. The file uses the `.type-checks.ts` suffix (not `.test.ts`) so it participates in the project's normal `npm run typecheck` pass; explicitly excluded from `tsconfig.lib.json` so it doesn't ship in `dist/`.
 
 Drift class this catches at compile time:
 

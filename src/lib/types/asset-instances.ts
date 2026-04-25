@@ -17,7 +17,8 @@
 // time. PR #945's `videoAsset({...})` width/height GA tightening came
 // out of this same drift class.
 //
-// Source of truth: schemas/cache/{version}/bundled/creative/asset-types/
+// Source of truth: schemas/cache/{version}/creative/asset-types/index.json
+// (registry) and schemas/cache/{version}/core/assets/*-asset.json (per-type).
 
 import type {
   ImageAsset,
@@ -74,13 +75,6 @@ export type AssetInstance =
   | BriefAsset
   | CatalogAsset
   | WebhookAsset;
-
-/**
- * Convenience: only the asset types most agents touch. Use this when you
- * want to narrow to the common case without enumerating every esoteric
- * variant. Prefer {@link AssetInstance} when you need exhaustive coverage.
- */
-export type CommonAssetInstance = ImageAsset | VideoAsset | AudioAsset | TextAsset | HTMLAsset | URLAsset;
 
 /**
  * The discriminator value (`asset_type`) of every variant in

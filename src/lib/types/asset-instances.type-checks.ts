@@ -17,15 +17,9 @@
 //
 // Run with `npm run typecheck`.
 
-import type {
-  AssetInstance,
-  AssetInstanceType,
-  CommonAssetInstance,
-  SyncAccountsResponseRow,
-  SyncGovernanceResponseRow,
-} from './index';
+import type { AssetInstance, AssetInstanceType, SyncAccountsResponseRow, SyncGovernanceResponseRow } from './index';
 
-// ── AssetInstance: discriminator narrowing works ─────────────────────────
+// ── AssetInstance: discriminator narrowing + exhaustiveness ──────────────
 
 function describeAsset(asset: AssetInstance): string {
   switch (asset.asset_type) {
@@ -50,9 +44,16 @@ function describeAsset(asset: AssetInstance): string {
     case 'catalog':
     case 'webhook':
       return asset.asset_type;
+    default: {
+      // Exhaustiveness rail: if a new asset_type lands in AssetInstance
+      // without a case above, `asset` here is no longer `never` and this
+      // line fails compilation. Stronger than `noImplicitReturns` —
+      // survives refactors that move returns out of switch arms.
+      const _exhaustive: never = asset;
+      return _exhaustive;
+    }
   }
 }
-void describeAsset;
 
 // ── AssetInstance: omitting asset_type is rejected ───────────────────────
 
@@ -60,7 +61,6 @@ function _assetInstance_missingDiscriminator(): AssetInstance {
   // @ts-expect-error — `asset_type` is the discriminator and required.
   return { url: 'https://x.test/img.png', width: 300, height: 250 };
 }
-void _assetInstance_missingDiscriminator;
 
 // ── AssetInstance: image variant requires width and height ───────────────
 
@@ -68,7 +68,6 @@ function _imageAsset_missingWidth(): AssetInstance {
   // @ts-expect-error — ImageAsset requires `width` (per AdCP 3.0 GA).
   return { asset_type: 'image', url: 'https://x.test/img.png', height: 250 };
 }
-void _imageAsset_missingWidth;
 
 // ── AssetInstance: html instance carries `content`, not `html` ───────────
 
@@ -76,7 +75,6 @@ function _htmlAsset_wrongFieldName(): AssetInstance {
   // @ts-expect-error — HTMLAsset has `content`, not `html`. Common drift.
   return { asset_type: 'html', html: '<div>...</div>' };
 }
-void _htmlAsset_wrongFieldName;
 
 // ── AssetInstanceType: enumerates every variant's discriminator ──────────
 
@@ -96,29 +94,11 @@ const _all_types: AssetInstanceType[] = [
   'catalog',
   'webhook',
 ];
-void _all_types;
 
 function _assetType_bogusValue(): AssetInstanceType {
   // @ts-expect-error — 'banner' is not a valid asset_type.
   return 'banner';
 }
-void _assetType_bogusValue;
-
-// ── CommonAssetInstance: narrower union, accepts only common variants ────
-
-const _common_image: CommonAssetInstance = {
-  asset_type: 'image',
-  url: 'https://x.test/img.png',
-  width: 300,
-  height: 250,
-};
-void _common_image;
-
-function _common_rejectsVast(): CommonAssetInstance {
-  // @ts-expect-error — 'vast' is in AssetInstance but not CommonAssetInstance.
-  return { asset_type: 'vast', content: '<VAST></VAST>' };
-}
-void _common_rejectsVast;
 
 // ── SyncAccountsResponseRow: action discriminator is required ────────────
 
@@ -129,7 +109,6 @@ const _row_ok: SyncAccountsResponseRow = {
   action: 'created',
   status: 'active',
 };
-void _row_ok;
 
 function _row_missingAction(): SyncAccountsResponseRow {
   // @ts-expect-error — `action` is required on every row.
@@ -140,7 +119,6 @@ function _row_missingAction(): SyncAccountsResponseRow {
     status: 'active',
   };
 }
-void _row_missingAction;
 
 function _row_badAction(): SyncAccountsResponseRow {
   return {
@@ -152,7 +130,6 @@ function _row_badAction(): SyncAccountsResponseRow {
     status: 'active',
   };
 }
-void _row_badAction;
 
 // ── SyncGovernanceResponseRow: status discriminator is required ──────────
 
@@ -160,10 +137,25 @@ const _gov_row_ok: SyncGovernanceResponseRow = {
   account: { account_id: 'acct_1' },
   status: 'synced',
 };
-void _gov_row_ok;
 
 function _gov_row_missingStatus(): SyncGovernanceResponseRow {
   // @ts-expect-error — `status` is required.
   return { account: { account_id: 'acct_1' } };
 }
-void _gov_row_missingStatus;
+
+// Reference all symbols once to keep the file's intent visible to readers
+// even though they're never executed. The file-level eslint-disable above
+// is what actually silences the unused-vars lint.
+export const _references = [
+  describeAsset,
+  _assetInstance_missingDiscriminator,
+  _imageAsset_missingWidth,
+  _htmlAsset_wrongFieldName,
+  _all_types,
+  _assetType_bogusValue,
+  _row_ok,
+  _row_missingAction,
+  _row_badAction,
+  _gov_row_ok,
+  _gov_row_missingStatus,
+] as const;
