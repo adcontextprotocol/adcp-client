@@ -27,7 +27,7 @@ export {
   serverSupportsTasks,
 } from './mcp-tasks';
 
-import { callMCPToolWithTasks } from './mcp-tasks';
+import { callMCPToolWithTasks, callMCPToolWithClient } from './mcp-tasks';
 import { callMCPToolWithOAuth } from './mcp';
 import { callA2ATool } from './a2a';
 import type { AgentConfig, DebugLogEntry } from '../types';
@@ -85,6 +85,15 @@ export class ProtocolClient {
         'http.url': agent.agent_uri,
       },
       async () => {
+        // In-process MCP path: pre-connected client, no HTTP transport.
+        // Idempotency injection, schema validation, and governance middleware all
+        // still apply (they run in SingleAgentClient above this call). We skip
+        // URL validation, OAuth refresh, and signing — none apply in-process.
+        if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
+          const inProcArgs = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+          return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
+        }
+
         validateAgentUrl(agent.agent_uri);
 
         // OAuth 2.0 client credentials (RFC 6749 §4.4): re-exchange the

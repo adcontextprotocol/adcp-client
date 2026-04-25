@@ -682,6 +682,11 @@ export class SingleAgentClient {
       return agent;
     }
 
+    // In-process MCP clients have no HTTP endpoint to discover
+    if (agent._inProcessMcpClient) {
+      return agent;
+    }
+
     // MCP agents need endpoint discovery - we'll test their path, then try adding /mcp
     return {
       ...agent,
@@ -2457,6 +2462,25 @@ export class SingleAgentClient {
     }>;
   }> {
     if (this.normalizedAgent.protocol === 'mcp') {
+      // In-process: use the pre-connected client instead of opening a new HTTP connection
+      if (this.normalizedAgent._inProcessMcpClient) {
+        const mcpClient = this.normalizedAgent._inProcessMcpClient;
+        const toolsList = await mcpClient.listTools();
+        const tools = toolsList.tools.map(tool => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+          parameters: tool.inputSchema?.properties ? Object.keys(tool.inputSchema.properties as object) : [],
+        }));
+        return {
+          name: this.normalizedAgent.name,
+          description: undefined,
+          protocol: this.normalizedAgent.protocol,
+          url: this.normalizedAgent.agent_uri,
+          tools,
+        };
+      }
+
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 

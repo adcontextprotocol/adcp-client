@@ -1,5 +1,6 @@
 // Per-agent client wrapper with conversation context preservation
 
+import type { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AgentConfig } from '../types';
 import type { MCPWebhookPayload } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
@@ -113,6 +114,44 @@ export type TaskResponseTypeMap = {
 export type AdcpTaskName = keyof TaskResponseTypeMap;
 
 /**
+ * Configuration for `AgentClient.fromMCPClient()`.
+ *
+ * A narrowed subset of `SingleAgentClientConfig` — only includes options that
+ * are meaningful for in-process transport. HTTP-only fields (`userAgent`, `headers`,
+ * `webhookUrlTemplate`, OAuth paths) are excluded because they have no effect when
+ * the client dispatches directly to an in-process MCP `Client`.
+ *
+ * The fields you most likely want:
+ * - `validation` — `requests`/`responses` validation mode (`strict` | `warn` | `off`)
+ * - `governance` — buyer-side governance config
+ * - `requireV3ForMutations` — enforce AdCP v3 before dispatching mutating tools
+ */
+export type InProcessAgentClientConfig = Pick<
+  SingleAgentClientConfig,
+  | 'debug'
+  | 'validation'
+  | 'governance'
+  | 'onActivity'
+  | 'validateFeatures'
+  | 'requireV3ForMutations'
+  | 'allowV2'
+  | 'workingTimeout'
+  | 'defaultMaxClarifications'
+  | 'persistConversations'
+> & {
+  /**
+   * Human-readable name for this agent, used in debug logs and
+   * `getAgentName()`. Defaults to `'in-process'`.
+   */
+  agentName?: string;
+  /**
+   * Stable identifier for this agent, used in `getAgentId()`.
+   * Defaults to a random string prefixed with `'in-process-'`.
+   */
+  agentId?: string;
+};
+
+/**
  * Task result states where the server is still holding the task open. While
  * the last response was in one of these states the AgentClient retains the
  * server-returned `taskId` so a follow-up call can resume the same
@@ -143,12 +182,65 @@ export class AgentClient {
   private client: SingleAgentClient;
   private currentContextId?: string;
   private pendingTaskId?: string;
+  private readonly _isInProcess: boolean;
 
   constructor(
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
     this.client = new SingleAgentClient(agent, config);
+    this._isInProcess = agent._inProcessMcpClient !== undefined;
+  }
+
+  /**
+   * Create an `AgentClient` backed by a pre-connected MCP `Client` instead of
+   * an HTTP endpoint. Useful for in-process compliance testing without spinning
+   * up a loopback HTTP server.
+   *
+   * **What this gives you over `dispatchTestRequest`:**
+   * All client-side pipeline stages still apply — idempotency key auto-injection,
+   * request/response schema validation hooks, governance middleware, and the typed
+   * `TaskResult<T>` discriminated-union response shape. None of these apply when
+   * calling `dispatchTestRequest()` directly.
+   *
+   * **Usage:**
+   * ```ts
+   * import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+   * import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+   * import { AgentClient } from '@adcp/client';
+   *
+   * const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+   * const mcpClient = new Client({ name: 'test', version: '1.0.0' });
+   * await Promise.all([
+   *   mcpClient.connect(clientTransport),
+   *   adcpServer.connect(serverTransport),
+   * ]);
+   *
+   * const agent = AgentClient.fromMCPClient(mcpClient, {
+   *   validation: { requests: 'strict' },
+   * });
+   * const result = await agent.createMediaBuy({ ... });
+   * ```
+   *
+   * **Unsupported methods on in-process instances:** `resolveCanonicalUrl`,
+   * `getWebhookUrl`, `registerWebhook`, `unregisterWebhook` — these require HTTP
+   * and will throw `Error` with a descriptive message. Use `getAgentId()` /
+   * `getAgentName()` for identification instead.
+   *
+   * @param mcpClient - An already-connected MCP `Client` (see example above).
+   * @param config - Optional narrowed config. HTTP-only fields are excluded.
+   */
+  static fromMCPClient(mcpClient: MCPClient, config: InProcessAgentClientConfig = {}): AgentClient {
+    const { agentName, agentId, ...rest } = config;
+    const id = agentId ?? `in-process-${Math.random().toString(36).slice(2, 10)}`;
+    const syntheticAgent: AgentConfig = {
+      id,
+      name: agentName ?? 'in-process',
+      agent_uri: `adcp-in-process://${id}`,
+      protocol: 'mcp',
+      _inProcessMcpClient: mcpClient,
+    };
+    return new AgentClient(syntheticAgent, rest as SingleAgentClientConfig);
   }
 
   /**
@@ -217,17 +309,6 @@ export class AgentClient {
     rawBody?: string
   ): Promise<boolean> {
     return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
-  }
-
-  /**
-   * Generate webhook URL for a specific task and operation
-   *
-   * @param taskType - Type of task (e.g., 'get_products', 'media_buy_delivery')
-   * @param operationId - Operation ID for this request
-   * @returns Full webhook URL
-   */
-  getWebhookUrl(taskType: string, operationId: string): string {
-    return this.client.getWebhookUrl(taskType, operationId);
   }
 
   /**
@@ -901,8 +982,17 @@ export class AgentClient {
    *
    * For A2A: Fetches the agent card and uses its 'url' field
    * For MCP: Performs endpoint discovery and strips /mcp suffix
+   *
+   * **Not supported on in-process instances** (created via `fromMCPClient`).
+   * Use `getAgentId()` / `getAgentName()` for identification instead.
    */
   async resolveCanonicalUrl(): Promise<string> {
+    if (this._isInProcess) {
+      throw new Error(
+        'resolveCanonicalUrl() is not supported on in-process AgentClient instances. ' +
+          'Use getAgentId() or getAgentName() to identify this client.'
+      );
+    }
     return this.client.resolveCanonicalUrl();
   }
 
@@ -1042,16 +1132,48 @@ export class AgentClient {
   }
 
   /**
-   * Register webhook for task notifications
+   * Generate webhook URL for a specific task and operation.
+   *
+   * **Not supported on in-process instances** (created via `fromMCPClient`).
+   * In-process clients have no HTTP listener to receive webhook callbacks.
+   */
+  getWebhookUrl(taskType: string, operationId: string): string {
+    if (this._isInProcess) {
+      throw new Error(
+        'getWebhookUrl() is not supported on in-process AgentClient instances. ' +
+          'In-process clients have no HTTP listener for webhook delivery.'
+      );
+    }
+    return this.client.getWebhookUrl(taskType, operationId);
+  }
+
+  /**
+   * Register webhook for task notifications.
+   *
+   * **Not supported on in-process instances** (created via `fromMCPClient`).
    */
   async registerWebhook(webhookUrl: string, taskTypes?: string[]): Promise<void> {
+    if (this._isInProcess) {
+      throw new Error(
+        'registerWebhook() is not supported on in-process AgentClient instances. ' +
+          'In-process clients have no HTTP listener for webhook delivery.'
+      );
+    }
     return this.client.registerWebhook(webhookUrl, taskTypes);
   }
 
   /**
-   * Unregister webhook notifications
+   * Unregister webhook notifications.
+   *
+   * **Not supported on in-process instances** (created via `fromMCPClient`).
    */
   async unregisterWebhook(): Promise<void> {
+    if (this._isInProcess) {
+      throw new Error(
+        'unregisterWebhook() is not supported on in-process AgentClient instances. ' +
+          'In-process clients have no HTTP listener for webhook delivery.'
+      );
+    }
     return this.client.unregisterWebhook();
   }
 }
