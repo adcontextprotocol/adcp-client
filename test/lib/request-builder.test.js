@@ -770,6 +770,30 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('get_content_standards (#989)', () => {
+    test("emits 'unknown' placeholder when context lacks a real id", () => {
+      // `standards_id` is required by GetContentStandardsRequestSchema (no .optional()).
+      // Returning {} would break the schema round-trip test. The 'unknown' placeholder
+      // triggers a clean NOT_FOUND, surfacing the authoring gap — different from
+      // get_media_buys where the id field is optional and {} is valid (see #983).
+      const result = buildRequest(step('get_content_standards'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.standards_id, 'unknown');
+    });
+
+    test('injects context.content_standards_id when present', () => {
+      const context = { content_standards_id: 'cs-abc-123' };
+      const result = buildRequest(step('get_content_standards'), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.standards_id, 'cs-abc-123');
+    });
+
+    test('fixture sample_request standards_id wins over context injection', () => {
+      const context = { content_standards_id: 'cs-from-context' };
+      const fixture = { standards_id: 'cs-from-fixture' };
+      const result = buildRequest(step('get_content_standards', { sample_request: fixture }), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.standards_id, 'cs-from-fixture');
+    });
+  });
+
   describe('hasRequestBuilder', () => {
     test('returns true for tasks with builders', () => {
       const tasks = [
