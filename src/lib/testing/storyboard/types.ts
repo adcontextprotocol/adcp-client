@@ -1116,7 +1116,7 @@ export interface MissingRequiredFieldHint {
   tool: string;
   /** RFC 6901 JSON Pointer to the missing field; e.g. `/field_name` for root-level. */
   field_path: string;
-  /** Optional `$ref` or schema id naming the schema that flagged it. */
+  /** AJV `schema_path` JSON Pointer identifying the schema keyword that flagged it (e.g. `#/required`). */
   schema_ref?: string;
 }
 

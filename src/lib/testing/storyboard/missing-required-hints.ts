@@ -13,15 +13,15 @@
  */
 import type { MissingRequiredFieldHint, ValidationResult } from './types';
 
-// AJV formats the message for `required` keyword violations as:
-//   must have required property '<name>'
-// Capture group 1 is the field name.
-const REQUIRED_MSG_RE = /required property ['"]([^'"]+)['"]/;
-
 /**
  * Scan the strict AJV verdicts in `validations` and emit one hint per
  * required-field violation. Returns an empty array when no AJV schemas
  * are available or no required-field issues are present.
+ *
+ * `field_path` is taken directly from `SchemaValidationError.instance_path`,
+ * which `ajvIssueToSchemaError` (via `formatIssue` in schema-validator.ts)
+ * already encodes as `"${instancePath}/${missingProperty}"` — so the field
+ * pointer is fully built before it reaches this detector.
  *
  * @param taskName - tool name (snake_case) the storyboard dispatched under
  * @param validations - result array from `runValidations` for this step
@@ -31,33 +31,30 @@ export function detectMissingRequiredHints(
   validations: ValidationResult[]
 ): MissingRequiredFieldHint[] {
   const hints: MissingRequiredFieldHint[] = [];
+  // De-duplicate across multiple ValidationResult entries (e.g. two
+  // response_schema checks on the same step that share overlapping schemas).
+  const seen = new Set<string>();
 
   for (const result of validations) {
     const strict = result.strict;
-    if (!strict || strict.valid || !strict.issues) continue;
+    if (!strict?.issues?.length) continue;
 
     for (const issue of strict.issues) {
       if (issue.keyword !== 'required') continue;
 
-      const match = issue.message.match(REQUIRED_MSG_RE);
-      const fieldName = match?.[1];
-      if (!fieldName) continue;
-
-      // Build RFC 6901 path: parent instance_path + "/" + field name.
-      // instance_path is "" for root-level required violations (AJV points
-      // at the parent object, not the missing child), so "" + "/" + name
-      // collapses to "/name" which is the correct RFC 6901 form.
-      const parentPath = issue.instance_path ?? '';
-      const fieldPath = `${parentPath}/${fieldName}`;
+      // instance_path already contains the full pointer to the missing field
+      // (formatIssue in schema-validator.ts: pointer = instancePath + "/" +
+      // missingProperty). Use it directly — do not reconstruct from message.
+      const fieldPath = issue.instance_path || '/';
+      if (seen.has(fieldPath)) continue;
+      seen.add(fieldPath);
 
       hints.push({
         kind: 'missing_required_field',
         tool: taskName,
         field_path: fieldPath,
         schema_ref: issue.schema_path || undefined,
-        message:
-          `${taskName} strict validation: missing required property '${fieldName}'` +
-          (parentPath ? ` at ${parentPath}` : ''),
+        message: `${taskName} strict validation: ${issue.message}`,
       });
     }
   }
