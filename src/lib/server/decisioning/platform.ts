@@ -1,0 +1,82 @@
+/**
+ * DecisioningPlatform — the top-level interface adopters implement.
+ *
+ * Per-specialism sub-interfaces (sales, creative, audiences, etc.) are
+ * optional; framework's compile-time enforcement (RequiredPlatformsFor<S>)
+ * forces the right sub-interfaces based on `capabilities.specialisms[]`.
+ *
+ * Status: Preview / 6.0. Not yet wired into the framework.
+ *
+ * @public
+ */
+
+import type { DecisioningCapabilities } from './capabilities';
+import type { AccountStore } from './account';
+import type { StatusMappers } from './status-mappers';
+import type { SalesPlatform } from './specialisms/sales';
+import type { CreativeTemplatePlatform, CreativeGenerativePlatform } from './specialisms/creative';
+import type { AudiencePlatform } from './specialisms/audiences';
+import type { AdCPSpecialism } from '../../types/tools.generated';
+
+/**
+ * Top-level platform interface. Adopters implement this; framework wires
+ * the wire protocol around it.
+ *
+ * @template TConfig Platform-specific config typed at the call site.
+ *                   Example: `class GAM implements DecisioningPlatform<{ networkId: string }>`.
+ * @template TMeta   Platform-specific Account.metadata typed at the call site.
+ */
+export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, unknown>> {
+  /** Capability declaration; single source of truth for get_adcp_capabilities. */
+  capabilities: DecisioningCapabilities<TConfig>;
+
+  /** Account model + tenant resolution. */
+  accounts: AccountStore<TMeta>;
+
+  /** Native-status mappers (account, mediaBuy, creative, plan). All optional. */
+  statusMappers: StatusMappers;
+
+  // Per-specialism sub-interfaces — optional at the type level; required at the
+  // call site by RequiredPlatformsFor<S>. v1.0 ships these four:
+  sales?: SalesPlatform;
+  creative?: CreativeTemplatePlatform | CreativeGenerativePlatform;
+  audiences?: AudiencePlatform;
+
+  // v1.1+ specialisms add: governance, brand, signals
+}
+
+// ---------------------------------------------------------------------------
+// Compile-time capability enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps an AdCP specialism to the platform interface(s) it requires. The
+ * framework's `createAdcpServer<P extends DecisioningPlatform>` constrains
+ * `P` to satisfy `RequiredPlatformsFor<P['capabilities']['specialisms'][number]>`,
+ * forcing every claimed specialism's interface methods to exist.
+ *
+ * Drop a method, fail compile.
+ * Claim a specialism without an implementation, fail compile.
+ *
+ * v1.0 covers the 4 specialisms shipping in v1.0; extended in v1.1+.
+ */
+export type RequiredPlatformsFor<S extends AdCPSpecialism> =
+  | (S extends 'creative-template' ? { creative: CreativeTemplatePlatform } : never)
+  | (S extends 'creative-generative' ? { creative: CreativeGenerativePlatform } : never)
+  | (S extends 'sales-non-guaranteed' ? { sales: SalesPlatform } : never)
+  | (S extends 'audience-sync' ? { audiences: AudiencePlatform } : never);
+
+/**
+ * The framework's createAdcpServer<P> signature uses this intersection to
+ * enforce capability claims at compile time. Sketch:
+ *
+ * ```ts
+ * declare function createAdcpServer<P extends DecisioningPlatform>(config: {
+ *   platform: P & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>;
+ * }): AdcpServer;
+ * ```
+ *
+ * NOTE: The companion file is preview-only; the actual `createAdcpServer`
+ * doesn't yet enforce this. Wiring lands in a follow-up PR with the
+ * framework refactor.
+ */
