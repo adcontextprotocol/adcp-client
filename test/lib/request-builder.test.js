@@ -402,6 +402,18 @@ describe('Request Builder', () => {
       assert.strictEqual(typeof entry.currency, 'string', 'currency must be string');
     });
 
+    test("fallback usage entry creative_id is 'unknown' when context lacks creative_id (#989)", () => {
+      // Regression guard: was 'test-creative', which could be silently accepted
+      // by pre-seeded test agents. 'unknown' triggers a clean NOT_FOUND instead.
+      const result = buildRequest(step('report_usage'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.usage[0].creative_id, 'unknown');
+    });
+
+    test('uses context.creative_id for usage entry creative_id when present', () => {
+      const result = buildRequest(step('report_usage'), { creative_id: 'cr-real-456' }, DEFAULT_OPTIONS);
+      assert.strictEqual(result.usage[0].creative_id, 'cr-real-456');
+    });
+
     test('honors step.sample_request when present', () => {
       const fixture = {
         account: { account_id: 'acct_x' },
@@ -767,6 +779,52 @@ describe('Request Builder', () => {
     test('injects media_buy_ids when context.media_buy_id is present', () => {
       const result = buildRequest(step('get_media_buy_delivery'), { media_buy_id: 'buy-99' }, DEFAULT_OPTIONS);
       assert.deepStrictEqual(result.media_buy_ids, ['buy-99']);
+    });
+  });
+
+  describe('calibrate_content (#989)', () => {
+    test("artifact.artifact_id is 'unknown' when context lacks creative_id", () => {
+      // Regression guard: was 'test-creative', which could be silently accepted
+      // by pre-seeded test agents. 'unknown' triggers a clean NOT_FOUND instead.
+      const result = buildRequest(step('calibrate_content'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.artifact.artifact_id, 'unknown');
+    });
+
+    test('uses context.creative_id for artifact.artifact_id when present', () => {
+      const result = buildRequest(step('calibrate_content'), { creative_id: 'cr-real-789' }, DEFAULT_OPTIONS);
+      assert.strictEqual(result.artifact.artifact_id, 'cr-real-789');
+    });
+  });
+
+  describe('validate_content_delivery (#989)', () => {
+    test("records[].artifact.artifact_id is 'unknown' when context lacks creative_id", () => {
+      // Regression guard: was 'test-creative', which could be silently accepted
+      // by pre-seeded test agents. 'unknown' triggers a clean NOT_FOUND instead.
+      const result = buildRequest(step('validate_content_delivery'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.records[0].artifact.artifact_id, 'unknown');
+    });
+
+    test('uses context.creative_id for records[].artifact.artifact_id when present', () => {
+      const result = buildRequest(
+        step('validate_content_delivery'),
+        { creative_id: 'cr-real-abc' },
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(result.records[0].artifact.artifact_id, 'cr-real-abc');
+    });
+  });
+
+  describe('creative_approval (#989)', () => {
+    test("creative_id is 'unknown' when context lacks creative_id", () => {
+      // Regression guard: was 'test-creative', which could be silently accepted
+      // by pre-seeded test agents. 'unknown' triggers a clean NOT_FOUND instead.
+      const result = buildRequest(step('creative_approval'), {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.creative_id, 'unknown');
+    });
+
+    test('uses context.creative_id when present', () => {
+      const result = buildRequest(step('creative_approval'), { creative_id: 'cr-real-xyz' }, DEFAULT_OPTIONS);
+      assert.strictEqual(result.creative_id, 'cr-real-xyz');
     });
   });
 
