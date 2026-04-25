@@ -2136,23 +2136,51 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // `mediaBuy.getProducts` may legitimately defer the specialism
   // declaration to a follow-up. The skill examples in build-seller-agent
   // already cover the right declaration; the runtime guardrail floor is
-  // set at "if you wire creative/signals/brand handlers, you SHOULD
-  // claim a specialism."
+  // set at "if you wire creative/signals/brand/governance handlers,
+  // you SHOULD claim a specialism."
+  //
+  // governance is intentionally COARSE: any governance specialism
+  // satisfies the check even though individual handlers map to specific
+  // specialisms (createPropertyList → property-lists, calibrateContent →
+  // content-standards, etc.). Per-handler-subgroup mapping is a
+  // follow-up; the coarse rule catches the drift class (governance
+  // handlers wired, no claim at all) without false-positives on
+  // legitimate cross-cutting reads (e.g., a sales agent that calls
+  // getPropertyList for read-only joins and claims its sales specialism).
+  const isWired = (handlers: Record<string, unknown> | undefined): boolean => {
+    // Filter to function-valued keys so `{ listCreativeFormats: undefined }`
+    // (a key set to undefined, e.g. via `{ ...maybeHandlers }` spread) is
+    // treated as not wired. `Object.keys` would otherwise count the key.
+    if (!handlers) return false;
+    return Object.values(handlers).some(v => typeof v === 'function');
+  };
+
   const DOMAIN_SPECIALISM_REQUIREMENTS = [
     {
       domain: 'creative' as const,
-      wired: !!config.creative && Object.keys(config.creative).length > 0,
+      wired: isWired(config.creative as Record<string, unknown> | undefined),
       specialisms: ['creative-ad-server', 'creative-generative', 'creative-template'] as const,
     },
     {
       domain: 'signals' as const,
-      wired: !!config.signals && Object.keys(config.signals).length > 0,
+      wired: isWired(config.signals as Record<string, unknown> | undefined),
       specialisms: ['signal-marketplace', 'signal-owned'] as const,
     },
     {
       domain: 'brandRights' as const,
-      wired: !!config.brandRights && Object.keys(config.brandRights).length > 0,
+      wired: isWired(config.brandRights as Record<string, unknown> | undefined),
       specialisms: ['brand-rights'] as const,
+    },
+    {
+      domain: 'governance' as const,
+      wired: isWired(config.governance as Record<string, unknown> | undefined),
+      specialisms: [
+        'governance-spend-authority',
+        'governance-delivery-monitor',
+        'property-lists',
+        'collection-lists',
+        'content-standards',
+      ] as const,
     },
   ];
 

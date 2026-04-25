@@ -1684,5 +1684,68 @@ describe('createAdcpServer', () => {
         `no warning expected when no handlers wired; got: ${JSON.stringify(errors)}`
       );
     });
+
+    it('logs error when governance handlers are wired without a governance specialism', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        governance: { getPropertyList: noopHandler },
+        capabilities: { specialisms: ['creative-template'] },
+      });
+      assert.ok(
+        errors.some(e => e.includes('governance handlers are wired but capabilities.specialisms does not include')),
+        `expected governance-specialism warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('accepts governance handlers when property-lists is claimed', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        governance: { getPropertyList: noopHandler },
+        capabilities: { specialisms: ['property-lists'] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('governance handlers are wired')),
+        `did not expect governance warning, got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('does not warn for an empty domain handlers object', () => {
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        creative: {},
+        capabilities: { specialisms: [] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('creative handlers are wired')),
+        `empty creative {} should not trigger warning; got: ${JSON.stringify(errors)}`
+      );
+    });
+
+    it('does not warn when handler keys are present but values are undefined', () => {
+      // Repro of the edge case where `{ ...maybeHandlers }` spreads in a key
+      // with an undefined value — Object.keys would count the key, but no
+      // real handler is wired. Filter to function-valued keys.
+      const { logger, errors } = captureLoggerErrors();
+      createAdcpServer({
+        name: 'test',
+        version: '1.0.0',
+        logger,
+        creative: { listCreativeFormats: undefined, buildCreative: undefined },
+        capabilities: { specialisms: [] },
+      });
+      assert.ok(
+        !errors.some(e => e.includes('creative handlers are wired')),
+        `undefined-value keys should not trigger warning; got: ${JSON.stringify(errors)}`
+      );
+    });
   });
 });
