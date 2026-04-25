@@ -1187,6 +1187,16 @@ export class SingleAgentClient {
     // on tools/list — treating that as "strip everything" would silently
     // drop every field the buyer sent.
     // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
+    //
+    // Note: the empty-properties state from framework agents is intentional
+    // (LLM context-window economy — see `PASSTHROUGH_INPUT_SCHEMA` in
+    // `create-adcp-server.ts`). Don't try to "fix" it by wiring per-tool
+    // schemas into `tools/list`. If you genuinely need to know a tool's
+    // shape (gating, validation, version adaptation), read raw JSON from
+    // `schemas/cache/{version}/` via `schema-loader.ts`. The right defense
+    // against unknown-field errors is to gate at the *injection site*
+    // (e.g. `applyBrandInvariant` in the storyboard runner — see #940),
+    // not to lean on this strip path as a backstop.
     const toolSchema = this.cachedToolSchemas?.get(taskType);
     if (!toolSchema || Object.keys(toolSchema).length === 0) return adapted;
 
