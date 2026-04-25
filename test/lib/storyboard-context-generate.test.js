@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const { injectContext, forwardAliasCache } = require('../../dist/lib/testing/storyboard/context');
+const { injectContext, forwardAliasCache, extractContext } = require('../../dist/lib/testing/storyboard/context');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -77,5 +77,36 @@ describe('$generate:uuid_v4 placeholder resolution', () => {
     const b = injectContext({ idempotency_key: '$generate:uuid_v4#replay_key' }, ctx2);
 
     assert.notStrictEqual(a.idempotency_key, b.idempotency_key);
+  });
+});
+
+describe('extractContext – get_media_buys pagination guard', () => {
+  it('returns {} when pagination.has_more is true (mid-walk page)', () => {
+    const data = {
+      media_buys: [{ media_buy_id: 'buy-1', status: 'active' }],
+      pagination: { has_more: true, cursor: 'cursor-abc' },
+    };
+    assert.deepStrictEqual(extractContext('get_media_buys', data), {});
+  });
+
+  it('extracts media_buy_id when pagination.has_more is false (terminal page)', () => {
+    const data = {
+      media_buys: [{ media_buy_id: 'buy-1', status: 'active' }],
+      pagination: { has_more: false },
+    };
+    const result = extractContext('get_media_buys', data);
+    assert.strictEqual(result.media_buy_id, 'buy-1');
+    assert.strictEqual(result.media_buy_status, 'active');
+  });
+
+  it('extracts media_buy_id when no pagination block present (single-resource response)', () => {
+    const data = { media_buys: [{ media_buy_id: 'buy-2', status: 'pending' }] };
+    const result = extractContext('get_media_buys', data);
+    assert.strictEqual(result.media_buy_id, 'buy-2');
+    assert.strictEqual(result.media_buy_status, 'pending');
+  });
+
+  it('returns {} when media_buys array is empty', () => {
+    assert.deepStrictEqual(extractContext('get_media_buys', { media_buys: [] }), {});
   });
 });
