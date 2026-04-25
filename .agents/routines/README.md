@@ -59,3 +59,39 @@ GitHub identity is what commits appear as. For AdCP we want
 For Claude-opened PRs, enable auto-fix via the CI status bar on the
 PR (or `/autofix-pr` locally while on the branch). Requires the
 Claude GitHub App.
+
+
+## Triage Routine — Manual Nudge
+
+The triage routine fires on issue open/reopen, on `/triage`
+slash-commands (via `slash-command-dispatch.yml`), or on plain
+non-bot, non-self, non-`/triage`, non-PR-conversation comments
+landing on open issues.
+
+| What you want | How |
+|---|---|
+| Re-trigger triage on a missed issue | Comment `/triage` |
+| Bias toward Execute on a borderline issue | Comment `/triage execute` |
+| Force a clarifying-question comment | Comment `/triage clarify` |
+| Force defer | Comment `/triage defer` |
+| Add new info to a stuck Clarify | Plain comment with the new info |
+
+**What does NOT trigger triage:** prose like "Pinging triage" or
+"@claude please look at this" without the literal `/triage` token
+(the slash-command-dispatch only matches the exact token); comments
+on PR conversations (auto-fix's job, not triage); bot authors;
+self-loops (filtered via the `Triaged by Claude Code` footer).
+
+**How to know if triage is on it:**
+
+- Label `claude-triaging` → routine is actively working (1-3 min).
+  Don't start a parallel PR.
+- Label `claude-triaged` (without `claude-triaging`) → routine
+  finished. Triage comment / draft PR / silent-defer is the outcome.
+- Neither label, no `## Triage` comment, issue >a few minutes old
+  → triage didn't fire. Webhook miss likely. Comment `/triage` to
+  recover, or run `.agents/scripts/triage-local.sh <issue#>`.
+
+The `Clear stuck claude-triaging labels` workflow clears the label
+automatically every 30 min; the `Triage webhook-miss sweep` catches
+silent webhook misses hourly.
