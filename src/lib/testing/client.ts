@@ -250,6 +250,7 @@ export async function discoverAgentProfile(
     try {
       const caps = (await client.getAdcpCapabilities({})) as TaskResult;
       if (caps?.success && caps?.data) {
+        profile.raw_capabilities = caps.data;
         const parsed = parseCapabilitiesResponse(caps.data);
         profile.adcp_version = parsed.version;
         profile.supported_protocols = parsed.protocols;
