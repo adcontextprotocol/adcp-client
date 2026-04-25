@@ -318,15 +318,19 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   },
 
   get_media_buys(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+    // media_buy_ids is optional per the request schema; omitting it returns
+    // the broad/paginated set. Inject only when context carries a real ID
+    // so storyboards exercising the list path don't reach the agent with a
+    // synthesized lookup that filters out every result.
+    if (context.media_buy_id == null) return {};
+    return { media_buy_ids: [context.media_buy_id] };
   },
 
   get_media_buy_delivery(_step, context, _options) {
-    return {
-      media_buy_ids: [context.media_buy_id ?? 'unknown'],
-    };
+    // Same omission rule as get_media_buys — media_buy_ids is optional on
+    // get_media_buy_delivery's request schema.
+    if (context.media_buy_id == null) return {};
+    return { media_buy_ids: [context.media_buy_id] };
   },
 
   // provide_performance_feedback intentionally has no builder — storyboard
