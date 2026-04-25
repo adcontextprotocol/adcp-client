@@ -1,4 +1,4 @@
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
@@ -616,6 +616,132 @@ describe('createAdcpServer config warnings', () => {
     assert.equal(messages.length, 0);
   });
 
+  it("idempotency: 'disabled' suppresses the missing-store error log", () => {
+    const messages = [];
+    const logger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: msg => messages.push(msg),
+    };
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    try {
+      createAdcpServer({
+        name: 'T',
+        version: '1.0.0',
+        logger,
+        idempotency: 'disabled',
+        mediaBuy: {
+          createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [] }),
+        },
+      });
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+    assert.equal(messages.length, 0);
+  });
+
+  it("idempotency: 'disabled' logs a warn at construction (visible operator signal)", () => {
+    const warns = [];
+    const logger = {
+      debug: () => {},
+      info: () => {},
+      warn: msg => warns.push(msg),
+      error: () => {},
+    };
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      createAdcpServer({
+        name: 'T',
+        version: '1.0.0',
+        logger,
+        idempotency: 'disabled',
+        mediaBuy: {
+          createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [] }),
+        },
+      });
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+    assert.ok(
+      warns.some(m => /idempotency: 'disabled' is set/.test(m)),
+      `expected disabled-mode warning, got: ${JSON.stringify(warns)}`
+    );
+  });
+
+  // The production-gate tests below mutate process.env.NODE_ENV and
+  // ADCP_IDEMPOTENCY_DISABLED_ACK. node:test runs files in parallel
+  // by default but tests within a file serially, so the
+  // save/restore-in-finally pattern is safe here. If --test-concurrency
+  // is ever raised at the file level, move these to a child process.
+  function withEnv(overrides, fn) {
+    const prev = {};
+    for (const k of Object.keys(overrides)) {
+      prev[k] = process.env[k];
+      if (overrides[k] === undefined) delete process.env[k];
+      else process.env[k] = overrides[k];
+    }
+    try {
+      return fn();
+    } finally {
+      for (const k of Object.keys(prev)) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
+    }
+  }
+
+  function buildDisabled(extra) {
+    return createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency: 'disabled',
+      mediaBuy: { createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [] }) },
+      ...extra,
+    });
+  }
+
+  it("idempotency: 'disabled' throws under NODE_ENV=production", () => {
+    withEnv({ NODE_ENV: 'production', ADCP_IDEMPOTENCY_DISABLED_ACK: undefined }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV="production"/);
+    });
+  });
+
+  it("idempotency: 'disabled' throws when NODE_ENV is unset (raw Lambda / K8s)", () => {
+    // The earlier draft used `NODE_ENV === 'production'`, which silently
+    // accepted unset. Inverted gate must reject the dangerous defaults.
+    withEnv({ NODE_ENV: undefined, ADCP_IDEMPOTENCY_DISABLED_ACK: undefined }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV=<unset>/);
+    });
+  });
+
+  it("idempotency: 'disabled' throws under NODE_ENV=staging (custom env names)", () => {
+    withEnv({ NODE_ENV: 'staging', ADCP_IDEMPOTENCY_DISABLED_ACK: undefined }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV="staging"/);
+    });
+  });
+
+  it("idempotency: 'disabled' allows ADCP_IDEMPOTENCY_DISABLED_ACK=1 escape hatch under any NODE_ENV", () => {
+    const warns = [];
+    const logger = { debug: () => {}, info: () => {}, warn: msg => warns.push(msg), error: () => {} };
+    withEnv({ NODE_ENV: 'staging', ADCP_IDEMPOTENCY_DISABLED_ACK: '1' }, () => {
+      assert.doesNotThrow(() => buildDisabled({ logger }));
+    });
+    assert.ok(warns.some(m => /idempotency: 'disabled' is set/.test(m)));
+  });
+
+  it("idempotency: 'disabled' rejects truthy-but-not-1 ack values", () => {
+    // Be strict about the ack — only the literal '1' acknowledges. 'true',
+    // 'yes', and other truthy strings should NOT pass; this prevents
+    // operators from copying half-remembered env-var values.
+    withEnv({ NODE_ENV: 'staging', ADCP_IDEMPOTENCY_DISABLED_ACK: 'true' }, () => {
+      assert.throws(() => buildDisabled(), /refuses to start with NODE_ENV="staging"/);
+    });
+  });
+
   it('si_initiate_session: string request.context does not leak through replay', async () => {
     // si_initiate_session overrides `context` as a required string on the
     // request (natural-language handoff) while the response schema keeps the
@@ -672,5 +798,112 @@ describe('createAdcpServer config warnings', () => {
     });
     assert.equal(calls, 1);
     assert.equal(conflict.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+  });
+});
+
+describe("createAdcpServer with idempotency: 'disabled'", () => {
+  // The disabled-mode gate refuses to start unless NODE_ENV is in
+  // {'test', 'development'} or ADCP_IDEMPOTENCY_DISABLED_ACK=1. The test
+  // runner doesn't set NODE_ENV by default, so pin it for this suite and
+  // restore on teardown.
+  let _prevNodeEnv;
+  before(() => {
+    _prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+  });
+  after(() => {
+    if (_prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = _prevNodeEnv;
+  });
+
+  function makeDisabledServer({ validationOverride } = {}) {
+    const calls = [];
+    const handler = async (params, ctx) => {
+      calls.push({ params, ctx });
+      return { media_buy_id: `mb_${calls.length}`, packages: [] };
+    };
+    const server = _createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency: 'disabled',
+      resolveSessionKey: () => 'tenant_a',
+      validation: validationOverride ?? { requests: 'off', responses: 'off' },
+      mediaBuy: { createMediaBuy: handler },
+    });
+    return { server, calls };
+  }
+
+  it('lets a mutating request through with no idempotency_key (middleware off)', async () => {
+    const { server, calls } = makeDisabledServer();
+    const result = await callTool(server, 'create_media_buy', basePayload);
+    assert.equal(result.adcp_error, undefined, `unexpected error: ${JSON.stringify(result.adcp_error)}`);
+    assert.equal(calls.length, 1, 'handler must run on disabled mode');
+    assert.equal(result.media_buy_id, 'mb_1');
+  });
+
+  it('lets a mutating request through under strict request schema validation', async () => {
+    // The actual unblock: tests that want strict schema enforcement on
+    // every other field but don't want to UUID-inject every payload.
+    const { server, calls } = makeDisabledServer({
+      validationOverride: { requests: 'strict', responses: 'off' },
+    });
+    const result = await callTool(server, 'create_media_buy', basePayload);
+    assert.equal(result.adcp_error, undefined, `unexpected error: ${JSON.stringify(result.adcp_error)}`);
+    assert.equal(calls.length, 1);
+  });
+
+  it('strict schema validation still rejects OTHER required fields', async () => {
+    // Filter must be surgical — only suppress the missing-idempotency_key
+    // failure. A genuinely malformed payload still fails VALIDATION_ERROR.
+    const { server, calls } = makeDisabledServer({
+      validationOverride: { requests: 'strict', responses: 'off' },
+    });
+    const broken = { ...basePayload };
+    delete broken.brand;
+    const result = await callTool(server, 'create_media_buy', broken);
+    assert.equal(result.adcp_error?.code, 'VALIDATION_ERROR');
+    assert.equal(calls.length, 0);
+  });
+
+  it('does not replay — same key twice executes the handler twice', async () => {
+    const { server, calls } = makeDisabledServer();
+    const key = 'replay_key_abcdefghij';
+    const first = await callTool(server, 'create_media_buy', { ...basePayload, idempotency_key: key });
+    const second = await callTool(server, 'create_media_buy', { ...basePayload, idempotency_key: key });
+    assert.equal(calls.length, 2, 'disabled mode must not replay');
+    assert.notEqual(first.media_buy_id, second.media_buy_id);
+    assert.notEqual(second.replayed, true);
+  });
+
+  it('get_adcp_capabilities advertises idempotency.supported: false (no replay_ttl_seconds)', async () => {
+    // Wire-honesty: the spec discriminated union has IdempotencySupported
+    // (`true` + replay_ttl_seconds) and IdempotencyUnsupported (`false`,
+    // no TTL). Disabled mode MUST flip to the Unsupported branch so a
+    // buyer reading caps falls back to natural-key dedup before retrying
+    // a spend-committing op. Lying about this with `supported: true` is
+    // a money-flow footgun.
+    const { server } = makeDisabledServer();
+    const caps = await callTool(server, 'get_adcp_capabilities', {});
+    assert.equal(caps.adcp.idempotency.supported, false);
+    assert.equal(
+      caps.adcp.idempotency.replay_ttl_seconds,
+      undefined,
+      'replay_ttl_seconds MUST be absent on the IdempotencyUnsupported branch'
+    );
+  });
+
+  it('rejects malformed idempotency_key even in disabled mode (shape gate runs regardless)', async () => {
+    // Defense-in-depth: when a buyer DOES supply a key, the spec pattern
+    // is enforced even in disabled mode so malformed strings never reach
+    // handler logs. Missing-key tolerance is the disabled-mode contract;
+    // malformed-key tolerance is not.
+    const { server, calls } = makeDisabledServer();
+    const result = await callTool(server, 'create_media_buy', {
+      ...basePayload,
+      idempotency_key: 'too short',
+    });
+    assert.equal(result.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(result.adcp_error?.field, 'idempotency_key');
+    assert.equal(calls.length, 0, 'malformed key must not reach the handler');
   });
 });

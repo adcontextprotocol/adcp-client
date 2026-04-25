@@ -1058,8 +1058,17 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * Scoping: by default uses `ctx.sessionKey` as the principal. Override
    * via `resolveIdempotencyPrincipal`.
+   *
+   * Pass the literal string `'disabled'` to suppress idempotency
+   * enforcement end-to-end: schema validation tolerates a missing
+   * `idempotency_key` on mutating tools, the replay/conflict middleware
+   * is skipped, and the missing-store guardrail log is silenced. Intended
+   * for non-production test fleets that don't model idempotency replay
+   * — production servers should always wire a real store. The framework
+   * logs an info-level warning at construction when this mode is used
+   * outside `NODE_ENV=test` so the choice is visible.
    */
-  idempotency?: IdempotencyStore;
+  idempotency?: IdempotencyStore | 'disabled';
   /**
    * Derive the idempotency principal from the handler context, the
    * request params, and the tool name. Defaults to `ctx.sessionKey`. Two
@@ -1993,7 +2002,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     stateStore = new InMemoryStateStore(),
     logger = noopLogger,
     capabilities: capConfig,
-    idempotency,
+    idempotency: idempotencyConfig,
     resolveIdempotencyPrincipal,
     instructions,
     taskStore,
@@ -2021,6 +2030,47 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const isProduction = process.env.NODE_ENV === 'production';
   const requestValidationMode = validationConfig?.requests ?? (isProduction ? 'off' : 'strict');
   const responseValidationMode = validationConfig?.responses ?? (isProduction ? 'off' : 'strict');
+
+  // Split the `idempotency` config field into "the active store" and
+  // "explicitly opted out" so existing call sites keep working with a
+  // single nullable variable while the disabled-mode branches stay
+  // surgical. `idempotencyDisabled` gates: schema-level missing-key
+  // tolerance, the missing-store guardrail log, the capability
+  // declaration shift to `IdempotencyUnsupported`, and the runtime
+  // production check below.
+  const idempotencyDisabled = idempotencyConfig === 'disabled';
+  const idempotency: IdempotencyStore | undefined = idempotencyDisabled ? undefined : idempotencyConfig;
+  if (idempotencyDisabled) {
+    // Allowlist gate. The earlier draft refused the flag only when
+    // NODE_ENV === 'production', which is a footgun: NODE_ENV defaults to
+    // unset in raw Lambda, custom containers, and many K8s deployments,
+    // so the strict equality returned `false` in exactly the
+    // hard-to-debug environments where disabled mode is most dangerous.
+    // Inverted to an allowlist of dev/test environments; any other value
+    // (unset, 'production', 'staging', 'qa', custom names) requires the
+    // operator to explicitly acknowledge the risk via
+    // `ADCP_IDEMPOTENCY_DISABLED_ACK=1`. Hard to set by accident, makes
+    // the choice deliberate, and turns a missing-NODE_ENV config into a
+    // startup crash instead of a silent money-flow incident on retry.
+    const env = process.env.NODE_ENV;
+    const acknowledged = process.env.ADCP_IDEMPOTENCY_DISABLED_ACK === '1';
+    const isAllowlistedDevEnv = env === 'test' || env === 'development';
+    if (!isAllowlistedDevEnv && !acknowledged) {
+      throw new Error(
+        "createAdcpServer: idempotency: 'disabled' refuses to start with NODE_ENV=" +
+          (env === undefined ? '<unset>' : JSON.stringify(env)) +
+          '. Disabled mode skips replay enforcement and silently double-executes mutating handlers on retry, ' +
+          'so the SDK only allows it under NODE_ENV=test or NODE_ENV=development by default. ' +
+          'Either: (a) wire a real store via `createIdempotencyStore({ backend, ttlSeconds })`, ' +
+          '(b) set NODE_ENV=test or NODE_ENV=development if this is a dev-only environment, or ' +
+          '(c) set ADCP_IDEMPOTENCY_DISABLED_ACK=1 to explicitly acknowledge the risk for non-standard environments.'
+      );
+    }
+    logger.warn(
+      "createAdcpServer: idempotency: 'disabled' is set. Mutating requests will not be replay-checked and " +
+        '`get_adcp_capabilities` will declare `idempotency.supported: false`. Use only in non-production test fleets.'
+    );
+  }
 
   // Enforce lock-step between the `signed-requests` specialism claim and the
   // verifier config for the auto-wiring path. When `signedRequests` is set
@@ -2144,26 +2194,49 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           return response;
         };
 
+        const toolIsMutating = isMutatingTask(toolName);
+
         // --- Request schema validation (opt-in) ---
         // Runs before idempotency so drifted payloads never touch the
         // replay cache. `off` short-circuits without calling AJV.
         if (requestValidationMode !== 'off') {
           const outcome = validateRequest(toolName, params);
           if (!outcome.valid) {
-            if (requestValidationMode === 'strict') {
-              // Thread `exposeSchemaPath` the same way response-side does
-              // so request-side schemaPath also ships in dev and stays
-              // gated in production. Prior to this, request-side silently
-              // stripped schemaPath even in dev — asymmetric with response-side.
-              const payload = buildAdcpValidationErrorPayload(toolName, 'request', outcome.issues, {
-                exposeSchemaPath: exposeErrorDetails,
+            // When `idempotency: 'disabled'` is set, drop the synthetic
+            // "missing idempotency_key" failure on mutating tools — the
+            // operator has explicitly opted out of enforcement and would
+            // otherwise need to UUID-inject every test payload to satisfy
+            // the spec-required field. All other schema issues still fail.
+            //
+            // The exact-match `pointer === '/idempotency_key'` is
+            // load-bearing: AJV builds the pointer from `instancePath +
+            // /missingProperty`, so today every mutating tool's
+            // idempotency_key sits at the top level (instancePath = '',
+            // pointer = '/idempotency_key'). If a future spec revision
+            // ever nests this field under another object, the new pointer
+            // (`/foo/idempotency_key`) won't match this filter and the
+            // strict-mode failure will correctly bubble up — drift is
+            // surfaced rather than silently swallowed.
+            const issues =
+              idempotencyDisabled && toolIsMutating
+                ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
+                : outcome.issues;
+            if (issues.length > 0) {
+              if (requestValidationMode === 'strict') {
+                // Thread `exposeSchemaPath` the same way response-side does
+                // so request-side schemaPath also ships in dev and stays
+                // gated in production. Prior to this, request-side silently
+                // stripped schemaPath even in dev — asymmetric with response-side.
+                const payload = buildAdcpValidationErrorPayload(toolName, 'request', issues, {
+                  exposeSchemaPath: exposeErrorDetails,
+                });
+                return finalize(adcpError('VALIDATION_ERROR', payload));
+              }
+              logger.warn(`Schema validation warning (request) for ${toolName}: ${formatIssues(issues)}`, {
+                tool: toolName,
+                issues,
               });
-              return finalize(adcpError('VALIDATION_ERROR', payload));
             }
-            logger.warn(`Schema validation warning (request) for ${toolName}: ${formatIssues(outcome.issues)}`, {
-              tool: toolName,
-              issues: outcome.issues,
-            });
           }
         }
 
@@ -2218,8 +2291,34 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // --- idempotency_key shape gate (runs even in disabled mode) ---
+        // Defense-in-depth against buyers that bypass MCP schema
+        // validation (different transport, bespoke client) AND against
+        // disabled-mode environments where the replay middleware below is
+        // skipped. Low-entropy keys pollute the cache and enable
+        // enumeration; keys containing the internal scope-separator byte
+        // would collide with the cache's scope tuple. Even in disabled
+        // mode (no cache, no enforcement) a malformed key flowing into
+        // handler logs is a debuggability hazard — so we reject the
+        // shape whenever a key was supplied, regardless of whether the
+        // replay middleware will execute. Missing-key enforcement
+        // remains scoped to the middleware below (gated on `idempotency`),
+        // so disabled mode tolerates absence per the schema-filter
+        // contract earlier in this dispatcher.
+        if (
+          toolIsMutating &&
+          typeof params.idempotency_key === 'string' &&
+          !IDEMPOTENCY_KEY_PATTERN.test(params.idempotency_key)
+        ) {
+          return finalize(
+            adcpError('INVALID_REQUEST', {
+              message: 'idempotency_key must match the spec pattern ^[A-Za-z0-9_.:-]{16,255}$',
+              field: 'idempotency_key',
+            })
+          );
+        }
+
         // --- Idempotency (mutating tools only) ---
-        const toolIsMutating = isMutatingTask(toolName);
         let idempotencyCheck: { key: string; principal: string; payloadHash: string; extraScope?: string } | undefined;
         if (idempotency && toolIsMutating) {
           const key = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
@@ -2231,19 +2330,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               })
             );
           }
-          // Enforce the spec pattern server-side — defense-in-depth against
-          // buyers that bypass MCP schema validation (different transport,
-          // bespoke client). Low-entropy keys pollute the cache and enable
-          // enumeration; keys containing \u0000 would collide with the
-          // internal scope separator.
-          if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
-            return finalize(
-              adcpError('INVALID_REQUEST', {
-                message: 'idempotency_key must match the spec pattern ^[A-Za-z0-9_.:-]{16,255}$',
-                field: 'idempotency_key',
-              })
-            );
-          }
+          // Pattern check already ran in the shape gate above. By this
+          // point `key` is guaranteed to match IDEMPOTENCY_KEY_PATTERN.
           const principal =
             (resolveIdempotencyPrincipal
               ? resolveIdempotencyPrincipal(ctx, params, toolName as AdcpServerToolName)
@@ -2684,7 +2772,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // about it can suppress the error by setting
   // `capabilities.idempotency.replay_ttl_seconds` directly.
   const registeredMutatingTools = [...registeredToolNames].filter(t => MUTATING_TASKS.has(t));
-  if (registeredMutatingTools.length > 0 && !idempotency && !capConfig?.idempotency?.replay_ttl_seconds) {
+  if (
+    registeredMutatingTools.length > 0 &&
+    !idempotency &&
+    !idempotencyDisabled &&
+    !capConfig?.idempotency?.replay_ttl_seconds
+  ) {
     logger.error(
       `createAdcpServer: ${registeredMutatingTools.length} mutating tools registered ` +
         `(${registeredMutatingTools.slice(0, 3).join(', ')}${
@@ -2713,19 +2806,28 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // --- Auto-register get_adcp_capabilities ---
   const protocols = detectProtocols([...registeredToolNames]);
 
-  const capabilitiesData: GetAdCPCapabilitiesResponse = {
-    adcp: {
-      major_versions: capConfig?.major_versions ?? [3],
-      // When an idempotency store is wired, pull the TTL from the store
-      // (so declared capability matches actual behavior). Fall back to
-      // explicit capConfig, else to the 24h spec-recommended default.
-      // clampReplayTtl guards against out-of-spec values in capConfig.
-      idempotency: {
+  // Idempotency capability declaration. Spec defines a discriminated
+  // union (`get-adcp-capabilities-response.json` `adcp.idempotency.oneOf`):
+  //   - `IdempotencySupported`  → `{ supported: true,  replay_ttl_seconds: N }`
+  //   - `IdempotencyUnsupported` → `{ supported: false }` (replay_ttl_seconds MUST be absent)
+  // Disabled mode flips to `IdempotencyUnsupported` so the wire contract
+  // matches actual behavior — buyers reading capabilities can fall back to
+  // natural-key dedup before retrying spend-committing operations. Lying
+  // here (declaring `supported: true` while skipping replay) is a
+  // money-flow footgun: a 504-retry under the same key double-books.
+  const idempotencyCapability: GetAdCPCapabilitiesResponse['adcp']['idempotency'] = idempotencyDisabled
+    ? { supported: false }
+    : {
         supported: true,
         replay_ttl_seconds: clampReplayTtl(
           capConfig?.idempotency?.replay_ttl_seconds ?? idempotency?.ttlSeconds ?? 86400
         ),
-      },
+      };
+
+  const capabilitiesData: GetAdCPCapabilitiesResponse = {
+    adcp: {
+      major_versions: capConfig?.major_versions ?? [3],
+      idempotency: idempotencyCapability,
     },
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };

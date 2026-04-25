@@ -28,3 +28,8 @@ export * from './format-asset-slots';
 
 // Re-export Zod schemas for runtime validation
 export * from './schemas.generated';
+
+// Re-export const-array enum values (e.g., MediaChannelValues, PacingValues)
+// for consumers that need to enumerate or validate against the spec's
+// literal sets without re-deriving them from Zod schemas.
+export * from './enums.generated';
