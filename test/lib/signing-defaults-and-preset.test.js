@@ -169,23 +169,68 @@ describe('buildAgentSigningFetch default upstream', () => {
     }
   });
 
-  it('throws a clear error when no upstream is provided and globalThis.fetch is unavailable', () => {
+  it('throws a clear error on first request when no upstream is provided and globalThis.fetch is unavailable', async () => {
+    // Lazy resolution: factory construction must NOT throw. The error surfaces
+    // on the first outbound request (when upstream is actually consulted) so
+    // that a polyfill installed between factory and first request can take
+    // effect.
     const original = globalThis.fetch;
     delete globalThis.fetch;
     try {
-      assert.throws(
+      const signedFetch = buildAgentSigningFetch({
+        signing: {
+          kid: 'test-ed25519-2026',
+          alg: 'ed25519',
+          private_key: primaryPrivate,
+          agent_url: 'https://buyer.example.com',
+        },
+        getCapability: () => undefined,
+      });
+      await assert.rejects(
         () =>
-          buildAgentSigningFetch({
-            signing: {
-              kid: 'test-ed25519-2026',
-              alg: 'ed25519',
-              private_key: primaryPrivate,
-              agent_url: 'https://buyer.example.com',
-            },
-            getCapability: () => undefined,
+          signedFetch('https://seller.example.com/mcp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{"jsonrpc":"2.0","id":1,"method":"initialize"}',
           }),
         err => err instanceof TypeError && /globalThis\.fetch is unavailable/i.test(err.message)
       );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('resolves globalThis.fetch lazily — polyfills installed after factory creation take effect', async () => {
+    // Build the signing fetch with NO globalThis.fetch yet. Eager resolution
+    // would either throw here or capture `undefined`; lazy resolution must
+    // defer to the first request, by which point the polyfill is installed.
+    const original = globalThis.fetch;
+    delete globalThis.fetch;
+    try {
+      const signedFetch = buildAgentSigningFetch({
+        signing: {
+          kid: 'test-ed25519-2026',
+          alg: 'ed25519',
+          private_key: primaryPrivate,
+          agent_url: 'https://buyer.example.com',
+        },
+        getCapability: () => undefined,
+      });
+
+      let captured;
+      globalThis.fetch = async (input, init) => {
+        captured = { input: String(input), init };
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+
+      const res = await signedFetch('https://seller.example.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"jsonrpc":"2.0","id":1,"method":"initialize"}',
+      });
+      assert.strictEqual(res.status, 200);
+      assert.ok(captured, 'late-installed polyfill should have been invoked');
+      assert.strictEqual(captured.input, 'https://seller.example.com/mcp');
     } finally {
       globalThis.fetch = original;
     }
