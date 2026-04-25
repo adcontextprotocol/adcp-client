@@ -31,6 +31,25 @@ export interface Storyboard {
   introduced_in?: string;
   /** Tools that make this storyboard applicable (at least one must be present) */
   required_tools?: string[];
+  /**
+   * Predicate evaluated against the agent's declared capabilities before any
+   * phase runs. When the predicate is false, the runner emits a single
+   * `{ skipped: true, skip_reason: 'capability_unsupported' }` storyboard
+   * result instead of running phases — avoiding misleading per-phase failures
+   * when the storyboard tests behavior the agent explicitly opted out of.
+   *
+   * `path` is a dotted key path into the raw `get_adcp_capabilities` response
+   * (e.g. `"adcp.idempotency.supported"`). `equals` is the scalar value the
+   * path must resolve to for the storyboard to run.
+   *
+   * When the path resolves to `undefined` (field absent), the predicate is
+   * treated as unresolvable and the storyboard runs — absence means the agent
+   * hasn't explicitly opted out, so failing the storyboard surfaces the gap.
+   *
+   * When `raw_capabilities` is not available (e.g. the agent doesn't expose
+   * `get_adcp_capabilities`), the gate is a no-op and the storyboard runs.
+   */
+  requires_capability?: { path: string; equals: boolean | string | number | null };
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
   requires_scenarios?: string[];
   agent: {
@@ -809,7 +828,17 @@ export type RunnerDetailedSkipReason =
    * still distinguish setup breaks from stateful-chain breaks within a
    * phase.
    */
-  | 'controller_seeding_failed';
+  | 'controller_seeding_failed'
+  /**
+   * A `requires_capability` predicate on the storyboard evaluated to false —
+   * the agent explicitly declared it does not support the capability this
+   * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
+   * storyboard is skipped before any phase runs. Maps to canonical
+   * `unsatisfied_contract`: the agent's self-declared capability profile
+   * does not satisfy the storyboard's preconditions — consistent with peer
+   * skip reasons `rate_abuse_opt_out` and `missing_test_kit_contract`.
+   */
+  | 'capability_unsupported';
 
 /**
  * Map detailed grader skip reasons onto the six canonical spec values so
@@ -822,6 +851,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   grader_skipped: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
+  capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
   live_side_effect_opt_in_required: 'unsatisfied_contract',

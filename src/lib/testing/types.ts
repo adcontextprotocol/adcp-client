@@ -251,6 +251,12 @@ export interface AgentProfile {
    * result is due to a broken caps probe, not an agent that lacks v3 support.
    */
   capabilities_probe_error?: string;
+  /**
+   * Raw `get_adcp_capabilities` response body. Used by the storyboard runner to
+   * evaluate `requires_capability` predicates (e.g. `adcp.idempotency.supported`)
+   * that reference fields not extracted into the normalised profile shape above.
+   */
+  raw_capabilities?: unknown;
 }
 
 export interface TestResult {

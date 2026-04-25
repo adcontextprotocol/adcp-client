@@ -79,7 +79,7 @@ import type {
   ValidationResult,
 } from './types';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
-import type { TaskResult } from '../types';
+import type { AgentProfile, TaskResult } from '../types';
 import {
   type AssertionContext,
   type AssertionSpec,
@@ -118,6 +118,28 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
   oauth_not_advertised: OAUTH_NOT_ADVERTISED_DETAIL,
   controller_seeding_failed: CONTROLLER_SEEDING_FAILED_DETAIL,
 };
+
+/**
+ * Walk a dotted key path (e.g. `"adcp.idempotency.supported"`) through a
+ * nested object. Returns `undefined` when any segment is missing or the
+ * intermediate value is not an object — the caller treats `undefined` as
+ * "path absent" and does NOT skip the storyboard (absence means the agent
+ * hasn't explicitly opted out, so failing the storyboard surfaces the gap).
+ *
+ * Exported for direct testing. Inline copies of this logic in test code
+ * silently drift from the runtime when edge cases (null prototypes,
+ * Symbol keys, prototype-chain access) get tightened — testing the real
+ * implementation forecloses that class of bug.
+ */
+export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown {
+  const keys = dottedPath.split('.');
+  let current: unknown = raw;
+  for (const key of keys) {
+    if (current === null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
@@ -377,6 +399,64 @@ export async function runStoryboard(
 }
 
 /**
+ * Build a minimal StoryboardResult for a storyboard skipped by a
+ * `requires_capability` predicate. The single synthetic step carries
+ * `skip_reason: 'capability_unsupported'` so CLI reports and JUnit
+ * consumers render it as a skip rather than a pass or failure.
+ */
+function buildCapabilityUnsupportedResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  detail: string
+): StoryboardResult {
+  const syntheticStep: StoryboardStepResult = {
+    storyboard_id: storyboard.id,
+    step_id: 'capability_unsupported',
+    phase_id: 'capability_unsupported',
+    title: 'Storyboard skipped: capability not supported by this agent',
+    task: '',
+    passed: true,
+    skipped: true,
+    skip_reason: 'capability_unsupported',
+    skip: { reason: 'unsatisfied_contract', detail },
+    duration_ms: 0,
+    validations: [],
+    context: {},
+    error: detail,
+    extraction: { path: 'none' },
+  };
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'capability_unsupported',
+        phase_title: 'Capability unsupported',
+        passed: true,
+        steps: [syntheticStep],
+        duration_ms: 0,
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+  };
+}
+
+/**
  * Execute a single pass of the storyboard against the supplied replica URLs
  * using round-robin dispatch starting at `dispatchOffset`. Called directly
  * by `runStoryboard` (offset 0) and repeatedly by `runMultiPass` (offsets
@@ -401,11 +481,43 @@ async function executeStoryboardPass(
   // expected to run the same code behind a shared state store, so one probe
   // is sufficient. For multi-instance runs, skipping N-1 redundant
   // get_agent_info calls also keeps CI output clean.
+  let profile: AgentProfile | undefined;
   if (!options._client) {
-    const { profile } = await getOrDiscoverProfile(clients[0]!, options);
+    const discovered = await getOrDiscoverProfile(clients[0]!, options);
+    profile = discovered.profile;
     // Populate agentTools from discovered profile if not already set
     if (!options.agentTools && profile?.tools) {
       options = { ...options, agentTools: profile.tools };
+    }
+  } else {
+    profile = options._profile;
+  }
+
+  // Evaluate requires_capability predicate before any phase setup.
+  // When the agent explicitly declared it doesn't support what this storyboard
+  // tests (e.g. `adcp.idempotency.supported: false`), skip the whole storyboard
+  // rather than producing a cascade of misleading per-phase failures.
+  if (storyboard.requires_capability) {
+    const rawCaps = profile?.raw_capabilities;
+    if (rawCaps !== undefined) {
+      const { path, equals } = storyboard.requires_capability;
+      const actual = resolveCapabilityPath(rawCaps, path);
+      // Absence semantics — load-bearing. `actual === undefined` means
+      // the agent didn't declare the capability at all (field missing
+      // from `get_adcp_capabilities` response). We deliberately RUN the
+      // storyboard in that case rather than skip it: an agent that
+      // pre-dates the capability field hasn't explicitly opted out, so
+      // the storyboard's failures surface a real spec-coverage gap
+      // (under-declared agent) rather than a behavior the agent
+      // affirmatively refused. Skip ONLY when the agent declared a
+      // value AND that value disagrees with the predicate.
+      if (actual !== undefined && actual !== equals) {
+        const detail =
+          `Capability predicate \`${path} === ${JSON.stringify(equals)}\` not satisfied: ` +
+          `agent declared ${JSON.stringify(actual)}.`;
+        if (!options._client) await closeConnections(options.protocol);
+        return buildCapabilityUnsupportedResult(agentUrls, storyboard, detail);
+      }
     }
   }
 

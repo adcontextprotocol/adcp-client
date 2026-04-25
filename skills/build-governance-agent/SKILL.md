@@ -46,6 +46,7 @@ Every production governance agent — regardless of specialism — must wire the
 - **Authentication** via `serve({ authenticate: verifyApiKey(...)/verifyBearer(...) })` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: don't reject requests that carry `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 - **Resolve-then-authorize** on id lookups (`get_property_list`, `get_content_standards`, `get_collection_list`): return byte-equivalent errors whether the id is cross-tenant or nonexistent — always `REFERENCE_NOT_FOUND`, never `PERMISSION_DENIED`. `adcp fuzz` runs a paired-probe invariant that enforces this; stand up two test tenants and pass `--auth-token` + `--auth-token-cross-tenant` for full coverage. See `skills/build-seller-agent/SKILL.md` §Resolve-then-authorize for the full rules.
+- **`comply_test_controller`** — required to pass the `governance_spend_authority` and `property_lists` storyboards. Each seeds fixtures via `comply_test_controller.seed_plan` / `seed_property_list` before running the business-logic phases. Register via `createComplyController({ seed: { plan, property_list, collection_list, content_standards } })` and call `controller.register(server)` — same pattern as seller. Full treatment in `skills/build-seller-agent/SKILL.md` §Compliance Testing. Without it, all business-logic steps skip with `missing_test_controller` and the track vacuously "passes" (no tests run, vacuous green detected by the grader as fail).
 
 ## Before Writing Code
 
@@ -78,7 +79,7 @@ For campaign governance, how should the agent decide?
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['governance-spend-authority', 'property-lists']`), NOT `[{id, version}]` objects.
+> - **Declare `capabilities: { specialisms: ['governance-spend-authority', 'property-lists'] }` on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 > - Every mutating-tool response (`create_property_list`, `create_collection_list`, `create_content_standards`, etc.) has `additionalProperties: false` — don't add extra fields. Return exactly what the schema declares.
 
 ### Campaign Governance
@@ -593,7 +594,8 @@ const server = createAdcpServer({
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+import { serve } from '@adcp/client';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {

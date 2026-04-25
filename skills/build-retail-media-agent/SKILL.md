@@ -73,11 +73,12 @@ Does the buyer send performance metrics back for optimization?
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - `capabilities.specialisms` is `string[]` of enum ids (e.g. `['sales-catalog-driven', 'conversion_tracking']`), NOT `[{id, version}]` objects.
+> - **Declare `capabilities: { specialisms: ['sales-catalog-driven'] }` on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 > - `get_media_buy_delivery` response requires **top-level `currency: string`** (ISO 4217).
 > - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows require `package_id`, `spend`, `pricing_model`, `rate`, `currency`. Mock handlers that return `{package_id, impressions, clicks}` fail validation — include the billing quintet on every package row.
 > - `get_media_buy_delivery /reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only. `'2026-04-21'` fails the GA format check.
 > - `get_media_buys /media_buys[i]` rows require `media_buy_id`, `status`, `currency`, `total_budget`, `packages`. Persist `currency` + `total_budget` from `create_media_buy` so they can be echoed back verbatim.
+> - `sync_accounts` response: each `accounts[]` row requires `action: 'created' | 'updated' | 'unchanged' | 'failed'` (same shape as `sync_creatives`). Omitting `action` fails schema validation and blocks every downstream stateful step.
 
 All standard seller tools apply (see `skills/build-seller-agent/SKILL.md`). The additional tools:
 
@@ -397,7 +398,8 @@ Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempote
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/client';
+import { serve } from '@adcp/client';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
