@@ -926,12 +926,23 @@ export class TaskExecutor {
     //
     // When the seller violated the spec and didn't include a task handle
     // we fall back to the local UUID so the buyer at least gets a
-    // non-undefined `taskId` field. This also matches the historical
-    // (broken) behavior on a wire where the server doesn't know the
-    // local UUID, so the polling cycle was already misaligned — better
-    // to keep the surface area stable than to introduce a hard fail at
-    // a place that's been silently wrong.
-    const serverTaskId = this.responseParser.getTaskId(response) ?? taskId;
+    // non-undefined `taskId` field. The polling cycle won't be able to
+    // locate the work in this state — log an advisory so operators
+    // grepping debug logs can pinpoint the seller-side spec violation.
+    const extractedServerTaskId = this.responseParser.getTaskId(response);
+    const serverTaskId = extractedServerTaskId ?? taskId;
+    if (!extractedServerTaskId) {
+      debugLogs.push({
+        type: 'warning',
+        message:
+          'Submitted-arm response omitted task_id (spec violation). Polling will use the runner-side ' +
+          'correlation id as a fallback; the seller will not recognize it. ' +
+          'Expected: response.task_id (AdCP) or result.id with kind === "task" (A2A wrapped).',
+        timestamp: new Date().toISOString(),
+        taskName,
+        runnerTaskId: taskId,
+      });
+    }
 
     const submitted: SubmittedContinuation<T> = {
       taskId: serverTaskId,
