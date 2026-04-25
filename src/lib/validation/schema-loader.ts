@@ -280,3 +280,37 @@ export { SCHEMA_FILENAME_SUFFIX };
 export function _resetValidationLoader(): void {
   state = undefined;
 }
+
+/**
+ * Returns the raw JSON schema for a tool's request, suitable for advertising
+ * in MCP `tools/list`. Only returns schemas from the pre-resolved `bundled/`
+ * directory — flat-tree domain schemas (governance, property-lists, etc.)
+ * contain unresolved `$ref`s that would appear as broken fragments to buyer
+ * clients.
+ *
+ * The root-level `additionalProperties: false` constraint is relaxed before
+ * returning so the MCP SDK does not reject protocol envelope fields
+ * (`idempotency_key`, `context`, `caller`, `ext`) if it runs JSON Schema
+ * validation on the advertised shape. AJV inside the handler closure remains
+ * authoritative for those fields.
+ *
+ * Returns `null` when:
+ * - No request schema is indexed for the tool (custom tool, schema not synced)
+ * - The schema is a flat-tree (non-bundled) file with unresolved `$ref`s
+ * - Schema data is unavailable (`npm run sync-schemas` not run yet)
+ */
+export function getRawRequestSchema(toolName: string): Record<string, unknown> | null {
+  try {
+    const s = ensureInit();
+    const file = s.fileIndex.get(`${toolName}::request`);
+    if (!file) return null;
+    if (!file.includes(`${path.sep}bundled${path.sep}`)) return null;
+    const raw = loadJson(file) as Record<string, unknown>;
+    if (raw.additionalProperties === false) {
+      return { ...raw, additionalProperties: true };
+    }
+    return raw;
+  } catch {
+    return null;
+  }
+}

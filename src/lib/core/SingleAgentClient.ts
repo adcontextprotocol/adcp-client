@@ -1183,9 +1183,11 @@ export class SingleAgentClient {
     // Fails open when no schema is cached OR when the schema declares no
     // properties (JSON Schema semantics: an object with no properties
     // and no `additionalProperties: false` accepts any shape). Post-#909,
-    // framework-registered agents publish `{ type: 'object', properties: {} }`
-    // on tools/list — treating that as "strip everything" would silently
-    // drop every field the buyer sent.
+    // framework-registered agents using bundled schemas publish real field
+    // shapes on tools/list (#954); flat-tree domain tools (governance,
+    // property-lists) still publish `{ type: 'object', properties: {} }` as
+    // a fallback — treating that as "strip everything" would silently drop
+    // every field the buyer sent.
     // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
     const toolSchema = this.cachedToolSchemas?.get(taskType);
     if (!toolSchema || Object.keys(toolSchema).length === 0) return adapted;

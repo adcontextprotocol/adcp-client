@@ -100,6 +100,7 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
 }
 import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { validateRequest, validateResponse, formatIssues } from '../validation/schema-validator';
+import { getRawRequestSchema } from '../validation/schema-loader';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
 import type { IdempotencyStore } from './idempotency';
 import {
@@ -2701,15 +2702,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // handler — destroying the actual arguments. `z.object({}).passthrough()`
       // keeps every key intact, so args still reach the closure.
       //
-      // Trade-off: MCP `tools/list` publishes `{ type: 'object' }` for
-      // every tool (no per-tool parameter schema). AdCP-native
-      // discovery via `get_adcp_capabilities` already works over both
-      // transports; upstream #3057 proposes a `get_schema` capability
-      // tool for per-tool shape discovery.
+      // For `tools/list` advertising, use the raw JSON request schema from
+      // `schemas/cache/{version}/bundled/` when available (#954). Only bundled
+      // (pre-resolved) schemas are safe — flat-tree schemas have unresolved
+      // `$ref`s that would appear as broken fragments to buyer clients.
+      // `getRawRequestSchema` relaxes `additionalProperties: false` at the
+      // root so the SDK does not reject envelope fields if it validates.
+      // Falls back to the passthrough Zod schema for flat-tree tools and
+      // when schemas are not yet synced.
+      const advertisedInputSchema =
+        (getRawRequestSchema(toolName) as Parameters<typeof server.registerTool>[1]['inputSchema']) ??
+        PASSTHROUGH_INPUT_SCHEMA;
       server.registerTool(
         toolName,
         {
-          inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+          inputSchema: advertisedInputSchema,
           ...(meta?.annotations != null && { annotations: meta.annotations }),
         },
         toolHandler as Parameters<typeof server.registerTool>[2]
