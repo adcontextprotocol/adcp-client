@@ -37,4 +37,13 @@ Companion docs added:
 - `docs/proposals/decisioning-platform-python-port.md` — cross-language port plan (`__init_subclass__` runtime check + Pydantic generics ergonomics in lieu of TS compile-time gates)
 - `docs/proposals/decisioning-platform-adopter-questions.md` — round-3 review answers (per-call context schemas → v1.1; migration coexistence → rip-and-replace per-server; comply_test_controller → framework-owned by default in v6; wiring PR phasing through alpha.2 → rc.1 → rc.2 → GA)
 
-Status: Preview / 6.0. Wiring lands in a follow-up PR with the framework refactor.
+v6.0 alpha runtime spike (`src/lib/server/decisioning/runtime/`):
+
+- `createAdcpServerFromPlatform(platform, opts)` — runtime entry that accepts a `DecisioningPlatform` impl and returns an `AdcpServer`. Implemented as a thin adapter over the existing `createAdcpServer()`: framework primitives (idempotency, RFC 9421 signing, governance, schema validation, state store, MCP/A2A wire mapping, sandbox boundary) apply unchanged; the new code is the translation shim, not a forked runtime.
+- `validatePlatform(platform)` — runtime check that claimed `capabilities.specialisms[]` match implemented per-specialism interfaces. Mirrors the compile-time `RequiredPlatformsFor<S>` gate; throws `PlatformConfigError` with a "claimed X; missing Y" diagnostic. The substitute for the TS compile-time gate when the platform is constructed from JS or relaxed-tsconfig contexts.
+- `buildRequestContext(handlerCtx)` — translates the framework's `HandlerContext` into the v6 `RequestContext` shape platform methods expect. v1.0 wires `account`; `state.*` and `resolve.*` are stubbed and arrive incrementally over subsequent commits.
+- `projectAsyncOutcome(outcome, mapResult)` — `AsyncOutcome<T>` → existing handler return projection. v6.0 alpha implements `sync` + `rejected`; `submitted` lands with task-envelope wiring in the next commit.
+- Wired surface (this commit): `getProducts` from `SalesPlatform`, plus `accounts.resolve()` (with `AccountNotFoundError` catch).
+- Smoke tests pass: build server from platform, dispatch `get_products` end-to-end, ACCOUNT_NOT_FOUND envelope on AccountNotFoundError throw.
+
+Status: Preview / 6.0. The runtime is not yet exported from `./server`; reach in via `@adcp/client/server/decisioning/runtime` for spike experimentation only. Subsequent commits expand the wired tool surface and ship the public export. Companion design doc at `docs/proposals/mcp-a2a-unified-serving.md`.
