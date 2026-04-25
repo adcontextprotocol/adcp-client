@@ -915,14 +915,26 @@ export class TaskExecutor {
     // Use the server-assigned task ID for polling. The local `taskId` is an
     // SDK-internal UUID the server has never seen — passing it to tasks/get
     // returns NOT_FOUND on any spec-conformant seller (#966).
-    const serverTaskId = this.responseParser.getTaskId(response) ?? taskId;
+    const extractedTaskId = this.responseParser.getTaskId(response);
+    if (!extractedTaskId) {
+      console.warn(
+        '[adcp-client] submitted response did not include a server-assigned task ID ' +
+          '(task_id / Task.id). Polling will use the SDK-internal operation ID, which ' +
+          'the seller has never seen and may return NOT_FOUND. Ensure the seller ' +
+          'includes task_id in its submitted response.'
+      );
+    }
+    const serverTaskId = extractedTaskId ?? taskId;
 
     const submitted: SubmittedContinuation<T> = {
       taskId: serverTaskId,
       operationId: taskId,
       webhookUrl,
       track: () => this.getTaskStatus(agent, serverTaskId),
-      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval),
+      // Pass `taskId` (local UUID) as `operationId` so `buildMetadata` inside the
+      // polling loop can look up idempotency keys from the `activeTasks` map.
+      waitForCompletion: (pollInterval = 60000) =>
+        this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, taskId),
     };
 
     return {
@@ -1155,7 +1167,17 @@ export class TaskExecutor {
     return (response.task as TaskInfo) || (response as unknown as TaskInfo);
   }
 
-  async pollTaskCompletion<T>(agent: AgentConfig, serverTaskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
+  async pollTaskCompletion<T>(
+    agent: AgentConfig,
+    serverTaskId: string,
+    pollInterval = 60000,
+    operationId?: string
+  ): Promise<TaskResult<T>> {
+    // `operationId` is the SDK-internal local UUID used as the `activeTasks` map
+    // key for idempotency-key lookup. When absent (external callers of the public
+    // method), falls back to `serverTaskId` which won't match the map, so
+    // idempotency_key will simply be absent from the metadata — acceptable.
+    const metaTaskId = operationId ?? serverTaskId;
     while (true) {
       const status = await this.getTaskStatus(agent, serverTaskId);
 
@@ -1168,7 +1190,7 @@ export class TaskExecutor {
             status: 'completed' as const,
             data: status.result,
             metadata: this.buildMetadata({
-              taskId: serverTaskId,
+              taskId: metaTaskId,
               taskName: status.taskType,
               agent,
               responseTimeMs: Date.now() - status.createdAt,
@@ -1184,10 +1206,10 @@ export class TaskExecutor {
           data: status.result,
           error: this.extractOperationError(status.result),
           adcpError: asyncResultErr,
-          errorInstance: this.buildErrorInstance(serverTaskId, asyncResultErr),
+          errorInstance: this.buildErrorInstance(metaTaskId, asyncResultErr),
           correlationId: extractCorrelationId(status.result),
           metadata: this.buildMetadata({
-            taskId: serverTaskId,
+            taskId: metaTaskId,
             taskName: status.taskType,
             agent,
             responseTimeMs: Date.now() - status.createdAt,
@@ -1205,10 +1227,10 @@ export class TaskExecutor {
           data: status.result,
           error: status.error || `Task ${status.status}`,
           adcpError: asyncFailedErr,
-          errorInstance: this.buildErrorInstance(serverTaskId, asyncFailedErr),
+          errorInstance: this.buildErrorInstance(metaTaskId, asyncFailedErr),
           correlationId: extractCorrelationId(status.result),
           metadata: this.buildMetadata({
-            taskId: serverTaskId,
+            taskId: metaTaskId,
             taskName: status.taskType,
             agent,
             responseTimeMs: Date.now() - status.createdAt,
