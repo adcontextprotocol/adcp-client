@@ -228,9 +228,21 @@ export interface BranchSetSpec {
 }
 
 export interface ContextOutput {
-  /** JSON path to extract from the response */
-  path: string;
-  /** Key to store the extracted value under in context */
+  /**
+   * JSON path to extract from the response. Mutually exclusive with
+   * `generate` — exactly one of `path` or `generate` must be set.
+   */
+  path?: string;
+  /**
+   * Generator name. When set, the runner mints a fresh opaque value
+   * once per run (or reuses a value already minted for the same `key`
+   * alias via an inline `$generate:…#<alias>` substitution in the same
+   * step's `sample_request`). Mutually exclusive with `path`. The loader
+   * rejects unknown values at storyboard-load time so typos fail loud
+   * before the first run.
+   */
+  generate?: 'uuid_v4' | 'opaque_id';
+  /** Key to store the extracted or generated value under in context */
   key: string;
 }
 
@@ -1089,8 +1101,9 @@ export interface ContextProvenanceEntry {
   /**
    * `context_outputs`: author-authored extraction from the YAML.
    * `convention`: task-default extractor in CONTEXT_EXTRACTORS.
+   * `generator`: runner-minted value (no response path involved).
    */
-  source_kind: 'context_outputs' | 'convention';
+  source_kind: 'context_outputs' | 'convention' | 'generator';
   /** Response path the value was extracted from (set for `context_outputs`). */
   response_path?: string;
   /** Task name whose response this value was extracted from. */
@@ -1139,9 +1152,9 @@ export interface ContextValueRejectedHint extends StoryboardStepHintBase {
   context_key: string;
   /** Step id that wrote the context key. */
   source_step_id: string;
-  /** How the context key was written (`context_outputs` vs convention). */
-  source_kind: 'context_outputs' | 'convention';
-  /** YAML response path set for `context_outputs`; absent for convention extractors. */
+  /** How the context key was written (`context_outputs` vs convention vs generator). */
+  source_kind: 'context_outputs' | 'convention' | 'generator';
+  /** YAML response path set for `context_outputs`; absent for convention extractors and generators. */
   response_path?: string;
   /** Task whose response the value was extracted from. */
   source_task?: string;
