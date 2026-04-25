@@ -2,7 +2,7 @@
 
 AdCP 3.0 supports [HTTP Message Signatures (RFC 9421)](https://www.rfc-editor.org/rfc/rfc9421) for cryptographic request authentication. A buyer signs outbound requests so the seller can verify who sent them and that the payload wasn't tampered with. A seller signs outbound webhooks so the buyer can verify authenticity.
 
-Signing is **optional in AdCP 3.0** and becomes **mandatory in 3.1+** for all mutating operations. Agents that don't sign yet must still tolerate signature headers (`Signature`, `Signature-Input`, `Content-Digest`) on inbound requests without breaking.
+Signing is **optional in AdCP 3.0** — sellers populate `request_signing.required_for` selectively during per-counterparty pilots. AdCP **4.0** (the next breaking-changes window) requires signed requests on **spend-committing operations** (`create_media_buy`, `acquire_*`, etc.). Agents that don't sign yet must still tolerate signature headers (`Signature`, `Signature-Input`, `Content-Digest`) on inbound requests without breaking.
 
 ## When You Need This
 
@@ -18,13 +18,18 @@ Signing is **optional in AdCP 3.0** and becomes **mandatory in 3.1+** for all mu
 
 ### Signature Coverage
 
-The AdCP signing profile covers these request components:
+The AdCP signing profile always covers:
 
 - `@method` — HTTP method (POST)
 - `@target-uri` — full request URL
 - `@authority` — host header
 - `content-type` — media type (application/json)
-- `content-digest` — SHA-256 or SHA-512 hash of the request body
+
+`content-digest` (SHA-256 or SHA-512 hash of the request body) is covered **conditionally**, controlled by the seller's `covers_content_digest` capability:
+
+- `'required'` — signers MUST cover `content-digest`. Body-unbound signatures rejected with `request_signature_components_incomplete`. **Recommended for spend-committing operations** in production.
+- `'either'` (default) — signer chooses per-request; verifier accepts both forms.
+- `'forbidden'` — signers MUST NOT cover `content-digest`. Opt-out for legacy infrastructure that can't preserve body bytes.
 
 If any covered component changes after signing, verification fails.
 
@@ -134,14 +139,16 @@ Serve at `/.well-known/brand.json` on your brand domain. This is the entry point
   "domain": "example.com",
   "agents": [
     {
+      "type": "sales",
+      "id": "acme_sales",
       "url": "https://agent.example.com",
-      "jwks_uri": "https://agent.example.com/.well-known/jwks.json",
-      "capabilities": ["media-buy"],
-      "adcp_use": ["request-signing"]
+      "jwks_uri": "https://agent.example.com/.well-known/jwks.json"
     }
   ]
 }
 ```
+
+Required per agent: `type`, `id`, `url`. The `type` enum is `brand | rights | measurement | governance | creative | sales | buying | signals` — pick the one matching this agent's role. `jwks_uri` is optional but recommended; verifiers default to `/.well-known/jwks.json` on the origin of `url` when absent.
 
 ## Step 3: Sign Outbound Requests (Buyer / Orchestrator)
 
@@ -238,13 +245,13 @@ On successful verification, `req.verifiedSigner` contains `{ keyid, agent_url?, 
 `requireAuthenticatedOrSigned` bundles signature verification with credential fallback in one call: when signature headers are present, only signature auth runs (no bearer fallback — that prevents bypass attacks); when absent, the credential authenticator runs as normal; and `requiredFor` enforces the spec's `request_signature_required` 401 on mutating operations that arrive unsigned without other credentials.
 
 ```typescript
+import { MUTATING_TASKS } from '@adcp/client';
 import {
   serve,
   verifyApiKey,
   verifySignatureAsAuthenticator,
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
-  MUTATING_TASKS,
 } from '@adcp/client/server';
 import { BrandJsonJwksResolver } from '@adcp/client/signing/server';
 
@@ -256,13 +263,13 @@ serve(createAgent, {
       resolveOperation: mcpToolNameResolver,
     }),
     fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
-    requiredFor: [...MUTATING_TASKS],
+    requiredFor: ['create_media_buy', 'update_media_buy'],
     resolveOperation: mcpToolNameResolver,
   }),
 });
 ```
 
-Pass `MUTATING_TASKS` (re-exported from `@adcp/client/server`) to `requiredFor` to require a signature on every mutating AdCP operation — matches the common production stance once 3.1 lands. For a narrower allowlist, pass an explicit `string[]` of tool names instead.
+Set `requiredFor` to the AdCP operations you want to gate behind signatures — start narrow during pilots, then widen. The spec stance for 3.0 is "empty by default; populate selectively per counterparty." 4.0 will require all spend-committing operations to be in this list. `MUTATING_TASKS` (exported from `@adcp/client`) is the full mutating set if you want to spread it as the upper bound: `requiredFor: [...MUTATING_TASKS]` — note that includes audit-class operations like `sync_audiences` and `report_usage` that 4.0's mandate does NOT cover, so it's stricter than the spec floor.
 
 ### JWKS resolution options
 
@@ -320,23 +327,25 @@ The framework signs every outbound webhook automatically using the configured ke
 
 ## Step 7: Declare the Capability
 
-If your seller agent verifies inbound signatures, declare `signed-requests` in your capabilities so buyers know to sign:
+If your seller agent verifies inbound signatures, declare `request_signing` in your capabilities so buyers know to sign:
 
 ```typescript
 createAdcpServer({
   capabilities: {
     overrides: {
-      signed_requests: {
+      request_signing: {
         supported: true,
         required_for: ['create_media_buy', 'update_media_buy'],
         supported_for: ['sync_creatives', 'sync_audiences'],
-        covers_content_digest: 'either',
+        covers_content_digest: 'required',
       },
     },
   },
   mediaBuy: { /* ... */ },
 });
 ```
+
+The capability key is `request_signing` (not `signed_requests`) — that's what `AdcpCapabilitiesOverrides` and the spec's `get_adcp_capabilities` response advertise. The wrong key is silently dropped, leaving the verifier wired up but invisible to buyers.
 
 ## Key Rotation
 
@@ -371,17 +380,25 @@ adcp signing verify-vector \
 
 ### Error codes
 
-When verification fails, return `401` with `WWW-Authenticate: Signature error="<code>"`:
+When verification fails, return `401` with `WWW-Authenticate: Signature error="<code>"`. These are the codes the conformance vectors at `compliance/cache/3.0.0/test-vectors/request-signing/negative/` exercise — they're a separate signature-error namespace surfaced via `WWW-Authenticate`, not entries in the AdCP `enums/error-code.json`:
 
 | Code | Meaning |
 |---|---|
-| `missing_signature` | Signature headers not present when required |
-| `invalid_signature` | Signature doesn't verify against the public key |
-| `expired_signature` | Signature timestamp too old |
-| `replayed_nonce` | Nonce was already used |
-| `revoked_key` | Key has been revoked |
-| `unknown_key` | Key ID not found in JWKS |
-| `unsupported_algorithm` | Algorithm not in allowlist |
+| `request_signature_required` | Signature headers absent on an operation listed in `required_for` |
+| `request_signature_invalid` | Signature doesn't verify against the public key |
+| `request_signature_window_invalid` | `created` outside the acceptable freshness window |
+| `request_signature_replayed` | (`keyid`, `nonce`) tuple was already used |
+| `request_signature_key_revoked` | Key marked revoked in the revocation store |
+| `request_signature_key_unknown` | `keyid` not found in JWKS |
+| `request_signature_alg_not_allowed` | `alg` outside the AdCP-permitted set (`ed25519`, `ecdsa-p256-sha256`) |
+| `request_signature_components_incomplete` | `covers_content_digest: 'required'` but `content-digest` missing from coverage |
+| `request_signature_components_unexpected` | `covers_content_digest: 'forbidden'` but `content-digest` was covered anyway |
+| `request_signature_digest_mismatch` | `content-digest` header doesn't match the body bytes |
+| `request_signature_header_malformed` | `Signature` / `Signature-Input` parse error |
+| `request_signature_key_purpose_invalid` | Key's `adcp_use` doesn't permit request signing |
+| `request_signature_params_incomplete` | Missing required parameters (`created`, `nonce`, `tag`) |
+| `request_signature_rate_abuse` | Same `keyid` exceeded the verifier's rate ceiling |
+| `request_signature_tag_invalid` | `tag` parameter doesn't match the AdCP request-signing tag |
 
 ## Related
 

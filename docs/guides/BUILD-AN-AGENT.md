@@ -322,7 +322,6 @@ import {
   verifyApiKey,
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
-  MUTATING_TASKS,
 } from '@adcp/client/server';
 import { BrandJsonJwksResolver } from '@adcp/client/signing/server';
 
@@ -331,7 +330,7 @@ serve(() => createAdcpServer({
   version: '1.0.0',
   capabilities: {
     overrides: {
-      signed_requests: {
+      request_signing: {
         supported: true,
         required_for: ['create_media_buy', 'update_media_buy'],
         covers_content_digest: 'either',
@@ -347,13 +346,13 @@ serve(() => createAdcpServer({
       resolveOperation: mcpToolNameResolver,
     }),
     fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
-    requiredFor: [...MUTATING_TASKS],
+    requiredFor: ['create_media_buy', 'update_media_buy'],
     resolveOperation: mcpToolNameResolver,
   }),
 });
 ```
 
-When signature headers are present, only signature auth runs (no fallback to bearer — that prevents bypass attacks). When absent, the credential authenticator runs as normal. `requiredFor` enforces the spec's `request_signature_required` 401 on mutating operations that arrive unsigned without other credentials. `replayStore` and `revocationStore` default to in-memory implementations — pass shared (e.g. Redis-backed) stores for horizontally scaled fleets.
+When signature headers are present, only signature auth runs (no fallback to bearer — that prevents bypass attacks). When absent, the credential authenticator runs as normal. `requiredFor` enforces the spec's `request_signature_required` 401 on operations that arrive unsigned without other credentials — start narrow and widen as your counterparties roll out signing. `replayStore` and `revocationStore` default to in-memory implementations — pass shared (e.g. Redis-backed) stores for horizontally scaled fleets. The capability key is `request_signing`; `signed_requests` is silently dropped (the `AdcpCapabilitiesOverrides` shape is what `get_adcp_capabilities` advertises).
 
 For outbound webhook signing, pass a `signerKey` to `createAdcpServer`:
 
