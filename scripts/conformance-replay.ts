@@ -29,20 +29,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import {
-  createAdcpServer,
-  createIdempotencyStore,
-  memoryBackend,
-  type AdcpServer,
-} from '../src/lib/server';
-import {
-  displayRender,
-  htmlAsset,
-  urlRender,
-  imageAssetSlot,
-  textAssetSlot,
-  urlAssetSlot,
-} from '../src/lib';
+import { createAdcpServer, createIdempotencyStore, memoryBackend, type AdcpServer } from '../src/lib/server';
+import { displayRender, htmlAsset, urlRender, imageAssetSlot, textAssetSlot, urlAssetSlot } from '../src/lib';
 import { validateResponse } from '../src/lib/validation/schema-validator';
 import { injectContext } from '../src/lib/testing/storyboard/context';
 import type { StoryboardContext } from '../src/lib/testing/storyboard/types';
@@ -107,7 +95,7 @@ function createCreativeTemplateAgent(): AdcpServer {
   ];
 
   function render(targetFid: { agent_url: string; id: string }, manifest: any) {
-    const fmt = formats.find((f) => f.format_id.id === targetFid.id);
+    const fmt = formats.find(f => f.format_id.id === targetFid.id);
     const dims = (fmt?.renders[0] as any)?.dimensions ?? { width: 300, height: 250 };
     const html =
       `<a href="${manifest?.assets?.click_url?.url ?? '#'}" target="_blank">` +
@@ -126,21 +114,19 @@ function createCreativeTemplateAgent(): AdcpServer {
     resolveSessionKey: () => 'conformance-replay',
     capabilities: { specialisms: ['creative-template'] },
     creative: {
-      listCreativeFormats: async (params) => {
+      listCreativeFormats: async params => {
         let result = formats;
-        if (params.type) result = result.filter((f) => f.type === params.type);
+        if (params.type) result = result.filter(f => f.type === params.type);
         if (params.max_width != null)
-          result = result.filter((f) => (f.renders[0] as any).dimensions.width <= params.max_width!);
+          result = result.filter(f => (f.renders[0] as any).dimensions.width <= params.max_width!);
         if (params.max_height != null)
-          result = result.filter((f) => (f.renders[0] as any).dimensions.height <= params.max_height!);
+          result = result.filter(f => (f.renders[0] as any).dimensions.height <= params.max_height!);
         return { formats: result };
       },
-      buildCreative: async (params) => {
+      buildCreative: async params => {
         if (params.target_format_ids?.length) {
           return {
-            creative_manifests: params.target_format_ids.map((fid: any) =>
-              render(fid, params.creative_manifest)
-            ),
+            creative_manifests: params.target_format_ids.map((fid: any) => render(fid, params.creative_manifest)),
             sandbox: true,
           };
         }
@@ -149,7 +135,7 @@ function createCreativeTemplateAgent(): AdcpServer {
       },
       previewCreative: async (params: any) => {
         const fid = params.creative_manifest?.format_id;
-        const fmt = formats.find((f) => f.format_id.id === fid?.id);
+        const fmt = formats.find(f => f.format_id.id === fid?.id);
         const dims = (fmt?.renders[0] as any)?.dimensions ?? { width: 300, height: 250 };
         return {
           response_type: 'single',
@@ -228,11 +214,7 @@ interface StepResult {
 // Check types this v0 implements. Anything outside this set is logged as
 // 'unimplemented' and counted as a skip — silent fall-through would hide
 // gaps from storyboard authors who add a new check expecting it to gate.
-const IMPLEMENTED_CHECKS = new Set([
-  'response_schema',
-  'field_present',
-  'field_value',
-]);
+const IMPLEMENTED_CHECKS = new Set(['response_schema', 'field_present', 'field_value']);
 
 // Check types that fundamentally need transport-layer state (HTTP status,
 // auth headers, error envelopes) that in-process dispatch doesn't surface.
@@ -247,7 +229,10 @@ const TRANSPORT_ONLY_CHECKS = new Set([
 
 function getByPath(obj: unknown, path: string): unknown {
   // Supports `a.b[0].c` style paths from storyboard validations.
-  const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
+  const parts = path
+    .replace(/\[(\d+)\]/g, '.$1')
+    .split('.')
+    .filter(Boolean);
   let cur: any = obj;
   for (const p of parts) {
     if (cur == null) return undefined;
@@ -300,9 +285,7 @@ async function runStep(
   const structured = response.structuredContent;
   if (response.isError) {
     result.outcome = 'fail';
-    result.failures.push(
-      `tool returned isError: ${JSON.stringify(structured ?? response.content).slice(0, 200)}`
-    );
+    result.failures.push(`tool returned isError: ${JSON.stringify(structured ?? response.content).slice(0, 200)}`);
     return result;
   }
 
@@ -321,7 +304,7 @@ async function runStep(
         allPassed = false;
         const issues = outcome.issues
           .slice(0, 3)
-          .map((i) => `${i.pointer}: ${i.message}`)
+          .map(i => `${i.pointer}: ${i.message}`)
           .join('; ');
         result.failures.push(`response_schema: ${issues}`);
       }
@@ -334,9 +317,7 @@ async function runStep(
       const actual = getByPath(structured, v.path as string);
       if (actual !== v.value) {
         allPassed = false;
-        result.failures.push(
-          `field_value ${v.path}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v.value)}`
-        );
+        result.failures.push(`field_value ${v.path}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v.value)}`);
       }
     } else if (TRANSPORT_ONLY_CHECKS.has(check)) {
       // Transport-only checks require an HTTP-mode harness; permanently
@@ -359,10 +340,11 @@ async function runStep(
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
-  const allSpecialisms = (await readdir(COMPLIANCE_DIR)).filter((d) => !d.startsWith('.'));
-  const targets = args.filters.length === 0
-    ? allSpecialisms
-    : allSpecialisms.filter((d) => args.filters.some((f) => d.includes(f) || d.replace(/-/g, '_').includes(f)));
+  const allSpecialisms = (await readdir(COMPLIANCE_DIR)).filter(d => !d.startsWith('.'));
+  const targets =
+    args.filters.length === 0
+      ? allSpecialisms
+      : allSpecialisms.filter(d => args.filters.some(f => d.includes(f) || d.replace(/-/g, '_').includes(f)));
 
   if (targets.length === 0) {
     console.error(`[conformance-replay] no specialisms matched filter; available:`);
@@ -414,9 +396,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const passed = allResults.filter((r) => r.outcome === 'pass').length;
-  const failed = allResults.filter((r) => r.outcome === 'fail').length;
-  const skipped = allResults.filter((r) => r.outcome === 'skip').length;
+  const passed = allResults.filter(r => r.outcome === 'pass').length;
+  const failed = allResults.filter(r => r.outcome === 'fail').length;
+  const skipped = allResults.filter(r => r.outcome === 'skip').length;
   const unimplemented = new Map<string, number>();
   for (const r of allResults) {
     for (const c of r.unimplementedChecks) {
@@ -439,7 +421,7 @@ async function main(): Promise<void> {
   process.exit(failed === 0 ? 0 : 1);
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(`[conformance-replay] fatal: ${err?.stack ?? err}`);
   process.exit(2);
 });
