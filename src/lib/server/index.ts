@@ -236,6 +236,7 @@ export type {
 
 export {
   createIdempotencyStore,
+  probeIdempotencyStore,
   memoryBackend,
   pgBackend,
   getIdempotencyMigration,

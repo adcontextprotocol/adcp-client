@@ -85,11 +85,45 @@ export const IDEMPOTENCY_MIGRATION = getIdempotencyMigration();
  * Pass a connection pool (or any `PgQueryable`) and optionally a custom
  * table name. Run `getIdempotencyMigration()` once per deployment to
  * create the table.
+ *
+ * **Startup probe.** Call `store.probe()` (or `probeIdempotencyStore(store)`)
+ * before your server starts accepting traffic to catch a bad `DATABASE_URL`
+ * at boot rather than on the first mutating request. Wire it via:
+ *
+ * ```ts
+ * serve(createAgent, {
+ *   readinessCheck: () => store.probe(),
+ * });
+ * ```
+ *
+ * **Idle-client errors.** `pg.Pool` re-emits network drop / PG restart
+ * errors on the pool itself. Without a listener, Node's `EventEmitter`
+ * default-throws and crashes the process. Add one in your bootstrap:
+ *
+ * ```ts
+ * pool.on('error', (err) => console.error('pg pool error', err));
+ * ```
  */
 export function pgBackend(db: PgQueryable, options: PgBackendOptions = {}): IdempotencyBackend {
+  // tableName is trusted SDK config (compile-time / startup), not user input —
+  // quoteIdent validates the identifier shape and is safe to interpolate.
   const table = quoteIdent(options.tableName ?? DEFAULT_TABLE);
 
   return {
+    async probe(): Promise<void> {
+      try {
+        await db.query(`SELECT 1 FROM ${table} LIMIT 0`);
+      } catch (err) {
+        const cause = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `idempotency backend probe failed: cannot reach the "${options.tableName ?? DEFAULT_TABLE}" table. ` +
+            `The pool is unreachable or the table has not been migrated — the server would advertise ` +
+            `IdempotencySupported but every mutating call would fail. ` +
+            `Run getIdempotencyMigration() to create the table, or check DATABASE_URL. Cause: ${cause}`
+        );
+      }
+    },
+
     async get(scopedKey: string): Promise<IdempotencyCacheEntry | null> {
       const result = await db.query(
         `SELECT payload_hash, response, EXTRACT(EPOCH FROM expires_at)::BIGINT AS expires_at FROM ${table} WHERE scoped_key = $1`,

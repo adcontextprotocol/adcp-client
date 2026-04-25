@@ -331,6 +331,16 @@ AdCP v3 requires an `idempotency_key` on every mutating request — for signals 
 
 Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal` for custom scoping). `ttlSeconds` must be 3600–604800 — out of range throws at construction. If you register mutating handlers without wiring `idempotency`, the framework logs an error at server-creation time.
 
+**Critical: probe the pool at boot (pgBackend).** `pg.Pool` is lazy — `new Pool({ connectionString })` does not validate the URL. A bad `DATABASE_URL` lets the server start, advertise `IdempotencySupported`, and then silently fail every `activate_signal` call. Wire `readinessCheck` on `serve()` so the server never accepts traffic with a broken pool:
+
+```ts
+const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
+pool.on('error', (err) => console.error('pg pool error', err)); // prevent crash on idle-client errors
+serve(createAgent, {
+  readinessCheck: () => store.probe(), // throws with a descriptive error if pool/table is broken
+});
+```
+
 ## Protecting your agent
 
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
