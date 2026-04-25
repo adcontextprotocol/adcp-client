@@ -1758,6 +1758,13 @@ async function executeStep(
   })();
   const shapeDriftHints = driftPayload === undefined ? [] : detectShapeDriftHints(effectiveStep.task, driftPayload);
   const strictHints = detectStrictValidationHints(effectiveStep.task, validations);
+  // Same root cause MAY produce both a `shape_drift` hint and a
+  // `format_mismatch` (keyword: 'type') hint — e.g. `list_creatives`
+  // returning a bare array. That's intentional co-emission, not a bug:
+  // shape_drift carries the fix recipe ("use listCreativesResponse() to
+  // wrap"); format_mismatch carries the structured RFC 6901 pointer +
+  // AJV schema_path so renderers can deep-link into the schema.
+  // Complementary fix lenses on the same fault.
   const hints = [...contextRejectionHints, ...shapeDriftHints, ...strictHints];
 
   // Build next step preview

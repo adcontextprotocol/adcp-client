@@ -26,6 +26,15 @@ import type {
   ValidationResult,
 } from './types';
 
+/**
+ * Per-validation cap on `format_mismatch` hints to keep `step.hints[]`
+ * bounded on pathological responses (e.g. a list payload where every
+ * `agent_url` field is malformed). When the cap trips, a sentinel
+ * `format_mismatch` hint is appended so the surface self-documents the
+ * truncation — operators see the elision rather than silently losing
+ * context. The total `failed` count remains visible via
+ * `StoryboardResult.strict_validation_summary`.
+ */
 const MAX_FORMAT_HINTS = 5;
 
 /**
@@ -51,8 +60,25 @@ export function detectStrictValidationHints(
     for (const grouped of groupRequiredIssues(taskName, required, v.schema_url ?? undefined)) {
       hints.push(grouped);
     }
-    for (const issue of others.slice(0, MAX_FORMAT_HINTS)) {
+    const shown = others.slice(0, MAX_FORMAT_HINTS);
+    const elided = others.length - shown.length;
+    for (const issue of shown) {
       hints.push(formatHintFromIssue(taskName, issue, v.schema_url ?? undefined));
+    }
+    if (elided > 0) {
+      // Sentinel hint surfaces the cap so consumers don't silently lose
+      // signal. `keyword: 'truncated'` is a runner-internal pseudo-keyword
+      // (no AJV equivalent); renderers branching on it can flag the
+      // strict_validation_summary as the authoritative count.
+      hints.push({
+        kind: 'format_mismatch',
+        tool: taskName,
+        instance_path: '',
+        schema_path: '',
+        keyword: 'truncated',
+        ...(v.schema_url ? { schema_url: v.schema_url } : {}),
+        message: `${taskName} produced ${elided} additional strict issue${elided === 1 ? '' : 's'} not shown — see strict_validation_summary on the run result for the full count.`,
+      });
     }
   }
   return hints;

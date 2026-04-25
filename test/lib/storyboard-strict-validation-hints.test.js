@@ -105,7 +105,12 @@ describe('detectStrictValidationHints', () => {
     assert.match(formats[0].message, /failed strict format/);
   });
 
-  test('caps format_mismatch hints at 5 to keep step.hints[] bounded', () => {
+  test('caps format_mismatch hints at 5 + emits a truncation sentinel', () => {
+    // The cap keeps `step.hints[]` bounded on pathological responses but
+    // operators must still see that information was elided — otherwise
+    // the per-step surface silently disagrees with `strict_validation_summary`.
+    // The sentinel hint carries `keyword: 'truncated'` so renderers can
+    // branch on it without parsing prose.
     const issues = Array.from({ length: 10 }, (_, i) => ({
       instance_path: `/x/${i}`,
       schema_path: '#',
@@ -117,7 +122,27 @@ describe('detectStrictValidationHints', () => {
       withStrict('list_creative_formats', { valid: false, variant: 'sync', issues })
     );
     const formats = out.filter(h => h.kind === 'format_mismatch');
-    assert.equal(formats.length, 5, 'cap trips on > 5 non-required issues');
+    assert.equal(formats.length, 6, 'five capped hints + one sentinel');
+    const sentinel = formats[formats.length - 1];
+    assert.equal(sentinel.keyword, 'truncated');
+    assert.match(sentinel.message, /5 additional strict issues not shown/);
+    assert.match(sentinel.message, /strict_validation_summary/);
+  });
+
+  test('does NOT emit a truncation sentinel when issue count fits under cap', () => {
+    const issues = Array.from({ length: 3 }, (_, i) => ({
+      instance_path: `/x/${i}`,
+      schema_path: '#',
+      keyword: 'format',
+      message: 'must match format "uri"',
+    }));
+    const out = detectStrictValidationHints(
+      'list_creative_formats',
+      withStrict('list_creative_formats', { valid: false, variant: 'sync', issues })
+    );
+    const formats = out.filter(h => h.kind === 'format_mismatch');
+    assert.equal(formats.length, 3);
+    assert.ok(!formats.some(h => h.keyword === 'truncated'), 'no sentinel under the cap');
   });
 
   test('schema_url passes through to every hint when available', () => {
