@@ -18,6 +18,7 @@ const {
   listPropertyListsResponse,
   listCollectionListsResponse,
   listContentStandardsResponse,
+  getPlanAuditLogsResponse,
   syncCreativesResponse,
   getSignalsResponse,
   activateSignalResponse,
@@ -582,5 +583,54 @@ describe('listContentStandardsResponse', () => {
     const result = listContentStandardsResponse(data);
     assert.match(result.content[0].text, /Found 1 content standard\b/);
     assert.doesNotMatch(result.content[0].text, /error/i);
+  });
+});
+
+describe('getPlanAuditLogsResponse', () => {
+  it('wraps plans under the required envelope with a counted default summary', () => {
+    const data = {
+      plans: [
+        {
+          plan_id: 'plan_1',
+          plan_version: 1,
+          status: 'active',
+          budget: {},
+          governed_actions: [],
+          summary: {},
+        },
+        {
+          plan_id: 'plan_2',
+          plan_version: 3,
+          status: 'completed',
+          budget: {},
+          governed_actions: [],
+          summary: {},
+        },
+      ],
+    };
+    const result = getPlanAuditLogsResponse(data);
+    assert.match(result.content[0].text, /Audit data for 2 plans/);
+    assert.deepStrictEqual(result.structuredContent.plans, data.plans);
+  });
+
+  it('handles the singular case without the plural "s"', () => {
+    const result = getPlanAuditLogsResponse({
+      plans: [
+        {
+          plan_id: 'plan_1',
+          plan_version: 1,
+          status: 'active',
+          budget: {},
+          governed_actions: [],
+          summary: {},
+        },
+      ],
+    });
+    assert.match(result.content[0].text, /Audit data for 1 plan\b/);
+  });
+
+  it('honours an explicit summary override', () => {
+    const result = getPlanAuditLogsResponse({ plans: [] }, 'Audit pulled');
+    assert.strictEqual(result.content[0].text, 'Audit pulled');
   });
 });
