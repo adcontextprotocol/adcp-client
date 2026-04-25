@@ -59,9 +59,11 @@ export {
 } from './types';
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 export {
+  createWebhookVerifier,
   verifyWebhookSignature,
   WEBHOOK_MANDATORY_COMPONENTS,
   WEBHOOK_SIGNING_TAG,
+  type CreateWebhookVerifierOptions,
   type VerifyWebhookOptions,
   type VerifyWebhookResult,
 } from './webhook-verifier';

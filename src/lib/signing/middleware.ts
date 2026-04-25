@@ -37,17 +37,19 @@ export interface ExpressMiddlewareOptions extends Omit<
 > {
   /**
    * Stores `(keyid, signature-bytes, expires)` tuples for replay detection.
-   * Defaults to a fresh {@link InMemoryReplayStore} — fine for single-process
-   * deployments. Wire a shared store (Redis, Postgres, etc.) for multi-replica
-   * setups where a signature accepted on one replica must be rejected on the
-   * others.
+   * Defaults to a fresh {@link InMemoryReplayStore} — suitable for single-process
+   * deployments only. **Multi-replica deployments MUST pass an explicit shared
+   * store** (Redis, Postgres, etc.) — the default in-memory store does not
+   * survive process boundaries, so a signature accepted on replica A is
+   * invisible to replica B and can be replayed there within the signature window.
    */
   replayStore?: VerifyRequestOptions['replayStore'];
   /**
    * Consulted for revoked `kid` / `jti` before accepting a signature.
-   * Defaults to a fresh {@link InMemoryRevocationStore}. Most agents don't
-   * revoke at runtime; when you do, swap in a store backed by your secrets
-   * manager or admin tooling.
+   * Defaults to a fresh {@link InMemoryRevocationStore}, which starts empty
+   * and does not poll for updates. The default is sufficient when you don't
+   * revoke keys at runtime; when you do, pass a store backed by your secrets
+   * manager or admin tooling so revocations take effect without redeployment.
    */
   revocationStore?: VerifyRequestOptions['revocationStore'];
   /**
