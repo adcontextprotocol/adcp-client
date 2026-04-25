@@ -4,7 +4,7 @@
 /**
  * AdCP client library version
  */
-export const LIBRARY_VERSION = '5.18.0';
+export const LIBRARY_VERSION = '5.19.0';
 
 /**
  * AdCP specification version this library is built for
@@ -27,10 +27,10 @@ export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '
  * Full version information
  */
 export const VERSION_INFO = {
-  library: '5.18.0',
+  library: '5.19.0',
   adcp: '3.0.0',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-04-25T18:58:27.946Z',
+  generatedAt: '2026-04-25T23:27:37.876Z',
 } as const;
 
 /**
