@@ -1737,13 +1737,19 @@ async function executeStep(
     }
   }
 
-  // Explicit context_outputs (always applied when data exists)
-  if (hasData && taskResult && step.context_outputs?.length) {
+  // Explicit context_outputs. `generate:` entries fire unconditionally
+  // (they don't need response data); `path:` entries are gated on a
+  // successful response. Both paths write into updatedContext and
+  // receive updatedContext for alias-cache coherence — forwardAliasCache
+  // above ensures the minted value from any same-step $generate:…#<key>
+  // inline substitution is visible here.
+  if (step.context_outputs?.length) {
     const explicit = applyContextOutputsWithProvenance(
-      taskResult.data,
+      hasData && taskResult ? taskResult.data : undefined,
       step.context_outputs,
       step.id,
-      effectiveStep.task
+      effectiveStep.task,
+      updatedContext
     );
     Object.assign(updatedContext, explicit.values);
     if (runState.contextProvenance) {

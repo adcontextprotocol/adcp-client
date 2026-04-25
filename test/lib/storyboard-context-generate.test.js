@@ -1,6 +1,11 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const { injectContext, forwardAliasCache, extractContext } = require('../../dist/lib/testing/storyboard/context');
+const {
+  injectContext,
+  forwardAliasCache,
+  extractContext,
+  applyContextOutputsWithProvenance,
+} = require('../../dist/lib/testing/storyboard/context');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -77,6 +82,181 @@ describe('$generate:uuid_v4 placeholder resolution', () => {
     const b = injectContext({ idempotency_key: '$generate:uuid_v4#replay_key' }, ctx2);
 
     assert.notStrictEqual(a.idempotency_key, b.idempotency_key);
+  });
+});
+
+describe('$generate:opaque_id placeholder resolution', () => {
+  it('aliased opaque_id resolves to the SAME UUID within a context', () => {
+    const context = {};
+    const a = injectContext({ task_id: '$generate:opaque_id#directive_task_id' }, context);
+    const b = injectContext({ task_id: '$generate:opaque_id#directive_task_id' }, context);
+
+    assert.match(a.task_id, UUID);
+    assert.strictEqual(a.task_id, b.task_id);
+  });
+
+  it('bare opaque_id and bare uuid_v4 each produce fresh UUIDs per call', () => {
+    const context = {};
+    const a = injectContext({ k: '$generate:opaque_id' }, context);
+    const b = injectContext({ k: '$generate:opaque_id' }, context);
+
+    assert.match(a.k, UUID);
+    assert.match(b.k, UUID);
+    assert.notStrictEqual(a.k, b.k);
+  });
+
+  it('opaque_id alias and uuid_v4 alias share the same cache namespace', () => {
+    // A storyboard author can use either $generate:opaque_id#my_task or
+    // $generate:uuid_v4#my_task interchangeably; both read from the same
+    // alias cache slot under the same key name.
+    const context = {};
+    const a = injectContext({ task_id: '$generate:opaque_id#shared_key' }, context);
+    const b = injectContext({ task_id: '$generate:uuid_v4#shared_key' }, context);
+
+    assert.strictEqual(a.task_id, b.task_id);
+  });
+});
+
+describe('context_outputs[generate] — applyContextOutputsWithProvenance', () => {
+  it('mints a UUID and writes it into values under the declared key', () => {
+    const context = {};
+    const result = applyContextOutputsWithProvenance(
+      null,
+      [{ key: 'directive_task_id', generate: 'opaque_id' }],
+      'step-arm',
+      'comply_test_controller',
+      context
+    );
+
+    assert.match(result.values.directive_task_id, UUID);
+    assert.strictEqual(result.provenance.directive_task_id.source_kind, 'generator');
+    assert.strictEqual(result.provenance.directive_task_id.source_step_id, 'step-arm');
+    assert.strictEqual(result.provenance.directive_task_id.source_task, 'comply_test_controller');
+    assert.strictEqual(result.provenance.directive_task_id.response_path, undefined);
+  });
+
+  it('reuses the alias-cache value when the same alias was resolved inline earlier', () => {
+    // Simulates: step has $generate:opaque_id#directive_task_id in sample_request
+    // AND context_outputs[{key: directive_task_id, generate: opaque_id}].
+    // Both must resolve to the same UUID.
+    const context = {};
+    const inline = injectContext({ task_id: '$generate:opaque_id#directive_task_id' }, context);
+
+    // Post-response: context_outputs[generate] fires against the same context.
+    const result = applyContextOutputsWithProvenance(
+      null,
+      [{ key: 'directive_task_id', generate: 'opaque_id' }],
+      'step-arm',
+      'comply_test_controller',
+      context
+    );
+
+    assert.strictEqual(result.values.directive_task_id, inline.task_id);
+  });
+
+  it('mints a fresh UUID when no prior inline substitution set the alias', () => {
+    const context = {};
+    const result = applyContextOutputsWithProvenance(
+      null,
+      [{ key: 'fresh_task_id', generate: 'opaque_id' }],
+      'step-1',
+      'comply_test_controller',
+      context
+    );
+
+    assert.match(result.values.fresh_task_id, UUID);
+  });
+
+  it('two generate entries with different keys produce different UUIDs', () => {
+    const context = {};
+    const result = applyContextOutputsWithProvenance(
+      null,
+      [
+        { key: 'task_a', generate: 'opaque_id' },
+        { key: 'task_b', generate: 'opaque_id' },
+      ],
+      'step-1',
+      'comply_test_controller',
+      context
+    );
+
+    assert.match(result.values.task_a, UUID);
+    assert.match(result.values.task_b, UUID);
+    assert.notStrictEqual(result.values.task_a, result.values.task_b);
+  });
+
+  it('generate entry fires even when data is null (no-response step)', () => {
+    const context = {};
+    const result = applyContextOutputsWithProvenance(
+      null,
+      [{ key: 'my_task_id', generate: 'uuid_v4' }],
+      'step-1',
+      'comply_test_controller',
+      context
+    );
+
+    assert.match(result.values.my_task_id, UUID);
+  });
+
+  it('path entry is skipped when data is null', () => {
+    const context = {};
+    const result = applyContextOutputsWithProvenance(
+      null,
+      [{ key: 'task_id', path: 'forced.task_id' }],
+      'step-1',
+      'comply_test_controller',
+      context
+    );
+
+    assert.deepStrictEqual(result.values, {});
+  });
+
+  it('generated value is written into alias cache so forwardAliasCache propagates it', () => {
+    const context = {};
+    applyContextOutputsWithProvenance(
+      null,
+      [{ key: 'lifecycle_task_id', generate: 'opaque_id' }],
+      'step-arm',
+      'comply_test_controller',
+      context
+    );
+
+    // Simulate runner's step-roll: shallow-clone + forwardAliasCache.
+    const nextContext = { ...context };
+    forwardAliasCache(context, nextContext);
+
+    // A later step using $generate:opaque_id#lifecycle_task_id must
+    // resolve to the same value that was generated by context_outputs.
+    const later = injectContext({ task_id: '$generate:opaque_id#lifecycle_task_id' }, nextContext);
+    const firstResult = applyContextOutputsWithProvenance(
+      null,
+      [{ key: 'lifecycle_task_id', generate: 'opaque_id' }],
+      'step-arm',
+      'comply_test_controller',
+      context
+    );
+
+    assert.strictEqual(later.task_id, firstResult.values.lifecycle_task_id);
+  });
+
+  it('mixed path+generate outputs: both work in one call', () => {
+    const context = {};
+    const data = { forced: { task_id: 'seller-task-xyz' } };
+    const result = applyContextOutputsWithProvenance(
+      data,
+      [
+        { key: 'directive_task_id', generate: 'opaque_id' },
+        { key: 'confirmed_task_id', path: 'forced.task_id' },
+      ],
+      'step-arm',
+      'comply_test_controller',
+      context
+    );
+
+    assert.match(result.values.directive_task_id, UUID);
+    assert.strictEqual(result.values.confirmed_task_id, 'seller-task-xyz');
+    assert.strictEqual(result.provenance.directive_task_id.source_kind, 'generator');
+    assert.strictEqual(result.provenance.confirmed_task_id.source_kind, 'context_outputs');
   });
 });
 
