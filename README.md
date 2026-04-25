@@ -814,3 +814,4 @@ Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 - **Documentation**: [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org)
 - **Issues**: [GitHub Issues](https://github.com/adcontextprotocol/adcp-client/issues)
 - **Protocol Spec**: [AdCP Specification](https://github.com/adcontextprotocol/adcp)
+<!-- ipr canary test, safe to revert or close -->
