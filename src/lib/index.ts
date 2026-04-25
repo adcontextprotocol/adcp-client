@@ -711,6 +711,13 @@ export * from './types/schemas.generated';
 // duplicating literal lists from the Zod unions.
 export * from './types/enums.generated';
 
+// `${ParentSchema}_${PropertyName}Values` const arrays for inline
+// anonymous unions inside named schemas — e.g.
+// `ImageAssetRequirements_FormatsValues`,
+// `VideoAssetRequirements_ContainersValues`. Companion to enums.generated;
+// see scripts/generate-inline-enum-arrays.ts for naming + scoping rules.
+export * from './types/inline-enums.generated';
+
 // PreviewCreativeRequestSchema is now a flat z.object() with request_type discriminant.
 // The old variant exports (PreviewCreativeSingleRequestSchema, etc.) are no longer needed —
 // use PreviewCreativeRequestSchema.shape directly with server.registerTool().

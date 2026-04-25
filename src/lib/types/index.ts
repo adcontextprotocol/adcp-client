@@ -33,3 +33,9 @@ export * from './schemas.generated';
 // for consumers that need to enumerate or validate against the spec's
 // literal sets without re-deriving them from Zod schemas.
 export * from './enums.generated';
+
+// Re-export inline-union value arrays for anonymous string-literal unions
+// inside named schemas (e.g., ImageAssetRequirements_FormatsValues,
+// VideoAssetRequirements_ContainersValues). Companion to enums.generated;
+// see scripts/generate-inline-enum-arrays.ts.
+export * from './inline-enums.generated';
