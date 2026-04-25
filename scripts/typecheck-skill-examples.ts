@@ -365,6 +365,35 @@ async function main(): Promise<void> {
     });
   }
 
+  // Lint pass: forbid `as any` in skill examples. The pattern hides API
+  // drift the typed surface would otherwise catch — every legitimate cast
+  // has a typed alternative (typed factories like `htmlAsset()`, named
+  // discriminated unions like `AssetInstance`, helper response builders
+  // like `buildCreativeResponse()`). Skill authors who want the escape
+  // hatch can use `// @ts-expect-error` against a specific known issue
+  // instead, which is greppable and self-documenting.
+  const asAnyRe = /\bas\s+any\b/g;
+  for (const entry of manifest) {
+    const cachePath = join(CACHE_DIR, entry.file);
+    const content = await readFile(cachePath, 'utf8');
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      let m: RegExpExecArray | null;
+      asAnyRe.lastIndex = 0;
+      while ((m = asAnyRe.exec(lines[i])) !== null) {
+        diagnostics.push({
+          source: entry.source,
+          // Line 1 is the `// source:` marker; offset matches the tsc path.
+          sourceLine: entry.startLine + i,
+          column: String(m.index + 1),
+          blockIndex: entry.index,
+          errorCode: 'LINT-as-any',
+          message: '`as any` hides API drift; use a typed factory or // @ts-expect-error instead',
+        });
+      }
+    }
+  }
+
   const currentEntries: BaselineEntry[] = diagnostics.map(d => ({
     source: d.source,
     errorCode: d.errorCode,
@@ -380,12 +409,32 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Multiset comparison: a `LINT-as-any` rule (or any TS error) can fire
+  // multiple times in the same file with the same message. Treat the
+  // baseline as "I expect at most N occurrences of [key]" so a third
+  // identical error fails CI even when the first two are baselined.
+  // Set-based dedup would silently swallow it.
   const baseline = await loadBaseline();
-  const baselineKeys = new Set(baseline.map(entryKey));
-  const currentKeys = new Set(currentEntries.map(entryKey));
-
-  const newErrors = diagnostics.filter((_, i) => !baselineKeys.has(entryKey(currentEntries[i])));
-  const fixedKeys = [...baselineKeys].filter(k => !currentKeys.has(k));
+  const baselineCounts = new Map<string, number>();
+  for (const e of baseline) {
+    const k = entryKey(e);
+    baselineCounts.set(k, (baselineCounts.get(k) ?? 0) + 1);
+  }
+  const remainingBudget = new Map(baselineCounts);
+  const newErrors: typeof diagnostics = [];
+  for (let i = 0; i < diagnostics.length; i++) {
+    const k = entryKey(currentEntries[i]);
+    const budget = remainingBudget.get(k) ?? 0;
+    if (budget > 0) {
+      remainingBudget.set(k, budget - 1);
+    } else {
+      newErrors.push(diagnostics[i]);
+    }
+  }
+  const fixedKeys: string[] = [];
+  for (const [k, count] of remainingBudget) {
+    if (count > 0) fixedKeys.push(`${k} (${count} fewer than baselined)`);
+  }
   const knownErrorCount = diagnostics.length - newErrors.length;
 
   if (newErrors.length === 0 && diagnostics.length === 0) {
