@@ -1119,9 +1119,23 @@ export interface ContextProvenanceEntry {
  * fields a renderer can consume" flows through this surface.
  */
 export interface StoryboardStepHintBase {
-  /** Discriminator. Each concrete hint kind sets its own literal value. */
+  /** Discriminator. Each concrete hint kind sets its own literal value.
+   * @provenance runner
+   */
   kind: string;
-  /** Pre-formatted human-readable message suitable for a console line. */
+  /**
+   * Pre-formatted human-readable message suitable for a console line.
+   * @provenance seller
+   * Contains pre-interpolated seller-derived bytes for
+   * `context_value_rejected` (rejected value, accepted values, request field
+   * pointer) and `monotonic_violation` (resource id, prior and current status)
+   * hint kinds. Treat as untrusted when rendering into LLM context or any
+   * prompt-injection-sensitive surface; build safe output from the structured
+   * `@provenance runner` / `@provenance storyboard` fields instead, or
+   * sanitize at the boundary. `shape_drift`, `missing_required_field`, and
+   * `format_mismatch` messages are composed entirely from runner-derived
+   * tokens and are safe to render without sanitization.
+   */
   message: string;
 }
 
@@ -1148,28 +1162,61 @@ export type StoryboardStepHint =
  */
 export interface ContextValueRejectedHint extends StoryboardStepHintBase {
   kind: 'context_value_rejected';
-  /** Context key whose value matched the rejected request field. */
+  /**
+   * Context key whose value matched the rejected request field.
+   * @provenance storyboard
+   */
   context_key: string;
-  /** Step id that wrote the context key. */
+  /**
+   * Step id that wrote the context key.
+   * @provenance runner
+   */
   source_step_id: string;
-  /** How the context key was written (`context_outputs` vs convention vs generator). */
+  /**
+   * How the context key was written (`context_outputs` vs convention vs generator).
+   * @provenance runner
+   */
   source_kind: 'context_outputs' | 'convention' | 'generator';
-  /** YAML response path set for `context_outputs`; absent for convention extractors and generators. */
+  /**
+   * YAML response path set for `context_outputs`; absent for convention extractors and generators.
+   * @provenance storyboard
+   */
   response_path?: string;
-  /** Task whose response the value was extracted from. */
+  /**
+   * Task whose response the value was extracted from.
+   * @provenance storyboard
+   */
   source_task?: string;
-  /** The value the seller rejected. */
+  /**
+   * The value the seller rejected. Copied verbatim from context (which was
+   * itself extracted from a prior seller response); already embedded in
+   * `message` via string interpolation — sanitize before rendering into LLM
+   * context.
+   * @provenance seller
+   */
   rejected_value: unknown;
   /**
    * Dotted path to the rejected field in the runner's request (when the
    * seller's error carried an explicit `field` pointer). Absent when the
    * match was resolved by scanning the request for a context-sourced value
-   * in the rejection set.
+   * in the rejection set. Sourced from the seller's `errors[].field` pointer
+   * and normalized by `normalizeFieldPath()` (RFC 6901 → dotted form);
+   * already embedded in `message` — sanitize before LLM rendering.
+   * @provenance seller
    */
   request_field?: string;
-  /** The accepted values the seller reported (`available` / `allowed` / `accepted_values`). */
+  /**
+   * The accepted values the seller reported (`available` / `allowed` /
+   * `accepted_values`). Elements are unconstrained seller strings embedded
+   * verbatim in `message`; sanitize before rendering into LLM context or
+   * any prompt-injection-sensitive surface.
+   * @provenance seller
+   */
   accepted_values: unknown[];
-  /** Error code from the seller's error (if present). */
+  /**
+   * Error code from the seller's error (if present).
+   * @provenance seller
+   */
   error_code?: string;
 }
 
@@ -1188,13 +1235,29 @@ export interface ContextValueRejectedHint extends StoryboardStepHintBase {
  */
 export interface ShapeDriftHint extends StoryboardStepHintBase {
   kind: 'shape_drift';
-  /** AdCP tool name (snake_case) that produced the drift. */
+  /**
+   * AdCP tool name (snake_case) that produced the drift.
+   * @provenance runner
+   */
   tool: string;
-  /** Short token describing the observed (wrong) shape variant. */
+  /**
+   * Short token describing the observed (wrong) shape variant. Always a
+   * runner-hardcoded string (`bare_array`, `platform_native_fields`, etc.)
+   * derived from pattern-matching the seller's response shape — not the
+   * seller's payload bytes directly.
+   * @provenance runner
+   */
   observed_variant: string;
-  /** Short token or schema fragment describing the expected shape. */
+  /**
+   * Short token or schema fragment describing the expected shape.
+   * @provenance runner
+   */
   expected_variant: string;
-  /** RFC 6901 pointer to the drift site; `""` for root-level. */
+  /**
+   * RFC 6901 pointer to the drift site; `""` for root-level. Hardcoded by
+   * the runner's shape-detector; not derived from seller response content.
+   * @provenance runner
+   */
   instance_path: string;
 }
 
@@ -1206,11 +1269,21 @@ export interface ShapeDriftHint extends StoryboardStepHintBase {
  */
 export interface MissingRequiredFieldHint extends StoryboardStepHintBase {
   kind: 'missing_required_field';
-  /** AdCP tool name (snake_case) the response was validated under. */
+  /**
+   * AdCP tool name (snake_case) the response was validated under.
+   * @provenance runner
+   */
   tool: string;
-  /** RFC 6901 pointer to the parent object missing the field. `""` for root. */
+  /**
+   * RFC 6901 pointer to the parent object missing the field. `""` for root.
+   * Generated by AJV from the JSON schema evaluation result.
+   * @provenance runner
+   */
   instance_path: string;
-  /** Pointer into the JSON schema that named the requirement. */
+  /**
+   * Pointer into the JSON schema that named the requirement.
+   * @provenance runner
+   */
   schema_path: string;
   /**
    * Field name(s) the parent object was required to carry. Every entry is a
@@ -1221,9 +1294,13 @@ export interface MissingRequiredFieldHint extends StoryboardStepHintBase {
    * verbatim. Callers can rely on every entry being a plain field name.
    * The raw AJV issue message may still appear in `ValidationResult.warning`
    * prose for human readers.
+   * @provenance runner
    */
   missing_fields: string[];
-  /** Resolvable schema URL (when the runner could attribute one). */
+  /**
+   * Resolvable schema URL (when the runner could attribute one).
+   * @provenance runner
+   */
   schema_url?: string;
 }
 
@@ -1236,15 +1313,34 @@ export interface MissingRequiredFieldHint extends StoryboardStepHintBase {
  */
 export interface FormatMismatchHint extends StoryboardStepHintBase {
   kind: 'format_mismatch';
-  /** AdCP tool name (snake_case). */
+  /**
+   * AdCP tool name (snake_case).
+   * @provenance runner
+   */
   tool: string;
-  /** RFC 6901 pointer to the failing field. */
+  /**
+   * RFC 6901 pointer to the failing field. Generated by AJV; identifies a
+   * location in the seller's response but the pointer string itself is
+   * runner-derived.
+   * @provenance runner
+   */
   instance_path: string;
-  /** Pointer into the JSON schema that named the constraint. */
+  /**
+   * Pointer into the JSON schema that named the constraint.
+   * @provenance runner
+   */
   schema_path: string;
-  /** AJV keyword that rejected (`format`, `pattern`, `enum`, `minLength`, ...). */
+  /**
+   * AJV keyword that rejected (`format`, `pattern`, `enum`, `minLength`, ...).
+   * Runner-internal pseudo-keyword `truncated` is used when the hint count
+   * is capped.
+   * @provenance runner
+   */
   keyword: string;
-  /** Resolvable schema URL (when the runner could attribute one). */
+  /**
+   * Resolvable schema URL (when the runner could attribute one).
+   * @provenance runner
+   */
   schema_url?: string;
 }
 
@@ -1256,23 +1352,51 @@ export interface FormatMismatchHint extends StoryboardStepHintBase {
  */
 export interface MonotonicViolationHint extends StoryboardStepHintBase {
   kind: 'monotonic_violation';
-  /** Resource family (`media_buy`, `creative`, `account`, ...). */
+  /**
+   * Resource family (`media_buy`, `creative`, `account`, ...). Hardcoded by
+   * the runner's per-resource-type extractors.
+   * @provenance runner
+   */
   resource_type: string;
-  /** Resource id observed transitioning. */
+  /**
+   * Resource id observed transitioning. Extracted from the seller's response
+   * (e.g. `media_buy_id`, `creative_id`) and embedded in `message` —
+   * sanitize before rendering into LLM context.
+   * @provenance seller
+   */
   resource_id: string;
-  /** Status the resource was in at the anchor step. */
+  /**
+   * Status the resource was in at the anchor step. Recorded by the runner
+   * from a prior step's seller response and stored in the assertion's state
+   * map; embedded in `message` — sanitize before LLM rendering.
+   * @provenance seller
+   */
   from_status: string;
-  /** Status the resource transitioned to at the current step. */
+  /**
+   * Status the resource transitioned to at the current step. Read directly
+   * from the seller's current response; embedded in `message` — sanitize
+   * before LLM rendering.
+   * @provenance seller
+   */
   to_status: string;
-  /** Step id that recorded the previous status. */
+  /**
+   * Step id that recorded the previous status. Runner-tracked internal ID.
+   * @provenance runner
+   */
   from_step_id: string;
   /**
    * Legal next-state set per the lifecycle graph. Empty array means the
    * `from_status` is terminal — the violation is "any forward transition
-   * from a terminal state".
+   * from a terminal state". Derived from the runner's hardcoded transition
+   * tables in `default-invariants.ts`.
+   * @provenance runner
    */
   legal_next_states: string[];
-  /** Canonical enum schema URL for the lifecycle graph. */
+  /**
+   * Canonical enum schema URL for the lifecycle graph. Runner-constructed
+   * from `ADCP_VERSION` and the per-resource enum filename.
+   * @provenance runner
+   */
   enum_url: string;
 }
 
