@@ -11,7 +11,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { createWebhookVerifier, verifyWebhookSignature } = require('../dist/lib/signing/server.js');
+const { createWebhookVerifier } = require('../dist/lib/signing/server.js');
 const { WebhookSignatureError } = require('../dist/lib/signing');
 const { StaticJwksResolver } = require('../dist/lib/signing/jwks.js');
 
