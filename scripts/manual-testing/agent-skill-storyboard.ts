@@ -283,14 +283,13 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);
-    if (typeof parsed.overall_passed === 'boolean') {
-      passed = parsed.overall_passed;
-    } else if (Array.isArray(parsed.results)) {
-      passed = parsed.results.every((r: { overall_passed?: boolean }) => r.overall_passed);
+    if (typeof parsed.overall_status === 'string') {
+      passed = parsed.overall_status === 'passing';
+    } else if (parsed.summary && typeof parsed.summary === 'object') {
+      const s = parsed.summary as { tracks_passed?: number; tracks_failed?: number };
+      passed = (s.tracks_failed ?? 0) === 0 && (s.tracks_passed ?? 0) > 0;
     }
   } catch {
-    // stdout wasn't clean JSON — the CLI printed an error to stderr and
-    // exited non-zero. Treat as fail.
     passed = false;
   }
   return { passed, raw };

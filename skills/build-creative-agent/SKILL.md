@@ -107,7 +107,7 @@ What happens when a creative is synced:
 | `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. `{width, height}` shorthand fails — wrap in `dimensions`.                     |
 | `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                                             |
 | `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                                            |
-| `preview_creative`      | manual (union schema)          | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | Register via `server.registerTool('preview_creative', { inputSchema: PreviewCreativeSingleRequestSchema.shape }, handler)` after `createAdcpServer`. `renders[].output_format` is a discriminator. |
+| `preview_creative`      | `creative.previewCreative`     | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | `renders[].output_format` is a discriminator — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` so the discriminator is injected and the required `preview_url`/`preview_html` field is enforced at compile time. |
 | `build_creative`        | `creative.buildCreative`       | [`#build_creative`](../../docs/llms.txt#build_creative)               | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                                     |
 
 Asset values use type-specific shapes, not a generic `asset_type` discriminator:
@@ -123,8 +123,6 @@ Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 `createAdcpServer` auto-echoes the request's `context` into every response from domain-grouped handlers — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
 
 **Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description, validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely.
-
-For manually registered tools (like `preview_creative`), the framework's auto-echo path does not apply — echo the request's `context` object unchanged in the response, or omit the field if the request didn't send one.
 
 Some schemas also define an `ext` field for vendor-namespaced extensions. If your request schema includes `ext`, accept it without error. Tools with explicit `ext` support: `get_creative_delivery`, `get_creative_features`.
 
@@ -142,12 +140,10 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `syncCreativesResponse(data)`                                       | Auto-applied response builder (don't call manually)                       |
 | `listCreativesResponse(data)`                                       | Auto-applied response builder (don't call manually)                       |
 | `buildCreativeResponse(data)`                                       | Auto-applied response builder (don't call manually)                       |
-| `previewCreativeResponse(data)`                                     | Call manually — `preview_creative` is registered outside the domain group |
+| `previewCreativeResponse(data)`                                     | Auto-applied response builder (don't call manually)                       |
 | `adcpError(code, { message })`                                      | Structured error                                                          |
-| `server.registerTool(name, { inputSchema: Schema.shape }, handler)` | Manual registration — only needed for `preview_creative` (union schema)   |
-| `PreviewCreativeSingleRequestSchema.shape`                          | Zod schema for manual `preview_creative` registration                     |
 
-Import: `import { createAdcpServer, serve, adcpError, previewCreativeResponse, PreviewCreativeSingleRequestSchema } from '@adcp/client';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
 
 ## Setup
 
@@ -185,13 +181,7 @@ Minimal `tsconfig.json`:
 7. Context passthrough is handled by the framework — no need to manually echo `args.context`
 
 ```typescript
-import {
-  createAdcpServer,
-  serve,
-  adcpError,
-  previewCreativeResponse,
-  PreviewCreativeSingleRequestSchema,
-} from '@adcp/client';
+import { createAdcpServer, serve, adcpError, urlRender } from '@adcp/client';
 import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
 
 const formats = [
@@ -227,8 +217,7 @@ const idempotency = createIdempotencyStore({
   ttlSeconds: 86400, // 24 hours (spec bounds: 1h–7d)
 });
 
-serve(() => {
-  const server = createAdcpServer({
+serve(() => createAdcpServer({
     name: 'My Creative Agent',
     version: '1.0.0',
     idempotency,
@@ -297,38 +286,29 @@ serve(() => {
           sandbox: true,
         };
       },
+
+      previewCreative: async (params) => {
+        return {
+          response_type: 'single',
+          previews: [
+            {
+              preview_id: `prev_${Date.now()}`,
+              input: { name: params.creative_manifest?.name ?? 'Preview' },
+              renders: [
+                urlRender({
+                  render_id: `r_${Date.now()}`,
+                  preview_url: 'https://example.com/preview.png',
+                  role: 'primary',
+                  dimensions: { width: 300, height: 250 },
+                }),
+              ],
+            },
+          ],
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        };
+      },
     },
-  });
-
-  // preview_creative has a union schema — register manually
-  server.registerTool(
-    'preview_creative',
-    { inputSchema: PreviewCreativeSingleRequestSchema.shape },
-    async ({ params }) => {
-      return previewCreativeResponse({
-        response_type: 'single',
-        previews: [
-          {
-            preview_id: `prev_${Date.now()}`,
-            input: { name: params.creative_manifest?.name ?? 'Preview' },
-            renders: [
-              {
-                render_id: `r_${Date.now()}`,
-                output_format: 'url',
-                preview_url: 'https://example.com/preview.png',
-                role: 'primary',
-                dimensions: { width: 300, height: 250 },
-              },
-            ],
-          },
-        ],
-        expires_at: new Date(Date.now() + 3600000).toISOString(),
-      });
-    }
-  );
-
-  return server;
-});
+  }));
 ```
 
 ### Key implementation detail: creative library
@@ -531,9 +511,9 @@ Common failure decoder:
 | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Using `createTaskCapableServer` + `server.tool()`                      | Use `createAdcpServer` with `creative` domain group                                                                                 |
 | Manually registering `get_adcp_capabilities`                           | Auto-generated by `createAdcpServer` from registered handlers                                                                       |
-| Putting `preview_creative` in the `creative` domain group              | Union schema — register manually on the returned server with `PreviewCreativeSingleRequestSchema.shape`                             |
+| Calling `server.registerTool('preview_creative', ...)`                 | `AdcpServer` does not expose `registerTool` — put `previewCreative` in the `creative:` domain group like the other handlers        |
 | Using module-level Maps for state                                      | Use `ctx.store.put/get/list` — framework provides `InMemoryStateStore` by default                                                   |
-| Calling response builders manually in domain handlers                  | Handlers return raw data — builders are auto-applied (except `preview_creative`)                                                    |
+| Calling response builders manually in domain handlers                  | Handlers return raw data — response builders are auto-applied across the `creative:` group, including `preview_creative`            |
 | `list_creatives` ignores format filter                                 | Check `args.filters?.format_ids` and filter results                                                                                 |
 | `preview_creative` returns wrong response_type                         | Must be `'single'` for single creative previews                                                                                     |
 | `preview_creative` looks up by creative_id                             | Preview the `creative_manifest` from the request — no library lookup needed                                                         |
@@ -706,6 +686,8 @@ buildCreative: async (params) => {
 Output can be HTML (`{ content: '<div>...</div>' }`), JavaScript tag (`{ content: '<script>...</script>' }`), or VAST XML. `asset_type: 'url'` is valid for click-through URLs.
 
 `list_creative_formats` accepts filter params (`type`, `max_width`, `max_height`). Return an empty array — not an error — when nothing matches.
+
+**`preview_creative` should return `urlRender` or `bothRender` — not `htmlRender` alone.** The creative-template storyboard asserts the preview carries a renderable URL (`previews[0].renders[0].preview_url`). An html-only render is spec-valid but fails that assertion. If your platform can render the creative to a hosted preview URL, use `urlRender`. If you only have inline HTML, use `bothRender` (emit both `preview_url: "<sandbox URL>"` and `preview_html: "<inline markup>"`).
 
 #### Audio creative-template (TTS / mix / master)
 
