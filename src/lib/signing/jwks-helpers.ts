@@ -65,7 +65,12 @@ export interface PemToAdcpJwkOptions {
  * ```
  */
 export function pemToAdcpJwk(pem: string, options: PemToAdcpJwkOptions): AdcpJsonWebKey {
-  if (/PRIVATE\s+KEY/.test(pem)) {
+  // Anchored to the BEGIN line so a public-key PEM that mentions "PRIVATE
+  // KEY" in surrounding metadata or comments doesn't false-positive. RFC
+  // 7468 mandates exact uppercase between dashes; matching all standard
+  // private-key headers (`PRIVATE KEY` PKCS#8, `RSA/EC/OPENSSH/ENCRYPTED
+  // PRIVATE KEY`).
+  if (/-----BEGIN [^-]*PRIVATE KEY-----/.test(pem)) {
     throw new TypeError(
       'pemToAdcpJwk received a private-key PEM. ' +
         'Pass only a public-key PEM (SPKI format: "BEGIN PUBLIC KEY"). ' +

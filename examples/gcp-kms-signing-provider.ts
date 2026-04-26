@@ -53,13 +53,12 @@
  *   caller. Reusing the same key across protocols creates a cross-protocol
  *   oracle.
  *
- * Multi-purpose keys (request + webhook signing on the same KMS material):
- * - Cryptographically safe — RFC 9421's `tag` parameter isolates the two
- *   profiles (`adcp/request-signing/v1` vs `adcp/webhook-signing/v1`).
- * - Publish two JWK entries with different `kid` values and matching `x`/`y`
- *   bytes, each tagged with the relevant `adcp_use` (`request-signing` /
- *   `webhook-signing`). See `docs/guides/SIGNING-GUIDE.md` § "Step 2: Publish
- *   your public keys" for the JWKS shape.
+ * Request-signing vs webhook-signing keys: AdCP **requires distinct key
+ * material** per purpose (see `docs/guides/SIGNING-GUIDE.md` § Key
+ * separation). The verifier's `adcp_use` discriminator and RFC 9421's `tag`
+ * parameter are gating checks that reject wrong-purpose presentation; they
+ * are not a license to share the underlying scalar across profiles. Mint a
+ * second `cryptoKeyVersion` for webhook signing — KMS makes this cheap.
  */
 
 import { createHash, createPublicKey } from 'node:crypto';
