@@ -61,8 +61,15 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   /** Account model + tenant resolution. */
   accounts: AccountStore<TMeta>;
 
-  /** Native-status mappers (account, mediaBuy, creative, plan). All optional. */
-  statusMappers: StatusMappers;
+  /**
+   * Native-status mappers (account, mediaBuy, creative, plan).
+   *
+   * **Optional.** Default behavior treats the platform's status strings as
+   * already-canonical AdCP status values (no translation). Provide mappers
+   * only when your platform exposes non-AdCP status strings (e.g., GAM's
+   * `DELIVERY_PAUSED` → AdCP's `paused`).
+   */
+  statusMappers?: StatusMappers;
 
   /**
    * Per-tenant capability override. Multi-tenant SaaS adopters (Prebid-style

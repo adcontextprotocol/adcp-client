@@ -45,6 +45,8 @@ Takes an image asset by id, applies a brand watermark, returns a manifest with t
 import {
   AdcpError,
   createAdcpServerFromPlatform,
+  getAsset,
+  requireAsset,
   type DecisioningPlatform,
   type AccountStore,
   type CreativeTemplatePlatform,
@@ -79,7 +81,10 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
     } satisfies WatermarkConfig,
   };
 
-  statusMappers = {};
+  // statusMappers + AccountStore.upsert/list are now optional. Stateless
+  // platforms (creative-template, signal-marketplace proxies) typically
+  // omit them; framework returns UNSUPPORTED_FEATURE to buyers calling
+  // sync_accounts / list_accounts on platforms that don't implement them.
 
   accounts: AccountStore<WatermarkMeta> = {
     resolve: async (ref: AccountReference) => {
@@ -91,25 +96,15 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
         authInfo: { kind: 'api_key' },
       };
     },
-    upsert: async () => [],
-    list: async () => ({ items: [], nextCursor: null }),
+    // upsert / list omitted — stateless platform doesn't manage accounts.
   };
 
   creative: CreativeTemplatePlatform = {
     /** Sync transform — fast operation, return result immediately. */
     buildCreative: async (req: BuildCreativeRequest): Promise<CreativeManifest> => {
-      // The format spec defines which asset_id holds the source image.
-      // For this watermark service we contract on 'source_image'.
-      const source = req.creative_manifest?.assets?.['source_image'];
-      if (!source || source.asset_type !== 'image') {
-        throw new AdcpError('INVALID_REQUEST', {
-          recovery: 'correctable',
-          message: 'creative_manifest.assets.source_image must be an ImageAsset',
-          field: 'creative_manifest.assets.source_image',
-        });
-      }
-      // After the discriminator check, TS narrows `source` to `ImageAsset`
-      // — no cast needed to read .url.
+      // requireAsset throws AdcpError with field path if missing/wrong type.
+      // After the call, TS narrows `source` to `ImageAsset` — no cast needed.
+      const source = requireAsset(req.creative_manifest, 'source_image', 'image');
       const watermarkedUrl = await applyWatermark(source.url, this.capabilities.config.watermarkUrl);
 
       const formatId = req.target_format_id;
@@ -133,8 +128,9 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
 
     /** Always sync — preview is just a sandbox URL. */
     previewCreative: async (req: PreviewCreativeRequest): Promise<PreviewCreativeResponse> => {
-      const source = req.creative_manifest?.assets?.['source_image'];
-      const sourceUrl = source?.asset_type === 'image' ? source.url : '';
+      // Soft-form helper — preview is best-effort even if source is missing.
+      const source = getAsset(req.creative_manifest, 'source_image', 'image');
+      const sourceUrl = source?.url ?? '';
       // PreviewCreativeResponse is a discriminated union by `response_type`.
       // Use `'single'` for one preview-per-request (the common case for
       // stateless template platforms).
@@ -243,6 +239,28 @@ return {
 **Do not write `as any` or `as never` on platform code.** If you find yourself reaching for those, you almost certainly want to `import type` the right asset from `@adcp/client/types` and use the discriminator instead.
 
 The asset types are generated from the spec; full list at `src/lib/types/tools.generated.ts`. Each carries `asset_type` as a literal-typed discriminator.
+
+### Helpers — `getAsset` and `requireAsset`
+
+Most platform methods do the same null-check + discriminator-check + extract pattern over and over. The SDK ships two helpers that collapse it:
+
+```ts
+import { getAsset, requireAsset } from '@adcp/client/server/decisioning';
+
+// Soft form — returns undefined if missing or wrong asset_type
+const optionalVoice = getAsset(req.creative_manifest, 'voice', 'text');
+//    ^^^^^^^^^^^^^ TextAsset | undefined
+
+// Throw form — throws AdcpError('INVALID_REQUEST') with a field path
+// if missing or wrong asset_type. Use when the asset is required for
+// the platform method to proceed.
+const script = requireAsset(req.creative_manifest, 'script', 'text');
+//    ^^^^^^ TextAsset (never undefined past this line)
+
+await audioStackClient.synthesize({ text: script.content });
+```
+
+Both helpers preserve the discriminator narrowing — `script.content` types correctly without a cast. `requireAsset` throws an `AdcpError` with a precomposed field path (e.g., `creative_manifest.assets.script`) so the buyer sees actionable feedback. Pass `messageOverride` if the default doesn't fit.
 
 ## Errors — `throw new AdcpError(...)`
 
@@ -422,6 +440,9 @@ import {
   AdcpError,
   AccountNotFoundError,
   createAdcpServerFromPlatform,
+  // Manifest accessors that preserve discriminator narrowing
+  getAsset,
+  requireAsset,
   type DecisioningPlatform,
   type AccountStore,
   type Account,

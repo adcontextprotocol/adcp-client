@@ -415,13 +415,25 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform>(
 function buildAccountHandlers<P extends DecisioningPlatform>(platform: P): AccountHandlers<Account> {
   return {
     syncAccounts: async (params, _ctx) => {
+      if (!platform.accounts.upsert) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'sync_accounts not supported by this platform',
+          recovery: 'terminal',
+        });
+      }
       const refs = ((params as { accounts?: unknown[] }).accounts ?? []) as never[];
       return (await projectSync(
-        () => platform.accounts.upsert(refs),
+        () => platform.accounts.upsert!(refs),
         rows => ({ accounts: rows })
       )) as never;
     },
     listAccounts: async (params, _ctx) => {
+      if (!platform.accounts.list) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'list_accounts not supported by this platform',
+          recovery: 'terminal',
+        }) as never;
+      }
       const filter = params as { brand_domain?: string; operator?: string; cursor?: string; limit?: number };
       const page = await platform.accounts.list(filter as never);
       return {

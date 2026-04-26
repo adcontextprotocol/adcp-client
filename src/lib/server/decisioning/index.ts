@@ -118,6 +118,11 @@ export {
   type JwksValidationResult,
 } from './tenant-registry';
 
+// Manifest helpers — typed accessors for creative_manifest.assets values.
+// Save adopters from writing the same null-check + discriminator-check
+// boilerplate per call.
+export { getAsset, requireAsset } from './manifest-helpers';
+
 // Admin Express router for ops visibility into the TenantRegistry.
 // Mount on a separate port/path with operator auth.
 export {

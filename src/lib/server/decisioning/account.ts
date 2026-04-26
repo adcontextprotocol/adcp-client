@@ -96,16 +96,20 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
   /**
    * sync_accounts API surface. Framework normalizes the wire request; platform
    * upserts and returns per-account result rows. `throw new AdcpError(...)`
-   * for buyer-facing rejection. Wrap with `ctx.runAsync(...)` if account
-   * provisioning takes longer than the auto-defer threshold (e.g., manual
-   * operator approval flows).
+   * for buyer-facing rejection.
+   *
+   * **Optional.** Stateless platforms (creative-template, signal-marketplace
+   * proxies) that don't manage account lifecycle can omit this; framework
+   * surfaces `UNSUPPORTED_FEATURE` to buyers calling `sync_accounts`.
    */
-  upsert(refs: AccountReference[]): Promise<SyncAccountsResultRow[]>;
+  upsert?(refs: AccountReference[]): Promise<SyncAccountsResultRow[]>;
 
   /**
    * list_accounts API surface. Framework wraps with cursor envelope.
+   *
+   * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
    */
-  list(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TMeta>>>;
+  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TMeta>>>;
 }
 
 /**
