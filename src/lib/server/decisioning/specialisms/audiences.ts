@@ -30,10 +30,15 @@ export interface AudiencePlatform {
    * cross-tenant scoping. Platform handles match-rate computation and
    * activation lifecycle.
    *
-   * Real-world: LiveRamp's match-rate computation against the identity graph
-   * takes minutes; wrap with `ctx.runAsync(...)` for in-process completion or
-   * `ctx.startTask()` if the activation pipeline webhooks back from a
-   * separate process. `throw new AdcpError(...)` for buyer-fixable rejection
+   * Sync acknowledgment with status changes via `publishStatusChange`:
+   * return per-audience results immediately (`pending` / `matching` rows
+   * are valid sync outcomes). The match-rate computation and activation
+   * pipeline run in the background — the platform calls
+   * `publishStatusChange({ resource_type: 'audience', ... })` from its
+   * webhook handler / job queue / cron when each audience reaches a
+   * terminal state.
+   *
+   * Throw `new AdcpError(...)` for buyer-fixable rejection
    * (`AUDIENCE_TOO_SMALL`, etc.).
    */
   syncAudiences(audiences: Audience[], ctx: Ctx): Promise<AudienceSyncResult[]>;

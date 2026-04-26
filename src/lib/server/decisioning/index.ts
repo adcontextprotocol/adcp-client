@@ -117,3 +117,13 @@ export {
   type JwksValidator,
   type JwksValidationResult,
 } from './tenant-registry';
+
+// Admin Express router for ops visibility into the TenantRegistry.
+// Mount on a separate port/path with operator auth.
+export {
+  createTenantAdminRouter,
+  createTenantAdminHandlers,
+  mountTenantAdmin,
+  type TenantAdminHandlers,
+  type RouterLike,
+} from './admin-router';
