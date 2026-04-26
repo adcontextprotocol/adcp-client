@@ -3,6 +3,8 @@
 // for structured rejection. (`ctx.runAsync` for in-process async opt-in
 // lands in the next commit.)
 
+process.env.NODE_ENV = 'test';
+
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
@@ -615,6 +617,127 @@ describe('ctx.startTask — out-of-process task lifecycle', () => {
 
     const record = server.getTaskState(capturedHandle.taskId);
     assert.deepStrictEqual(record.result, { id: 'first' });
+  });
+});
+
+describe('NODE_ENV gate on default in-memory task registry', () => {
+  function emptyPlatform() {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'a', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      statusMappers: {},
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  function withEnv(env, fn) {
+    const prev = process.env.NODE_ENV;
+    const prevAck = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    if (env.NODE_ENV === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = env.NODE_ENV;
+    if (env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS === undefined)
+      delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    try {
+      fn();
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+      if (prevAck === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = prevAck;
+    }
+  }
+
+  it('NODE_ENV=test → uses default in-memory registry', () => {
+    withEnv({ NODE_ENV: 'test' }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServerFromPlatform(emptyPlatform(), {
+          name: 't',
+          version: '0',
+          validation: { requests: 'off', responses: 'off' },
+        })
+      );
+    });
+  });
+
+  it('NODE_ENV=development → uses default in-memory registry', () => {
+    withEnv({ NODE_ENV: 'development' }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServerFromPlatform(emptyPlatform(), {
+          name: 't',
+          version: '0',
+          validation: { requests: 'off', responses: 'off' },
+        })
+      );
+    });
+  });
+
+  it('NODE_ENV=production without explicit ack → refuses with diagnostic', () => {
+    withEnv({ NODE_ENV: 'production' }, () => {
+      assert.throws(
+        () =>
+          createAdcpServerFromPlatform(emptyPlatform(), {
+            name: 't',
+            version: '0',
+            validation: { requests: 'off', responses: 'off' },
+          }),
+        /in-memory task registry refused/
+      );
+    });
+  });
+
+  it('NODE_ENV unset (also production) without explicit ack → refuses', () => {
+    withEnv({ NODE_ENV: undefined }, () => {
+      assert.throws(() =>
+        createAdcpServerFromPlatform(emptyPlatform(), {
+          name: 't',
+          version: '0',
+          validation: { requests: 'off', responses: 'off' },
+        })
+      );
+    });
+  });
+
+  it('NODE_ENV=production WITH ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 → allows (with documented data-loss tradeoff)', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_DECISIONING_ALLOW_INMEMORY_TASKS: '1' }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServerFromPlatform(emptyPlatform(), {
+          name: 't',
+          version: '0',
+          validation: { requests: 'off', responses: 'off' },
+        })
+      );
+    });
+  });
+
+  it('explicit taskRegistry provided → no NODE_ENV check', () => {
+    const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+    withEnv({ NODE_ENV: 'production' }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServerFromPlatform(emptyPlatform(), {
+          name: 't',
+          version: '0',
+          taskRegistry: createInMemoryTaskRegistry(),
+          validation: { requests: 'off', responses: 'off' },
+        })
+      );
+    });
   });
 });
 

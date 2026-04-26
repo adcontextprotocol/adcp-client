@@ -2,6 +2,8 @@
 // (`examples/decisioning-platform-mock-seller.ts`). Exercises four real
 // async patterns end-to-end through `createAdcpServerFromPlatform`.
 
+process.env.NODE_ENV = 'test';
+
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');

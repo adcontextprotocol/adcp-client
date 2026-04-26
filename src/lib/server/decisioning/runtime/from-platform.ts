@@ -100,7 +100,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform>(
 ): DecisioningAdcpServer {
   validatePlatform(platform);
 
-  const taskRegistry = opts.taskRegistry ?? createInMemoryTaskRegistry();
+  const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -130,6 +130,34 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform>(
 // ---------------------------------------------------------------------------
 // AdcpError catch + project — adopter throws, framework projects.
 // ---------------------------------------------------------------------------
+
+/**
+ * Build the default in-memory task registry, gated by NODE_ENV.
+ *
+ * The in-memory registry loses task state on process restart — fine for
+ * tests and local dev, NOT fine for production. Gate via allowlist:
+ * `NODE_ENV` must be `'test'` or `'development'`, OR the operator must
+ * explicitly opt in via `ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1`.
+ *
+ * Pattern follows `feedback_node_env_allowlist.md`: never compare
+ * `=== 'production'` (production may unset NODE_ENV entirely); always
+ * allowlist the safe modes.
+ */
+function buildDefaultTaskRegistry(): TaskRegistry {
+  const env = process.env.NODE_ENV;
+  const safe = env === 'test' || env === 'development';
+  const ack = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS === '1';
+  if (!safe && !ack) {
+    throw new Error(
+      'createAdcpServerFromPlatform: in-memory task registry refused outside ' +
+        '{NODE_ENV=test, NODE_ENV=development}. Pass `taskRegistry` explicitly ' +
+        '(e.g., a durable Postgres-backed registry — landing in v6.0-rc.1), ' +
+        'OR set ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 if you accept that ' +
+        'in-flight tasks are lost on process restart.'
+    );
+  }
+  return createInMemoryTaskRegistry();
+}
 
 type SubmittedEnvelope = {
   status: 'submitted';

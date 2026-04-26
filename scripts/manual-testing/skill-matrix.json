@@ -2,6 +2,7 @@
   "description": "Skill × storyboard pairs exercised by `npm run compliance:skill-matrix`. Each entry spawns a fresh Claude instance against the skill, lets it build an agent, then grades against the storyboard. Add or remove pairs as the skill surface evolves.",
   "pairs": [
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "sales_guaranteed" },
+    { "skill": "skills/build-decisioning-platform/SKILL.md", "storyboard": "sales_non_guaranteed" },
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "idempotency" },
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "webhook_emission" },
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "security_baseline" },
