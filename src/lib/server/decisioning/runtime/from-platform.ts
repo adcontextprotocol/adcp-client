@@ -179,13 +179,32 @@ type SubmittedEnvelope = {
  *     structured fields.
  *   - Other thrown errors: propagate to the framework's existing
  *     `SERVICE_UNAVAILABLE` mapping.
+ *
+ * Also: slow-pending-start warning (DX caveat). When the platform returns
+ * sync (no runAsync) AND the elapsed time exceeded a threshold AND the
+ * result carries `status: 'pending_start'`, log a warning. This catches
+ * adopters who silently regress buyer UX by awaiting >30s in `createMediaBuy`
+ * without using `ctx.runAsync` to surface a partial result earlier.
  */
+const SLOW_PENDING_START_THRESHOLD_MS = 30_000;
+
 async function projectPlatformCall<TResult, TWire>(
   fn: () => Promise<TResult>,
-  mapResult: (r: TResult) => TWire
+  mapResult: (r: TResult) => TWire,
+  context?: { tool?: string }
 ): Promise<TWire | SubmittedEnvelope | AdcpErrorResponse> {
+  const startedAt = Date.now();
   try {
-    return mapResult(await fn());
+    const result = await fn();
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > SLOW_PENDING_START_THRESHOLD_MS && hasPendingStartStatus(result)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[adcp] ${context?.tool ?? 'platform method'} resolved with status: 'pending_start' after ${elapsed}ms (>${SLOW_PENDING_START_THRESHOLD_MS}ms). ` +
+          `Consider wrapping in ctx.runAsync({ partialResult }, ...) to give the buyer immediate visibility while approval completes.`
+      );
+    }
+    return mapResult(result);
   } catch (err) {
     if (err instanceof TaskDeferredError) {
       const env: SubmittedEnvelope = {
@@ -210,6 +229,14 @@ async function projectPlatformCall<TResult, TWire>(
   }
 }
 
+function hasPendingStartStatus(value: unknown): boolean {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    (value as { status?: string }).status === 'pending_start'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Specialism → handler-map adapters
 // ---------------------------------------------------------------------------
@@ -230,7 +257,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform>(
       const reqCtx = buildRequestContext(ctx, { tool: 'create_media_buy', taskRegistry });
       return (await projectPlatformCall(
         () => sales.createMediaBuy(params, reqCtx),
-        buy => buy
+        buy => buy,
+        { tool: 'create_media_buy' }
       )) as never;
     },
 
