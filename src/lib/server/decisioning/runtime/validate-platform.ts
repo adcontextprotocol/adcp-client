@@ -29,19 +29,59 @@ export class PlatformConfigError extends Error {
   }
 }
 
+/**
+ * Dual-method tool pairs. Each spec-HITL-eligible tool exposes both a sync
+ * variant (`xxx`) and a HITL variant (`xxxTask`). Exactly one must be defined
+ * per pair when the specialism requires the tool; defining both is an error.
+ */
+const DUAL_METHOD_PAIRS: Record<string, ReadonlyArray<readonly [string, string]>> = {
+  sales: [
+    ['getProducts', 'getProductsTask'],
+    ['createMediaBuy', 'createMediaBuyTask'],
+    ['updateMediaBuy', 'updateMediaBuyTask'],
+    ['syncCreatives', 'syncCreativesTask'],
+  ],
+  creative: [
+    ['buildCreative', 'buildCreativeTask'],
+    ['syncCreatives', 'syncCreativesTask'],
+  ],
+};
+
 export function validatePlatform(platform: DecisioningPlatform): void {
   const claimed = platform.capabilities?.specialisms ?? [];
-  const missing: string[] = [];
+  const errors: string[] = [];
+
+  // 1. Specialism declarations match required interfaces
   for (const specialism of claimed) {
     const required = SPECIALISM_REQUIREMENTS[specialism];
-    if (!required) continue; // unknown specialism — framework's runtime gate is a no-op (forward-compat)
+    if (!required) continue; // forward-compat for unknown specialisms
     for (const field of required) {
       if (platform[field] == null) {
-        missing.push(`capabilities.specialisms claims '${specialism}'; platform.${String(field)} is missing`);
+        errors.push(`capabilities.specialisms claims '${specialism}'; platform.${String(field)} is missing`);
       }
     }
   }
-  if (missing.length > 0) {
-    throw new PlatformConfigError(`DecisioningPlatform configuration is incomplete:\n  - ${missing.join('\n  - ')}`);
+
+  // 2. Dual-method exactly-one enforcement on each spec-HITL tool
+  for (const [field, pairs] of Object.entries(DUAL_METHOD_PAIRS)) {
+    const specialism = (platform as unknown as Record<string, unknown>)[field];
+    if (specialism == null) continue;
+    const methods = specialism as Record<string, unknown>;
+    for (const [syncName, taskName] of pairs) {
+      const hasSync = typeof methods[syncName] === 'function';
+      const hasTask = typeof methods[taskName] === 'function';
+      if (hasSync && hasTask) {
+        errors.push(
+          `${field}.${syncName} and ${field}.${taskName} are both defined. ` +
+            `Each spec-HITL tool requires exactly one method shape per platform — ` +
+            `pick sync (${syncName}) for "buyer gets resource ID immediately" workflows OR ` +
+            `task (${taskName}) for HITL workflows where buyer cannot get the resource until human acts.`
+        );
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new PlatformConfigError(`DecisioningPlatform configuration is incomplete:\n  - ${errors.join('\n  - ')}`);
   }
 }

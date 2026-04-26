@@ -1,17 +1,14 @@
 /**
- * Async-completion primitives for `DecisioningPlatform`.
+ * Error vocabulary + structured error class for `DecisioningPlatform`.
  *
- * Adopters write plain `async (req, ctx) => Promise<T>` methods and either
- * return the success value (framework projects to the wire success arm) or
- * `throw new AdcpError(...)` for structured rejection (framework projects
- * to the wire error envelope with code/recovery/field/suggestion/retry_after).
- * In-process async work that may exceed `getProducts`-style timeouts uses
- * `ctx.runAsync(opts, fn)`; out-of-process completion uses `ctx.startTask()`
- * (see `RequestContext` in `./context.ts`).
+ * Adopters write per-tool methods (sync OR `*Task` HITL variant), return
+ * the success value, or `throw new AdcpError(...)` for structured rejection.
+ * The framework projects the structured fields onto the wire `adcp_error`
+ * envelope; generic thrown errors map to `SERVICE_UNAVAILABLE`.
  *
- * `AsyncOutcome<T>` and its `ok` / `submitted` / `rejected` constructors
- * remain in the runtime as the framework's internal projection vocabulary;
- * adopter code does not return them.
+ * `AsyncOutcome<T>` and the `ok` / `submitted` / `rejected` constructors
+ * remain as the framework's internal projection vocabulary; adopter code
+ * doesn't return them.
  *
  * Status: Preview / 6.0.
  *
@@ -25,8 +22,7 @@
  * `(string & {})` escape hatch on `AdcpStructuredError.code`.
  *
  * TODO(6.0): generate this from `schemas/cache/<version>/enums/error-code.json`
- * via the same codegen pipeline as the rest of `tools.generated.ts`. The
- * hand-maintained list rots; codegen pins it to spec.
+ * via the same codegen pipeline as the rest of `tools.generated.ts`.
  */
 export type ErrorCode =
   | 'INVALID_REQUEST'
@@ -76,51 +72,7 @@ export type ErrorCode =
   | 'VERSION_UNSUPPORTED';
 
 /**
- * Discriminated union returned by any decision-point method that can complete
- * synchronously, defer to an async task, or reject. Framework owns task
- * envelope generation, polling, webhook emission, retry, dedup.
- */
-export type AsyncOutcome<TResult, TError extends AdcpStructuredError = AdcpStructuredError> =
-  | AsyncOutcomeSync<TResult>
-  | AsyncOutcomeSubmitted<TResult, TError>
-  | AsyncOutcomeRejected<TError>;
-
-export interface AsyncOutcomeSync<TResult> {
-  kind: 'sync';
-  result: TResult;
-}
-
-export interface AsyncOutcomeSubmitted<TResult, TError extends AdcpStructuredError = AdcpStructuredError> {
-  kind: 'submitted';
-  taskHandle: TaskHandle<TResult, TError>;
-  /** Hint for buyer-side polling intervals. Optional. */
-  estimatedCompletion?: Date;
-  /** Human-readable status note. Optional. */
-  message?: string;
-  /**
-   * Partial result available immediately, before the async workflow completes.
-   * Use when the platform creates a real entity that the buyer should see
-   * NOW — e.g., GAM creates an Order in `PENDING_APPROVAL` state and the
-   * buyer should see the buy with `status: pending_start` while a trafficker
-   * reviews. Framework projects this onto the wire so MCP buyers see
-   * `structuredContent.partial_result` and A2A buyers see it in the artifact
-   * data alongside `adcp_task_id`. The terminal value (the same shape) flows
-   * through `taskHandle.notify({ kind: 'completed', result })`.
-   */
-  partialResult?: TResult;
-}
-
-export interface AsyncOutcomeRejected<TError extends AdcpStructuredError = AdcpStructuredError> {
-  kind: 'rejected';
-  error: TError;
-}
-
-/**
  * Structured error envelope. Mirrors `schemas/cache/3.0.0/core/error.json`.
- * The wire schema permits unknown codes but the spec posture is "use the
- * standard vocabulary; agents fall back to recovery classification on
- * unknowns." `ErrorCode | (string & {})` gives autocomplete for the 45
- * standard codes plus an escape hatch for adapter-specific codes.
  *
  * `recovery` is REQUIRED at this interface level. The wire schema makes it
  * optional; we tighten because every adopter needs to declare buyer-recovery
@@ -128,8 +80,7 @@ export interface AsyncOutcomeRejected<TError extends AdcpStructuredError = AdcpS
  * caused buyers to misroute retries.
  *
  * Adopter code throws `AdcpError` (the class wrapper); the framework catches
- * and projects the structured fields onto the wire envelope. Internal
- * projection paths construct `AdcpStructuredError` literals.
+ * and projects the structured fields onto the wire envelope.
  */
 export interface AdcpStructuredError {
   code: ErrorCode | (string & {});
@@ -141,42 +92,16 @@ export interface AdcpStructuredError {
   suggestion?: string;
   /**
    * Seconds to wait before retrying. REQUIRED by the spec for `RATE_LIMITED`
-   * and `SERVICE_UNAVAILABLE`; the framework auto-fills a default if the
-   * platform omits it. Adopters MUST clamp to [1, 3600] per spec.
+   * and `SERVICE_UNAVAILABLE`; framework auto-fills if omitted.
+   * Adopters MUST clamp to [1, 3600] per spec.
    */
   retry_after?: number;
   details?: Record<string, unknown>;
 }
 
 /**
- * Internal sentinel thrown by `ctx.runAsync` when the in-process work
- * exceeds the auto-defer timeout. The runtime catches this and projects
- * the response onto the wire submitted envelope; the original work
- * promise keeps running in the background and notifies the registry
- * (via `taskHandle.notify`) on completion.
- *
- * Adopters should not throw or catch this directly — return value of
- * `ctx.runAsync(opts, fn)` either resolves with the work's value
- * (sync arm) or throws `TaskDeferredError` (submitted arm).
- *
- * @internal
- */
-export class TaskDeferredError<TResult = unknown> extends Error {
-  readonly name = 'TaskDeferredError' as const;
-  readonly taskHandle: TaskHandle<TResult>;
-  readonly partialResult?: TResult;
-  readonly statusMessage?: string;
-  constructor(opts: { taskHandle: TaskHandle<TResult>; partialResult?: TResult; statusMessage?: string }) {
-    super(opts.statusMessage ?? `Task ${opts.taskHandle.taskId} deferred`);
-    this.taskHandle = opts.taskHandle;
-    if (opts.partialResult !== undefined) this.partialResult = opts.partialResult;
-    if (opts.statusMessage !== undefined) this.statusMessage = opts.statusMessage;
-  }
-}
-
-/**
- * Throwable structured error. Adopter code uses this to fail a specialism
- * method with a buyer-facing wire envelope:
+ * Throwable structured error. Adopter code throws this to fail a specialism
+ * method with a buyer-facing wire envelope.
  *
  * ```ts
  * createMediaBuy: async (req, ctx) => {
@@ -185,21 +110,15 @@ export class TaskDeferredError<TResult = unknown> extends Error {
  *       recovery: 'correctable',
  *       message: `Floor is $${this.floor} CPM`,
  *       field: 'total_budget.amount',
- *       suggestion: `Raise total_budget to at least ${this.floor * 1000}`,
  *     });
  *   }
  *   return await this.gam.createOrder(req);
  * }
  * ```
  *
- * Framework catches `AdcpError` thrown from any specialism method and
- * projects the structured fields onto the wire `adcp_error` envelope.
- * Generic thrown errors (`Error`, `TypeError`, etc.) are mapped to
- * `SERVICE_UNAVAILABLE` with `recovery: 'transient'`.
- *
- * `recovery` is REQUIRED on the constructor; pass `'correctable'` for
- * buyer-fixable errors, `'transient'` for upstream outages, `'terminal'`
- * for permission/account/policy denials.
+ * Framework catches `AdcpError` from any specialism method and projects
+ * the structured fields onto the wire `adcp_error` envelope.
+ * Generic thrown errors map to `SERVICE_UNAVAILABLE` with `recovery: 'transient'`.
  */
 export class AdcpError extends Error {
   readonly name = 'AdcpError' as const;
@@ -242,117 +161,4 @@ export class AdcpError extends Error {
       ...(this.details !== undefined && { details: this.details }),
     };
   }
-}
-
-/**
- * Handle the framework hands to the buyer (via task envelope) and to the
- * platform (so it can push terminal state). The platform calls
- * `taskHandle.notify()` when its backend learns the task is done; framework
- * polls only as a fallback for platforms that haven't wired webhook ingress.
- */
-export interface TaskHandle<TResult = unknown, TError extends AdcpStructuredError = AdcpStructuredError> {
-  /** Stable task identifier; survives retries and cross-process. */
-  readonly taskId: string;
-
-  /**
-   * Push a status update to the framework. Called by the platform from its
-   * own webhook handlers (e.g., when GAM emits an order-status notification).
-   * Framework dedupes, retries the buyer-side webhook on failure, and ignores
-   * updates after a terminal one. Safe to call from any context.
-   */
-  notify(update: TaskUpdate<TResult, TError>): void;
-}
-
-/**
- * Task lifecycle: monotonic. A task transitions `progress*` → `completed | failed`,
- * and `completed` / `failed` are terminal.
- *
- * Bounce-back workflows (e.g., GAM `PENDING_APPROVAL → DRAFT` after a trafficker
- * rejects the line item, then re-submitted) are NOT modeled as a non-terminal
- * rejection here. The platform should emit `failed` with `recovery: 'correctable'`
- * carrying the rejection reason; the buyer issues a fresh `createMediaBuy` (or
- * `updateMediaBuy`) with the corrected payload, which receives a new task envelope.
- *
- * This keeps the type-level contract simple at the cost of losing platform-side
- * task-id correlation on bounce-back. Revisit at v1.1 if other platforms
- * (broadcast TV, DOOH) report the same idiom.
- */
-export type TaskUpdate<TResult = unknown, TError extends AdcpStructuredError = AdcpStructuredError> =
-  | TaskUpdateProgress
-  | TaskUpdateCompleted<TResult>
-  | TaskUpdateFailed<TError>;
-
-export interface TaskUpdateProgress {
-  kind: 'progress';
-  status?: string;
-  /** 0..1 if known; omit otherwise. */
-  percent?: number;
-}
-
-export interface TaskUpdateCompleted<TResult> {
-  kind: 'completed';
-  result: TResult;
-}
-
-export interface TaskUpdateFailed<TError extends AdcpStructuredError = AdcpStructuredError> {
-  kind: 'failed';
-  error: TError;
-}
-
-// ---------------------------------------------------------------------------
-// Internal projection vocabulary
-//
-// The framework's runtime constructs `AsyncOutcome` literals when projecting
-// platform results onto the wire. Adopter code returns plain `T` and throws
-// `AdcpError`; these functions are not part of the adopter surface.
-// ---------------------------------------------------------------------------
-
-/** @internal */
-export function ok<TResult>(result: TResult): AsyncOutcome<TResult> {
-  return { kind: 'sync', result };
-}
-
-/** @internal */
-export function submitted<TResult>(
-  taskHandle: TaskHandle<TResult>,
-  options?: { estimatedCompletion?: Date; message?: string; partialResult?: TResult }
-): AsyncOutcome<TResult> {
-  return {
-    kind: 'submitted',
-    taskHandle,
-    estimatedCompletion: options?.estimatedCompletion,
-    message: options?.message,
-    partialResult: options?.partialResult,
-  };
-}
-
-/** @internal */
-export function rejected<TResult>(error: AdcpStructuredError): AsyncOutcome<TResult> {
-  return { kind: 'rejected', error };
-}
-
-// Internal helper retained for the projection layer (see runtime/from-platform.ts).
-/** @internal */
-export function _aggregateRejected<TResult>(
-  errors: ReadonlyArray<AdcpStructuredError>,
-  options?: { code?: ErrorCode | (string & {}); recovery?: AdcpStructuredError['recovery']; message?: string }
-): AsyncOutcome<TResult> {
-  const head = errors[0];
-  if (!head) {
-    return rejected({
-      code: options?.code ?? 'INVALID_REQUEST',
-      recovery: options?.recovery ?? 'correctable',
-      message: options?.message ?? 'Request rejected (no specific errors supplied)',
-    });
-  }
-  const rest = errors.slice(1);
-  return rejected({
-    code: options?.code ?? head.code,
-    recovery: options?.recovery ?? head.recovery,
-    message: options?.message ?? head.message,
-    field: head.field,
-    suggestion: head.suggestion,
-    retry_after: head.retry_after,
-    details: { ...head.details, errors: rest },
-  });
 }

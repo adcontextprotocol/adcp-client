@@ -1,14 +1,21 @@
 /**
  * RequestContext — what the framework passes to every decision-point method.
  *
- * Split into two namespaces by semantics:
- *   - ctx.state.*   — sync state reads of what the framework knows about
- *                      this in-flight request and prior workflow steps
- *   - ctx.resolve.* — async resolvers for framework-mediated lookups
- *                      (property lists, collection lists, creative formats)
+ *   - `account` — resolved tenant for this request (from `accounts.resolve()`)
+ *   - `state.*` — sync state reads (workflow steps, governance context, proposal lookups)
+ *   - `resolve.*` — async framework-mediated fetches (property lists, formats)
  *
- * Platform reads only; framework writes only. Adopters never mutate the
- * context.
+ * Async patterns:
+ *   - **Sync**: adopter implements `xxx(req, ctx) => Promise<T>`. Framework
+ *     awaits in foreground; projects to wire success arm.
+ *   - **HITL**: adopter implements `xxxTask(taskId, req, ctx) => Promise<T>`.
+ *     Framework returns submitted envelope to buyer first, then runs the
+ *     task method in background; return value becomes terminal task state.
+ *   - **Status changes**: adopter calls `publishStatusChange(...)` (event bus)
+ *     from anywhere — webhook handler, cron, in-process worker. Framework
+ *     records the change and projects to subscribers / per-resource reads.
+ *
+ * Platform reads only; framework writes only. Adopters never mutate the context.
  *
  * Status: Preview / 6.0.
  *
@@ -17,7 +24,6 @@
 
 import type { Account } from './account';
 import type { Format, FormatID, PropertyList, CollectionList } from '../../types/tools.generated';
-import type { TaskHandle } from './async-outcome';
 
 export interface RequestContext<TAccount extends Account = Account> {
   /** Resolved account for this request. */
@@ -28,62 +34,6 @@ export interface RequestContext<TAccount extends Account = Account> {
 
   /** Async framework-mediated resolvers. */
   resolve: ResourceResolver;
-
-  /**
-   * Start a framework-managed async task explicitly. Use when async
-   * completion happens out-of-process (operator webhook arrives later,
-   * possibly in a different request lifecycle): persist the returned
-   * `taskHandle.taskId` somewhere durable; the webhook handler later
-   * calls `taskHandle.notify(update)` (or `server.completeTask(taskId, ...)`)
-   * to push terminal state.
-   *
-   * For in-process async work — "I'm awaiting a long-running operation
-   * inside this request" — use {@link runAsync} instead. It races the
-   * work against a configurable timeout, returns the resolved value if
-   * fast enough, and projects to the submitted wire envelope (with
-   * background completion via the registry) if slow.
-   */
-  startTask<TResult>(opts?: { partialResult?: TResult }): TaskHandle<TResult>;
-
-  /**
-   * Run an in-process async function with auto-defer semantics. The
-   * framework races `fn()` against a configurable timeout (default
-   * `submittedAfterMs`):
-   *
-   *   - If `fn()` resolves before the timeout: `runAsync` resolves with
-   *     the value; the adopter just returns it normally and the wire
-   *     response is the sync success arm.
-   *   - If the timeout fires first: `runAsync` throws an internal sentinel
-   *     the runtime catches and projects to the submitted wire envelope
-   *     (with `task_id`, `message`, and `partial_result`). The original
-   *     `fn()` promise keeps running in the background; on resolve the
-   *     framework calls `handle.notify({ kind: 'completed', result })`,
-   *     on throw it calls `handle.notify({ kind: 'failed', error })` —
-   *     `AdcpError` instances project to structured rejection, generic
-   *     errors to `SERVICE_UNAVAILABLE`.
-   *
-   * ```ts
-   * createMediaBuy: async (req, ctx) => {
-   *   if (this.requiresApproval(req)) {
-   *     return await ctx.runAsync(
-   *       { message: 'Awaiting approval', partialResult: this.toPendingBuy(req) },
-   *       async () => this.waitForOperatorApproval(req)
-   *     );
-   *   }
-   *   return await this.platform.create(req);
-   * };
-   * ```
-   *
-   * Hard cap: the framework cancels in-process await at `maxAutoAwaitMs`
-   * (default 10min). After that, the task record stays `submitted` and
-   * the adopter must push completion via webhook handler + `notify` from
-   * out of process. Long-running work belongs on `startTask`, not
-   * `runAsync`.
-   */
-  runAsync<TResult>(
-    opts: { message?: string; partialResult?: TResult; submittedAfterMs?: number; maxAutoAwaitMs?: number },
-    fn: () => Promise<TResult>
-  ): Promise<TResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,8 +52,7 @@ export interface WorkflowStateReader {
   /**
    * Resolve a proposal_id to its proposal context. Threaded by the framework
    * across get_products → refine → create_media_buy without platform code.
-   * Returns null if the framework doesn't recognize the id (typically because
-   * it expired or was never issued by this agent).
+   * Returns null if the framework doesn't recognize the id.
    */
   findProposalById(proposalId: string): Proposal | null;
 

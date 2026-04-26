@@ -1,21 +1,35 @@
 /**
- * SalesPlatform — sales specialism platform interface (v1.0).
+ * SalesPlatform — sales specialism platform interface (v2 dual-method shape).
  *
- * One interface for all sales specialisms (sales-non-guaranteed in v1.0;
- * sales-guaranteed and sales-broadcast-tv in v1.1). Behavioral variation is
- * driven by capabilities (channels, pricing models) and by the
- * `MediaBuy.status` enum the platform sets in its responses — NOT by
- * splitting into per-variant interfaces.
+ * Each spec-HITL-eligible tool (`get_products`, `create_media_buy`,
+ * `update_media_buy`, `sync_creatives`) exposes a method-pair. Adopter
+ * implements EXACTLY ONE per pair:
  *
- * Five methods. Each maps 1:1 to an AdCP wire tool. Each returns a plain
- * `Promise<T>`: the framework projects the resolved value to the wire success
- * arm, and catches `AdcpError` thrown from the method to project the
- * structured error envelope. Generic thrown errors (`Error`, `TypeError`)
- * surface as `SERVICE_UNAVAILABLE`. Adopters who need explicit async-task
- * envelopes use `ctx.runAsync(opts, fn)` (in-process) or `ctx.startTask()`
- * (out-of-process) — see `RequestContext` JSDoc.
+ *   - **Sync variant** (`xxx`): adopter returns the resource synchronously.
+ *     Framework awaits in foreground; projects to wire success arm.
+ *     Lifecycle changes flow via `publishStatusChange(...)` or per-resource
+ *     read endpoints (e.g., `getMediaBuys`).
  *
- * Status: Preview / 6.0. Not yet wired into the framework.
+ *   - **HITL variant** (`xxxTask`): framework creates a task BEFORE calling
+ *     the platform method, returns submitted envelope to buyer immediately,
+ *     then runs the task method in background. Method's return value
+ *     becomes the task's terminal state. The `taskId` parameter signals
+ *     "you're in HITL background; framework already responded to the buyer."
+ *
+ * Type-level both are optional; `validatePlatform()` enforces exactly-one
+ * per spec-HITL tool at construction time (and `RequiredPlatformsFor<S>`
+ * enforces which variant per specialism — `sales-broadcast-tv` requires
+ * `*Task`; `sales-social` requires sync; `sales-non-guaranteed` accepts
+ * either).
+ *
+ * Each method either returns the value or throws `AdcpError` for
+ * structured rejection. Generic thrown errors map to `SERVICE_UNAVAILABLE`.
+ *
+ * `getMediaBuyDelivery` is sync-only at the wire level today. For platforms
+ * with manual report-running, return the request acknowledgment + emit
+ * `delivery_status_changes` via `publishStatusChange(...)`.
+ *
+ * Status: Preview / 6.0.
  *
  * @public
  */
@@ -36,86 +50,69 @@ type Ctx = RequestContext<Account>;
 import type { CreativeReviewResult } from './creative';
 
 export interface SalesPlatform {
-  /**
-   * Discovery — given a brief, what products do I offer?
-   *
-   * Synchronous in nearly every real platform. Framework auto-tracks
-   * proposal_id values in the response so they round-trip to subsequent
-   * get_products(refine) calls and create_media_buy without the platform
-   * re-resolving them.
-   */
-  getProducts(req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
+  // ── get_products: sync OR task (custom proposal system) ─────────────
+
+  /** Sync discovery: brief in, products out. Most platforms. */
+  getProducts?(req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
 
   /**
-   * Create a media buy. Return the resolved `MediaBuy` for the success arm;
-   * `throw new AdcpError(...)` for buyer-facing rejection
-   * (`BUDGET_TOO_LOW`, `TERMS_REJECTED`, `GOVERNANCE_DENIED`, etc.).
-   *
-   * If the platform's underlying workflow can take longer than the
-   * framework's auto-defer threshold (~30s by default), wrap with
-   * `ctx.runAsync({ message, partialResult }, async () => ...)` to opt
-   * into the submitted-task envelope. Adopters whose async approval
-   * happens out-of-process (operator webhook arrives hours later, possibly
-   * in a different request) use `ctx.startTask()` for explicit handle
-   * management.
-   *
-   * The MediaBuy.status enum (pending_creatives / pending_start / active /
-   * paused / completed / rejected / canceled) carries the wire status from
-   * the spec verbatim.
+   * HITL discovery: framework creates task; platform runs through
+   * proposal/offline workflow and returns when products are ready.
+   * Buyer initially sees a submitted envelope with `task_id`; resource
+   * lands on the task's completion artifact.
    */
-  createMediaBuy(req: CreateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
+  getProductsTask?(taskId: string, req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
+
+  // ── create_media_buy: sync OR task (broadcast TV / guaranteed) ──────
 
   /**
-   * Mutate an existing buy: bid, budget, dates, status, packages.
-   *
-   * The patch is the wire shape. Adopters whose underlying platform exposes
-   * action verbs (GAM's `PauseLineItems` / `ResumeLineItems` / `ArchiveLineItems`,
-   * Prebid's action-string convention) dispatch locally on the patch fields:
-   *
-   * ```ts
-   * updateMediaBuy: async (buyId, patch, ctx) => {
-   *   if (patch.active === false) return this.pause(buyId, ctx);
-   *   if (patch.active === true)  return this.resume(buyId, ctx);
-   *   // ... fall through to a generic patch apply
-   * };
-   * ```
-   *
-   * Don't ask the framework for an action-based convenience surface — it
-   * would duplicate the wire shape and drift as the spec evolves.
-   *
-   * `update_media_buy` has no wire submitted arm. If a patch triggers an
-   * async re-approval workflow, return the current state (with `paused`
-   * status if applicable); the buyer polls `get_media_buys` for resolution.
+   * Sync media-buy creation. Return the resolved `MediaBuy` immediately.
+   * Status changes (pending_creatives → active → completed) flow via
+   * `publishStatusChange(...)` after creation.
    */
-  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
+  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
 
   /**
-   * Unified creative review. Framework normalizes both wire paths
-   * (sync_creatives push AND inline creative_assignments[]) so the platform
-   * sees one decision per creative regardless of intake channel.
-   *
-   * Per-creative review status is the natural shape: return
-   * `CreativeReviewResult[]` with each row carrying its own status
-   * (`approved` / `rejected` / `pending_review`). Buyers see partial
-   * approvals immediately; the framework projects per-row status onto the
-   * wire response.
-   *
-   * For platforms whose entire batch goes through async manual review
-   * (Innovid, broadcast TV approval — 4-72h SLA), return rows with
-   * `status: 'pending_review'` and use `ctx.startTask()` to issue a handle
-   * the platform's review pipeline calls `notify(...)` on per-creative.
+   * HITL media-buy creation. Framework creates task before calling this;
+   * platform reserves inventory + runs internal checks + returns the
+   * MediaBuy once accepted. `media_buy_id` is unknown to the buyer until
+   * the task completes.
    */
-  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<CreativeReviewResult[]>;
+  createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
+
+  // ── update_media_buy: sync OR task (re-approval edge) ───────────────
 
   /**
-   * Delivery + spend reporting.
+   * Sync update. Most patches apply immediately; status changes that
+   * follow (e.g., `paused` → `active` after operator confirms re-spend)
+   * flow via `publishStatusChange(...)`.
    *
-   * Synchronous in most paths; large reports (GAM runReportJob, BigQuery
-   * exports) take longer than the auto-defer threshold — wrap with
-   * `ctx.runAsync(...)` to issue a task envelope. Framework owns the
-   * wire-shape mapping (top-level currency, billing-quintet on package
-   * rows, ISO 8601 date-time on reporting_period).
+   * The patch is the wire shape. Adopters whose underlying platform
+   * exposes action verbs dispatch locally on the patch fields.
    */
+  updateMediaBuy?(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
+
+  /** HITL update. Re-approval workflows that gate the patch from applying at all. */
+  updateMediaBuyTask?(taskId: string, buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
+
+  // ── sync_creatives: sync OR task (mandatory pre-persist review) ─────
+
+  /**
+   * Sync creative push. Returns per-creative status array — buyers see
+   * mixed `approved` / `pending_review` rows in one response. Subsequent
+   * review state changes flow via `publishStatusChange(...)`.
+   */
+  syncCreatives?(creatives: Creative[], ctx: Ctx): Promise<CreativeReviewResult[]>;
+
+  /**
+   * HITL creative review. Framework creates task; platform queues for
+   * mandatory review before persisting any creative. Return the per-
+   * creative results once review is complete.
+   */
+  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx): Promise<CreativeReviewResult[]>;
+
+  // ── get_media_buy_delivery: sync only at the wire level ─────────────
+
   getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx): Promise<DeliveryActuals>;
 }
 

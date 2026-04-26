@@ -1,27 +1,32 @@
 /**
  * MockSeller — worked example for the v6.0 alpha DecisioningPlatform
- * runtime. Exercises four real-world async patterns:
+ * runtime under the v2.1 dual-method shape.
  *
- *   1. **Trafficker approval (in-process)** — `createMediaBuy` either
- *      returns sync (auto-approved) or wraps the approval wait in
- *      `ctx.runAsync`; framework auto-defers if approval takes long
- *      enough.
+ * Two variants exist because v2.1 enforces exactly-one method per pair:
  *
- *   2. **Out-of-process completion (webhook)** — a separate code path
- *      uses `ctx.startTask` and exposes a `completeTask` hook the test
- *      harness (or a real webhook handler) calls hours later.
+ *   - **MockSyncSeller** — implements `createMediaBuy` (sync). Buyer gets
+ *     `media_buy_id` immediately; lifecycle changes (pending → active) flow
+ *     via `publishStatusChange()` (event bus, separate commit).
  *
- *   3. **Per-creative review (partial-batch)** — `syncCreatives` returns
- *      a mix of `approved` and `pending_review` rows in one response;
- *      no auto-defer needed.
+ *   - **MockHitlSeller** — implements `createMediaBuyTask` (HITL). Buyer
+ *     sees `submitted` envelope with `task_id`; framework runs the trafficker
+ *     review in background, terminal state lands on the task record.
  *
- *   4. **Multi-error pre-flight rejection** — adopter throws one
- *      `AdcpError` carrying all validation failures in `details.errors`.
+ * Patterns demonstrated:
+ *
+ *   1. **Sync happy path** (`MockSyncSeller`): plain `Promise<T>`; no async
+ *      ceremony.
+ *   2. **HITL background work** (`MockHitlSeller`): framework allocates
+ *      `taskId`, returns submitted envelope, runs `*Task` in background.
+ *   3. **Per-creative review** (both variants): `syncCreatives` returns mixed
+ *      `approved` + `pending_review` rows in one response.
+ *   4. **Multi-error pre-flight rejection** (both variants): adopter throws
+ *      one `AdcpError` carrying all validation failures in `details.errors`.
  *
  * This file doubles as integration tests in
  * `test/server-decisioning-mock-seller.test.js`.
  *
- * @see `docs/proposals/decisioning-platform-v1.md`
+ * @see `docs/proposals/decisioning-platform-v2-hitl-split.md`
  */
 
 import {
@@ -30,7 +35,6 @@ import {
   type SalesPlatform,
   type AccountStore,
   type AdcpStructuredError,
-  type TaskHandle,
 } from '../src/lib/server/decisioning';
 import type { CreativeReviewResult } from '../src/lib/server/decisioning/specialisms/creative';
 import type {
@@ -45,15 +49,13 @@ import type {
 } from '../src/lib/types/tools.generated';
 
 // ---------------------------------------------------------------------------
-// MockSeller config + state types
+// Shared config + state
 // ---------------------------------------------------------------------------
 
 export interface MockSellerConfig {
   /** Threshold (CPM) below which media buys are auto-rejected. */
   floorCpm: number;
-  /** Approval-required total_budget threshold; above this, a trafficker review fires. */
-  reviewThreshold: number;
-  /** Simulated trafficker review duration (ms). */
+  /** Simulated trafficker review duration (ms) — only used by HITL variant. */
   approvalDurationMs: number;
 }
 
@@ -68,35 +70,17 @@ type MockMediaBuy = {
   total_budget: number;
 };
 
-// ---------------------------------------------------------------------------
-// MockSeller implementation
-// ---------------------------------------------------------------------------
+const DEFAULT_CONFIG: MockSellerConfig = {
+  floorCpm: 1.0,
+  approvalDurationMs: 100,
+};
 
-export class MockSeller implements DecisioningPlatform<MockSellerConfig, MockSellerMeta> {
-  /** Pending out-of-process tasks: taskId → TaskHandle (notified later via completeTask). */
-  private pendingApprovals = new Map<string, TaskHandle<MockMediaBuy>>();
+// Shared cross-variant helpers — preflight, account store, syncCreatives,
+// getProducts. Variant classes only differ on createMediaBuy{,Task}.
 
-  /** In-memory media buy store. */
-  private mediaBuys = new Map<string, MockMediaBuy>();
-
-  capabilities = {
-    specialisms: ['sales-non-guaranteed'] as const,
-    creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
-    channels: ['display', 'video'] as const,
-    pricingModels: ['cpm'] as const,
-    config: {
-      floorCpm: 1.0,
-      reviewThreshold: 50_000,
-      approvalDurationMs: 100, // short for tests; in production this is hours
-    } satisfies MockSellerConfig,
-  };
-
-  statusMappers = {};
-
-  accounts: AccountStore<MockSellerMeta> = {
+function makeAccounts(): AccountStore<MockSellerMeta> {
+  return {
     resolve: async (ref: AccountReference) => {
-      // Demo: any reference resolves to the same mock account.
-      // Real adapters lookup tenant from auth principal.
       const id = 'account_id' in ref ? ref.account_id : 'mock_acc_1';
       return {
         id,
@@ -108,83 +92,120 @@ export class MockSeller implements DecisioningPlatform<MockSellerConfig, MockSel
     upsert: async () => [],
     list: async () => ({ items: [], nextCursor: null }),
   };
+}
 
-  // ---------------------------------------------------------------------------
-  // Sales — exercising the four async patterns
-  // ---------------------------------------------------------------------------
+function preflight(req: CreateMediaBuyRequest, config: MockSellerConfig): AdcpStructuredError[] {
+  const errors: AdcpStructuredError[] = [];
+  const totalBudget =
+    typeof req.total_budget === 'number'
+      ? req.total_budget
+      : ((req.total_budget as { amount?: number })?.amount ?? 0);
+
+  if (totalBudget < config.floorCpm * 1000) {
+    errors.push({
+      code: 'BUDGET_TOO_LOW',
+      recovery: 'correctable',
+      message: `total_budget below floor (${config.floorCpm} CPM × 1000 imp)`,
+      field: 'total_budget',
+      suggestion: `Raise total_budget to at least ${config.floorCpm * 1000}`,
+    });
+  }
+
+  const packages = (req as { packages?: unknown[] }).packages ?? [];
+  if (packages.length === 0) {
+    errors.push({
+      code: 'INVALID_REQUEST',
+      recovery: 'correctable',
+      message: 'packages must be non-empty',
+      field: 'packages',
+    });
+  }
+
+  return errors;
+}
+
+function rejectPreflight(errors: AdcpStructuredError[]): never {
+  throw new AdcpError('INVALID_REQUEST', {
+    recovery: 'correctable',
+    message: errors[0]!.message,
+    field: errors[0]!.field,
+    details: { errors },
+  });
+}
+
+const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProductsResponse> => ({
+  products: [
+    {
+      product_id: 'prod_premium_video',
+      name: 'Premium Video',
+      description: 'Pre-roll video on premium inventory',
+      format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/creative-agent/mcp' }],
+      delivery_type: 'non_guaranteed',
+      publisher_properties: { reportable: true },
+      reporting_capabilities: { available_dimensions: ['geo', 'creative'] },
+      pricing_options: [{ pricing_model: 'cpm', rate: 12.5, currency: 'USD' }],
+    } as never,
+  ],
+});
+
+const SHARED_SYNC_CREATIVES = async (creatives: CreativeAsset[]): Promise<CreativeReviewResult[]> => {
+  return creatives.map(c => {
+    const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
+    const needsReview = (c as { format_id?: { id?: string } }).format_id?.id?.startsWith('video_');
+    return {
+      creative_id: id,
+      status: needsReview ? 'pending_review' : 'approved',
+      ...(needsReview && { reason: 'video creatives go through brand-suitability review' }),
+    };
+  });
+};
+
+const SHARED_GET_MEDIA_BUY_DELIVERY = async (
+  filter: GetMediaBuyDeliveryRequest
+): Promise<GetMediaBuyDeliveryResponse> =>
+  ({
+    currency: 'USD',
+    reporting_period: {
+      start: filter.start_date ?? '2026-04-01',
+      end: filter.end_date ?? '2026-04-30',
+    },
+    media_buys: [],
+  }) as never;
+
+// ---------------------------------------------------------------------------
+// MockSyncSeller — sync createMediaBuy (auto-approve)
+// ---------------------------------------------------------------------------
+
+export class MockSyncSeller implements DecisioningPlatform<MockSellerConfig, MockSellerMeta> {
+  private mediaBuys = new Map<string, MockMediaBuy>();
+
+  capabilities = {
+    specialisms: ['sales-non-guaranteed'] as const,
+    creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
+    channels: ['display', 'video'] as const,
+    pricingModels: ['cpm'] as const,
+    config: { ...DEFAULT_CONFIG } satisfies MockSellerConfig,
+  };
+
+  statusMappers = {};
+  accounts = makeAccounts();
 
   sales: SalesPlatform = {
-    /** Pattern: synchronous discovery. Plain Promise<T>; no async ceremony. */
-    getProducts: async (req: GetProductsRequest): Promise<GetProductsResponse> => {
-      return {
-        products: [
-          {
-            product_id: 'prod_premium_video',
-            name: 'Premium Video',
-            description: 'Pre-roll video on premium inventory',
-            format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/creative-agent/mcp' }],
-            delivery_type: 'non_guaranteed',
-            publisher_properties: { reportable: true },
-            reporting_capabilities: { available_dimensions: ['geo', 'creative'] },
-            pricing_options: [{ pricing_model: 'cpm', rate: 12.5, currency: 'USD' }],
-          } as never,
-        ],
-      };
-    },
+    getProducts: SHARED_GET_PRODUCTS,
 
-    /**
-     * Patterns: pre-flight validation (multi-error throw), sync happy path,
-     * AND in-process trafficker review via ctx.runAsync.
-     */
-    createMediaBuy: async (req: CreateMediaBuyRequest, ctx) => {
-      // Pattern 4: multi-error pre-flight throw.
-      const errors = this.preflight(req);
-      if (errors.length > 0) {
-        throw new AdcpError('INVALID_REQUEST', {
-          recovery: 'correctable',
-          message: errors[0]!.message,
-          field: errors[0]!.field,
-          details: { errors },
-        });
-      }
+    /** Sync happy path: pre-flight; auto-approve; return MediaBuy immediately. */
+    createMediaBuy: async (req: CreateMediaBuyRequest) => {
+      const errors = preflight(req, this.capabilities.config);
+      if (errors.length > 0) rejectPreflight(errors);
 
       const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const totalBudget =
         typeof req.total_budget === 'number'
           ? req.total_budget
           : ((req.total_budget as { amount?: number })?.amount ?? 0);
-
-      // Pattern 1: in-process trafficker approval via ctx.runAsync.
-      // Race the approval wait against the framework's auto-defer timeout;
-      // framework projects to submitted envelope if approval takes too long.
-      if (totalBudget >= this.capabilities.config.reviewThreshold) {
-        const partialBuy: MockMediaBuy = {
-          media_buy_id: buyId,
-          status: 'pending_start',
-          total_budget: totalBudget,
-        };
-        return await ctx.runAsync<MockMediaBuy>(
-          {
-            message: `Trafficker review required for ${this.capabilities.config.reviewThreshold} CPM threshold`,
-            partialResult: partialBuy,
-          },
-          async () => {
-            await new Promise(r => setTimeout(r, this.capabilities.config.approvalDurationMs));
-            const approved: MockMediaBuy = { ...partialBuy, status: 'active' };
-            this.mediaBuys.set(buyId, approved);
-            return approved;
-          }
-        );
-      }
-
-      // Sync happy path: under threshold, auto-approve.
-      const buy: MockMediaBuy = {
-        media_buy_id: buyId,
-        status: 'pending_creatives',
-        total_budget: totalBudget,
-      };
+      const buy: MockMediaBuy = { media_buy_id: buyId, status: 'pending_creatives', total_budget: totalBudget };
       this.mediaBuys.set(buyId, buy);
-      return buy;
+      return buy as never;
     },
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
@@ -196,94 +217,75 @@ export class MockSeller implements DecisioningPlatform<MockSellerConfig, MockSel
           field: 'media_buy_id',
         });
       }
-      // Local action dispatch (patch-vs-verb).
       if (patch.active === false) existing.status = 'paused';
       if (patch.active === true && existing.status === 'paused') existing.status = 'active';
-      return existing;
+      return existing as never;
     },
 
-    /**
-     * Pattern 3: per-creative status. Some auto-approved, some pending_review.
-     * No auto-defer; the wire shape carries the partial state per-row.
-     */
-    syncCreatives: async (creatives: CreativeAsset[]): Promise<CreativeReviewResult[]> => {
-      return creatives.map(c => {
-        const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
-        // Mock policy: video creatives need manual review; everything else auto-approves.
-        const needsReview = (c as { format_id?: { id?: string } }).format_id?.id?.startsWith('video_');
-        return {
-          creative_id: id,
-          status: needsReview ? 'pending_review' : 'approved',
-          ...(needsReview && { reason: 'video creatives go through brand-suitability review' }),
-        };
-      });
-    },
+    syncCreatives: SHARED_SYNC_CREATIVES,
+    getMediaBuyDelivery: SHARED_GET_MEDIA_BUY_DELIVERY,
+  };
+}
 
-    getMediaBuyDelivery: async (filter: GetMediaBuyDeliveryRequest): Promise<GetMediaBuyDeliveryResponse> => {
-      return {
-        currency: 'USD',
-        reporting_period: {
-          start: filter.start_date ?? '2026-04-01',
-          end: filter.end_date ?? '2026-04-30',
-        },
-        media_buys: [],
-      } as never;
-    },
+// ---------------------------------------------------------------------------
+// MockHitlSeller — HITL createMediaBuyTask (trafficker review)
+// ---------------------------------------------------------------------------
+
+export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, MockSellerMeta> {
+  private mediaBuys = new Map<string, MockMediaBuy>();
+
+  capabilities = {
+    specialisms: ['sales-non-guaranteed'] as const,
+    creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
+    channels: ['display', 'video'] as const,
+    pricingModels: ['cpm'] as const,
+    config: { ...DEFAULT_CONFIG } satisfies MockSellerConfig,
   };
 
-  // ---------------------------------------------------------------------------
-  // Out-of-process completion (Pattern 2)
-  //
-  // Adopters can use ctx.startTask explicitly when async completion happens
-  // OUTSIDE the request lifecycle (operator webhook arrives hours later).
-  // The handle's taskId is persisted; the webhook handler later calls
-  // server.completeTask(taskId, result) (or notify directly on the stored
-  // handle).
-  // ---------------------------------------------------------------------------
+  statusMappers = {};
+  accounts = makeAccounts();
 
-  /**
-   * Test/demo helper that simulates a webhook arriving hours later.
-   * Real adapters wire this to their backend's notification system.
-   */
-  resolvePendingApproval(taskId: string, result: MockMediaBuy): void {
-    const handle = this.pendingApprovals.get(taskId);
-    if (!handle) throw new Error(`no pending approval for taskId ${taskId}`);
-    handle.notify({ kind: 'completed', result });
-    this.pendingApprovals.delete(taskId);
-    this.mediaBuys.set(result.media_buy_id, result);
-  }
+  sales: SalesPlatform = {
+    getProducts: SHARED_GET_PRODUCTS,
 
-  // ---------------------------------------------------------------------------
-  // Pre-flight validation (Pattern 4)
-  // ---------------------------------------------------------------------------
+    /**
+     * HITL: framework allocates `taskId` BEFORE invoking, returns submitted
+     * envelope to buyer immediately, runs this method in background. Method's
+     * return value becomes terminal `result`; thrown `AdcpError` becomes
+     * terminal `error`.
+     */
+    createMediaBuyTask: async (_taskId: string, req: CreateMediaBuyRequest) => {
+      const errors = preflight(req, this.capabilities.config);
+      if (errors.length > 0) rejectPreflight(errors);
 
-  private preflight(req: CreateMediaBuyRequest): AdcpStructuredError[] {
-    const errors: AdcpStructuredError[] = [];
-    const totalBudget =
-      typeof req.total_budget === 'number'
-        ? req.total_budget
-        : ((req.total_budget as { amount?: number })?.amount ?? 0);
+      // Trafficker review window
+      await new Promise(r => setTimeout(r, this.capabilities.config.approvalDurationMs));
 
-    if (totalBudget < this.capabilities.config.floorCpm * 1000) {
-      errors.push({
-        code: 'BUDGET_TOO_LOW',
-        recovery: 'correctable',
-        message: `total_budget below floor (${this.capabilities.config.floorCpm} CPM × 1000 imp)`,
-        field: 'total_budget',
-        suggestion: `Raise total_budget to at least ${this.capabilities.config.floorCpm * 1000}`,
-      });
-    }
+      const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const totalBudget =
+        typeof req.total_budget === 'number'
+          ? req.total_budget
+          : ((req.total_budget as { amount?: number })?.amount ?? 0);
+      const buy: MockMediaBuy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
+      this.mediaBuys.set(buyId, buy);
+      return buy as never;
+    },
 
-    const packages = (req as { packages?: unknown[] }).packages ?? [];
-    if (packages.length === 0) {
-      errors.push({
-        code: 'INVALID_REQUEST',
-        recovery: 'correctable',
-        message: 'packages must be non-empty',
-        field: 'packages',
-      });
-    }
+    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
+      const existing = this.mediaBuys.get(buyId);
+      if (!existing) {
+        throw new AdcpError('MEDIA_BUY_NOT_FOUND', {
+          recovery: 'terminal',
+          message: `media buy ${buyId} not found`,
+          field: 'media_buy_id',
+        });
+      }
+      if (patch.active === false) existing.status = 'paused';
+      if (patch.active === true && existing.status === 'paused') existing.status = 'active';
+      return existing as never;
+    },
 
-    return errors;
-  }
+    syncCreatives: SHARED_SYNC_CREATIVES,
+    getMediaBuyDelivery: SHARED_GET_MEDIA_BUY_DELIVERY,
+  };
 }

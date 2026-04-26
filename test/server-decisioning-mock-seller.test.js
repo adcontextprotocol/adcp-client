@@ -1,49 +1,45 @@
 // Integration tests for the MockSeller worked example
 // (`examples/decisioning-platform-mock-seller.ts`). Exercises four real
-// async patterns end-to-end through `createAdcpServerFromPlatform`.
+// adopter patterns end-to-end through `createAdcpServerFromPlatform`
+// under the v2.1 dual-method shape:
+//
+//   1. Sync createMediaBuy (auto-approve happy path).
+//   2. HITL createMediaBuyTask (trafficker-review variant).
+//   3. Per-creative status (mixed approved/pending in one batch).
+//   4. Multi-error pre-flight rejection via AdcpError.details.errors.
+//
+// Each platform variant exposes EXACTLY ONE of each method-pair. A single
+// platform implementation that wanted both shapes would be a v2.1 violation
+// (validatePlatform throws). Buyers that need both modes call different
+// agent endpoints — that's the multi-tenant routing story, not per-call
+// shape selection.
 
 process.env.NODE_ENV = 'test';
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
-// MockSeller is a TS file under examples/. We dispatch through the same
-// dist-compiled SDK paths the example uses, so we have to load it via tsx
-// or compile it inline. Simpler: re-implement the platform shape inline
-// for the test; the example file is the canonical reference.
-
 const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 
-function makeMockSeller(overrides = {}) {
-  const config = {
-    floorCpm: 1.0,
-    reviewThreshold: 50_000,
-    approvalDurationMs: 30,
-    ...overrides,
-  };
-
+function basePlatformShape(salesOverrides) {
   const mediaBuys = new Map();
-  const pendingApprovals = new Map();
-
-  const platform = {
+  return {
+    mediaBuys,
     capabilities: {
       specialisms: ['sales-non-guaranteed'],
       creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
       channels: ['display', 'video'],
       pricingModels: ['cpm'],
-      config,
+      config: {},
     },
     statusMappers: {},
     accounts: {
-      resolve: async ref => {
-        const id = ref?.account_id ?? 'mock_acc_1';
-        return {
-          id,
-          operator: 'mockseller.example.com',
-          metadata: { network_id: 'mock_network', advertiser_id: 'mock_advertiser' },
-          authInfo: { kind: 'api_key' },
-        };
-      },
+      resolve: async ref => ({
+        id: ref?.account_id ?? 'mock_acc_1',
+        operator: 'mockseller.example.com',
+        metadata: { network_id: 'mock_network', advertiser_id: 'mock_advertiser' },
+        authInfo: { kind: 'api_key' },
+      }),
       upsert: async () => [],
       list: async () => ({ items: [], nextCursor: null }),
     },
@@ -62,45 +58,6 @@ function makeMockSeller(overrides = {}) {
           },
         ],
       }),
-
-      createMediaBuy: async (req, ctx) => {
-        // Pre-flight (Pattern 4)
-        const errors = preflight(req, config);
-        if (errors.length > 0) {
-          throw new AdcpError('INVALID_REQUEST', {
-            recovery: 'correctable',
-            message: errors[0].message,
-            field: errors[0].field,
-            details: { errors },
-          });
-        }
-
-        const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
-
-        // Pattern 1: in-process trafficker approval via ctx.runAsync
-        if (totalBudget >= config.reviewThreshold) {
-          const partialBuy = { media_buy_id: buyId, status: 'pending_start', total_budget: totalBudget };
-          return await ctx.runAsync(
-            {
-              message: 'Trafficker review required',
-              partialResult: partialBuy,
-              submittedAfterMs: 10, // tiny so the test reliably defers
-            },
-            async () => {
-              await new Promise(r => setTimeout(r, config.approvalDurationMs));
-              const approved = { ...partialBuy, status: 'active' };
-              mediaBuys.set(buyId, approved);
-              return approved;
-            }
-          );
-        }
-
-        // Sync happy path
-        const buy = { media_buy_id: buyId, status: 'pending_creatives', total_budget: totalBudget };
-        mediaBuys.set(buyId, buy);
-        return buy;
-      },
 
       updateMediaBuy: async (buyId, patch) => {
         const existing = mediaBuys.get(buyId);
@@ -134,30 +91,68 @@ function makeMockSeller(overrides = {}) {
         reporting_period: { start: filter.start_date ?? '2026-04-01', end: filter.end_date ?? '2026-04-30' },
         media_buys: [],
       }),
-    },
-    // Test helper for Pattern 2 (out-of-process)
-    _resolvePendingApproval(taskId, result) {
-      const handle = pendingApprovals.get(taskId);
-      if (!handle) throw new Error(`no pending approval for taskId ${taskId}`);
-      handle.notify({ kind: 'completed', result });
-      pendingApprovals.delete(taskId);
-      mediaBuys.set(result.media_buy_id, result);
+
+      ...salesOverrides,
     },
   };
-
-  return { platform, mediaBuys, pendingApprovals };
 }
 
-function preflight(req, config) {
+function makeSyncMockSeller({ floorCpm = 1.0 } = {}) {
+  const platform = basePlatformShape({
+    createMediaBuy: async req => {
+      const errors = preflight(req, { floorCpm });
+      if (errors.length > 0) {
+        throw new AdcpError('INVALID_REQUEST', {
+          recovery: 'correctable',
+          message: errors[0].message,
+          field: errors[0].field,
+          details: { errors },
+        });
+      }
+      const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
+      const buy = { media_buy_id: buyId, status: 'pending_creatives', total_budget: totalBudget };
+      platform.mediaBuys.set(buyId, buy);
+      return buy;
+    },
+  });
+  return platform;
+}
+
+function makeHitlMockSeller({ floorCpm = 1.0, approvalDurationMs = 30 } = {}) {
+  const platform = basePlatformShape({
+    createMediaBuyTask: async (taskId, req) => {
+      const errors = preflight(req, { floorCpm });
+      if (errors.length > 0) {
+        throw new AdcpError('INVALID_REQUEST', {
+          recovery: 'correctable',
+          message: errors[0].message,
+          field: errors[0].field,
+          details: { errors },
+        });
+      }
+      // Trafficker review window
+      await new Promise(r => setTimeout(r, approvalDurationMs));
+      const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
+      const buy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
+      platform.mediaBuys.set(buyId, buy);
+      return buy;
+    },
+  });
+  return platform;
+}
+
+function preflight(req, { floorCpm }) {
   const errors = [];
   const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
-  if (totalBudget < config.floorCpm * 1000) {
+  if (totalBudget < floorCpm * 1000) {
     errors.push({
       code: 'BUDGET_TOO_LOW',
       recovery: 'correctable',
-      message: `total_budget below floor (${config.floorCpm} CPM × 1000 imp)`,
+      message: `total_budget below floor (${floorCpm} CPM × 1000 imp)`,
       field: 'total_budget',
-      suggestion: `Raise total_budget to at least ${config.floorCpm * 1000}`,
+      suggestion: `Raise total_budget to at least ${floorCpm * 1000}`,
     });
   }
   const packages = req.packages ?? [];
@@ -199,40 +194,60 @@ function dispatchCreate(server, args = {}) {
   });
 }
 
-describe('MockSeller worked example', () => {
-  describe('Pattern 1: in-process trafficker approval via ctx.runAsync', () => {
-    it('under review threshold: sync auto-approval', async () => {
-      const { platform } = makeMockSeller({ reviewThreshold: 50_000 });
+describe('MockSeller worked example — v2.1 dual-method', () => {
+  describe('Pattern 1: sync createMediaBuy (auto-approve)', () => {
+    it('valid request: sync success arm with media_buy_id and pending_creatives', async () => {
+      const platform = makeSyncMockSeller();
       const server = buildServer(platform);
       const result = await dispatchCreate(server, { total_budget: 5000 });
       assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
       assert.strictEqual(result.structuredContent.status, 'pending_creatives');
       assert.ok(result.structuredContent.media_buy_id.startsWith('mb_'));
     });
+  });
 
-    it('above review threshold: async via runAsync, partial result + submitted envelope, then completion', async () => {
-      const { platform } = makeMockSeller({ reviewThreshold: 1000, approvalDurationMs: 60 });
+  describe('Pattern 2: HITL createMediaBuyTask (trafficker review)', () => {
+    it('returns submitted envelope with task_id; background completes terminal active', async () => {
+      const platform = makeHitlMockSeller({ approvalDurationMs: 30 });
       const server = buildServer(platform);
       const result = await dispatchCreate(server, { total_budget: 100_000 });
 
       assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
       assert.strictEqual(result.structuredContent.status, 'submitted');
-      assert.strictEqual(result.structuredContent.message, 'Trafficker review required');
-      assert.strictEqual(result.structuredContent.partial_result.status, 'pending_start');
+      assert.ok(result.structuredContent.task_id.startsWith('task_'));
       const taskId = result.structuredContent.task_id;
 
-      // Wait for background completion (60ms approval duration)
       await server.awaitTask(taskId);
 
       const final = server.getTaskState(taskId);
       assert.strictEqual(final.status, 'completed');
       assert.strictEqual(final.result.status, 'active');
     });
+
+    it('background AdcpError records terminal failed with structured fields', async () => {
+      const platform = makeHitlMockSeller();
+      const server = buildServer(platform);
+      const result = await dispatchCreate(server, {
+        total_budget: 100, // below floor — pre-flight inside *Task throws AdcpError
+      });
+
+      // Pre-flight runs inside the *Task method, so the buyer first sees submitted,
+      // then the registry record carries the structured rejection on the task.
+      assert.strictEqual(result.structuredContent.status, 'submitted');
+      const taskId = result.structuredContent.task_id;
+
+      await server.awaitTask(taskId);
+
+      const final = server.getTaskState(taskId);
+      assert.strictEqual(final.status, 'failed');
+      assert.strictEqual(final.error.code, 'INVALID_REQUEST');
+      assert.strictEqual(final.error.recovery, 'correctable');
+    });
   });
 
   describe('Pattern 3: per-creative review with mixed sync/pending rows', () => {
     it('returns approved + pending_review rows in one response', async () => {
-      const { platform } = makeMockSeller();
+      const platform = makeSyncMockSeller();
       const server = buildServer(platform);
       const result = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -262,8 +277,8 @@ describe('MockSeller worked example', () => {
   });
 
   describe('Pattern 4: multi-error pre-flight rejection', () => {
-    it('throws AdcpError with details.errors carrying all validation failures', async () => {
-      const { platform } = makeMockSeller();
+    it('throws AdcpError with details.errors carrying all validation failures (sync mode)', async () => {
+      const platform = makeSyncMockSeller();
       const server = buildServer(platform);
       const result = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -283,7 +298,6 @@ describe('MockSeller worked example', () => {
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
       assert.strictEqual(result.structuredContent.adcp_error.recovery, 'correctable');
-      // Multi-error pattern: details.errors carries the rest
       const detailsErrors = result.structuredContent.adcp_error.details.errors;
       assert.ok(Array.isArray(detailsErrors));
       assert.ok(detailsErrors.length >= 1);
@@ -292,7 +306,7 @@ describe('MockSeller worked example', () => {
 
   describe('updateMediaBuy: throw AdcpError for not-found', () => {
     it('returns MEDIA_BUY_NOT_FOUND envelope when buy does not exist', async () => {
-      const { platform } = makeMockSeller();
+      const platform = makeSyncMockSeller();
       const server = buildServer(platform);
       const result = await server.dispatchTestRequest({
         method: 'tools/call',

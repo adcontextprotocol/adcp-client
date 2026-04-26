@@ -1,7 +1,9 @@
 // Smoke tests for `createAdcpServerFromPlatform` — the v6.0 alpha runtime.
-// Adopter shape: plain `async (req, ctx) => Promise<T>`. Throw `AdcpError`
-// for structured rejection. (`ctx.runAsync` for in-process async opt-in
-// lands in the next commit.)
+// Adopter shape: per spec-HITL tool, exactly one of {sync `xxx`, HITL
+// `xxxTask`}. Sync return value projects to wire success arm; throw
+// `AdcpError` for structured rejection. HITL allocates `taskId` BEFORE
+// invoking, returns submitted envelope to buyer, runs `*Task(taskId, ...)`
+// in background; method's return value becomes terminal task result.
 
 process.env.NODE_ENV = 'test';
 
@@ -117,7 +119,6 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.ok(sawCtx.account, 'ctx.account should be populated from accounts.resolve');
     assert.strictEqual(typeof sawCtx.state.workflowSteps, 'function');
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
-    assert.strictEqual(typeof sawCtx.startTask, 'function');
   });
 
   it('catches AccountNotFoundError from accounts.resolve and returns ACCOUNT_NOT_FOUND envelope', async () => {
@@ -369,8 +370,8 @@ describe('CreativeTemplatePlatform + AudiencePlatform wiring', () => {
   });
 });
 
-describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
-  function buildRunAsyncPlatform(createMediaBuyImpl) {
+describe('HITL dual-method dispatch — *Task variants', () => {
+  function buildHitlPlatform(salesOverrides) {
     return {
       capabilities: {
         specialisms: ['sales-non-guaranteed'],
@@ -386,11 +387,13 @@ describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
       },
       statusMappers: {},
       sales: {
-        getProducts: async () => ({ products: [] }),
-        createMediaBuy: createMediaBuyImpl,
+        // No sync method; HITL `*Task` variant only.
+        getProducts: undefined,
+        createMediaBuy: undefined,
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        ...salesOverrides,
       },
     };
   }
@@ -412,36 +415,14 @@ describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
     });
   }
 
-  it('fast work: ctx.runAsync resolves before timeout, projects to sync arm', async () => {
-    const platform = buildRunAsyncPlatform(async (req, ctx) => {
-      return await ctx.runAsync(
-        { message: 'normally async', submittedAfterMs: 5000 },
-        async () => ({ media_buy_id: 'mb_fast' }) // resolves immediately
-      );
-    });
-    const server = createAdcpServerFromPlatform(platform, {
-      name: 'spike',
-      version: '0.0.1',
-      validation: { requests: 'off', responses: 'off' },
-    });
-    const result = await dispatchCreate(server);
-    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.strictEqual(result.structuredContent.media_buy_id, 'mb_fast');
-  });
-
-  it('slow work: ctx.runAsync exceeds timeout, projects to submitted envelope with partial_result', async () => {
-    const platform = buildRunAsyncPlatform(async (req, ctx) => {
-      return await ctx.runAsync(
-        {
-          message: 'pending operator approval',
-          partialResult: { media_buy_id: 'mb_partial', status: 'pending_start' },
-          submittedAfterMs: 20,
-        },
-        async () => {
-          await new Promise(r => setTimeout(r, 60));
-          return { media_buy_id: 'mb_final', status: 'active' };
-        }
-      );
+  it('createMediaBuyTask returns submitted envelope; background completes terminal state', async () => {
+    let capturedTaskId;
+    const platform = buildHitlPlatform({
+      createMediaBuyTask: async (taskId, req) => {
+        capturedTaskId = taskId;
+        await new Promise(r => setTimeout(r, 30));
+        return { media_buy_id: 'mb_final', status: 'active' };
+      },
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -452,11 +433,7 @@ describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
     const result = await dispatchCreate(server);
     assert.strictEqual(result.structuredContent.status, 'submitted');
     assert.ok(result.structuredContent.task_id.startsWith('task_'));
-    assert.strictEqual(result.structuredContent.message, 'pending operator approval');
-    assert.deepStrictEqual(result.structuredContent.partial_result, {
-      media_buy_id: 'mb_partial',
-      status: 'pending_start',
-    });
+    assert.strictEqual(result.structuredContent.task_id, capturedTaskId, 'taskId on the wire matches the one passed to *Task');
 
     const taskId = result.structuredContent.task_id;
     await server.awaitTask(taskId);
@@ -466,12 +443,12 @@ describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
   });
 
-  it('background failure: AdcpError thrown after timeout records as failed with structured fields', async () => {
-    const platform = buildRunAsyncPlatform(async (req, ctx) => {
-      return await ctx.runAsync({ submittedAfterMs: 20 }, async () => {
-        await new Promise(r => setTimeout(r, 60));
+  it('createMediaBuyTask throwing AdcpError records terminal failed with structured fields', async () => {
+    const platform = buildHitlPlatform({
+      createMediaBuyTask: async () => {
+        await new Promise(r => setTimeout(r, 20));
         throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'operator declined' });
-      });
+      },
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -491,12 +468,12 @@ describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
     assert.strictEqual(finalRecord.error.recovery, 'terminal');
   });
 
-  it('background failure: generic Error becomes SERVICE_UNAVAILABLE', async () => {
-    const platform = buildRunAsyncPlatform(async (req, ctx) => {
-      return await ctx.runAsync({ submittedAfterMs: 20 }, async () => {
-        await new Promise(r => setTimeout(r, 60));
+  it('createMediaBuyTask throwing generic Error records terminal failed as SERVICE_UNAVAILABLE', async () => {
+    const platform = buildHitlPlatform({
+      createMediaBuyTask: async () => {
+        await new Promise(r => setTimeout(r, 20));
         throw new Error('upstream API timeout');
-      });
+      },
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -513,110 +490,6 @@ describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
     assert.strictEqual(finalRecord.status, 'failed');
     assert.strictEqual(finalRecord.error.code, 'SERVICE_UNAVAILABLE');
     assert.strictEqual(finalRecord.error.recovery, 'transient');
-  });
-});
-
-describe('ctx.startTask — out-of-process task lifecycle', () => {
-  // ctx.startTask is the explicit out-of-process primitive: adopter persists
-  // taskId, webhook handler later calls handle.notify (in this commit, the
-  // notify path writes to the in-memory registry; wire-level tasks/get
-  // integration arrives in a subsequent commit).
-
-  it('ctx.startTask returns a framework-issued taskId; notify writes the registry record', async () => {
-    let capturedHandle;
-    const platform = {
-      capabilities: {
-        specialisms: ['sales-non-guaranteed'],
-        creative_agents: [],
-        channels: ['display'],
-        pricingModels: ['cpm'],
-        config: {},
-      },
-      accounts: {
-        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
-        upsert: async () => [],
-        list: async () => ({ items: [], nextCursor: null }),
-      },
-      statusMappers: {},
-      sales: {
-        getProducts: async (req, ctx) => {
-          // Demonstrate ctx.startTask issuance from any specialism method.
-          capturedHandle = ctx.startTask({ partialResult: { stub: true } });
-          return { products: [] };
-        },
-        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
-        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
-        syncCreatives: async () => [],
-        getMediaBuyDelivery: async () => ({ media_buys: [] }),
-      },
-    };
-    const server = createAdcpServerFromPlatform(platform, {
-      name: 'spike',
-      version: '0.0.1',
-      validation: { requests: 'off', responses: 'off' },
-    });
-    await server.dispatchTestRequest({
-      method: 'tools/call',
-      params: {
-        name: 'get_products',
-        arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } },
-      },
-    });
-    assert.ok(capturedHandle, 'ctx.startTask should produce a handle');
-    assert.ok(capturedHandle.taskId.startsWith('task_'));
-
-    capturedHandle.notify({ kind: 'completed', result: { final: true } });
-
-    const record = server.getTaskState(capturedHandle.taskId);
-    assert.strictEqual(record.status, 'completed');
-    assert.deepStrictEqual(record.result, { final: true });
-  });
-
-  it('terminal-state lock-out: subsequent notify calls are no-ops', async () => {
-    let capturedHandle;
-    const platform = {
-      capabilities: {
-        specialisms: ['sales-non-guaranteed'],
-        creative_agents: [],
-        channels: ['display'],
-        pricingModels: ['cpm'],
-        config: {},
-      },
-      accounts: {
-        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
-        upsert: async () => [],
-        list: async () => ({ items: [], nextCursor: null }),
-      },
-      statusMappers: {},
-      sales: {
-        getProducts: async (req, ctx) => {
-          capturedHandle = ctx.startTask();
-          return { products: [] };
-        },
-        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
-        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
-        syncCreatives: async () => [],
-        getMediaBuyDelivery: async () => ({ media_buys: [] }),
-      },
-    };
-    const server = createAdcpServerFromPlatform(platform, {
-      name: 'spike',
-      version: '0.0.1',
-      validation: { requests: 'off', responses: 'off' },
-    });
-    await server.dispatchTestRequest({
-      method: 'tools/call',
-      params: {
-        name: 'get_products',
-        arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } },
-      },
-    });
-
-    capturedHandle.notify({ kind: 'completed', result: { id: 'first' } });
-    capturedHandle.notify({ kind: 'completed', result: { id: 'second_should_be_ignored' } });
-
-    const record = server.getTaskState(capturedHandle.taskId);
-    assert.deepStrictEqual(record.result, { id: 'first' });
   });
 });
 
@@ -761,5 +634,19 @@ describe('validatePlatform', () => {
       },
     });
     assert.doesNotThrow(() => validatePlatform(platform));
+  });
+
+  it('throws PlatformConfigError when both sync and *Task method-pair are defined', () => {
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        getProductsTask: async (_taskId, _req, _ctx) => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    });
+    assert.throws(() => validatePlatform(platform), /both defined/);
   });
 });

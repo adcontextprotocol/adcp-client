@@ -10,31 +10,17 @@
  * @packageDocumentation
  */
 
-// Adopter-facing async-completion primitives.
+// Adopter-facing structured-error primitive.
 //
-// `AdcpError` is the canonical throwable for structured rejection.
-// `TaskHandle` / `TaskUpdate` are framework-issued via `ctx.startTask()`;
-// adopters call `taskHandle.notify(...)` to push lifecycle.
+// `AdcpError` is the canonical throwable for structured rejection. Specialism
+// methods return plain `T` for success or `throw new AdcpError(...)` to project
+// to the wire `adcp_error` envelope.
 //
-// `AsyncOutcome` and its `ok` / `submitted` / `rejected` constructors are
-// internal projection vocabulary — kept exported as types for adopters who
-// integrate at the framework layer (e.g., custom dispatchers). Adopter
-// code in specialism methods returns plain `T` and throws `AdcpError`.
-export {
-  type AsyncOutcome,
-  type AsyncOutcomeSync,
-  type AsyncOutcomeSubmitted,
-  type AsyncOutcomeRejected,
-  type AdcpStructuredError,
-  type ErrorCode,
-  type TaskHandle,
-  type TaskUpdate,
-  type TaskUpdateProgress,
-  type TaskUpdateCompleted,
-  type TaskUpdateFailed,
-  AdcpError,
-  TaskDeferredError,
-} from './async-outcome';
+// HITL is expressed in the type system via the dual-method shape on each
+// spec-HITL tool (`xxx` for sync, `xxxTask` for HITL). No adopter-facing
+// task primitives — the framework owns task lifecycle and dispatches the
+// `*Task` method in the background.
+export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
 
 // Cursor pagination
 export type { CursorPage, CursorRequest } from './pagination';
