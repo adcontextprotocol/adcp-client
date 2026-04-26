@@ -348,6 +348,23 @@ export interface AgentRequestSigningOperationOverrides {
    * seller asks for" behavior.
    */
   sign_supported?: boolean;
+  /**
+   * Optional override for the JWKS endpoint where this agent publishes its
+   * verification keys. Verifiers walk brand.json from `agent_url` to find the
+   * `jwks_uri` — this field is informational, mirroring what brand.json
+   * publishes so audit logs and custom verifier wiring have a single source
+   * of truth for the buyer-side identity.
+   *
+   * Use when the JWKS lives off the conventional
+   * `${agent_url}/.well-known/jwks.json` path — split-domain setups (identity
+   * domain separate from the agent endpoint) being the common case.
+   *
+   * The SDK does not consume this field for signing; it's carried here so the
+   * config object is self-describing. Brand.json publication is the
+   * authoritative side — make sure the `jwks_uri` in your brand.json matches
+   * this value.
+   */
+  jwks_uri?: string;
 }
 
 /**
