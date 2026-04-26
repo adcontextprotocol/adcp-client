@@ -342,6 +342,27 @@ new AdcpError(code: ErrorCode | string, options: {
 
 Common codes for creative-template: `INVALID_REQUEST`, `UNSUPPORTED_FEATURE`, `VALIDATION_ERROR`, `RATE_LIMITED`, `SERVICE_UNAVAILABLE`, `CREATIVE_REJECTED`. The full vocabulary is in `@adcp/client/server/decisioning`'s `ErrorCode` type — return any spec code OR your own platform-specific string (agents fall back to `recovery` classification on unknowns).
 
+## Idempotency — the framework dedupes; you thread the key downstream
+
+The framework consumes `idempotency_key` on every mutating request before dispatching to your platform method. Replays come back from the framework's idempotency store; **you never see duplicate calls** for the same `(idempotency_key, account)` pair.
+
+What you SHOULD do: pass `req.idempotency_key` to your upstream API's idempotency parameter when you call into GAM / Snap / Meta / your internal services. That makes the dedupe story end-to-end — if the AdCP layer dedupes a request, your upstream platform won't double-charge a CPM either.
+
+```ts
+buildCreative: async (req) => {
+  // Framework already deduped for the (idempotency_key, account) pair.
+  // Thread the same key into the upstream call so YOUR platform's API
+  // also dedupes if the same key arrives twice (defensive).
+  const job = await audioStackClient.synthesize({
+    text: scriptText,
+    idempotency_key: req.idempotency_key,
+  });
+  return { format_id: req.target_format_id!, assets: { rendered_audio: job.asset } };
+};
+```
+
+You do NOT need to maintain your own replay table. The framework owns that.
+
 ## Account resolution
 
 `accounts.resolve(ref)` is called by the framework BEFORE any creative method. Whatever you return becomes `ctx.account` inside your methods. `AccountReference` is a discriminated union:

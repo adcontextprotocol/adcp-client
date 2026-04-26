@@ -123,6 +123,10 @@ export {
 // boilerplate per call.
 export { getAsset, requireAsset } from './manifest-helpers';
 
+// Start-time helper — normalize the wire `start_time` union into a Date,
+// with platform-aware ASAP lead-time injection.
+export { resolveStartTime, type ResolveStartTimeOptions } from './start-time';
+
 // Admin Express router for ops visibility into the TenantRegistry.
 // Mount on a separate port/path with operator auth.
 export {
