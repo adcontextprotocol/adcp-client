@@ -391,6 +391,48 @@ describe('createWebhookEmitter: signerProvider path', () => {
 });
 
 // ────────────────────────────────────────────────────────────
+// Wire-byte equality: signerKey and signerProvider paths produce
+// byte-identical signature bases for the same input. Locks the
+// "only the dispatch differs" contract claimed in the PR description.
+// ────────────────────────────────────────────────────────────
+
+describe('createWebhookEmitter: signerKey and signerProvider produce byte-identical signature bases', () => {
+  test('same body + same nonce + same `created` → identical Signature-Input + signatureBase', async () => {
+    const { signerKey } = makeSignerKey('parity-test-2026');
+    const provider = signerKeyToProvider(signerKey);
+
+    const fixedNow = 1_700_000_000;
+    const fixedNonce = 'parity-test-nonce-fixed-1234';
+
+    // Pin nonce + now via signOptions so the only nondeterministic input
+    // (timestamp + nonce) is fixed across both paths. Ed25519 is
+    // deterministic, so the resulting Signature bytes will also match —
+    // but the strong assertion is the signatureBase, which the verifier
+    // is what receivers compute against.
+    const { signWebhook, signWebhookAsync } = require('../../dist/lib/signing/index.js');
+    const request = {
+      method: 'POST',
+      url: 'https://example.test/webhook',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ idempotency_key: 'idem-test', operation_id: 'op-1', payload: { hello: 'world' } }),
+    };
+    const sigOpts = { now: () => fixedNow, nonce: fixedNonce };
+
+    const sync = signWebhook(request, signerKey, sigOpts);
+    const async_ = await signWebhookAsync(request, provider, sigOpts);
+
+    // Signature base — the bytes the verifier hashes. Wire equivalence.
+    assert.strictEqual(async_.signatureBase, sync.signatureBase);
+    // Signature-Input header — same params (kid, alg, tag, nonce, created,
+    // expires, components). For Ed25519 (deterministic) the Signature
+    // bytes also match.
+    assert.strictEqual(async_.headers['Signature-Input'], sync.headers['Signature-Input']);
+    assert.strictEqual(async_.headers.Signature, sync.headers.Signature);
+    assert.strictEqual(async_.headers['Content-Digest'], sync.headers['Content-Digest']);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
 // Construction-time mutual-exclusion validation
 // ────────────────────────────────────────────────────────────
 

@@ -114,8 +114,20 @@ export interface WebhookEmitterOptions {
    * Async KMS-backed signing provider (GCP KMS, AWS KMS, Azure Key Vault, etc.).
    * Routes webhook signing through `signWebhookAsync` so the private key never
    * enters process memory. Mutually exclusive with `signerKey` — exactly one
-   * must be provided. The JWKS entry for the wrapped key MUST carry
-   * `adcp_use: "webhook-signing"` so receivers can validate key purpose.
+   * must be provided.
+   *
+   * **Single-purpose key requirement.** The JWKS entry for the wrapped key
+   * MUST carry `adcp_use: "webhook-signing"` so receivers can validate key
+   * purpose at JWKS-publication time. The `SigningProvider` interface
+   * exposes only `keyid` / `algorithm` / `fingerprint`, not JWKS metadata,
+   * so the SDK cannot enforce the purpose binding at runtime — it's the
+   * publisher's responsibility to publish the correct `adcp_use` on the
+   * JWK and to NOT reuse the same `SigningProvider` instance for both
+   * `request_signing.provider` and `webhooks.signerProvider`. Per
+   * `docs/guides/SIGNING-GUIDE.md` § Key separation, AdCP requires
+   * **distinct key material** per purpose; mint a second
+   * `cryptoKeyVersion` for webhook signing rather than sharing the
+   * request-signing key.
    */
   signerProvider?: SigningProvider;
   retries?: WebhookRetryOptions;
@@ -193,6 +205,17 @@ export interface WebhookEmitResult {
   attempts: number;
   delivered: boolean;
   final_status?: number;
+  /**
+   * Per-attempt error messages (transport / signer / network failures).
+   *
+   * **Logging caution:** when a `signerProvider` rejection bubbles into
+   * this array, the message text comes from the adapter and may include
+   * infra-flavored detail (KMS resource names, IAM principals, project
+   * IDs). Mirrors the same caution flagged on `SigningProvider.fingerprint`.
+   * If you pipe `errors[]` into shared logs / observability pipelines,
+   * sanitize or redact at your boundary — adapter messages aren't
+   * guaranteed to be operator-safe.
+   */
   errors: string[];
 }
 
