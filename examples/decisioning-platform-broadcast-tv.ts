@@ -66,12 +66,10 @@ interface BroadcastTvMeta {
   affiliate_advertiser_id: string;
 }
 
-type BroadcastBuy = {
-  media_buy_id: string;
-  status: 'pending_acceptance' | 'accepted' | 'active' | 'completed' | 'rejected';
-  total_budget: number;
-  daypart: string;
-};
+// Wire-shaped MediaBuy (re-exported from sales specialism). Local alias is
+// just sugar — the shape is the canonical wire type.
+import type { MediaBuy } from '../src/lib/server/decisioning/specialisms/sales';
+type BroadcastBuy = MediaBuy & { daypart?: string };
 
 // ---------------------------------------------------------------------------
 // Implementation
@@ -145,7 +143,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
             publisher_properties: { reportable: true },
             reporting_capabilities: { available_dimensions: ['daypart', 'creative'] },
             pricing_options: [{ pricing_model: 'cpm', rate: 42.0, currency: 'USD' }],
-          } as never,
+          },
         ],
       } satisfies GetProductsResponse;
     },
@@ -179,6 +177,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       const buy: BroadcastBuy = {
         media_buy_id: buyId,
         status: 'accepted',
+        currency: 'USD',
         total_budget: totalBudget,
         daypart: 'primetime',
       };
@@ -199,7 +198,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
         });
       }, this.capabilities.config.activationOffsetMs).unref?.();
 
-      return buy as never;
+      return buy;
     },
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
@@ -213,7 +212,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       }
       // Broadcast: pause = preempt the schedule; can resume only with re-IO.
       if (patch.active === false) existing.status = 'rejected';
-      return existing as never;
+      return existing;
     },
 
     /**
@@ -246,7 +245,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
           end: filter.end_date ?? '2026-04-30',
         },
         media_buys: [],
-      } as never;
+      };
     },
   };
 

@@ -57,11 +57,8 @@ interface ProgrammaticMeta {
   advertiser_id: string;
 }
 
-type ProgrammaticBuy = {
-  media_buy_id: string;
-  status: 'pending_creatives' | 'active' | 'paused' | 'completed';
-  total_budget: number;
-};
+import type { MediaBuy } from '../src/lib/server/decisioning/specialisms/sales';
+type ProgrammaticBuy = MediaBuy;
 
 export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfig, ProgrammaticMeta> {
   private mediaBuys = new Map<string, ProgrammaticBuy>();
@@ -107,7 +104,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
           publisher_properties: { reportable: true },
           reporting_capabilities: { available_dimensions: ['geo', 'creative', 'site'] },
           pricing_options: [{ pricing_model: 'cpm', rate: 2.5, currency: 'USD' }],
-        } as never,
+        },
         {
           product_id: 'prod_premium_video_15s',
           name: 'Premium Video 15s',
@@ -117,7 +114,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
           publisher_properties: { reportable: true },
           reporting_capabilities: { available_dimensions: ['geo', 'creative', 'site'] },
           pricing_options: [{ pricing_model: 'cpm', rate: 18.0, currency: 'USD' }],
-        } as never,
+        },
       ],
     }),
 
@@ -140,7 +137,12 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
       }
 
       const buyId = `mb_${this.capabilities.config.networkId}_${Date.now()}`;
-      const buy: ProgrammaticBuy = { media_buy_id: buyId, status: 'pending_creatives', total_budget: totalBudget };
+      const buy: ProgrammaticBuy = {
+        media_buy_id: buyId,
+        status: 'pending_creatives',
+        currency: 'USD',
+        total_budget: totalBudget,
+      };
       this.mediaBuys.set(buyId, buy);
 
       // Demo: schedule the pending_creatives → active transition once
@@ -158,7 +160,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
         });
       }, this.capabilities.config.creativeReviewMs).unref?.();
 
-      return buy as never;
+      return buy;
     },
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
@@ -172,7 +174,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
       }
       if (patch.active === false) existing.status = 'paused';
       if (patch.active === true && existing.status === 'paused') existing.status = 'active';
-      return existing as never;
+      return existing;
     },
 
     /**
@@ -211,6 +213,6 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
         end: filter.end_date ?? '2026-04-30',
       },
       media_buys: [],
-    }) as never,
+    }),
   };
 }

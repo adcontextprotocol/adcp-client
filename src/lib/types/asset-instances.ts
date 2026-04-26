@@ -82,3 +82,24 @@ export type AssetInstance =
  * switch-case helpers.
  */
 export type AssetInstanceType = AssetInstance['asset_type'];
+
+// Re-export the individual asset types so adopters can use them for
+// returning / narrowing without reaching into `tools.generated`. The
+// generated module is the source of truth; this re-export is the public
+// surface.
+export type {
+  ImageAsset,
+  VideoAsset,
+  AudioAsset,
+  TextAsset,
+  HTMLAsset,
+  URLAsset,
+  CSSAsset,
+  JavaScriptAsset,
+  MarkdownAsset,
+  VASTAsset,
+  DAASTAsset,
+  BriefAsset,
+  CatalogAsset,
+  WebhookAsset,
+};
