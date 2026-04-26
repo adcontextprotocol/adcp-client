@@ -103,6 +103,24 @@ Wire flow:
 
 The buyer doesn't poll. The status is pushed.
 
+#### Forward-compat: adopter code stays the same across 3.0 → 3.1
+
+The adopter's code above works identically whether running against AdCP 3.0 (no status-change webhook in spec yet) or 3.1+ (status webhooks added). The framework adapts the wire projection based on the spec version:
+
+| Spec version | What `syncAudiences` returns to the buyer | What `emitStatusChange` does |
+|---|---|---|
+| **3.0** (today) | Sync `SyncAudiencesSuccess` with per-row `status: 'matching'` | No subscription channel exists. Framework records the status change on its task registry; buyer polls `getAudienceStatus(audienceId)` to learn current state. |
+| **3.1 with status-change webhooks** (proposed in this doc) | Same sync response | Framework emits signed webhook to subscribers of `audience_status_changes`. Buyer polling continues to work as a fallback. |
+| **3.1 with sync-audiences-async-arm** (alternative spec proposal) | Framework converts the sync response into `SyncAudiencesSubmitted { task_id, ... }`; persists audiences as working tasks | Framework flips task to `completed` with the new status; pushes via `tasks/get` polling and `push_notification_config` webhook |
+
+**The adopter writes one shape; framework picks the wire projection.** They don't have to know which spec version is active or whether the upstream proposals land. The same `syncAudiences` + `emitStatusChange` code works as the spec evolves; only the wire output shape changes underneath.
+
+The mechanism: SDK reads `ADCP_VERSION` at construction (already present in the framework) and routes `emitStatusChange` calls through whichever delivery channel the active spec supports. If multiple are available, framework prefers webhook over polling — but adopter code doesn't see this.
+
+This applies to all "slow with eventual ack" tools (`build_creative`, `sync_catalogs`, `activate_signal`, `getMediaBuyDelivery` for manual reports, `acquire_rights` when not HITL). The adopter writes Shape B once; framework projects to whatever the spec version supports.
+
+Note: the HITL Shape A (`xxxTask`) doesn't have this forward-compat concern — `task_id` + `tasks/get` is already in spec since 3.0; the only delta would be the proposed `getMediaBuyDeliveryTask` arm, which is purely additive.
+
 ## Categorization of all spec-async-eligible tools
 
 | Tool | v1.0 alpha (current) | v2 proposed | Rationale |
