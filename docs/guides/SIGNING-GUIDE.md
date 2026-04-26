@@ -339,7 +339,35 @@ app.post(
 );
 ```
 
-`replayStore` and `revocationStore` default to in-memory implementations — fine for single-process deployments. Replace with a shared store (Redis-backed, etc.) for horizontally scaled fleets so replay detection works across instances.
+`replayStore` and `revocationStore` default to in-memory implementations — fine for single-process deployments.
+
+**For multi-instance verifier deployments, the in-memory default is a real gap.** Each process has its own cache; an attacker who captures a signed request can replay it against a sibling instance whose cache hasn't seen the nonce. The replay-protection invariant is "this `(keyid, scope, nonce)` tuple has not been seen before" — that has to hold across the fleet, not per-process. RFC 9421 expiry bounds the window to 5 minutes, but that's plenty of time for an in-flight replay. Use a shared backend.
+
+The SDK ships `PostgresReplayStore` for this:
+
+```typescript
+import { Pool } from 'pg';
+import { PostgresReplayStore, getReplayStoreMigration, sweepExpiredReplays } from '@adcp/client/signing/server';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+await pool.query(getReplayStoreMigration());                    // run once at boot
+
+const replayStore = new PostgresReplayStore(pool);
+
+// Postgres has no native TTL — schedule the sweeper somewhere to delete
+// expired rows. Once a minute is fine for moderate traffic; tune down if
+// the verifier sees thousands of signed requests per second.
+setInterval(() => sweepExpiredReplays(pool).catch(console.error), 60_000);
+
+app.use(createExpressVerifier({
+  capability: { ... },
+  jwks,
+  replayStore,                                                  // <-- shared across instances
+  resolveOperation: mcpToolNameResolver,
+}));
+```
+
+The schema is one table with `(keyid, scope, nonce)` as the primary key plus indexes on `expires_at` and `(keyid, scope, expires_at)`. Lookups are O(log n) on the composite index; insert is one round-trip CTE that handles the replay/cap/insert decision atomically. The sweeper exists because Postgres has no native row-level TTL — it's a `DELETE FROM replay_cache WHERE expires_at <= now()` you call on a schedule. Other backends (Redis, KeyDB, anything supporting atomic insert-if-absent with TTL) can implement the `ReplayStore` interface the same way.
 
 On successful verification, `req.verifiedSigner` contains `{ keyid, agent_url?, verified_at }`. On failure, the middleware returns `401` with `WWW-Authenticate: Signature error="<code>"`.
 
