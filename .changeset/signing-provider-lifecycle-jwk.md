@@ -1,5 +1,5 @@
 ---
-"@adcp/client": patch
+"@adcp/client": minor
 ---
 
 Address SigningProvider first-adopter friction (#1022 from #3283 KMS integration)
