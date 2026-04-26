@@ -1,3 +1,4 @@
+import { type LookupAddress, type LookupOptions } from 'dns';
 import { lookup as dnsLookup } from 'dns/promises';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isAlwaysBlocked, isPrivateIp } from '../probes';
@@ -30,10 +31,12 @@ export interface ProbeResult {
  * Send a signed HTTP request to an AdCP agent and capture the response fields
  * needed for conformance grading (status, WWW-Authenticate error code, body).
  *
- * Reuses the SSRF guards established by `fetchProbe` — same classifier, same
- * IP pin against DNS rebinding. Bodies are capped at 64 KiB and parsed as JSON
- * when content-type matches; otherwise returned as text. `redirect: 'manual'`
- * is enforced so an agent that 301s can't smuggle the grader elsewhere.
+ * Reuses the SSRF guards from the address classifiers — scheme check,
+ * `isAlwaysBlocked`, `isPrivateIp` — then pins the outbound connection to the
+ * pre-validated address via an undici dispatcher, defeating DNS rebinding.
+ * Bodies are capped at 64 KiB and parsed as JSON when content-type matches;
+ * otherwise returned as text. `redirect: 'manual'` is enforced so an agent
+ * that 301s can't smuggle the grader elsewhere.
  */
 export async function probeSignedRequest(signed: SignedHttpRequest, options: ProbeOptions = {}): Promise<ProbeResult> {
   const start = Date.now();
@@ -90,8 +93,24 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
     }
   }
   const pinned = addresses[0]!;
+  const pinnedFamily = pinned.family === 6 ? 6 : 4;
+  // undici calls lookup with { all: true } for HTTPS targets on Node 22+, which
+  // expects the array form of the callback. Handle both shapes so the pin works
+  // across Node versions.
   const dispatcher = new Agent({
-    connect: { lookup: (_h, _o, cb) => cb(null, pinned.address, pinned.family) },
+    connect: {
+      lookup: (
+        _h: string,
+        opts: LookupOptions | undefined,
+        cb: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void
+      ) => {
+        if (opts?.all) {
+          cb(null, [{ address: pinned.address, family: pinnedFamily }]);
+        } else {
+          cb(null, pinned.address, pinnedFamily);
+        }
+      },
+    },
   });
 
   const ac = new AbortController();
