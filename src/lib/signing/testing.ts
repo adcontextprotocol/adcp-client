@@ -52,9 +52,7 @@ export class InMemorySigningProvider implements SigningProvider {
       );
     }
     if (!options.privateKey.d) {
-      throw new TypeError(
-        'InMemorySigningProvider requires a JWK with a `d` (private scalar) field.'
-      );
+      throw new TypeError('InMemorySigningProvider requires a JWK with a `d` (private scalar) field.');
     }
     this.keyid = options.keyid;
     this.algorithm = options.algorithm;

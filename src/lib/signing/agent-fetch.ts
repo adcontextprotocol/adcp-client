@@ -167,9 +167,7 @@ export function toSignerKey(config: AgentRequestSigningConfigInline): SignerKey 
 }
 
 /** Narrow predicate for the inline shape (kind absent or `'inline'`). */
-export function isInlineSigningConfig(
-  config: AgentRequestSigningConfig
-): config is AgentRequestSigningConfigInline {
+export function isInlineSigningConfig(config: AgentRequestSigningConfig): config is AgentRequestSigningConfigInline {
   return config.kind !== 'provider';
 }
 

@@ -84,9 +84,7 @@ export interface GcpKmsSigningProviderOptions {
  * key — fails fast with {@link SigningProviderAlgorithmMismatchError} rather
  * than producing signatures verifiers would reject downstream.
  */
-export async function createGcpKmsSigningProvider(
-  options: GcpKmsSigningProviderOptions
-): Promise<SigningProvider> {
+export async function createGcpKmsSigningProvider(options: GcpKmsSigningProviderOptions): Promise<SigningProvider> {
   const [pubResp] = await options.client.getPublicKey({ name: options.versionName });
   const kmsAlgorithm = pubResp.algorithm ?? '';
   const expectedKmsAlgorithm = mapDeclaredAlgorithmToKms(options.algorithm);
@@ -131,4 +129,3 @@ function coerceSignature(value: Buffer | Uint8Array | string | null | undefined)
   }
   return value instanceof Uint8Array ? value : new Uint8Array(value);
 }
-

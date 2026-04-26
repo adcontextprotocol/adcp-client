@@ -592,6 +592,9 @@ describe('derEcdsaToP1363', () => {
   });
 
   test('throws on malformed DER', () => {
-    assert.throws(() => derEcdsaToP1363(new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), 32), /SEQUENCE tag/);
+    assert.throws(
+      () => derEcdsaToP1363(new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), 32),
+      /SEQUENCE tag/
+    );
   });
 });
