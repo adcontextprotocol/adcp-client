@@ -374,7 +374,116 @@ Estimated 3-5 commits, ~half-day to a day of focused work depending on how clean
 
 6. **MCP client adoption gap**: Claude Code, ChatGPT, Cursor, Cline, Copilot — none of them fully implement `resources/subscribe` today. SDK ships with the polling-fallback path on `resources/read`; subscription is the optimization, not a hard requirement. Worth tracking client-by-client which support-level they're at and documenting in the build-decisioning-platform skill.
 
-## What this gives up
+## Multi-tenant dispatch — Salesagent feedback
+
+The biggest architectural concern from the Prebid salesagent team: their deployment serves many tenants, where the same tool can be HITL for one tenant (broadcast-TV) and sync for another (programmatic). The "pick one shape per tool" model assumes per-platform-class choice — works for single-tenant client SDKs, awkward for multi-tenant servers.
+
+Their current pattern: a sync method that throws `ManualApprovalRequired` to switch to HITL dynamically. Equivalent to v1's `ctx.runAsync` conditional shape — which we explicitly killed for buyer-predictability reasons. So we have a real tension.
+
+**Resolution: per-tenant platform routing.** The `DecisioningPlatform` interface gets an optional per-account selector that returns the right specialism shape based on the resolved tenant:
+
+```ts
+class MyMultiTenantAgent implements DecisioningPlatform {
+  capabilities = {...}
+  accounts = {...}
+
+  // Optional: route to per-tenant specialism impls. When present, framework
+  // calls this AFTER accounts.resolve() and dispatches the request to the
+  // returned platform's tool method. When absent, framework uses the static
+  // `sales` / `creative` / `audiences` declarations.
+  getSpecialism?: <K extends keyof SpecialismMap>(specialism: K, account: Account) => SpecialismMap[K];
+
+  // Per-tenant impls — adopter holds these, returns the right one:
+  private broadcastTvSales: SalesPlatformHitl = {
+    createMediaBuyTask: async (taskId, req, ctx) => {
+      // Trafficker review pipeline
+    },
+  };
+  private programmaticSales: SalesPlatformSync = {
+    createMediaBuy: async (req, ctx) => {
+      // Sync programmatic
+    },
+  };
+}
+```
+
+The buyer-predictability argument still holds: a buyer reaching tenant A always sees HITL on `create_media_buy`; a buyer on tenant B always sees sync. The shape is stable per-tenant, just not per-platform-class. Documented in `getCapabilitiesFor(account)` (already in v1.0 alpha) — a buyer querying `get_adcp_capabilities` for their account learns which shape applies.
+
+For salesagent specifically: their existing `ManualApprovalRequired` throw-pattern wraps one tool method that conditionally goes HITL. Under the new shape, that conditional dispatch moves to `getSpecialism()` — same code path, just lifted out of the tool method into the framework's dispatch layer. Slight refactor but no semantic change.
+
+## Python port — sum-type alternative
+
+The TS surface uses 7 tools × 2 method-name variants = 14 declared methods. In Python this is heavier:
+
+- TS's `RequiredPlatformsFor<'sales-broadcast-tv'>` compile-time gate doesn't translate; Python falls back to runtime `validate_platform()` from day one.
+- 14 protocol methods on a `Protocol` class is more boilerplate than feels native in Python.
+
+Salesagent's counter-proposal: **single `_impl` method per tool, returning a sum type**:
+
+```python
+@dataclass
+class SyncResult(Generic[T]):
+    value: T
+
+@dataclass
+class TaskAccepted(Generic[T]):
+    work: Callable[[], Awaitable[T]]
+    message: str | None = None
+
+# Adopter writes ONE method per tool:
+async def create_media_buy(
+    self, req: CreateMediaBuyRequest, ctx: RequestContext
+) -> SyncResult[MediaBuy] | TaskAccepted[MediaBuy]:
+    if req.tenant.is_broadcast_tv:
+        return TaskAccepted(work=lambda: self.queue_for_trafficker(req))
+    return SyncResult(value=self.platform.create(req))
+```
+
+Framework dispatches based on which sum-type variant the method returns. Adopter writes one signature, gets the same wire result.
+
+**Trade-off**: the sum-type approach loses "shape is stable per-tenant" at the type level — TypeScript's per-tenant `SalesPlatformHitl | SalesPlatformSync` could in principle be enforced by `getSpecialism`'s return type, while a single Python method that conditionally returns either variant doesn't expose tenant routing to the type checker. Buyer-predictability becomes a runtime contract documented in the skill, not a type-level guarantee.
+
+**Recommendation for Python port**: ship the sum-type shape. The compile-time enforcement was already weak in Python; adding 14 method names per specialism doesn't earn its weight. Document buyer-predictability via convention (the same tenant always returns the same sum-type variant) rather than enforce it via types.
+
+The TS port keeps the two-method shape because the compile-time gate IS valuable there — `RequiredPlatformsFor<'sales-broadcast-tv'>` catches the wrong shape at build time. Different language, different best ergonomics.
+
+## Event-bus emission instead of `server.emitStatusChange(...)`
+
+Salesagent observation: `server.emitStatusChange(...)` requires the adopter to hold a reference to the server instance. In Python/Flask multi-tenant deployments this becomes thread-local or singleton — both invite circular imports and complicate testing.
+
+**Cleaner shape: framework-provided event bus**:
+
+```python
+# Adopter imports the bus, doesn't need server reference:
+from adcp.events import publish, StatusChange
+
+async def my_match_pipeline(audience_id):
+    matched = await run_match(audience_id)
+    publish(StatusChange(
+        account_id=...,
+        resource_type='audience',
+        resource_id=audience_id,
+        new_status='active' if matched else 'failed',
+    ))
+```
+
+The framework subscribes to the bus at server startup; emits to wire (MCP `notifications/resources/updated` or A2A push_url) on each event. Decouples adopter from server instance entirely.
+
+**For TS**: same idea works. `import { publishStatusChange } from '@adcp/client/server/decisioning';` — module-level event registry instead of a method on the server handle. Cleaner for the multi-tenant case since the same publish call works regardless of which tenant the calling code is running for.
+
+Adopting the event-bus shape across both ports.
+
+## Other concerns
+
+**Resource URI privacy**: `adcp://acc_1/media_buy/mb_42` exposes `account_id` in MCP resource lists, error logs, client-side caches. Account ID is already authenticated to the buyer that's reading it (own-tenant), but ops-staff log aggregation could leak across operator/buyer trust boundaries. Recommendation: spec the URI's `account_id` segment as a tenant-private identifier; SDK's logging surface masks it; documented contract on what's safe to surface client-side. Add to the upstream proposal.
+
+**3.0 fallback retention bound**: 3.0 clients see status changes via `tasks/get` continuation. The framework's task registry retains every status transition until the buyer polls or some retention bound. Without a bound, slow leak under buyers that subscribe but never poll. Spec the retention (recommend 7 days post-terminal), document GC behavior. Add to the upstream proposal.
+
+**Naming `xxxTask`**: salesagent flagged that "task" is overloaded in their codebase (deprecated `tasks` table + active `workflow_steps`). For TS port, `xxxTask` matches the wire (`task_id`, `tasks/get`); for Python port using the sum-type shape, naming dodges entirely — the discriminator is the return type, not the method name. Different ports, different naming surfaces; the wire name (`task_id`) is the common ground.
+
+**`acquire_rights` / `update_media_buy` "HITL sometimes"**: legitimate edge case. Resolution: declare HITL always; complete the task immediately when no approval is needed. Buyer always sees submitted envelope but the task completes instantly on `tasks/get` first poll. Slight buyer-side regression for no-approval-needed case; clean alternative is per-tenant routing (above). Document the trade-off in the skill.
+
+
 
 - **Per-request flexibility**: a tool can no longer be sync-sometimes / task-other-times. The adopter picks one shape per tool. This is a feature, not a bug — buyer mental model becomes consistent.
 
