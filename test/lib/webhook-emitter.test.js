@@ -22,6 +22,7 @@ const { verifyWebhookSignature } = require('../../dist/lib/signing/webhook-verif
 const { StaticJwksResolver } = require('../../dist/lib/signing/jwks.js');
 const { InMemoryReplayStore } = require('../../dist/lib/signing/replay.js');
 const { InMemoryRevocationStore } = require('../../dist/lib/signing/revocation.js');
+const { signerKeyToProvider } = require('../../dist/lib/signing/testing.js');
 
 // ────────────────────────────────────────────────────────────
 // Fixtures
@@ -317,5 +318,148 @@ describe('createWebhookEmitter: observability', () => {
     assert.strictEqual(results[0].willRetry, true);
     assert.strictEqual(results[1].willRetry, false);
     assert.strictEqual(results[1].status, 204);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// signerProvider path (KMS-backed async signing)
+// ────────────────────────────────────────────────────────────
+
+describe('createWebhookEmitter: signerProvider path', () => {
+  test('provider-signed webhook produces a 9421 signature the public verifier accepts', async () => {
+    const { signerKey, publicJwk } = makeSignerKey();
+    const provider = signerKeyToProvider(signerKey);
+    const fetch = stubFetch([{ status: 204 }]);
+    const emitter = createWebhookEmitter({ signerProvider: provider, fetch, sleep: noSleep });
+
+    await emitter.emit({
+      url: 'https://buyer.example/webhook',
+      payload: { task: { task_id: 'mb-provider' } },
+      operation_id: 'op.provider',
+    });
+
+    const call = fetch.calls[0];
+    const verified = await verifyWebhookSignature(
+      { method: 'POST', url: call.url, headers: call.headers, body: call.body },
+      {
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: new InMemoryRevocationStore(),
+      }
+    );
+    assert.strictEqual(verified.status, 'verified');
+  });
+
+  test('provider path delivers and returns idempotency_key with compact body', async () => {
+    const { signerKey } = makeSignerKey();
+    const provider = signerKeyToProvider(signerKey);
+    const fetch = stubFetch([{ status: 204 }]);
+    const emitter = createWebhookEmitter({ signerProvider: provider, fetch, sleep: noSleep });
+
+    const result = await emitter.emit({
+      url: 'http://127.0.0.1:9999/webhook',
+      payload: { task: { task_id: 'mb-provider-2' } },
+      operation_id: 'op.provider2',
+    });
+
+    assert.strictEqual(result.delivered, true);
+    assert.strictEqual(result.attempts, 1);
+    assert.match(result.idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
+    const body = JSON.parse(fetch.calls[0].body);
+    assert.strictEqual(body.idempotency_key, result.idempotency_key);
+    assert.ok(!fetch.calls[0].body.includes(', '), 'body MUST be compact (adcp#2478)');
+  });
+
+  test('provider path retries on 503 with stable idempotency_key', async () => {
+    const { signerKey } = makeSignerKey();
+    const provider = signerKeyToProvider(signerKey);
+    const fetch = stubFetch([{ status: 503 }, { status: 204 }]);
+    const emitter = createWebhookEmitter({ signerProvider: provider, fetch, sleep: noSleep });
+
+    const result = await emitter.emit({
+      url: 'http://127.0.0.1/hook',
+      payload: { event: 'retry' },
+      operation_id: 'op.provider-retry',
+    });
+
+    assert.strictEqual(result.delivered, true);
+    assert.strictEqual(result.final_status, 204);
+    assert.strictEqual(fetch.calls.length, 2);
+    const keys = fetch.calls.map(c => JSON.parse(c.body).idempotency_key);
+    assert.strictEqual(new Set(keys).size, 1, 'idempotency_key MUST be stable across retries (adcp#2417)');
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Wire-byte equality: signerKey and signerProvider paths produce
+// byte-identical signature bases for the same input. Locks the
+// "only the dispatch differs" contract claimed in the PR description.
+// ────────────────────────────────────────────────────────────
+
+describe('createWebhookEmitter: signerKey and signerProvider produce byte-identical signature bases', () => {
+  test('same body + same nonce + same `created` → identical Signature-Input + signatureBase', async () => {
+    const { signerKey } = makeSignerKey('parity-test-2026');
+    const provider = signerKeyToProvider(signerKey);
+
+    const fixedNow = 1_700_000_000;
+    const fixedNonce = 'parity-test-nonce-fixed-1234';
+
+    // Pin nonce + now via signOptions so the only nondeterministic input
+    // (timestamp + nonce) is fixed across both paths. Ed25519 is
+    // deterministic, so the resulting Signature bytes will also match —
+    // but the strong assertion is the signatureBase, which the verifier
+    // is what receivers compute against.
+    const { signWebhook, signWebhookAsync } = require('../../dist/lib/signing/index.js');
+    const request = {
+      method: 'POST',
+      url: 'https://example.test/webhook',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ idempotency_key: 'idem-test', operation_id: 'op-1', payload: { hello: 'world' } }),
+    };
+    const sigOpts = { now: () => fixedNow, nonce: fixedNonce };
+
+    const sync = signWebhook(request, signerKey, sigOpts);
+    const async_ = await signWebhookAsync(request, provider, sigOpts);
+
+    // Signature base — the bytes the verifier hashes. Wire equivalence.
+    assert.strictEqual(async_.signatureBase, sync.signatureBase);
+    // Signature-Input header — same params (kid, alg, tag, nonce, created,
+    // expires, components). For Ed25519 (deterministic) the Signature
+    // bytes also match.
+    assert.strictEqual(async_.headers['Signature-Input'], sync.headers['Signature-Input']);
+    assert.strictEqual(async_.headers.Signature, sync.headers.Signature);
+    assert.strictEqual(async_.headers['Content-Digest'], sync.headers['Content-Digest']);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Construction-time mutual-exclusion validation
+// ────────────────────────────────────────────────────────────
+
+describe('createWebhookEmitter: construction validation', () => {
+  test('throws when neither signerKey nor signerProvider is provided', () => {
+    const fetch = stubFetch([]);
+    assert.throws(
+      () => createWebhookEmitter({ fetch, sleep: noSleep }),
+      err => {
+        assert.ok(err instanceof TypeError);
+        assert.match(err.message, /one of signerKey or signerProvider is required/);
+        return true;
+      }
+    );
+  });
+
+  test('throws when both signerKey and signerProvider are provided', () => {
+    const { signerKey } = makeSignerKey();
+    const provider = signerKeyToProvider(signerKey);
+    const fetch = stubFetch([]);
+    assert.throws(
+      () => createWebhookEmitter({ signerKey, signerProvider: provider, fetch, sleep: noSleep }),
+      err => {
+        assert.ok(err instanceof TypeError);
+        assert.match(err.message, /provide exactly one of signerKey or signerProvider, not both/);
+        return true;
+      }
+    );
   });
 });
