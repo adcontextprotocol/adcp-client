@@ -28,6 +28,13 @@ import type { AdcpSignAlg } from './types';
  *   oracle. Bind IAM (e.g., GCP `roles/cloudkms.signer` scoped to one
  *   `cryptoKeyVersions/N`, or AWS `kms:Sign` conditioned on the key ARN) so
  *   only the AdCP signing path can invoke this key.
+ *
+ * The bundled `InMemorySigningProvider` (under `@adcp/client/signing/testing`)
+ * carries a `NODE_ENV=production` gate as a self-discipline aid for the
+ * reference implementation only — `createSigningFetchAsync` does NOT and
+ * cannot enforce hygiene on third-party providers, so a custom adapter
+ * that holds keys in process memory bypasses the gate entirely. Adapter
+ * authors are responsible for their own production-safety policy.
  */
 export interface SigningProvider {
   /**

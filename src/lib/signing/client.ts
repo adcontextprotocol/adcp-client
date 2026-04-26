@@ -18,8 +18,13 @@ export {
 } from './canonicalize';
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
 export {
+  finalizeRequestSignature,
+  prepareRequestSignature,
+  prepareWebhookSignature,
   signRequest,
   signWebhook,
+  type PreparedRequestSignature,
+  type SignatureIdentity,
   type SignedRequest,
   type SignerKey,
   type SignRequestOptions,

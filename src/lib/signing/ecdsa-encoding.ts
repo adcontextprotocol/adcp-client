@@ -30,19 +30,31 @@ export function derEcdsaToP1363(der: Uint8Array, componentLen: number): Uint8Arr
   }
   let cursor = 2;
   const lengthByte = readByte(1);
+  // SEQUENCE total-content length, used to validate the parsed contents
+  // don't claim more bytes than the buffer holds.
+  let sequenceContentLen: number;
   // P-256 ECDSA signatures are always short-form length encoded (<= 72 bytes
   // including header), so production callers never hit the long-form branch.
-  // We still skip the length octets defensively if present, but reject any
-  // payload that would put cursor past the buffer.
+  // We still parse long-form defensively but reject anything that would put
+  // cursor past the buffer.
   if ((lengthByte & 0x80) !== 0) {
     const skip = lengthByte & 0x7f;
     if (skip === 0 || skip > 4) {
       throw new Error('Malformed DER ECDSA signature: invalid long-form length.');
     }
+    sequenceContentLen = 0;
+    for (let i = 0; i < skip; i++) {
+      sequenceContentLen = (sequenceContentLen << 8) | readByte(2 + i);
+    }
     cursor = 2 + skip;
     if (cursor >= der.length) {
       throw new Error('Malformed DER ECDSA signature: long-form length runs past buffer.');
     }
+  } else {
+    sequenceContentLen = lengthByte;
+  }
+  if (cursor + sequenceContentLen > der.length) {
+    throw new Error('Malformed DER ECDSA signature: SEQUENCE content runs past buffer.');
   }
   if (readByte(cursor) !== 0x02) {
     throw new Error('Malformed DER ECDSA signature: missing INTEGER tag for r.');

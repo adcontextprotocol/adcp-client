@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const fc = require('fast-check');
 
 const {
   signRequest,
@@ -117,6 +118,30 @@ describe('signWebhookAsync is functionally equivalent to signWebhook', () => {
     assert.strictEqual(async_.headers.Signature, sync.headers.Signature);
     assert.strictEqual(async_.headers['Signature-Input'], sync.headers['Signature-Input']);
     assert.strictEqual(async_.signatureBase, sync.signatureBase);
+  });
+});
+
+describe('createSigningFetchAsync rejects non-UTF-8 byte bodies', () => {
+  test('Uint8Array with invalid UTF-8 throws a clear TypeError instead of silently lossy-converting', async () => {
+    const kid = 'test-ed25519-2026';
+    const provider = new InMemorySigningProvider({
+      keyid: kid,
+      algorithm: 'ed25519',
+      privateKey: privateJwkFor(kid),
+    });
+    const upstream = async () => new Response('ok', { status: 200 });
+    const fetchSigned = createSigningFetchAsync(upstream, provider);
+    // 0xff 0xfe is not valid UTF-8 (continuation bytes without a start).
+    const invalidUtf8 = new Uint8Array([0xff, 0xfe, 0xfd]);
+    await assert.rejects(
+      () =>
+        fetchSigned('https://seller.example.com/adcp/create_media_buy', {
+          method: 'POST',
+          headers: { 'content-type': 'application/octet-stream' },
+          body: invalidUtf8,
+        }),
+      err => err instanceof TypeError && /not valid UTF-8/.test(err.message)
+    );
   });
 });
 
@@ -379,6 +404,76 @@ describe('SigningProviderAlgorithmMismatchError', () => {
     assert.strictEqual(err.providerKid, 'addie-2026');
     assert.match(err.message, /declared algorithm 'ed25519'/);
     assert.match(err.message, /underlying key is 'EC_SIGN_P256_SHA256'/);
+  });
+});
+
+describe('property: signRequest (sync) and signRequestAsync share canonicalization', () => {
+  // Locks the parallel structure of signer.ts and signer-async.ts. If a future
+  // change adds a mandatory component, header-handling tweak, or default change
+  // to one path without the other, this property fails. Ed25519 is deterministic,
+  // so we can assert byte-identical Signature output as well as base equality.
+  const kid = 'test-ed25519-2026';
+
+  function buildArbitrary() {
+    return fc.record({
+      method: fc.constantFrom('POST', 'PUT', 'DELETE', 'PATCH'),
+      pathSegments: fc.array(
+        fc.string({ minLength: 1, maxLength: 16, unit: fc.constantFrom('a', 'b', 'c', 'media_buy', '_') }),
+        { minLength: 1, maxLength: 4 }
+      ),
+      // Body is JSON-encoded (UTF-8 by construction) — the signer covers
+      // exact wire bytes, so feeding it valid JSON bytes is the realistic case.
+      body: fc.option(
+        fc.dictionary(
+          fc.string({ minLength: 1, maxLength: 12, unit: fc.constantFrom('a', 'b', 'c', '_', '0', '1') }),
+          fc.oneof(
+            fc.string({ maxLength: 32, unit: fc.constantFrom('a', 'b', 'c', ' ', '0') }),
+            fc.integer({ min: -1000, max: 1000 })
+          ),
+          { minKeys: 0, maxKeys: 6 }
+        ),
+        { nil: undefined }
+      ),
+      coverContentDigest: fc.boolean(),
+      now: fc.integer({ min: 1700000000, max: 1900000000 }),
+      windowSeconds: fc.integer({ min: 1, max: 300 }),
+      nonce: fc.string({ minLength: 16, maxLength: 22, unit: fc.constantFrom('a', 'b', 'c', '0', '_', '-') }),
+    });
+  }
+
+  test('sync and async produce identical signatureBase, Signature-Input, and Signature for Ed25519', async () => {
+    const provider = new InMemorySigningProvider({
+      keyid: kid,
+      algorithm: 'ed25519',
+      privateKey: privateJwkFor(kid),
+    });
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+
+    await fc.assert(
+      fc.asyncProperty(buildArbitrary(), async input => {
+        const request = {
+          method: input.method,
+          url: 'https://seller.example.com/' + input.pathSegments.join('/'),
+          headers: { 'Content-Type': 'application/json' },
+          body: input.body === undefined ? '' : JSON.stringify(input.body),
+        };
+        const opts = {
+          coverContentDigest: input.coverContentDigest,
+          now: () => input.now,
+          windowSeconds: input.windowSeconds,
+          nonce: input.nonce,
+        };
+        const sync = signRequest(request, key, opts);
+        const async_ = await signRequestAsync(request, provider, opts);
+
+        // Same canonicalization → same base, same Signature-Input, same Ed25519 sig.
+        assert.strictEqual(async_.signatureBase, sync.signatureBase);
+        assert.strictEqual(async_.headers['Signature-Input'], sync.headers['Signature-Input']);
+        assert.strictEqual(async_.headers.Signature, sync.headers.Signature);
+        return true;
+      }),
+      { numRuns: 50 }
+    );
   });
 });
 

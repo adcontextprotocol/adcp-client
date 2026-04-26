@@ -38,6 +38,8 @@ import type {
   SyncCreativesResponse,
 } from './core.generated';
 
+import type { SigningProvider } from '../signing/provider';
+
 export type { FrequencyCap } from './core.generated';
 
 export interface MediaBuy {
@@ -401,10 +403,7 @@ export interface AgentRequestSigningConfigProvider extends AgentRequestSigningOp
    * contract and `examples/gcp-kms-signing-provider.ts` for a reference
    * KMS adapter.
    */
-  // SigningProvider is intentionally referenced by string, not imported,
-  // to avoid a forward-dependency cycle from the types module into signing.
-  // The interface lives at `src/lib/signing/provider.ts`.
-  provider: import('../signing/provider').SigningProvider;
+  provider: SigningProvider;
   /** Agent base URL — same semantics as the inline shape. */
   agent_url: string;
 }

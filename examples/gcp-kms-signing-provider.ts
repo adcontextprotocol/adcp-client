@@ -6,13 +6,21 @@
  * Usage:
  *
  * ```ts
+ * // Consumer-side wiring. The KMS client construction is the consumer's
+ * // responsibility — the SDK keeps `@google-cloud/kms` out of its deps so
+ * // non-GCP users don't pay the install cost.
+ * import { KeyManagementServiceClient } from '@google-cloud/kms';
  * import { createGcpKmsSigningProvider } from './gcp-kms-signing-provider';
  * import type { AgentConfig } from '@adcp/client';
+ *
+ * const kmsClient = new KeyManagementServiceClient(); // ADC inside GCP, or
+ *                                                     // explicit credentials elsewhere
  *
  * const provider = await createGcpKmsSigningProvider({
  *   versionName: process.env.ADCP_KMS_VERSION!,
  *   kid: 'addie-2026-04',
  *   algorithm: 'ecdsa-p256-sha256',
+ *   client: kmsClient,
  * });
  *
  * const agent: AgentConfig = {
