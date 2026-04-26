@@ -38,10 +38,12 @@ const { InMemorySigningProvider } = require('../dist/lib/signing/testing.js');
 // ---------------------------------------------------------------------------
 // Key fixtures — generated fresh per process, self-contained
 // ---------------------------------------------------------------------------
-let privateJwk;    // request-signing key
+let privateJwk;    // request-signing key (ed25519)
 let publicJwk;
-let webhookPrivJwk; // webhook-signing key
+let webhookPrivJwk; // webhook-signing key (ed25519)
 let webhookPubJwk;
+let ecPrivJwk;     // request-signing key (ecdsa-p256-sha256)
+let ecPubJwk;
 
 before(() => {
   function makeKeypair(kid, adcp_use) {
@@ -51,12 +53,21 @@ before(() => {
     const pub  = { ...publicKey.export({ format: 'jwk' }),  kid, kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA', adcp_use, key_ops: ['verify'] };
     return { priv, pub };
   }
+  function makeEcKeypair(kid, adcp_use) {
+    const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const priv = { ...privateKey.export({ format: 'jwk' }), kid, kty: 'EC', crv: 'P-256', alg: 'ES256', adcp_use, key_ops: ['sign'] };
+    const pub  = { ...publicKey.export({ format: 'jwk' }),  kid, kty: 'EC', crv: 'P-256', alg: 'ES256', adcp_use, key_ops: ['verify'] };
+    return { priv, pub };
+  }
   const req = makeKeypair('test-gen-ed25519', 'request-signing');
   privateJwk = req.priv;
   publicJwk  = req.pub;
   const wh = makeKeypair('test-gen-webhook', 'webhook-signing');
   webhookPrivJwk = wh.priv;
   webhookPubJwk  = wh.pub;
+  const ec = makeEcKeypair('test-gen-ec-p256', 'request-signing');
+  ecPrivJwk = ec.priv;
+  ecPubJwk  = ec.pub;
 });
 
 function makeReq(opts = {}) {
@@ -217,6 +228,28 @@ describe('buildAgentSigningContextFromConfig fingerprint validation', () => {
       'https://seller.example.com'
     );
     assert.ok(ctx.cacheKey.startsWith('sig='));
+  });
+});
+
+describe('ECDSA-P256 round-trip with InMemorySigningProvider', () => {
+  it('signed with ecdsa-p256-sha256 provider verifies successfully', async () => {
+    const provider = new InMemorySigningProvider({
+      keyid: ecPubJwk.kid,
+      algorithm: 'ecdsa-p256-sha256',
+      privateKey: ecPrivJwk,
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    const req = makeReq();
+    const signed = await signRequestAsync(req, provider, { now: () => now });
+
+    const verifier = makeVerifier(ecPubJwk);
+    const result = await verifyRequestSignature(
+      { method: req.method, url: req.url, headers: { ...req.headers, ...signed.headers }, body: req.body },
+      { ...verifier, now: () => now }
+    );
+    assert.strictEqual(result.status, 'verified');
+    assert.strictEqual(result.keyid, ecPubJwk.kid);
   });
 });
 

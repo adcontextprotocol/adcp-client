@@ -78,6 +78,9 @@ export interface GcpKmsSigningProviderOptions {
   client?: InstanceType<typeof KeyManagementServiceClient>;
 }
 
+const GCP_VERSION_NAME_RE =
+  /^projects\/[^/]+\/locations\/[^/]+\/keyRings\/[^/]+\/cryptoKeys\/[^/]+\/cryptoKeyVersions\/\d+$/;
+
 export function createGcpKmsSigningProvider(opts: GcpKmsSigningProviderOptions): SigningProvider {
   if (opts.algorithm !== 'ecdsa-p256-sha256') {
     // GCP KMS does not offer Ed25519. Fail at construction rather than at
@@ -86,6 +89,14 @@ export function createGcpKmsSigningProvider(opts: GcpKmsSigningProviderOptions):
       `GCP KMS does not support algorithm "${opts.algorithm}". ` +
         'Only "ecdsa-p256-sha256" is available. ' +
         'For Ed25519 test keys use InMemorySigningProvider from @adcp/client/signing/testing.'
+    );
+  }
+
+  if (!GCP_VERSION_NAME_RE.test(opts.versionName)) {
+    throw new Error(
+      `GCP KMS: versionName does not match expected resource path format ` +
+        `"projects/P/locations/L/keyRings/R/cryptoKeys/K/cryptoKeyVersions/N". ` +
+        `Got: ${JSON.stringify(opts.versionName)}`
     );
   }
 
@@ -133,6 +144,7 @@ function derEcdsaToP1363(der: Buffer, coordBytes: number): Uint8Array {
   function readInt(): Buffer {
     if (der[offset++] !== 0x02) throw new Error('GCP KMS: expected DER INTEGER tag 0x02');
     const len = der[offset++];
+    if (len & 0x80) throw new Error('GCP KMS: unexpected long-form INTEGER length in DER signature');
     const value = der.subarray(offset, offset + len);
     offset += len;
     return Buffer.from(value);

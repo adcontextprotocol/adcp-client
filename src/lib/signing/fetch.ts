@@ -64,9 +64,9 @@ export function createSigningFetch(
     const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest };
 
     const requestLike = { method, url, headers, body };
-    const signed = 'privateKey' in signer
-      ? signRequest(requestLike, signer, signerOptions)
-      : await signRequestAsync(requestLike, signer, signerOptions);
+    const signed = 'sign' in signer
+      ? await signRequestAsync(requestLike, signer, signerOptions)
+      : signRequest(requestLike, signer, signerOptions);
 
     const mergedInit: RequestInit = { ...init, method, headers: signed.headers };
     if (body !== undefined && mergedInit.body === undefined) mergedInit.body = body;
