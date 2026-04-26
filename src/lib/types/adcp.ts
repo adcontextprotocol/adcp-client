@@ -325,8 +325,41 @@ export interface AdcpPrivateJsonWebKey {
  * advertised `covers_content_digest` policy: `required` covers, `forbidden`
  * omits, `either` (or absent) covers by default — body-binding is the safer
  * choice and a seller advertising `either` has explicitly allowed both forms.
+ *
+ * Two shapes, discriminated on `kind`:
+ * - `'inline'` (default) — private JWK held in process memory.
+ * - `'provider'` — delegates `sign()` to a {@link SigningProvider} so private
+ *   key material can live in a managed key store (GCP KMS, AWS KMS, etc.).
  */
-export interface AgentRequestSigningConfig {
+export type AgentRequestSigningConfig = AgentRequestSigningConfigInline | AgentRequestSigningConfigProvider;
+
+/** Operation-list overrides shared by both `request_signing` shapes. */
+export interface AgentRequestSigningOperationOverrides {
+  /**
+   * AdCP operation names to sign regardless of the seller's advertisement.
+   * Useful during pilots before a counterparty flips an op into `required_for`.
+   */
+  always_sign?: string[];
+  /**
+   * When true, also sign operations the seller lists in `supported_for` (but
+   * not `required_for`). Defaults to false — conservative "sign what the
+   * seller asks for" behavior.
+   */
+  sign_supported?: boolean;
+}
+
+/**
+ * In-process signing identity. The SDK loads the private JWK at request time
+ * and signs synchronously — appropriate for development, testing, and
+ * deployments where holding the private scalar in process memory is
+ * acceptable.
+ *
+ * `kind` defaults to `'inline'` so existing literals without the field
+ * continue to type-check.
+ */
+export interface AgentRequestSigningConfigInline extends AgentRequestSigningOperationOverrides {
+  /** Discriminator. Defaults to `'inline'` so legacy literals work unchanged. */
+  kind?: 'inline';
   /** Key identifier (published by the buyer at its JWKS endpoint) */
   kid: string;
   /** Signature algorithm. Must match the key material. */
@@ -349,17 +382,31 @@ export interface AgentRequestSigningConfig {
    * custom verifier wiring.
    */
   agent_url: string;
+}
+
+/**
+ * KMS-backed (or otherwise externalized) signing identity. The SDK calls
+ * `provider.sign(payload)` on every signed request — async, may dispatch
+ * to a managed key store. Use a {@link SigningProvider} for production
+ * deployments that keep private keys out of process memory.
+ *
+ * The `kid` and `alg` come from the provider itself; this shape only carries
+ * the agent's `agent_url` and the operation-list overrides.
+ */
+export interface AgentRequestSigningConfigProvider extends AgentRequestSigningOperationOverrides {
+  kind: 'provider';
   /**
-   * AdCP operation names to sign regardless of the seller's advertisement.
-   * Useful during pilots before a counterparty flips an op into `required_for`.
+   * The signing provider that produces RFC 9421 signature bytes. Imported
+   * from `@adcp/client/signing` — see `SigningProvider` for the interface
+   * contract and `examples/gcp-kms-signing-provider.ts` for a reference
+   * KMS adapter.
    */
-  always_sign?: string[];
-  /**
-   * When true, also sign operations the seller lists in `supported_for` (but
-   * not `required_for`). Defaults to false — conservative "sign what the
-   * seller asks for" behavior.
-   */
-  sign_supported?: boolean;
+  // SigningProvider is intentionally referenced by string, not imported,
+  // to avoid a forward-dependency cycle from the types module into signing.
+  // The interface lives at `src/lib/signing/provider.ts`.
+  provider: import('../signing/provider').SigningProvider;
+  /** Agent base URL — same semantics as the inline shape. */
+  agent_url: string;
 }
 
 // Agent Configuration Types

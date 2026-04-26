@@ -80,3 +80,37 @@ export class WebhookSignatureError extends ADCPError {
     this.failedStep = failedStep;
   }
 }
+
+/**
+ * SDK-side error codes for the `SigningProvider` integration path. Distinct
+ * namespace from `RequestSignatureErrorCode` / `WebhookSignatureErrorCode`
+ * because these surface during adapter setup, not during wire-level
+ * signature verification.
+ */
+export type SigningProviderErrorCode = 'signing_provider_algorithm_mismatch';
+
+/**
+ * Adapter-side error thrown when a `SigningProvider`'s declared `algorithm`
+ * doesn't match the algorithm of the underlying key material.
+ *
+ * KMS providers should detect this during construction (one-shot
+ * `getPublicKey` / `describe-key` call) so misconfigurations fail before
+ * the first signed request rather than producing signatures verifiers
+ * reject downstream with the generic `request_signature_invalid` code.
+ */
+export class SigningProviderAlgorithmMismatchError extends ADCPError {
+  readonly code: SigningProviderErrorCode = 'signing_provider_algorithm_mismatch';
+  readonly expected: string;
+  readonly actual: string;
+  readonly providerKid: string;
+
+  constructor(expected: string, actual: string, providerKid: string) {
+    super(
+      `SigningProvider declared algorithm '${expected}' but underlying key is '${actual}' (kid='${providerKid}'). ` +
+        `Reconfigure the adapter to match the key, or rotate to a key whose algorithm matches the declared one.`
+    );
+    this.expected = expected;
+    this.actual = actual;
+    this.providerKid = providerKid;
+  }
+}
