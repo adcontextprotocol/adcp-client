@@ -136,35 +136,84 @@ Note: the HITL Shape A (`xxxTask`) doesn't have this forward-compat concern — 
 | `activate_signal` | sync only | `activateSignal` (sync) — `signal_status_changes` webhook | Destination activation. **Not yet async in spec — propose upstream.** |
 | `acquire_rights` | sync only | `acquireRights` (sync) OR `acquireRightsTask` (HITL) | Legal review can take days (HITL); routine licensing is sync with `rights_status_changes` webhook. |
 
-## Status-change webhook channels (proposed)
+## Status-change subscriptions: extend MCP Resources, backport to A2A
 
-Five new webhook channels, one per lifecycle resource type:
+Rather than inventing a fresh webhook taxonomy, AdCP picks up the **MCP Resources** model (already in protocol) and defines two things on top:
 
-- `media_buy_status_changes` — pending_creatives → pending_start → active → paused → completed → canceled
-- `creative_status_changes` — pending_review → approved/rejected; building → ready/failed
-- `proposal_status_changes` — issued → committed → expired
-- `audience_status_changes` — pending → matching → matched → activating → active → archived → failed
-- `signal_status_changes` — pending → activating → active → failed
-- `delivery_status_changes` — running → ready → updated → final
-- `rights_status_changes` — pending → granted/denied → revoked
+1. **Resource taxonomy**: AdCP's lifecycle resources expressed as MCP resources via a stable URI scheme — `adcp://{account_id}/{resource_type}/{resource_id}`. Resource types: `media_buy`, `creative`, `audience`, `signal`, `proposal`, `plan`, `rights_grant`, `delivery_report`.
+2. **Per-resource status enums**: each resource type's allowed status transitions (already defined per-type elsewhere in the spec).
 
-Subscription model: each webhook channel is independently subscribable per buyer per account, just like `delivery_reporting` works today. Buyer registers `push_notification_config.url` once; framework signs each emission with RFC 9421.
+### MCP transport (native, free for subscription-capable clients)
 
-Wire envelope (all status-change webhooks share this shape):
+```
+resources/list                          → enumerate resources for the authenticated account
+resources/read?uri=adcp://...           → current state (status + payload) of one resource
+resources/subscribe?uri=adcp://...      → subscribe to a single resource OR a pattern
+resources/unsubscribe                   → drop subscription
+notifications/resources/updated         → server pushes when status / payload changes
+```
+
+URI patterns: `adcp://acc_1/media_buy/mb_42` (single), `adcp://acc_1/media_buy/*` (all of one type), `adcp://acc_1/*` (everything for the account).
+
+Wire envelope on `notifications/resources/updated` follows MCP's spec (resource URI + new contents). The contents body carries:
 
 ```json
 {
   "resource_type": "media_buy",
   "resource_id": "mb_42",
-  "account": { "account_id": "acc_1" },
   "previous_status": "pending_creatives",
   "new_status": "pending_start",
   "changed_at": "2026-04-25T12:34:56Z",
-  "details": { /* resource-specific extras */ }
+  "snapshot": { /* full current resource state */ },
+  "details": { /* resource-type-specific extras (e.g., match_rate for audiences) */ }
 }
 ```
 
-This is a spec proposal — does not exist in AdCP 3.0 today. Status-change webhooks would be a **3.1 feature**.
+### A2A transport (backport — AdCP defines as part of the AdCP-over-A2A spec)
+
+A2A doesn't have a native resource-subscription concept. AdCP backports the same surface as four DataPart-typed message contracts:
+
+```
+{ kind: 'data', data: { adcp_action: 'resources/list' } }
+  → response: { resources: [...] }
+
+{ kind: 'data', data: { adcp_action: 'resources/read', uri: 'adcp://...' } }
+  → response: current resource state
+
+{ kind: 'data', data: { adcp_action: 'resources/subscribe', uri: 'adcp://...', push_url: 'https://buyer.example.com/webhook' } }
+  → response: { subscription_id }
+  → subsequent: signed RFC 9421 webhooks pushed to push_url
+
+{ kind: 'data', data: { adcp_action: 'resources/unsubscribe', subscription_id } }
+```
+
+A2A push uses the buyer's `push_notification_config.url` machinery (already in spec). Status changes are signed and PUT to that URL. The body shape is identical to MCP's `notifications/resources/updated` content — same parser on both transports.
+
+Positive externality: this contributes the resource-subscription pattern to the A2A ecosystem more broadly. Useful well beyond ad tech.
+
+### Client-compat: graceful degradation for clients without subscription support
+
+Most MCP clients today don't implement `resources/subscribe` (Claude Code partial; ChatGPT none; Copilot/Cursor/Cline varying). AdCP doesn't require it — clients that can't subscribe fall back to polling:
+
+| Client | Subscribe support | Buyer pattern |
+|---|---|---|
+| Subscription-capable | yes | `resources/subscribe` once; receive pushes |
+| Polling-only | no | Periodic `resources/read` on the URIs they care about |
+| Buyer using A2A | yes (via webhook config) | `resources/subscribe` with push_url |
+
+The framework's `server.emitStatusChange(...)` adapter doesn't know which buyer is on which client mode. It records the new resource state in its registry. Subscribers get a push; polling clients see the new state on their next `resources/read`. No adopter code changes; no buyer-side branching beyond "do I want to subscribe or poll?"
+
+For existing AdCP 3.0 clients (no resources at all): framework projects status changes to `tasks/get` continuation as a 3.0-compatible fallback (the `*-async-response-working.json` arm carries intermediate state). This is the forward-compat path that lets buyers on 3.0 clients see lifecycle changes too, just less efficiently.
+
+### Why this framing is better than inventing webhook channels
+
+- **Smaller upstream proposal**: "extend MCP Resources for AdCP" is much smaller than "add 7 new webhook channel types"
+- **Native subscription mechanism**: clients that already subscribe to MCP resources get AdCP status changes for free as `resources/subscribe` adoption grows
+- **AdCP contributes A2A backport**: defining resource-subscriptions for A2A benefits the broader agentic ecosystem
+- **Single envelope across transports**: same content body on MCP `notifications/resources/updated` and A2A push webhook — buyer parser is one path
+- **Forward-compat to 3.0 clients**: degrades to polling or `tasks/get` continuation; no flag day
+
+Status: spec proposal. The MCP Resources extension and A2A backport go in as a **3.1 feature**.
 
 ## SDK API surface (post-refactor)
 
@@ -283,19 +332,21 @@ The MockSeller worked example will be rewritten to demonstrate both patterns end
 
 Two issues to file against `adcontextprotocol/adcp`:
 
-### Issue 1: Status-change webhook channels
+### Issue 1: Resource-subscription model — adopt MCP Resources, backport to A2A
 
-Add five new webhook channel types: `media_buy_status_changes`, `creative_status_changes`, `proposal_status_changes`, `audience_status_changes`, `signal_status_changes`, `delivery_status_changes`, `rights_status_changes`. Common envelope shape (above). RFC 9421 signed. Subscription via existing `push_notification_config` with new `event_types` field.
+Define lifecycle resources in AdCP via the URI scheme `adcp://{account_id}/{resource_type}/{resource_id}` covering 8 resource types (`media_buy`, `creative`, `audience`, `signal`, `proposal`, `plan`, `rights_grant`, `delivery_report`). MCP transport uses native `resources/list` / `resources/read` / `resources/subscribe` / `notifications/resources/updated`. A2A transport gets a backport: AdCP defines `resources/list` / `resources/read` / `resources/subscribe` / `resources/unsubscribe` as DataPart-typed message contracts, with status changes pushed via the buyer's `push_notification_config.url`. Same content envelope on both transports.
+
+Single-page proposal benefits: no new webhook channels invented (just a resource taxonomy on top of an existing protocol), client improvements flow automatically, A2A ecosystem benefits from the backport.
 
 ### Issue 2: Extend async-response pattern to remaining tools
 
 Add `*-async-response-{input-required, submitted, working}` schemas for:
-- `get_media_buy_delivery` (manual report runs)
-- `sync_audiences` (identity-graph match — though this might be better served by status webhook only)
-- `activate_signal` (destination activation — same)
-- `acquire_rights` (legal review takes days — HITL)
 
-Possibly: roll these into the status-webhook shape rather than expanding the async-response triplet — depends on which feels cleaner to the spec maintainers.
+- `acquire_rights` — legal review takes days; clear HITL case
+- `getMediaBuyDelivery` — manual report runs (alternative: rely on resource-subscription with `delivery_report` resource type from Issue 1)
+- `sync_audiences`, `activate_signal` — likely better served by resource-subscription rather than async response triplet
+
+The two issues are interdependent: if Issue 1 lands cleanly, Issue 2 narrows to just `acquire_rights` (the only tool that's HITL-by-nature with no obvious resource-subscription analog).
 
 ## Implementation phases
 
@@ -315,9 +366,13 @@ Estimated 3-5 commits, ~half-day to a day of focused work depending on how clean
 
 2. **Compile-time exactly-one enforcement**: TypeScript can express "either A or B, not both" via discriminated unions, but the syntax for declaring a method-pair-where-exactly-one-is-defined is awkward. Pragmatic answer: type-level allows both, runtime `validatePlatform` throws if both defined or neither. Documented invariant + clear error.
 
-3. **Status-change webhooks before spec lands**: ship the SDK with `server.emitStatusChange` API, project to `ext.status_change` until the spec adds it as a first-class field, OR wait for spec consensus before shipping. Lean toward shipping — adopters who want this can put their buyers behind ext-aware client; spec catches up.
+3. **Resource subscriptions before spec lands**: ship the SDK with `server.emitStatusChange` API + the resource taxonomy + URI scheme. Adopter code is stable across spec evolution (per the forward-compat section). Subscription-capable MCP clients (Claude Code partial, A2A buyers via push_url) get pushes immediately. Polling-only clients (ChatGPT, others) fall back to `resources/read`. Existing 3.0 clients (no resources at all) fall back to `tasks/get` continuation.
 
-4. **`getMediaBuyDelivery` async support**: spec doesn't currently model it. Two options: (a) ship sync-only with status webhooks for the slow case, (b) propose upstream `getMediaBuyDeliveryTask` arm. Lean toward (a) — webhooks fit the data-streaming nature better than tasks.
+4. **`getMediaBuyDelivery` async support**: handle via the resource-subscription model (Issue 1) — `delivery_report` becomes a resource type. Buyer subscribes to `adcp://acc/delivery_report/*`; framework pushes when reports are ready. Cleaner than adding a `getMediaBuyDeliveryTask` arm to the spec.
+
+5. **A2A push_url discoverability**: A2A's resource-subscription backport requires the buyer to register a webhook URL on the `resources/subscribe` call. AdCP needs to spec the per-call vs per-session push-config semantics — does each subscribe call carry its own push_url, or do they share the agent-level `push_notification_config` registered at session start? Lean toward per-subscribe-call (more flexible; buyer can route different resource types to different webhooks).
+
+6. **MCP client adoption gap**: Claude Code, ChatGPT, Cursor, Cline, Copilot — none of them fully implement `resources/subscribe` today. SDK ships with the polling-fallback path on `resources/read`; subscription is the optimization, not a hard requirement. Worth tracking client-by-client which support-level they're at and documenting in the build-decisioning-platform skill.
 
 ## What this gives up
 
