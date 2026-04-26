@@ -84,12 +84,20 @@ export function pemToAdcpJwk(pem: string, options: PemToAdcpJwkOptions): AdcpJso
     );
   }
 
+  const joseAlg = WIRE_ALG_TO_JOSE[options.algorithm];
+  if (!joseAlg) {
+    throw new TypeError(
+      `pemToAdcpJwk: unsupported algorithm '${options.algorithm}'. ` +
+        `Supported: ${Object.keys(WIRE_ALG_TO_JOSE).join(', ')}.`
+    );
+  }
+
   const exported = keyObj.export({ format: 'jwk' }) as Record<string, unknown>;
 
   return {
     ...exported,
     kid: options.kid,
-    alg: WIRE_ALG_TO_JOSE[options.algorithm],
+    alg: joseAlg,
     use: 'sig',
     adcp_use: options.adcp_use,
     key_ops: ['verify'],

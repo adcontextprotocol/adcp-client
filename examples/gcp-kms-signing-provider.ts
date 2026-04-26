@@ -129,7 +129,12 @@ export async function createGcpKmsSigningProvider(options: GcpKmsSigningProvider
     throw new SigningProviderAlgorithmMismatchError(options.algorithm, kmsAlgorithm, options.kid);
   }
 
-  if (options.expectedPublicKeyPem != null && pubResp.pem != null) {
+  if (options.expectedPublicKeyPem != null) {
+    if (pubResp.pem == null) {
+      throw new Error(
+        `KMS returned no public key material for ${options.versionName}; cannot verify expectedPublicKeyPem tripwire.`
+      );
+    }
     assertSpkiMatches(options.versionName, pubResp.pem, options.expectedPublicKeyPem);
   }
 
@@ -199,7 +204,12 @@ export function createGcpKmsSigningProviderLazy(options: GcpKmsSigningProviderOp
     if (kmsAlgorithm !== expectedKmsAlgorithm) {
       throw new SigningProviderAlgorithmMismatchError(options.algorithm, kmsAlgorithm, options.kid);
     }
-    if (options.expectedPublicKeyPem != null && pubResp.pem != null) {
+    if (options.expectedPublicKeyPem != null) {
+      if (pubResp.pem == null) {
+        throw new Error(
+          `KMS returned no public key material for ${options.versionName}; cannot verify expectedPublicKeyPem tripwire.`
+        );
+      }
       assertSpkiMatches(options.versionName, pubResp.pem, options.expectedPublicKeyPem);
     }
   }
