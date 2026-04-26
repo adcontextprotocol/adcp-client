@@ -327,3 +327,70 @@ Three migration sketches against real adapter codebases (training-agent, GAM, `s
 - **JSDoc clarifications**: `TaskUpdate` is monotonic (bounce-back becomes `failed` + `recovery: 'correctable'` + new task envelope on the buyer's retry); `StatusMappers` is wire-status decoder, not rollup engine; `updateMediaBuy` patches dispatch locally to action verbs in adapter code; framework intercepts `dry_run` and platforms never see dry-run traffic.
 
 Pricing-model enum already covers all 9 AdCP values (`cpm | vcpm | cpc | cpcv | cpv | cpp | cpa | flat_rate | time`); no change needed.
+
+## Round-5/6 refactor: throw-`AdcpError` adopter shape
+
+After parallel JS + DX expert review (round 5) and direct adopter feedback from Prebid + Scope3 (round 4), the **adopter-facing surface shifted from `AsyncOutcome<T>`-as-default-return to plain `Promise<T>` with `throw AdcpError` for structured rejection**. Rationale: AsyncOutcome is idiosyncratic in the TS server ecosystem (tRPC / Express / GraphQL all use plain async + throw); the per-method `ok()`/`rejected()` ceremony was a tax on every sync happy path; agent-generated code mixed return shapes.
+
+### New canonical adopter shape
+
+```ts
+sales: SalesPlatform = {
+  // Sync happy path: just await and return.
+  getProducts: async (req, ctx) => ({ products: this.lookup(req.brief) }),
+
+  createMediaBuy: async (req, ctx) => {
+    // Structured rejection: throw.
+    if (req.total_budget.amount < this.floor) {
+      throw new AdcpError('BUDGET_TOO_LOW', {
+        recovery: 'correctable',
+        message: `Floor is $${this.floor} CPM`,
+        field: 'total_budget.amount',
+      });
+    }
+
+    // In-process async: ctx.runAsync races against framework timeout.
+    if (this.requiresOperatorReview(req)) {
+      return await ctx.runAsync(
+        { message: 'Awaiting approval', partialResult: pendingBuy },
+        async () => await this.waitForOperatorApproval(req)
+      );
+    }
+
+    // Sync.
+    return await this.platform.create(req);
+  },
+};
+```
+
+### Three rules
+
+1. Methods return `Promise<T>` directly. No `ok()` / `submitted()` / `rejected()` wrappers in adopter code.
+2. `throw new AdcpError(code, opts)` for buyer-facing structured rejection. Generic thrown errors fall through to `SERVICE_UNAVAILABLE`.
+3. For in-process async: `await ctx.runAsync(opts, fn)`. For out-of-process: `ctx.startTask()` + `server.completeTask(taskId, result)` (out-of-process notify path).
+
+### What stays internal
+
+`AsyncOutcome<T>` and its `ok` / `submitted` / `rejected` constructors remain in the runtime as **internal projection vocabulary**. Adopter code never sees them; the runtime constructs `AsyncOutcome` literals when projecting platform results onto the wire.
+
+### What's added
+
+- **`AdcpError`** class — throwable structured error carrying `code`, `recovery`, `field?`, `suggestion?`, `retry_after?`, `details?`. Mirrors `schemas/cache/3.0.0/core/error.json`. Required field: `recovery` (the wire schema makes it optional, but every adopter needs to declare buyer-recovery intent on every rejection).
+- **`ctx.runAsync(opts, fn)`** — in-process async opt-in. Races `fn()` against `submittedAfterMs` (default 30s). Fast path: returns the value normally (sync wire arm). Slow path: throws internal `TaskDeferredError` (the runtime catches and projects to submitted envelope with `task_id` / `message` / `partial_result`); meanwhile `fn()` keeps running and notifies the registry on resolve/throw.
+- **`ctx.startTask(opts?)`** — out-of-process async explicit. Returns a `TaskHandle` whose `taskId` is framework-issued. Adopter persists the taskId; webhook handler later calls `notify` directly (or `server.completeTask` once the wire path lands).
+- **`server.getTaskState(taskId)`** — read the registry record (status, result, error, partialResult, statusMessage, timestamps). The API the forthcoming `tasks/get` wire handler plugs into.
+- **`server.awaitTask(taskId)`** — await any registered background completion. Used by tests + the wire path for deterministic settlement.
+
+### Production hardening (round-6)
+
+- **`NODE_ENV` gate on default in-memory task registry**. Allowlist: `NODE_ENV=test` or `NODE_ENV=development`. Anything else (including unset; production may unset NODE_ENV) → refuse construction. Override: pass `taskRegistry` explicitly. Emergency hatch: `ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1`. Pattern follows `feedback_node_env_allowlist.md`.
+- **Slow-pending-start warning**. When `createMediaBuy` returns sync (no `runAsync`) AND elapsed > 30s AND result carries `status: 'pending_start'`, log a warning suggesting `ctx.runAsync({ partialResult }, ...)`. Catches adopters who silently regress buyer UX by awaiting hours inside `createMediaBuy`.
+
+### Worked example + skill
+
+- **MockSeller worked example**: `examples/decisioning-platform-mock-seller.ts` demonstrates four real-world async patterns (in-process trafficker approval via `ctx.runAsync`, out-of-process via `ctx.startTask`, partial-batch creative review, multi-error pre-flight rejection). Doubles as integration tests in `test/server-decisioning-mock-seller.test.js`.
+- **Skill**: `skills/build-decisioning-platform/SKILL.md` — focused (~250 lines vs the legacy build-seller-agent's 1397) walkthrough of the new shape.
+
+### Migration
+
+`docs/proposals/decisioning-platform-training-agent-migration.md` updated to use the new shape. Other migration sketches (GAM, Scope3, Prebid) preserve their original code style for historical reference; all four migrations remain valid against the new shape with mechanical substitutions (`ok(buy)` → `buy`; `rejected({...})` → `throw new AdcpError(...)`; `submitted({...})` → `await ctx.runAsync({...}, fn)`).
