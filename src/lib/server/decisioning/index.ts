@@ -101,3 +101,19 @@ export {
 } from './runtime/from-platform';
 export { PlatformConfigError, validatePlatform } from './runtime/validate-platform';
 export { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './runtime/task-registry';
+
+// Multi-tenant deployment helper — wraps createAdcpServerFromPlatform with
+// per-tenant config, health states (healthy/unverified/disabled), and JWKS
+// validation. Composes with the existing serve() host-routing surface.
+export {
+  createTenantRegistry,
+  createDefaultJwksValidator,
+  type TenantRegistry,
+  type TenantConfig,
+  type TenantSigningKey,
+  type TenantStatus,
+  type TenantHealth,
+  type TenantRegistryOptions,
+  type JwksValidator,
+  type JwksValidationResult,
+} from './tenant-registry';
