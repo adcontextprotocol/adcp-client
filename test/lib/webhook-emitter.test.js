@@ -385,7 +385,7 @@ describe('createWebhookEmitter: signerProvider path', () => {
     assert.strictEqual(result.delivered, true);
     assert.strictEqual(result.final_status, 204);
     assert.strictEqual(fetch.calls.length, 2);
-    const keys = fetch.calls.map((c) => JSON.parse(c.body).idempotency_key);
+    const keys = fetch.calls.map(c => JSON.parse(c.body).idempotency_key);
     assert.strictEqual(new Set(keys).size, 1, 'idempotency_key MUST be stable across retries (adcp#2417)');
   });
 });
@@ -399,7 +399,7 @@ describe('createWebhookEmitter: construction validation', () => {
     const fetch = stubFetch([]);
     assert.throws(
       () => createWebhookEmitter({ fetch, sleep: noSleep }),
-      (err) => {
+      err => {
         assert.ok(err instanceof TypeError);
         assert.match(err.message, /one of signerKey or signerProvider is required/);
         return true;
@@ -413,7 +413,7 @@ describe('createWebhookEmitter: construction validation', () => {
     const fetch = stubFetch([]);
     assert.throws(
       () => createWebhookEmitter({ signerKey, signerProvider: provider, fetch, sleep: noSleep }),
-      (err) => {
+      err => {
         assert.ok(err instanceof TypeError);
         assert.match(err.message, /provide exactly one of signerKey or signerProvider, not both/);
         return true;
