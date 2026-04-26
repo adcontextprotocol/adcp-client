@@ -55,7 +55,11 @@ export type {
   ActivateSignalSuccess,
   SignalID,
   SignalValueType,
+  SignalCatalogType,
   Destination,
+  Deployment,
+  ActivationKey,
+  VendorPricingOption,
   // Capability declaration
   AdCPSpecialism,
   // Property / collection lists
