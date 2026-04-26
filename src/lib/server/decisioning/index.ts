@@ -88,6 +88,12 @@ export type {
   SyncCreativesRow,
 } from './specialisms/creative';
 
+export type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
+
+export type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
+
+export type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
+
 export type { SalesPlatform } from './specialisms/sales';
 
 export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } from './specialisms/audiences';

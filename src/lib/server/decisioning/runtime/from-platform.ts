@@ -54,6 +54,7 @@ import {
   type EventTrackingHandlers,
   type AccountHandlers,
   type SignalsHandlers,
+  type GovernanceHandlers,
   type HandlerContext,
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
@@ -61,6 +62,7 @@ import type { Account } from '../account';
 import { AccountNotFoundError, toWireAccount } from '../account';
 import { AdcpError } from '../async-outcome';
 import type { CreativeTemplatePlatform } from '../specialisms/creative';
+import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
 import type { CreativeAsset, AccountReference } from '../../../types/tools.generated';
@@ -127,6 +129,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     creative: buildCreativeHandlers(platform, taskRegistry),
     eventTracking: buildEventTrackingHandlers(platform, taskRegistry),
     signals: buildSignalsHandlers(platform),
+    governance: buildGovernanceHandlers(platform),
     accounts: buildAccountHandlers(platform),
   };
 
@@ -364,6 +367,37 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
         rows => ({ creatives: rows })
       );
     },
+
+    // Ad-server-specialism methods. Only the CreativeAdServerPlatform variant
+    // implements these; framework returns UNSUPPORTED_FEATURE for the other
+    // archetypes (template, generative).
+    listCreatives: async (params, ctx) => {
+      if (!('listCreatives' in creative)) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'list_creatives not supported by this platform',
+          recovery: 'terminal',
+        });
+      }
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx),
+        r => r
+      );
+    },
+
+    getCreativeDelivery: async (params, ctx) => {
+      if (!('getCreativeDelivery' in creative)) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'get_creative_delivery not supported by this platform',
+          recovery: 'terminal',
+        });
+      }
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx),
+        r => r
+      );
+    },
   };
 }
 
@@ -406,6 +440,90 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       );
     },
   };
+}
+
+function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
+  platform: P
+): GovernanceHandlers<Account> | undefined {
+  const cg = platform.campaignGovernance;
+  const pl = platform.propertyLists;
+  // collectionLists dispatch is gated on framework AdcpToolMap support
+  // landing for `create_collection_list` etc. The interface ships now;
+  // wire-level dispatch follows in a focused framework PR.
+  if (!cg && !pl) return undefined;
+
+  const handlers: GovernanceHandlers<Account> = {};
+
+  if (cg) {
+    handlers.checkGovernance = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cg.checkGovernance(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.syncPlans = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cg.syncPlans(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.reportPlanOutcome = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cg.reportPlanOutcome(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.getPlanAuditLogs = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cg.getPlanAuditLogs(params, reqCtx),
+        r => r
+      );
+    };
+  }
+
+  if (pl) {
+    handlers.createPropertyList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => pl.createPropertyList(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.updatePropertyList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => pl.updatePropertyList(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.getPropertyList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => pl.getPropertyList(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.listPropertyLists = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => pl.listPropertyLists(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.deletePropertyList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => pl.deletePropertyList(params, reqCtx),
+        r => r
+      );
+    };
+  }
+
+  return handlers;
 }
 
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform: P): AccountHandlers<Account> {

@@ -15,8 +15,11 @@ import type { Account, AccountStore } from './account';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform } from './specialisms/sales';
 import type { CreativeTemplatePlatform, CreativeGenerativePlatform } from './specialisms/creative';
+import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
+import type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
+import type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
 import type { AdCPSpecialism } from '../../types/tools.generated';
 
 /**
@@ -91,12 +94,14 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   // Per-specialism sub-interfaces — optional at the type level; required at the
   // call site by RequiredPlatformsFor<S>. v1.0 ships these:
   sales?: SalesPlatform;
-  creative?: CreativeTemplatePlatform | CreativeGenerativePlatform;
+  creative?: CreativeTemplatePlatform | CreativeGenerativePlatform | CreativeAdServerPlatform;
   audiences?: AudiencePlatform;
   signals?: SignalsPlatform;
+  campaignGovernance?: CampaignGovernancePlatform;
+  propertyLists?: PropertyListsPlatform;
+  collectionLists?: CollectionListsPlatform;
 
-  // v1.1+ specialisms add: governance, brand-rights, content-standards,
-  // property-lists, collection-lists, creative-ad-server.
+  // v1.1+ specialisms add: creative-review, content-standards, brand-rights.
 }
 
 // ---------------------------------------------------------------------------
@@ -139,17 +144,31 @@ type SalesSpecialism =
 // = third-party data brokers; owned = first-party data providers.
 type SignalSpecialism = 'signal-marketplace' | 'signal-owned';
 
+// Today's spec splits campaign governance into spend-authority + delivery-monitor;
+// both share one CampaignGovernancePlatform interface. When adcp#3329 lands and
+// the spec consolidates to `campaign-governance`, this union shrinks to one
+// value without shape changes.
+type CampaignGovernanceSpecialism = 'governance-spend-authority' | 'governance-delivery-monitor';
+
 export type RequiredPlatformsFor<S extends AdCPSpecialism> = S extends 'creative-template'
   ? { creative: CreativeTemplatePlatform }
   : S extends 'creative-generative'
     ? { creative: CreativeGenerativePlatform }
-    : S extends SalesSpecialism
-      ? { sales: SalesPlatform }
-      : S extends 'audience-sync'
-        ? { audiences: AudiencePlatform }
-        : S extends SignalSpecialism
-          ? { signals: SignalsPlatform }
-          : Record<string, never>;
+    : S extends 'creative-ad-server'
+      ? { creative: CreativeAdServerPlatform }
+      : S extends SalesSpecialism
+        ? { sales: SalesPlatform }
+        : S extends 'audience-sync'
+          ? { audiences: AudiencePlatform }
+          : S extends SignalSpecialism
+            ? { signals: SignalsPlatform }
+            : S extends CampaignGovernanceSpecialism
+              ? { campaignGovernance: CampaignGovernancePlatform }
+              : S extends 'property-lists'
+                ? { propertyLists: PropertyListsPlatform }
+                : S extends 'collection-lists'
+                  ? { collectionLists: CollectionListsPlatform }
+                  : Record<string, never>;
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to

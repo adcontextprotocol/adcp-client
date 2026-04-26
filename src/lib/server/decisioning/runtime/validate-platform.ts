@@ -28,15 +28,24 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   'sales-catalog-driven': ['sales'],
   'sales-proposal-mode': ['sales'],
   // Creative specialisms share the CreativeXxxPlatform field name; adopters
-  // pick the right archetype (template vs generative) at construction time.
+  // pick the right archetype (template / generative / ad-server) at
+  // construction time.
   'creative-template': ['creative'],
   'creative-generative': ['creative'],
+  'creative-ad-server': ['creative'],
   // Audience sync is a single specialism with a single platform interface.
   'audience-sync': ['audiences'],
   // Signal specialisms — both share the SignalsPlatform interface.
   // Marketplace = third-party data brokers; owned = first-party providers.
   'signal-marketplace': ['signals'],
   'signal-owned': ['signals'],
+  // Campaign governance — today's two specialisms share one platform
+  // interface; consolidates to `campaign-governance` when adcp#3329 lands.
+  'governance-spend-authority': ['campaignGovernance'],
+  'governance-delivery-monitor': ['campaignGovernance'],
+  // Property + collection list publishing.
+  'property-lists': ['propertyLists'],
+  'collection-lists': ['collectionLists'],
 };
 
 export class PlatformConfigError extends Error {
