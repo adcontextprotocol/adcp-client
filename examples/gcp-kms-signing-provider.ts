@@ -42,7 +42,8 @@
  * - GCP KMS Ed25519 (`EC_SIGN_ED25519`) is GA but availability varies by
  *   region/tier. Verify in your target region before pinning.
  * - The `versionName` pins a specific `cryptoKeyVersion`. Rotation is a
- *   redeploy. For lazy primary lookup, see the `lazyPrimary` example below.
+ *   redeploy. See `createGcpKmsSigningProviderLazy` below for a variant that
+ *   defers initialization until the first signed request.
  *
  * IAM (least privilege):
  * - GCP: `roles/cloudkms.signer` scoped to the specific `cryptoKeyVersions/N`
@@ -53,7 +54,7 @@
  *   oracle.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey } from 'node:crypto';
 import type { SigningProvider } from '@adcp/client/signing';
 import { derEcdsaToP1363, SigningProviderAlgorithmMismatchError } from '@adcp/client/signing';
 
@@ -84,6 +85,28 @@ export interface GcpKmsSigningProviderOptions {
    * Stubbable for tests via the {@link GcpKmsClientLike} structural type.
    */
   client: GcpKmsClientLike;
+  /**
+   * Optional tripwire: a PEM-encoded public key committed to your source repo.
+   * When provided, the constructor compares the SPKI bytes returned by KMS
+   * against this value and throws if they differ.
+   *
+   * This catches silent out-of-band key rotations (disabled key version, IAM
+   * swap, hostile substitution) before the first signed request. Without it,
+   * a rotated KMS key starts producing signatures that verifiers reject with
+   * `request_signature_key_unknown` — no clear signal that the JWKS is stale.
+   *
+   * Pattern:
+   * ```
+   * # Export the expected public key once and commit it:
+   * gcloud kms keys versions get-public-key 1 \
+   *   --location=us-east1 --keyring=adcp --key=adcp-signing \
+   *   --output-file=keys/addie-2026-04.pem
+   * git add keys/addie-2026-04.pem && git commit -m "chore: commit signer public key for tripwire"
+   * ```
+   *
+   * Then pass `expectedPublicKeyPem: fs.readFileSync('keys/addie-2026-04.pem', 'utf8')`.
+   */
+  expectedPublicKeyPem?: string;
 }
 
 /**
@@ -91,6 +114,12 @@ export interface GcpKmsSigningProviderOptions {
  * construction to validate the declared algorithm matches the underlying
  * key — fails fast with {@link SigningProviderAlgorithmMismatchError} rather
  * than producing signatures verifiers would reject downstream.
+ *
+ * If `expectedPublicKeyPem` is provided, also asserts the SPKI bytes returned
+ * by KMS match the committed PEM (tripwire against silent key rotation).
+ *
+ * For a variant that defers initialization to the first `sign()` call, see
+ * {@link createGcpKmsSigningProviderLazy}.
  */
 export async function createGcpKmsSigningProvider(options: GcpKmsSigningProviderOptions): Promise<SigningProvider> {
   const [pubResp] = await options.client.getPublicKey({ name: options.versionName });
@@ -100,32 +129,128 @@ export async function createGcpKmsSigningProvider(options: GcpKmsSigningProvider
     throw new SigningProviderAlgorithmMismatchError(options.algorithm, kmsAlgorithm, options.kid);
   }
 
+  if (options.expectedPublicKeyPem != null && pubResp.pem != null) {
+    assertSpkiMatches(options.versionName, pubResp.pem, options.expectedPublicKeyPem);
+  }
+
   return {
     keyid: options.kid,
     algorithm: options.algorithm,
     fingerprint: options.versionName,
     async sign(payload: Uint8Array): Promise<Uint8Array> {
-      if (options.algorithm === 'ecdsa-p256-sha256') {
-        const digest = createHash('sha256').update(payload).digest();
-        const [resp] = await options.client.asymmetricSign({
-          name: options.versionName,
-          digest: { sha256: digest },
-        });
-        const sig = coerceSignature(resp.signature);
-        return derEcdsaToP1363(sig, 32);
-      }
-      const [resp] = await options.client.asymmetricSign({
-        name: options.versionName,
-        data: payload,
-      });
-      return coerceSignature(resp.signature);
+      return kmsSign(options, payload);
     },
   };
 }
 
+/**
+ * Lazy-initialization variant of {@link createGcpKmsSigningProvider}.
+ *
+ * Unlike the eager factory, this constructor returns synchronously without
+ * touching KMS. The first `sign()` call triggers `getPublicKey` (algorithm
+ * validation + optional tripwire check). Subsequent calls skip initialization.
+ *
+ * Choose between eager and lazy based on your operational priorities:
+ *
+ * | | Eager (`createGcpKmsSigningProvider`) | Lazy (this) |
+ * |---|---|---|
+ * | Boot fails if KMS unreachable | yes | no |
+ * | Misconfiguration surface | deploy time | first request |
+ * | Cold-start latency on first sign | none (already done) | one `getPublicKey` RTT |
+ *
+ * **Thundering-herd / concurrent-first-call safety:** the lazy pattern below
+ * uses an in-flight promise that is deduplicated across concurrent callers.
+ * Critically, the promise is **cleared on rejection** so a transient KMS blip
+ * during the first call retries rather than permanently caching the failure:
+ *
+ * ```
+ * inflightInit = init().catch(err => { inflightInit = null; throw err; });
+ * ```
+ *
+ * Without the `catch` clear, a transient network error during init permanently
+ * bricks the provider for the lifetime of the process — every subsequent
+ * `sign()` call receives the same rejected promise.
+ */
+export function createGcpKmsSigningProviderLazy(options: GcpKmsSigningProviderOptions): SigningProvider {
+  let initialized = false;
+  let inflightInit: Promise<void> | null = null;
+
+  async function ensureInitialized(): Promise<void> {
+    if (initialized) return;
+    if (!inflightInit) {
+      inflightInit = initProvider().then(
+        () => {
+          initialized = true;
+          inflightInit = null;
+        },
+        err => {
+          inflightInit = null; // Clear so the next call retries
+          throw err;
+        }
+      );
+    }
+    return inflightInit;
+  }
+
+  async function initProvider(): Promise<void> {
+    const [pubResp] = await options.client.getPublicKey({ name: options.versionName });
+    const kmsAlgorithm = pubResp.algorithm ?? '';
+    const expectedKmsAlgorithm = mapDeclaredAlgorithmToKms(options.algorithm);
+    if (kmsAlgorithm !== expectedKmsAlgorithm) {
+      throw new SigningProviderAlgorithmMismatchError(options.algorithm, kmsAlgorithm, options.kid);
+    }
+    if (options.expectedPublicKeyPem != null && pubResp.pem != null) {
+      assertSpkiMatches(options.versionName, pubResp.pem, options.expectedPublicKeyPem);
+    }
+  }
+
+  return {
+    keyid: options.kid,
+    algorithm: options.algorithm,
+    fingerprint: options.versionName,
+    async sign(payload: Uint8Array): Promise<Uint8Array> {
+      await ensureInitialized();
+      return kmsSign(options, payload);
+    },
+  };
+}
+
+// --- Shared helpers ---
+
 function mapDeclaredAlgorithmToKms(alg: 'ed25519' | 'ecdsa-p256-sha256'): string {
   // GCP KMS algorithm enum names per CryptoKeyVersion.CryptoKeyVersionAlgorithm.
   return alg === 'ed25519' ? 'EC_SIGN_ED25519' : 'EC_SIGN_P256_SHA256';
+}
+
+async function kmsSign(options: GcpKmsSigningProviderOptions, payload: Uint8Array): Promise<Uint8Array> {
+  if (options.algorithm === 'ecdsa-p256-sha256') {
+    const digest = createHash('sha256').update(payload).digest();
+    const [resp] = await options.client.asymmetricSign({
+      name: options.versionName,
+      digest: { sha256: digest },
+    });
+    const sig = coerceSignature(resp.signature);
+    return derEcdsaToP1363(sig, 32);
+  }
+  const [resp] = await options.client.asymmetricSign({
+    name: options.versionName,
+    data: payload,
+  });
+  return coerceSignature(resp.signature);
+}
+
+function assertSpkiMatches(versionName: string, actualPem: string, expectedPem: string): void {
+  const toSpki = (pem: string) =>
+    createPublicKey({ key: pem, format: 'pem' }).export({ type: 'spki', format: 'der' }) as Buffer;
+  const actual = toSpki(actualPem);
+  const expected = toSpki(expectedPem);
+  if (!actual.equals(expected)) {
+    throw new Error(
+      `KMS key ${versionName} public SPKI does not match the committed expectedPublicKeyPem. ` +
+        `An out-of-band key rotation may have occurred. ` +
+        `Commit the new public key PEM and redeploy to clear this guard.`
+    );
+  }
 }
 
 function coerceSignature(value: Buffer | Uint8Array | string | null | undefined): Uint8Array {

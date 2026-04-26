@@ -74,3 +74,4 @@ export {
   type AgentSigningIdentitySnapshot,
 } from './agent-context';
 export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';
+export { pemToAdcpJwk, type AdcpUse, type PemToAdcpJwkOptions } from './jwks-helpers';
