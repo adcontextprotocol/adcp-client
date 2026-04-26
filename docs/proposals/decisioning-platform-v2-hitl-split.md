@@ -506,3 +506,249 @@ This proposal is design-only. Implementation gates on:
 2. Status-change webhook spec proposal (file upstream now or wait for spec)
 3. Phase ordering acceptable
 4. No major design objections from adopter teams (Prebid + Scope3) on the new shape
+
+---
+
+# v2.1 — Consolidated decisions (supersedes earlier sections where they conflict)
+
+The sections above are the design history. This is the locked spec after rounds of feedback (Prebid salesagent, Scope3 agentic-adapters, plus the user's own pushback on multi-tenant + AAO + single-method shape). Where v2.0 above conflicts with v2.1, **v2.1 is authoritative**.
+
+## Locked decisions
+
+### 1. Method shape — dual-method (TS), sum-type (Python)
+
+**TypeScript port**: dual-method shape per spec-HITL-eligible tool. Adopter writes ONE of each pair:
+
+```ts
+sales: SalesPlatform = {
+  // For each spec-HITL tool, pick one:
+  createMediaBuy?:     (req, ctx) => Promise<MediaBuy>,
+  createMediaBuyTask?: (taskId, req, ctx) => Promise<MediaBuy>,
+
+  updateMediaBuy?:     (buyId, patch, ctx) => Promise<MediaBuy>,
+  updateMediaBuyTask?: (taskId, buyId, patch, ctx) => Promise<MediaBuy>,
+
+  syncCreatives?:     (creatives, ctx) => Promise<CreativeReviewResult[]>,
+  syncCreativesTask?: (taskId, creatives, ctx) => Promise<CreativeReviewResult[]>,
+
+  getProducts?:     (req, ctx) => Promise<GetProductsResponse>,
+  getProductsTask?: (taskId, req, ctx) => Promise<GetProductsResponse>,
+
+  // Always sync:
+  getMediaBuyDelivery: (filter, ctx) => Promise<DeliveryActuals>,
+};
+```
+
+The `taskId` parameter signals "you're in HITL background; framework already responded to the buyer." Compile-time clarity wins; no footgun where the adopter accidentally awaits slow work in a sync method.
+
+Runtime: `validatePlatform()` throws if both methods of a pair are defined, OR if neither is defined for a specialism that requires it. Per `RequiredPlatformsFor<'sales-broadcast-tv'>`, the framework expects the `*Task` variant (HITL by spec); for `sales-non-guaranteed` either is acceptable.
+
+**Python port**: sum-type return on a single method:
+
+```python
+async def create_media_buy(
+    self, req: CreateMediaBuyRequest, ctx: RequestContext
+) -> SyncResult[MediaBuy] | TaskAccepted[MediaBuy]:
+    if req.tenant.is_broadcast_tv:
+        return TaskAccepted(work=lambda: self.queue_for_trafficker(req))
+    return SyncResult(value=self.platform.create(req))
+```
+
+TS's compile-time dual-method gate doesn't translate; doubling the protocol method count is pure cost in Python. Sum-type collapses to one signature with runtime dispatch on the variant. Different ports, different ergonomics; the wire output is identical.
+
+### 2. Multi-tenant — `TenantRegistry` + host/path routing in `serve()`
+
+Drop `getSpecialism`. Multi-tenant is a serve-layer concern, not a per-platform concern. Adopters with different shapes per tenant register multiple platforms and route by host/path:
+
+```ts
+import { TenantRegistry, serve } from '@adcp/client/server/decisioning';
+
+const registry = new TenantRegistry({
+  capabilityDrift: 'narrow_to_local',  // or 'strict_refuse'
+  jwksRefreshIntervalMs: 60 * 60_000,
+});
+
+registry.register('broadcast-tv.example.com', {
+  platform: new BroadcastTvPlatform(),    // dual-method shape, *Task variants
+  agentUrl: 'https://broadcast-tv.example.com/mcp',
+  signingKey: ed25519KeysForBroadcastTenant,
+});
+
+registry.register('programmatic.example.com', {
+  platform: new ProgrammaticPlatform(),   // dual-method shape, sync variants
+  agentUrl: 'https://programmatic.example.com/mcp',
+  signingKey: ed25519KeysForProgrammaticTenant,
+});
+
+// Default fallback (optional):
+registry.register(null, { platform: new DefaultPlatform(), ... });
+
+// Dynamic add/remove at runtime:
+registry.register('newtenant.example.com', { ... });   // hot-add
+registry.unregister('oldtenant.example.com');          // hot-remove
+
+serve(ctx => {
+  const tenant = registry.resolve(ctx.host) ?? registry.resolveByPath(ctx.path);
+  if (!tenant) throw new UnknownHostError();
+  if (tenant.health.status === 'disabled') {
+    // Service unavailable for this tenant — operator misconfiguration
+    throw new TenantDisabledError(tenant.host, tenant.health.lastError);
+  }
+  return tenant.adcpServer;
+});
+```
+
+Each tenant is fully isolated: own `agentUrl`, own signing key, own platform shape, own auth config, own webhook config. Different tenants on the same process can be HITL or sync independently.
+
+Hostname-per-tenant works for moderate tenant counts; path-based works for many-tenants-per-host (`/tenant/{id}/mcp`). Same registry, different routing.
+
+### 3. Per-tenant signing-key validation
+
+When a tenant registers, the framework fetches `{agentUrl}/.well-known/brand.json`, extracts the published JWKS, and confirms the public counterpart of `signingKey` is in the set. Three health states per tenant:
+
+| State | Trigger | Framework behavior | Buyer-side observation |
+|---|---|---|---|
+| `healthy` | JWKS fetched, key matches | Serve normally; periodic refresh | Normal responses |
+| `unverified` | brand.json unreachable / 5xx / DNS / cert / timeout | Serve with last-known-good JWKS cache; retry refresh; surface in admin API | Normal responses (no buyer-facing degradation) |
+| `disabled` | Definitive mismatch (JWKS retrieved, public key not in set) | Refuse to dispatch this tenant's requests; return SERVICE_UNAVAILABLE | SERVICE_UNAVAILABLE with `retry_after` |
+
+Asymmetry is the core design: **mismatch is deterministic** (operator deployed wrong keys → buyers can't verify signed messages → refuse to serve). **Unreach is transient** (brand.json server hiccup → keep serving with cached keys; buyer-side JWKS caches make this opaque to most callers).
+
+State transitions happen in background via the framework's refresh loop (default 1h, or on first signed-message emission). `register()` does NOT block on validation — registration succeeds immediately as `unverified`; first refresh promotes to `healthy` or `disabled`. New tenants whose brand.json is offline at registration get serving anyway (can't be sure of mismatch yet); promoted to `disabled` only after a configurable threshold of consecutive failed fetches.
+
+Key rotation: JWKS publishes N keys; signingKey just needs to match one. Operator rotates by:
+1. Add new key to brand.json (JWKS now has both)
+2. Deploy new signingKey (matches new entry; old key still in JWKS so old buyer-cached signatures verify)
+3. Remove old key from brand.json after grace period
+
+Framework tolerates any-match. Standard JWT key-rotation pattern.
+
+Failure mode posture: NOT fatal at startup (one bad tenant doesn't kill the server). Per-tenant disabled state isolates impact.
+
+### 4. AAO / adagents.json — NOT applicable to seller side
+
+Walked back from earlier sections. AAO (Authorized Agents Of) and `/.well-known/adagents.json` are buyer-side concerns: brands publish adagents.json declaring which BUYER agents are authorized to act on their behalf.
+
+`DecisioningPlatform` is seller-side. Sellers operate for themselves (publishers, SSPs, retail-media networks) — they don't need adagents.json validation. The earlier proposal to "fetch each brand's adagents.json and validate this agent's URL is listed" was conflating the two sides. Drop it.
+
+What seller-side agents DO need: per-tenant signing keys + agent_url validation against published JWKS (Decision 3). These come from the operator's TenantConfig, not from external registry lookup.
+
+If a publisher-side analog of adagents.json ever lands (publishers declaring "these SSPs/sellers are authorized to sell my inventory"), the framework can pick it up then. Until then, `list_authorized_properties` is the seller's self-declaration; the operator maintains accuracy via local property-list config.
+
+### 5. Status-change subscriptions — MCP Resources extension
+
+**Drop `ext.status_change`.** No new wire field needed for 3.0 fallback — the spec already has the lifecycle mechanisms:
+
+- **HITL (`*Task` shape)**: buy stays in `submitted` task state until the platform's task method completes. Buyer polls `tasks/get` to see progression. Already in spec since 3.0; zero new fields.
+- **Slow-with-sync-ack**: buyer polls per-resource read endpoint (`getAudienceStatus`, `getMediaBuys`, etc.) for current state. Already in spec since 3.0; zero new fields.
+
+Framework's `publishStatusChange(...)` writes to its internal resource registry. In 3.0 mode, buyer reads via existing tools. **In 3.1+ mode (when MCP Resources extension lands)**, framework ALSO pushes via:
+
+- **MCP**: native `resources/list` / `resources/read` / `resources/subscribe` / `notifications/resources/updated` — same surface, no AdCP-invented wire field
+- **A2A**: backport — AdCP defines `resources/list` / `resources/read` / `resources/subscribe` as DataPart-typed message contracts; pushes via buyer's `push_notification_config.url` with same content envelope
+
+Adopter writes `publishStatusChange(...)` once; framework decides delivery (registry-only for 3.0, registry + push for 3.1+) based on `ADCP_VERSION`. No spec-bending in the meantime.
+
+### 6. `publishStatusChange` via event bus (not server reference)
+
+```ts
+// TS:
+import { publishStatusChange, StatusChange } from '@adcp/client/server/decisioning';
+
+class MyAdapter {
+  async runMatchPipeline(audienceId: string) {
+    const matched = await this.runMatch(audienceId);
+    publishStatusChange({
+      account_id: this.accountIdFor(audienceId),
+      resource_type: 'audience',
+      resource_id: audienceId,
+      new_status: matched.success ? 'active' : 'failed',
+      details: { match_rate: matched.rate },
+    });
+  }
+}
+```
+
+```python
+# Python:
+from adcp.events import publish, StatusChange
+
+async def run_match_pipeline(audience_id):
+    matched = await run_match(audience_id)
+    publish(StatusChange(
+        account_id=...,
+        resource_type='audience',
+        resource_id=audience_id,
+        new_status='active' if matched else 'failed',
+    ))
+```
+
+Module-level event registry; framework subscribes at server startup. No adopter-held server reference; no thread-local; no circular imports. Decoupled from request lifecycle.
+
+### 7. Admin API for tenant operations
+
+Operator-internal surface, separate from buyer-facing AdCP server. Mounted on its own port (recommend `/admin` on internal-only port):
+
+```
+GET    /admin/agents              → list registered tenants + health states
+POST   /admin/agents              → register new tenant
+PUT    /admin/agents/:host        → update tenant config (force JWKS refresh after)
+DELETE /admin/agents/:host        → unregister tenant
+POST   /admin/agents/:host/refresh-jwks   → force immediate JWKS refresh
+GET    /admin/health              → registry-wide health roll-up
+```
+
+Adopter wires their own auth on the admin port (typically internal-network-only, mTLS, or operator-token). Not part of AdCP wire; buyer-facing surface unchanged.
+
+### 8. Per-call context schemas (Q1 from Scope3) — mostly resolved by AccountReference enumeration
+
+Most platform-specific IDs the buyer would otherwise pass per-call (TikTok `advertiser_id`, Google `login_customer_id`) are already modeled in AdCP:
+
+- `customer_id` → `AccountReference.account_id`
+- `login_customer_id` → `AccountReference.operator` (the agency/managed-services entity)
+
+The seller's `list_accounts` enumerates each platform sub-tenant as a separate `AccountReference`. Buyer picks one; subsequent calls scope via `req.account.account_id`. The platform-internal IDs live in `Account.metadata` after `accounts.resolve()`.
+
+Genuinely-residual cases (Flashtalking `library_id` if libraries scope across creatives without being an account hierarchy; Google's cross-account meta-queries) use `req.ext` with adopter-side validation. Most adapters won't need any per-call ext.
+
+`getRequestContextSchema?<TTool>` framework hook moves to v1.1+ optional surface; not blocking v6.0.
+
+## Implementation phases (revised)
+
+1. **Phase 1 (v6.0-alpha.2)**: SDK refactor to v2.1 shape
+   - Drop `ctx.runAsync`, `ctx.startTask`, `partial_result`
+   - Dual-method shape on each spec-HITL tool
+   - `TenantRegistry` with per-tenant config + health states
+   - JWKS fetcher + per-tenant key validation
+   - `publishStatusChange` via event bus + resource registry
+   - Update MockSeller + tests + skill
+
+2. **Phase 2 (v6.0-alpha.3)**: Sample builds + adopter spike
+   - BroadcastTvSeller (HITL — `*Task` variants)
+   - ProgrammaticSeller (sync — non-`*Task` variants)
+   - LiveRampAudienceProvider (sync ack + `publishStatusChange`)
+   - Multi-tenant deployment example (TenantRegistry with mixed shapes)
+
+3. **Phase 3 (v6.0-rc.1)**: Wire integration
+   - MCP `resources/*` native binding
+   - A2A backport (DataPart contracts + push_notification_config)
+   - Admin API as separate Express adapter
+
+4. **Phase 4 (v6.0-rc.2)**: Conformance + storyboard parity
+   - Existing matrix harness against new shape
+   - Snap/Scope3 adapter spike
+
+5. **Phase 5 (v6.0 GA)**: Publish; v5.x maintenance mode
+
+Estimated 1-2 weeks per phase given the deeper refactor.
+
+## What did NOT survive consolidation
+
+For clarity, what's been dropped from earlier sections of this doc:
+
+- ❌ `getSpecialism(specialism, account)` per-tenant routing — replaced by `TenantRegistry` host/path routing
+- ❌ Single-method-with-`hitl_tools`-flag shape — footgun-prone; back to dual-method for TS
+- ❌ AAO / adagents.json fetcher — buyer-side concept, not seller-side
+- ❌ `ext.status_change` 3.0 stopgap envelope — 3.0 has spec-native lifecycle channels (`tasks/get` + per-resource reads)
+- ❌ 7 status-change webhook channel types — replaced by single MCP Resources extension + A2A backport
+- ❌ `partial_result` on submitted envelope — non-spec; intermediate state lives on the spec's `*-async-response-working` arm
