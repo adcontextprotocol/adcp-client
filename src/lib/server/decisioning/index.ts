@@ -25,6 +25,23 @@ export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-out
 // Cursor pagination
 export type { CursorPage, CursorRequest } from './pagination';
 
+// Status-change event bus — adopter-facing primitive for spec-native
+// lifecycle channels (media_buy / creative / audience / signal / proposal /
+// plan / rights_grant / delivery_report). Module-level so adopters can
+// publish from webhook handlers, crons, in-process workers without holding
+// a server reference.
+export {
+  publishStatusChange,
+  setStatusChangeBus,
+  getStatusChangeBus,
+  createInMemoryStatusChangeBus,
+  type StatusChange,
+  type StatusChangeBus,
+  type StatusChangeResourceType,
+  type StatusChangeListener,
+  type PublishStatusChangeOpts,
+} from './status-changes';
+
 // Capabilities (single source of truth for get_adcp_capabilities)
 export type {
   DecisioningCapabilities,
