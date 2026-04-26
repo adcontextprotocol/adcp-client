@@ -53,6 +53,7 @@ import {
   type CreativeHandlers,
   type EventTrackingHandlers,
   type AccountHandlers,
+  type SignalsHandlers,
   type HandlerContext,
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
@@ -125,6 +126,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     mediaBuy: buildMediaBuyHandlers(platform, taskRegistry),
     creative: buildCreativeHandlers(platform, taskRegistry),
     eventTracking: buildEventTrackingHandlers(platform, taskRegistry),
+    signals: buildSignalsHandlers(platform),
     accounts: buildAccountHandlers(platform),
   };
 
@@ -378,6 +380,29 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         () => audiences.syncAudiences(audienceList, reqCtx),
         rows => ({ audiences: rows })
+      );
+    },
+  };
+}
+
+function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
+  platform: P
+): SignalsHandlers<Account> | undefined {
+  const signals = platform.signals;
+  if (!signals) return undefined;
+  return {
+    getSignals: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => signals.getSignals(params, reqCtx),
+        r => r
+      );
+    },
+    activateSignal: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => signals.activateSignal(params, reqCtx),
+        r => r
       );
     },
   };

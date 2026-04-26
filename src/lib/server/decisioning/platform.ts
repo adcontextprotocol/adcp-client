@@ -16,6 +16,7 @@ import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform } from './specialisms/sales';
 import type { CreativeTemplatePlatform, CreativeGenerativePlatform } from './specialisms/creative';
 import type { AudiencePlatform } from './specialisms/audiences';
+import type { SignalsPlatform } from './specialisms/signals';
 import type { AdCPSpecialism } from '../../types/tools.generated';
 
 /**
@@ -88,12 +89,14 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   ): DecisioningCapabilities<TConfig> | Promise<DecisioningCapabilities<TConfig>>;
 
   // Per-specialism sub-interfaces — optional at the type level; required at the
-  // call site by RequiredPlatformsFor<S>. v1.0 ships these four:
+  // call site by RequiredPlatformsFor<S>. v1.0 ships these:
   sales?: SalesPlatform;
   creative?: CreativeTemplatePlatform | CreativeGenerativePlatform;
   audiences?: AudiencePlatform;
+  signals?: SignalsPlatform;
 
-  // v1.1+ specialisms add: governance, brand, signals
+  // v1.1+ specialisms add: governance, brand-rights, content-standards,
+  // property-lists, collection-lists, creative-ad-server.
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +135,10 @@ type SalesSpecialism =
   | 'sales-catalog-driven'
   | 'sales-proposal-mode';
 
+// Signal specialisms — both share the SignalsPlatform interface. Marketplace
+// = third-party data brokers; owned = first-party data providers.
+type SignalSpecialism = 'signal-marketplace' | 'signal-owned';
+
 export type RequiredPlatformsFor<S extends AdCPSpecialism> = S extends 'creative-template'
   ? { creative: CreativeTemplatePlatform }
   : S extends 'creative-generative'
@@ -140,7 +147,9 @@ export type RequiredPlatformsFor<S extends AdCPSpecialism> = S extends 'creative
       ? { sales: SalesPlatform }
       : S extends 'audience-sync'
         ? { audiences: AudiencePlatform }
-        : Record<string, never>;
+        : S extends SignalSpecialism
+          ? { signals: SignalsPlatform }
+          : Record<string, never>;
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to

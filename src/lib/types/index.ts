@@ -47,6 +47,15 @@ export type {
   // Audiences
   SyncAudiencesRequest,
   SyncAudiencesResponse,
+  // Signals
+  GetSignalsRequest,
+  GetSignalsResponse,
+  ActivateSignalRequest,
+  ActivateSignalResponse,
+  ActivateSignalSuccess,
+  SignalID,
+  SignalValueType,
+  Destination,
   // Capability declaration
   AdCPSpecialism,
   // Property / collection lists

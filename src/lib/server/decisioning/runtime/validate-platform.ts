@@ -33,6 +33,10 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   'creative-generative': ['creative'],
   // Audience sync is a single specialism with a single platform interface.
   'audience-sync': ['audiences'],
+  // Signal specialisms — both share the SignalsPlatform interface.
+  // Marketplace = third-party data brokers; owned = first-party providers.
+  'signal-marketplace': ['signals'],
+  'signal-owned': ['signals'],
 };
 
 export class PlatformConfigError extends Error {

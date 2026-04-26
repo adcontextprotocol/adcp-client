@@ -92,6 +92,8 @@ export type { SalesPlatform } from './specialisms/sales';
 
 export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } from './specialisms/audiences';
 
+export type { SignalsPlatform } from './specialisms/signals';
+
 // Runtime (v6.0 alpha) — preview surface for adopters spiking against the
 // new shape. Subject to change before 6.0 GA.
 export {
