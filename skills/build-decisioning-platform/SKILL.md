@@ -27,11 +27,11 @@ The framework owns wire mapping, account resolution, idempotency, signing, async
 ```ts
 import {
   AdcpError,
+  createAdcpServerFromPlatform,
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
 } from '@adcp/client/server/decisioning';
-import { createAdcpServerFromPlatform } from '@adcp/client/server/decisioning/runtime/from-platform';
 
 class MyAdNetwork implements DecisioningPlatform<MyConfig, MyMeta> {
   capabilities = {
@@ -245,7 +245,7 @@ Throwing `AccountNotFoundError` only from `resolve()` — never from specialism 
 
 ## What's not in v6.0 alpha
 
-- Public `./server` export — currently reach in via `@adcp/client/server/decisioning/runtime/from-platform`
+- Public `./server` export — `./server/decisioning` is preview-only; subject to change before v6.0 GA
 - Wire-level `tasks/get` round-trip for buyer polling (next commit)
 - Webhook emitter on `notify` push (next commit)
 - `ctx.runAsync` `maxAutoAwaitMs` cap with AbortSignal cancellation

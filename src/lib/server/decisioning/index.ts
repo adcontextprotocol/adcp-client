@@ -88,3 +88,17 @@ export type {
 export type { SalesPlatform, MediaBuy, DeliveryActuals } from './specialisms/sales';
 
 export type { AudiencePlatform, AudienceSyncResult, AudienceStatus } from './specialisms/audiences';
+
+// Runtime (v6.0 alpha) — preview surface for adopters spiking against the
+// new shape. Subject to change before 6.0 GA.
+export {
+  createAdcpServerFromPlatform,
+  type CreateAdcpServerFromPlatformOptions,
+  type DecisioningAdcpServer,
+} from './runtime/from-platform';
+export { PlatformConfigError, validatePlatform } from './runtime/validate-platform';
+export {
+  createInMemoryTaskRegistry,
+  type TaskRegistry,
+  type TaskRecord,
+} from './runtime/task-registry';

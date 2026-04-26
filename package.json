@@ -36,6 +36,11 @@
       "require": "./dist/lib/server/index.js",
       "types": "./dist/lib/server/index.d.ts"
     },
+    "./server/decisioning": {
+      "import": "./dist/lib/server/decisioning/index.js",
+      "require": "./dist/lib/server/decisioning/index.js",
+      "types": "./dist/lib/server/decisioning/index.d.ts"
+    },
     "./signing": {
       "import": "./dist/lib/signing/index.js",
       "require": "./dist/lib/signing/index.js",

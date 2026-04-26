@@ -29,7 +29,6 @@ import {
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
-  type Account,
   type AdcpStructuredError,
   type TaskHandle,
 } from '../src/lib/server/decisioning';
