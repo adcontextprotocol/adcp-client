@@ -216,10 +216,7 @@ describe('gradeSigner', () => {
     // ed25519 key that's not in the JWKS. Reuses the gov-signing key from the
     // test vectors.
     const govEd = keysData.keys.find(k => k.adcp_use === 'governance-signing' && k.crv === 'Ed25519');
-    if (!govEd) {
-      // No alternate Ed25519 key in vectors — skip this case.
-      return;
-    }
+    assert.ok(govEd, 'test fixture: governance-signing Ed25519 key required for wrong-key assertion');
     const wrongKey = { ...privateJwkFor(ed), d: govEd._private_d_for_test_only };
     writeFileSync(keyFilePath, JSON.stringify(wrongKey));
 
@@ -261,6 +258,52 @@ describe('gradeSigner', () => {
     });
     assert.strictEqual(report.passed, false);
     assert.strictEqual(report.step.error_code, 'signer_setup_failed');
+  });
+
+  test('default coversContentDigest is required → step 11 (digest recompute) is exercised', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'adcp-grader-'));
+    const keyFilePath = path.join(dir, 'key.jwk');
+    writeFileSync(keyFilePath, JSON.stringify(privateJwkFor(ed)));
+
+    const report = await gradeSigner({
+      agentUrl: 'http://127.0.0.1:9999/agent',
+      kid: 'test-ed25519-2026',
+      algorithm: 'ed25519',
+      keyFilePath,
+      jwksUrl,
+      allowPrivateIp: true,
+      // No coversContentDigest passed → defaults to 'required'.
+    });
+    assert.strictEqual(report.passed, true);
+    // With required policy, the signer must emit Content-Digest. Confirm
+    // the header is present in the sample headers we report.
+    const headers = report.sample.headers;
+    const lookup = name => {
+      const k = Object.keys(headers).find(h => h.toLowerCase() === name.toLowerCase());
+      return k ? headers[k] : undefined;
+    };
+    assert.ok(lookup('content-digest'), 'Content-Digest header must be present under coversContentDigest=required');
+    assert.match(lookup('signature-input'), /content-digest/);
+  });
+
+  test('coversContentDigest=forbidden → signer omits Content-Digest', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'adcp-grader-'));
+    const keyFilePath = path.join(dir, 'key.jwk');
+    writeFileSync(keyFilePath, JSON.stringify(privateJwkFor(ed)));
+
+    const report = await gradeSigner({
+      agentUrl: 'http://127.0.0.1:9999/agent',
+      kid: 'test-ed25519-2026',
+      algorithm: 'ed25519',
+      keyFilePath,
+      jwksUrl,
+      allowPrivateIp: true,
+      coversContentDigest: 'forbidden',
+    });
+    assert.strictEqual(report.passed, true);
+    const headers = report.sample.headers;
+    const sigInput = Object.entries(headers).find(([k]) => k.toLowerCase() === 'signature-input')?.[1];
+    assert.doesNotMatch(sigInput, /content-digest/);
   });
 
   test('JWKS endpoint unreachable → verifier rejects key_unknown / fetch error', async () => {

@@ -9,9 +9,11 @@ import {
   verifyRequestSignature,
   type AdcpJsonWebKey,
   type AdcpSignAlg,
+  type ContentDigestPolicy,
   type JwksResolver,
   type SigningProvider,
 } from '../../../signing';
+import { ssrfSafeFetch } from '../../../net/ssrf-fetch';
 import type { SignerGradeReport, SignerGradeStep } from './types';
 
 export interface GradeSignerOptions {
@@ -41,6 +43,15 @@ export interface GradeSignerOptions {
   jwksUrl: string;
   /** AdCP operation to embed in the sample request body. Defaults to `create_media_buy`. */
   operation?: string;
+  /**
+   * Content-digest policy the operator's verifier advertises. The grader
+   * exercises the same policy locally so a signer that fails to emit
+   * `Content-Digest` against a `'required'` policy surfaces here as
+   * `request_signature_components_incomplete` (step 6) — the same code a
+   * real counterparty would reject with. Defaults to `'required'`, which
+   * is the recommended posture for spend-committing operations.
+   */
+  coversContentDigest?: ContentDigestPolicy;
   /** Allow http:// signer / JWKS URLs for development. Off by default. */
   allowPrivateIp?: boolean;
   /** Per-probe timeout. Defaults to 10000 ms. */
@@ -61,6 +72,7 @@ export interface GradeSignerOptions {
 export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGradeReport> {
   const start = Date.now();
   const operation = options.operation ?? 'create_media_buy';
+  const coversContentDigest = options.coversContentDigest ?? 'required';
   const sampleUrl = new URL(`/adcp/${operation}`, options.agentUrl).toString();
   const sampleBody = JSON.stringify({ probe: 'adcp-signer-grade', operation });
   const sample = {
@@ -84,12 +96,17 @@ export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGr
   // Sign a sample request with the user's signer. Wire format is the
   // verifier's only contact surface — if this step throws, the user's
   // signer raised before producing a signature (e.g., KMS auth failure,
-  // network timeout).
+  // network timeout). When `coversContentDigest === 'required'` the signer
+  // must emit a `Content-Digest` header; the verifier then exercises step
+  // 11 (digest recompute) end-to-end.
   let signed;
   try {
     signed = await signRequestAsync(
       { method: 'POST', url: sampleUrl, headers: { 'Content-Type': 'application/json' }, body: sampleBody },
-      provider
+      provider,
+      // Cover Content-Digest unless the operator's policy is `'forbidden'`,
+      // matching `resolveCoverContentDigest`'s posture at the agent layer.
+      { coverContentDigest: coversContentDigest !== 'forbidden' }
     );
   } catch (err) {
     return failReport(options, sample, start, {
@@ -102,7 +119,9 @@ export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGr
 
   // Verify against the user's JWKS. The verifier returns step + code on
   // failure; pass that straight through to the report so the operator
-  // sees exactly which spec check rejected.
+  // sees exactly which spec check rejected. The capability passed here is
+  // the operator's (not a permissive default) so digest-policy
+  // misconfigurations surface as step 6 rejections.
   const jwks = buildJwksResolver(options);
   const replayStore = new InMemoryReplayStore();
   const revocationStore = new InMemoryRevocationStore();
@@ -116,27 +135,28 @@ export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGr
   let step: SignerGradeStep;
   try {
     const result = await verifyRequestSignature(verifyRequest, {
-      capability: { supported: true, covers_content_digest: 'either', required_for: [operation] },
+      capability: { supported: true, covers_content_digest: coversContentDigest, required_for: [operation] },
       jwks,
       replayStore,
       revocationStore,
       operation,
     });
-    if (result.status === 'verified') {
-      step = { status: 'pass', diagnostic: 'Signature verified end-to-end against JWKS.' };
-    } else {
-      step = {
-        status: 'fail',
-        error_code: 'verifier_returned_unsigned',
-        diagnostic: 'Verifier reported `unsigned` — signer produced no signature headers.',
-      };
+    if (result.status !== 'verified') {
+      // Defensive — `signRequestAsync` always emits `Signature` /
+      // `Signature-Input` so a successful sign-then-verify can't reach
+      // here. Throw rather than silently report a custom code so an SDK
+      // bug that produces empty headers surfaces loudly.
+      throw new Error(
+        `gradeSigner internal: verifier returned status='${result.status}' on a freshly-signed request — likely SDK bug`
+      );
     }
+    step = { status: 'pass', diagnostic: 'Signature verified end-to-end against JWKS.' };
   } catch (err) {
     if (err instanceof RequestSignatureError) {
       step = {
         status: 'fail',
         error_code: err.code,
-        diagnostic: `step ${err.failedStep}: ${err.message}`,
+        diagnostic: buildVerifierDiagnostic(err, options.algorithm),
       };
     } else {
       step = {
@@ -157,6 +177,27 @@ export async function gradeSigner(options: GradeSignerOptions): Promise<SignerGr
     step,
     sample,
   };
+}
+
+/**
+ * Layer a hint on top of the verifier's raw error message for the
+ * common KMS-adapter misconfigurations operators hit. Today the only
+ * one with a unique signature is DER-vs-P1363 for ECDSA — the verifier
+ * surfaces it as the generic `request_signature_invalid` at step 10,
+ * but the most likely cause is a KMS adapter that didn't run output
+ * through `derEcdsaToP1363`. Surfacing this inline is cheap and saves
+ * an operator a debugging cycle.
+ */
+function buildVerifierDiagnostic(err: RequestSignatureError, algorithm: AdcpSignAlg): string {
+  const base = `step ${err.failedStep}: ${err.message}`;
+  if (err.code === 'request_signature_invalid' && algorithm === 'ecdsa-p256-sha256') {
+    return (
+      `${base}\n  Common cause: signing oracle returned a DER-encoded signature.` +
+      ` AdCP / RFC 9421 §3.3.1 require raw r‖s (IEEE P1363, 64 bytes for P-256).` +
+      ` See \`derEcdsaToP1363\` in @adcp/client/signing.`
+    );
+  }
+  return base;
 }
 
 function failReport(
@@ -181,7 +222,7 @@ async function buildProviderFromOptions(options: GradeSignerOptions): Promise<Si
   const hasKey = options.keyFilePath !== undefined;
   const hasUrl = options.signerUrl !== undefined;
   if (hasKey === hasUrl) {
-    throw new Error('gradeSigner: pass exactly one of keyFilePath or signerUrl');
+    throw new Error('gradeSigner: pass exactly one of --key-file or --signer-url');
   }
   if (hasKey) {
     return await keyFileProvider(options.keyFilePath as string, options.kid, options.algorithm);
@@ -192,6 +233,7 @@ async function buildProviderFromOptions(options: GradeSignerOptions): Promise<Si
     kid: options.kid,
     algorithm: options.algorithm,
     timeoutMs: options.timeoutMs ?? 10_000,
+    allowPrivateIp: options.allowPrivateIp ?? false,
   });
 }
 
@@ -232,6 +274,7 @@ interface HttpOracleOptions {
   kid: string;
   algorithm: AdcpSignAlg;
   timeoutMs: number;
+  allowPrivateIp: boolean;
 }
 
 /**
@@ -259,32 +302,44 @@ function httpOracleProvider(options: HttpOracleOptions): SigningProvider {
     algorithm: options.algorithm,
     fingerprint: `oracle:${options.url}#${options.kid}`,
     async sign(payload: Uint8Array): Promise<Uint8Array> {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-      try {
-        const headers: Record<string, string> = { 'content-type': 'application/json' };
-        if (options.authorization) headers.authorization = options.authorization;
-        const response = await fetch(options.url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            payload_b64: Buffer.from(payload).toString('base64'),
-            kid: options.kid,
-            alg: options.algorithm,
-          }),
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error(`signing oracle ${options.url} responded ${response.status} ${response.statusText}`);
-        }
-        const body = (await response.json()) as { signature_b64?: unknown };
-        if (typeof body.signature_b64 !== 'string') {
-          throw new Error(`signing oracle response missing 'signature_b64' string field`);
-        }
-        return new Uint8Array(Buffer.from(body.signature_b64, 'base64'));
-      } finally {
-        clearTimeout(timer);
+      // Route through `ssrfSafeFetch` so the oracle POST inherits DNS
+      // pinning, IMDS-block, manual-redirect (a hostile or compromised
+      // oracle URL can't 302 the `Authorization: Bearer ...` header to
+      // an attacker-controlled host), and a 64 KiB body cap. Plain
+      // `fetch()` would re-introduce the SSRF / redirect-leak surface
+      // every other counterparty-influenced URL in the SDK already
+      // guards against.
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (options.authorization) headers.authorization = options.authorization;
+      const reqBody = JSON.stringify({
+        payload_b64: Buffer.from(payload).toString('base64'),
+        kid: options.kid,
+        alg: options.algorithm,
+      });
+      const response = await ssrfSafeFetch(options.url, {
+        method: 'POST',
+        headers,
+        body: reqBody,
+        timeoutMs: options.timeoutMs,
+        allowPrivateIp: options.allowPrivateIp,
+      });
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(
+          `signing oracle ${options.url} responded ${response.status} (manual-redirect; not following 3xx)`
+        );
       }
+      let parsed: { signature_b64?: unknown };
+      try {
+        parsed = JSON.parse(Buffer.from(response.body).toString('utf8'));
+      } catch (err) {
+        throw new Error(
+          `signing oracle response was not valid JSON: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (typeof parsed.signature_b64 !== 'string') {
+        throw new Error(`signing oracle response missing 'signature_b64' string field`);
+      }
+      return new Uint8Array(Buffer.from(parsed.signature_b64, 'base64'));
     },
   };
 }

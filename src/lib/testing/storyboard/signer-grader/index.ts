@@ -1,2 +1,2 @@
 export { gradeSigner, type GradeSignerOptions } from './grader';
-export type { SignerGradeReport, SignerGradeStep } from './types';
+export type { SignerGradeErrorCode, SignerGradeReport, SignerGradeStep, SignerGraderErrorCode } from './types';

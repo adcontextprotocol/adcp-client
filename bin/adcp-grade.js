@@ -75,6 +75,14 @@ Required:
 Options:
   --operation <name>         AdCP operation in the sample request body.
                              Default: \`create_media_buy\`.
+  --covers-content-digest    Content-digest policy your verifier advertises
+    <required|forbidden|either>
+                             (\`request_signing.covers_content_digest\`).
+                             Default: \`required\` — recommended posture for
+                             spend-committing operations. A signer that
+                             skips \`Content-Digest\` against \`required\`
+                             surfaces here as step 6
+                             \`request_signature_components_incomplete\`.
   --signer-auth <header>     Authorization header attached to --signer-url
                              POSTs (e.g. \`Bearer <secret>\`).
   --allow-http               Allow http:// signer / JWKS URLs + private-IP
@@ -255,6 +263,17 @@ async function runSignerGrader(args) {
       case '--operation':
         options.operation = args[++i];
         break;
+      case '--covers-content-digest': {
+        const policy = args[++i];
+        if (policy !== 'required' && policy !== 'forbidden' && policy !== 'either') {
+          console.error(
+            `ERROR: --covers-content-digest must be \"required\", \"forbidden\", or \"either\", got \"${policy}\"\n`
+          );
+          process.exit(2);
+        }
+        options.coversContentDigest = policy;
+        break;
+      }
       case '--allow-http':
         options.allowPrivateIp = true;
         break;
@@ -287,6 +306,15 @@ async function runSignerGrader(args) {
   }
   if (options.keyFilePath && options.signerUrl) {
     errExit('Pass exactly one of --key-file or --signer-url, not both', USAGE_SIGNER);
+  }
+  // Surface the in-process key-file path on stderr so CI logs make the
+  // dev-tool nature of the run visible — operators reviewing the log can
+  // confirm the file isn't checked in / shipped to prod.
+  if (options.keyFilePath) {
+    process.stderr.write(
+      `[adcp grade signer] in-process key loaded from ${options.keyFilePath} — ` +
+        `ensure this file is not checked in or shipped to production.\n`
+    );
   }
 
   try {
@@ -329,15 +357,24 @@ function printSignerReport(report) {
     console.log();
     console.log('Sample request the signer produced headers for:');
     console.log(`  ${report.sample.method} ${report.sample.url}`);
-    if (report.sample.headers['Signature-Input']) {
-      console.log(`  Signature-Input: ${report.sample.headers['Signature-Input']}`);
+    const sigInput = headerCaseInsensitive(report.sample.headers, 'signature-input');
+    if (sigInput) {
+      console.log(`  Signature-Input: ${sigInput}`);
     }
-    if (report.sample.headers['Signature']) {
-      const sig = report.sample.headers['Signature'];
-      console.log(`  Signature: ${sig.length > 100 ? sig.slice(0, 80) + '...' : sig}`);
+    const signature = headerCaseInsensitive(report.sample.headers, 'signature');
+    if (signature) {
+      console.log(`  Signature: ${signature.length > 100 ? signature.slice(0, 80) + '...' : signature}`);
     }
   }
   console.log();
+}
+
+function headerCaseInsensitive(headers, name) {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) return headers[key];
+  }
+  return undefined;
 }
 
 function parseVectorList(raw, flagName) {
