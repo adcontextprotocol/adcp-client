@@ -475,6 +475,43 @@ describe('property: signRequest (sync) and signRequestAsync share canonicalizati
       { numRuns: 50 }
     );
   });
+
+  test('sync and async produce identical signatureBase + Signature-Input for ECDSA-P256 (signature bytes vary by non-determinism)', async () => {
+    const ecdsaKid = 'test-es256-2026';
+    const provider = new InMemorySigningProvider({
+      keyid: ecdsaKid,
+      algorithm: 'ecdsa-p256-sha256',
+      privateKey: privateJwkFor(ecdsaKid),
+    });
+    const key = { keyid: ecdsaKid, alg: 'ecdsa-p256-sha256', privateKey: privateJwkFor(ecdsaKid) };
+
+    await fc.assert(
+      fc.asyncProperty(buildArbitrary(), async input => {
+        const request = {
+          method: input.method,
+          url: 'https://seller.example.com/' + input.pathSegments.join('/'),
+          headers: { 'Content-Type': 'application/json' },
+          body: input.body === undefined ? '' : JSON.stringify(input.body),
+        };
+        const opts = {
+          coverContentDigest: input.coverContentDigest,
+          now: () => input.now,
+          windowSeconds: input.windowSeconds,
+          nonce: input.nonce,
+        };
+        const sync = signRequest(request, key, opts);
+        const async_ = await signRequestAsync(request, provider, opts);
+
+        // ECDSA is non-deterministic so Signature bytes legitimately differ.
+        // The canonicalization invariant lives in the base + Signature-Input;
+        // both ECDSA branches must compute these identically.
+        assert.strictEqual(async_.signatureBase, sync.signatureBase);
+        assert.strictEqual(async_.headers['Signature-Input'], sync.headers['Signature-Input']);
+        return true;
+      }),
+      { numRuns: 50 }
+    );
+  });
 });
 
 describe('end-to-end: provider-signed request verifies under the SDK verifier', () => {

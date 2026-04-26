@@ -42,6 +42,16 @@ snapshotted at context-build time so a provider object whose fields drift
 between build and outbound request cannot desynchronize the on-wire `keyid`
 from the cache key the connection was bound to.
 
+**Behavior change for non-UTF-8 byte bodies:** `createSigningFetch` and
+`createSigningFetchAsync` now throw `TypeError` on `Uint8Array` /
+`ArrayBuffer` request bodies that aren't valid UTF-8. Previously, invalid
+bytes were silently replaced with U+FFFD by `Buffer.toString('utf8')` —
+verification still passed because the wire and the digest agreed on the
+lossy string, but the seller received mangled content. Callers hitting
+this should pass a string body, ensure their bytes are UTF-8, or sign
+manually with `signRequest` / `signRequestAsync` against the exact wire
+bytes they intend to send. Error message names the escape hatch.
+
 Wire format unchanged. No AdCP version bump.
 
 A reference GCP KMS adapter ships at `examples/gcp-kms-signing-provider.ts`,
