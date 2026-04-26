@@ -42,6 +42,14 @@ export {
   type ReplayInsertResult,
   type ReplayStore,
 } from './replay';
+export {
+  PostgresReplayStore,
+  REPLAY_CACHE_MIGRATION,
+  getReplayStoreMigration,
+  sweepExpiredReplays,
+  type PostgresReplayStoreOptions,
+  type SweepExpiredReplaysOptions,
+} from './postgres-replay-store';
 export { InMemoryRevocationStore, type RevocationStore } from './revocation';
 export { HttpsRevocationStore, type HttpsRevocationStoreOptions } from './revocation-https';
 export {
