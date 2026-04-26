@@ -357,19 +357,16 @@ serve(() =>
           item_count: c.items?.length ?? 0,
           items_approved: c.items?.length ?? 0,
         })),
-        sandbox: true,
       }),
       syncEventSources: async (params, ctx) => ({
         event_sources: params.event_sources.map(s => ({
           event_source_id: s.event_source_id,
           action: 'created' as const,
         })),
-        sandbox: true,
       }),
       logEvent: async (params, ctx) => ({
         events_received: params.events?.length ?? 0,
         events_processed: params.events?.length ?? 0,
-        sandbox: true,
       }),
       // ... syncAudiences
     },

@@ -227,20 +227,45 @@ function enforceStrictSchema(schema: any): any {
   }
 
   if (strictSchema.allOf) {
-    // Strip allOf members that contain only `not` constraints. These are mutual-exclusivity
-    // validators (e.g. "not both feed_field and value") that TypeScript cannot represent.
-    // Keeping them causes json-schema-to-typescript to emit the full property set once per
-    // member, producing duplicate intersection arms in the output type.
+    // Strip allOf members that contain only validation logic TypeScript can't
+    // represent. Two cases:
+    //   1. `not` constraints — mutual-exclusivity validators (e.g. "not both
+    //      feed_field and value"). Keeping them causes json-schema-to-typescript
+    //      to emit the full property set once per member, producing duplicate
+    //      intersection arms.
+    //   2. `if`/`then`/`else` conditionals — JSON Schema 7 conditional
+    //      validation (e.g. "if request_type='single' then creative_manifest
+    //      is required"). TS can't conditionally require fields based on
+    //      another field's discriminator value. Worse, jsts intersects every
+    //      branch's properties with `{ [k: string]: unknown }`, producing
+    //      `BaseShape & { [k: string]: unknown }` noise that forces adopters
+    //      into `as any` casts. These conditionals are still enforced at
+    //      runtime by Ajv, which loads the original (unstripped) JSON
+    //      schemas — so removing them from the TS-emit path doesn't weaken
+    //      validation.
     strictSchema.allOf = strictSchema.allOf
       .filter((member: any) => {
         const keys = Object.keys(member);
-        return !(keys.length === 1 && keys[0] === 'not');
+        if (keys.length === 1 && keys[0] === 'not') return false;
+        // Conditional validators are exclusively `if` / `then` / `else`.
+        // Drop members composed only of those keys.
+        if (keys.length > 0 && keys.every(k => k === 'if' || k === 'then' || k === 'else')) {
+          return false;
+        }
+        return true;
       })
       .map(enforceStrictSchema);
     if (strictSchema.allOf.length === 0) {
       delete strictSchema.allOf;
     }
   }
+
+  // Top-level `if` / `then` / `else` (rare but valid JSON Schema 7) — same
+  // rationale as above. Strip; Ajv enforces them at runtime against the
+  // unstripped schema.
+  if (strictSchema.if) delete strictSchema.if;
+  if (strictSchema.then) delete strictSchema.then;
+  if (strictSchema.else) delete strictSchema.else;
 
   if (strictSchema.anyOf) {
     strictSchema.anyOf = strictSchema.anyOf.map(enforceStrictSchema);

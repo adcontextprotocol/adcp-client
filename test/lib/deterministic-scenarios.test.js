@@ -247,8 +247,16 @@ describe('Generated comply test controller types', () => {
     const fs = require('fs');
     const path = require('path');
     const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
-    assert.ok(typesContent.includes('export type ComplyTestControllerRequest'));
-    assert.ok(typesContent.includes('export type ComplyTestControllerResponse'));
+    // Codegen may emit either `type` or `interface` depending on the schema's
+    // structural shape. Accept either — semantics are identical for consumers.
+    assert.ok(
+      typesContent.includes('export type ComplyTestControllerRequest') ||
+        typesContent.includes('export interface ComplyTestControllerRequest')
+    );
+    assert.ok(
+      typesContent.includes('export type ComplyTestControllerResponse') ||
+        typesContent.includes('export interface ComplyTestControllerResponse')
+    );
   });
 
   test('Request has all scenario variants', () => {

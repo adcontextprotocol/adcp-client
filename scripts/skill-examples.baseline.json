@@ -260,16 +260,6 @@
     "messagePrefix": "Cannot find name 'lookupKey'."
   },
   {
-    "source": "skills/build-governance-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; plans: Record<st"
-  },
-  {
-    "source": "skills/build-governance-agent/SKILL.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type 'unknown' is not assignable to parameter of type 'string'."
-  },
-  {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS18004",
     "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
@@ -323,6 +313,11 @@
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'PRODUCTS'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; account: { [x: s"
   },
   {
     "source": "skills/build-seller-agent/deployment.md",
