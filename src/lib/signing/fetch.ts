@@ -1,4 +1,5 @@
-import { signRequest, type SignerKey, type SignRequestOptions } from './signer';
+import type { SigningProvider } from './provider';
+import { signRequest, signRequestAsync, type SignerKey, type SignRequestOptions } from './signer';
 
 /** Callback form for `coverContentDigest` — lets the wrapper decide per call. */
 export type CoverContentDigestPredicate = (url: string, init: RequestInit | undefined) => boolean;
@@ -24,7 +25,13 @@ type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<
  */
 const SIGNING_RESERVED_HEADERS = new Set(['signature', 'signature-input', 'content-digest']);
 
-export function createSigningFetch(upstream: FetchLike, key: SignerKey, options: SigningFetchOptions = {}): FetchLike {
+export function createSigningFetch(upstream: FetchLike, signer: SignerKey, options?: SigningFetchOptions): FetchLike;
+export function createSigningFetch(upstream: FetchLike, signer: SigningProvider, options?: SigningFetchOptions): FetchLike;
+export function createSigningFetch(
+  upstream: FetchLike,
+  signer: SignerKey | SigningProvider,
+  options: SigningFetchOptions = {}
+): FetchLike {
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
@@ -56,7 +63,10 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
     const { coverContentDigest: _omit, ...signerOptionsBase } = options;
     const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest };
 
-    const signed = signRequest({ method, url, headers, body }, key, signerOptions);
+    const requestLike = { method, url, headers, body };
+    const signed = 'privateKey' in signer
+      ? signRequest(requestLike, signer, signerOptions)
+      : await signRequestAsync(requestLike, signer, signerOptions);
 
     const mergedInit: RequestInit = { ...init, method, headers: signed.headers };
     if (body !== undefined && mergedInit.body === undefined) mergedInit.body = body;

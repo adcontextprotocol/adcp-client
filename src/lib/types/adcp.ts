@@ -17,6 +17,8 @@ export const ADCP_ENVELOPE_FIELDS = new Set([
 ]);
 
 // Import structured FormatID from generated core types
+import type { SigningProvider } from '../signing/provider';
+
 import type {
   CreateMediaBuyAsyncInputRequired,
   CreateMediaBuyAsyncSubmitted,
@@ -362,6 +364,37 @@ export interface AgentRequestSigningConfig {
   sign_supported?: boolean;
 }
 
+/**
+ * KMS/HSM-backed signing configuration. Use instead of
+ * {@link AgentRequestSigningConfig} when the private key is managed by an
+ * external key store and must never be loaded into process memory.
+ *
+ * Supply a `SigningProvider` whose `sign()` delegates to your KMS. The SDK
+ * never calls `private_key.d` on this path.
+ */
+export interface AgentProviderSigningConfig {
+  /** Signing backend — KMS, HSM, Vault Transit, or an in-memory test double. */
+  provider: SigningProvider;
+  /**
+   * Agent's base URL. Sellers derive the JWKS endpoint from this via the
+   * conventional well-known suffix (`{agent_url}/.well-known/adcp-jwks.json`).
+   */
+  agent_url: string;
+  /** AdCP operation names to sign regardless of the seller's advertisement. */
+  always_sign?: string[];
+  /**
+   * When true, also sign operations the seller lists in `supported_for`.
+   * Defaults to false.
+   */
+  sign_supported?: boolean;
+}
+
+/**
+ * Either form of signing configuration accepted by the SDK. Pass to
+ * `buildAgentSigningContext` / `buildAgentSigningFetch`.
+ */
+export type AnyAgentSigningConfig = AgentRequestSigningConfig | AgentProviderSigningConfig;
+
 // Agent Configuration Types
 export interface AgentConfig {
   id: string;
@@ -420,9 +453,11 @@ export interface AgentConfig {
    * Optional — when set, outbound requests to this agent are signed per
    * RFC 9421 for operations the agent advertises in its `request_signing`
    * capability block (fetched once via `get_adcp_capabilities` and cached
-   * by the client). See {@link AgentRequestSigningConfig}.
+   * by the client). Accepts either {@link AgentRequestSigningConfig} (raw
+   * JWK in process memory) or {@link AgentProviderSigningConfig} (KMS/HSM
+   * backend via {@link SigningProvider}).
    */
-  request_signing?: AgentRequestSigningConfig;
+  request_signing?: AnyAgentSigningConfig;
 
   /**
    * Pre-connected MCP `Client` for in-process testing without an HTTP loopback server.

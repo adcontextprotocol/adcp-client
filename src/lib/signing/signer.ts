@@ -1,12 +1,13 @@
 import { createPrivateKey, randomBytes, sign as nodeSign, type JsonWebKey } from 'crypto';
 import { buildSignatureBase, formatSignatureParams, type RequestLike, type SignatureParams } from './canonicalize';
 import { computeContentDigest } from './content-digest';
-import { MANDATORY_COMPONENTS, MAX_SIGNATURE_WINDOW_SECONDS, REQUEST_SIGNING_TAG, type AdcpJsonWebKey } from './types';
+import type { SigningProvider } from './provider';
+import { MANDATORY_COMPONENTS, MAX_SIGNATURE_WINDOW_SECONDS, REQUEST_SIGNING_TAG, type AdcpJsonWebKey, type AdcpSignAlg } from './types';
 import { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-verifier';
 
 export interface SignerKey {
   keyid: string;
-  alg: 'ed25519' | 'ecdsa-p256-sha256';
+  alg: AdcpSignAlg;
   privateKey: AdcpJsonWebKey;
 }
 
@@ -108,6 +109,83 @@ export function signWebhook(request: RequestLike, key: SignerKey, options: SignW
   const normalizedRequest: RequestLike = { ...request, headers };
   const base = buildSignatureBase(components, normalizedRequest, params);
   const signature = produceSignature(key, Buffer.from(base, 'utf8'));
+  const sigB64 = Buffer.from(signature).toString('base64url');
+
+  headers['Signature-Input'] = `${label}=${formatSignatureParams(components, params)}`;
+  headers['Signature'] = `${label}=:${sigB64}:`;
+  return { headers, signatureBase: base, params };
+}
+
+/** Async variant of {@link signRequest} for use with a {@link SigningProvider}. */
+export async function signRequestAsync(
+  request: RequestLike,
+  provider: SigningProvider,
+  options: SignRequestOptions = {}
+): Promise<SignedRequest> {
+  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
+  const nonce = options.nonce ?? base64UrlRandom(16);
+  const label = options.label ?? 'sig1';
+  const hasBody = (request.body ?? '').length > 0;
+
+  const coverDigest = options.coverContentDigest === true && hasBody;
+  const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
+  if (coverDigest) {
+    headers['Content-Digest'] = computeContentDigest(request.body ?? '');
+  }
+
+  const components = [...MANDATORY_COMPONENTS];
+  if (hasBody) components.push('content-type');
+  if (coverDigest) components.push('content-digest');
+
+  const params: SignatureParams = {
+    created: now,
+    expires: now + windowSeconds,
+    nonce,
+    keyid: provider.keyid,
+    alg: provider.algorithm,
+    tag: REQUEST_SIGNING_TAG,
+  };
+
+  const normalizedRequest: RequestLike = { ...request, headers };
+  const base = buildSignatureBase(components, normalizedRequest, params);
+
+  const signature = await provider.sign(Buffer.from(base, 'utf8'));
+  const sigB64 = Buffer.from(signature).toString('base64url');
+
+  headers['Signature-Input'] = `${label}=${formatSignatureParams(components, params)}`;
+  headers['Signature'] = `${label}=:${sigB64}:`;
+
+  return { headers, signatureBase: base, params };
+}
+
+/** Async variant of {@link signWebhook} for use with a {@link SigningProvider}. */
+export async function signWebhookAsync(
+  request: RequestLike,
+  provider: SigningProvider,
+  options: SignWebhookOptions = {}
+): Promise<SignedRequest> {
+  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
+  const nonce = options.nonce ?? base64UrlRandom(16);
+  const label = options.label ?? 'sig1';
+
+  const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
+  headers['Content-Digest'] = computeContentDigest(request.body ?? '');
+
+  const components = [...WEBHOOK_MANDATORY_COMPONENTS];
+  const params: SignatureParams = {
+    created: now,
+    expires: now + windowSeconds,
+    nonce,
+    keyid: provider.keyid,
+    alg: provider.algorithm,
+    tag: options.tag ?? WEBHOOK_SIGNING_TAG,
+  };
+
+  const normalizedRequest: RequestLike = { ...request, headers };
+  const base = buildSignatureBase(components, normalizedRequest, params);
+  const signature = await provider.sign(Buffer.from(base, 'utf8'));
   const sigB64 = Buffer.from(signature).toString('base64url');
 
   headers['Signature-Input'] = `${label}=${formatSignatureParams(components, params)}`;

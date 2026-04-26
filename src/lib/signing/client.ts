@@ -19,7 +19,9 @@ export {
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
 export {
   signRequest,
+  signRequestAsync,
   signWebhook,
+  signWebhookAsync,
   type SignedRequest,
   type SignerKey,
   type SignRequestOptions,
@@ -34,9 +36,11 @@ export {
   MAX_SIGNATURE_WINDOW_SECONDS,
   REQUEST_SIGNING_TAG,
   type AdcpJsonWebKey,
+  type AdcpSignAlg,
   type ContentDigestPolicy,
   type VerifierCapability,
 } from './types';
+export { type SigningProvider } from './provider';
 export {
   CapabilityCache,
   buildCapabilityCacheKey,
@@ -54,5 +58,11 @@ export {
   type BuildAgentSigningFetchOptions,
   type CreateAgentSignedFetchOptions,
 } from './agent-fetch';
-export { buildAgentSigningContext, signingContextStorage, type AgentSigningContext } from './agent-context';
+export {
+  buildAgentSigningContext,
+  buildAgentSigningContextFromConfig,
+  isProviderConfig,
+  signingContextStorage,
+  type AgentSigningContext,
+} from './agent-context';
 export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';

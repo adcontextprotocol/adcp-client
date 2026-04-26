@@ -51,6 +51,11 @@
       "require": "./dist/lib/signing/server.js",
       "types": "./dist/lib/signing/server.d.ts"
     },
+    "./signing/testing": {
+      "import": "./dist/lib/signing/testing.js",
+      "require": "./dist/lib/signing/testing.js",
+      "types": "./dist/lib/signing/testing.d.ts"
+    },
     "./schemas": {
       "import": "./dist/lib/schemas/index.js",
       "require": "./dist/lib/schemas/index.js",
@@ -102,6 +107,9 @@
       ],
       "signing/server": [
         "dist/lib/signing/server.d.ts"
+      ],
+      "signing/testing": [
+        "dist/lib/signing/testing.d.ts"
       ],
       "schemas": [
         "dist/lib/schemas/index.d.ts"

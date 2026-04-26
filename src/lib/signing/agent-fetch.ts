@@ -1,4 +1,5 @@
-import type { AgentRequestSigningConfig } from '../types/adcp';
+import type { AnyAgentSigningConfig, AgentRequestSigningConfig } from '../types/adcp';
+import { isProviderConfig } from './agent-context';
 import { createSigningFetch, type CoverContentDigestPredicate } from './fetch';
 import {
   buildCapabilityCacheKey,
@@ -122,7 +123,7 @@ export function extractAdcpOperation(body: unknown): string | undefined {
 export function shouldSignOperation(
   operation: string | undefined,
   capability: VerifierCapability | undefined,
-  config: AgentRequestSigningConfig
+  config: AnyAgentSigningConfig
 ): boolean {
   if (!operation) return false;
   if (config.always_sign?.includes(operation)) return true;
@@ -148,8 +149,9 @@ export function resolveCoverContentDigest(policy: ContentDigestPolicy | undefine
 }
 
 /**
- * Convert an `AgentRequestSigningConfig` into the `SignerKey` shape expected
- * by `signRequest` / `createSigningFetch`.
+ * Convert an {@link AgentRequestSigningConfig} into the `SignerKey` shape
+ * expected by `signRequest` / `createSigningFetch`. Only valid on the
+ * raw-key arm — call site must guard with `!isProviderConfig(config)`.
  */
 export function toSignerKey(config: AgentRequestSigningConfig): SignerKey {
   return {
@@ -166,7 +168,7 @@ export interface BuildAgentSigningFetchOptions {
    * decorated fetch (retries, telemetry) to compose.
    */
   upstream?: FetchLike;
-  signing: AgentRequestSigningConfig;
+  signing: AnyAgentSigningConfig;
   /** Lazy accessor for the current cached capability — re-read on every call. */
   getCapability: () => CachedCapability | undefined;
 }
@@ -189,7 +191,6 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   // factory-call time.
   const explicitUpstream = options.upstream;
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
-  const key = toSignerKey(signing);
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
     const operation = extractAdcpOperation(init?.body);
@@ -202,12 +203,15 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     return resolveCoverContentDigest(entry?.requestSigning?.covers_content_digest);
   };
 
-  return createSigningFetch(upstream, key, { shouldSign, coverContentDigest });
+  if (isProviderConfig(signing)) {
+    return createSigningFetch(upstream, signing.provider, { shouldSign, coverContentDigest });
+  }
+  return createSigningFetch(upstream, toSignerKey(signing), { shouldSign, coverContentDigest });
 }
 
 export interface CreateAgentSignedFetchOptions {
-  /** This agent's RFC 9421 signing identity (kid, alg, private_key, agent_url). */
-  signing: AgentRequestSigningConfig;
+  /** This agent's RFC 9421 signing identity — raw JWK or KMS provider. */
+  signing: AnyAgentSigningConfig;
   /**
    * Target seller's `agent_uri` — the base URL whose `get_adcp_capabilities`
    * response gates whether each operation gets signed. The preset keys a

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
-import type { AgentConfig, AgentRequestSigningConfig } from '../types/adcp';
+import type { AgentConfig, AgentProviderSigningConfig, AgentRequestSigningConfig, AnyAgentSigningConfig } from '../types/adcp';
 import {
   buildCapabilityCacheKey,
   CapabilityCache,
@@ -17,8 +17,8 @@ import {
  * each outbound request), and `signing` (to produce the signer key).
  */
 export interface AgentSigningContext {
-  /** Signing config copied from AgentConfig.request_signing. */
-  signing: AgentRequestSigningConfig;
+  /** Signing config — raw-key or provider arm. */
+  signing: AnyAgentSigningConfig;
   /** Suffix to append to transport connection-cache keys so agents with different signing identities don't share a connection. */
   cacheKey: string;
   /** Lazy accessor for the currently cached capability for this agent. */
@@ -61,15 +61,28 @@ export function buildAgentSigningContext(
 ): AgentSigningContext | undefined {
   const signing = agent.request_signing;
   if (!signing) return undefined;
+  return buildAgentSigningContextFromConfig(signing, agent.agent_uri, agent.auth_token, options);
+}
 
+/**
+ * Build an `AgentSigningContext` directly from an {@link AnyAgentSigningConfig}.
+ * Use when the config comes from outside an `AgentConfig` — for example, when
+ * wiring a KMS-backed provider without loading a full agent config.
+ */
+export function buildAgentSigningContextFromConfig(
+  signing: AnyAgentSigningConfig,
+  agentUri: string,
+  authToken?: string,
+  options: { cache?: CapabilityCache } = {}
+): AgentSigningContext {
   const cache = options.cache ?? defaultCapabilityCache;
-  const keyFingerprint = privateKeyFingerprint(signing);
-  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, keyFingerprint);
-  // Transport-connection cache-key suffix binds to a hash of the private key,
-  // not just the advertised `kid`. Two tenants that misconfigure the same
-  // `kid` string but hold distinct private keys must not collide on a shared
-  // cached transport — that would sign one tenant's outbound requests with
-  // the other tenant's key (same `kid`, different `d`), an impersonation.
+  const keyFingerprint = resolveFingerprint(signing);
+  const capabilityCacheKey = buildCapabilityCacheKey(agentUri, authToken, keyFingerprint);
+  // Transport-connection cache-key suffix binds to a fingerprint that
+  // uniquely identifies the private key. Two tenants that advertise the same
+  // `kid` but hold distinct private keys must not collide on a shared cached
+  // transport — that would sign one tenant's outbound requests with the other
+  // tenant's key (same `kid`, different key material), an impersonation.
   const cacheKey = `sig=${keyFingerprint}`;
 
   return {
@@ -82,14 +95,24 @@ export function buildAgentSigningContext(
   };
 }
 
-/**
- * Derive a stable per-key cache-key fragment. Hashes both `kid` and the
- * private scalar `d` so that two tenants advertising the same `kid` but
- * holding distinct private keys get different cache entries. Truncated to
- * 16 hex chars — a collision-resistance budget of 64 bits against random
- * keys is plenty for a cache disambiguator, and we never rely on this
- * value as a security boundary.
- */
-function privateKeyFingerprint(signing: AgentRequestSigningConfig): string {
+/** Derive a stable per-key cache-key fragment from whichever config arm is supplied. */
+function resolveFingerprint(signing: AnyAgentSigningConfig): string {
+  if (isProviderConfig(signing)) {
+    const fp = signing.provider.fingerprint;
+    if (!fp || fp.length < 16) {
+      throw new Error(
+        `SigningProvider.fingerprint must be at least 16 characters to provide adequate cache-isolation entropy (got ${JSON.stringify(fp)}). ` +
+          'Use the KMS resource path (e.g. projects/…/cryptoKeyVersions/N) or a SHA-256 hex prefix.'
+      );
+    }
+    return fp;
+  }
+  // Raw-key path: derive from kid + private scalar so two tenants with the
+  // same kid but distinct keys get different cache entries.
   return createHash('sha256').update(signing.kid).update('\0').update(signing.private_key.d).digest('hex').slice(0, 16);
+}
+
+/** Type guard distinguishing the provider arm from the raw-key arm. */
+export function isProviderConfig(signing: AnyAgentSigningConfig): signing is AgentProviderSigningConfig {
+  return 'provider' in signing;
 }
