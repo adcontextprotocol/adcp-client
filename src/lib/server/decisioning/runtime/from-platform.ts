@@ -70,6 +70,7 @@ import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform } from './validate-platform';
 import { buildRequestContext } from './to-context';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './task-registry';
+import { createInMemoryStatusChangeBus, type StatusChangeBus } from '../status-changes';
 
 export interface CreateAdcpServerFromPlatformOptions extends Omit<
   AdcpServerConfig,
@@ -100,6 +101,17 @@ export interface DecisioningAdcpServer extends AdcpServer {
    * path for deterministic settlement.
    */
   awaitTask(taskId: string): Promise<void>;
+  /**
+   * Per-server status-change bus. Delegates to the same internal bus the
+   * framework uses for MCP Resources subscription projection.
+   *
+   * Use `server.statusChange.publish(...)` in tests to push events scoped
+   * to this specific server instance — avoids contaminating sibling servers
+   * that share the module-level `activeBus` when running multiple servers
+   * in the same process. Production webhook/cron code that does not hold a
+   * server reference keeps calling the module-level `publishStatusChange(...)`.
+   */
+  statusChange: StatusChangeBus;
 }
 
 // Use `DecisioningPlatform<any, any>` for the generic constraint. The default
@@ -114,6 +126,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   validatePlatform(platform);
 
   const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
+  const statusChangeBus = createInMemoryStatusChangeBus();
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -139,6 +152,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     getTaskState: <TResult = unknown>(taskId: string): TaskRecord<TResult> | null =>
       taskRegistry.getTask<TResult>(taskId),
     awaitTask: (taskId: string): Promise<void> => taskRegistry.awaitTask(taskId),
+    statusChange: statusChangeBus,
   });
 }
 

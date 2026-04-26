@@ -7,12 +7,13 @@
 
 process.env.NODE_ENV = 'test';
 
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 const { PlatformConfigError, validatePlatform } = require('../dist/lib/server/decisioning/runtime/validate-platform');
 const { AccountNotFoundError } = require('../dist/lib/server/decisioning/account');
 const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
+const { setStatusChangeBus, createInMemoryStatusChangeBus } = require('../dist/lib/server/decisioning/status-changes');
 
 function buildPlatform(overrides = {}) {
   return {
@@ -656,5 +657,76 @@ describe('validatePlatform', () => {
       },
     });
     assert.throws(() => validatePlatform(platform), /both defined/);
+  });
+});
+
+describe('server.statusChange — per-server bus', () => {
+  let prevBus;
+  let moduleBus;
+
+  beforeEach(() => {
+    moduleBus = createInMemoryStatusChangeBus();
+    prevBus = setStatusChangeBus(moduleBus);
+  });
+
+  function restoreBus() {
+    setStatusChangeBus(prevBus);
+  }
+
+  it('exposes a statusChange bus on the returned server', () => {
+    const platform = buildPlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'test',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    assert.strictEqual(typeof server.statusChange.publish, 'function');
+    assert.strictEqual(typeof server.statusChange.subscribe, 'function');
+    assert.strictEqual(typeof server.statusChange.recent, 'function');
+    restoreBus();
+  });
+
+  it('server.statusChange.publish does not leak into the module-level bus', () => {
+    const platform = buildPlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'test',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    server.statusChange.publish({
+      account_id: 'acc_1',
+      resource_type: 'media_buy',
+      resource_id: 'mb_42',
+      payload: { status: 'active' },
+    });
+
+    assert.strictEqual(server.statusChange.recent().length, 1, 'per-server bus received the event');
+    assert.strictEqual(moduleBus.recent().length, 0, 'module-level bus is not contaminated');
+    restoreBus();
+  });
+
+  it('two servers have independent buses — events do not cross-contaminate', () => {
+    const server1 = createAdcpServerFromPlatform(buildPlatform(), {
+      name: 'srv1',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const server2 = createAdcpServerFromPlatform(buildPlatform(), {
+      name: 'srv2',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    server1.statusChange.publish({
+      account_id: 'acc_1',
+      resource_type: 'media_buy',
+      resource_id: 'mb_1',
+      payload: { status: 'active' },
+    });
+
+    assert.strictEqual(server1.statusChange.recent().length, 1);
+    assert.strictEqual(server2.statusChange.recent().length, 0, 'server2 bus should not receive server1 events');
+    restoreBus();
   });
 });
