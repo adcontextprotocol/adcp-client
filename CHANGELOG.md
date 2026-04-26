@@ -1,5 +1,123 @@
 # Changelog
 
+## 5.20.0
+
+### Minor Changes
+
+- b43b39d: feat(signing): PostgresReplayStore for distributed verifier deployments
+
+  Adds a Postgres-backed `ReplayStore` so multi-instance verifier deployments share replay-protection state. The default `InMemoryReplayStore` is per-process; on a fleet, an attacker who captures a signed request can replay it against a sibling whose cache hasn't seen the nonce — RFC 9421's 5-minute expiry bounds the window but that's plenty of time for an in-flight replay. `PostgresReplayStore` closes that hole using a `(keyid, scope, nonce)` primary key the verifier checks on every signed request.
+
+  New exports from `@adcp/client/signing/server`:
+  - `PostgresReplayStore` — `ReplayStore` implementation against the structural `PgQueryable` interface (same pattern as `PostgresTaskStore` and `PostgresStateStore`; the SDK stays free of a hard `pg` dependency).
+  - `getReplayStoreMigration(tableName?)` — idempotent DDL for the cache table plus indexes on `expires_at` and `(keyid, scope, expires_at)`.
+  - `sweepExpiredReplays(pool, options?)` — exported helper for callers to schedule (cron, app timer, `pg_cron`, etc.); Postgres has no native row-level TTL, so expired rows have to be deleted explicitly.
+
+  The insert path is a single CTE statement that handles replay/cap/insert decision atomically. `ON CONFLICT DO UPDATE WHERE existing-is-expired` recycles expired rows in place — a same-nonce insert after the previous registration's TTL elapsed (but before the sweeper ran) correctly returns `'ok'` rather than falsely reporting `'replayed'`. Concurrent same-nonce inserts (10 parallel) consistently produce exactly one `'ok'` and the rest `'replayed'`, matching `InMemoryReplayStore` semantics.
+
+  Wire format unchanged. No AdCP version bump.
+
+  See [`docs/guides/SIGNING-GUIDE.md` § Verify Inbound Signatures](./guides/SIGNING-GUIDE.md#step-4-verify-inbound-signatures-seller) for the multi-instance failure mode and the wire-up.
+
+  Closes #1015.
+
+- 78fdb54: feat(testing): `adcp grade signer` — validate a signer end-to-end before going live
+
+  Adds a CLI grader and matching library function that exercises a signer (typically KMS-backed) end-to-end: produces a sample signed AdCP request through the operator's signer, then verifies the result against the operator's published JWKS via the SDK's RFC 9421 verifier. Pass means a counterparty verifier will accept your signatures; fail produces a specific `error_code` + step matching the verifier-checklist semantics, so DER-vs-P1363 / kid-mismatch / wrong-key / algorithm-mismatch each surface as a distinct diagnostic instead of the generic `request_signature_invalid` you'd see in the seller's monitoring after pushing live traffic.
+
+  Two signer-source modes:
+  - `--key-file <path>` — local JWK file. Easy path for local dev / non-KMS testing.
+  - `--signer-url <url>` — HTTP signing oracle for KMS-backed signers. Wire contract is intentionally minimal — `POST {payload_b64, kid, alg}` returns `{signature_b64}` (raw wire-format bytes, not DER) — so any KMS adapter can put a small handler in front of `provider.sign()` for grading without exposing the underlying KMS to the grader.
+
+  Programmatic API: `gradeSigner(options)` exported from `@adcp/client/testing/storyboard/signer-grader`. Returns a `SignerGradeReport` with `passed`, `step.{status,error_code,diagnostic}`, the JWKS URI it resolved against, and the sample request the signer produced headers for (useful for operator-side diagnostics).
+
+  Pairs with the `SigningProvider` abstraction (also in 5.20.0) — that release added the surface for KMS-backed signing; this one closes the loop by giving operators a way to validate their adapter before going live.
+
+  Closes #610.
+
+- c4afc75: feat(signing): add SigningProvider abstraction for KMS-backed RFC 9421 signing
+
+  Adds a pluggable `SigningProvider` interface so private keys can live in a
+  managed key store (GCP KMS, AWS KMS, Azure Key Vault, HashiCorp Vault Transit)
+  instead of process memory. The async `sign(payload)` boundary matches RFC
+  9421 §3.1 — the SDK produces the canonical signature base, the provider
+  returns wire-format signature bytes.
+
+  New surface:
+  - `SigningProvider` interface and `AdcpSignAlg` type (exported from
+    `@adcp/client/signing`).
+  - `signRequestAsync` / `signWebhookAsync` — async variants that accept a
+    provider; sync `signRequest` / `signWebhook` are unchanged.
+  - `createSigningFetchAsync(upstream, provider, options)` — async-signing
+    fetch wrapper, paired with the existing sync `createSigningFetch`. Two
+    symbols rather than one overload so the latency-cost distinction is
+    visible at integration time.
+  - `derEcdsaToP1363(der, componentLen)` — DER → IEEE P1363 ECDSA signature
+    converter for KMS adapters whose `sign` API returns DER (GCP, AWS, Azure).
+  - `SigningProviderAlgorithmMismatchError` — typed error adapters throw when
+    the declared algorithm doesn't match the underlying key, so misconfigurations
+    fail fast at adapter construction rather than producing signatures verifiers
+    reject downstream.
+  - `@adcp/client/signing/testing` sub-path exporting `InMemorySigningProvider`
+    and `signerKeyToProvider`. Constructor refuses to instantiate when
+    `NODE_ENV=production` unless `ADCP_ALLOW_IN_MEMORY_SIGNER=1` is set.
+
+  `AgentRequestSigningConfig` is now a discriminated union on `kind`:
+  - `kind: 'inline'` (default — `kind` is optional on this shape so existing
+    literals work unchanged) holds a private JWK in process.
+  - `kind: 'provider'` delegates `sign()` to a `SigningProvider`.
+
+  `buildAgentSigningContext` defensively hashes the provider-supplied
+  `fingerprint` together with `algorithm` and `kid` before composing
+  transport- and capability-cache keys, preserving the multi-tenant isolation
+  property the in-memory path has always provided. The signing identity is
+  snapshotted at context-build time so a provider object whose fields drift
+  between build and outbound request cannot desynchronize the on-wire `keyid`
+  from the cache key the connection was bound to.
+
+  **Behavior change for non-UTF-8 byte bodies:** `createSigningFetch` and
+  `createSigningFetchAsync` now throw `TypeError` on `Uint8Array` /
+  `ArrayBuffer` request bodies that aren't valid UTF-8. Previously, invalid
+  bytes were silently replaced with U+FFFD by `Buffer.toString('utf8')` —
+  verification still passed because the wire and the digest agreed on the
+  lossy string, but the seller received mangled content. Callers hitting
+  this should pass a string body, ensure their bytes are UTF-8, or sign
+  manually with `signRequest` / `signRequestAsync` against the exact wire
+  bytes they intend to send. Error message names the escape hatch.
+
+  Wire format unchanged. No AdCP version bump.
+
+  A reference GCP KMS adapter ships at `examples/gcp-kms-signing-provider.ts`,
+  type-checked under `npm run typecheck:examples`. AWS KMS and Azure Key Vault
+  adapters can mirror the same pattern; users `npm i` the cloud SDK they need.
+
+  See adcontextprotocol/adcp-client#1009.
+
+### Patch Changes
+
+- a8e50ac: fix(hints): drop AJV-prose fallback in `groupRequiredIssues`
+
+  `MissingRequiredFieldHint.missing_fields` is documented as "Field name(s) the parent object was required to carry." When the field-name extraction regex did not match an AJV `required` error message (e.g. a reworded or locale-variant message), the fallback `?? issue.message` wrote the entire AJV prose string into `missing_fields[]` as if it were a field name. Downstream renderers (CLI, Addie, JUnit) wrap entries in backticks and generate "add the X field" coaching, so they would produce nonsense output for these entries.
+
+  The fallback is now removed. When the regex does not match, the issue is skipped — `missing_fields` contains only clean field identifiers. Unextractable issues remain visible via `ValidationResult.warning`.
+
+- 976c6e0: docs(testing): add @provenance annotations to StoryboardStepHint fields
+
+  Each field on the five hint kinds (ContextValueRejectedHint, ShapeDriftHint,
+  MissingRequiredFieldHint, FormatMismatchHint, MonotonicViolationHint) now
+  carries a @provenance seller|storyboard|runner tag so downstream renderers
+  (Addie, CLI, JUnit) can identify which fields contain seller-controlled bytes
+  that must be sanitized before reaching prompt-injection-vulnerable surfaces.
+
+  Also annotates StoryboardStepHintBase.message with an explicit warning that
+  the pre-formatted string embeds seller bytes for context_value_rejected and
+  monotonic_violation kinds; and adds @provenance to typedoc.json blockTags so
+  the TypeDoc build recognises the new tag.
+
+  Motivated by adcp#3084 and adcp#3220, where undocumented seller provenance on
+  request_field and from_status produced prompt-injection vectors in downstream
+  renderers.
+
 ## 5.19.0
 
 ### Minor Changes
