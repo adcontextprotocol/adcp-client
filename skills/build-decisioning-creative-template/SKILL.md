@@ -119,6 +119,8 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
       const watermarked: ImageAsset = {
         asset_type: 'image',
         url: watermarkedUrl,
+        width: source.width,
+        height: source.height,
       };
       return {
         format_id: formatId,
@@ -318,6 +320,7 @@ Throw `AccountNotFoundError` (importable from `@adcp/client/server/decisioning`)
 
 ## Serving the agent
 
+<!-- skill-example-skip: continuation of the watermark example above; re-uses identifiers defined there -->
 ```ts
 import { serve } from '@adcp/client/server';
 

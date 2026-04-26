@@ -16,8 +16,12 @@ import type { ZodSchema } from 'zod';
 import type { AdCPSpecialism, MediaChannel, PricingModel } from '../../types/tools.generated';
 
 export interface DecisioningCapabilities<TConfig = unknown> {
-  /** Specialisms claimed; framework type-checks these against implemented platform interfaces. */
-  specialisms: AdCPSpecialism[];
+  /**
+   * Specialisms claimed; framework type-checks these against implemented platform
+   * interfaces. Arrays are `readonly` so adopters can declare with `as const`
+   * (load-bearing for the `RequiredPlatformsFor<S>` compile-time gate).
+   */
+  specialisms: readonly AdCPSpecialism[];
 
   /**
    * Creative agents this seller composes with. Framework fetches format catalogs
@@ -30,13 +34,13 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * 10 of them. Filter scope is per-creative-agent: `[{ agent_url: A, format_ids: ['x'] }, { agent_url: B }]`
    * means "from A only format x; from B all formats."
    */
-  creative_agents: CreativeAgentRef[];
+  creative_agents: readonly CreativeAgentRef[];
 
   /** Channels this platform sells. */
-  channels: MediaChannel[];
+  channels: readonly MediaChannel[];
 
   /** Pricing models this platform supports. */
-  pricingModels: PricingModel[];
+  pricingModels: readonly PricingModel[];
 
   /** Targeting capabilities. Optional — framework infers reasonable defaults if omitted. */
   targeting?: TargetingCapabilities;

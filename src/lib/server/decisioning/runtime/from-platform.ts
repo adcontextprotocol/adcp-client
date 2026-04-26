@@ -98,7 +98,12 @@ export interface DecisioningAdcpServer extends AdcpServer {
   awaitTask(taskId: string): Promise<void>;
 }
 
-export function createAdcpServerFromPlatform<P extends DecisioningPlatform>(
+// Use `DecisioningPlatform<any, any>` for the generic constraint. The default
+// `TMeta = Record<string, unknown>` doesn't accept adopter metadata interfaces
+// without an index signature (e.g., `interface MyMeta { brand_id: string }`),
+// which is a needless friction point — adopter metadata is opaque to the
+// framework, so we don't need to constrain it here.
+export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, any>>(
   platform: P & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>,
   opts: CreateAdcpServerFromPlatformOptions
 ): DecisioningAdcpServer {
@@ -240,7 +245,7 @@ function ctxFor(handlerCtx: HandlerContext<Account>): RequestContext<Account> {
   return buildRequestContext(handlerCtx);
 }
 
-function buildMediaBuyHandlers<P extends DecisioningPlatform>(
+function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry
 ): MediaBuyHandlers<Account> | undefined {
@@ -333,7 +338,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform>(
   };
 }
 
-function buildCreativeHandlers<P extends DecisioningPlatform>(
+function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry
 ): CreativeHandlers<Account> | undefined {
@@ -394,7 +399,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform>(
   };
 }
 
-function buildEventTrackingHandlers<P extends DecisioningPlatform>(
+function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   _taskRegistry: TaskRegistry
 ): EventTrackingHandlers<Account> | undefined {
@@ -412,7 +417,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform>(
   };
 }
 
-function buildAccountHandlers<P extends DecisioningPlatform>(platform: P): AccountHandlers<Account> {
+function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform: P): AccountHandlers<Account> {
   return {
     syncAccounts: async (params, _ctx) => {
       if (!platform.accounts.upsert) {
