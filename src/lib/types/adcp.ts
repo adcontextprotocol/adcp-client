@@ -348,6 +348,21 @@ export interface AgentRequestSigningOperationOverrides {
    * seller asks for" behavior.
    */
   sign_supported?: boolean;
+  /**
+   * Informational mirror of the JWKS endpoint where this agent publishes
+   * its verification keys. Verifiers do not read this field — they walk
+   * brand.json from `agent_url` to discover the authoritative `jwks_uri`.
+   * The field is carried on the buyer-side config so audit logs, custom
+   * verifier wiring, and split-domain setups have a single self-describing
+   * source of truth that matches what brand.json publishes.
+   *
+   * Common case: split-domain setups where the JWKS lives off the
+   * conventional `${agent_url}/.well-known/jwks.json` path (identity
+   * domain separate from the agent endpoint). Make sure brand.json's
+   * `jwks_uri` agrees with whatever you set here — brand.json is
+   * authoritative; this field documents intent.
+   */
+  jwks_uri?: string;
 }
 
 /**

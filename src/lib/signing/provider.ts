@@ -71,6 +71,14 @@ export interface SigningProvider {
    * collapse multi-tenant cache isolation. The hash is a defense-in-depth
    * measure, not a security boundary — adapter authors should still supply
    * a high-entropy stable identifier.
+   *
+   * **Logging caution:** `fingerprint` may embed infra identifiers. For GCP
+   * KMS the version resource name
+   * (`projects/<id>/locations/<loc>/keyRings/<ring>/cryptoKeyVersions/<N>`)
+   * exposes project ID and key topology. When emitting to shared logs, traces,
+   * or span attributes, log only the trailing `cryptoKeyVersions/<N>` segment,
+   * or use the stable `kid` instead — it is already published on the wire and
+   * carries no infra topology.
    */
   readonly fingerprint: string;
 }
