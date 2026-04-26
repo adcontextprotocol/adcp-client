@@ -22,6 +22,8 @@
  */
 
 import { signWebhook, type SignerKey } from '../signing/signer';
+import { signWebhookAsync } from '../signing/signer-async';
+import type { SigningProvider } from '../signing/provider';
 import type { RequestLike } from '../signing/canonicalize';
 import { createHmac, randomUUID } from 'node:crypto';
 
@@ -103,8 +105,19 @@ export interface WebhookRetryOptions {
 }
 
 export interface WebhookEmitterOptions {
-  /** Ed25519 / ECDSA-P256 signing key. `adcp_use` MUST be `"webhook-signing"`. */
-  signerKey: SignerKey;
+  /**
+   * In-process JWK signing key. `adcp_use` MUST be `"webhook-signing"`.
+   * Mutually exclusive with `signerProvider` — exactly one must be provided.
+   */
+  signerKey?: SignerKey;
+  /**
+   * Async KMS-backed signing provider (GCP KMS, AWS KMS, Azure Key Vault, etc.).
+   * Routes webhook signing through `signWebhookAsync` so the private key never
+   * enters process memory. Mutually exclusive with `signerKey` — exactly one
+   * must be provided. The JWKS entry for the wrapped key MUST carry
+   * `adcp_use: "webhook-signing"` so receivers can validate key purpose.
+   */
+  signerProvider?: SigningProvider;
   retries?: WebhookRetryOptions;
   idempotencyKeyStore?: WebhookIdempotencyKeyStore;
   /**
@@ -192,6 +205,12 @@ export interface WebhookEmitter {
 // ────────────────────────────────────────────────────────────
 
 export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmitter {
+  if (options.signerKey && options.signerProvider) {
+    throw new TypeError('createWebhookEmitter: provide exactly one of signerKey or signerProvider, not both');
+  }
+  if (!options.signerKey && !options.signerProvider) {
+    throw new TypeError('createWebhookEmitter: one of signerKey or signerProvider is required');
+  }
   const store = options.idempotencyKeyStore ?? memoryWebhookKeyStore();
   const generateKey = options.generateIdempotencyKey ?? defaultGenerateIdempotencyKey;
   const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -230,6 +249,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
             url: params.url,
             bodyBytes,
             signerKey: options.signerKey,
+            signerProvider: options.signerProvider,
             authentication: params.authentication ?? null,
             tag: options.tag,
             userAgent: options.userAgent,
@@ -300,14 +320,15 @@ interface DeliveryResponse {
 async function deliverOnce(args: {
   url: string;
   bodyBytes: string;
-  signerKey: SignerKey;
+  signerKey?: SignerKey;
+  signerProvider?: SigningProvider;
   authentication: WebhookAuthentication;
   tag?: string;
   userAgent?: string;
   fetch: typeof fetch;
   suppressLegacyWarnings?: boolean;
 }): Promise<DeliveryResponse> {
-  const headers = buildHeaders(args);
+  const headers = await buildHeaders(args);
   const response = await args.fetch(args.url, {
     method: 'POST',
     headers,
@@ -319,15 +340,16 @@ async function deliverOnce(args: {
   };
 }
 
-function buildHeaders(args: {
+async function buildHeaders(args: {
   url: string;
   bodyBytes: string;
-  signerKey: SignerKey;
+  signerKey?: SignerKey;
+  signerProvider?: SigningProvider;
   authentication: WebhookAuthentication;
   tag?: string;
   userAgent?: string;
   suppressLegacyWarnings?: boolean;
-}): Record<string, string> {
+}): Promise<Record<string, string>> {
   const baseHeaders: Record<string, string> = {
     'content-type': 'application/json',
   };
@@ -366,7 +388,10 @@ function buildHeaders(args: {
     headers: baseHeaders,
     body: args.bodyBytes,
   };
-  const signed = signWebhook(request, args.signerKey, args.tag !== undefined ? { tag: args.tag } : {});
+  const signOpts = args.tag !== undefined ? { tag: args.tag } : {};
+  const signed = args.signerProvider
+    ? await signWebhookAsync(request, args.signerProvider, signOpts)
+    : signWebhook(request, args.signerKey!, signOpts);
   return { ...baseHeaders, ...signed.headers };
 }
 
