@@ -16,9 +16,22 @@ import type { DecisioningPlatform } from '../platform';
 import type { AdCPSpecialism } from '../../../types/tools.generated';
 
 const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyof DecisioningPlatform>>> = {
+  // All sales-* specialisms share the SalesPlatform interface. Adopters
+  // implement `sales` once; the specialism enum picks which buyer-side
+  // storyboard the agent is validated against. Wired here per the AdCP 3.0
+  // GA enum; preview specialisms (sales-streaming-tv, sales-exchange,
+  // sales-retail-media) get added when they land in `AdCPSpecialism`.
   'sales-non-guaranteed': ['sales'],
+  'sales-guaranteed': ['sales'],
+  'sales-broadcast-tv': ['sales'],
+  'sales-social': ['sales'],
+  'sales-catalog-driven': ['sales'],
+  'sales-proposal-mode': ['sales'],
+  // Creative specialisms share the CreativeXxxPlatform field name; adopters
+  // pick the right archetype (template vs generative) at construction time.
   'creative-template': ['creative'],
   'creative-generative': ['creative'],
+  // Audience sync is a single specialism with a single platform interface.
   'audience-sync': ['audiences'],
 };
 

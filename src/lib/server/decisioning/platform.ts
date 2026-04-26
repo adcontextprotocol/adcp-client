@@ -119,11 +119,24 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
  * resolve to an empty requirement — the framework's runtime check is the
  * fallback gate.
  */
+// Sales specialisms — all share the SalesPlatform interface but route through
+// different storyboards on the buyer side. Adopter implements `sales` once;
+// claiming any of these specialisms compile-checks for the same field.
+// Wired per the AdCP 3.0 GA enum; preview specialisms (sales-streaming-tv,
+// sales-exchange, sales-retail-media) get added when they land in spec.
+type SalesSpecialism =
+  | 'sales-non-guaranteed'
+  | 'sales-guaranteed'
+  | 'sales-broadcast-tv'
+  | 'sales-social'
+  | 'sales-catalog-driven'
+  | 'sales-proposal-mode';
+
 export type RequiredPlatformsFor<S extends AdCPSpecialism> = S extends 'creative-template'
   ? { creative: CreativeTemplatePlatform }
   : S extends 'creative-generative'
     ? { creative: CreativeGenerativePlatform }
-    : S extends 'sales-non-guaranteed'
+    : S extends SalesSpecialism
       ? { sales: SalesPlatform }
       : S extends 'audience-sync'
         ? { audiences: AudiencePlatform }
