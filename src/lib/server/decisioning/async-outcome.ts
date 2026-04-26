@@ -149,6 +149,32 @@ export interface AdcpStructuredError {
 }
 
 /**
+ * Internal sentinel thrown by `ctx.runAsync` when the in-process work
+ * exceeds the auto-defer timeout. The runtime catches this and projects
+ * the response onto the wire submitted envelope; the original work
+ * promise keeps running in the background and notifies the registry
+ * (via `taskHandle.notify`) on completion.
+ *
+ * Adopters should not throw or catch this directly — return value of
+ * `ctx.runAsync(opts, fn)` either resolves with the work's value
+ * (sync arm) or throws `TaskDeferredError` (submitted arm).
+ *
+ * @internal
+ */
+export class TaskDeferredError<TResult = unknown> extends Error {
+  readonly name = 'TaskDeferredError' as const;
+  readonly taskHandle: TaskHandle<TResult>;
+  readonly partialResult?: TResult;
+  readonly statusMessage?: string;
+  constructor(opts: { taskHandle: TaskHandle<TResult>; partialResult?: TResult; statusMessage?: string }) {
+    super(opts.statusMessage ?? `Task ${opts.taskHandle.taskId} deferred`);
+    this.taskHandle = opts.taskHandle;
+    if (opts.partialResult !== undefined) this.partialResult = opts.partialResult;
+    if (opts.statusMessage !== undefined) this.statusMessage = opts.statusMessage;
+  }
+}
+
+/**
  * Throwable structured error. Adopter code uses this to fail a specialism
  * method with a buyer-facing wire envelope:
  *

@@ -367,6 +367,153 @@ describe('CreativeTemplatePlatform + AudiencePlatform wiring', () => {
   });
 });
 
+describe('ctx.runAsync — in-process timeout race + auto-defer', () => {
+  function buildRunAsyncPlatform(createMediaBuyImpl) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      statusMappers: {},
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: createMediaBuyImpl,
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  function dispatchCreate(server) {
+    return server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+  }
+
+  it('fast work: ctx.runAsync resolves before timeout, projects to sync arm', async () => {
+    const platform = buildRunAsyncPlatform(async (req, ctx) => {
+      return await ctx.runAsync(
+        { message: 'normally async', submittedAfterMs: 5000 },
+        async () => ({ media_buy_id: 'mb_fast' }) // resolves immediately
+      );
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCreate(server);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.media_buy_id, 'mb_fast');
+  });
+
+  it('slow work: ctx.runAsync exceeds timeout, projects to submitted envelope with partial_result', async () => {
+    const platform = buildRunAsyncPlatform(async (req, ctx) => {
+      return await ctx.runAsync(
+        {
+          message: 'pending operator approval',
+          partialResult: { media_buy_id: 'mb_partial', status: 'pending_start' },
+          submittedAfterMs: 20,
+        },
+        async () => {
+          await new Promise(r => setTimeout(r, 60));
+          return { media_buy_id: 'mb_final', status: 'active' };
+        }
+      );
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await dispatchCreate(server);
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    assert.ok(result.structuredContent.task_id.startsWith('task_'));
+    assert.strictEqual(result.structuredContent.message, 'pending operator approval');
+    assert.deepStrictEqual(result.structuredContent.partial_result, {
+      media_buy_id: 'mb_partial',
+      status: 'pending_start',
+    });
+
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTask(taskId);
+
+    const finalRecord = server.getTaskState(taskId);
+    assert.strictEqual(finalRecord.status, 'completed');
+    assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
+  });
+
+  it('background failure: AdcpError thrown after timeout records as failed with structured fields', async () => {
+    const platform = buildRunAsyncPlatform(async (req, ctx) => {
+      return await ctx.runAsync({ submittedAfterMs: 20 }, async () => {
+        await new Promise(r => setTimeout(r, 60));
+        throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'operator declined' });
+      });
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await dispatchCreate(server);
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    const taskId = result.structuredContent.task_id;
+
+    await server.awaitTask(taskId);
+
+    const finalRecord = server.getTaskState(taskId);
+    assert.strictEqual(finalRecord.status, 'failed');
+    assert.strictEqual(finalRecord.error.code, 'GOVERNANCE_DENIED');
+    assert.strictEqual(finalRecord.error.recovery, 'terminal');
+  });
+
+  it('background failure: generic Error becomes SERVICE_UNAVAILABLE', async () => {
+    const platform = buildRunAsyncPlatform(async (req, ctx) => {
+      return await ctx.runAsync({ submittedAfterMs: 20 }, async () => {
+        await new Promise(r => setTimeout(r, 60));
+        throw new Error('upstream API timeout');
+      });
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await dispatchCreate(server);
+    const taskId = result.structuredContent.task_id;
+
+    await server.awaitTask(taskId);
+
+    const finalRecord = server.getTaskState(taskId);
+    assert.strictEqual(finalRecord.status, 'failed');
+    assert.strictEqual(finalRecord.error.code, 'SERVICE_UNAVAILABLE');
+    assert.strictEqual(finalRecord.error.recovery, 'transient');
+  });
+});
+
 describe('ctx.startTask — out-of-process task lifecycle', () => {
   // ctx.startTask is the explicit out-of-process primitive: adopter persists
   // taskId, webhook handler later calls handle.notify (in this commit, the

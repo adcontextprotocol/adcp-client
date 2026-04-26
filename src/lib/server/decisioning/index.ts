@@ -33,6 +33,7 @@ export {
   type TaskUpdateCompleted,
   type TaskUpdateFailed,
   AdcpError,
+  TaskDeferredError,
 } from './async-outcome';
 
 // Cursor pagination

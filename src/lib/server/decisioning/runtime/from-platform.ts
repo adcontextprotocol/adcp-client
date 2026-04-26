@@ -52,7 +52,7 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
 import type { Account } from '../account';
 import { AccountNotFoundError } from '../account';
-import { AdcpError } from '../async-outcome';
+import { AdcpError, TaskDeferredError } from '../async-outcome';
 import type { CreativeTemplatePlatform } from '../specialisms/creative';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform } from './validate-platform';
@@ -80,6 +80,13 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
  */
 export interface DecisioningAdcpServer extends AdcpServer {
   getTaskState<TResult = unknown>(taskId: string): TaskRecord<TResult> | null;
+  /**
+   * Await any in-flight background completion for `taskId` (`ctx.runAsync`
+   * post-timeout work). Resolves immediately if the task is already
+   * terminal or has no registered background. Used by tests + the
+   * `tasks/get` wire path for deterministic settlement.
+   */
+  awaitTask(taskId: string): Promise<void>;
 }
 
 /**
@@ -116,6 +123,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform>(
   return Object.assign(server, {
     getTaskState: <TResult = unknown>(taskId: string): TaskRecord<TResult> | null =>
       taskRegistry.getTask<TResult>(taskId),
+    awaitTask: (taskId: string): Promise<void> => taskRegistry.awaitTask(taskId),
   });
 }
 
@@ -123,20 +131,43 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform>(
 // AdcpError catch + project — adopter throws, framework projects.
 // ---------------------------------------------------------------------------
 
+type SubmittedEnvelope = {
+  status: 'submitted';
+  task_id: string;
+  message?: string;
+  partial_result?: unknown;
+};
+
 /**
- * Run a platform method and project the outcome onto the existing handler
- * dispatch shape. Catches `AdcpError` thrown from the platform and projects
- * to the wire `adcp_error` envelope; generic thrown errors propagate up to
- * the framework's existing `SERVICE_UNAVAILABLE` mapping (so adopters who
- * throw `Error` for upstream-API outages get the expected wire shape).
+ * Run a platform method and project the outcome onto the wire dispatch
+ * shape. Three throw branches:
+ *
+ *   - `TaskDeferredError` (from `ctx.runAsync` timing out): project to a
+ *     submitted wire envelope carrying the framework-issued `task_id`,
+ *     `message`, and optional `partial_result`. The original work promise
+ *     keeps running in the background; on resolve the registry's terminal
+ *     state is updated via `taskHandle.notify`.
+ *   - `AdcpError`: project to the wire `adcp_error` envelope with full
+ *     structured fields.
+ *   - Other thrown errors: propagate to the framework's existing
+ *     `SERVICE_UNAVAILABLE` mapping.
  */
 async function projectPlatformCall<TResult, TWire>(
   fn: () => Promise<TResult>,
   mapResult: (r: TResult) => TWire
-): Promise<TWire | AdcpErrorResponse> {
+): Promise<TWire | SubmittedEnvelope | AdcpErrorResponse> {
   try {
     return mapResult(await fn());
   } catch (err) {
+    if (err instanceof TaskDeferredError) {
+      const env: SubmittedEnvelope = {
+        status: 'submitted',
+        task_id: err.taskHandle.taskId,
+      };
+      if (err.statusMessage !== undefined) env.message = err.statusMessage;
+      if (err.partialResult !== undefined) env.partial_result = err.partialResult;
+      return env;
+    }
     if (err instanceof AdcpError) {
       return adcpError(err.code, {
         message: err.message,

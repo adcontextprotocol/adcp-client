@@ -42,6 +42,20 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
 export interface TaskRegistry {
   startTask<TResult>(opts: { tool: string; accountId: string; partialResult?: TResult }): TaskHandle<TResult>;
   getTask<TResult = unknown>(taskId: string): TaskRecord<TResult> | null;
+  /**
+   * Register a background completion promise (from `ctx.runAsync` post-timeout
+   * await). Tests can `awaitTask(taskId)` to flush the deferred completion
+   * deterministically; production callers don't need this.
+   *
+   * @internal
+   */
+  _registerBackground(taskId: string, completion: Promise<void>): void;
+  /**
+   * Await any registered background completion for a task. Resolves
+   * immediately if no background is registered or the registered one
+   * has already settled. Used by test harnesses + `tasks/get` integration.
+   */
+  awaitTask(taskId: string): Promise<void>;
 }
 
 /**
@@ -53,6 +67,7 @@ export interface TaskRegistry {
  */
 export function createInMemoryTaskRegistry(): TaskRegistry {
   const tasks = new Map<string, TaskRecord<unknown>>();
+  const backgrounds = new Map<string, Promise<void>>();
 
   return {
     startTask<TResult>(opts: { tool: string; accountId: string; partialResult?: TResult }): TaskHandle<TResult> {
@@ -104,6 +119,27 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     getTask<TResult = unknown>(taskId: string): TaskRecord<TResult> | null {
       const record = tasks.get(taskId);
       return (record as TaskRecord<TResult> | undefined) ?? null;
+    },
+
+    _registerBackground(taskId: string, completion: Promise<void>): void {
+      // Compose the cleanup into the same chain, so awaiting the stored
+      // promise also flushes the cleanup. Avoids a separate floating
+      // `.finally` that would otherwise trip Node test runners' "promise
+      // resolution still pending" detection.
+      const composed: Promise<void> = completion.then(
+        () => {
+          if (backgrounds.get(taskId) === composed) backgrounds.delete(taskId);
+        },
+        () => {
+          if (backgrounds.get(taskId) === composed) backgrounds.delete(taskId);
+        }
+      );
+      backgrounds.set(taskId, composed);
+    },
+
+    async awaitTask(taskId: string): Promise<void> {
+      const pending = backgrounds.get(taskId);
+      if (pending) await pending;
     },
   };
 }
