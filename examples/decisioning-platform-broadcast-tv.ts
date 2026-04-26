@@ -33,13 +33,15 @@ import {
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
+  type SyncCreativesRow,
 } from '../src/lib/server/decisioning';
-import type { CreativeReviewResult } from '../src/lib/server/decisioning/specialisms/creative';
 import type {
   GetProductsRequest,
   GetProductsResponse,
   CreateMediaBuyRequest,
+  CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
+  UpdateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   CreativeAsset,
@@ -66,10 +68,9 @@ interface BroadcastTvMeta {
   affiliate_advertiser_id: string;
 }
 
-// Wire-shaped MediaBuy (re-exported from sales specialism). Local alias is
-// just sugar — the shape is the canonical wire type.
-import type { MediaBuy } from '../src/lib/server/decisioning/specialisms/sales';
-type BroadcastBuy = MediaBuy & { daypart?: string };
+// Local stash type — what we keep in our internal Map. The values returned
+// from the createMediaBuy method are typed as wire `CreateMediaBuySuccess`.
+type BroadcastBuy = CreateMediaBuySuccess & { daypart?: string };
 
 // ---------------------------------------------------------------------------
 // Implementation
@@ -98,13 +99,13 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       const id = 'account_id' in ref ? ref.account_id : 'broadcast_acc_1';
       return {
         id,
+        name: `Broadcast TV — ${id}`,
+        status: 'active',
         operator: 'broadcast.example.com',
         metadata: { agency_buyer_id: 'agc_42', affiliate_advertiser_id: 'aff_99' },
         authInfo: { kind: 'api_key' },
       };
     },
-    upsert: async () => [],
-    list: async () => ({ items: [], nextCursor: null }),
   };
 
   // ---------------------------------------------------------------------------
@@ -176,12 +177,13 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
           : ((req.total_budget as { amount?: number })?.amount ?? 0);
       const buy: BroadcastBuy = {
         media_buy_id: buyId,
-        status: 'accepted',
-        currency: 'USD',
-        total_budget: totalBudget,
+        status: 'pending_start',
+        confirmed_at: new Date().toISOString(),
+        revision: 1,
         daypart: 'primetime',
       };
       this.mediaBuys.set(buyId, buy);
+      void totalBudget;
 
       // After acceptance, the broadcast traffic system controls the campaign
       // window. The SDK demo schedules a status-change at activationOffsetMs
@@ -201,7 +203,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       return buy;
     },
 
-    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
+    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
       const existing = this.mediaBuys.get(buyId);
       if (!existing) {
         throw new AdcpError('MEDIA_BUY_NOT_FOUND', {
@@ -212,7 +214,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       }
       // Broadcast: pause = preempt the schedule; can resume only with re-IO.
       if (patch.active === false) existing.status = 'rejected';
-      return existing;
+      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
     },
 
     /**
@@ -220,7 +222,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
      * before it can air. 24-48 hour SLA in production; demo uses
      * standardsReviewMs.
      */
-    syncCreativesTask: async (_taskId: string, creatives: CreativeAsset[]): Promise<CreativeReviewResult[]> => {
+    syncCreativesTask: async (_taskId: string, creatives: CreativeAsset[]): Promise<SyncCreativesRow[]> => {
       await new Promise(r => setTimeout(r, this.capabilities.config.standardsReviewMs));
       // Mock policy: anything tagged "political" rejects; rest approve.
       return creatives.map(c => {
@@ -229,11 +231,17 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
         if (tags.includes('political')) {
           return {
             creative_id: id,
+            action: 'failed',
             status: 'rejected',
-            reason: 'Political ads require FCC disclosure file + station GM sign-off',
+            errors: [
+              {
+                code: 'CREATIVE_REJECTED',
+                message: 'Political ads require FCC disclosure file + station GM sign-off',
+              },
+            ],
           };
         }
-        return { creative_id: id, status: 'approved' };
+        return { creative_id: id, action: 'created', status: 'approved' };
       });
     },
 

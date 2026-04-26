@@ -644,8 +644,8 @@ describe('validatePlatform', () => {
     const platform = buildPlatform({
       sales: {
         getProducts: async () => ({ products: [] }),
-        getProductsTask: async (_taskId, _req, _ctx) => ({ products: [] }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        createMediaBuyTask: async (_taskId, _req, _ctx) => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),

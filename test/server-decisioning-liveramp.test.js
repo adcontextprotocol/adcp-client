@@ -163,7 +163,7 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
       assert.strictEqual(auds[0].action, 'created');
 
       // Wait for the full match → activating → active pipeline
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 200));
 
       const stages = received
         .filter(e => e.resource_type === 'audience' && e.resource_id === 'aud_42')
@@ -233,7 +233,7 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
         },
       });
 
-      await new Promise(r => setTimeout(r, 80));
+      await new Promise(r => setTimeout(r, 200));
 
       const a = received.filter(e => e.resource_id === 'aud_a').map(e => e.payload.status);
       const b = received.filter(e => e.resource_id === 'aud_b').map(e => e.payload.status);

@@ -27,12 +27,14 @@ import {
   type SalesPlatform,
   type AccountStore,
 } from '../src/lib/server/decisioning';
-import type { CreativeReviewResult } from '../src/lib/server/decisioning/specialisms/creative';
+import type { SyncCreativesRow } from '../src/lib/server/decisioning';
 import type {
   GetProductsRequest,
   GetProductsResponse,
   CreateMediaBuyRequest,
+  CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
+  UpdateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   CreativeAsset,
@@ -57,8 +59,7 @@ interface ProgrammaticMeta {
   advertiser_id: string;
 }
 
-import type { MediaBuy } from '../src/lib/server/decisioning/specialisms/sales';
-type ProgrammaticBuy = MediaBuy;
+type ProgrammaticBuy = CreateMediaBuySuccess;
 
 export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfig, ProgrammaticMeta> {
   private mediaBuys = new Map<string, ProgrammaticBuy>();
@@ -82,13 +83,13 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
       const id = 'account_id' in ref ? ref.account_id : 'prog_acc_1';
       return {
         id,
+        name: `Programmatic — ${id}`,
+        status: 'active',
         operator: 'programmatic.example.com',
         metadata: { network_id: this.capabilities.config.networkId, advertiser_id: 'adv_42' },
         authInfo: { kind: 'api_key' },
       };
     },
-    upsert: async () => [],
-    list: async () => ({ items: [], nextCursor: null }),
   };
 
   sales: SalesPlatform = {
@@ -140,10 +141,11 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
       const buy: ProgrammaticBuy = {
         media_buy_id: buyId,
         status: 'pending_creatives',
-        currency: 'USD',
-        total_budget: totalBudget,
+        confirmed_at: new Date().toISOString(),
+        revision: 1,
       };
       this.mediaBuys.set(buyId, buy);
+      void totalBudget;
 
       // Demo: schedule the pending_creatives → active transition once
       // creative review clears. In production this fires from the SSP's
@@ -163,7 +165,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
       return buy;
     },
 
-    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
+    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
       const existing = this.mediaBuys.get(buyId);
       if (!existing) {
         throw new AdcpError('MEDIA_BUY_NOT_FOUND', {
@@ -174,7 +176,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
       }
       if (patch.active === false) existing.status = 'paused';
       if (patch.active === true && existing.status === 'paused') existing.status = 'active';
-      return existing;
+      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
     },
 
     /**
@@ -182,7 +184,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
      * continues async — the seller's review pipeline pushes status changes
      * via publishStatusChange when each creative reaches terminal state.
      */
-    syncCreatives: async (creatives: CreativeAsset[]): Promise<CreativeReviewResult[]> => {
+    syncCreatives: async (creatives: CreativeAsset[]): Promise<SyncCreativesRow[]> => {
       return creatives.map(c => {
         const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
         const formatId = (c as { format_id?: { id?: string } }).format_id?.id ?? '';
@@ -200,8 +202,8 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
         }
         return {
           creative_id: id,
+          action: 'created',
           status: needsReview ? 'pending_review' : 'approved',
-          ...(needsReview && { reason: 'video creatives go through brand-suitability review' }),
         };
       });
     },

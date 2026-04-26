@@ -15,15 +15,42 @@
 import type { BrandReference, AccountReference } from '../../types/tools.generated';
 import type { CursorPage, CursorRequest } from './pagination';
 
+/**
+ * Account — framework's rich representation. A strict superset of the wire
+ * `Account` shape (from `list_accounts` / response envelopes):
+ *
+ *   - Adds `metadata: TMeta` (platform-internal fields the framework doesn't
+ *     read but adopters use to thread platform-specific data)
+ *   - Adds `authInfo: AuthPrincipal` (auth context for the request — MUST NOT
+ *     leak to the wire)
+ *   - All wire-required fields (`id`/`account_id`, `name`, `status`) are
+ *     required here too.
+ *
+ * Framework projects to wire shape via `toWireAccount`: strips `metadata` +
+ * `authInfo`, renames `id` → `account_id`. ~10 lines, no `as never` casts.
+ */
 export interface Account<TMeta = Record<string, unknown>> {
-  /** Your platform's account_id. Matches AdCP's `AccountReference.account_id`. */
+  /** Your platform's account_id. Maps to wire `Account.account_id`. */
   id: string;
+
+  /** Human-readable account name (e.g., 'Acme', 'Acme c/o Pinnacle'). Required on the wire. */
+  name: string;
+
+  /** Account status. Maps to wire `Account.status`. */
+  status: AdcpAccountStatus;
 
   /** Canonical brand reference. Either id OR (brand+operator) identifies the account. */
   brand?: BrandReference;
 
   /** Operator domain (agency / managed-services). Pairs with `brand`. */
   operator?: string;
+
+  /**
+   * The advertiser whose rates apply to this account. Maps to wire
+   * `Account.advertiser`. Use when the account is operated by an agency on
+   * behalf of an advertiser whose rates differ from the operator's.
+   */
+  advertiser?: string;
 
   /**
    * Settlement boundary for operator-billed retail-media platforms.
@@ -38,13 +65,14 @@ export interface Account<TMeta = Record<string, unknown>> {
   billing?: { invoicedTo: 'agent' | 'operator' | BrandReference };
 
   /**
-   * Platform-specific extension. Framework doesn't read this. GAM puts
-   * `{ networkId, advertiserId }`; Spotify puts `{ brandId, businessId }`;
-   * Criteo puts `{ customerId }`. Each platform's choice.
+   * Platform-specific extension. Framework doesn't read this; **stripped
+   * before emitting on the wire**. GAM puts `{ networkId, advertiserId }`;
+   * Spotify puts `{ brandId, businessId }`; Criteo puts `{ customerId }`.
+   * Each platform's choice.
    */
   metadata: TMeta;
 
-  /** Caller's authenticated principal. */
+  /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
   authInfo: AuthPrincipal;
 }
 
@@ -163,3 +191,41 @@ export type AdcpAccountStatus =
   | 'payment_required'
   | 'suspended'
   | 'closed';
+
+// ---------------------------------------------------------------------------
+// Wire projection — strip framework-internal fields before emit
+// ---------------------------------------------------------------------------
+
+import type { Account as WireAccount } from '../../types/tools.generated';
+
+/**
+ * Project a framework `Account<TMeta>` to the wire `Account` shape.
+ *
+ * Strips `metadata` and `authInfo` (framework-internal); renames `id` →
+ * `account_id`; passes through `name`, `status`, `brand`, `operator`,
+ * `advertiser`, and `billing.invoicedTo` mappings.
+ *
+ * Used by the framework when emitting `list_accounts` and other wire
+ * responses that include account data. Adopters never call this directly —
+ * they return `Account<TMeta>` from `accounts.resolve` / `accounts.list`
+ * and the framework projects.
+ */
+export function toWireAccount<TMeta>(account: Account<TMeta>): WireAccount {
+  const wire: WireAccount = {
+    account_id: account.id,
+    name: account.name,
+    status: account.status,
+  };
+  if (account.brand !== undefined) wire.brand = account.brand;
+  if (account.operator !== undefined) wire.operator = account.operator;
+  if (account.advertiser !== undefined) wire.advertiser = account.advertiser;
+  if (account.billing !== undefined) {
+    // Wire `Account.billing: 'operator' | 'agent' | 'advertiser'` is the
+    // invoiced-to party. Internal `billing.invoicedTo` collapses string +
+    // BrandReference; a BrandReference indicates a third-party advertiser
+    // (Amazon DSP-shaped flow), which projects to `'advertiser'`.
+    const t = account.billing.invoicedTo;
+    wire.billing = typeof t === 'string' ? t : 'advertiser';
+  }
+  return wire;
+}

@@ -57,10 +57,12 @@ import {
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
 import type { Account } from '../account';
-import { AccountNotFoundError } from '../account';
+import { AccountNotFoundError, toWireAccount } from '../account';
 import { AdcpError } from '../async-outcome';
 import type { CreativeTemplatePlatform } from '../specialisms/creative';
+import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
+import type { CreativeAsset, AccountReference } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform } from './validate-platform';
 import { buildRequestContext } from './to-context';
@@ -254,15 +256,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   return {
     getProducts: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      if (sales.getProductsTask) {
-        return dispatchHitl(taskRegistry, { tool: 'get_products', accountId: reqCtx.account.id }, taskId =>
-          sales.getProductsTask!(taskId, params, reqCtx)
-        ) as never;
-      }
-      return (await projectSync(
-        () => sales.getProducts!(params, reqCtx),
+      return projectSync(
+        () => sales.getProducts(params, reqCtx),
         r => r
-      )) as never;
+      );
     },
 
     createMediaBuy: async (params, ctx) => {
@@ -270,12 +267,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       if (sales.createMediaBuyTask) {
         return dispatchHitl(taskRegistry, { tool: 'create_media_buy', accountId: reqCtx.account.id }, taskId =>
           sales.createMediaBuyTask!(taskId, params, reqCtx)
-        ) as never;
+        );
       }
-      return (await projectSync(
+      return projectSync(
         () => sales.createMediaBuy!(params, reqCtx),
         r => r
-      )) as never;
+      );
     },
 
     updateMediaBuy: async (params, ctx) => {
@@ -288,43 +285,32 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           recovery: 'correctable',
         });
       }
-      if (sales.updateMediaBuyTask) {
-        return dispatchHitl(taskRegistry, { tool: 'update_media_buy', accountId: reqCtx.account.id }, taskId =>
-          sales.updateMediaBuyTask!(taskId, buyId, params, reqCtx)
-        ) as never;
-      }
-      return (await projectSync(
-        () => sales.updateMediaBuy!(buyId, params, reqCtx),
+      return projectSync(
+        () => sales.updateMediaBuy(buyId, params, reqCtx),
         r => r
-      )) as never;
+      );
     },
 
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      const creatives = ((params as { creatives?: unknown[] }).creatives ?? []) as never[];
+      const creatives = ((params as { creatives?: CreativeAsset[] }).creatives ?? []) as CreativeAsset[];
       if (sales.syncCreativesTask) {
         return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
           sales.syncCreativesTask!(taskId, creatives, reqCtx)
-        ) as never;
+        );
       }
-      return (await projectSync(
+      return projectSync(
         () => sales.syncCreatives!(creatives, reqCtx),
-        results => ({
-          creatives: results.map(r => ({
-            creative_id: r.creative_id,
-            status: r.status,
-            ...(r.reason !== undefined && { reason: r.reason }),
-          })),
-        })
-      )) as never;
+        rows => ({ creatives: rows })
+      );
     },
 
     getMediaBuyDelivery: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      return (await projectSync(
+      return projectSync(
         () => sales.getMediaBuyDelivery(params, reqCtx),
         actuals => actuals
-      )) as never;
+      );
     },
   };
 }
@@ -339,15 +325,14 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   return {
     buildCreative: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      if (creative.buildCreativeTask) {
-        return dispatchHitl(taskRegistry, { tool: 'build_creative', accountId: reqCtx.account.id }, taskId =>
-          creative.buildCreativeTask!(taskId, params, reqCtx)
-        ) as never;
-      }
-      return (await projectSync(
-        () => creative.buildCreative!(params, reqCtx),
-        manifest => manifest
-      )) as never;
+      // build_creative is sync-only at the wire level — BuildCreativeResponse
+      // doesn't define a Submitted arm. Long-running generation awaits in
+      // the request; status changes for downstream effects flow via
+      // publishStatusChange.
+      return projectSync(
+        () => creative.buildCreative(params, reqCtx),
+        manifest => ({ creative_manifest: manifest })
+      );
     },
 
     previewCreative: async (params, ctx) => {
@@ -358,30 +343,24 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
         });
       }
       const reqCtx = ctxFor(ctx);
-      return (await projectSync(
+      return projectSync(
         () => (creative as CreativeTemplatePlatform).previewCreative(params, reqCtx),
         preview => preview
-      )) as never;
+      );
     },
 
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      const creatives = ((params as { creatives?: unknown[] }).creatives ?? []) as never[];
+      const creatives = ((params as { creatives?: CreativeAsset[] }).creatives ?? []) as CreativeAsset[];
       if (creative.syncCreativesTask) {
         return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
           creative.syncCreativesTask!(taskId, creatives, reqCtx)
-        ) as never;
+        );
       }
-      return (await projectSync(
+      return projectSync(
         () => creative.syncCreatives!(creatives, reqCtx),
-        results => ({
-          creatives: results.map(r => ({
-            creative_id: r.creative_id,
-            status: r.status,
-            ...(r.reason !== undefined && { reason: r.reason }),
-          })),
-        })
-      )) as never;
+        rows => ({ creatives: rows })
+      );
     },
   };
 }
@@ -395,11 +374,11 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
   return {
     syncAudiences: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      const audienceList = ((params as { audiences?: unknown[] }).audiences ?? []) as never[];
-      return (await projectSync(
+      const audienceList = ((params as { audiences?: Audience[] }).audiences ?? []) as Audience[];
+      return projectSync(
         () => audiences.syncAudiences(audienceList, reqCtx),
-        results => ({ audiences: results })
-      )) as never;
+        rows => ({ audiences: rows })
+      );
     },
   };
 }
@@ -413,23 +392,23 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform:
           recovery: 'terminal',
         });
       }
-      const refs = ((params as { accounts?: unknown[] }).accounts ?? []) as never[];
-      return (await projectSync(
+      const refs = ((params as { accounts?: AccountReference[] }).accounts ?? []) as AccountReference[];
+      return projectSync(
         () => platform.accounts.upsert!(refs),
         rows => ({ accounts: rows })
-      )) as never;
+      );
     },
     listAccounts: async (params, _ctx) => {
       if (!platform.accounts.list) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'list_accounts not supported by this platform',
           recovery: 'terminal',
-        }) as never;
+        });
       }
-      const filter = params as { brand_domain?: string; operator?: string; cursor?: string; limit?: number };
-      const page = await platform.accounts.list(filter as never);
+      const filter = params as Parameters<NonNullable<typeof platform.accounts.list>>[0];
+      const page = await platform.accounts.list(filter);
       return {
-        accounts: page.items as never,
+        accounts: page.items.map(toWireAccount),
         ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
       };
     },

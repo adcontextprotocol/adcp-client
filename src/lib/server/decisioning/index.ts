@@ -84,13 +84,13 @@ export type { DecisioningPlatform, RequiredPlatformsFor } from './platform';
 export type {
   CreativeTemplatePlatform,
   CreativeGenerativePlatform,
-  CreativeReviewResult,
   RefinementMessage,
+  SyncCreativesRow,
 } from './specialisms/creative';
 
-export type { SalesPlatform, MediaBuy, DeliveryActuals } from './specialisms/sales';
+export type { SalesPlatform } from './specialisms/sales';
 
-export type { AudiencePlatform, AudienceSyncResult, AudienceStatus } from './specialisms/audiences';
+export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } from './specialisms/audiences';
 
 // Runtime (v6.0 alpha) — preview surface for adopters spiking against the
 // new shape. Subject to change before 6.0 GA.

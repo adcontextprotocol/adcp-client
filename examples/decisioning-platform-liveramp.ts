@@ -33,7 +33,7 @@ import type {
   AudiencePlatform,
   Audience,
   AudienceStatus,
-  AudienceSyncResult,
+  SyncAudiencesRow,
 } from '../src/lib/server/decisioning/specialisms/audiences';
 import type { AccountReference } from '../src/lib/types/tools.generated';
 
@@ -90,13 +90,13 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
       const id = 'account_id' in ref ? ref.account_id : 'liveramp_acc_1';
       return {
         id,
+        name: `LiveRamp — ${id}`,
+        status: 'active',
         operator: 'liveramp.example.com',
         metadata: { ramp_id: 'XR-12345' },
         authInfo: { kind: 'api_key' },
       };
     },
-    upsert: async () => [],
-    list: async () => ({ items: [], nextCursor: null }),
   };
 
   audiences_platform: AudiencePlatform = {
@@ -105,8 +105,8 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
      * pipeline + activation pipeline run in background and emit
      * publishStatusChange events as each audience progresses.
      */
-    syncAudiences: async (audiences: Audience[]): Promise<AudienceSyncResult[]> => {
-      const results: AudienceSyncResult[] = [];
+    syncAudiences: async (audiences: Audience[]): Promise<SyncAudiencesRow[]> => {
+      const results: SyncAudiencesRow[] = [];
       const accountId = 'liveramp_acc_1';
 
       for (const aud of audiences) {
@@ -116,9 +116,8 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
         if (identifiers.length < this.capabilities.config.minIdentifiers) {
           results.push({
             audience_id: audienceId,
-            action: 'rejected',
+            action: 'failed',
             status: 'failed',
-            reason: `Audience too small: ${identifiers.length} identifiers (minimum ${this.capabilities.config.minIdentifiers})`,
           });
           continue;
         }

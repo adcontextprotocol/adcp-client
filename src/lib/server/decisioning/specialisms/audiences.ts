@@ -13,7 +13,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
-import type { SyncAudiencesRequest } from '../../../types/tools.generated';
+import type { SyncAudiencesRequest, SyncAudiencesSuccess } from '../../../types/tools.generated';
 
 type Ctx = RequestContext<Account>;
 
@@ -24,6 +24,19 @@ type Ctx = RequestContext<Account>;
  */
 export type Audience = NonNullable<SyncAudiencesRequest['audiences']>[number];
 
+/**
+ * Wire success-row shape for `sync_audiences`. Returning the array of these
+ * rows from `syncAudiences` is what adopters write — the framework wraps
+ * with `{ audiences: [...] }` to form `SyncAudiencesSuccess`.
+ *
+ * `action` enum is the wire spec's: `'created' | 'updated' | 'unchanged' |
+ * 'deleted' | 'failed'`. Note: `'rejected'` is NOT a valid wire action
+ * value — use `'failed'` for buyer-rejected audiences.
+ */
+export type SyncAudiencesRow = SyncAudiencesSuccess['audiences'][number];
+
+export type AudienceStatus = NonNullable<SyncAudiencesRow['status']>;
+
 export interface AudiencePlatform {
   /**
    * Push audiences to the platform. Framework handles batching, idempotency,
@@ -31,8 +44,8 @@ export interface AudiencePlatform {
    * activation lifecycle.
    *
    * Sync acknowledgment with status changes via `publishStatusChange`:
-   * return per-audience results immediately (`pending` / `matching` rows
-   * are valid sync outcomes). The match-rate computation and activation
+   * return per-audience result rows immediately (`pending` / `matching` are
+   * valid sync outcomes). The match-rate computation and activation
    * pipeline run in the background — the platform calls
    * `publishStatusChange({ resource_type: 'audience', ... })` from its
    * webhook handler / job queue / cron when each audience reaches a
@@ -41,7 +54,7 @@ export interface AudiencePlatform {
    * Throw `new AdcpError(...)` for buyer-fixable rejection
    * (`AUDIENCE_TOO_SMALL`, etc.).
    */
-  syncAudiences(audiences: Audience[], ctx: Ctx): Promise<AudienceSyncResult[]>;
+  syncAudiences(audiences: Audience[], ctx: Ctx): Promise<SyncAudiencesRow[]>;
 
   /**
    * Read current audience status. Sync — this is a state-read, not a
@@ -50,25 +63,3 @@ export interface AudiencePlatform {
    */
   getAudienceStatus(audienceId: string, ctx: Ctx): Promise<AudienceStatus>;
 }
-
-export interface AudienceSyncResult {
-  audience_id: string;
-  action: 'created' | 'updated' | 'unchanged' | 'rejected';
-  /** Number of identifiers matched against the platform's graph. */
-  matched_count?: number;
-  /** Match rate (0..1). 0.4 = 40% of submitted identifiers matched. */
-  match_rate?: number;
-  /** Status of activation. */
-  status: AudienceStatus;
-  /** Optional rejection reason if action === 'rejected'. */
-  reason?: string;
-}
-
-export type AudienceStatus =
-  | 'pending' // received, not yet processed
-  | 'matching' // identity-graph match in progress
-  | 'matched' // matched, ready to activate
-  | 'activating' // pushing to destinations
-  | 'active' // available for targeting
-  | 'failed' // permanent failure
-  | 'archived'; // explicitly retired by buyer or seller

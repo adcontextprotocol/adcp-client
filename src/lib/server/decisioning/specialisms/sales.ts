@@ -1,33 +1,38 @@
 /**
- * SalesPlatform — sales specialism platform interface (v2 dual-method shape).
+ * SalesPlatform — sales specialism platform interface (v2.1).
  *
- * Each spec-HITL-eligible tool (`get_products`, `create_media_buy`,
- * `update_media_buy`, `sync_creatives`) exposes a method-pair. Adopter
- * implements EXACTLY ONE per pair:
+ * **HITL coverage matches the AdCP wire spec.** Only `create_media_buy` and
+ * `sync_creatives` define `Submitted` arms in their sync response unions;
+ * those are the two tools where the v2.1 dual-method shape applies. Every
+ * other tool is sync-only:
  *
- *   - **Sync variant** (`xxx`): adopter returns the resource synchronously.
- *     Framework awaits in foreground; projects to wire success arm.
- *     Lifecycle changes flow via `publishStatusChange(...)` or per-resource
- *     read endpoints (e.g., `getMediaBuys`).
+ *   - `get_products` — sync. Brief in, products out.
+ *   - `create_media_buy` — sync OR `*Task` HITL.
+ *   - `update_media_buy` — sync only. Re-approval flows that need HITL run
+ *     out-of-band; `publishStatusChange` carries the result.
+ *   - `sync_creatives` — sync OR `*Task` HITL.
+ *   - `get_media_buy_delivery` — sync only.
  *
- *   - **HITL variant** (`xxxTask`): framework creates a task BEFORE calling
- *     the platform method, returns submitted envelope to buyer immediately,
- *     then runs the task method in background. Method's return value
- *     becomes the task's terminal state. The `taskId` parameter signals
- *     "you're in HITL background; framework already responded to the buyer."
+ * For the two HITL-eligible tools, adopter implements EXACTLY ONE per pair:
  *
- * Type-level both are optional; `validatePlatform()` enforces exactly-one
- * per spec-HITL tool at construction time (and `RequiredPlatformsFor<S>`
- * enforces which variant per specialism — `sales-broadcast-tv` requires
- * `*Task`; `sales-social` requires sync; `sales-non-guaranteed` accepts
- * either).
+ *   - **Sync variant** (`xxx`): adopter returns the wire success arm
+ *     synchronously. Framework awaits in foreground; projects the value to
+ *     the wire response. Lifecycle changes flow via `publishStatusChange(...)`.
  *
- * Each method either returns the value or throws `AdcpError` for
- * structured rejection. Generic thrown errors map to `SERVICE_UNAVAILABLE`.
+ *   - **HITL variant** (`xxxTask`): framework allocates `taskId` BEFORE
+ *     calling the platform, returns the spec-defined submitted envelope
+ *     (`{ status: 'submitted', task_id }`) to the buyer immediately, then
+ *     runs the task method in background. Method's return value becomes
+ *     the task's terminal artifact.
  *
- * `getMediaBuyDelivery` is sync-only at the wire level today. For platforms
- * with manual report-running, return the request acknowledgment + emit
- * `delivery_status_changes` via `publishStatusChange(...)`.
+ * Sync-only tools that need long completion semantics use
+ * `publishStatusChange` (see `status-changes.ts`) — that's the spec-aligned
+ * channel for tools whose wire response unions don't define a Submitted
+ * arm. See `docs/proposals/decisioning-platform-v2-hitl-split.md`
+ * § "v2.1 spec-alignment" for rationale.
+ *
+ * Each method either returns the value or throws `AdcpError` for structured
+ * rejection. Generic thrown errors map to `SERVICE_UNAVAILABLE`.
  *
  * Status: Preview / 6.0.
  *
@@ -40,88 +45,79 @@ import type {
   GetProductsRequest,
   GetProductsResponse,
   CreateMediaBuyRequest,
+  CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
+  UpdateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
+  SyncCreativesSuccess,
   CreativeAsset,
 } from '../../../types/tools.generated';
 
 type Creative = CreativeAsset;
 type Ctx = RequestContext<Account>;
-import type { CreativeReviewResult } from './creative';
+
+/**
+ * Wire success-row shape for `sync_creatives`. Returning the array of these
+ * rows from `syncCreatives` is what adopters write — the framework wraps
+ * with `{ creatives: [...] }` to form `SyncCreativesSuccess`.
+ */
+export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 
 export interface SalesPlatform {
-  // ── get_products: sync OR task (custom proposal system) ─────────────
+  // ── get_products: sync only ─────────────────────────────────────────
+  // Spec doesn't define a Submitted arm in GetProductsResponse. Long-form
+  // proposal/offline workflows surface the eventual proposal via per-account
+  // notification channels, not this tool.
+  /** Sync discovery: brief in, products out. */
+  getProducts(req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
 
-  /** Sync discovery: brief in, products out. Most platforms. */
-  getProducts?(req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
-
-  /**
-   * HITL discovery: framework creates task; platform runs through
-   * proposal/offline workflow and returns when products are ready.
-   * Buyer initially sees a submitted envelope with `task_id`; resource
-   * lands on the task's completion artifact.
-   */
-  getProductsTask?(taskId: string, req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
-
-  // ── create_media_buy: sync OR task (broadcast TV / guaranteed) ──────
+  // ── create_media_buy: sync OR task ──────────────────────────────────
 
   /**
-   * Sync media-buy creation. Return the resolved `MediaBuy` immediately.
+   * Sync media-buy creation. Return the wire success-arm shape immediately.
    * Status changes (pending_creatives → active → completed) flow via
    * `publishStatusChange(...)` after creation.
-   */
-  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
-
-  /**
-   * HITL media-buy creation. Framework creates task before calling this;
-   * platform reserves inventory + runs internal checks + returns the
-   * MediaBuy once accepted. `media_buy_id` is unknown to the buyer until
-   * the task completes.
-   */
-  createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
-
-  // ── update_media_buy: sync OR task (re-approval edge) ───────────────
-
-  /**
-   * Sync update. Most patches apply immediately; status changes that
-   * follow (e.g., `paused` → `active` after operator confirms re-spend)
-   * flow via `publishStatusChange(...)`.
    *
-   * The patch is the wire shape. Adopters whose underlying platform
-   * exposes action verbs dispatch locally on the patch fields.
+   * Required: `media_buy_id`. Other fields optional — populate the ones
+   * your platform tracks at creation time.
    */
-  updateMediaBuy?(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
-
-  /** HITL update. Re-approval workflows that gate the patch from applying at all. */
-  updateMediaBuyTask?(taskId: string, buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<MediaBuy>;
-
-  // ── sync_creatives: sync OR task (mandatory pre-persist review) ─────
+  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx): Promise<CreateMediaBuySuccess>;
 
   /**
-   * Sync creative push. Returns per-creative status array — buyers see
-   * mixed `approved` / `pending_review` rows in one response. Subsequent
-   * review state changes flow via `publishStatusChange(...)`.
+   * HITL media-buy creation. Framework returns the submitted envelope to
+   * the buyer; this method runs in background. Method's return value
+   * becomes the task's terminal artifact.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx): Promise<CreativeReviewResult[]>;
+  createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx): Promise<CreateMediaBuySuccess>;
+
+  // ── update_media_buy: sync only ─────────────────────────────────────
+  // Spec doesn't define a Submitted arm in UpdateMediaBuyResponse. Operator
+  // re-approval flows return the patched buy synchronously after the
+  // operator confirms (or with the previous state if a re-approval is queued
+  // off-band) and `publishStatusChange` carries the eventual transition.
+  /** Sync update. Returns the patched buy. */
+  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<UpdateMediaBuySuccess>;
+
+  // ── sync_creatives: sync OR task ────────────────────────────────────
 
   /**
-   * HITL creative review. Framework creates task; platform queues for
-   * mandatory review before persisting any creative. Return the per-
-   * creative results once review is complete.
+   * Sync creative push. Returns the array of wire success rows — one per
+   * creative processed. Each row carries `action` (CRUD outcome) and
+   * optional `status` (review state). Buyers see mixed `approved` /
+   * `pending_review` rows in one response. Subsequent review state changes
+   * flow via `publishStatusChange(...)`.
    */
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx): Promise<CreativeReviewResult[]>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
 
-  // ── get_media_buy_delivery: sync only at the wire level ─────────────
+  /**
+   * HITL creative review. Framework returns the submitted envelope to the
+   * buyer; this method runs in background. Returns per-creative result rows
+   * once review is complete.
+   */
+  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
 
-  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx): Promise<DeliveryActuals>;
+  // ── get_media_buy_delivery: sync only ───────────────────────────────
+
+  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx): Promise<GetMediaBuyDeliveryResponse>;
 }
-
-// ---------------------------------------------------------------------------
-// Shared shapes — re-export from generated for now; tighten later.
-// ---------------------------------------------------------------------------
-
-/** Re-exported from tools.generated; matches wire schema's MediaBuy shape. */
-export type MediaBuy = import('../../../types/tools.generated').GetMediaBuysResponse['media_buys'][number];
-
-/** Re-exported from tools.generated; matches wire schema's delivery row shape. */
-export type DeliveryActuals = import('../../../types/tools.generated').GetMediaBuyDeliveryResponse;

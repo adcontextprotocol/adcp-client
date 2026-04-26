@@ -30,21 +30,25 @@ export class PlatformConfigError extends Error {
 }
 
 /**
- * Dual-method tool pairs. Each spec-HITL-eligible tool exposes both a sync
- * variant (`xxx`) and a HITL variant (`xxxTask`). Exactly one must be defined
- * per pair when the specialism requires the tool; defining both is an error.
+ * Dual-method tool pairs. Only the two spec-HITL-eligible tools that have
+ * `Submitted` arms in their wire response unions today: `create_media_buy`
+ * and `sync_creatives`. Adopters implement EXACTLY ONE per pair when the
+ * specialism uses the tool; defining both is an error.
+ *
+ * `get_products`, `update_media_buy`, `build_creative`, and `sync_audiences`
+ * are sync-only — their wire response unions don't define Submitted arms.
+ * Long-running flows for those tools surface via `publishStatusChange` on
+ * the appropriate resource type (audience, plan, proposal, etc.).
+ *
+ * If you want HITL on a sync-only tool, file an issue against
+ * adcontextprotocol/adcp to add a Submitted arm to its response union.
  */
 const DUAL_METHOD_PAIRS: Record<string, ReadonlyArray<readonly [string, string]>> = {
   sales: [
-    ['getProducts', 'getProductsTask'],
     ['createMediaBuy', 'createMediaBuyTask'],
-    ['updateMediaBuy', 'updateMediaBuyTask'],
     ['syncCreatives', 'syncCreativesTask'],
   ],
-  creative: [
-    ['buildCreative', 'buildCreativeTask'],
-    ['syncCreatives', 'syncCreativesTask'],
-  ],
+  creative: [['syncCreatives', 'syncCreativesTask']],
 };
 
 export function validatePlatform(platform: DecisioningPlatform): void {

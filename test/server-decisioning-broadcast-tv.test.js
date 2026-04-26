@@ -49,8 +49,7 @@ function makeBroadcastTvSeller({
       list: async () => ({ items: [], nextCursor: null }),
     },
     sales: {
-      getProductsTask: async (_taskId, req) => {
-        await new Promise(r => setTimeout(r, 10));
+      getProducts: async req => {
         const promotedOffering = req?.promoted_offering ?? '';
         if (/political|cannabis|gambling/i.test(promotedOffering)) {
           throw new AdcpError('POLICY_VIOLATION', {
@@ -86,7 +85,7 @@ function makeBroadcastTvSeller({
         }
         await new Promise(r => setTimeout(r, config.trafficReviewMs));
         const buyId = `mb_${config.affiliateId}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const buy = { media_buy_id: buyId, status: 'accepted', total_budget: totalBudget, daypart: 'primetime' };
+        const buy = { media_buy_id: buyId, status: 'pending_start', daypart: 'primetime' };
         mediaBuys.set(buyId, buy);
 
         const accountId = req?.account?.account_id ?? 'broadcast_acc_1';
@@ -124,11 +123,12 @@ function makeBroadcastTvSeller({
           if (tags.includes('political')) {
             return {
               creative_id: id,
+              action: 'failed',
               status: 'rejected',
-              reason: 'Political ads require FCC + station GM sign-off',
+              errors: [{ code: 'CREATIVE_REJECTED', message: 'FCC + station GM sign-off required' }],
             };
           }
-          return { creative_id: id, status: 'approved' };
+          return { creative_id: id, action: 'created', status: 'approved' };
         });
       },
 
@@ -179,7 +179,7 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     await server.awaitTask(taskId);
     const final = server.getTaskState(taskId);
     assert.strictEqual(final.status, 'completed');
-    assert.strictEqual(final.result.status, 'accepted');
+    assert.strictEqual(final.result.status, 'pending_start');
     assert.ok(final.result.media_buy_id.startsWith('mb_WCBS_'));
   });
 
@@ -223,7 +223,7 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     }
   });
 
-  it('rejected category throws POLICY_VIOLATION via getProductsTask', async () => {
+  it('rejected category throws POLICY_VIOLATION sync (getProducts is sync-only per v2.1)', async () => {
     const platform = makeBroadcastTvSeller();
     const server = buildServer(platform);
 
@@ -239,13 +239,9 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
       },
     });
 
-    const taskId = result.structuredContent.task_id;
-    await server.awaitTask(taskId);
-
-    const final = server.getTaskState(taskId);
-    assert.strictEqual(final.status, 'failed');
-    assert.strictEqual(final.error.code, 'POLICY_VIOLATION');
-    assert.strictEqual(final.error.recovery, 'terminal');
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'POLICY_VIOLATION');
+    assert.strictEqual(result.structuredContent.adcp_error.recovery, 'terminal');
   });
 
   it('syncCreativesTask rejects political tags; approves rest', async () => {
@@ -276,8 +272,10 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     assert.strictEqual(reviews.length, 2);
     const brand = reviews.find(r => r.creative_id === 'cr_brand');
     const pol = reviews.find(r => r.creative_id === 'cr_pol');
+    assert.strictEqual(brand.action, 'created');
     assert.strictEqual(brand.status, 'approved');
+    assert.strictEqual(pol.action, 'failed');
     assert.strictEqual(pol.status, 'rejected');
-    assert.ok(/FCC|GM/.test(pol.reason));
+    assert.ok(/FCC|GM/.test(pol.errors?.[0]?.message ?? ''));
   });
 });

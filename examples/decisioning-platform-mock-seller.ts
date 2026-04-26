@@ -35,13 +35,15 @@ import {
   type SalesPlatform,
   type AccountStore,
   type AdcpStructuredError,
+  type SyncCreativesRow,
 } from '../src/lib/server/decisioning';
-import type { CreativeReviewResult } from '../src/lib/server/decisioning/specialisms/creative';
 import type {
   GetProductsRequest,
   GetProductsResponse,
   CreateMediaBuyRequest,
+  CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
+  UpdateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   CreativeAsset,
@@ -64,11 +66,7 @@ interface MockSellerMeta {
   advertiser_id: string;
 }
 
-type MockMediaBuy = {
-  media_buy_id: string;
-  status: 'pending_creatives' | 'pending_start' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
-  total_budget: number;
-};
+type MockMediaBuy = CreateMediaBuySuccess;
 
 const DEFAULT_CONFIG: MockSellerConfig = {
   floorCpm: 1.0,
@@ -84,13 +82,13 @@ function makeAccounts(): AccountStore<MockSellerMeta> {
       const id = 'account_id' in ref ? ref.account_id : 'mock_acc_1';
       return {
         id,
+        name: 'Mock Account',
+        status: 'active',
         operator: 'mockseller.example.com',
         metadata: { network_id: 'mock_network', advertiser_id: 'mock_advertiser' },
         authInfo: { kind: 'api_key' },
       };
     },
-    upsert: async () => [],
-    list: async () => ({ items: [], nextCursor: null }),
   };
 }
 
@@ -142,33 +140,32 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
       publisher_properties: { reportable: true },
       reporting_capabilities: { available_dimensions: ['geo', 'creative'] },
       pricing_options: [{ pricing_model: 'cpm', rate: 12.5, currency: 'USD' }],
-    } as never,
+    },
   ],
 });
 
-const SHARED_SYNC_CREATIVES = async (creatives: CreativeAsset[]): Promise<CreativeReviewResult[]> => {
+const SHARED_SYNC_CREATIVES = async (creatives: CreativeAsset[]): Promise<SyncCreativesRow[]> => {
   return creatives.map(c => {
     const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
     const needsReview = (c as { format_id?: { id?: string } }).format_id?.id?.startsWith('video_');
     return {
       creative_id: id,
+      action: 'created',
       status: needsReview ? 'pending_review' : 'approved',
-      ...(needsReview && { reason: 'video creatives go through brand-suitability review' }),
     };
   });
 };
 
 const SHARED_GET_MEDIA_BUY_DELIVERY = async (
   filter: GetMediaBuyDeliveryRequest
-): Promise<GetMediaBuyDeliveryResponse> =>
-  ({
-    currency: 'USD',
-    reporting_period: {
-      start: filter.start_date ?? '2026-04-01',
-      end: filter.end_date ?? '2026-04-30',
-    },
-    media_buys: [],
-  }) as never;
+): Promise<GetMediaBuyDeliveryResponse> => ({
+  currency: 'USD',
+  reporting_period: {
+    start: filter.start_date ?? '2026-04-01',
+    end: filter.end_date ?? '2026-04-30',
+  },
+  media_buys: [],
+});
 
 // ---------------------------------------------------------------------------
 // MockSyncSeller — sync createMediaBuy (auto-approve)
@@ -191,22 +188,23 @@ export class MockSyncSeller implements DecisioningPlatform<MockSellerConfig, Moc
   sales: SalesPlatform = {
     getProducts: SHARED_GET_PRODUCTS,
 
-    /** Sync happy path: pre-flight; auto-approve; return MediaBuy immediately. */
-    createMediaBuy: async (req: CreateMediaBuyRequest) => {
+    /** Sync happy path: pre-flight; auto-approve; return wire success arm. */
+    createMediaBuy: async (req: CreateMediaBuyRequest): Promise<CreateMediaBuySuccess> => {
       const errors = preflight(req, this.capabilities.config);
       if (errors.length > 0) rejectPreflight(errors);
 
       const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const totalBudget =
-        typeof req.total_budget === 'number'
-          ? req.total_budget
-          : ((req.total_budget as { amount?: number })?.amount ?? 0);
-      const buy: MockMediaBuy = { media_buy_id: buyId, status: 'pending_creatives', total_budget: totalBudget };
+      const buy: MockMediaBuy = {
+        media_buy_id: buyId,
+        status: 'pending_creatives',
+        confirmed_at: new Date().toISOString(),
+        revision: 1,
+      };
       this.mediaBuys.set(buyId, buy);
-      return buy as never;
+      return buy;
     },
 
-    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
+    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
       const existing = this.mediaBuys.get(buyId);
       if (!existing) {
         throw new AdcpError('MEDIA_BUY_NOT_FOUND', {
@@ -217,7 +215,7 @@ export class MockSyncSeller implements DecisioningPlatform<MockSellerConfig, Moc
       }
       if (patch.active === false) existing.status = 'paused';
       if (patch.active === true && existing.status === 'paused') existing.status = 'active';
-      return existing as never;
+      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
     },
 
     syncCreatives: SHARED_SYNC_CREATIVES,
@@ -252,7 +250,7 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
      * return value becomes terminal `result`; thrown `AdcpError` becomes
      * terminal `error`.
      */
-    createMediaBuyTask: async (_taskId: string, req: CreateMediaBuyRequest) => {
+    createMediaBuyTask: async (_taskId: string, req: CreateMediaBuyRequest): Promise<CreateMediaBuySuccess> => {
       const errors = preflight(req, this.capabilities.config);
       if (errors.length > 0) rejectPreflight(errors);
 
@@ -260,16 +258,17 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
       await new Promise(r => setTimeout(r, this.capabilities.config.approvalDurationMs));
 
       const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const totalBudget =
-        typeof req.total_budget === 'number'
-          ? req.total_budget
-          : ((req.total_budget as { amount?: number })?.amount ?? 0);
-      const buy: MockMediaBuy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
+      const buy: MockMediaBuy = {
+        media_buy_id: buyId,
+        status: 'active',
+        confirmed_at: new Date().toISOString(),
+        revision: 1,
+      };
       this.mediaBuys.set(buyId, buy);
-      return buy as never;
+      return buy;
     },
 
-    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest) => {
+    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
       const existing = this.mediaBuys.get(buyId);
       if (!existing) {
         throw new AdcpError('MEDIA_BUY_NOT_FOUND', {
@@ -280,7 +279,7 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
       }
       if (patch.active === false) existing.status = 'paused';
       if (patch.active === true && existing.status === 'paused') existing.status = 'active';
-      return existing as never;
+      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
     },
 
     syncCreatives: SHARED_SYNC_CREATIVES,
