@@ -66,11 +66,10 @@ import { validatePlatform } from './validate-platform';
 import { buildRequestContext } from './to-context';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './task-registry';
 
-export interface CreateAdcpServerFromPlatformOptions
-  extends Omit<
-    AdcpServerConfig,
-    'mediaBuy' | 'creative' | 'accounts' | 'eventTracking' | 'resolveAccount' | 'capabilities' | 'name' | 'version'
-  > {
+export interface CreateAdcpServerFromPlatformOptions extends Omit<
+  AdcpServerConfig,
+  'mediaBuy' | 'creative' | 'accounts' | 'eventTracking' | 'resolveAccount' | 'capabilities' | 'name' | 'version'
+> {
   name: string;
   version: string;
   /**
@@ -256,10 +255,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     getProducts: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       if (sales.getProductsTask) {
-        return dispatchHitl(
-          taskRegistry,
-          { tool: 'get_products', accountId: reqCtx.account.id },
-          taskId => sales.getProductsTask!(taskId, params, reqCtx)
+        return dispatchHitl(taskRegistry, { tool: 'get_products', accountId: reqCtx.account.id }, taskId =>
+          sales.getProductsTask!(taskId, params, reqCtx)
         ) as never;
       }
       return (await projectSync(
@@ -271,10 +268,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     createMediaBuy: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       if (sales.createMediaBuyTask) {
-        return dispatchHitl(
-          taskRegistry,
-          { tool: 'create_media_buy', accountId: reqCtx.account.id },
-          taskId => sales.createMediaBuyTask!(taskId, params, reqCtx)
+        return dispatchHitl(taskRegistry, { tool: 'create_media_buy', accountId: reqCtx.account.id }, taskId =>
+          sales.createMediaBuyTask!(taskId, params, reqCtx)
         ) as never;
       }
       return (await projectSync(
@@ -294,10 +289,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         });
       }
       if (sales.updateMediaBuyTask) {
-        return dispatchHitl(
-          taskRegistry,
-          { tool: 'update_media_buy', accountId: reqCtx.account.id },
-          taskId => sales.updateMediaBuyTask!(taskId, buyId, params, reqCtx)
+        return dispatchHitl(taskRegistry, { tool: 'update_media_buy', accountId: reqCtx.account.id }, taskId =>
+          sales.updateMediaBuyTask!(taskId, buyId, params, reqCtx)
         ) as never;
       }
       return (await projectSync(
@@ -310,10 +303,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = ((params as { creatives?: unknown[] }).creatives ?? []) as never[];
       if (sales.syncCreativesTask) {
-        return dispatchHitl(
-          taskRegistry,
-          { tool: 'sync_creatives', accountId: reqCtx.account.id },
-          taskId => sales.syncCreativesTask!(taskId, creatives, reqCtx)
+        return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
+          sales.syncCreativesTask!(taskId, creatives, reqCtx)
         ) as never;
       }
       return (await projectSync(
@@ -349,10 +340,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     buildCreative: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       if (creative.buildCreativeTask) {
-        return dispatchHitl(
-          taskRegistry,
-          { tool: 'build_creative', accountId: reqCtx.account.id },
-          taskId => creative.buildCreativeTask!(taskId, params, reqCtx)
+        return dispatchHitl(taskRegistry, { tool: 'build_creative', accountId: reqCtx.account.id }, taskId =>
+          creative.buildCreativeTask!(taskId, params, reqCtx)
         ) as never;
       }
       return (await projectSync(
@@ -379,10 +368,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = ((params as { creatives?: unknown[] }).creatives ?? []) as never[];
       if (creative.syncCreativesTask) {
-        return dispatchHitl(
-          taskRegistry,
-          { tool: 'sync_creatives', accountId: reqCtx.account.id },
-          taskId => creative.syncCreativesTask!(taskId, creatives, reqCtx)
+        return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
+          creative.syncCreativesTask!(taskId, creatives, reqCtx)
         ) as never;
       }
       return (await projectSync(

@@ -97,9 +97,7 @@ function makeAccounts(): AccountStore<MockSellerMeta> {
 function preflight(req: CreateMediaBuyRequest, config: MockSellerConfig): AdcpStructuredError[] {
   const errors: AdcpStructuredError[] = [];
   const totalBudget =
-    typeof req.total_budget === 'number'
-      ? req.total_budget
-      : ((req.total_budget as { amount?: number })?.amount ?? 0);
+    typeof req.total_budget === 'number' ? req.total_budget : ((req.total_budget as { amount?: number })?.amount ?? 0);
 
   if (totalBudget < config.floorCpm * 1000) {
     errors.push({

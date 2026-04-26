@@ -433,7 +433,11 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const result = await dispatchCreate(server);
     assert.strictEqual(result.structuredContent.status, 'submitted');
     assert.ok(result.structuredContent.task_id.startsWith('task_'));
-    assert.strictEqual(result.structuredContent.task_id, capturedTaskId, 'taskId on the wire matches the one passed to *Task');
+    assert.strictEqual(
+      result.structuredContent.task_id,
+      capturedTaskId,
+      'taskId on the wire matches the one passed to *Task'
+    );
 
     const taskId = result.structuredContent.task_id;
     await server.awaitTask(taskId);

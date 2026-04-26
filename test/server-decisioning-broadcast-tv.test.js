@@ -76,8 +76,7 @@ function makeBroadcastTvSeller({
       },
 
       createMediaBuyTask: async (_taskId, req) => {
-        const totalBudget =
-          typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
+        const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
         if (totalBudget < 5000) {
           throw new AdcpError('BUDGET_TOO_LOW', {
             recovery: 'correctable',
@@ -162,7 +161,9 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
         arguments: {
           buyer_ref: 'b1',
           idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
-          packages: [{ product_id: 'prod_primetime_30s', budget: 10000, package_id: 'pkg_1', creative_assignments: [] }],
+          packages: [
+            { product_id: 'prod_primetime_30s', budget: 10000, package_id: 'pkg_1', creative_assignments: [] },
+          ],
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           total_budget: 10000,
@@ -199,7 +200,9 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
           arguments: {
             buyer_ref: 'b1',
             idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
-            packages: [{ product_id: 'prod_primetime_30s', budget: 10000, package_id: 'pkg_1', creative_assignments: [] }],
+            packages: [
+              { product_id: 'prod_primetime_30s', budget: 10000, package_id: 'pkg_1', creative_assignments: [] },
+            ],
             start_time: '2026-05-01T00:00:00Z',
             end_time: '2026-06-01T00:00:00Z',
             total_budget: 10000,

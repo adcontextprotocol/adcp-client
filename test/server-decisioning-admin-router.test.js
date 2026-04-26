@@ -5,11 +5,7 @@ process.env.NODE_ENV = 'test';
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const {
-  createTenantRegistry,
-  createTenantAdminHandlers,
-  mountTenantAdmin,
-} = require('../dist/lib/server/decisioning');
+const { createTenantRegistry, createTenantAdminHandlers, mountTenantAdmin } = require('../dist/lib/server/decisioning');
 
 const SAMPLE_KEY = {
   keyId: 'k1',

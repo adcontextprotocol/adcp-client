@@ -18,9 +18,7 @@ import type { HandlerContext } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
 
-export function buildRequestContext<TAccount = unknown>(
-  handlerCtx: HandlerContext<TAccount>
-): RequestContext<Account> {
+export function buildRequestContext<TAccount = unknown>(handlerCtx: HandlerContext<TAccount>): RequestContext<Account> {
   const account = handlerCtx.account as Account | undefined;
   if (!account) {
     throw new Error('buildRequestContext: handler context missing resolved account');

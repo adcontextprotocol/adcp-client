@@ -99,7 +99,9 @@ export function buildMultiTenantRegistry(): TenantRegistry {
  */
 export function makeMultiTenantFactory(
   registry: TenantRegistry
-): (ctx: { host: string }) => ReturnType<NonNullable<ReturnType<typeof buildMultiTenantRegistry>['resolveByHost']>>['server'] {
+): (ctx: {
+  host: string;
+}) => ReturnType<NonNullable<ReturnType<typeof buildMultiTenantRegistry>['resolveByHost']>>['server'] {
   return ctx => {
     const resolved = registry.resolveByHost(ctx.host);
     if (!resolved) {

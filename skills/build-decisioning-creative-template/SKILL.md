@@ -183,6 +183,36 @@ serve(() => server, { publicUrl: 'https://watermark.example.com' });
 
 That's the entire shape. **No `as never` casts in adopter code** — the wire types are typed. Discriminators do narrowing for you. The rest of this skill is the rules around it.
 
+## Two wire shapes that trip people up
+
+### `target_format_id` is a `FormatID` object, not a bare string
+
+```ts
+// ❌ WRONG
+if (req.target_format_id === 'audio_30s') { ... }
+
+// ✅ CORRECT — FormatID is { id: string; agent_url: string }
+if (req.target_format_id?.id === 'audio_30s') { ... }
+```
+
+The wire schema separates format identity (`id`) from the creative agent that hosts the format definition (`agent_url`). Always read `.id` for the literal format identifier.
+
+### `PreviewCreativeResponse` is a discriminated union — pick `'single'`
+
+```ts
+// 3 variants by `response_type`: 'single' | 'batch' | 'variant'
+// For stateless creative-template platforms, return `'single'`. Always.
+return {
+  response_type: 'single',
+  previews: [{ preview_id, input: { name: 'default' }, renders: [...] }],
+  expires_at,
+};
+```
+
+`batch` and `variant` are for advanced post-flight workflows you don't need. The full union exists because the spec covers ad servers that produce per-impression preview variants — irrelevant for transform platforms. **If you're a creative-template platform, always return `'single'`.**
+
+(See [#3268](https://github.com/adcontextprotocol/adcp/issues/3268) — proposing to hoist `preview_url` to the top level for the single-render case.)
+
 ## The interface you implement
 
 `CreativeTemplatePlatform` has 5 method slots. **For each method-pair you implement EXACTLY ONE — sync OR `*Task`** — `validatePlatform()` will throw at construction if you provide both.
