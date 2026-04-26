@@ -1,5 +1,10 @@
-import type { AgentRequestSigningConfig } from '../types/adcp';
+import type {
+  AgentRequestSigningConfig,
+  AgentRequestSigningConfigInline,
+  AgentRequestSigningConfigProvider,
+} from '../types/adcp';
 import { createSigningFetch, type CoverContentDigestPredicate } from './fetch';
+import { createSigningFetchAsync } from './fetch-async';
 import {
   buildCapabilityCacheKey,
   defaultCapabilityCache,
@@ -148,15 +153,29 @@ export function resolveCoverContentDigest(policy: ContentDigestPolicy | undefine
 }
 
 /**
- * Convert an `AgentRequestSigningConfig` into the `SignerKey` shape expected
- * by `signRequest` / `createSigningFetch`.
+ * Convert an inline `AgentRequestSigningConfig` into the `SignerKey` shape
+ * expected by `signRequest` / `createSigningFetch`. Provider-backed configs
+ * have no in-process key material — callers must route through
+ * `createSigningFetchAsync(upstream, config.provider, ...)` instead.
  */
-export function toSignerKey(config: AgentRequestSigningConfig): SignerKey {
+export function toSignerKey(config: AgentRequestSigningConfigInline): SignerKey {
   return {
     keyid: config.kid,
     alg: config.alg,
     privateKey: config.private_key as SignerKey['privateKey'],
   };
+}
+
+/** Narrow predicate for the inline shape (kind absent or `'inline'`). */
+export function isInlineSigningConfig(config: AgentRequestSigningConfig): config is AgentRequestSigningConfigInline {
+  return config.kind !== 'provider';
+}
+
+/** Narrow predicate for the provider shape. */
+export function isProviderSigningConfig(
+  config: AgentRequestSigningConfig
+): config is AgentRequestSigningConfigProvider {
+  return config.kind === 'provider';
 }
 
 export interface BuildAgentSigningFetchOptions {
@@ -189,7 +208,6 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   // factory-call time.
   const explicitUpstream = options.upstream;
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
-  const key = toSignerKey(signing);
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
     const operation = extractAdcpOperation(init?.body);
@@ -202,7 +220,30 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     return resolveCoverContentDigest(entry?.requestSigning?.covers_content_digest);
   };
 
-  return createSigningFetch(upstream, key, { shouldSign, coverContentDigest });
+  if (isProviderSigningConfig(signing)) {
+    // Freeze the provider's identity fields at factory time and pass a
+    // snapshot view down to the async signer. TypeScript `readonly` on the
+    // `SigningProvider` interface is compile-time only — if a downstream
+    // adapter mutates `keyid`/`algorithm`/`fingerprint` between context
+    // build and outbound request, the wire `keyid` would drift away from
+    // the cache key the connection was bound to. The frozen view binds the
+    // wire identity to the snapshot already used for cache routing.
+    const frozen = freezeProviderIdentity(signing.provider);
+    return createSigningFetchAsync(upstream, frozen, { shouldSign, coverContentDigest });
+  }
+  return createSigningFetch(upstream, toSignerKey(signing), { shouldSign, coverContentDigest });
+}
+
+function freezeProviderIdentity(provider: AgentRequestSigningConfigProvider['provider']) {
+  const keyid = provider.keyid;
+  const algorithm = provider.algorithm;
+  const fingerprint = provider.fingerprint;
+  return {
+    keyid,
+    algorithm,
+    fingerprint,
+    sign: (payload: Uint8Array) => provider.sign(payload),
+  };
 }
 
 export interface CreateAgentSignedFetchOptions {

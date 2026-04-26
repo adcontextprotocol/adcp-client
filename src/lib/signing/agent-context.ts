@@ -7,6 +7,23 @@ import {
   defaultCapabilityCache,
   type CachedCapability,
 } from './capability-cache';
+import type { SigningProvider } from './provider';
+import type { AdcpSignAlg } from './types';
+
+/**
+ * Snapshot of the signing identity captured at context-build time. The
+ * transport layer reads from this snapshot rather than from `provider.*`
+ * directly so a provider object whose fields drift between context build
+ * and outbound request can't desynchronize the on-wire `keyid` from the
+ * cache key the connection was bound to. TypeScript's `readonly` modifier
+ * is compile-time only; the snapshot is the runtime defense.
+ */
+export interface AgentSigningIdentitySnapshot {
+  keyid: string;
+  algorithm: AdcpSignAlg;
+  /** Defensively hashed disambiguator — see {@link buildAgentSigningContext}. */
+  fingerprint: string;
+}
 
 /**
  * Per-call signing context passed down to the MCP/A2A transport layer. Built
@@ -14,11 +31,16 @@ import {
  * attached to the transport. Opaque to the transport helpers — they only
  * use `cacheKey` (to disambiguate connection-cache entries per signing
  * identity), `getCapability` (to read the cached seller advertisement on
- * each outbound request), and `signing` (to produce the signer key).
+ * each outbound request), and `signing` (to produce the signer key or
+ * provider).
  */
 export interface AgentSigningContext {
   /** Signing config copied from AgentConfig.request_signing. */
   signing: AgentRequestSigningConfig;
+  /** Provider when `signing.kind === 'provider'`; undefined for inline keys. */
+  provider?: SigningProvider;
+  /** Snapshot of identity fields read from the provider at build time. */
+  identity: AgentSigningIdentitySnapshot;
   /** Suffix to append to transport connection-cache keys so agents with different signing identities don't share a connection. */
   cacheKey: string;
   /** Lazy accessor for the currently cached capability for this agent. */
@@ -63,17 +85,23 @@ export function buildAgentSigningContext(
   if (!signing) return undefined;
 
   const cache = options.cache ?? defaultCapabilityCache;
-  const keyFingerprint = privateKeyFingerprint(signing);
-  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, keyFingerprint);
-  // Transport-connection cache-key suffix binds to a hash of the private key,
-  // not just the advertised `kid`. Two tenants that misconfigure the same
-  // `kid` string but hold distinct private keys must not collide on a shared
-  // cached transport — that would sign one tenant's outbound requests with
-  // the other tenant's key (same `kid`, different `d`), an impersonation.
-  const cacheKey = `sig=${keyFingerprint}`;
+  const identity = snapshotIdentity(signing);
+  const cacheFingerprint = deriveCacheFingerprint(identity);
+  const capabilityCacheKey = buildCapabilityCacheKey(agent.agent_uri, agent.auth_token, cacheFingerprint);
+  // Transport-connection cache-key suffix binds to the defensively hashed
+  // identity, not just the advertised `kid`. Two tenants that misconfigure
+  // the same `kid` string but hold distinct keys must not collide on a
+  // shared cached transport — that would sign one tenant's outbound
+  // requests with the other tenant's key (same `kid`, different material),
+  // an impersonation. The hash includes `algorithm` so an Ed25519/P-256
+  // swap on the same `kid+fingerprint` doesn't alias either.
+  const cacheKey = `sig=${cacheFingerprint}`;
+  const provider = signing.kind === 'provider' ? signing.provider : undefined;
 
   return {
     signing,
+    provider,
+    identity,
     cacheKey,
     cache,
     capabilityCacheKey,
@@ -83,13 +111,56 @@ export function buildAgentSigningContext(
 }
 
 /**
- * Derive a stable per-key cache-key fragment. Hashes both `kid` and the
- * private scalar `d` so that two tenants advertising the same `kid` but
- * holding distinct private keys get different cache entries. Truncated to
- * 16 hex chars — a collision-resistance budget of 64 bits against random
- * keys is plenty for a cache disambiguator, and we never rely on this
- * value as a security boundary.
+ * Snapshot the signing identity at context-build time. For provider configs,
+ * reads `keyid` / `algorithm` / `fingerprint` once and freezes them. For
+ * inline configs, derives a fingerprint from the private scalar — same
+ * 64-bit cache disambiguator the SDK has always used.
  */
-function privateKeyFingerprint(signing: AgentRequestSigningConfig): string {
-  return createHash('sha256').update(signing.kid).update('\0').update(signing.private_key.d).digest('hex').slice(0, 16);
+function snapshotIdentity(signing: AgentRequestSigningConfig): AgentSigningIdentitySnapshot {
+  if (signing.kind === 'provider') {
+    const provider = signing.provider;
+    return {
+      keyid: provider.keyid,
+      algorithm: provider.algorithm,
+      fingerprint: provider.fingerprint,
+    };
+  }
+  return {
+    keyid: signing.kid,
+    algorithm: signing.alg,
+    fingerprint: inlineFingerprint(signing.kid, signing.private_key.d),
+  };
+}
+
+/**
+ * Defensively hash the snapshot before composing cache keys. A
+ * provider-supplied `fingerprint` is treated as untrusted input — a
+ * confused integrator could return a constant, an empty string, or a
+ * tenant-controlled value, any of which would re-enable cross-tenant
+ * collisions on the same `kid`. Including `algorithm` in the digest
+ * prevents an Ed25519/P-256 swap on identical `kid+fingerprint` from
+ * aliasing.
+ *
+ * Truncated to 16 hex chars — a 64-bit collision-resistance budget against
+ * random keys is plenty for a cache disambiguator, and we never rely on
+ * this value as a security boundary.
+ */
+function deriveCacheFingerprint(identity: AgentSigningIdentitySnapshot): string {
+  return createHash('sha256')
+    .update(identity.algorithm)
+    .update('\0')
+    .update(identity.keyid)
+    .update('\0')
+    .update(identity.fingerprint)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function inlineFingerprint(kid: string, d: string | undefined): string {
+  if (!d) {
+    throw new TypeError(
+      `AgentRequestSigningConfig (kind: 'inline', kid='${kid}') is missing 'private_key.d' — JWK must include the private scalar.`
+    );
+  }
+  return createHash('sha256').update(kid).update('\0').update(d).digest('hex').slice(0, 16);
 }

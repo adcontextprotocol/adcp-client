@@ -1,30 +1,34 @@
-import { signRequest, type SignerKey, type SignRequestOptions } from './signer';
-
-/** Callback form for `coverContentDigest` — lets the wrapper decide per call. */
-export type CoverContentDigestPredicate = (url: string, init: RequestInit | undefined) => boolean;
-
-export interface SigningFetchOptions extends Omit<SignRequestOptions, 'coverContentDigest'> {
-  shouldSign?: (url: string, init: RequestInit | undefined) => boolean;
-  /**
-   * Whether to cover `content-digest`. May be a boolean (static) or a
-   * predicate resolved at signing time against the current request — used by
-   * the AdCP agent wrapper to honor the seller's `covers_content_digest`
-   * policy (`required` / `forbidden` / `either`) per operation.
-   */
-  coverContentDigest?: boolean | CoverContentDigestPredicate;
-}
+import type { CoverContentDigestPredicate, SigningFetchOptions } from './fetch';
+import type { SigningProvider } from './provider';
+import type { SignRequestOptions } from './signer';
+import { signRequestAsync } from './signer-async';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-/**
- * Header names whose wire values are produced by the signer itself. Any
- * caller-supplied value gets stripped before signing so a misconfigured
- * custom-headers bag can't silently overwrite (or bypass) the RFC 9421
- * signature output.
- */
 const SIGNING_RESERVED_HEADERS = new Set(['signature', 'signature-input', 'content-digest']);
 
-export function createSigningFetch(upstream: FetchLike, key: SignerKey, options: SigningFetchOptions = {}): FetchLike {
+/**
+ * Async-signing variant of `createSigningFetch`. Identical request
+ * extraction and reserved-header policy; differs only in routing through a
+ * {@link SigningProvider}, which may issue a network call to a managed key
+ * store on every signed request. Returns the same `FetchLike` shape so the
+ * wrapped function is interchangeable with the sync-signed variant from
+ * the caller's point of view.
+ *
+ * The split between {@link createSigningFetch} (sync inner) and this helper
+ * is deliberate: hover docs and the function name surface the latency-cost
+ * distinction at integration time. Use the sync entry point with an
+ * in-memory `SignerKey`; use this one with a KMS-backed `SigningProvider`.
+ *
+ * Keep in sync with `createSigningFetch` in `./fetch.ts` — reserved-header
+ * policy, content-type defaulting, and `Request`-rejection are line-for-line
+ * parallel.
+ */
+export function createSigningFetchAsync(
+  upstream: FetchLike,
+  provider: SigningProvider,
+  options: SigningFetchOptions = {}
+): FetchLike {
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
@@ -33,7 +37,7 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
 
     if (input instanceof Request) {
       throw new TypeError(
-        'createSigningFetch does not accept Request objects (the body would be consumed out from under the signer). Pass a URL string and a separate init.'
+        'createSigningFetchAsync does not accept Request objects (the body would be consumed out from under the signer). Pass a URL string and a separate init.'
       );
     }
 
@@ -51,12 +55,12 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
 
     const coverContentDigest =
       typeof options.coverContentDigest === 'function'
-        ? options.coverContentDigest(url, init)
+        ? (options.coverContentDigest as CoverContentDigestPredicate)(url, init)
         : options.coverContentDigest;
     const { coverContentDigest: _omit, ...signerOptionsBase } = options;
     const signerOptions: SignRequestOptions = { ...signerOptionsBase, coverContentDigest };
 
-    const signed = signRequest({ method, url, headers, body }, key, signerOptions);
+    const signed = await signRequestAsync({ method, url, headers, body }, provider, signerOptions);
 
     const mergedInit: RequestInit = { ...init, method, headers: signed.headers };
     if (body !== undefined && mergedInit.body === undefined) mergedInit.body = body;
@@ -85,26 +89,22 @@ function bodyToString(body: RequestInit['body']): string | undefined {
   if (body instanceof Uint8Array) return decodeUtf8Strict(body);
   if (body instanceof ArrayBuffer) return decodeUtf8Strict(new Uint8Array(body));
   throw new TypeError(
-    'createSigningFetch requires a string, Uint8Array, or ArrayBuffer body. FormData / Blob / ReadableStream are not supported because the signature must cover the exact wire bytes.'
+    'createSigningFetchAsync requires a string, Uint8Array, or ArrayBuffer body. FormData / Blob / ReadableStream are not supported because the signature must cover the exact wire bytes.'
   );
 }
 
 /**
- * Decode bytes to UTF-8, throwing on invalid sequences. Permissive decode
- * (the `Buffer.toString('utf8')` default) replaces invalid bytes with
- * `U+FFFD`, which would silently corrupt binary or non-UTF-8 payloads — the
- * signer would commit to the lossy string and the wire would carry the same
- * lossy bytes, so verification still passes but the seller receives
- * mangled content. Throwing forces the caller to send a string body or
- * ensure their Uint8Array is valid UTF-8.
+ * Decode bytes to UTF-8, throwing on invalid sequences. See the matching
+ * helper in `./fetch.ts` for the full rationale; both wrappers refuse
+ * non-UTF-8 byte bodies so callers don't get silent body corruption.
  */
 function decodeUtf8Strict(bytes: Uint8Array): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
     throw new TypeError(
-      'createSigningFetch received a Uint8Array/ArrayBuffer body that is not valid UTF-8. ' +
-        'Pass a string body, ensure the bytes are UTF-8, or sign the request manually with `signRequest` against the exact wire bytes you intend to send.'
+      'createSigningFetchAsync received a Uint8Array/ArrayBuffer body that is not valid UTF-8. ' +
+        'Pass a string body, ensure the bytes are UTF-8, or sign the request manually with `signRequestAsync` against the exact wire bytes you intend to send.'
     );
   }
 }

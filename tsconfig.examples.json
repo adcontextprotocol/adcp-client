@@ -12,6 +12,10 @@
       "@adcp/client/*": ["./dist/lib/*"]
     }
   },
-  "include": ["examples/comply-controller-seller.ts", "examples/seller-test-controller.ts"],
+  "include": [
+    "examples/comply-controller-seller.ts",
+    "examples/seller-test-controller.ts",
+    "examples/gcp-kms-signing-provider.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

@@ -18,15 +18,25 @@ export {
 } from './canonicalize';
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
 export {
+  finalizeRequestSignature,
+  prepareRequestSignature,
+  prepareWebhookSignature,
   signRequest,
   signWebhook,
+  type PreparedRequestSignature,
+  type SignatureIdentity,
   type SignedRequest,
   type SignerKey,
   type SignRequestOptions,
   type SignWebhookOptions,
 } from './signer';
+export { signRequestAsync, signWebhookAsync } from './signer-async';
+export { derEcdsaToP1363 } from './ecdsa-encoding';
 export { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-verifier';
 export { createSigningFetch, type CoverContentDigestPredicate, type SigningFetchOptions } from './fetch';
+export { createSigningFetchAsync } from './fetch-async';
+export type { SigningProvider } from './provider';
+export { SigningProviderAlgorithmMismatchError, type SigningProviderErrorCode } from './errors';
 export {
   ALLOWED_ALGS,
   CLOCK_SKEW_TOLERANCE_SECONDS,
@@ -34,6 +44,7 @@ export {
   MAX_SIGNATURE_WINDOW_SECONDS,
   REQUEST_SIGNING_TAG,
   type AdcpJsonWebKey,
+  type AdcpSignAlg,
   type ContentDigestPolicy,
   type VerifierCapability,
 } from './types';
@@ -48,11 +59,18 @@ export {
   buildAgentSigningFetch,
   createAgentSignedFetch,
   extractAdcpOperation,
+  isInlineSigningConfig,
+  isProviderSigningConfig,
   resolveCoverContentDigest,
   shouldSignOperation,
   toSignerKey,
   type BuildAgentSigningFetchOptions,
   type CreateAgentSignedFetchOptions,
 } from './agent-fetch';
-export { buildAgentSigningContext, signingContextStorage, type AgentSigningContext } from './agent-context';
+export {
+  buildAgentSigningContext,
+  signingContextStorage,
+  type AgentSigningContext,
+  type AgentSigningIdentitySnapshot,
+} from './agent-context';
 export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';

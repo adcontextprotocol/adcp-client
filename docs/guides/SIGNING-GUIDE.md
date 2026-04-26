@@ -212,6 +212,109 @@ const signingFetch = buildAgentSigningFetch({
 });
 ```
 
+## Step 3.5: Production Key Storage — KMS / HSM / Vault
+
+Holding a private JWK in process memory is fine for development and testing but it's not where you want production signing keys to live. A process compromise leaks the signing key, and the only remedy is rotation across every counterparty that's cached your public key (within their TTL). The AdCP spec recommends storing keys in a managed key store (HSM or KMS); the SDK supports this directly via the `SigningProvider` interface.
+
+### When to switch
+
+- **Stay in-process** for local development, integration tests, and pilot deployments where the signed traffic isn't financially significant.
+- **Move to KMS** before going live with mutating operations — `create_media_buy`, `acquire_*`, `sync_audiences`, anything that commits spend or changes shared state. RFC 9421 signing is recommended at AdCP 3.0 and **required for mutating ops at 3.1+**, so the threshold to care arrives soon.
+
+### The interface
+
+```typescript
+import type { SigningProvider } from '@adcp/client/signing';
+
+export interface SigningProvider {
+  sign(payload: Uint8Array): Promise<Uint8Array>;
+  readonly keyid: string;
+  readonly algorithm: 'ed25519' | 'ecdsa-p256-sha256';
+  readonly fingerprint: string;
+}
+```
+
+`sign(payload)` receives the canonical RFC 9421 signature base; the provider returns wire-format signature bytes (64-byte raw for Ed25519, 64-byte `r‖s` IEEE P1363 for ECDSA-P256 — **not** DER). `keyid` flows into `Signature-Input`; `algorithm` is the wire string; `fingerprint` is a stable opaque token (e.g., `projects/.../cryptoKeyVersions/N`) used by the SDK for transport-cache isolation. The SDK defensively hashes the fingerprint, so a buggy adapter that returns a low-entropy string can't collapse multi-tenant cache isolation.
+
+### Wiring a provider into your config
+
+`AgentRequestSigningConfig` is a discriminated union on `kind`. Existing literals continue to work — `kind` defaults to `'inline'` so adding the field isn't required. Switch to a KMS-backed signer by replacing the `private_key` block with `{ kind: 'provider', provider }`:
+
+```typescript
+import { createAgentSignedFetch } from '@adcp/client/signing';
+import { createGcpKmsSigningProvider } from './gcp-kms-signing-provider'; // see examples/
+
+const provider = await createGcpKmsSigningProvider({
+  versionName: process.env.ADCP_KMS_VERSION!,
+  kid: 'my-agent-2026',
+  algorithm: 'ed25519',
+  client: kmsClient,
+});
+
+const signedFetch = createAgentSignedFetch({
+  signing: {
+    kind: 'provider',
+    provider,
+    agent_url: 'https://agent.example.com',
+  },
+  sellerAgentUri: 'https://seller.example.com',
+});
+```
+
+The wire format is unchanged. Sellers can't tell the difference between a request signed in-process and one signed by KMS — the SDK's canonicalization is shared between the sync (in-process) and async (provider) paths via the same helpers.
+
+### GCP KMS reference adapter
+
+A complete reference lives at [`examples/gcp-kms-signing-provider.ts`](https://github.com/adcontextprotocol/adcp-client/blob/main/examples/gcp-kms-signing-provider.ts). The adapter handles two GCP-specific quirks:
+
+- **DER → IEEE P1363 conversion** for ECDSA. GCP KMS returns ECDSA signatures DER-encoded; AdCP and RFC 9421 §3.3.1 want raw `r‖s`. The SDK exports `derEcdsaToP1363(der, componentLen)` so any KMS adapter (GCP, AWS for ECDSA, Azure) can normalize at the boundary.
+- **Pre-flight algorithm check.** The adapter calls `getPublicKey` once at construction and throws `SigningProviderAlgorithmMismatchError` if the declared `algorithm` doesn't match the underlying key's algorithm. Without this, a misconfigured key produces signatures the verifier rejects with a generic `request_signature_invalid` — useless for diagnosis. Pre-flight failure is loud and specific.
+
+The published `@adcp/client` package keeps `@google-cloud/kms` out of its dependencies — copy the example into your project and `npm i @google-cloud/kms` yourself. Mirror the same shape for AWS KMS (`@aws-sdk/client-kms`), Azure Key Vault, or HashiCorp Vault Transit.
+
+### Setting up GCP KMS — the parts that actually matter
+
+1. **Key purpose.** Asymmetric sign. Algorithm: `EC_SIGN_P256_SHA256` is the well-trodden default; `EC_SIGN_ED25519` is GA but availability varies by region — verify before pinning.
+2. **Protection level.** Software is fine for AdCP — keeps the private scalar inside Google's KMS service (your process never sees it). HSM (~10× cost) is only required if you have a regulatory mandate.
+3. **IAM.** Grant `roles/cloudkms.signer` on the **key** (versions inherit the policy; per-version IAM isn't a knob GCP exposes). Treat the key as single-purpose — RFC 9421's `tag` parameter protects verifiers, not signers, so reusing the same KMS key across protocols creates a cross-protocol oracle. Bind IAM so only the AdCP signing path can call `asymmetricSign`.
+4. **JWKS publication.** Pull the public key (`gcloud kms keys versions get-public-key 1 --output-file=pub.pem`), convert PEM → JWK (the `jose` package's `importSPKI` + `exportJWK` is one line each), publish at your agent's `jwks_uri`. The `kid` you use in the `SigningProvider` must match what's published. Keep `kid` short and stable (e.g. `addie-2026-04`) — don't put the full GCP resource name on the wire; that's what `versionName` is for.
+5. **Rotation.** GCP KMS asymmetric keys don't auto-rotate. Pin `versionName` to a specific `cryptoKeyVersions/N`, redeploy when you cut a new version. This is consistent with publishing both versions in your JWKS during the transition.
+
+### Authentication when your runtime is outside GCP
+
+If your agent runs on Cloud Run / GKE / Compute Engine, ADC handles auth automatically — `new KeyManagementServiceClient()` finds credentials via the metadata service.
+
+If your agent runs **outside GCP** (Fly.io, Railway, AWS, your own VMs), you have two options, neither of them frictionless today:
+
+- **Service-account JSON key + Fly secret.** Simplest path. Create a service account, grant it `roles/cloudkms.signer` on the key, generate a JSON key, set as a Fly secret (or equivalent), construct the client with explicit credentials. The signing key still lives in KMS (never in your process); only the access credential lives in your secret store. Rotate the SA key every ~90 days as hygiene. **Caveat:** GCP orgs commonly enforce `constraints/iam.disableServiceAccountKeyCreation`, which blocks this — you'll need a temporary org-policy exception (project owner can grant themselves `orgpolicy.policyAdmin` and toggle the constraint for the project; takes seconds with the right role).
+- **Workload Identity Federation.** The right answer long-term, but requires the runtime to issue OIDC tokens GCP can trust. Fly currently issues Macaroons, not OIDC, so WIF doesn't drop in. Worth revisiting when Fly ships native OIDC.
+
+For non-GCP runtimes that lack OIDC and where the org policy blocks SA keys, the operationally clean fallback is a **Cloud Run remote-signer sidecar** — a tiny GCP-hosted service that exposes `POST /sign`, runs as the signer SA (gets ADC for free), authenticates incoming calls via shared secret. Adds 30–100 ms per signed request; no SA key in the off-cloud secret store.
+
+### Threat model upgrade — what you actually buy
+
+| Compromise | In-process key | KMS-backed signer (any auth path) |
+|---|---|---|
+| Process memory dump | Signing key gone — full impersonation until JWKS rotates everywhere | Signing key untouched — only the auth credential leaks (revocable in seconds) |
+| Recovery | Rotate the JWK + push to all counterparties + wait out their cache TTL | Revoke the SA key (or KMS access) — signing stops immediately, JWK unchanged |
+| Auditability | Whatever your app logs | Cloud audit log: every `asymmetricSign` call, by identity, with version |
+
+### Testing — `InMemorySigningProvider`
+
+The SDK ships `InMemorySigningProvider` under a separate import path so production imports surface the KMS path first:
+
+```typescript
+import { InMemorySigningProvider } from '@adcp/client/signing/testing';
+
+const provider = new InMemorySigningProvider({
+  keyid: 'test-2026',
+  algorithm: 'ed25519',
+  privateKey: testJwk,
+});
+```
+
+The constructor refuses to instantiate when `NODE_ENV=production` unless `ADCP_ALLOW_IN_MEMORY_SIGNER=1` is set explicitly — defense-in-depth so a copy-paste from a test file doesn't accidentally ship to prod. The gate is a self-discipline aid for the bundled implementation; the SDK can't enforce hygiene on third-party providers.
+
 ## Step 4: Verify Inbound Signatures (Seller)
 
 ### Express middleware
