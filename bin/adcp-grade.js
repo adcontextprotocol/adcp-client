@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 const { gradeRequestSigning } = require('../dist/lib/testing/storyboard/request-signing/index.js');
+const { gradeSigner } = require('../dist/lib/testing/storyboard/signer-grader/index.js');
 
-const USAGE = `Usage: adcp grade request-signing <agent-url> [options]
+const USAGE_REQUEST_SIGNING = `Usage: adcp grade request-signing <agent-url> [options]
 
 Runs the RFC 9421 conformance grader against an agent's request-signing
 verifier. Returns a PASS/FAIL report with per-vector diagnostics.
@@ -45,20 +46,98 @@ Examples:
   adcp grade request-signing https://sandbox.seller.com/adcp --json | jq
 `;
 
+const USAGE_SIGNER = `Usage: adcp grade signer <agent-url> [options]
+
+Grades an AdCP signer end-to-end: produces a sample signed request through
+your signer, then verifies it against your agent's published JWKS via the
+SDK's RFC 9421 verifier. Surfaces algorithm-mismatch / kid-mismatch /
+DER-vs-P1363 / wrong-key failures as specific verifier error codes — the
+same codes a real counterparty would reject with — rather than the generic
+\`request_signature_invalid\` you'd see in the seller's monitoring after
+pushing live traffic.
+
+Pick exactly ONE signer source:
+  --key-file <path>          Local JWK file (must include \`d\`). For local
+                             dev / non-KMS testing.
+  --signer-url <url>         HTTP signing oracle for KMS-backed signers.
+                             POSTs JSON {payload_b64, kid, alg}; expects
+                             {signature_b64} back. Lets you grade without
+                             handing the grader your private key.
+
+Required:
+  --kid <id>                 Key identifier the signer asserts in
+                             \`Signature-Input\`. Must match a JWK at the
+                             agent's \`jwks_uri\`.
+  --alg <alg>                Algorithm — \`ed25519\` or \`ecdsa-p256-sha256\`.
+                             Must match \`ALLOWED_ALGS\` and the JWK \`alg\`.
+  --jwks-url <url>           JWKS endpoint to verify against.
+
+Options:
+  --operation <name>         AdCP operation in the sample request body.
+                             Default: \`create_media_buy\`.
+  --covers-content-digest    Content-digest policy your verifier advertises
+    <required|forbidden|either>
+                             (\`request_signing.covers_content_digest\`).
+                             Default: \`required\` — recommended posture for
+                             spend-committing operations. A signer that
+                             skips \`Content-Digest\` against \`required\`
+                             surfaces here as step 6
+                             \`request_signature_components_incomplete\`.
+  --signer-auth <header>     Authorization header attached to --signer-url
+                             POSTs (e.g. \`Bearer <secret>\`).
+  --allow-http               Allow http:// signer / JWKS URLs + private-IP
+                             targets (dev only).
+  --timeout <ms>             Per-probe timeout (default 10000).
+  --json                     Emit the report as JSON.
+  -h, --help                 Show this help.
+
+Exit code:
+  0   signer produces valid AdCP signatures (verifier accepted)
+  1   verifier rejected — see error_code / step in the report
+  2   argument / configuration error
+
+Examples:
+  # Grade a KMS-backed signer via a signing oracle
+  adcp grade signer https://addie.example.com \\
+    --signer-url https://signer.internal/sign \\
+    --signer-auth "Bearer \${SIGNER_TOKEN}" \\
+    --kid addie-2026-04 \\
+    --alg ed25519 \\
+    --jwks-url https://addie.example.com/.well-known/jwks.json
+
+  # Grade an in-process signer with a local JWK
+  adcp grade signer https://agent.example.com \\
+    --key-file ./signing-key.jwk \\
+    --kid my-agent-2026 \\
+    --alg ed25519 \\
+    --jwks-url https://agent.example.com/.well-known/jwks.json
+`;
+
 async function handleGradeCommand(argv) {
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
-    process.stdout.write(USAGE);
+    process.stdout.write(USAGE_REQUEST_SIGNING);
+    process.stdout.write('\n');
+    process.stdout.write(USAGE_SIGNER);
     return;
   }
-  if (argv[0] !== 'request-signing') {
-    console.error(`Unknown grade subject: ${argv[0]}\n`);
-    process.stderr.write(USAGE);
-    process.exit(2);
+  const subject = argv[0];
+  if (subject === 'request-signing') {
+    return await runRequestSigningGrader(argv.slice(1));
   }
-  const args = argv.slice(1);
+  if (subject === 'signer') {
+    return await runSignerGrader(argv.slice(1));
+  }
+  console.error(`Unknown grade subject: ${subject}\n`);
+  process.stderr.write(USAGE_REQUEST_SIGNING);
+  process.stderr.write('\n');
+  process.stderr.write(USAGE_SIGNER);
+  process.exit(2);
+}
+
+async function runRequestSigningGrader(args) {
   if (args.length === 0 || args[0].startsWith('-')) {
     console.error('ERROR: agent URL is required\n');
-    process.stderr.write(USAGE);
+    process.stderr.write(USAGE_REQUEST_SIGNING);
     process.exit(2);
   }
 
@@ -112,11 +191,11 @@ async function handleGradeCommand(argv) {
         break;
       case '-h':
       case '--help':
-        process.stdout.write(USAGE);
+        process.stdout.write(USAGE_REQUEST_SIGNING);
         return;
       default:
         console.error(`Unknown flag: ${a}\n`);
-        process.stderr.write(USAGE);
+        process.stderr.write(USAGE_REQUEST_SIGNING);
         process.exit(2);
     }
   }
@@ -133,6 +212,169 @@ async function handleGradeCommand(argv) {
     console.error(`grade-request-signing failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(2);
   }
+}
+
+async function runSignerGrader(args) {
+  if (args.length === 0) {
+    console.error('ERROR: agent URL is required\n');
+    process.stderr.write(USAGE_SIGNER);
+    process.exit(2);
+  }
+  if (args[0] === '-h' || args[0] === '--help') {
+    process.stdout.write(USAGE_SIGNER);
+    return;
+  }
+  if (args[0].startsWith('-')) {
+    console.error('ERROR: agent URL is required (must come before flags)\n');
+    process.stderr.write(USAGE_SIGNER);
+    process.exit(2);
+  }
+  const agentUrl = args[0];
+  const options = { agentUrl };
+  let emitJson = false;
+
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    switch (a) {
+      case '--key-file':
+        options.keyFilePath = args[++i];
+        break;
+      case '--signer-url':
+        options.signerUrl = args[++i];
+        break;
+      case '--signer-auth':
+        options.signerAuth = args[++i];
+        break;
+      case '--kid':
+        options.kid = args[++i];
+        break;
+      case '--alg': {
+        const alg = args[++i];
+        if (alg !== 'ed25519' && alg !== 'ecdsa-p256-sha256') {
+          console.error(`ERROR: --alg must be \"ed25519\" or \"ecdsa-p256-sha256\", got \"${alg}\"\n`);
+          process.exit(2);
+        }
+        options.algorithm = alg;
+        break;
+      }
+      case '--jwks-url':
+        options.jwksUrl = args[++i];
+        break;
+      case '--operation':
+        options.operation = args[++i];
+        break;
+      case '--covers-content-digest': {
+        const policy = args[++i];
+        if (policy !== 'required' && policy !== 'forbidden' && policy !== 'either') {
+          console.error(
+            `ERROR: --covers-content-digest must be \"required\", \"forbidden\", or \"either\", got \"${policy}\"\n`
+          );
+          process.exit(2);
+        }
+        options.coversContentDigest = policy;
+        break;
+      }
+      case '--allow-http':
+        options.allowPrivateIp = true;
+        break;
+      case '--timeout':
+        options.timeoutMs = Number.parseInt(args[++i], 10);
+        if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 1) {
+          console.error('ERROR: --timeout requires a positive integer (ms)\n');
+          process.exit(2);
+        }
+        break;
+      case '--json':
+        emitJson = true;
+        break;
+      case '-h':
+      case '--help':
+        process.stdout.write(USAGE_SIGNER);
+        return;
+      default:
+        console.error(`Unknown flag: ${a}\n`);
+        process.stderr.write(USAGE_SIGNER);
+        process.exit(2);
+    }
+  }
+
+  if (!options.kid) errExit('--kid is required', USAGE_SIGNER);
+  if (!options.algorithm) errExit('--alg is required', USAGE_SIGNER);
+  if (!options.jwksUrl) errExit('--jwks-url is required', USAGE_SIGNER);
+  if (!options.keyFilePath && !options.signerUrl) {
+    errExit('Pass exactly one of --key-file or --signer-url', USAGE_SIGNER);
+  }
+  if (options.keyFilePath && options.signerUrl) {
+    errExit('Pass exactly one of --key-file or --signer-url, not both', USAGE_SIGNER);
+  }
+  // Surface the in-process key-file path on stderr so CI logs make the
+  // dev-tool nature of the run visible — operators reviewing the log can
+  // confirm the file isn't checked in / shipped to prod.
+  if (options.keyFilePath) {
+    process.stderr.write(
+      `[adcp grade signer] in-process key loaded from ${options.keyFilePath} — ` +
+        `ensure this file is not checked in or shipped to production.\n`
+    );
+  }
+
+  try {
+    const report = await gradeSigner(options);
+    if (emitJson) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    } else {
+      printSignerReport(report);
+    }
+    process.exit(report.passed ? 0 : 1);
+  } catch (err) {
+    console.error(`grade-signer failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
+}
+
+function errExit(message, usage) {
+  console.error(`ERROR: ${message}\n`);
+  process.stderr.write(usage);
+  process.exit(2);
+}
+
+function printSignerReport(report) {
+  console.log();
+  console.log(`Agent:     ${report.agent_url}`);
+  console.log(`JWKS:      ${report.jwks_uri}`);
+  console.log(`kid:       ${report.kid}`);
+  console.log(`algorithm: ${report.algorithm}`);
+  console.log(`duration:  ${report.duration_ms}ms`);
+  console.log();
+  const status = report.step.status === 'pass' ? 'PASS' : 'FAIL';
+  console.log(`Result: ${status}`);
+  if (report.step.error_code) {
+    console.log(`  error_code: ${report.step.error_code}`);
+  }
+  if (report.step.diagnostic) {
+    console.log(`  diagnostic: ${report.step.diagnostic}`);
+  }
+  if (!report.passed) {
+    console.log();
+    console.log('Sample request the signer produced headers for:');
+    console.log(`  ${report.sample.method} ${report.sample.url}`);
+    const sigInput = headerCaseInsensitive(report.sample.headers, 'signature-input');
+    if (sigInput) {
+      console.log(`  Signature-Input: ${sigInput}`);
+    }
+    const signature = headerCaseInsensitive(report.sample.headers, 'signature');
+    if (signature) {
+      console.log(`  Signature: ${signature.length > 100 ? signature.slice(0, 80) + '...' : signature}`);
+    }
+  }
+  console.log();
+}
+
+function headerCaseInsensitive(headers, name) {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) return headers[key];
+  }
+  return undefined;
 }
 
 function parseVectorList(raw, flagName) {

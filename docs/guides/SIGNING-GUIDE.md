@@ -315,6 +315,26 @@ const provider = new InMemorySigningProvider({
 
 The constructor refuses to instantiate when `NODE_ENV=production` unless `ADCP_ALLOW_IN_MEMORY_SIGNER=1` is set explicitly — defense-in-depth so a copy-paste from a test file doesn't accidentally ship to prod. The gate is a self-discipline aid for the bundled implementation; the SDK can't enforce hygiene on third-party providers.
 
+### Validating a signer before going live — `adcp grade signer`
+
+Before pushing live signed traffic from a KMS-backed signer, exercise the full signing path through the SDK's verifier so misconfigurations surface as specific RFC 9421 error codes (the same codes a counterparty would reject with) rather than the generic `request_signature_invalid` you'd see in the seller's monitoring after the fact.
+
+```bash
+# KMS-backed signer via an HTTPS signing oracle (no private key handed to the CLI):
+adcp grade signer https://addie.example.com \
+  --signer-url https://signer.internal/sign \
+  --signer-auth "Bearer ${SIGNER_TOKEN}" \
+  --kid addie-2026-04 \
+  --alg ed25519 \
+  --jwks-url https://addie.example.com/.well-known/jwks.json
+```
+
+The grader produces a sample signed AdCP request through your signer, then verifies it against your published JWKS. PASS means a counterparty verifier will accept your signatures. FAIL produces a specific `error_code` and `step` matching the verifier-checklist semantics, so DER-vs-P1363 / kid-mismatch / wrong-key / algorithm-mismatch each surface as a distinct diagnostic.
+
+The signing-oracle protocol is intentionally minimal — `POST {payload_b64, kid, alg}` returns `{signature_b64}` — so any KMS adapter can put a small handler in front of `provider.sign()` for grading without exposing the underlying KMS.
+
+For local dev / non-KMS testing, `--key-file <jwk-path>` accepts an in-process JWK directly. Same grader, same report.
+
 ## Step 4: Verify Inbound Signatures (Seller)
 
 ### Express middleware
