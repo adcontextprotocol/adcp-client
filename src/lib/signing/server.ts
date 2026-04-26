@@ -44,6 +44,7 @@ export {
 } from './replay';
 export {
   PostgresReplayStore,
+  REPLAY_CACHE_MIGRATION,
   getReplayStoreMigration,
   sweepExpiredReplays,
   type PostgresReplayStoreOptions,

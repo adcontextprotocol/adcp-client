@@ -41,6 +41,21 @@ const DEFAULT_TABLE = 'adcp_replay_cache';
 const DEFAULT_CAP = 100_000;
 const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 
+/**
+ * Reject non-finite or out-of-range timestamps before they reach Postgres.
+ * `to_timestamp(NaN)` raises a parse error and `to_timestamp(±Infinity)`
+ * silently produces an `infinity` timestamp — neither would lapse replay
+ * protection, but a buggy `options.now()` injection point could DoS the
+ * verifier with PG errors. Bound to JS-safe-integer territory; verifiers
+ * pass UNIX seconds, not microseconds, so the upper bound is effectively
+ * "year 9999 plus epsilon."
+ */
+function assertFiniteSeconds(label: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) {
+    throw new TypeError(`PostgresReplayStore: ${label} must be a finite non-negative number; received ${value}`);
+  }
+}
+
 export interface PostgresReplayStoreOptions {
   /** Table name. Lowercase letters, digits, underscores only. Defaults to `adcp_replay_cache`. */
   tableName?: string;
@@ -48,9 +63,23 @@ export interface PostgresReplayStoreOptions {
    * Max retained (unexpired) nonces per `(keyid, scope)` pair before
    * `insert` returns `'rate_abuse'`. Mirrors `InMemoryReplayStore`'s
    * `maxEntriesPerKeyid`. Defaults to 100,000.
+   *
+   * The cap is **best-effort** under concurrency: two simultaneous inserts
+   * at `cap-1` can both observe `n = cap-1` from the same MVCC snapshot
+   * and both insert, briefly overshooting by one. This matches
+   * `InMemoryReplayStore` semantics — the cap is a soft DoS guard, not a
+   * hard invariant.
    */
   cap?: number;
 }
+
+/**
+ * Pre-baked migration SQL for the default `adcp_replay_cache` table. Use
+ * when callers don't need a custom table name. Mirrors the convention of
+ * `MCP_TASKS_MIGRATION` (`postgres-task-store.ts`) and `ADCP_STATE_MIGRATION`
+ * (`postgres-state-store.ts`).
+ */
+export const REPLAY_CACHE_MIGRATION: string = renderReplayStoreMigration(DEFAULT_TABLE);
 
 /**
  * Generate the SQL DDL for the replay-cache table. Idempotent — safe to
@@ -68,6 +97,10 @@ export interface PostgresReplayStoreOptions {
  *   themselves.
  */
 export function getReplayStoreMigration(tableName: string = DEFAULT_TABLE): string {
+  return renderReplayStoreMigration(tableName);
+}
+
+function renderReplayStoreMigration(tableName: string): string {
   if (!VALID_IDENTIFIER.test(tableName)) {
     throw new Error(`Invalid table name: "${tableName}". Must match /^[a-z_][a-z0-9_]*$/.`);
   }
@@ -104,6 +137,7 @@ export class PostgresReplayStore implements ReplayStore {
   }
 
   async has(keyid: string, scope: string, nonce: string, now: number): Promise<boolean> {
+    assertFiniteSeconds('now', now);
     const result = await this.db.query(
       `SELECT 1 FROM ${this.tableName}
        WHERE keyid = $1 AND scope = $2 AND nonce = $3 AND expires_at > to_timestamp($4)
@@ -114,6 +148,7 @@ export class PostgresReplayStore implements ReplayStore {
   }
 
   async isCapHit(keyid: string, scope: string, now: number): Promise<boolean> {
+    assertFiniteSeconds('now', now);
     const result = await this.db.query(
       `SELECT count(*)::bigint AS active FROM ${this.tableName}
        WHERE keyid = $1 AND scope = $2 AND expires_at > to_timestamp($3)`,
@@ -152,6 +187,8 @@ export class PostgresReplayStore implements ReplayStore {
     ttlSeconds: number,
     now: number
   ): Promise<ReplayInsertResult> {
+    assertFiniteSeconds('now', now);
+    assertFiniteSeconds('ttlSeconds', ttlSeconds);
     const expiresAt = now + ttlSeconds;
     const result = await this.db.query(
       `WITH

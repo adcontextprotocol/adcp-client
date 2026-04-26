@@ -128,6 +128,49 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
     assert.strictEqual(await store.insert('kid-A', 'https://seller/op', 'n2', 60, now), 'replayed');
   });
 
+  test('cap clears once entries pass expiry — no sweeper required', async () => {
+    // The invariant: every store query filters `expires_at > now`, so an
+    // expired-but-not-yet-swept entry doesn't count toward the cap. This
+    // matches InMemoryReplayStore's prune-then-check semantics. Locking
+    // this in a test so a future schema change can't quietly regress it.
+    const store = new PostgresReplayStore(pool, { cap: 2 });
+    const now = 1_700_000_550;
+
+    await store.insert('kid-A', 'https://seller/op', 'a', 30, now);
+    await store.insert('kid-A', 'https://seller/op', 'b', 30, now);
+    assert.strictEqual(await store.isCapHit('kid-A', 'https://seller/op', now), true);
+
+    // Advance past expiry — without running the sweeper.
+    assert.strictEqual(await store.isCapHit('kid-A', 'https://seller/op', now + 60), false);
+
+    // A fresh insert should now succeed (cap is no longer hit).
+    const after = await store.insert('kid-A', 'https://seller/op', 'c', 30, now + 60);
+    assert.strictEqual(after, 'ok');
+  });
+
+  test('concurrent recycle of an expired same-nonce — exactly one ok, others replayed', async () => {
+    // Variant of the same-nonce concurrency test, but this time the row
+    // already exists and is expired. Both the InMemory and Postgres stores
+    // must serialize the recycle so only one caller observes the fresh
+    // registration.
+    const store = new PostgresReplayStore(pool);
+    const now = 1_700_000_650;
+
+    await store.insert('kid-A', 'https://seller/op', 'recycle-race', 30, now);
+
+    // 10 concurrent attempts to register the same nonce, all at a time
+    // past the original entry's expiry.
+    const recycleAt = now + 60;
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => store.insert('kid-A', 'https://seller/op', 'recycle-race', 30, recycleAt))
+    );
+
+    const okCount = results.filter(r => r === 'ok').length;
+    const replayedCount = results.filter(r => r === 'replayed').length;
+    assert.strictEqual(okCount, 1, 'exactly one concurrent recycle wins');
+    assert.strictEqual(replayedCount, 9, 'losers report replayed');
+  });
+
   test('isCapHit reflects active count vs configured cap', async () => {
     const store = new PostgresReplayStore(pool, { cap: 2 });
     const now = 1_700_000_600;
@@ -164,6 +207,22 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
     assert.strictEqual(await store.has('kid-A', 'https://seller/op', 'long-lived', now + 60), true);
   });
 
+  test('sweepExpiredReplays with batchSize larger than expired count returns actual count', async () => {
+    const store = new PostgresReplayStore(pool);
+    const now = 1_700_000_750;
+
+    await store.insert('kid-A', 'https://seller/op', 'short-1', 30, now);
+    await store.insert('kid-A', 'https://seller/op', 'short-2', 30, now);
+    await store.insert('kid-A', 'https://seller/op', 'long', 600, now);
+
+    // batchSize 100, but only 2 are expired at the sweep time.
+    const { deleted } = await sweepExpiredReplays(pool, { now: now + 60, batchSize: 100 });
+    assert.strictEqual(deleted, 2);
+
+    const remaining = await pool.query(`SELECT count(*)::int AS n FROM ${TABLE}`);
+    assert.strictEqual(remaining.rows[0].n, 1);
+  });
+
   test('sweepExpiredReplays with batchSize bounds work per call', async () => {
     const store = new PostgresReplayStore(pool);
     const now = 1_700_000_800;
@@ -196,6 +255,94 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
   });
 
   // ====== Wiring with the verifier ======
+
+  test('rejects non-finite or negative `now` / `ttlSeconds` — defense vs PG to_timestamp DoS', async () => {
+    const store = new PostgresReplayStore(pool);
+    await assert.rejects(() => store.insert('kid-A', 'scope', 'n1', 30, Number.NaN), /finite non-negative/);
+    await assert.rejects(
+      () => store.insert('kid-A', 'scope', 'n1', 30, Number.POSITIVE_INFINITY),
+      /finite non-negative/
+    );
+    await assert.rejects(() => store.insert('kid-A', 'scope', 'n1', 30, -1), /finite non-negative/);
+    await assert.rejects(() => store.insert('kid-A', 'scope', 'n1', Number.NaN, 1_700_000_000), /finite non-negative/);
+    await assert.rejects(() => store.has('kid-A', 'scope', 'n1', Number.NaN), /finite non-negative/);
+    await assert.rejects(() => store.isCapHit('kid-A', 'scope', Number.POSITIVE_INFINITY), /finite non-negative/);
+  });
+
+  test('end-to-end rate-abuse: cap hit at the verifier boundary surfaces request_signature_rate_abuse', async () => {
+    const {
+      signRequest,
+      verifyRequestSignature,
+      InMemoryRevocationStore,
+      StaticJwksResolver,
+      RequestSignatureError,
+    } = require('../../dist/lib/signing/index.js');
+    const { readFileSync } = require('node:fs');
+    const path = require('node:path');
+
+    const KEYS_PATH = path.join(
+      __dirname,
+      '..',
+      '..',
+      'compliance',
+      'cache',
+      'latest',
+      'test-vectors',
+      'request-signing',
+      'keys.json'
+    );
+    const keys = JSON.parse(readFileSync(KEYS_PATH, 'utf8')).keys;
+    const ed = keys.find(k => k.kid === 'test-ed25519-2026');
+    const privateJwk = { ...ed, d: ed._private_d_for_test_only };
+    delete privateJwk._private_d_for_test_only;
+    const publicJwk = { ...ed };
+    delete publicJwk._private_d_for_test_only;
+
+    // Cap of 2 — third unique signed request should be rejected as rate_abuse,
+    // exercising the same rejection path the conformance vector
+    // `negative/020-rate-abuse.json` covers.
+    const replayStore = new PostgresReplayStore(pool, { cap: 2 });
+    const revocationStore = new InMemoryRevocationStore();
+    const jwks = new StaticJwksResolver([publicJwk]);
+    const capability = {
+      supported: true,
+      covers_content_digest: 'either',
+      required_for: ['create_media_buy'],
+    };
+    const now = 1_700_001_500;
+    const baseRequest = {
+      method: 'POST',
+      url: 'https://seller.example.com/adcp/create_media_buy',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: 'p1' }),
+    };
+
+    const signWithNonce = nonce =>
+      signRequest(
+        baseRequest,
+        { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+        { now: () => now, nonce }
+      );
+
+    for (const nonce of ['rate-test-1', 'rate-test-2']) {
+      const signed = signWithNonce(nonce);
+      const result = await verifyRequestSignature(
+        { ...baseRequest, headers: signed.headers },
+        { capability, jwks, replayStore, revocationStore, operation: 'create_media_buy', now: () => now }
+      );
+      assert.strictEqual(result.status, 'verified');
+    }
+
+    const signed = signWithNonce('rate-test-3');
+    await assert.rejects(
+      () =>
+        verifyRequestSignature(
+          { ...baseRequest, headers: signed.headers },
+          { capability, jwks, replayStore, revocationStore, operation: 'create_media_buy', now: () => now }
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_rate_abuse'
+    );
+  });
 
   test('end-to-end: signed request → verifier with PostgresReplayStore → second attempt rejected as replay', async () => {
     const {
