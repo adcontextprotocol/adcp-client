@@ -63,22 +63,27 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
     return result;
   }
 
+  // Strip URL brackets from IPv6 literals (`[::1]` → `::1`) before DNS lookup
+  // and address classification. `URL.hostname` wraps IPv6 in brackets; both
+  // `dns.lookup` and the address classifiers need the bare form.
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+
   let addresses: { address: string; family: number }[];
   try {
-    addresses = await dnsLookup(parsed.hostname, { all: true });
+    addresses = await dnsLookup(hostname, { all: true });
   } catch (err) {
-    result.error = `DNS lookup failed for ${parsed.hostname}: ${err instanceof Error ? err.message : String(err)}`;
+    result.error = `DNS lookup failed for ${hostname}: ${err instanceof Error ? err.message : String(err)}`;
     result.duration_ms = Date.now() - start;
     return result;
   }
   if (addresses.length === 0) {
-    result.error = `DNS returned no addresses for ${parsed.hostname}`;
+    result.error = `DNS returned no addresses for ${hostname}`;
     result.duration_ms = Date.now() - start;
     return result;
   }
   for (const a of addresses) {
     if (isAlwaysBlocked(a.address)) {
-      result.error = `Refusing to probe always-blocked address ${a.address} for ${parsed.hostname}`;
+      result.error = `Refusing to probe always-blocked address ${a.address} for ${hostname}`;
       result.duration_ms = Date.now() - start;
       return result;
     }
@@ -86,7 +91,7 @@ export async function probeSignedRequest(signed: SignedHttpRequest, options: Pro
   if (!options.allowPrivateIp) {
     for (const a of addresses) {
       if (isPrivateIp(a.address)) {
-        result.error = `Refusing to probe private/loopback address ${a.address} for ${parsed.hostname}`;
+        result.error = `Refusing to probe private/loopback address ${a.address} for ${hostname}`;
         result.duration_ms = Date.now() - start;
         return result;
       }
