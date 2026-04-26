@@ -91,6 +91,8 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
       const id = 'account_id' in ref ? ref.account_id : 'wm_acc_default';
       return {
         id,
+        name: 'Watermark default',     // required by wire Account
+        status: 'active',              // required by wire Account
         operator: 'watermark.example.com',
         metadata: { brand_id: 'brand_default' },
         authInfo: { kind: 'api_key' },
@@ -156,10 +158,17 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
       };
     },
 
-    /** Stateless template platforms typically auto-approve. */
+    /**
+     * Stateless template platforms typically auto-approve. Each row is the
+     * wire `SyncCreativesSuccess.creatives[]` shape: `action` is required
+     * (CRUD outcome — what your platform did), `status` is optional (review
+     * state). Stateless transforms use `action: 'unchanged'` since they
+     * don't persist; review state is `'approved'` since auto-approving.
+     */
     syncCreatives: async (creatives: CreativeAsset[]) => {
       return creatives.map(c => ({
         creative_id: c.creative_id ?? `cr_${Math.random()}`,
+        action: 'unchanged' as const,
         status: 'approved' as const,
       }));
     },
