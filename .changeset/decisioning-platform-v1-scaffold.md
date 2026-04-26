@@ -33,6 +33,7 @@ After adopter feedback (Prebid `salesagent` + Scope3 `agentic-adapters` teams), 
 - `dry_run` framework-interception language removed. AdCP 3.0 expresses "validate against real platform without writing to production" via `AccountReference.sandbox: true` — framework resolves the buyer's sandbox account through `accounts.resolve()`; platform routes reads/writes to its sandbox backend. Tool-specific `dry_run` flags on `sync_catalogs` and `sync_creatives` remain wire fields the platform receives and honors locally.
 
 Companion docs added:
+
 - `docs/proposals/mcp-a2a-unified-serving.md` — locks how `serve(platform)` projects one DecisioningPlatform onto MCP and A2A transports
 - `docs/proposals/decisioning-platform-python-port.md` — cross-language port plan (`__init_subclass__` runtime check + Pydantic generics ergonomics in lieu of TS compile-time gates)
 - `docs/proposals/decisioning-platform-adopter-questions.md` — round-3 review answers (per-call context schemas → v1.1; migration coexistence → rip-and-replace per-server; comply_test_controller → framework-owned by default in v6; wiring PR phasing through alpha.2 → rc.1 → rc.2 → GA)

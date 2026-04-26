@@ -230,11 +230,7 @@ async function projectPlatformCall<TResult, TWire>(
 }
 
 function hasPendingStartStatus(value: unknown): boolean {
-  return (
-    value != null &&
-    typeof value === 'object' &&
-    (value as { status?: string }).status === 'pending_start'
-  );
+  return value != null && typeof value === 'object' && (value as { status?: string }).status === 'pending_start';
 }
 
 // ---------------------------------------------------------------------------

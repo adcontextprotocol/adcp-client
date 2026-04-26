@@ -97,8 +97,4 @@ export {
   type DecisioningAdcpServer,
 } from './runtime/from-platform';
 export { PlatformConfigError, validatePlatform } from './runtime/validate-platform';
-export {
-  createInMemoryTaskRegistry,
-  type TaskRegistry,
-  type TaskRecord,
-} from './runtime/task-registry';
+export { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './runtime/task-registry';
