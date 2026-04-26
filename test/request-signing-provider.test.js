@@ -18,7 +18,6 @@ const {
   InMemoryRevocationStore,
   verifyRequestSignature,
   RequestSignatureError,
-  canonicalTargetUri,
 } = require('../dist/lib/signing/index.js');
 
 const { InMemorySigningProvider, signerKeyToProvider } = require('../dist/lib/signing/testing.js');
@@ -202,7 +201,6 @@ describe('buildAgentSigningContext: cache isolation', () => {
   });
 
   test('SDK defensively hashes provider fingerprint — low-entropy fingerprints still isolated by kid', () => {
-    const kid = 'test-ed25519-2026';
     // Two providers, same kid, both supplying a stupid `fingerprint: 'x'`.
     // SDK-side hash includes algorithm+kid so they collide ONLY if all three
     // (algorithm, kid, fingerprint) match. Demonstrate that swapping kid
