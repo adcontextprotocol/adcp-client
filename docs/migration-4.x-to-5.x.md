@@ -955,6 +955,67 @@ Only the items whose subsystem you actually use.
 - [ ] **`comply_test_controller` publishers** — use `createComplyController({...}).register(server)` instead of hand-registering.
 - [ ] **Storyboard runners** — seed with `seedComplianceFixtures(server)`; wire `AdcpServer.compliance.reset()` on your reset hook; handle `CapabilityResolutionError` by `err.code` rather than regexing messages.
 
+## Part 6 — `SigningProvider` abstraction (5.20.0)
+
+_Applies to anyone signing AdCP requests in production who'd rather not hold private keys in process memory._
+
+### 6a. New: pluggable `SigningProvider` for KMS / HSM / Vault
+
+Adds a `SigningProvider` interface so private keys can live in a managed key store (GCP KMS, AWS KMS, Azure Key Vault, HashiCorp Vault Transit) instead of process memory. The async `sign(payload)` boundary matches RFC 9421 §3.1: the SDK produces the canonical signature base, the provider returns wire-format signature bytes.
+
+Existing inline literals continue to work unchanged — `AgentRequestSigningConfig` is now a discriminated union on `kind`, but `kind` defaults to `'inline'` on the existing shape:
+
+```typescript
+// Existing — still works
+request_signing: {
+  kid: 'my-agent-2026',
+  alg: 'ed25519',
+  private_key: privateJwk,
+  agent_url: 'https://agent.example.com',
+}
+
+// New — KMS-backed
+request_signing: {
+  kind: 'provider',
+  provider: await createGcpKmsSigningProvider({
+    versionName: process.env.ADCP_KMS_VERSION!,
+    kid: 'my-agent-2026',
+    algorithm: 'ed25519',
+    client: kmsClient,
+  }),
+  agent_url: 'https://agent.example.com',
+}
+```
+
+Wire format unchanged. Sellers can't tell the difference between a request signed in-process and one signed by KMS — sync and async paths share the same canonicalization helpers.
+
+New exports from `@adcp/client/signing`:
+
+- `SigningProvider` interface, `AdcpSignAlg` type
+- `signRequestAsync` / `signWebhookAsync`
+- `createSigningFetchAsync(upstream, provider, options)` — paired with the existing sync `createSigningFetch`. Two symbols rather than one overload so the latency-cost difference is visible at integration time.
+- `derEcdsaToP1363(der, componentLen)` — DER → IEEE P1363 ECDSA converter for KMS adapters
+- `SigningProviderAlgorithmMismatchError` — typed error for adapter misconfigurations
+- Reusable canonicalization helpers `prepareRequestSignature`, `prepareWebhookSignature`, `finalizeRequestSignature` — for anyone building a third signer (sigstore, custom HSM)
+
+`@adcp/client/signing/testing` sub-path: `InMemorySigningProvider` (NODE_ENV-gated against accidental production use) and `signerKeyToProvider` adapter for the conformance runner.
+
+A reference GCP KMS adapter ships at `examples/gcp-kms-signing-provider.ts` (type-checked under `npm run typecheck:examples`). AWS KMS / Azure Key Vault adapters can mirror the same shape; users `npm i` the cloud SDK they need.
+
+See [`docs/guides/SIGNING-GUIDE.md` § Production Key Storage](./guides/SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full setup walkthrough including the GCP-from-non-GCP-runtime story.
+
+### 6b. **BREAKING (small)** — strict UTF-8 decoding on byte-body signing
+
+`createSigningFetch` and `createSigningFetchAsync` now throw `TypeError` on `Uint8Array` / `ArrayBuffer` request bodies that aren't valid UTF-8. Previously, invalid bytes were silently replaced with U+FFFD by `Buffer.toString('utf8')` — verification still passed because the wire and the digest agreed on the lossy string, but the seller received mangled content.
+
+If your CI starts failing here, your code was passing non-UTF-8 bytes (binary content type, encrypted payload). Pick one:
+
+- Pass a string body, ensuring valid UTF-8.
+- Ensure the `Uint8Array` contents are valid UTF-8.
+- Sign manually with `signRequest` / `signRequestAsync` against the exact wire bytes you intend to send (this bypasses the fetch wrapper's decoding step).
+
+Error message names the escape hatch.
+
 ### Tooling to adopt
 
 - [ ] Run `npm run schema-diff` after each `npm run sync-schemas` to see wire-level deltas before they bite you downstream.

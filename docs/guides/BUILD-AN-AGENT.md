@@ -390,7 +390,9 @@ createAdcpServer({
 });
 ```
 
-See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, and conformance testing.
+**Production key storage.** For outbound *request* signing (calling other agents' tools), prefer a KMS-backed `SigningProvider` over in-process JWKs — `request_signing` accepts `{ kind: 'provider', provider, agent_url }` for any KMS / HSM / Vault backend. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Server-side `webhooks.signerKey` currently accepts only an in-process `SignerKey`; KMS-backed webhook signing on the server is a follow-up.
+
+See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.
 
 ### createTaskCapableServer (Low-Level)
 
