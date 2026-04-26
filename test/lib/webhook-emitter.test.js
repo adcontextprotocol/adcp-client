@@ -383,6 +383,7 @@ describe('createWebhookEmitter: signerProvider path', () => {
     });
 
     assert.strictEqual(result.delivered, true);
+    assert.strictEqual(result.final_status, 204);
     assert.strictEqual(fetch.calls.length, 2);
     const keys = fetch.calls.map((c) => JSON.parse(c.body).idempotency_key);
     assert.strictEqual(new Set(keys).size, 1, 'idempotency_key MUST be stable across retries (adcp#2417)');

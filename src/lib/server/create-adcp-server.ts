@@ -1096,15 +1096,23 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * idempotency-stable webhooks without hand-rolling the pipeline. Omit
    * if your server never emits webhooks.
    *
-   * The `signerKey` MUST have `adcp_use: "webhook-signing"` — a
-   * request-signing key is a conformance violation per adcp#2423 (key
-   * purpose discriminator). Publishers publishing their JWKS at the
-   * `jwks_uri` on brand.json's `agents[]` entry reuse the same key across
-   * every buyer they deliver to.
+   * Provide exactly one of `signerKey` (in-process JWK) or `signerProvider`
+   * (KMS-backed async signing). The signing key or provider key MUST have
+   * `adcp_use: "webhook-signing"` — a request-signing key is a conformance
+   * violation per adcp#2423 (key purpose discriminator). Publishers publishing
+   * their JWKS at the `jwks_uri` on brand.json's `agents[]` entry reuse the
+   * same key across every buyer they deliver to.
    */
   webhooks?: Pick<
     WebhookEmitterOptions,
-    'signerKey' | 'retries' | 'idempotencyKeyStore' | 'generateIdempotencyKey' | 'fetch' | 'userAgent' | 'tag'
+    | 'signerKey'
+    | 'signerProvider'
+    | 'retries'
+    | 'idempotencyKeyStore'
+    | 'generateIdempotencyKey'
+    | 'fetch'
+    | 'userAgent'
+    | 'tag'
   > & {
     /** Observability: emitter-wide onAttempt hook. */
     onAttempt?: WebhookEmitterOptions['onAttempt'];

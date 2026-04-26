@@ -275,6 +275,7 @@ export type {
   WebhookRetryOptions,
   WebhookAuthentication,
 } from './webhook-emitter';
+export type { SigningProvider } from '../signing/provider';
 
 export { checkGovernance, governanceDeniedError } from './governance';
 export type {
