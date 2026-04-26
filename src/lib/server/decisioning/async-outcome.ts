@@ -1,13 +1,19 @@
 /**
- * Universal async pattern for DecisioningPlatform decision points.
+ * Async-completion primitives for `DecisioningPlatform`.
  *
- * Every decision-point method that can be slow returns `AsyncOutcome<T>`.
- * One discriminated union, one task envelope mechanism, one webhook-or-poll
- * completion path. Methods that always-sync return `Promise<T>` directly;
- * async-eligible methods that mostly-sync still wrap so the platform can
- * return `{ kind: 'submitted' }` when a patch triggers an approval workflow.
+ * Adopters write plain `async (req, ctx) => Promise<T>` methods and either
+ * return the success value (framework projects to the wire success arm) or
+ * `throw new AdcpError(...)` for structured rejection (framework projects
+ * to the wire error envelope with code/recovery/field/suggestion/retry_after).
+ * In-process async work that may exceed `getProducts`-style timeouts uses
+ * `ctx.runAsync(opts, fn)`; out-of-process completion uses `ctx.startTask()`
+ * (see `RequestContext` in `./context.ts`).
  *
- * Status: Preview / 6.0. Not yet wired into the framework.
+ * `AsyncOutcome<T>` and its `ok` / `submitted` / `rejected` constructors
+ * remain in the runtime as the framework's internal projection vocabulary;
+ * adopter code does not return them.
+ *
+ * Status: Preview / 6.0.
  *
  * @public
  */
@@ -120,6 +126,10 @@ export interface AsyncOutcomeRejected<TError extends AdcpStructuredError = AdcpS
  * optional; we tighten because every adopter needs to declare buyer-recovery
  * intent on every rejection — implicit "terminal" by absence has historically
  * caused buyers to misroute retries.
+ *
+ * Adopter code throws `AdcpError` (the class wrapper); the framework catches
+ * and projects the structured fields onto the wire envelope. Internal
+ * projection paths construct `AdcpStructuredError` literals.
  */
 export interface AdcpStructuredError {
   code: ErrorCode | (string & {});
@@ -136,6 +146,76 @@ export interface AdcpStructuredError {
    */
   retry_after?: number;
   details?: Record<string, unknown>;
+}
+
+/**
+ * Throwable structured error. Adopter code uses this to fail a specialism
+ * method with a buyer-facing wire envelope:
+ *
+ * ```ts
+ * createMediaBuy: async (req, ctx) => {
+ *   if (req.total_budget.amount < this.floor) {
+ *     throw new AdcpError('BUDGET_TOO_LOW', {
+ *       recovery: 'correctable',
+ *       message: `Floor is $${this.floor} CPM`,
+ *       field: 'total_budget.amount',
+ *       suggestion: `Raise total_budget to at least ${this.floor * 1000}`,
+ *     });
+ *   }
+ *   return await this.gam.createOrder(req);
+ * }
+ * ```
+ *
+ * Framework catches `AdcpError` thrown from any specialism method and
+ * projects the structured fields onto the wire `adcp_error` envelope.
+ * Generic thrown errors (`Error`, `TypeError`, etc.) are mapped to
+ * `SERVICE_UNAVAILABLE` with `recovery: 'transient'`.
+ *
+ * `recovery` is REQUIRED on the constructor; pass `'correctable'` for
+ * buyer-fixable errors, `'transient'` for upstream outages, `'terminal'`
+ * for permission/account/policy denials.
+ */
+export class AdcpError extends Error {
+  readonly name = 'AdcpError' as const;
+  readonly code: ErrorCode | (string & {});
+  readonly recovery: 'transient' | 'correctable' | 'terminal';
+  readonly field?: string;
+  readonly suggestion?: string;
+  readonly retry_after?: number;
+  readonly details?: Record<string, unknown>;
+
+  constructor(
+    code: ErrorCode | (string & {}),
+    options: {
+      recovery: 'transient' | 'correctable' | 'terminal';
+      message: string;
+      field?: string;
+      suggestion?: string;
+      retry_after?: number;
+      details?: Record<string, unknown>;
+    }
+  ) {
+    super(options.message);
+    this.code = code;
+    this.recovery = options.recovery;
+    if (options.field !== undefined) this.field = options.field;
+    if (options.suggestion !== undefined) this.suggestion = options.suggestion;
+    if (options.retry_after !== undefined) this.retry_after = options.retry_after;
+    if (options.details !== undefined) this.details = options.details;
+  }
+
+  /** Coerce to the structured envelope shape the framework projects to the wire. */
+  toStructuredError(): AdcpStructuredError {
+    return {
+      code: this.code,
+      recovery: this.recovery,
+      message: this.message,
+      ...(this.field !== undefined && { field: this.field }),
+      ...(this.suggestion !== undefined && { suggestion: this.suggestion }),
+      ...(this.retry_after !== undefined && { retry_after: this.retry_after }),
+      ...(this.details !== undefined && { details: this.details }),
+    };
+  }
 }
 
 /**
@@ -194,25 +274,19 @@ export interface TaskUpdateFailed<TError extends AdcpStructuredError = AdcpStruc
 }
 
 // ---------------------------------------------------------------------------
-// Construction helpers — adopters return these instead of literal { kind: ... }
-// objects. Helpers narrow the shape per branch and keep the discriminator
-// framework-controlled.
+// Internal projection vocabulary
+//
+// The framework's runtime constructs `AsyncOutcome` literals when projecting
+// platform results onto the wire. Adopter code returns plain `T` and throws
+// `AdcpError`; these functions are not part of the adopter surface.
 // ---------------------------------------------------------------------------
 
-/** Synchronous success. Most happy paths use this. */
+/** @internal */
 export function ok<TResult>(result: TResult): AsyncOutcome<TResult> {
   return { kind: 'sync', result };
 }
 
-/**
- * Submitted — the platform has handed work to its async pipeline. Framework
- * generates the task envelope; buyer can poll `tasks/get` or wait for the
- * completion webhook to push_notification_config.url. The platform calls
- * `taskHandle.notify(...)` when its backend learns the task completes.
- *
- * Pass `partialResult` when the platform has already created a real entity
- * the buyer should see immediately (e.g., GAM Order in PENDING_APPROVAL).
- */
+/** @internal */
 export function submitted<TResult>(
   taskHandle: TaskHandle<TResult>,
   options?: { estimatedCompletion?: Date; message?: string; partialResult?: TResult }
@@ -226,44 +300,14 @@ export function submitted<TResult>(
   };
 }
 
-/** Terminal rejection. `recovery` field guides buyer behavior. */
+/** @internal */
 export function rejected<TResult>(error: AdcpStructuredError): AsyncOutcome<TResult> {
   return { kind: 'rejected', error };
 }
 
-/**
- * Stub-shape rejection for methods the platform hasn't implemented yet.
- * Returns `rejected({ code: 'UNSUPPORTED_FEATURE', recovery: 'terminal' })`
- * so the buyer learns the feature is unavailable and stops retrying.
- *
- * Useful while standing up a new adapter — implement methods incrementally
- * and `unimplemented()` everything else without leaving handlers undefined.
- */
-export function unimplemented<TResult>(message = 'Method not implemented'): AsyncOutcome<TResult> {
-  return rejected({
-    code: 'UNSUPPORTED_FEATURE',
-    recovery: 'terminal',
-    message,
-  });
-}
-
-/**
- * Multi-error pre-flight rejection. Use when the platform validates the
- * request shape before any platform write and has multiple errors to surface
- * at once (Prebid's `validate_media_buy_request` returns `list[str]`).
- *
- * The first error becomes the canonical envelope (its `code` and `recovery`
- * drive buyer behavior); the rest land in `details.errors` for the buyer to
- * consume. The aggregate is conventionally `INVALID_REQUEST` /
- * `recovery: 'correctable'` because pre-flight errors are by definition
- * fixable on the buyer side.
- *
- * ```ts
- * const errors = this.preflight(req);
- * if (errors.length > 0) return aggregateRejected(errors);
- * ```
- */
-export function aggregateRejected<TResult>(
+// Internal helper retained for the projection layer (see runtime/from-platform.ts).
+/** @internal */
+export function _aggregateRejected<TResult>(
   errors: ReadonlyArray<AdcpStructuredError>,
   options?: { code?: ErrorCode | (string & {}); recovery?: AdcpStructuredError['recovery']; message?: string }
 ): AsyncOutcome<TResult> {

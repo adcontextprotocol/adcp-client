@@ -11,7 +11,6 @@
  * @public
  */
 
-import type { AsyncOutcome } from '../async-outcome';
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
 import type { SyncAudiencesRequest } from '../../../types/tools.generated';
@@ -31,11 +30,13 @@ export interface AudiencePlatform {
    * cross-tenant scoping. Platform handles match-rate computation and
    * activation lifecycle.
    *
-   * Real-world: LiveRamp returns `{ kind: 'submitted' }` because match-rate
-   * computation against the identity graph takes minutes; the platform's
-   * webhook ingress (via taskHandle.notify) pushes the terminal result.
+   * Real-world: LiveRamp's match-rate computation against the identity graph
+   * takes minutes; wrap with `ctx.runAsync(...)` for in-process completion or
+   * `ctx.startTask()` if the activation pipeline webhooks back from a
+   * separate process. `throw new AdcpError(...)` for buyer-fixable rejection
+   * (`AUDIENCE_TOO_SMALL`, etc.).
    */
-  syncAudiences(audiences: Audience[], ctx: Ctx): Promise<AsyncOutcome<AudienceSyncResult[]>>;
+  syncAudiences(audiences: Audience[], ctx: Ctx): Promise<AudienceSyncResult[]>;
 
   /**
    * Read current audience status. Sync — this is a state-read, not a

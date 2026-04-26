@@ -14,7 +14,6 @@
 
 import type { BrandReference, AccountReference } from '../../types/tools.generated';
 import type { CursorPage, CursorRequest } from './pagination';
-import type { AsyncOutcome } from './async-outcome';
 
 export interface Account<TMeta = Record<string, unknown>> {
   /** Your platform's account_id. Matches AdCP's `AccountReference.account_id`. */
@@ -96,10 +95,12 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
 
   /**
    * sync_accounts API surface. Framework normalizes the wire request; platform
-   * upserts and returns per-account result rows. Async-eligible: account
-   * provisioning may require human approval workflows.
+   * upserts and returns per-account result rows. `throw new AdcpError(...)`
+   * for buyer-facing rejection. Wrap with `ctx.runAsync(...)` if account
+   * provisioning takes longer than the auto-defer threshold (e.g., manual
+   * operator approval flows).
    */
-  upsert(refs: AccountReference[]): Promise<AsyncOutcome<SyncAccountsResultRow[]>>;
+  upsert(refs: AccountReference[]): Promise<SyncAccountsResultRow[]>;
 
   /**
    * list_accounts API surface. Framework wraps with cursor envelope.

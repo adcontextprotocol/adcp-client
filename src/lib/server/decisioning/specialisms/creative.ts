@@ -9,15 +9,16 @@
  * v1.0 ships CreativeTemplatePlatform + CreativeGenerativePlatform.
  * CreativeAdServerPlatform follows in v1.1.
  *
+ * All methods return plain `Promise<T>`. `throw new AdcpError(...)` for
+ * structured rejection; wrap in `ctx.runAsync(opts, fn)` for async opt-in.
+ *
  * Status: Preview / 6.0. Not yet wired into the framework.
  *
  * @public
  */
 
-import type { AsyncOutcome } from '../async-outcome';
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
-import type { CursorPage, CursorRequest } from '../pagination';
 import type {
   CreativeAsset,
   CreativeManifest,
@@ -42,14 +43,15 @@ type Ctx = RequestContext<Account>;
 export interface CreativeTemplatePlatform {
   /**
    * Build a rendered creative from inline manifest + target format.
-   * Mostly synchronous; platforms with TTS / audio mixing pipelines may submit.
+   * Mostly synchronous; platforms with TTS / audio mixing pipelines that
+   * exceed the auto-defer threshold use `ctx.runAsync(...)`.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<AsyncOutcome<CreativeManifest>>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<CreativeManifest>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires.
    */
-  previewCreative(req: PreviewCreativeRequest, ctx: Ctx): Promise<AsyncOutcome<PreviewCreativeResponse>>;
+  previewCreative(req: PreviewCreativeRequest, ctx: Ctx): Promise<PreviewCreativeResponse>;
 
   /**
    * Unified review surface. Framework normalizes both wire paths
@@ -58,9 +60,9 @@ export interface CreativeTemplatePlatform {
    * one decision per creative.
    *
    * Stateless template platforms typically accept any well-formed manifest;
-   * the review usually returns sync.
+   * the review returns sync with per-creative `status: 'approved'` rows.
    */
-  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<AsyncOutcome<CreativeReviewResult[]>>;
+  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<CreativeReviewResult[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,19 +75,21 @@ export interface CreativeTemplatePlatform {
  */
 export interface CreativeGenerativePlatform {
   /**
-   * Generate a new creative from brief. Almost always returns
-   * `{ kind: 'submitted' }` for real generation pipelines.
+   * Generate a new creative from brief. Almost always exceeds the auto-defer
+   * threshold; wrap in `ctx.runAsync({ message: 'Generating...' }, fn)` for
+   * the in-process generation case, or `ctx.startTask()` for out-of-process
+   * pipelines that webhook back later.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<AsyncOutcome<CreativeManifest>>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<CreativeManifest>;
 
   /**
    * Refine an in-flight or completed generation. `taskId` references
    * a prior buildCreative submission. Framework threads task continuity.
    */
-  refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx): Promise<AsyncOutcome<CreativeManifest>>;
+  refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx): Promise<CreativeManifest>;
 
   /** Same unified review surface as CreativeTemplatePlatform. */
-  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<AsyncOutcome<CreativeReviewResult[]>>;
+  syncCreatives(creatives: Creative[], ctx: Ctx): Promise<CreativeReviewResult[]>;
 }
 
 // ---------------------------------------------------------------------------

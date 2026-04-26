@@ -11,7 +11,6 @@
 import type {
   DecisioningPlatform,
   RequiredPlatformsFor,
-  AsyncOutcome,
   Account,
   AccountStore,
   DecisioningCapabilities,
@@ -21,36 +20,47 @@ import type {
   SalesPlatform,
   AudiencePlatform,
 } from './index';
-import { ok, submitted, rejected, unimplemented, aggregateRejected, AccountNotFoundError } from './index';
+import { AdcpError, AccountNotFoundError } from './index';
 
-// ── AsyncOutcome construction helpers ─────────────────────────────────
+// ── AdcpError construction ────────────────────────────────────────────
 
-function _ok_returns_sync_kind(): AsyncOutcome<{ id: string }> {
-  return ok({ id: 'mb_1' });
-}
-
-function _rejected_requires_recovery(): AsyncOutcome<{ id: string }> {
-  return rejected({
-    code: 'TERMS_REJECTED',
+function _adcp_error_minimum(): AdcpError {
+  return new AdcpError('TERMS_REJECTED', {
     recovery: 'correctable',
     message: 'max_variance_percent below seller floor',
   });
 }
 
-function _rejected_accepts_unknown_code_with_brand_trick(): AsyncOutcome<{ id: string }> {
-  return rejected({
-    code: 'GAM_INTERNAL_QUOTA_EXCEEDED', // platform-specific; (string & {}) escape hatch
-    recovery: 'transient',
-    message: 'GAM rate limit hit; retry in 60s',
+function _adcp_error_full_fields(): AdcpError {
+  return new AdcpError('INVALID_REQUEST', {
+    recovery: 'correctable',
+    message: 'targeting.geo[0] is not a known DMA',
+    field: 'packages[0].targeting.geo[0]',
+    suggestion: 'Use a 3-digit Nielsen DMA code',
+    retry_after: undefined,
+    details: { offending_value: 'XYZ' },
   });
 }
 
-function _rejected_missing_recovery_fails(): AsyncOutcome<{ id: string }> {
-  // @ts-expect-error — `recovery` is required on AdcpStructuredError.
-  return rejected({
-    code: 'TERMS_REJECTED',
-    message: 'forgot recovery',
+function _adcp_error_accepts_unknown_code(): AdcpError {
+  return new AdcpError('GAM_INTERNAL_QUOTA_EXCEEDED', {
+    recovery: 'transient',
+    message: 'GAM rate limit hit',
+    retry_after: 60,
   });
+}
+
+function _adcp_error_missing_recovery_fails(): AdcpError {
+  // @ts-expect-error — `recovery` is required on AdcpError options.
+  return new AdcpError('TERMS_REJECTED', { message: 'forgot recovery' });
+}
+
+// AdcpError is throwable from any specialism method.
+async function _adcp_error_throw_pattern(): Promise<{ id: string }> {
+  if (Math.random() > 0.5) {
+    throw new AdcpError('BUDGET_TOO_LOW', { recovery: 'correctable', message: 'too low' });
+  }
+  return { id: 'mb_1' };
 }
 
 // ── RequiredPlatformsFor enforces specialism → interface mapping ─────
@@ -144,68 +154,18 @@ function _targeting_capabilities_rejects_unknown_geo_metro(): TargetingCapabilit
   };
 }
 
-// ── AdcpStructuredError carries field/suggestion/retry_after ──────────
-
-function _structured_error_with_wire_fields(): AsyncOutcome<{ id: string }> {
-  return rejected({
-    code: 'INVALID_REQUEST',
-    recovery: 'correctable',
-    message: 'targeting.geo[0] is not a known DMA',
-    field: 'packages[0].targeting.geo[0]',
-    suggestion: 'Use a 3-digit Nielsen DMA code',
-    retry_after: undefined, // optional; only required on RATE_LIMITED / SERVICE_UNAVAILABLE
-  });
-}
-
-function _structured_error_retry_after_for_transient(): AsyncOutcome<{ id: string }> {
-  return rejected({
-    code: 'RATE_LIMITED',
-    recovery: 'transient',
-    message: 'too many concurrent get_products calls',
-    retry_after: 60,
-  });
-}
-
 // ── ErrorCode covers the 45 spec codes (sample the new ones) ──────────
 
-function _new_codes_compile(): AsyncOutcome<{ id: string }> {
-  // These codes weren't in the v1.0 scaffold pre-must-fixes.
-  void rejected({ code: 'INVALID_STATE', recovery: 'correctable', message: '' });
-  void rejected({ code: 'MEDIA_BUY_NOT_FOUND', recovery: 'terminal', message: '' });
-  void rejected({ code: 'NOT_CANCELLABLE', recovery: 'terminal', message: '' });
-  void rejected({ code: 'REQUOTE_REQUIRED', recovery: 'correctable', message: '' });
-  void rejected({ code: 'CREATIVE_DEADLINE_EXCEEDED', recovery: 'terminal', message: '' });
-  return ok({ id: 'mb_1' });
-}
-
-// ── submitted() carries partialResult for buy-pending-review pattern ──
-
-function _submitted_with_partial_result(): AsyncOutcome<{ id: string; status: string }> {
-  // Stub TaskHandle for the type test.
-  const handle = { taskId: 'task_1', notify: () => {} };
-  return submitted(handle, {
-    estimatedCompletion: new Date(Date.now() + 4 * 3600_000),
-    message: 'pending operator approval',
-    partialResult: { id: 'mb_1', status: 'pending_start' },
-  });
-}
-
-// ── unimplemented + aggregateRejected helpers compile cleanly ─────────
-
-function _unimplemented_helper(): AsyncOutcome<{ id: string }> {
-  return unimplemented('audience-sync not yet wired');
-}
-
-function _aggregate_rejected_with_errors(): AsyncOutcome<{ id: string }> {
-  return aggregateRejected([
-    { code: 'INVALID_REQUEST', recovery: 'correctable', message: 'budget too low', field: 'total_budget' },
-    {
-      code: 'UNSUPPORTED_FEATURE',
-      recovery: 'correctable',
-      message: 'pricing model "vcpm" not supported',
-      field: 'packages[0].pricing.model',
-    },
-  ]);
+function _new_codes_compile(): AdcpError[] {
+  // These codes weren't in the v1.0 scaffold pre-must-fixes; verify they
+  // remain valid `code` values on AdcpError after the round-5 refactor.
+  return [
+    new AdcpError('INVALID_STATE', { recovery: 'correctable', message: '' }),
+    new AdcpError('MEDIA_BUY_NOT_FOUND', { recovery: 'terminal', message: '' }),
+    new AdcpError('NOT_CANCELLABLE', { recovery: 'terminal', message: '' }),
+    new AdcpError('REQUOTE_REQUIRED', { recovery: 'correctable', message: '' }),
+    new AdcpError('CREATIVE_DEADLINE_EXCEEDED', { recovery: 'terminal', message: '' }),
+  ];
 }
 
 // ── RequiredPlatformsFor surfaces a legible "missing field" error ─────
@@ -225,10 +185,11 @@ const _check_sales_required: _missing_sales_required = true;
 
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
-  _ok_returns_sync_kind,
-  _rejected_requires_recovery,
-  _rejected_accepts_unknown_code_with_brand_trick,
-  _rejected_missing_recovery_fails,
+  _adcp_error_minimum,
+  _adcp_error_full_fields,
+  _adcp_error_accepts_unknown_code,
+  _adcp_error_missing_recovery_fails,
+  _adcp_error_throw_pattern,
   _check_sales_only,
   _check_creative_template,
   _check_audience_sync,
@@ -242,11 +203,6 @@ export const _references = [
   _capabilities_supported_billings_invalid,
   _targeting_capabilities_nested,
   _targeting_capabilities_rejects_unknown_geo_metro,
-  _structured_error_with_wire_fields,
-  _structured_error_retry_after_for_transient,
   _new_codes_compile,
-  _submitted_with_partial_result,
-  _unimplemented_helper,
-  _aggregate_rejected_with_errors,
   _check_sales_required,
 ] as const;

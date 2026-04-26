@@ -27,10 +27,7 @@ import {
   type SalesPlatform,
   type AccountStore,
   type Account,
-  type AsyncOutcome,
-  ok,
-  submitted,
-  rejected,
+  AdcpError,
 } from '@adcp/client/server/decisioning';
 import { TrainingAgentDB } from './db';
 
@@ -113,11 +110,10 @@ class TrainingAgentPlatform
           ...req,
           advertiserId: ctx.account.metadata.advertiser_id,
         });
-        return ok(this.toMediaBuy(buy));
+        return this.toMediaBuy(buy);
       } catch (e) {
         if (e instanceof TooLowBudgetError) {
-          return rejected({
-            code: 'BUDGET_TOO_LOW',
+          throw new AdcpError('BUDGET_TOO_LOW', {
             recovery: 'correctable',
             message: `Floor is $${this.capabilities.config.default_floor_cpm} CPM`,
           });
@@ -128,22 +124,20 @@ class TrainingAgentPlatform
 
     updateMediaBuy: async (id, patch, ctx) => {
       const updated = await this.db.mediaBuys.update(id, patch, ctx.account.metadata.advertiser_id);
-      return ok(this.toMediaBuy(updated));
+      return this.toMediaBuy(updated);
     },
 
     syncCreatives: async (creatives, ctx) => {
-      const results = await Promise.all(
+      return Promise.all(
         creatives.map(async (c) => ({
           creative_id: c.creative_id,
           status: await this.db.creatives.review(c, ctx.account.metadata.advertiser_id),
         }))
       );
-      return ok(results);
     },
 
     getMediaBuyDelivery: async (filter, ctx) => {
-      const actuals = await this.db.reporting.run(filter, ctx.account.metadata.network_id);
-      return ok(actuals);
+      return this.db.reporting.run(filter, ctx.account.metadata.network_id);
     },
   };
 

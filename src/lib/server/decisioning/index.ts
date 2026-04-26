@@ -10,7 +10,16 @@
  * @packageDocumentation
  */
 
-// Universal async pattern
+// Adopter-facing async-completion primitives.
+//
+// `AdcpError` is the canonical throwable for structured rejection.
+// `TaskHandle` / `TaskUpdate` are framework-issued via `ctx.startTask()`;
+// adopters call `taskHandle.notify(...)` to push lifecycle.
+//
+// `AsyncOutcome` and its `ok` / `submitted` / `rejected` constructors are
+// internal projection vocabulary — kept exported as types for adopters who
+// integrate at the framework layer (e.g., custom dispatchers). Adopter
+// code in specialism methods returns plain `T` and throws `AdcpError`.
 export {
   type AsyncOutcome,
   type AsyncOutcomeSync,
@@ -23,11 +32,7 @@ export {
   type TaskUpdateProgress,
   type TaskUpdateCompleted,
   type TaskUpdateFailed,
-  ok,
-  submitted,
-  rejected,
-  unimplemented,
-  aggregateRejected,
+  AdcpError,
 } from './async-outcome';
 
 // Cursor pagination
