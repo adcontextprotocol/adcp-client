@@ -72,6 +72,9 @@ jobs:
       - name: Typecheck examples
         run: npm run typecheck:examples
 
+      - name: Typecheck skill code samples
+        run: npm run typecheck:skill-examples
+
       - name: Run unit tests
         run: npm test
         env:

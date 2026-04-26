@@ -22,6 +22,39 @@ export type {
 // Re-export FormatID from generated core types
 export type { FormatID } from './core.generated';
 
+// Re-export wire request/response types adopters need when building a
+// DecisioningPlatform. Source of truth is `tools.generated.ts`; this
+// curated subset is the public surface so adopters never reach into
+// generated files. Add new entries as new specialism platforms land.
+export type {
+  // Account model
+  AccountReference,
+  // Creative
+  BuildCreativeRequest,
+  CreativeManifest,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
+  CreativeAsset,
+  CreativeQuality,
+  // Sales — media buy
+  GetProductsRequest,
+  GetProductsResponse,
+  CreateMediaBuyRequest,
+  UpdateMediaBuyRequest,
+  GetMediaBuysResponse,
+  GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
+  // Audiences
+  SyncAudiencesRequest,
+  SyncAudiencesResponse,
+  // Capability declaration
+  AdCPSpecialism,
+  // Property / collection lists
+  PropertyList,
+  CollectionList,
+  Format,
+} from './tools.generated';
+
 // Strict format asset slot types (hand-authored — the codegen drops the
 // discriminated per-asset-type branches of Format.assets[]).
 export * from './format-asset-slots';

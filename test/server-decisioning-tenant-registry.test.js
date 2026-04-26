@@ -1,0 +1,402 @@
+// TenantRegistry tests — multi-tenant deployment, per-tenant health states,
+// JWKS validation, recheck after fix.
+
+process.env.NODE_ENV = 'test';
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert');
+const { createTenantRegistry } = require('../dist/lib/server/decisioning/tenant-registry');
+
+function basePlatform(specialism = 'sales-non-guaranteed') {
+  return {
+    capabilities: {
+      specialisms: [specialism],
+      creative_agents: [],
+      channels: ['display'],
+      pricingModels: ['cpm'],
+      config: {},
+    },
+    accounts: {
+      resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+      upsert: async () => [],
+      list: async () => ({ items: [], nextCursor: null }),
+    },
+    statusMappers: {},
+    sales: {
+      getProducts: async () => ({ products: [] }),
+      createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+      updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+      syncCreatives: async () => [],
+      getMediaBuyDelivery: async () => ({ media_buys: [] }),
+    },
+  };
+}
+
+const SAMPLE_KEY = {
+  keyId: 'tenant-key-1',
+  publicJwk: { kty: 'RSA', n: 'pub_modulus_xxx', e: 'AQAB' },
+  privateJwk: { kty: 'RSA', n: 'pub_modulus_xxx', e: 'AQAB', d: 'priv_exp_yyy' },
+};
+
+const DEFAULT_SERVER_OPTIONS = {
+  name: 'tenant-test',
+  version: '0.0.1',
+  validation: { requests: 'off', responses: 'off' },
+};
+
+function fakeValidator(impl) {
+  return { validate: impl };
+}
+
+describe('TenantRegistry — register, resolve, health', () => {
+  it('register without auto-validate; manual recheck transitions to healthy', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('tenant_a', {
+      agentUrl: 'https://a.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    let status = registry.getStatus('tenant_a');
+    assert.strictEqual(status.health, 'unverified');
+    assert.strictEqual(status.tenantId, 'tenant_a');
+
+    status = await registry.recheck('tenant_a');
+    assert.strictEqual(status.health, 'healthy');
+  });
+
+  it('disabled tenant does not resolveByHost; healthy tenant does', async () => {
+    const validator = fakeValidator(async ({ agentUrl }) => {
+      if (agentUrl === 'https://bad.example.com') {
+        return { ok: false, recovery: 'permanent', reason: 'key not in JWKS' };
+      }
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('good', {
+      agentUrl: 'https://good.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('bad', {
+      agentUrl: 'https://bad.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    await registry.recheck('good');
+    await registry.recheck('bad');
+
+    const goodResolved = registry.resolveByHost('good.example.com');
+    assert.ok(goodResolved, 'healthy tenant resolves');
+    assert.strictEqual(goodResolved.tenantId, 'good');
+
+    const badResolved = registry.resolveByHost('bad.example.com');
+    assert.strictEqual(badResolved, null, 'disabled tenant does not resolve');
+  });
+
+  it('unverified tenant still resolves (graceful degradation during validation)', async () => {
+    let resolveValidator;
+    const validator = fakeValidator(
+      () =>
+        new Promise(resolve => {
+          resolveValidator = resolve;
+        })
+    );
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: true,
+    });
+
+    registry.register('pending', {
+      agentUrl: 'https://pending.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    const status = registry.getStatus('pending');
+    assert.strictEqual(status.health, 'unverified');
+
+    const resolved = registry.resolveByHost('pending.example.com');
+    assert.ok(resolved, 'unverified tenant accepts traffic during validation');
+    assert.strictEqual(resolved.tenantId, 'pending');
+
+    // Settle to keep test deterministic
+    resolveValidator({ ok: true });
+  });
+
+  it('transient validation failure → unverified (not disabled)', async () => {
+    const validator = fakeValidator(async () => ({
+      ok: false,
+      recovery: 'transient',
+      reason: 'connection refused',
+    }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('transient', {
+      agentUrl: 'https://transient.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    const status = await registry.recheck('transient');
+    assert.strictEqual(status.health, 'unverified');
+    assert.match(status.reason, /connection refused/);
+  });
+
+  it('recheck after fix transitions disabled → healthy', async () => {
+    let firstAttempt = true;
+    const validator = fakeValidator(async () => {
+      if (firstAttempt) {
+        firstAttempt = false;
+        return { ok: false, recovery: 'permanent', reason: 'key mismatch' };
+      }
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('recheck', {
+      agentUrl: 'https://recheck.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    const first = await registry.recheck('recheck');
+    assert.strictEqual(first.health, 'disabled');
+
+    const second = await registry.recheck('recheck');
+    assert.strictEqual(second.health, 'healthy');
+  });
+
+  it('one disabled tenant does not affect others (per-tenant isolation)', async () => {
+    const validator = fakeValidator(async ({ agentUrl }) => {
+      if (agentUrl === 'https://broken.example.com') {
+        return { ok: false, recovery: 'permanent', reason: 'invalid' };
+      }
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('alpha', {
+      agentUrl: 'https://alpha.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('broken', {
+      agentUrl: 'https://broken.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('beta', {
+      agentUrl: 'https://beta.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    await Promise.all([registry.recheck('alpha'), registry.recheck('broken'), registry.recheck('beta')]);
+
+    const all = registry.list();
+    const byId = Object.fromEntries(all.map(s => [s.tenantId, s.health]));
+    assert.strictEqual(byId.alpha, 'healthy');
+    assert.strictEqual(byId.broken, 'disabled');
+    assert.strictEqual(byId.beta, 'healthy');
+  });
+
+  it('unregister removes tenant; resolveByHost returns null after', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('temp', {
+      agentUrl: 'https://temp.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('temp');
+    assert.ok(registry.resolveByHost('temp.example.com'));
+
+    registry.unregister('temp');
+    assert.strictEqual(registry.resolveByHost('temp.example.com'), null);
+    assert.strictEqual(registry.getStatus('temp'), null);
+  });
+
+  it('mixed-shape tenants (sync seller + HITL seller) coexist on different hosts', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    const syncPlatform = basePlatform();
+    const hitlPlatform = basePlatform();
+    // Replace sync createMediaBuy with the HITL *Task variant
+    delete hitlPlatform.sales.createMediaBuy;
+    hitlPlatform.sales.createMediaBuyTask = async (taskId, _req) => ({ media_buy_id: 'mb_hitl' });
+
+    registry.register('sync', {
+      agentUrl: 'https://sync.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: syncPlatform,
+      label: 'programmatic',
+    });
+    registry.register('hitl', {
+      agentUrl: 'https://hitl.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: hitlPlatform,
+      label: 'broadcast',
+    });
+
+    await Promise.all([registry.recheck('sync'), registry.recheck('hitl')]);
+
+    const syncRes = registry.resolveByHost('sync.example.com');
+    const hitlRes = registry.resolveByHost('hitl.example.com');
+    assert.ok(syncRes && hitlRes);
+    assert.strictEqual(syncRes.config.label, 'programmatic');
+    assert.strictEqual(hitlRes.config.label, 'broadcast');
+
+    // The two servers are independent instances
+    assert.notStrictEqual(syncRes.server, hitlRes.server);
+  });
+
+  it('register with duplicate tenantId throws', () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('dup', {
+      agentUrl: 'https://dup.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    assert.throws(
+      () =>
+        registry.register('dup', {
+          agentUrl: 'https://dup.example.com',
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /already registered/
+    );
+  });
+});
+
+describe('TenantRegistry — default JWKS validator (fetch-based)', () => {
+  const { createDefaultJwksValidator } = require('../dist/lib/server/decisioning/tenant-registry');
+
+  it('matches a signing key by kid against published JWKS', async () => {
+    const fakeFetch = async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      async json() {
+        return { jwks: { keys: [{ kty: 'RSA', kid: 'tenant-key-1', n: 'aaa', e: 'AQAB' }] } };
+      },
+    });
+    const validator = createDefaultJwksValidator({ fetchImpl: fakeFetch });
+    const result = await validator.validate({
+      agentUrl: 'https://example.com',
+      signingKey: { keyId: 'tenant-key-1', publicJwk: { kty: 'RSA', n: 'bbb', e: 'AQAB' }, privateJwk: {} },
+    });
+    assert.strictEqual(result.ok, true);
+  });
+
+  it('matches by structural equality when kid is not present', async () => {
+    const fakeFetch = async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      async json() {
+        return { jwks: { keys: [{ kty: 'RSA', n: 'modulus', e: 'AQAB' }] } };
+      },
+    });
+    const validator = createDefaultJwksValidator({ fetchImpl: fakeFetch });
+    const result = await validator.validate({
+      agentUrl: 'https://example.com',
+      signingKey: { keyId: 'whatever', publicJwk: { kty: 'RSA', n: 'modulus', e: 'AQAB' }, privateJwk: {} },
+    });
+    assert.strictEqual(result.ok, true);
+  });
+
+  it('returns permanent rejection when key is not in JWKS', async () => {
+    const fakeFetch = async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      async json() {
+        return { jwks: { keys: [{ kty: 'RSA', kid: 'other-key', n: 'aaa', e: 'AQAB' }] } };
+      },
+    });
+    const validator = createDefaultJwksValidator({ fetchImpl: fakeFetch });
+    const result = await validator.validate({
+      agentUrl: 'https://example.com',
+      signingKey: { keyId: 'missing-key', publicJwk: { kty: 'RSA', n: 'bbb', e: 'AQAB' }, privateJwk: {} },
+    });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.recovery, 'permanent');
+  });
+
+  it('classifies network errors as transient', async () => {
+    const fakeFetch = async () => {
+      throw new Error('ECONNREFUSED');
+    };
+    const validator = createDefaultJwksValidator({ fetchImpl: fakeFetch });
+    const result = await validator.validate({
+      agentUrl: 'https://down.example.com',
+      signingKey: { keyId: 'k', publicJwk: { kty: 'RSA' }, privateJwk: {} },
+    });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.recovery, 'transient');
+  });
+
+  it('classifies 5xx as transient and 4xx as permanent', async () => {
+    const validator5xx = createDefaultJwksValidator({
+      fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Service Unavailable' }),
+    });
+    const r5 = await validator5xx.validate({
+      agentUrl: 'https://example.com',
+      signingKey: { keyId: 'k', publicJwk: {}, privateJwk: {} },
+    });
+    assert.strictEqual(r5.recovery, 'transient');
+
+    const validator4xx = createDefaultJwksValidator({
+      fetchImpl: async () => ({ ok: false, status: 404, statusText: 'Not Found' }),
+    });
+    const r4 = await validator4xx.validate({
+      agentUrl: 'https://example.com',
+      signingKey: { keyId: 'k', publicJwk: {}, privateJwk: {} },
+    });
+    assert.strictEqual(r4.recovery, 'permanent');
+  });
+});
