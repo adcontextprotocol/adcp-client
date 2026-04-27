@@ -7,9 +7,17 @@
  * `state.*` (sync state reads) and `resolve.*` (async framework-mediated
  * resolvers) on top.
  *
- * Status: Preview / 6.0. v1.0 wires `account` and stub-shape `state` /
- * `resolve` — full state/resolve plumbing arrives with the runtime refactor
- * over subsequent commits.
+ * **Stub status — v6.0 alpha.** `state.*` (workflow-step reads, proposal
+ * lookups, governance JWS) and `resolve.*` (property/collection-list +
+ * format fetchers) are NOT yet wired. The state readers return empty
+ * results; the resolvers throw. Touching them in a platform method will
+ * crash the request — the framework hasn't connected them to an underlying
+ * store / fetch layer yet.
+ *
+ * Adopters spiking against the preview surface MUST avoid `ctx.state.*`
+ * and `ctx.resolve.*` until the wire-up commits land in rc.1. Use
+ * `ctx.account` (fully wired) and the structured-error / status-change
+ * primitives only.
  *
  * @public
  */
@@ -23,8 +31,27 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
 ): RequestContext<Account<TMeta>> {
   const account = handlerCtx.account;
   if (!account) {
-    throw new Error('buildRequestContext: handler context missing resolved account');
+    // The framework calls `resolveAccount` before dispatch and aborts with
+    // ACCOUNT_NOT_FOUND when it returns null. Reaching this branch means
+    // either (a) a handler dispatched without a resolved account (framework
+    // bug) or (b) a test harness invoked `buildRequestContext` directly
+    // with an unresolved context. Surface a precise diagnostic.
+    throw new Error(
+      'buildRequestContext: handler context missing resolved account. ' +
+        'This is a framework invariant violation — every dispatch path runs ' +
+        '`resolveAccount` before reaching the platform layer. If you see this ' +
+        'in a test, the test fixture is constructing HandlerContext without ' +
+        'an `account` field; pass one explicitly.'
+    );
   }
+
+  const stubResolver = (name: string) => async (): Promise<never> => {
+    throw new Error(
+      `ctx.resolve.${name}: not yet wired in v6.0 alpha — landing in rc.1. ` +
+        `Avoid touching ctx.resolve.* in adopter code until the framework ` +
+        `connects this resolver to an underlying fetcher.`
+    );
+  };
 
   return {
     account,
@@ -35,15 +62,9 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
       workflowSteps: () => [],
     },
     resolve: {
-      propertyList: async () => {
-        throw new Error('ctx.resolve.propertyList: not yet wired in v6.0 alpha');
-      },
-      collectionList: async () => {
-        throw new Error('ctx.resolve.collectionList: not yet wired in v6.0 alpha');
-      },
-      creativeFormat: async () => {
-        throw new Error('ctx.resolve.creativeFormat: not yet wired in v6.0 alpha');
-      },
+      propertyList: stubResolver('propertyList'),
+      collectionList: stubResolver('collectionList'),
+      creativeFormat: stubResolver('creativeFormat'),
     },
   };
 }

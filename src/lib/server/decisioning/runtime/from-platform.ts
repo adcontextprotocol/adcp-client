@@ -65,7 +65,7 @@ import type { CreativeTemplatePlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
-import type { CreativeAsset, AccountReference } from '../../../types/tools.generated';
+import type { AccountReference } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform } from './validate-platform';
 import { buildRequestContext } from './to-context';
@@ -119,6 +119,14 @@ export interface DecisioningAdcpServer extends AdcpServer {
    * that share the module-level `activeBus` when running multiple servers
    * in the same process. Production webhook/cron code that does not hold a
    * server reference keeps calling the module-level `publishStatusChange(...)`.
+   *
+   * **Projection wiring contract** (rc.1): when the MCP Resources subscription
+   * projection commit lands, the projector MUST fan-in from BOTH this
+   * per-server bus AND the module-level `activeBus`. Anchoring the subscriber
+   * to only one source silently makes the other call site inert in production
+   * — adopters who scope to `server.statusChange.publish(...)` for tenant
+   * isolation must still reach buyer-facing subscriptions, and webhook/cron
+   * code calling module-level `publishStatusChange(...)` must too.
    */
   statusChange: StatusChangeBus;
 }
@@ -305,8 +313,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     updateMediaBuy: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      const buyId = (params as { media_buy_id?: string }).media_buy_id;
-      if (!buyId) {
+      // `media_buy_id` is required on the wire schema, but `validation: 'off'`
+      // mode skips the schema parse — guard at the seam so platform code can
+      // trust the value rather than re-checking. Also catches buyers calling
+      // with the param missing under an off-spec server config.
+      const { media_buy_id } = params;
+      if (!media_buy_id) {
         return adcpError('INVALID_REQUEST', {
           message: 'update_media_buy requires media_buy_id',
           field: 'media_buy_id',
@@ -314,14 +326,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         });
       }
       return projectSync(
-        () => sales.updateMediaBuy(buyId, params, reqCtx),
+        () => sales.updateMediaBuy(media_buy_id, params, reqCtx),
         r => r
       );
     },
 
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      const creatives = ((params as { creatives?: CreativeAsset[] }).creatives ?? []) as CreativeAsset[];
+      const creatives = params.creatives ?? [];
       if (sales.syncCreativesTask) {
         return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
           sales.syncCreativesTask!(taskId, creatives, reqCtx)
@@ -379,7 +391,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
 
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      const creatives = ((params as { creatives?: CreativeAsset[] }).creatives ?? []) as CreativeAsset[];
+      const creatives = params.creatives ?? [];
       if (creative.syncCreativesTask) {
         return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
           creative.syncCreativesTask!(taskId, creatives, reqCtx)
@@ -433,7 +445,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
   return {
     syncAudiences: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      const audienceList = ((params as { audiences?: Audience[] }).audiences ?? []) as Audience[];
+      const audienceList = (params.audiences ?? []) as Audience[];
       return projectSync(
         () => audiences.syncAudiences(audienceList, reqCtx),
         rows => ({ audiences: rows })
@@ -594,7 +606,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform:
           recovery: 'terminal',
         });
       }
-      const refs = ((params as { accounts?: AccountReference[] }).accounts ?? []) as AccountReference[];
+      const refs = (params.accounts ?? []) as AccountReference[];
       return projectSync(
         () => platform.accounts.upsert!(refs),
         rows => ({ accounts: rows })
