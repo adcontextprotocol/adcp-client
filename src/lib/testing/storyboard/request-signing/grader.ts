@@ -66,6 +66,23 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   allowLiveSideEffects?: boolean;
   /**
+   * Agent's declared `covers_content_digest` policy from
+   * `get_adcp_capabilities.request_signing.covers_content_digest`. When set
+   * without `agentCapability`, the grader auto-skips **negative** vectors whose
+   * `verifier_capability.covers_content_digest` asserts a policy the agent
+   * didn't advertise (positive vectors are always gradable regardless of policy):
+   *   - `'either'` → skips neg/007 (`'required'`) and neg/018 (`'forbidden'`)
+   *   - `'required'` → skips neg/018; neg/007 still runs
+   *   - `'forbidden'` → skips neg/007; neg/018 still runs
+   *
+   * Skipped vectors use `skip_reason: 'capability_profile_mismatch'`.
+   *
+   * Has no effect when `agentCapability` is provided — the full capability
+   * fixture's `covers_content_digest` field governs via `capabilityMismatch()`.
+   * Use `agentCapability` when you also need `required_for` skip behavior.
+   */
+  agentContentDigestPolicy?: 'required' | 'forbidden' | 'either';
+  /**
    * Transport shape the agent speaks. `'raw'` (default) POSTs per-operation
    * AdCP endpoints matching the vectors' URL shape. `'mcp'` wraps each
    * vector body in a JSON-RPC `tools/call` envelope and POSTs to the MCP
@@ -259,6 +276,19 @@ function preflightSkip(
         skipped: true,
         skip_reason: 'capability_profile_mismatch',
         diagnostic: mismatch,
+      };
+    }
+  }
+  if (kind === 'negative' && !options.agentCapability && options.agentContentDigestPolicy) {
+    const vectorCd = vector.verifier_capability.covers_content_digest;
+    if (vectorCd !== 'either' && vectorCd !== options.agentContentDigestPolicy) {
+      return {
+        ...base,
+        skipped: true,
+        skip_reason: 'capability_profile_mismatch',
+        diagnostic:
+          `Vector asserts covers_content_digest='${vectorCd}' but agent declares '${options.agentContentDigestPolicy}'. ` +
+          `The agent's policy is incompatible with the vector's expected verifier behavior.`,
       };
     }
   }
