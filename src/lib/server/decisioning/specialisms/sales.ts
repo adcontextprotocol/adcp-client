@@ -48,8 +48,16 @@ import type {
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
+  GetMediaBuysRequest,
+  GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
+  ProvidePerformanceFeedbackRequest,
+  ProvidePerformanceFeedbackSuccess,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
+  ListCreativesRequest,
+  ListCreativesResponse,
   SyncCreativesSuccess,
   CreativeAsset,
 } from '../../../types/tools.generated';
@@ -120,4 +128,41 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 
   getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuyDeliveryResponse>;
+
+  // ── get_media_buys: sync only ───────────────────────────────────────
+  // Read tool — buyers fetch a list of their media buys (often filtered by
+  // status / time window). Optional because some sales agents are write-only
+  // (proposal-mode adopters who deliver via push channels), but the vast
+  // majority of seller agents implement this. Framework returns
+  // UNSUPPORTED_FEATURE when omitted.
+  /** List media buys this account owns. Filter + pagination per the wire shape. */
+  getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuysResponse>;
+
+  // ── provide_performance_feedback: sync only ─────────────────────────
+  // Write tool — buyers report aggregate creative-level performance
+  // (impressions, clicks, conversions) to help the seller's optimizer learn.
+  // Optional because not every sales agent runs an optimizer, but every
+  // buyer expects to be able to call it. Framework returns UNSUPPORTED_FEATURE
+  // when omitted.
+  /** Accept buyer-side performance signals on a media buy / creative. */
+  providePerformanceFeedback?(
+    req: ProvidePerformanceFeedbackRequest,
+    ctx: Ctx<TMeta>
+  ): Promise<ProvidePerformanceFeedbackSuccess>;
+
+  // ── list_creative_formats: sync only ────────────────────────────────
+  // Discovery tool — buyers query what creative formats this seller
+  // accepts. Optional because sellers that delegate to external
+  // `creative_agents` (declared in `capabilities.creative_agents[]`) don't
+  // own format definitions; framework can resolve from the declared agents.
+  // Self-hosted sellers (own creative library) implement this directly.
+  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TMeta>): Promise<ListCreativeFormatsResponse>;
+
+  // ── list_creatives: sync only ───────────────────────────────────────
+  // Read tool — buyers query the seller's creative library. Optional
+  // because most sales adopters delegate creative state to the
+  // `creative_agents` declared in capabilities; ad-server-style sales
+  // platforms implement directly. Note: also lives on `CreativeAdServerPlatform.listCreatives`
+  // for the standalone-creative-agent shape.
+  listCreatives?(req: ListCreativesRequest, ctx: Ctx<TMeta>): Promise<ListCreativesResponse>;
 }

@@ -12,7 +12,14 @@
  * @public
  */
 
-import type { BrandReference, AccountReference } from '../../types/tools.generated';
+import type {
+  BrandReference,
+  AccountReference,
+  ReportUsageRequest,
+  ReportUsageResponse,
+  GetAccountFinancialsRequest,
+  GetAccountFinancialsSuccess,
+} from '../../types/tools.generated';
 import type { CursorPage, CursorRequest } from './pagination';
 
 /**
@@ -138,6 +145,30 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
    */
   list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TMeta>>>;
+
+  /**
+   * report_usage API surface. Operator-billed platforms accept usage rows
+   * (often impressions / spend by media_buy + period) for billing
+   * reconciliation. Optional — adopters that don't run billing through the
+   * agent leave this unimplemented and the framework returns
+   * UNSUPPORTED_FEATURE.
+   *
+   * Idempotent on `(account, period_start, period_end, line_item_id)` —
+   * platform must dedupe replays under the framework's idempotency key.
+   */
+  reportUsage?(req: ReportUsageRequest): Promise<ReportUsageResponse>;
+
+  /**
+   * get_account_financials API surface. Operator-billed platforms expose
+   * spend / credit / payment status per the wire shape. Optional — agent-
+   * billed platforms (where the buyer settles directly with the publisher)
+   * leave this unimplemented.
+   *
+   * Read tool — no idempotency requirement. Throw `AdcpError` for buyer-
+   * fixable rejection (`'PERMISSION_DENIED'` if the principal can't see
+   * financials for the requested account).
+   */
+  getAccountFinancials?(req: GetAccountFinancialsRequest): Promise<GetAccountFinancialsSuccess>;
 }
 
 /**

@@ -619,6 +619,118 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
   });
 });
 
+describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
+  // The v1.0 stable surface adds getMediaBuys / providePerformanceFeedback /
+  // listCreativeFormats / listCreatives as optional methods on SalesPlatform.
+  // Adopters who implement them get first-class dispatch through the platform
+  // interface; adopters who don't can still fill via the merge seam (see the
+  // separate suite below).
+
+  it('getMediaBuys dispatches through sales.getMediaBuys when defined', async () => {
+    let sawCtx;
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        getMediaBuys: async (req, ctx) => {
+          sawCtx = ctx;
+          return { media_buys: [{ media_buy_id: 'mb_via_platform', status: 'active' }] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_media_buys', arguments: { account: { account_id: 'acc_1' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.media_buys[0].media_buy_id, 'mb_via_platform');
+    assert.ok(sawCtx?.account, 'platform method received the resolved RequestContext');
+  });
+
+  // TODO(rc.1): providePerformanceFeedback + listCreativeFormats tests are
+  // pending auth-derived account resolution. Their wire requests don't carry
+  // an `account` field, so the framework's `hasAccount` check skips
+  // `resolveAccount`, and `buildRequestContext` throws on the missing
+  // account. The rc.1 framework refactor adds `resolveAccount(undefined,
+  // { authInfo, toolName })` for these tools so platform methods always see
+  // a tenant-scoped ctx. The dispatch wiring is in place; once that lands,
+  // these tests light up. Pinned in the rc.1 issue list.
+});
+
+describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
+  function buildAccountsPlatform(extras) {
+    return buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_1', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+        ...extras,
+      },
+    });
+  }
+
+  it('reportUsage dispatches through accounts.reportUsage when defined', async () => {
+    let received;
+    const platform = buildAccountsPlatform({
+      reportUsage: async req => {
+        received = req;
+        return { success: true };
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'report_usage',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          period: { start: '2026-04-01', end: '2026-04-30' },
+          line_items: [],
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(received, 'platform reportUsage was invoked');
+  });
+
+  it('getAccountFinancials dispatches through accounts.getAccountFinancials when defined', async () => {
+    const platform = buildAccountsPlatform({
+      getAccountFinancials: async () => ({
+        account: { account_id: 'acc_1' },
+        currency: 'USD',
+        period: { start: '2026-04-01', end: '2026-04-30' },
+        timezone: 'America/New_York',
+        spend: { total_spend: 1234.56, media_buy_count: 3 },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_1' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.spend.total_spend, 1234.56);
+  });
+
+  // Note: when neither the platform nor the merge seam supplies a handler
+  // for report_usage / get_account_financials, the framework simply doesn't
+  // register the tool — `tools/list` won't include it and a buyer call
+  // returns "tool not registered". That's coherent: undeclared = absent.
+  // Adopters who want UNSUPPORTED_FEATURE-on-disabled register a stub via
+  // the merge seam that throws AdcpError('UNSUPPORTED_FEATURE').
+});
+
 describe('Custom-handler merge seam (incremental migration)', () => {
   // The platform shape models the v1.0 stable surface. Adopters with
   // established handler-style adapters use the merge seam to fill gaps for

@@ -424,6 +424,48 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         actuals => actuals
       );
     },
+
+    // Optional methods — return UNSUPPORTED_FEATURE when the platform omits
+    // them. Adopters that haven't migrated to the v6 platform interface for
+    // these specific tools can still pass raw handlers via opts.mediaBuy
+    // (merge seam) — the merge runs AFTER buildMediaBuyHandlers, so opts
+    // handlers fill in for the methods this platform omits.
+    ...(sales.getMediaBuys && {
+      getMediaBuys: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          () => sales.getMediaBuys!(params, reqCtx),
+          r => r
+        );
+      },
+    }),
+    ...(sales.providePerformanceFeedback && {
+      providePerformanceFeedback: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          () => sales.providePerformanceFeedback!(params, reqCtx),
+          r => r
+        );
+      },
+    }),
+    ...(sales.listCreativeFormats && {
+      listCreativeFormats: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          () => sales.listCreativeFormats!(params, reqCtx),
+          r => r
+        );
+      },
+    }),
+    ...(sales.listCreatives && {
+      listCreatives: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          () => sales.listCreatives!(params, reqCtx),
+          r => r
+        );
+      },
+    }),
   };
 }
 
@@ -670,9 +712,11 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform: P): AccountHandlers<Account> {
-  return {
+  const accounts = platform.accounts;
+
+  const handlers: AccountHandlers<Account> = {
     syncAccounts: async (params, _ctx) => {
-      if (!platform.accounts.upsert) {
+      if (!accounts.upsert) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_accounts not supported by this platform',
           recovery: 'terminal',
@@ -680,23 +724,41 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform:
       }
       const refs = (params.accounts ?? []) as AccountReference[];
       return projectSync(
-        () => platform.accounts.upsert!(refs),
+        () => accounts.upsert!(refs),
         rows => ({ accounts: rows })
       );
     },
     listAccounts: async (params, _ctx) => {
-      if (!platform.accounts.list) {
+      if (!accounts.list) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'list_accounts not supported by this platform',
           recovery: 'terminal',
         });
       }
-      const filter = params as Parameters<NonNullable<typeof platform.accounts.list>>[0];
-      const page = await platform.accounts.list(filter);
+      const filter = params as Parameters<NonNullable<typeof accounts.list>>[0];
+      const page = await accounts.list(filter);
       return {
         accounts: page.items.map(toWireAccount),
         ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
       };
     },
   };
+
+  if (accounts.reportUsage) {
+    handlers.reportUsage = async (params, _ctx) =>
+      projectSync(
+        () => accounts.reportUsage!(params),
+        r => r
+      );
+  }
+
+  if (accounts.getAccountFinancials) {
+    handlers.getAccountFinancials = async (params, _ctx) =>
+      projectSync(
+        () => accounts.getAccountFinancials!(params),
+        r => r
+      );
+  }
+
+  return handlers;
 }
