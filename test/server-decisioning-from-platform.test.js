@@ -1425,6 +1425,33 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const hookWarn = warns.find(w => w.includes('observability hook onAccountResolve threw'));
     assert.ok(hookWarn, `expected hook-throw warning, got: ${JSON.stringify(warns)}`);
   });
+
+  it('hook async rejections are caught and logged — dispatch unaffected', async () => {
+    // safeFire must catch promise rejections from accidentally-async hooks.
+    // If an adopter writes `onAccountResolve: async () => { throw }`, the
+    // returned promise rejects out-of-band; without the .catch in safeFire
+    // the process logs 'UnhandledPromiseRejection' and may exit on
+    // node --unhandled-rejections=strict.
+    const warns = [];
+    const platform = buildPlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      logger: { debug: () => {}, info: () => {}, warn: m => warns.push(m), error: () => {} },
+      observability: {
+        onAccountResolve: async () => { throw new Error('async telemetry exploded'); },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } } },
+    });
+    assert.notStrictEqual(result.isError, true, 'dispatch succeeded despite async hook rejection');
+    // Allow microtask queue to flush so the rejection .catch runs.
+    await new Promise(r => setImmediate(r));
+    const hookWarn = warns.find(w => w.includes('onAccountResolve') && w.includes('rejected promise'));
+    assert.ok(hookWarn, `expected async hook-rejection warning, got: ${JSON.stringify(warns)}`);
+  });
 });
 
 describe('HITL push notification webhook on terminal state', () => {
@@ -1507,7 +1534,7 @@ describe('HITL push notification webhook on terminal state', () => {
     assert.ok(typeof emit.payload.idempotency_key === 'string' && emit.payload.idempotency_key.length >= 16);
     assert.ok(typeof emit.payload.timestamp === 'string');
     assert.deepStrictEqual(emit.payload.result, { media_buy_id: 'mb_42', status: 'active' });
-    assert.strictEqual(emit.payload.validation_token, 'shhh');
+    assert.strictEqual(emit.payload.token, 'shhh');
     assert.ok(emit.operation_id.startsWith('create_media_buy.task_'));
   });
 
@@ -1545,7 +1572,7 @@ describe('HITL push notification webhook on terminal state', () => {
     assert.strictEqual(emits[0].payload.status, 'failed');
     assert.deepStrictEqual(emits[0].payload.result.errors[0].code, 'GOVERNANCE_DENIED');
     assert.strictEqual(emits[0].payload.message, 'op declined');
-    assert.strictEqual(emits[0].payload.validation_token, undefined, 'token omitted when buyer didn\'t supply one');
+    assert.strictEqual(emits[0].payload.token, undefined, 'token omitted when buyer didn\'t supply one');
   });
 
   it('does not emit webhook when push_notification_config is absent', async () => {
@@ -1641,6 +1668,18 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     ['link-local AWS metadata', 'http://169.254.169.254/latest/meta-data/', 'link-local 169.254/16'],
     ['CGNAT 100.64/10', 'https://100.64.0.1/hook', 'CGNAT range 100.64/10'],
     ['IPv6 loopback', 'https://[::1]/hook', 'IPv6 loopback'],
+    ['IPv6 unique-local with brackets', 'https://[fc00::1]/hook', 'IPv6 unique-local'],
+    ['IPv6 link-local with brackets', 'https://[fe80::1]/hook', 'IPv6 link-local'],
+    ['IPv4-mapped IPv6 dotted (loopback)', 'https://[::ffff:127.0.0.1]/hook', 'IPv4-mapped IPv6'],
+    ['IPv4-mapped IPv6 hex (loopback)', 'https://[::ffff:7f00:1]/hook', 'IPv4-mapped IPv6'],
+    // Node's WHATWG URL parser canonicalizes alternate IPv4 forms to
+    // dotted-decimal before our regex checks see them — `2130706433`,
+    // `0x7f000001`, and `0177.0.0.1` all parse to host `127.0.0.1`. So
+    // they hit the loopback range check, not the alternate-form rejectors.
+    // Either way they're rejected; that's what matters.
+    ['integer-form IPv4 (2130706433 = 127.0.0.1)', 'https://2130706433/hook', 'loopback range 127/8'],
+    ['hex-form IPv4 (0x7f000001 = 127.0.0.1)', 'https://0x7f000001/hook', 'loopback range 127/8'],
+    ['octal-form IPv4 (0177.0.0.1 = 127.0.0.1)', 'https://0177.0.0.1/hook', 'loopback range 127/8'],
     ['localhost', 'https://localhost/hook', 'host "localhost" rejected'],
     ['unsupported scheme', 'file:///etc/passwd', 'unsupported scheme "file:"'],
     ['malformed URL', 'not a url', 'malformed URL'],
@@ -1676,6 +1715,18 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     assert.strictEqual(emits.length, 1);
   });
 
+  it('rejects empty token', async () => {
+    const warns = [];
+    const emits = [];
+    const server = makeServer({ warns, emits });
+    const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', '');
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].payload.token, undefined, 'empty token NOT round-tripped');
+    const warn = warns.find(w => w.includes('token rejected') && w.includes('empty'));
+    assert.ok(warn, `expected empty-token rejection, got: ${JSON.stringify(warns)}`);
+  });
+
   it('rejects token over 255 chars', async () => {
     const warns = [];
     const emits = [];
@@ -1685,7 +1736,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     await server.awaitTask(result.structuredContent.task_id);
     // Webhook still delivers (URL was valid) but without the rejected token
     assert.strictEqual(emits.length, 1);
-    assert.strictEqual(emits[0].payload.validation_token, undefined, 'long token NOT round-tripped');
+    assert.strictEqual(emits[0].payload.token, undefined, 'long token NOT round-tripped');
     const warn = warns.find(w => w.includes('token rejected') && w.includes('longer than'));
     assert.ok(warn, `expected token-length rejection, got: ${JSON.stringify(warns)}`);
   });
@@ -1697,7 +1748,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', 'tok\x00\x01with-controls');
     await server.awaitTask(result.structuredContent.task_id);
     assert.strictEqual(emits.length, 1);
-    assert.strictEqual(emits[0].payload.validation_token, undefined, 'control-char token NOT round-tripped');
+    assert.strictEqual(emits[0].payload.token, undefined, 'control-char token NOT round-tripped');
     const warn = warns.find(w => w.includes('token rejected') && w.includes('control characters'));
     assert.ok(warn);
   });
@@ -1708,7 +1759,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', 'tok_abc-123:xyz.456');
     await server.awaitTask(result.structuredContent.task_id);
     assert.strictEqual(emits.length, 1);
-    assert.strictEqual(emits[0].payload.validation_token, 'tok_abc-123:xyz.456');
+    assert.strictEqual(emits[0].payload.token, 'tok_abc-123:xyz.456');
   });
 });
 
@@ -1823,6 +1874,48 @@ describe('tasks_get wire tool (B9)', () => {
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
       params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_attacker' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+  });
+
+  it('refuses to leak when caller omits account AND no auth context resolves one', async () => {
+    // Unauthenticated probe path: caller passes only { task_id }, no
+    // `account` arg, and the resolver returns nothing for `undefined` ref
+    // (i.e. there's no auth-derived account either). The handler must NOT
+    // return the task even though task_id is valid — owning account mismatch
+    // ('owner' vs undefined) blocks the leak.
+    const server = createAdcpServerFromPlatform(
+      {
+        capabilities: {
+          specialisms: ['sales-non-guaranteed'],
+          creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+        },
+        accounts: {
+          resolve: async ref => {
+            // Only resolve when ref explicitly carries account_id; treat
+            // `undefined` ref as unauthenticated (no auth-derived match).
+            if (!ref?.account_id) return null;
+            return {
+              id: ref.account_id, name: 'X', status: 'active',
+              metadata: {}, authInfo: { kind: 'api_key' },
+            };
+          },
+        },
+        sales: {
+          getProducts: async () => ({ products: [] }),
+          createMediaBuyTask: async () => ({ media_buy_id: 'mb_42', status: 'active' }),
+          updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
+          syncCreatives: async () => [],
+          getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        },
+      },
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const taskId = await createTask(server, 'acc_owner');
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'tasks_get', arguments: { task_id: taskId } },
     });
     assert.strictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');

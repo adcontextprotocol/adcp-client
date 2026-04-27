@@ -500,17 +500,32 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   return {
     description:
       'Poll the lifecycle of a HITL task (create_media_buy / sync_creatives) by task_id. ' +
-      'Returns the current status, terminal result on completed, or structured error on failed. ' +
+      'Returns the spec-flat lifecycle shape (`tasks-get-response.json`). ' +
       'Spec-aligned alternative to the MCP-native `tasks/get` method (native integration lands in v6.1).',
     title: 'Get Task State',
     inputSchema: inputShape,
     annotations: { readOnlyHint: true },
-    handler: async (args: { task_id: string; account?: { account_id?: string } }) => {
+    // Handler receives the MCP RequestHandlerExtra as second arg — carries
+    // the caller's `authInfo` extracted by `serve({ authenticate })`. Thread
+    // it through `accounts.resolve(ref, ctx)` so adopters' `'explicit'`-mode
+    // resolvers can authorize the resolution against the principal — without
+    // this, an attacker passing `{ account: { account_id: 'tenant_B' } }`
+    // gets tenant B's account back from a naive `findById(ref.account_id)`
+    // resolver and reads tenant B's task. Same threading as the regular
+    // `resolveAccount` dispatch flow in `create-adcp-server.ts:2380-2398`.
+    handler: async (
+      args: { task_id: string; account?: { account_id?: string } },
+      extra: { authInfo?: { token: string; clientId: string; scopes: string[]; expiresAt?: number; extra?: Record<string, unknown> } }
+    ) => {
       const ref = args.account;
+      const resolveCtx = {
+        ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+        toolName: 'tasks_get',
+      };
       let resolvedAccountId: string | undefined;
       if (ref) {
         try {
-          const resolved = await platform.accounts.resolve(ref as AccountReference);
+          const resolved = await platform.accounts.resolve(ref as AccountReference, resolveCtx);
           if (resolved) resolvedAccountId = resolved.id;
         } catch (err) {
           if (!(err instanceof AccountNotFoundError)) throw err;
@@ -523,7 +538,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         }
       } else {
         try {
-          const resolved = await platform.accounts.resolve(undefined);
+          const resolved = await platform.accounts.resolve(undefined, resolveCtx);
           if (resolved) resolvedAccountId = resolved.id;
         } catch (err) {
           if (!(err instanceof AccountNotFoundError)) throw err;
@@ -537,6 +552,18 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           field: 'task_id',
         });
       }
+      // Tenant boundary. Two checks to close the auth-derived bypass:
+      //   1. If we resolved an account, the task's owning account must match.
+      //   2. If we did NOT resolve an account but the task IS owned by an
+      //      account, refuse to leak. This catches the unauthenticated /
+      //      `'explicit'`-mode-misconfigured caller that hits the auth-derived
+      //      branch and would otherwise read any task by id.
+      if (resolvedAccountId === undefined && record.accountId) {
+        return adcpError('REFERENCE_NOT_FOUND', {
+          message: `Task ${args.task_id} not found`,
+          field: 'task_id',
+        });
+      }
       if (resolvedAccountId !== undefined && record.accountId !== resolvedAccountId) {
         return adcpError('REFERENCE_NOT_FOUND', {
           message: `Task ${args.task_id} not found`,
@@ -544,12 +571,15 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         });
       }
 
+      // Spec shape: `tasks-get-response.json` requires task_id, task_type,
+      // status, created_at, updated_at, protocol. Optional message + result.
       const payload: Record<string, unknown> = {
         task_id: record.taskId,
         task_type: record.tool,
         status: record.status,
-        timestamp: record.updatedAt,
         protocol: protocolForTool(record.tool),
+        created_at: record.createdAt,
+        updated_at: record.updatedAt,
       };
       if (record.statusMessage) payload.message = record.statusMessage;
       if (record.status === 'completed' && record.result !== undefined) {
@@ -651,20 +681,36 @@ function mergeHandlers<T extends object>(
 // ---------------------------------------------------------------------------
 
 /**
- * Fire an observability callback with throw-safe semantics. Adopter throws
- * inside hooks are caught + logged so a buggy span/metric callback never
- * breaks dispatch. Callbacks are sync; if you need async tracer work,
- * fire-and-forget inside the callback body.
+ * Fire an observability callback with throw-safe semantics — both sync
+ * throws AND rejected promises are caught + logged so a buggy span/metric
+ * callback never breaks dispatch. The framework does NOT await the
+ * callback; if you need async tracer work, do it inside the callback and
+ * the framework will not hold the dispatch path waiting for it.
  */
 function safeFire<T>(fn: ((arg: T) => unknown) | undefined, arg: T, hookName: string, logger: AdcpLogger): void {
   if (!fn) return;
+  let result: unknown;
   try {
-    fn(arg);
+    result = fn(arg);
   } catch (err) {
     logger.warn(
       `[adcp/decisioning] observability hook ${hookName} threw — telemetry callbacks must never throw. ` +
         `Error: ${err instanceof Error ? err.message : String(err)}`
     );
+    return;
+  }
+  // Catch rejected promises from accidentally-async callbacks. Without
+  // this an `async () => { throw ... }` hook would surface as
+  // UnhandledPromiseRejection and on `--unhandled-rejections=strict`
+  // would crash the process.
+  if (result && typeof (result as { catch?: unknown }).catch === 'function') {
+    (result as Promise<unknown>).catch((err: unknown) => {
+      logger.warn(
+        `[adcp/decisioning] observability hook ${hookName} returned a rejected promise — ` +
+          `telemetry callbacks must never reject. ` +
+          `Error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
   }
 }
 
@@ -927,8 +973,14 @@ function buildTaskWebhookPayload(
     timestamp: new Date().toISOString(),
     protocol: protocolForTool(opts.tool),
   };
+  // Spec doesn't define a wire field name for the echoed token. Buyers
+  // pass `push_notification_config.token` on the request; we echo it back
+  // under the same name `token` so receivers verifying via the request
+  // field can find it. (Earlier preview drops named this `validation_token`
+  // — that wasn't spec-aligned and won't be picked up by buyers wiring
+  // against the spec request shape.)
   if (opts.pushNotificationToken !== undefined) {
-    payload.validation_token = opts.pushNotificationToken;
+    payload.token = opts.pushNotificationToken;
   }
   // `result` is the AdCP async-response-data union — for completed it's
   // the success-arm body; for failed it carries `errors: AdcpStructuredError[]`
@@ -1127,12 +1179,26 @@ function validatePushNotificationUrl(rawUrl: string): UrlValidationResult {
     return { ok: false, reason: `unsupported scheme "${parsed.protocol}" (only http: / https:)` };
   }
 
-  const host = parsed.hostname.toLowerCase();
+  // Node's `URL.hostname` returns IPv6 literals WITH brackets — so
+  // `https://[::1]/` yields `[::1]`. Strip them so our IPv6 checks below
+  // can match the unbracketed form. (`URL.host` includes the port, which
+  // we don't want here.)
+  let host = parsed.hostname.toLowerCase();
+  if (host.startsWith('[') && host.endsWith(']')) {
+    host = host.slice(1, -1);
+  }
   if (host === '' || host === 'localhost' || host === '0') {
     return { ok: false, reason: `host "${host}" rejected (loopback / unspecified)` };
   }
 
-  // IPv4 literal check
+  // Note on IPv4 alternate forms (integer `2130706433`, hex `0x7f000001`,
+  // octal `0177.0.0.1`): Node's WHATWG URL parser canonicalizes all of
+  // these to dotted-decimal before we see `parsed.hostname`. So
+  // `https://2130706433/` arrives here with host `127.0.0.1` and falls
+  // through to the dotted-decimal range check below. Defense-in-depth
+  // alternate-form regex rejectors are not needed at this layer.
+
+  // IPv4 dotted-decimal check
   const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
     const a = Number(ipv4Match[1]);
@@ -1147,15 +1213,47 @@ function validatePushNotificationUrl(rawUrl: string): UrlValidationResult {
     if (a >= 224) return { ok: false, reason: 'multicast / reserved range rejected' };
   }
 
-  // IPv6 literal check (simplified — covers the common cases)
+  // IPv6 literal check — Node strips brackets so we match unbracketed forms.
+  // A hostname containing `:` is an IPv6 literal (DNS hostnames disallow `:`).
   if (host.includes(':')) {
-    if (host === '::1' || host === '[::1]') return { ok: false, reason: 'IPv6 loopback ::1 rejected' };
-    if (host === '::' || host === '[::]') return { ok: false, reason: 'IPv6 unspecified :: rejected' };
-    if (host.startsWith('fe80:') || host.startsWith('[fe80:')) {
+    // Loopback + unspecified — exact match
+    if (host === '::1') return { ok: false, reason: 'IPv6 loopback ::1 rejected' };
+    if (host === '::') return { ok: false, reason: 'IPv6 unspecified :: rejected' };
+    // Link-local fe80::/10 — match strict prefix `fe80:` (not just `fe80`)
+    if (host.startsWith('fe80:')) {
       return { ok: false, reason: 'IPv6 link-local fe80::/10 rejected' };
     }
-    if (host.startsWith('fc') || host.startsWith('[fc') || host.startsWith('fd') || host.startsWith('[fd')) {
+    // Unique-local fc00::/7 — match strict prefix `fc` or `fd` followed
+    // by exactly one more hex char (so fc00:, fcab:, fd00:, fdef:) and
+    // then `:`. Old check `host.startsWith('fc')` would match the
+    // hostname-not-IP `fc-cdn.example.com`; since IPv6 hostnames always
+    // contain `:`, restrict to literals where char[2] is hex + `:`.
+    if (/^f[cd][0-9a-f]{2}:/.test(host)) {
       return { ok: false, reason: 'IPv6 unique-local fc00::/7 rejected' };
+    }
+    // IPv4-mapped IPv6 — `::ffff:127.0.0.1` or `::ffff:7f00:0001`. Either
+    // form: extract the embedded IPv4 (if dotted) or the last 32 bits and
+    // re-run the IPv4 range checks. Simpler: reject any `::ffff:` prefix
+    // pointing to a private IPv4 by recursive validation.
+    const v4MappedMatch = host.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (v4MappedMatch) {
+      const inner = v4MappedMatch[1];
+      const innerCheck = validatePushNotificationUrl(`http://${inner}/`);
+      if (!innerCheck.ok) {
+        return { ok: false, reason: `IPv4-mapped IPv6 ${host}: ${innerCheck.reason}` };
+      }
+    }
+    // Hex IPv4-mapped form (`::ffff:7f00:0001`): match the 32-bit
+    // suffix and convert to dotted form for re-check.
+    const v4MappedHexMatch = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (v4MappedHexMatch) {
+      const high = parseInt(v4MappedHexMatch[1]!, 16);
+      const low = parseInt(v4MappedHexMatch[2]!, 16);
+      const dotted = `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+      const innerCheck = validatePushNotificationUrl(`http://${dotted}/`);
+      if (!innerCheck.ok) {
+        return { ok: false, reason: `IPv4-mapped IPv6 ${host}: ${innerCheck.reason}` };
+      }
     }
   }
 
@@ -1166,6 +1264,9 @@ const TOKEN_MAX_LENGTH = 255;
 const TOKEN_CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 
 function validatePushNotificationToken(token: string): UrlValidationResult {
+  if (token.length === 0) {
+    return { ok: false, reason: 'token is empty' };
+  }
   if (token.length > TOKEN_MAX_LENGTH) {
     return { ok: false, reason: `token longer than ${TOKEN_MAX_LENGTH} chars` };
   }
@@ -1715,11 +1816,16 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform:
         });
       }
       const filter = params as Parameters<NonNullable<typeof accounts.list>>[0];
-      const page = await accounts.list(filter);
-      return {
-        accounts: page.items.map(toWireAccount),
-        ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
-      };
+      // Wrap in projectSync so adopter `throw new AdcpError('PERMISSION_DENIED', ...)`
+      // from the list impl projects to the structured wire envelope rather
+      // than falling through to the framework's `SERVICE_UNAVAILABLE` mapping.
+      return projectSync(
+        () => accounts.list!(filter),
+        page => ({
+          accounts: page.items.map(toWireAccount),
+          ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
+        })
+      );
     },
   };
 

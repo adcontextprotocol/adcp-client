@@ -115,7 +115,16 @@ CREATE TABLE IF NOT EXISTS ${table} (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   CONSTRAINT ${table}_valid_status CHECK (
-    status IN ('submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required', 'unknown')
+    -- Only the 3 framework-written values today. The other 6 spec-defined
+    -- states ('working', 'input-required', 'canceled', 'rejected',
+    -- 'auth-required', 'unknown') are reserved for adopter-emitted
+    -- transitions via the v6.1 \`taskRegistry.transition()\` API; the
+    -- v6.1 migration will widen this CHECK. Keeping it narrow today
+    -- prevents adopters writing the other 6 directly via SQL from
+    -- pinning tasks in non-terminal states the framework's
+    -- \`complete()\`/\`fail()\` no-op against (their WHERE predicates
+    -- match \`status='submitted'\`).
+    status IN ('submitted', 'completed', 'failed')
   )
 );
 
