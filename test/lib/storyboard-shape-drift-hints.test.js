@@ -161,3 +161,64 @@ describe('detectShapeDriftHint (string shim): delegates to structured detector',
     assert.equal(detectShapeDriftHint('build_creative', { creative_manifest: {} }), undefined);
   });
 });
+
+describe('detectShapeDriftHints: version-staleness suffix (issue #850)', () => {
+  test('library_version absent → message unchanged', () => {
+    const [hint] = detectShapeDriftHints('build_creative', {
+      tag_url: 'https://cdn.example.com/ad.mp3',
+      creative_id: 'c1',
+      media_type: 'audio/mpeg',
+    });
+    assert.ok(hint, 'expected a hint');
+    assert.doesNotMatch(hint.message, /Note: your agent reports/);
+  });
+
+  test('library_version present, above minimum → message unchanged', () => {
+    const [hint] = detectShapeDriftHints(
+      'build_creative',
+      { tag_url: 'https://cdn.example.com/ad.mp3', creative_id: 'c1', media_type: 'audio/mpeg' },
+      '@adcp/client@5.20.0'
+    );
+    assert.ok(hint, 'expected a hint');
+    assert.doesNotMatch(hint.message, /Note: your agent reports/);
+  });
+
+  test('library_version present, below minimum (e.g. 5.9.0 < 5.14.0) → suffix appended', () => {
+    const [hint] = detectShapeDriftHints(
+      'build_creative',
+      { tag_url: 'https://cdn.example.com/ad.mp3', creative_id: 'c1', media_type: 'audio/mpeg' },
+      '@adcp/client@5.9.0'
+    );
+    assert.ok(hint, 'expected a hint');
+    assert.match(hint.message, /Note: your agent reports @adcp\/client@5\.9\.0/);
+    assert.match(hint.message, /buildCreativeResponse\(\) ships in @adcp\/client ≥5\.14\.0/);
+    assert.match(hint.message, /Upgrade your SDK dep/);
+  });
+
+  test('semver comparison is numeric, not lexicographic (5.9.0 < 5.14.0, not 5.9.0 > 5.14.0)', () => {
+    // Guard against naive string comparison where "9" > "14" alphabetically
+    const [hint] = detectShapeDriftHints(
+      'build_creative',
+      { tag_url: 'https://cdn.example.com/ad.mp3', creative_id: 'c1' },
+      '@adcp/client@5.9.0'
+    );
+    assert.ok(hint, 'expected a hint');
+    assert.match(hint.message, /Note: your agent reports/, 'suffix must fire for 5.9.0 < 5.14.0');
+  });
+
+  test('bare-array drift with old library_version → suffix appended to list-tool hint', () => {
+    const [hint] = detectShapeDriftHints('list_creatives', [{ creative_id: 'c1' }], '@adcp/client@4.16.2');
+    assert.ok(hint, 'expected a hint');
+    assert.match(hint.message, /Note: your agent reports @adcp\/client@4\.16\.2/);
+    assert.match(hint.message, /listCreativesResponse/);
+  });
+
+  test('no drift detected → no hints regardless of library_version', () => {
+    const hints = detectShapeDriftHints(
+      'build_creative',
+      { creative_manifest: { format_id: 'f1', assets: {} } },
+      '@adcp/client@4.0.0'
+    );
+    assert.equal(hints.length, 0);
+  });
+});

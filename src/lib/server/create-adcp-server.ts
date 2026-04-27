@@ -120,6 +120,7 @@ import type { JwksResolver } from '../signing/jwks';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
 import type { ContentDigestPolicy } from '../signing/types';
+import { LIBRARY_VERSION } from '../version';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
@@ -2986,6 +2987,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   if (capConfig?.overrides) {
     applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
   }
+
+  // Stamp the SDK version so conformance tooling can surface version-staleness
+  // hints when the agent's reported version predates recommended helpers.
+  // Cast needed because GetAdCPCapabilitiesResponse is generated and lacks
+  // this field; it remains a forward-compatible extension until the spec
+  // formally defines library_version in a future AdCP minor.
+  (capabilitiesData as Record<string, unknown>).library_version = `@adcp/client@${LIBRARY_VERSION}`;
 
   // Passthrough inputSchema — framework validation is authoritative on
   // both transports (#909). Same rationale as the domain-tool loop above.

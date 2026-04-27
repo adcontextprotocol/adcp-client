@@ -260,6 +260,8 @@ export async function discoverAgentProfile(
         if (Array.isArray(specialisms)) {
           profile.specialisms = specialisms.filter((s): s is string => typeof s === 'string');
         }
+        const libVersion = (caps.data as Record<string, unknown>).library_version;
+        if (typeof libVersion === 'string') profile.library_version = libVersion;
       } else {
         profile.capabilities_probe_error = caps?.error || 'get_adcp_capabilities returned no data';
       }

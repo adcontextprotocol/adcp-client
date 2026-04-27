@@ -1810,7 +1810,7 @@ async function executeStep(
     }
     return raw;
   })();
-  const shapeDriftHints = driftPayload === undefined ? [] : detectShapeDriftHints(effectiveStep.task, driftPayload);
+  const shapeDriftHints = driftPayload === undefined ? [] : detectShapeDriftHints(effectiveStep.task, driftPayload, profile?.library_version);
   const strictHints = detectStrictValidationHints(effectiveStep.task, validations);
   // Same root cause MAY produce both a `shape_drift` hint and a
   // `format_mismatch` (keyword: 'type') hint — e.g. `list_creatives`
