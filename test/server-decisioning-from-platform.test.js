@@ -1205,6 +1205,228 @@ describe('Merge-seam collision warning (M3)', () => {
   });
 });
 
+describe('Observability hooks (DecisioningObservabilityHooks)', () => {
+  function buildHitlPlatform(taskFn) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
+          metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuyTask: taskFn,
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  it('onAccountResolve fires after every resolve with timing + resolved flag', async () => {
+    const calls = [];
+    const platform = buildPlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      observability: {
+        onAccountResolve: info => calls.push(info),
+      },
+    });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } } },
+    });
+    assert.ok(calls.length >= 1, 'onAccountResolve fired at least once');
+    const call = calls[0];
+    assert.strictEqual(call.tool, 'get_products');
+    assert.strictEqual(call.resolved, true);
+    assert.strictEqual(call.fromAuth, false);
+    assert.ok(typeof call.durationMs === 'number' && call.durationMs >= 0);
+  });
+
+  it('onAccountResolve marks fromAuth=true on auth-derived path', async () => {
+    const calls = [];
+    const platform = buildPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({ id: 'singleton', name: 'X', status: 'active', metadata: {}, authInfo: { kind: 'api_key' } }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        providePerformanceFeedback: async () => ({ success: true }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      observability: { onAccountResolve: info => calls.push(info) },
+    });
+    // provide_performance_feedback wire request has no `account` field —
+    // framework calls resolveAccountFromAuth → fromAuth=true on the hook.
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'provide_performance_feedback',
+        arguments: {
+          media_buy_id: 'mb_1',
+          performance_index: 0.85,
+          measurement_period: { start: '2026-04-01T00:00:00Z', end: '2026-04-08T00:00:00Z' },
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    const authCall = calls.find(c => c.fromAuth === true);
+    assert.ok(authCall, `expected fromAuth=true call, got: ${JSON.stringify(calls)}`);
+    assert.strictEqual(authCall.tool, 'provide_performance_feedback');
+  });
+
+  it('onTaskCreate + onTaskTransition fire across HITL lifecycle', async () => {
+    const events = [];
+    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      observability: {
+        onTaskCreate: info => events.push({ kind: 'create', ...info }),
+        onTaskTransition: info => events.push({ kind: 'transition', ...info }),
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+
+    const create = events.find(e => e.kind === 'create');
+    const transition = events.find(e => e.kind === 'transition');
+    assert.ok(create, 'onTaskCreate fired');
+    assert.strictEqual(create.tool, 'create_media_buy');
+    assert.strictEqual(create.accountId, 'acc_1');
+    assert.ok(transition, 'onTaskTransition fired');
+    assert.strictEqual(transition.status, 'completed');
+    assert.ok(typeof transition.durationMs === 'number' && transition.durationMs >= 0);
+  });
+
+  it('onTaskTransition status="failed" carries errorCode on AdcpError', async () => {
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
+    const transitions = [];
+    const platform = buildHitlPlatform(async () => {
+      throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'denied' });
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      observability: { onTaskTransition: info => transitions.push(info) },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(transitions.length, 1);
+    assert.strictEqual(transitions[0].status, 'failed');
+    assert.strictEqual(transitions[0].errorCode, 'GOVERNANCE_DENIED');
+  });
+
+  it('onWebhookEmit fires after each delivery attempt', async () => {
+    const emits = [];
+    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_1' }));
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: {
+        emit: async params => ({ operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }),
+      },
+      observability: { onWebhookEmit: info => emits.push(info) },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].url, 'https://buyer.example.com/webhook');
+    assert.strictEqual(emits[0].status, 'completed');
+    assert.strictEqual(emits[0].success, true);
+    assert.strictEqual(emits[0].tool, 'create_media_buy');
+  });
+
+  it('onStatusChangePublish fires for every server.statusChange.publish', () => {
+    const events = [];
+    const platform = buildPlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      observability: { onStatusChangePublish: info => events.push(info) },
+    });
+    server.statusChange.publish({
+      account_id: 'acc_1',
+      resource_type: 'media_buy',
+      resource_id: 'mb_1',
+      payload: { status: 'active' },
+    });
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].accountId, 'acc_1');
+    assert.strictEqual(events[0].resourceType, 'media_buy');
+    assert.strictEqual(events[0].resourceId, 'mb_1');
+  });
+
+  it('hook throws are caught and logged — dispatch unaffected', async () => {
+    const warns = [];
+    const platform = buildPlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      logger: { debug: () => {}, info: () => {}, warn: m => warns.push(m), error: () => {} },
+      observability: {
+        onAccountResolve: () => { throw new Error('telemetry exploded'); },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } } },
+    });
+    assert.notStrictEqual(result.isError, true, 'dispatch succeeded despite hook throw');
+    const hookWarn = warns.find(w => w.includes('observability hook onAccountResolve threw'));
+    assert.ok(hookWarn, `expected hook-throw warning, got: ${JSON.stringify(warns)}`);
+  });
+});
+
 describe('HITL push notification webhook on terminal state', () => {
   // When a buyer passes `push_notification_config: { url, token }` and the
   // host wires `webhooks` on serve(), the framework emits a signed RFC 9421

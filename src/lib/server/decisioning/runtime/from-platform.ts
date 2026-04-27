@@ -71,7 +71,93 @@ import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext } from './to-context';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './task-registry';
-import { createInMemoryStatusChangeBus, type StatusChangeBus } from '../status-changes';
+import {
+  createInMemoryStatusChangeBus,
+  type StatusChangeBus,
+  type PublishStatusChangeOpts,
+} from '../status-changes';
+
+/**
+ * Lifecycle observability hooks the v6 runtime fires at well-known points.
+ * Each callback is optional; throws are caught and logged via the framework
+ * logger so adopter telemetry mistakes never break dispatch.
+ *
+ * Reach for these to wire DataDog / Prometheus / OpenTelemetry / structured
+ * logging without baking any specific backend into the framework. For
+ * OpenTelemetry, the `@adcp/client/telemetry/otel` peer-dep adapter returns
+ * a pre-wired implementation with AdCP-aligned span / metric names.
+ *
+ * **What's instrumented today (v6.0):**
+ * - Task lifecycle (`onTaskCreate`, `onTaskTransition`) — fires from `dispatchHitl`
+ * - Webhook delivery (`onWebhookEmit`) — fires after each push-notification post
+ * - Status-change events (`onStatusChangePublish`) — wraps the per-server bus
+ * - Account resolution (`onAccountResolve`) — fires after every `resolve()` call
+ *
+ * **Coming in v6.1:**
+ * - Per-tool dispatch latency (`onDispatchStart` / `onDispatchEnd`) —
+ *   requires wrapping every handler entry point; lands when the per-handler
+ *   instrumentation pass goes through.
+ * - Idempotency replay rate (covered at the framework layer when v5 hooks land)
+ * - State-store reads (per-handler instrumentation)
+ *
+ * @public
+ */
+export interface DecisioningObservabilityHooks {
+  /**
+   * Fired after `accounts.resolve` (or `resolveAccountFromAuth`) returns.
+   * `resolved: false` means the resolver returned `null` — caller maps to
+   * `ACCOUNT_NOT_FOUND`. `fromAuth: true` indicates the auth-derived path
+   * (tools without an `account` field on the wire).
+   */
+  onAccountResolve?(info: {
+    tool: string;
+    durationMs: number;
+    resolved: boolean;
+    fromAuth: boolean;
+  }): void;
+
+  /** Fired when `dispatchHitl` allocates a new task in the registry. */
+  onTaskCreate?(info: { tool: string; taskId: string; accountId: string }): void;
+
+  /**
+   * Fired when a task transitions to a terminal state (`completed` or
+   * `failed`). `durationMs` is from create → terminal.
+   */
+  onTaskTransition?(info: {
+    taskId: string;
+    tool: string;
+    accountId: string;
+    status: 'completed' | 'failed';
+    durationMs: number;
+    errorCode?: string;
+  }): void;
+
+  /**
+   * Fired after a push-notification webhook delivery attempt completes
+   * (success or all retries exhausted). Adopters wire to per-buyer
+   * deliverability dashboards.
+   */
+  onWebhookEmit?(info: {
+    taskId: string;
+    tool: string;
+    status: string;
+    url: string;
+    success: boolean;
+    durationMs: number;
+    errors?: string[];
+  }): void;
+
+  /**
+   * Fired after each `publishStatusChange(...)` event (per-server bus +
+   * module-level singleton routes both go through the wrapped bus). Lets
+   * adopters meter event rates per resource type without subscribing.
+   */
+  onStatusChangePublish?(info: {
+    accountId: string;
+    resourceType: string;
+    resourceId: string;
+  }): void;
+}
 
 export interface CreateAdcpServerFromPlatformOptions extends Omit<
   AdcpServerConfig,
@@ -95,6 +181,20 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * — pass an explicit bus here only when you want a per-server channel.
    */
   statusChangeBus?: StatusChangeBus;
+
+  /**
+   * Lifecycle observability hooks. Adopters wire their telemetry backend
+   * (DataDog, Prometheus, OpenTelemetry, structured logger, etc.) by
+   * supplying any subset of the callbacks below. The framework calls them
+   * at well-known dispatch points; throws inside callbacks are caught and
+   * logged via `opts.logger.warn` — they never break dispatch.
+   *
+   * For an out-of-the-box OpenTelemetry binding, `@adcp/client/telemetry/otel`
+   * (peer-dep, opt-in) returns a pre-wired `DecisioningObservabilityHooks`
+   * object. Adopters using DataDog, Prometheus, or hand-rolled metrics
+   * implement the callbacks directly.
+   */
+  observability?: DecisioningObservabilityHooks;
 
   /**
    * Merge-seam collision behavior. When an adopter-supplied custom handler
@@ -221,22 +321,46 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   validatePlatform(platform);
 
   const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
-  const statusChangeBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
+  const baseBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
   const taskWebhookEmit = opts.taskWebhookEmitter?.emit;
-  const mergeOpts = {
-    mode: opts.mergeSeam ?? 'warn',
+
+  // Wrap the status-change bus so every publish fires onStatusChangePublish.
+  // Subscribers / recent-buffer behavior pass through unchanged — the wrap
+  // is only for the publish side. Hook-throw is caught + logged so adopter
+  // telemetry mistakes don't break event delivery.
+  const observability = opts.observability;
+  const statusChangeBus: StatusChangeBus = observability?.onStatusChangePublish
+    ? wrapBusWithObservability(baseBus, observability)
+    : baseBus;
+  const fwLogger = opts.logger ?? {
+    debug: () => {},
+    info: () => {},
     // eslint-disable-next-line no-console
-    logger: opts.logger ?? { debug: () => {}, info: () => {}, warn: console.warn.bind(console), error: console.error.bind(console) },
+    warn: console.warn.bind(console),
+    // eslint-disable-next-line no-console
+    error: console.error.bind(console),
   };
+  const mergeOpts = { mode: opts.mergeSeam ?? 'warn', logger: fwLogger };
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
-    resolveAccount: async ref => {
+    resolveAccount: async (ref, ctx) => {
+      const start = Date.now();
+      let resolved = false;
       try {
-        return await platform.accounts.resolve(ref);
+        const account = await platform.accounts.resolve(ref);
+        resolved = account != null;
+        return account;
       } catch (err) {
         if (err instanceof AccountNotFoundError) return null;
         throw err;
+      } finally {
+        safeFire(
+          observability?.onAccountResolve,
+          { tool: ctx.toolName, durationMs: Date.now() - start, resolved, fromAuth: false },
+          'onAccountResolve',
+          fwLogger
+        );
       }
     },
     // Auth-derived path: framework calls this for tools whose wire request
@@ -245,12 +369,23 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // with `undefined` ref; per its `resolution` mode it returns the
     // singleton (`'derived'`), looks up by auth (`'implicit'`), or `null`
     // for `'explicit'` adopters who don't model these tools.
-    resolveAccountFromAuth: async () => {
+    resolveAccountFromAuth: async ctx => {
+      const start = Date.now();
+      let resolved = false;
       try {
-        return await platform.accounts.resolve(undefined);
+        const account = await platform.accounts.resolve(undefined);
+        resolved = account != null;
+        return account;
       } catch (err) {
         if (err instanceof AccountNotFoundError) return null;
         throw err;
+      } finally {
+        safeFire(
+          observability?.onAccountResolve,
+          { tool: ctx.toolName, durationMs: Date.now() - start, resolved, fromAuth: true },
+          'onAccountResolve',
+          fwLogger
+        );
       }
     },
     // Merge: platform-derived handlers WIN per-key over adopter-supplied
@@ -258,8 +393,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // doesn't yet model (getMediaBuys, listCreativeFormats, content-standards
     // CRUD, sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
     // JSDoc for the migration-seam contract.
-    mediaBuy: mergeHandlers(opts.mediaBuy, buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit), 'mediaBuy', mergeOpts),
-    creative: mergeHandlers(opts.creative, buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit), 'creative', mergeOpts),
+    mediaBuy: mergeHandlers(
+      opts.mediaBuy,
+      buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger),
+      'mediaBuy',
+      mergeOpts
+    ),
+    creative: mergeHandlers(
+      opts.creative,
+      buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger),
+      'creative',
+      mergeOpts
+    ),
     eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, taskRegistry), 'eventTracking', mergeOpts),
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform), 'governance', mergeOpts),
@@ -357,6 +502,57 @@ function mergeHandlers<T extends object>(
 }
 
 // ---------------------------------------------------------------------------
+// Observability hook plumbing
+// ---------------------------------------------------------------------------
+
+/**
+ * Fire an observability callback with throw-safe semantics. Adopter throws
+ * inside hooks are caught + logged so a buggy span/metric callback never
+ * breaks dispatch. Callbacks are sync; if you need async tracer work,
+ * fire-and-forget inside the callback body.
+ */
+function safeFire<T>(fn: ((arg: T) => unknown) | undefined, arg: T, hookName: string, logger: AdcpLogger): void {
+  if (!fn) return;
+  try {
+    fn(arg);
+  } catch (err) {
+    logger.warn(
+      `[adcp/decisioning] observability hook ${hookName} threw — telemetry callbacks must never throw. ` +
+        `Error: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+/**
+ * Wrap a `StatusChangeBus` so every publish fires `onStatusChangePublish`
+ * after the underlying bus persists the event. Subscribers + recent-buffer
+ * pass through; only the publish side is observed.
+ */
+function wrapBusWithObservability(bus: StatusChangeBus, observability: DecisioningObservabilityHooks): StatusChangeBus {
+  return {
+    publish<TPayload>(eventOpts: PublishStatusChangeOpts<TPayload>): void {
+      bus.publish(eventOpts);
+      if (observability.onStatusChangePublish) {
+        try {
+          observability.onStatusChangePublish({
+            accountId: eventOpts.account_id,
+            resourceType: eventOpts.resource_type,
+            resourceId: eventOpts.resource_id,
+          });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[adcp/decisioning] observability hook onStatusChangePublish threw: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    },
+    subscribe: bus.subscribe.bind(bus),
+    recent: bus.recent.bind(bus),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Default task registry — gated by NODE_ENV
 // ---------------------------------------------------------------------------
 
@@ -425,6 +621,7 @@ async function projectSync<TResult, TWire>(
   }
 }
 
+
 /**
  * HITL dispatch: allocate task, return submitted envelope to buyer
  * immediately, run `*Task(taskId, ...)` in background. Method's return
@@ -444,6 +641,8 @@ interface DispatchHitlOpts {
   pushNotificationUrl?: string;
   pushNotificationToken?: string;
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
+  observability?: DecisioningObservabilityHooks;
+  logger: AdcpLogger;
 }
 
 async function dispatchHitl<TResult>(
@@ -452,11 +651,30 @@ async function dispatchHitl<TResult>(
   taskFn: (taskId: string) => Promise<TResult>
 ): Promise<SubmittedEnvelope> {
   const { taskId } = await taskRegistry.create({ tool: opts.tool, accountId: opts.accountId });
+  safeFire(
+    opts.observability?.onTaskCreate,
+    { tool: opts.tool, taskId, accountId: opts.accountId },
+    'onTaskCreate',
+    opts.logger
+  );
+  const taskStart = Date.now();
 
   const completion: Promise<void> = (async () => {
     try {
       const result = await taskFn(taskId);
       await taskRegistry.complete(taskId, result);
+      safeFire(
+        opts.observability?.onTaskTransition,
+        {
+          taskId,
+          tool: opts.tool,
+          accountId: opts.accountId,
+          status: 'completed',
+          durationMs: Date.now() - taskStart,
+        },
+        'onTaskTransition',
+        opts.logger
+      );
       await emitTaskWebhook(opts, {
         task: { task_id: taskId, status: 'completed', result },
       });
@@ -470,6 +688,19 @@ async function dispatchHitl<TResult>(
               message: err instanceof Error ? err.message : String(err),
             };
       await taskRegistry.fail(taskId, structured);
+      safeFire(
+        opts.observability?.onTaskTransition,
+        {
+          taskId,
+          tool: opts.tool,
+          accountId: opts.accountId,
+          status: 'failed',
+          durationMs: Date.now() - taskStart,
+          errorCode: structured.code,
+        },
+        'onTaskTransition',
+        opts.logger
+      );
       await emitTaskWebhook(opts, {
         task: { task_id: taskId, status: 'failed', error: structured },
       });
@@ -489,17 +720,40 @@ async function emitTaskWebhook(
   if (opts.pushNotificationToken !== undefined) {
     wirePayload.validation_token = opts.pushNotificationToken;
   }
+  const start = Date.now();
+  let success = false;
+  let errors: string[] | undefined;
   try {
-    await opts.emitWebhook({
+    const result = await opts.emitWebhook({
       url: opts.pushNotificationUrl,
       payload: wirePayload,
       operation_id: `${opts.tool}.${payload.task.task_id}`,
     });
+    success = result?.delivered === true;
+    if (result && Array.isArray(result.errors) && result.errors.length > 0) {
+      errors = result.errors;
+    }
   } catch (err) {
+    errors = [err instanceof Error ? err.message : String(err)];
     // Webhook failures don't fail the task — registry already records the
     // terminal state. Log via console so operators can investigate.
     // eslint-disable-next-line no-console
     console.warn(`[adcp] task webhook for ${payload.task.task_id} failed:`, err);
+  } finally {
+    safeFire(
+      opts.observability?.onWebhookEmit,
+      {
+        taskId: payload.task.task_id,
+        tool: opts.tool,
+        status: payload.task.status,
+        url: opts.pushNotificationUrl,
+        success,
+        durationMs: Date.now() - start,
+        ...(errors && { errors }),
+      },
+      'onWebhookEmit',
+      opts.logger
+    );
   }
 }
 
@@ -532,7 +786,9 @@ function extractPushConfig(params: unknown): { url?: string; token?: string } {
 function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry,
-  taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined
+  taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
+  observability: DecisioningObservabilityHooks | undefined,
+  logger: AdcpLogger
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
@@ -558,6 +814,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             pushNotificationUrl: push.url,
             pushNotificationToken: push.token,
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+            observability,
+            logger,
           },
           taskId => sales.createMediaBuyTask!(taskId, params, reqCtx)
         );
@@ -601,6 +859,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             pushNotificationUrl: push.url,
             pushNotificationToken: push.token,
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+            observability,
+            logger,
           },
           taskId => sales.syncCreativesTask!(taskId, creatives, reqCtx)
         );
@@ -666,7 +926,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry,
-  taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined
+  taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
+  observability: DecisioningObservabilityHooks | undefined,
+  logger: AdcpLogger
 ): CreativeHandlers<Account> | undefined {
   const creative = platform.creative;
   if (!creative) return undefined;
@@ -711,6 +973,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
             pushNotificationUrl: push.url,
             pushNotificationToken: push.token,
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+            observability,
+            logger,
           },
           taskId => creative.syncCreativesTask!(taskId, creatives, reqCtx)
         );
