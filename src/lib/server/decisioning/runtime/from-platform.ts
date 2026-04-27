@@ -277,10 +277,24 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
 export interface DecisioningAdcpServer extends AdcpServer {
   /**
    * Read the current lifecycle state for a HITL task. Returns `null` if the
-   * `taskId` is unknown. Async to accommodate storage-backed task registries
+   * `taskId` is unknown OR (when `expectedAccountId` is supplied) the
+   * task's owning account doesn't match.
+   *
+   * **Multi-tenant isolation: pass `expectedAccountId` whenever the caller
+   * has a buyer-derived account in scope.** Adopters wrapping this method
+   * in a `tasks/get` wire handler MUST pass `ctx.account.id` to scope reads
+   * — without it, any caller with a known `task_id` reads any tenant's
+   * task lifecycle, including its `result` and `error` payloads. The
+   * unscoped form (single-arg) is for ops / test harnesses that hold no
+   * buyer account in scope.
+   *
+   * Async to accommodate storage-backed task registries
    * (`createPostgresTaskRegistry`); the in-memory impl resolves synchronously.
    */
-  getTaskState<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
+  getTaskState<TResult = unknown>(
+    taskId: string,
+    expectedAccountId?: string
+  ): Promise<TaskRecord<TResult> | null>;
   /**
    * Await any in-flight background completion for `taskId` (HITL `*Task`
    * method still running). Resolves immediately if the task is terminal
@@ -414,8 +428,21 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const server = createAdcpServer(config);
 
   return Object.assign(server, {
-    getTaskState: <TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> =>
-      taskRegistry.getTask<TResult>(taskId),
+    getTaskState: async <TResult = unknown>(
+      taskId: string,
+      expectedAccountId?: string
+    ): Promise<TaskRecord<TResult> | null> => {
+      const record = await taskRegistry.getTask<TResult>(taskId);
+      if (record == null) return null;
+      // Tenant boundary: if caller specified the expected account and the
+      // task's owner doesn't match, treat as not-found. Returning null
+      // here mirrors the "not-found / cross-tenant" envelope and avoids
+      // principal-enumeration via task_id probing.
+      if (expectedAccountId !== undefined && record.accountId !== expectedAccountId) {
+        return null;
+      }
+      return record;
+    },
     awaitTask: (taskId: string): Promise<void> => taskRegistry.awaitTask(taskId),
     statusChange: statusChangeBus,
   });
@@ -766,21 +793,147 @@ function ctxFor(handlerCtx: HandlerContext<Account>): RequestContext<Account> {
 }
 
 /**
- * Extract the buyer's push-notification webhook config from a request body.
+ * Extract the buyer's push-notification webhook config from a request body
+ * and validate the URL + token against SSRF / replay primitives.
+ *
  * AdCP wire requests for HITL tools carry `push_notification_config: { url,
- * token? }`. The framework emits a signed RFC 9421 webhook to that URL on
- * task terminal state.
+ * token? }`. The buyer-supplied URL is attacker-controllable — without
+ * validation, a buyer with `create_media_buy` access can force the agent
+ * process to POST signed payloads to internal admin endpoints, AWS metadata
+ * (`http://169.254.169.254/`), or RFC 1918 private ranges. Validation
+ * gates here:
+ *
+ * 1. **Scheme**: `https://` only in production; `http://` allowed when
+ *    `NODE_ENV` ∈ {test, development} OR the operator opts in via
+ *    `ADCP_DECISIONING_ALLOW_HTTP_WEBHOOKS=1`. Same allowlist pattern as
+ *    the in-memory task registry.
+ * 2. **Host**: rejects IP-literals targeting RFC 1918 private ranges
+ *    (10/8, 172.16/12, 192.168/16), link-local (169.254/16, fe80::/10),
+ *    loopback (127/8, ::1), CGNAT (100.64/10), and unspecified addresses
+ *    (0.0.0.0, ::). Rejects bare hostnames `localhost` / `0`.
+ * 3. **Token shape**: rejects tokens longer than 255 chars or containing
+ *    control characters. Tokens past 255 chars combined with a malicious
+ *    URL would inflate webhook payload size; control characters break log
+ *    redaction.
+ *
+ * Adopters who need stricter rules (host allowlist) can re-validate
+ * inside their `taskWebhookEmitter` impl. Adopters needing to relax for
+ * legitimate internal-network test setups use the env-var ack.
+ *
+ * On rejection, returns the URL + token absent — the framework then skips
+ * webhook delivery silently (rather than failing the task) and logs at
+ * warn level so operators can spot the buyer's malformed config.
  */
-function extractPushConfig(params: unknown): { url?: string; token?: string } {
+function extractPushConfig(params: unknown, logger: AdcpLogger): { url?: string; token?: string } {
   if (!params || typeof params !== 'object') return {};
   const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
   if (!cfg || typeof cfg !== 'object') return {};
-  const url = (cfg as { url?: unknown }).url;
-  const token = (cfg as { token?: unknown }).token;
+  const rawUrl = (cfg as { url?: unknown }).url;
+  const rawToken = (cfg as { token?: unknown }).token;
+
+  let url: string | undefined;
+  if (typeof rawUrl === 'string') {
+    const validation = validatePushNotificationUrl(rawUrl);
+    if (validation.ok) {
+      url = rawUrl;
+    } else {
+      logger.warn(
+        `[adcp/decisioning] push_notification_config.url rejected: ${validation.reason}. ` +
+          `Webhook delivery skipped. Buyer should resend with a public https URL.`
+      );
+    }
+  }
+
+  let token: string | undefined;
+  if (typeof rawToken === 'string') {
+    const validation = validatePushNotificationToken(rawToken);
+    if (validation.ok) {
+      token = rawToken;
+    } else {
+      logger.warn(
+        `[adcp/decisioning] push_notification_config.token rejected: ${validation.reason}. ` +
+          `Webhook delivered without token round-trip.`
+      );
+    }
+  }
+
   return {
-    ...(typeof url === 'string' && { url }),
-    ...(typeof token === 'string' && { token }),
+    ...(url !== undefined && { url }),
+    ...(token !== undefined && { token }),
   };
+}
+
+interface UrlValidationResult {
+  ok: boolean;
+  reason?: string;
+}
+
+function validatePushNotificationUrl(rawUrl: string): UrlValidationResult {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, reason: 'malformed URL' };
+  }
+
+  const allowHttp =
+    process.env.NODE_ENV === 'test' ||
+    process.env.NODE_ENV === 'development' ||
+    process.env.ADCP_DECISIONING_ALLOW_HTTP_WEBHOOKS === '1';
+
+  if (parsed.protocol === 'http:' && !allowHttp) {
+    return { ok: false, reason: 'http:// scheme not allowed (use https:// or set ADCP_DECISIONING_ALLOW_HTTP_WEBHOOKS=1)' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, reason: `unsupported scheme "${parsed.protocol}" (only http: / https:)` };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (host === '' || host === 'localhost' || host === '0') {
+    return { ok: false, reason: `host "${host}" rejected (loopback / unspecified)` };
+  }
+
+  // IPv4 literal check
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const a = Number(ipv4Match[1]);
+    const b = Number(ipv4Match[2]);
+    if (a === 10) return { ok: false, reason: 'RFC 1918 private range 10/8 rejected' };
+    if (a === 127) return { ok: false, reason: 'loopback range 127/8 rejected' };
+    if (a === 0) return { ok: false, reason: 'unspecified range 0/8 rejected' };
+    if (a === 169 && b === 254) return { ok: false, reason: 'link-local 169.254/16 rejected (cloud metadata)' };
+    if (a === 172 && b >= 16 && b <= 31) return { ok: false, reason: 'RFC 1918 private range 172.16/12 rejected' };
+    if (a === 192 && b === 168) return { ok: false, reason: 'RFC 1918 private range 192.168/16 rejected' };
+    if (a === 100 && b >= 64 && b <= 127) return { ok: false, reason: 'CGNAT range 100.64/10 rejected' };
+    if (a >= 224) return { ok: false, reason: 'multicast / reserved range rejected' };
+  }
+
+  // IPv6 literal check (simplified — covers the common cases)
+  if (host.includes(':')) {
+    if (host === '::1' || host === '[::1]') return { ok: false, reason: 'IPv6 loopback ::1 rejected' };
+    if (host === '::' || host === '[::]') return { ok: false, reason: 'IPv6 unspecified :: rejected' };
+    if (host.startsWith('fe80:') || host.startsWith('[fe80:')) {
+      return { ok: false, reason: 'IPv6 link-local fe80::/10 rejected' };
+    }
+    if (host.startsWith('fc') || host.startsWith('[fc') || host.startsWith('fd') || host.startsWith('[fd')) {
+      return { ok: false, reason: 'IPv6 unique-local fc00::/7 rejected' };
+    }
+  }
+
+  return { ok: true };
+}
+
+const TOKEN_MAX_LENGTH = 255;
+const TOKEN_CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+
+function validatePushNotificationToken(token: string): UrlValidationResult {
+  if (token.length > TOKEN_MAX_LENGTH) {
+    return { ok: false, reason: `token longer than ${TOKEN_MAX_LENGTH} chars` };
+  }
+  if (TOKEN_CONTROL_CHAR_RE.test(token)) {
+    return { ok: false, reason: 'token contains control characters' };
+  }
+  return { ok: true };
 }
 
 function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
@@ -805,7 +958,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     createMediaBuy: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       if (sales.createMediaBuyTask) {
-        const push = extractPushConfig(params);
+        const push = extractPushConfig(params, logger);
         return dispatchHitl(
           taskRegistry,
           {
@@ -850,7 +1003,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
       if (sales.syncCreativesTask) {
-        const push = extractPushConfig(params);
+        const push = extractPushConfig(params, logger);
         return dispatchHitl(
           taskRegistry,
           {
@@ -964,7 +1117,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
       if (creative.syncCreativesTask) {
-        const push = extractPushConfig(params);
+        const push = extractPushConfig(params, logger);
         return dispatchHitl(
           taskRegistry,
           {

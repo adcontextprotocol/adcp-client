@@ -1569,6 +1569,214 @@ describe('HITL push notification webhook on terminal state', () => {
   });
 });
 
+describe('Push notification webhook URL/token validation (B5/B6)', () => {
+  // SSRF + token-replay hardening on the buyer-supplied
+  // push_notification_config.url / token.
+
+  function buildHitlPlatform(taskFn) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
+          metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuyTask: taskFn,
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  async function dispatchWithUrl(server, url, token) {
+    return server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+          push_notification_config: { url, ...(token != null && { token }) },
+        },
+      },
+    });
+  }
+
+  function makeServer({ warns, emits } = {}) {
+    return createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'mb_1' })),
+      {
+        name: 'ssrf', version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        logger: warns ? { debug: () => {}, info: () => {}, warn: m => warns.push(m), error: () => {} } : undefined,
+        taskWebhookEmitter: emits ? {
+          emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
+        } : undefined,
+      }
+    );
+  }
+
+  for (const [label, url, reasonFragment] of [
+    ['RFC 1918 10/8', 'https://10.0.0.1/hook', 'RFC 1918 private range 10/8'],
+    ['RFC 1918 192.168/16', 'https://192.168.0.1/hook', '192.168/16'],
+    ['RFC 1918 172.16/12', 'https://172.16.0.1/hook', '172.16/12'],
+    ['loopback 127/8', 'https://127.0.0.1/hook', 'loopback range 127/8'],
+    ['link-local AWS metadata', 'http://169.254.169.254/latest/meta-data/', 'link-local 169.254/16'],
+    ['CGNAT 100.64/10', 'https://100.64.0.1/hook', 'CGNAT range 100.64/10'],
+    ['IPv6 loopback', 'https://[::1]/hook', 'IPv6 loopback'],
+    ['localhost', 'https://localhost/hook', 'host "localhost" rejected'],
+    ['unsupported scheme', 'file:///etc/passwd', 'unsupported scheme "file:"'],
+    ['malformed URL', 'not a url', 'malformed URL'],
+  ]) {
+    it(`rejects ${label}: ${url}`, async () => {
+      const warns = [];
+      const emits = [];
+      const server = makeServer({ warns, emits });
+      const result = await dispatchWithUrl(server, url);
+      assert.notStrictEqual(result.isError, true, 'task accepted; webhook silently skipped');
+      await server.awaitTask(result.structuredContent.task_id);
+      assert.strictEqual(emits.length, 0, 'no webhook delivered to rejected URL');
+      const warn = warns.find(w => w.includes('push_notification_config.url rejected') && w.includes(reasonFragment));
+      assert.ok(warn, `expected rejection reason "${reasonFragment}", got: ${JSON.stringify(warns)}`);
+    });
+  }
+
+  it('accepts a public https URL', async () => {
+    const emits = [];
+    const server = makeServer({ emits });
+    const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook');
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].url, 'https://buyer.example.com/webhook');
+  });
+
+  it('accepts http:// in NODE_ENV=test (allowlist)', async () => {
+    // We're already in NODE_ENV=test (set at module scope); http should be accepted.
+    const emits = [];
+    const server = makeServer({ emits });
+    const result = await dispatchWithUrl(server, 'http://buyer.example.com/webhook');
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(emits.length, 1);
+  });
+
+  it('rejects token over 255 chars', async () => {
+    const warns = [];
+    const emits = [];
+    const server = makeServer({ warns, emits });
+    const longToken = 'a'.repeat(300);
+    const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', longToken);
+    await server.awaitTask(result.structuredContent.task_id);
+    // Webhook still delivers (URL was valid) but without the rejected token
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].payload.validation_token, undefined, 'long token NOT round-tripped');
+    const warn = warns.find(w => w.includes('token rejected') && w.includes('longer than'));
+    assert.ok(warn, `expected token-length rejection, got: ${JSON.stringify(warns)}`);
+  });
+
+  it('rejects token with control characters', async () => {
+    const warns = [];
+    const emits = [];
+    const server = makeServer({ warns, emits });
+    const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', 'tok\x00\x01with-controls');
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].payload.validation_token, undefined, 'control-char token NOT round-tripped');
+    const warn = warns.find(w => w.includes('token rejected') && w.includes('control characters'));
+    assert.ok(warn);
+  });
+
+  it('accepts a well-formed token', async () => {
+    const emits = [];
+    const server = makeServer({ emits });
+    const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', 'tok_abc-123:xyz.456');
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].payload.validation_token, 'tok_abc-123:xyz.456');
+  });
+});
+
+describe('getTaskState account-scoping (B7)', () => {
+  // Cross-tenant leak protection. getTaskState must filter by account when
+  // an `expectedAccountId` is supplied — adopters wrapping it as `tasks/get`
+  // pass `ctx.account.id` to scope reads.
+
+  function buildHitlPlatform() {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
+          metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuyTask: async () => ({ media_buy_id: 'mb_42' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  async function createTaskFor(server, accountId) {
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: accountId },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+    return result.structuredContent.task_id;
+  }
+
+  it('returns task for the owning account', async () => {
+    const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
+      name: 't', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const taskId = await createTaskFor(server, 'acc_owner');
+    const record = await server.getTaskState(taskId, 'acc_owner');
+    assert.ok(record);
+    assert.strictEqual(record.accountId, 'acc_owner');
+  });
+
+  it('returns null when expectedAccountId mismatches (cross-tenant probe)', async () => {
+    const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
+      name: 't', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const taskId = await createTaskFor(server, 'acc_owner');
+    const record = await server.getTaskState(taskId, 'acc_other');
+    assert.strictEqual(record, null, 'cross-tenant probe must not leak the task');
+  });
+
+  it('unscoped read still works (ops/test contexts)', async () => {
+    const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
+      name: 't', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const taskId = await createTaskFor(server, 'acc_owner');
+    const record = await server.getTaskState(taskId);
+    assert.ok(record);
+    assert.strictEqual(record.accountId, 'acc_owner');
+  });
+});
+
 describe('CollectionListsPlatform wiring', () => {
   function buildListsPlatform(overrides = {}) {
     return {
