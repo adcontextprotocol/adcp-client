@@ -50,7 +50,7 @@ class MyAdNetwork implements DecisioningPlatform<MyConfig, MyMeta> {
     list: async (filter) => /* list_accounts with cursor */,
   };
 
-  sales: SalesPlatform = {
+  sales: SalesPlatform<MyMeta> = {
     getProducts: async (req, ctx) => ({ products: this.lookup(req.brief) }),
     createMediaBuy: async (req, ctx) => /* see async patterns below */,
     updateMediaBuy: async (buyId, patch, ctx) => /* mutate + return */,
@@ -71,11 +71,11 @@ const server = createAdcpServerFromPlatform(new MyAdNetwork(), {
 
 **Three rules**:
 
-1. Methods return `Promise<T>` directly. No `ok()` / `submitted()` / `rejected()` wrappers.
+1. Methods return `Promise<T>` directly — no `ok()` / `submitted()` / `rejected()` wrappers.
 2. `throw new AdcpError(code, opts)` for buyer-facing structured rejection.
-3. For in-process async opt-in: `await ctx.runAsync(opts, fn)`.
+3. For HITL: implement `xxxTask(taskId, req, ctx)` instead of `xxx(req, ctx)`. Pick exactly one per pair (`createMediaBuy` OR `createMediaBuyTask`); `validatePlatform()` rejects defining both.
 
-## Four async patterns
+## Three async patterns
 
 ### 1. Sync happy path
 
@@ -120,58 +120,46 @@ if (errors.length > 0) {
 }
 ```
 
-### 3. In-process async — `ctx.runAsync`
+### 3. HITL — implement the `*Task` variant
 
-When the work might exceed the framework's auto-defer timeout (default 30s):
+For tools whose wire response unions define a `Submitted` arm (today: `create_media_buy`, `sync_creatives`), adopters with human-in-the-loop workflows implement the `*Task` variant instead of the sync one. The framework allocates `taskId` BEFORE invoking your method, returns the spec-defined submitted envelope to the buyer immediately, and runs your `*Task` method in the background. Your method's return value becomes the task's terminal artifact; `throw new AdcpError(...)` becomes the terminal error.
 
 ```ts
-createMediaBuy: async (req, ctx) => {
-  if (this.requiresOperatorReview(req)) {
-    return await ctx.runAsync(
-      {
-        message: 'Awaiting operator approval',
-        partialResult: this.toPendingBuy(req),
-      },
-      async () => {
-        return await this.waitForOperatorApproval(req); // resolves to MediaBuy
-      }
-    );
-  }
-  return await this.platform.create(req);
+sales: SalesPlatform<MyMeta> = {
+  // ... other methods ...
+  createMediaBuyTask: async (taskId, req, ctx) => {
+    // Persist the task_id on your side first, before waiting on a human:
+    await this.queueForReview({ taskId, request: req });
+
+    // Then await the operator. Hours-to-days are fine — buyer received
+    // the submitted envelope already and polls / receives webhook.
+    const decision = await this.waitForOperatorApproval(req);
+
+    if (decision.denied) {
+      throw new AdcpError('GOVERNANCE_DENIED', {
+        recovery: 'terminal',
+        message: decision.reason,
+      });
+    }
+
+    // Sync return → task transitions to `completed` with this as `result`
+    return {
+      media_buy_id: decision.media_buy_id,
+      status: 'pending_creatives',
+      confirmed_at: new Date().toISOString(),
+    };
+  },
 };
 ```
 
-What happens:
+**The buyer gets terminal state two ways:**
 
-- `fn()` resolves before `submittedAfterMs` → returns the value normally (sync wire arm).
-- `fn()` exceeds `submittedAfterMs` → throws `TaskDeferredError`; runtime catches, projects to submitted wire envelope with `task_id`, `message`, `partial_result`. Meanwhile `fn()` keeps running in the background; on resolve, framework calls `notify({ kind: 'completed', result })`. On throw — `AdcpError` projects to structured rejection on the registry record; generic `Error` becomes `SERVICE_UNAVAILABLE`.
+1. **Webhook push** — buyer included `push_notification_config: { url, token }` in the original request. Framework signs (RFC 9421) + delivers to that URL with the spec's `mcp-webhook-payload.json` envelope on terminal state. URL is validated server-side: rejects RFC 1918, loopback, link-local, CGNAT, IPv6 unique-local before delivery (SSRF guard).
+2. **Polling** — buyer calls programmatic `server.getTaskState(taskId, accountId)` — same record. Native MCP `tasks/get` wire integration lands in v6.1; for now, adopter wraps `getTaskState` in their own `tasks/get` tool if needed.
 
-Adopters never see `TaskDeferredError`; the runtime hides it. From your code's perspective, you just `await ctx.runAsync(...)` and get back a value.
+**Always declare HITL when the surface is HITL-eligible.** Don't conditionally pick between sync and task variants based on the request — `validatePlatform()` rejects defining both anyway. If the fast path is the 99% case (pre-approved buyers, low-risk amounts), the `*Task` method resolves immediately and the buyer's first poll catches the terminal state. Uniform contract for the buyer; one code path for you. See § "HITL-sometimes" below.
 
-### 4. Out-of-process async — `ctx.startTask`
-
-When completion arrives in a different request lifecycle (operator webhook hours later):
-
-```ts
-createMediaBuy: async (req, ctx) => {
-  if (this.requiresOperatorReview(req)) {
-    const handle = ctx.startTask<MediaBuy>({ partialResult: this.toPendingBuy(req) });
-    await this.queueForReview({ taskId: handle.taskId, request: req });
-    // The webhook handler later calls `handle.notify({ kind: 'completed', result })`
-    // — typically by reading the persisted taskId and looking up the handle
-    // (or via `server.completeTask(taskId, result)` once the v6 wire path lands).
-
-    // ctx.startTask alone doesn't signal "I'm async" to the framework;
-    // wrap in ctx.runAsync if you also want auto-defer race semantics:
-    return await ctx.runAsync({ message: 'Pending operator review', partialResult: this.toPendingBuy(req) }, () =>
-      this.waitForExternalNotify(handle.taskId)
-    );
-  }
-  return await this.platform.create(req);
-};
-```
-
-For most adopters: prefer `ctx.runAsync`. Use `ctx.startTask` only when you can't await the completion in-process at all (e.g., your webhook handler runs on a different process/region from the original request).
+**Sync-only tools that need long-running completion** use `publishStatusChange(...)` for lifecycle updates instead of HITL. The wire spec doesn't define `Submitted` arms for `update_media_buy`, `get_media_buy_delivery`, `build_creative` — long-running work for those publishes status changes (`media_buy` → `active` → `completed`) on the event bus and buyers subscribe.
 
 ## Per-creative review (partial-batch)
 
@@ -332,6 +320,64 @@ accounts: {
 ```
 
 Same pattern for stdio + http transports — `authenticate` runs at the transport boundary, the platform sees the resolved principal. There's no `auth?: AuthProvider` field on `DecisioningPlatform`; that boundary is intentionally on the surrounding `serve()` opts.
+
+## Production task storage
+
+The framework's default in-memory `TaskRegistry` is gated by `NODE_ENV` — refuses to construct outside `{test, development}` unless `ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1` is explicitly set. Every HITL-eligible production deployment needs a durable task registry so task state survives process restarts and load-balancer failover.
+
+Ship `createPostgresTaskRegistry({ pool, tableName? })`:
+
+```ts
+import { Pool } from 'pg';
+import {
+  createAdcpServerFromPlatform,
+  createPostgresTaskRegistry,
+  getDecisioningTaskRegistryMigration,
+} from '@adcp/client/server/decisioning';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Once at boot — idempotent CREATE TABLE IF NOT EXISTS, safe to re-run
+await pool.query(getDecisioningTaskRegistryMigration());
+
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network', version: '1.0.0',
+  taskRegistry: createPostgresTaskRegistry({ pool }),
+});
+```
+
+Cross-instance reads work — process A allocates the task, process B reads the lifecycle for `tasks/get`. Terminal-state idempotency is enforced via SQL `WHERE status = 'submitted'` so concurrent webhook deliveries can't race to overwrite each other. Background-completion tracking (`_registerBackground`) is process-local — promises don't serialize, so production HITL flows that span process boundaries drive completion via webhook → an explicit `complete()` / `fail()` from the receiving process.
+
+Custom backend? Implement the `TaskRegistry` interface (8 methods) for Redis / DynamoDB / Spanner / etc. — the framework awaits each call so all 4 mutators (`create`, `complete`, `fail`, `getTask`) can be storage-backed.
+
+## Observability hooks
+
+Wire any telemetry backend (DataDog / Prometheus / OpenTelemetry / structured logger) via the framework's `observability` hooks:
+
+```ts
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network', version: '1.0.0',
+  observability: {
+    onAccountResolve: ({ tool, durationMs, resolved, fromAuth }) => {
+      metrics.histogram('adcp.account_resolve.ms', durationMs, { tool, fromAuth });
+    },
+    onTaskCreate: ({ tool, taskId, accountId }) => {
+      metrics.increment('adcp.task.created', { tool, accountId });
+    },
+    onTaskTransition: ({ tool, status, durationMs, errorCode }) => {
+      metrics.histogram('adcp.task.duration_ms', durationMs, { tool, status, errorCode });
+    },
+    onWebhookEmit: ({ tool, status, success, durationMs }) => {
+      metrics.increment('adcp.webhook.emit', { tool, status, success: String(success) });
+    },
+    onStatusChangePublish: ({ accountId, resourceType }) => {
+      metrics.increment('adcp.status_change', { accountId, resourceType });
+    },
+  },
+});
+```
+
+Hooks are throw-safe — adopter callback exceptions are caught and logged via the framework logger; they never break dispatch. Per-tool dispatch latency hooks (`onDispatchStart` / `onDispatchEnd`) land in v6.1 with the per-handler instrumentation pass; an opt-in `@adcp/client/telemetry/otel` peer-dep adapter ships with AdCP-aligned span / metric names.
 
 ## Reference
 
