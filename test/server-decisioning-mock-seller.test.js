@@ -219,7 +219,7 @@ describe('MockSeller worked example — v2.1 dual-method', () => {
 
       await server.awaitTask(taskId);
 
-      const final = server.getTaskState(taskId);
+      const final = await server.getTaskState(taskId);
       assert.strictEqual(final.status, 'completed');
       assert.strictEqual(final.result.status, 'active');
     });
@@ -238,7 +238,7 @@ describe('MockSeller worked example — v2.1 dual-method', () => {
 
       await server.awaitTask(taskId);
 
-      const final = server.getTaskState(taskId);
+      const final = await server.getTaskState(taskId);
       assert.strictEqual(final.status, 'failed');
       assert.strictEqual(final.error.code, 'INVALID_REQUEST');
       assert.strictEqual(final.error.recovery, 'correctable');

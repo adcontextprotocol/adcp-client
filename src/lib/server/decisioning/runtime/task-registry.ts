@@ -40,27 +40,31 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
   updatedAt: string;
 }
 
+// All read/write methods are async to accommodate storage-backed
+// implementations (`createPostgresTaskRegistry`). The in-memory impl
+// resolves immediately. The framework `await`s every call, so the
+// in-memory case pays one microtask per dispatch — negligible.
 export interface TaskRegistry {
   /**
    * Allocate a new task record. Returns the `taskId` the framework hands
    * to `platform.xxxTask(taskId, ...)`. Initial status is `submitted`.
    */
-  create(opts: { tool: string; accountId: string }): { taskId: string };
+  create(opts: { tool: string; accountId: string }): Promise<{ taskId: string }>;
 
   /** Read a task by id. Returns `null` if unknown. */
-  getTask<TResult = unknown>(taskId: string): TaskRecord<TResult> | null;
+  getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
 
   /**
    * Mark a task `completed` with the method's return value. No-op if the
    * task is already terminal (idempotent).
    */
-  complete<TResult>(taskId: string, result: TResult): void;
+  complete<TResult>(taskId: string, result: TResult): Promise<void>;
 
   /**
    * Mark a task `failed` with the structured error. No-op if the task is
    * already terminal (idempotent).
    */
-  fail(taskId: string, error: AdcpStructuredError): void;
+  fail(taskId: string, error: AdcpStructuredError): Promise<void>;
 
   /**
    * Register the background completion promise the framework spawned for
@@ -84,7 +88,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
   const backgrounds = new Map<string, Promise<void>>();
 
   return {
-    create(opts: { tool: string; accountId: string }): { taskId: string } {
+    async create(opts: { tool: string; accountId: string }): Promise<{ taskId: string }> {
       const taskId = `task_${randomUUID()}`;
       const now = new Date().toISOString();
       tasks.set(taskId, {
@@ -98,12 +102,12 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       return { taskId };
     },
 
-    getTask<TResult = unknown>(taskId: string): TaskRecord<TResult> | null {
+    async getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
       const record = tasks.get(taskId);
       return (record as TaskRecord<TResult> | undefined) ?? null;
     },
 
-    complete<TResult>(taskId: string, result: TResult): void {
+    async complete<TResult>(taskId: string, result: TResult): Promise<void> {
       const existing = tasks.get(taskId);
       if (!existing) return;
       if (existing.status === 'completed' || existing.status === 'failed') return;
@@ -112,7 +116,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       existing.updatedAt = new Date().toISOString();
     },
 
-    fail(taskId: string, error: AdcpStructuredError): void {
+    async fail(taskId: string, error: AdcpStructuredError): Promise<void> {
       const existing = tasks.get(taskId);
       if (!existing) return;
       if (existing.status === 'completed' || existing.status === 'failed') return;

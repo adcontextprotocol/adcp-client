@@ -177,7 +177,7 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     const taskId = result.structuredContent.task_id;
 
     await server.awaitTask(taskId);
-    const final = server.getTaskState(taskId);
+    const final = await server.getTaskState(taskId);
     assert.strictEqual(final.status, 'completed');
     assert.strictEqual(final.result.status, 'pending_start');
     assert.ok(final.result.media_buy_id.startsWith('mb_WCBS_'));
@@ -266,7 +266,7 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
     const taskId = result.structuredContent.task_id;
     await server.awaitTask(taskId);
 
-    const final = server.getTaskState(taskId);
+    const final = await server.getTaskState(taskId);
     assert.strictEqual(final.status, 'completed');
     const reviews = final.result;
     assert.strictEqual(reviews.length, 2);

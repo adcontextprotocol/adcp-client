@@ -443,7 +443,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const taskId = result.structuredContent.task_id;
     await server.awaitTask(taskId);
 
-    const finalRecord = server.getTaskState(taskId);
+    const finalRecord = await server.getTaskState(taskId);
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
   });
@@ -467,7 +467,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
     await server.awaitTask(taskId);
 
-    const finalRecord = server.getTaskState(taskId);
+    const finalRecord = await server.getTaskState(taskId);
     assert.strictEqual(finalRecord.status, 'failed');
     assert.strictEqual(finalRecord.error.code, 'GOVERNANCE_DENIED');
     assert.strictEqual(finalRecord.error.recovery, 'terminal');
@@ -491,7 +491,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
     await server.awaitTask(taskId);
 
-    const finalRecord = server.getTaskState(taskId);
+    const finalRecord = await server.getTaskState(taskId);
     assert.strictEqual(finalRecord.status, 'failed');
     assert.strictEqual(finalRecord.error.code, 'SERVICE_UNAVAILABLE');
     assert.strictEqual(finalRecord.error.recovery, 'transient');

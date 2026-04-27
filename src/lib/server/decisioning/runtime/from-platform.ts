@@ -139,7 +139,12 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
  * forthcoming `tasks/get` wire handler) can inspect lifecycle.
  */
 export interface DecisioningAdcpServer extends AdcpServer {
-  getTaskState<TResult = unknown>(taskId: string): TaskRecord<TResult> | null;
+  /**
+   * Read the current lifecycle state for a HITL task. Returns `null` if the
+   * `taskId` is unknown. Async to accommodate storage-backed task registries
+   * (`createPostgresTaskRegistry`); the in-memory impl resolves synchronously.
+   */
+  getTaskState<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
   /**
    * Await any in-flight background completion for `taskId` (HITL `*Task`
    * method still running). Resolves immediately if the task is terminal
@@ -208,7 +213,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const server = createAdcpServer(config);
 
   return Object.assign(server, {
-    getTaskState: <TResult = unknown>(taskId: string): TaskRecord<TResult> | null =>
+    getTaskState: <TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> =>
       taskRegistry.getTask<TResult>(taskId),
     awaitTask: (taskId: string): Promise<void> => taskRegistry.awaitTask(taskId),
     statusChange: statusChangeBus,
@@ -263,8 +268,9 @@ function buildDefaultTaskRegistry(): TaskRegistry {
     throw new Error(
       'createAdcpServerFromPlatform: in-memory task registry refused outside ' +
         '{NODE_ENV=test, NODE_ENV=development}. Pass `taskRegistry` explicitly ' +
-        '(e.g., a durable Postgres-backed registry — landing in v6.0-rc.1), ' +
-        'OR set ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 if you accept that ' +
+        '(e.g., `createPostgresTaskRegistry({ pool })` — see ' +
+        '`@adcp/client/server/decisioning`), OR set ' +
+        'ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 if you accept that ' +
         'in-flight tasks are lost on process restart.'
     );
   }
@@ -312,22 +318,22 @@ async function projectSync<TResult, TWire>(
  * immediately, run `*Task(taskId, ...)` in background. Method's return
  * value becomes terminal `result`; throws become terminal `error`.
  */
-function dispatchHitl<TResult>(
+async function dispatchHitl<TResult>(
   taskRegistry: TaskRegistry,
   opts: { tool: string; accountId: string },
   taskFn: (taskId: string) => Promise<TResult>
-): SubmittedEnvelope {
-  const { taskId } = taskRegistry.create({ tool: opts.tool, accountId: opts.accountId });
+): Promise<SubmittedEnvelope> {
+  const { taskId } = await taskRegistry.create({ tool: opts.tool, accountId: opts.accountId });
 
   const completion: Promise<void> = (async () => {
     try {
       const result = await taskFn(taskId);
-      taskRegistry.complete(taskId, result);
+      await taskRegistry.complete(taskId, result);
     } catch (err) {
       if (err instanceof AdcpError) {
-        taskRegistry.fail(taskId, err.toStructuredError());
+        await taskRegistry.fail(taskId, err.toStructuredError());
       } else {
-        taskRegistry.fail(taskId, {
+        await taskRegistry.fail(taskId, {
           code: 'SERVICE_UNAVAILABLE',
           recovery: 'transient',
           message: err instanceof Error ? err.message : String(err),

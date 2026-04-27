@@ -109,6 +109,12 @@ export {
 } from './runtime/from-platform';
 export { PlatformConfigError, validatePlatform } from './runtime/validate-platform';
 export { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './runtime/task-registry';
+export {
+  createPostgresTaskRegistry,
+  getDecisioningTaskRegistryMigration,
+  type CreatePostgresTaskRegistryOptions,
+  type PgQueryable,
+} from './runtime/postgres-task-registry';
 
 // Multi-tenant deployment helper — wraps createAdcpServerFromPlatform with
 // per-tenant config, health states (healthy/unverified/disabled), and JWKS

@@ -262,6 +262,77 @@ accounts: AccountStore<MyMeta> = {
 
 Throwing `AccountNotFoundError` only from `resolve()` — never from specialism methods — gets the spec's fixed `ACCOUNT_NOT_FOUND` envelope. Generic throws from inside `resolve()` map to `SERVICE_UNAVAILABLE`.
 
+### `accounts.resolve()` is mandatory — even for "no tenant" agents
+
+The framework calls `accounts.resolve()` on every request before dispatching to a specialism method. Single-tenant agents that historically skipped account resolution (no per-buyer scoping; the agent serves one logical advertiser) MUST still implement `resolve()` — declare `resolution: 'derived'` and return a single synthetic `Account` regardless of the input ref:
+
+```ts
+accounts: AccountStore<MyMeta> = {
+  resolution: 'derived', // single-tenant; auth principal alone identifies the tenant
+  resolve: async () => ({
+    id: 'singleton',
+    name: 'My Agent',
+    status: 'active',
+    metadata: { /* whatever your handlers want to read off ctx.account.metadata */ },
+    authInfo: { kind: 'api_key' },
+  }),
+};
+```
+
+Why this is non-negotiable: the resolved account is the framework's tenant boundary for idempotency keys, status-change scoping (`account_id` on every event), workflow steps, and per-tenant capability overrides via `getCapabilitiesFor(account)`. A platform without an `account` per request can't participate in any of those. Adopters migrating from a pre-v6 codebase where `accounts.resolve()` was skipped (training-agent's posture today) need to add this wrapper as part of the migration — it's ~10 lines and unblocks the rest of the framework's invariants.
+
+### Sandbox: `AccountReference.sandbox === true`
+
+There is no separate "dry-run" mode in v6. When the buyer sends `account.sandbox === true`, the framework calls `accounts.resolve()` with the same flag set; your resolver routes to a sandbox account, and the platform reads/writes go through your sandbox backend by reading `account.metadata`:
+
+```ts
+resolve: async (ref) => {
+  if (ref.sandbox === true) {
+    return { id: 'sandbox_acc', metadata: { backend: 'sandbox' }, ... };
+  }
+  return { id: 'prod_acc', metadata: { backend: 'production' }, ... };
+}
+```
+
+Tool-specific `dry_run` flags on `sync_catalogs` and `sync_creatives` are wire fields the platform receives and honors locally — they're NOT a framework-level mode.
+
+## OAuth provider wiring
+
+OAuth verifiers live on `serve()`, not on the platform. The platform only sees the resolved `authInfo` via `ctx.account.authInfo` after `serve({ authenticate })` produces it:
+
+<!-- skill-example-skip: documentation-pattern, references undeclared `server`, `parseBearerToken`, `myOAuthProvider` -->
+```ts
+import { serve } from '@adcp/client/server';
+
+serve(() => server, {
+  publicUrl: 'https://my-agent.example.com',
+  authenticate: async ({ headers }) => {
+    const token = parseBearerToken(headers.authorization);
+    const principal = await myOAuthProvider.verify(token); // SnapOAuthProvider, your verifier, etc.
+    if (!principal) return null; // 401
+    return {
+      token,
+      clientId: principal.client_id,
+      scopes: principal.scopes,
+      extra: { sub: principal.sub, /* whatever */ },
+    };
+  },
+});
+```
+
+The platform's `accounts.resolve()` receives this as `extra.authInfo` on the second arg context (when `serve({ authenticate })` is wired). Use it to translate the OAuth principal into your tenant model:
+
+```ts
+accounts: {
+  resolve: async (ref, { authInfo }) => {
+    const platformAccountId = await myUpstream.findAccountByOAuthClient(authInfo?.clientId, ref);
+    return { id: platformAccountId, ... };
+  },
+};
+```
+
+Same pattern for stdio + http transports — `authenticate` runs at the transport boundary, the platform sees the resolved principal. There's no `auth?: AuthProvider` field on `DecisioningPlatform`; that boundary is intentionally on the surrounding `serve()` opts.
+
 ## Reference
 
 - Worked example: [`examples/decisioning-platform-mock-seller.ts`](../../examples/decisioning-platform-mock-seller.ts)
