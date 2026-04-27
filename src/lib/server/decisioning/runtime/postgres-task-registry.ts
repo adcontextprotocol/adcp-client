@@ -81,7 +81,30 @@ const VALID_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 
 function assertValidIdentifier(name: string): void {
   if (!VALID_IDENTIFIER.test(name)) {
-    throw new Error(`Invalid table name "${name}": must match ${VALID_IDENTIFIER}`);
+    throw new Error(
+      `Invalid table name "${name}": must be lowercase letters, digits, ` +
+        `or underscores, starting with a letter or underscore.`
+    );
+  }
+}
+
+/**
+ * Cap on `result` / `error` JSONB column size. Adopter `*Task` returns are
+ * written verbatim — a buggy or malicious adopter handing back a 1GB
+ * result would OOM the Node process before pg complains. 4MB matches the
+ * default Postgres `toast` row threshold and gives plenty of headroom for
+ * legitimate task payloads.
+ */
+const MAX_RESULT_BYTES = 4 * 1024 * 1024;
+
+function assertResultSize(json: string, taskId: string): void {
+  // `Buffer.byteLength` is utf-8 byte length, which is what Postgres stores.
+  if (Buffer.byteLength(json, 'utf8') > MAX_RESULT_BYTES) {
+    throw new Error(
+      `Task ${taskId}: result/error JSON exceeds ${MAX_RESULT_BYTES} bytes ` +
+        `(adopter *Task method returned an oversized payload — investigate ` +
+        `whether the body should be persisted via blob storage and referenced).`
+    );
   }
 }
 
@@ -201,20 +224,24 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
     },
 
     async complete<TResult>(taskId: string, result: TResult): Promise<void> {
+      const json = JSON.stringify(result);
+      assertResultSize(json, taskId);
       await pool.query(
         `UPDATE ${table}
          SET status = 'completed', result = $2::jsonb, updated_at = NOW()
          WHERE task_id = $1 AND status = 'submitted'`,
-        [taskId, JSON.stringify(result)]
+        [taskId, json]
       );
     },
 
     async fail(taskId: string, error: AdcpStructuredError): Promise<void> {
+      const json = JSON.stringify(error);
+      assertResultSize(json, taskId);
       await pool.query(
         `UPDATE ${table}
          SET status = 'failed', error = $2::jsonb, status_message = $3, updated_at = NOW()
          WHERE task_id = $1 AND status = 'submitted'`,
-        [taskId, JSON.stringify(error), error.message]
+        [taskId, json, error.message]
       );
     },
 

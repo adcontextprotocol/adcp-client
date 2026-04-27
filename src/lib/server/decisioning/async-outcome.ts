@@ -161,4 +161,15 @@ export class AdcpError extends Error {
       ...(this.details !== undefined && { details: this.details }),
     };
   }
+
+  /**
+   * Override `Error.toString` so default `console.error(err)` /
+   * CloudWatch / structured-log adopters see the `code` and `recovery`
+   * alongside the message rather than the bare `AdcpError: <message>`
+   * default. Triage in operator dashboards needs the code more than
+   * the stack.
+   */
+  override toString(): string {
+    return `AdcpError [${this.code}, ${this.recovery}]: ${this.message}`;
+  }
 }

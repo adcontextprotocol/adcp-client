@@ -59,7 +59,7 @@ import {
   type HandlerContext,
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
-import type { Account } from '../account';
+import type { Account, ResolvedAuthInfo } from '../account';
 import { AccountNotFoundError, toWireAccount } from '../account';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeTemplatePlatform } from '../specialisms/creative';
@@ -71,7 +71,9 @@ import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext } from './to-context';
+import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
+import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
 import {
   createInMemoryStatusChangeBus,
   type StatusChangeBus,
@@ -108,21 +110,41 @@ export interface DecisioningObservabilityHooks {
    * Fired after `accounts.resolve` (or `resolveAccountFromAuth`) returns.
    * `resolved: false` means the resolver returned `null` — caller maps to
    * `ACCOUNT_NOT_FOUND`. `fromAuth: true` indicates the auth-derived path
-   * (tools without an `account` field on the wire).
+   * (tools without an `account` field on the wire). `accountId` is the
+   * resolved tenant id when `resolved: true`, undefined otherwise — useful
+   * for dimensioning DD / Prometheus tag sets by tenant.
+   *
+   * **Cardinality warning:** if you forward `accountId` to a multi-tenant
+   * metric backend, pre-bucket or sample — high tenant counts will
+   * explode tag cardinality.
    */
   onAccountResolve?(info: {
     tool: string;
     durationMs: number;
     resolved: boolean;
     fromAuth: boolean;
+    accountId?: string;
   }): void;
 
-  /** Fired when `dispatchHitl` allocates a new task in the registry. */
-  onTaskCreate?(info: { tool: string; taskId: string; accountId: string }): void;
+  /**
+   * Fired when `dispatchHitl` allocates a new task in the registry.
+   * `durationMs` is the registry-create call latency (typically
+   * sub-millisecond for in-memory, single-digit ms for Postgres).
+   */
+  onTaskCreate?(info: {
+    tool: string;
+    taskId: string;
+    accountId: string;
+    durationMs: number;
+  }): void;
 
   /**
-   * Fired when a task transitions to a terminal state (`completed` or
-   * `failed`). `durationMs` is from create → terminal.
+   * Fired when a task transitions to a terminal state (`completed`,
+   * `failed`, or `failed-write` when the registry write itself fails).
+   * `durationMs` is from create → terminal. `errorCode` is the structured
+   * error code for the failure cases — pre-bucketed for metric tags
+   * (matches `ErrorCode` enum + the framework-synthetic
+   * `'REGISTRY_WRITE_FAILED'` value).
    */
   onTaskTransition?(info: {
     taskId: string;
@@ -137,6 +159,12 @@ export interface DecisioningObservabilityHooks {
    * Fired after a push-notification webhook delivery attempt completes
    * (success or all retries exhausted). Adopters wire to per-buyer
    * deliverability dashboards.
+   *
+   * `errorCode` is a single bucketed value adopters tag metrics with
+   * (`'TIMEOUT'`, `'CONNECTION_REFUSED'`, `'HTTP_4XX'`, `'HTTP_5XX'`,
+   * `'SIGNATURE_FAILURE'`, `'UNKNOWN'` — derived from the underlying
+   * emitter error). `errorMessages` is the raw free-text error list for
+   * structured-log adopters; do NOT forward this to metrics tag values.
    */
   onWebhookEmit?(info: {
     taskId: string;
@@ -145,7 +173,8 @@ export interface DecisioningObservabilityHooks {
     url: string;
     success: boolean;
     durationMs: number;
-    errors?: string[];
+    errorCode?: string;
+    errorMessages?: string[];
   }): void;
 
   /**
@@ -362,12 +391,14 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     resolveAccount: async (ref, ctx) => {
       const start = Date.now();
       let resolved = false;
+      let resolvedAccountId: string | undefined;
       try {
         const account = await platform.accounts.resolve(ref, {
           ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
           toolName: ctx.toolName,
         });
         resolved = account != null;
+        resolvedAccountId = account?.id;
         return account;
       } catch (err) {
         if (err instanceof AccountNotFoundError) return null;
@@ -375,7 +406,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       } finally {
         safeFire(
           observability?.onAccountResolve,
-          { tool: ctx.toolName, durationMs: Date.now() - start, resolved, fromAuth: false },
+          {
+            tool: ctx.toolName,
+            durationMs: Date.now() - start,
+            resolved,
+            fromAuth: false,
+            ...(resolvedAccountId !== undefined && { accountId: resolvedAccountId }),
+          },
           'onAccountResolve',
           fwLogger
         );
@@ -391,12 +428,14 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     resolveAccountFromAuth: async ctx => {
       const start = Date.now();
       let resolved = false;
+      let resolvedAccountId: string | undefined;
       try {
         const account = await platform.accounts.resolve(undefined, {
           ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
           toolName: ctx.toolName,
         });
         resolved = account != null;
+        resolvedAccountId = account?.id;
         return account;
       } catch (err) {
         if (err instanceof AccountNotFoundError) return null;
@@ -404,7 +443,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       } finally {
         safeFire(
           observability?.onAccountResolve,
-          { tool: ctx.toolName, durationMs: Date.now() - start, resolved, fromAuth: true },
+          {
+            tool: ctx.toolName,
+            durationMs: Date.now() - start,
+            resolved,
+            fromAuth: true,
+            ...(resolvedAccountId !== undefined && { accountId: resolvedAccountId }),
+          },
           'onAccountResolve',
           fwLogger
         );
@@ -487,13 +532,22 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry
 ) {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const z = require('zod') as typeof import('zod');
   const inputShape = {
-    task_id: z.string().min(1).describe('Task identifier returned in the submitted envelope of a HITL tool call.'),
+    // Cap task_id length: framework-issued task ids are
+    // `task_<UUIDv4>` = 41 chars. Cap at 128 so a malicious buyer can't
+    // hand us megabytes of string for a parameterized read query.
+    task_id: z
+      .string()
+      .min(1)
+      .max(128)
+      .describe('Task identifier returned in the submitted envelope of a HITL tool call.'),
+    // `AccountReference.account_id` per `core/account-ref.json`. Stricter
+    // than `passthrough()` — must be a string when present. We don't
+    // accept the `{ brand, operator }` arm here because tenant scoping
+    // for `tasks_get` is by resolved account id, not by brand identity.
     account: z
-      .object({ account_id: z.string().optional() })
-      .passthrough()
+      .object({ account_id: z.string().min(1).optional() })
+      .strict()
       .optional()
       .describe('Optional account reference for tenant scoping. Required for multi-tenant deployments.'),
   };
@@ -515,7 +569,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
     // `resolveAccount` dispatch flow in `create-adcp-server.ts:2380-2398`.
     handler: async (
       args: { task_id: string; account?: { account_id?: string } },
-      extra: { authInfo?: { token: string; clientId: string; scopes: string[]; expiresAt?: number; extra?: Record<string, unknown> } }
+      extra: { authInfo?: ResolvedAuthInfo }
     ) => {
       const ref = args.account;
       const resolveCtx = {
@@ -572,7 +626,9 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       }
 
       // Spec shape: `tasks-get-response.json` requires task_id, task_type,
-      // status, created_at, updated_at, protocol. Optional message + result.
+      // status, created_at, updated_at, protocol. Optional: completed_at
+      // (terminal states), error (failed tasks — top-level, NOT inside
+      // result), result (success-arm body for completed tasks).
       const payload: Record<string, unknown> = {
         task_id: record.taskId,
         task_type: record.tool,
@@ -581,12 +637,28 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         created_at: record.createdAt,
         updated_at: record.updatedAt,
       };
+      // Terminal states get `completed_at` per spec (covers completed,
+      // failed, canceled). The framework writes terminal-state transitions
+      // by stamping `updated_at`, so the two coincide today.
+      if (record.status === 'completed' || record.status === 'failed' || record.status === 'canceled') {
+        payload.completed_at = record.updatedAt;
+      }
       if (record.statusMessage) payload.message = record.statusMessage;
       if (record.status === 'completed' && record.result !== undefined) {
         payload.result = record.result;
       }
       if (record.status === 'failed' && record.error) {
-        payload.result = { errors: [record.error] };
+        // Spec shape: top-level `error: { code, message, details? }` —
+        // matches `tasks-get-response.json`'s required `code` + `message`
+        // shape with optional `details` carrying the structured-error
+        // tail (`recovery`, `field`, `suggestion`, `retry_after`,
+        // adopter-supplied `details`).
+        const { code, message, ...details } = record.error;
+        payload.error = {
+          code,
+          message,
+          ...(Object.keys(details).length > 0 && { details }),
+        };
       }
       return {
         content: [{ type: 'text' as const, text: `Task ${record.taskId} status: ${record.status}` }],
@@ -702,9 +774,12 @@ function safeFire<T>(fn: ((arg: T) => unknown) | undefined, arg: T, hookName: st
   // Catch rejected promises from accidentally-async callbacks. Without
   // this an `async () => { throw ... }` hook would surface as
   // UnhandledPromiseRejection and on `--unhandled-rejections=strict`
-  // would crash the process.
-  if (result && typeof (result as { catch?: unknown }).catch === 'function') {
-    (result as Promise<unknown>).catch((err: unknown) => {
+  // would crash the process. `Promise.resolve()` coerces both real
+  // promises and user-land thenables (a thenable returning sync values
+  // is wrapped, a true Promise is returned as-is) — safer than the
+  // duck-typed `typeof .catch === 'function'` check.
+  if (result !== undefined && result !== null) {
+    Promise.resolve(result).catch((err: unknown) => {
       logger.warn(
         `[adcp/decisioning] observability hook ${hookName} returned a rejected promise — ` +
           `telemetry callbacks must never reject. ` +
@@ -841,10 +916,16 @@ async function dispatchHitl<TResult>(
   opts: DispatchHitlOpts,
   taskFn: (taskId: string) => Promise<TResult>
 ): Promise<SubmittedEnvelope> {
+  const createStart = Date.now();
   const { taskId } = await taskRegistry.create({ tool: opts.tool, accountId: opts.accountId });
   safeFire(
     opts.observability?.onTaskCreate,
-    { tool: opts.tool, taskId, accountId: opts.accountId },
+    {
+      tool: opts.tool,
+      taskId,
+      accountId: opts.accountId,
+      durationMs: Date.now() - createStart,
+    },
     'onTaskCreate',
     opts.logger
   );
@@ -879,6 +960,23 @@ async function dispatchHitl<TResult>(
           `[adcp/decisioning] task ${taskId} (${opts.tool}) completed but registry write failed — ` +
             `manual reconciliation required. Webhook not emitted; buyer state will diverge until resolved. ` +
             `Error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
+        );
+        // Fire onTaskTransition with synthetic REGISTRY_WRITE_FAILED so SREs
+        // wiring DD/Prom on `onTaskTransition` see the failed-write path
+        // they would otherwise miss. Without this an adopter only sees the
+        // log line, never a metric.
+        safeFire(
+          opts.observability?.onTaskTransition,
+          {
+            taskId,
+            tool: opts.tool,
+            accountId: opts.accountId,
+            status: 'failed',
+            durationMs: Date.now() - taskStart,
+            errorCode: 'REGISTRY_WRITE_FAILED',
+          },
+          'onTaskTransition',
+          opts.logger
         );
         return;
       }
@@ -916,6 +1014,19 @@ async function dispatchHitl<TResult>(
         `[adcp/decisioning] task ${taskId} (${opts.tool}) failed AND registry fail-write also failed — ` +
           `manual reconciliation required. Webhook not emitted. ` +
           `taskFn error: ${structured.message}; registry error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
+      );
+      safeFire(
+        opts.observability?.onTaskTransition,
+        {
+          taskId,
+          tool: opts.tool,
+          accountId: opts.accountId,
+          status: 'failed',
+          durationMs: Date.now() - taskStart,
+          errorCode: 'REGISTRY_WRITE_FAILED',
+        },
+        'onTaskTransition',
+        opts.logger
       );
       return;
     }
@@ -995,35 +1106,8 @@ function buildTaskWebhookPayload(
   return payload;
 }
 
-/**
- * Map a v6 tool name to its AdCP protocol category, per
- * `enums/adcp-protocol.json`. Goes on the webhook payload's `protocol`
- * field so receivers can route to the right pipeline before parsing the
- * task body.
- */
-function protocolForTool(tool: string): string {
-  if (tool.startsWith('si_')) return 'sponsored-intelligence';
-  if (
-    tool === 'check_governance' ||
-    tool === 'sync_plans' ||
-    tool === 'report_plan_outcome' ||
-    tool === 'get_plan_audit_logs' ||
-    tool.endsWith('_property_list') ||
-    tool.endsWith('_property_lists') ||
-    tool.endsWith('_collection_list') ||
-    tool.endsWith('_collection_lists') ||
-    tool.endsWith('_content_standards') ||
-    tool === 'calibrate_content' ||
-    tool === 'validate_content_delivery' ||
-    tool === 'get_media_buy_artifacts'
-  ) {
-    return 'governance';
-  }
-  if (tool === 'get_signals' || tool === 'activate_signal') return 'signals';
-  if (tool === 'build_creative' || tool === 'preview_creative' || tool === 'get_creative_delivery') return 'creative';
-  if (tool === 'get_brand_identity' || tool === 'get_rights' || tool === 'acquire_rights') return 'brand';
-  return 'media-buy';
-}
+// `protocolForTool` and `SPEC_WEBHOOK_TASK_TYPES` are exported from
+// `protocol-for-tool.ts` — see import at top of file.
 
 async function emitTaskWebhook(
   opts: DispatchHitlOpts,
@@ -1031,13 +1115,28 @@ async function emitTaskWebhook(
 ): Promise<void> {
   if (!opts.emitWebhook || !opts.pushNotificationUrl) return;
   const taskId = source.task.task_id;
+  // Spec gate: `enums/task-type.json` is a closed 20-value enum at AdCP
+  // 3.0 GA. Spec-validating receivers reject envelopes with a non-spec
+  // `task_type` value. The framework dispatches a wider tool surface
+  // than the spec-listed task types — for those, skip webhook delivery
+  // (adopters surface long-running state via `publishStatusChange`
+  // instead). Tracking spec issue to widen the enum.
+  if (!SPEC_WEBHOOK_TASK_TYPES.has(opts.tool)) {
+    opts.logger.warn(
+      `[adcp/decisioning] task webhook for ${taskId} (${opts.tool}) skipped — ` +
+        `tool not in spec task-type enum (closed 20-value set per enums/task-type.json). ` +
+        `Use publishStatusChange for long-running ${opts.tool} state.`
+    );
+    return;
+  }
   const wirePayload = buildTaskWebhookPayload(opts, taskId, source.task.status, {
     ...(source.task.result !== undefined && { result: source.task.result }),
     ...(source.task.error !== undefined && { error: source.task.error }),
   });
   const start = Date.now();
   let success = false;
-  let errors: string[] | undefined;
+  let errorMessages: string[] | undefined;
+  let errorCode: string | undefined;
   try {
     const result = await opts.emitWebhook({
       url: opts.pushNotificationUrl,
@@ -1046,16 +1145,19 @@ async function emitTaskWebhook(
     });
     success = result?.delivered === true;
     if (result && Array.isArray(result.errors) && result.errors.length > 0) {
-      errors = result.errors;
+      errorMessages = result.errors;
+      errorCode = bucketWebhookError(result.errors[0] ?? '');
     }
   } catch (err) {
-    errors = [err instanceof Error ? err.message : String(err)];
+    const msg = err instanceof Error ? err.message : String(err);
+    errorMessages = [msg];
+    errorCode = bucketWebhookError(msg);
     // Webhook failures don't fail the task — registry already records the
     // terminal state. URL redacted from log to avoid leaking buyer-supplied
     // attacker-controllable values into operator log aggregators.
     opts.logger.warn(
       `[adcp/decisioning] task webhook for ${taskId} (${opts.tool}, status=${source.task.status}) ` +
-        `failed: ${err instanceof Error ? err.message : String(err)}`
+        `failed: ${msg}`
     );
   } finally {
     safeFire(
@@ -1067,12 +1169,32 @@ async function emitTaskWebhook(
         url: opts.pushNotificationUrl,
         success,
         durationMs: Date.now() - start,
-        ...(errors && { errors }),
+        ...(errorCode && { errorCode }),
+        ...(errorMessages && { errorMessages }),
       },
       'onWebhookEmit',
       opts.logger
     );
   }
+}
+
+/**
+ * Bucket a free-text webhook error into a metric-tag-safe code. Matches
+ * `DecisioningObservabilityHooks.onWebhookEmit.errorCode` documented enum
+ * (`'TIMEOUT'`, `'CONNECTION_REFUSED'`, `'HTTP_4XX'`, `'HTTP_5XX'`,
+ * `'SIGNATURE_FAILURE'`, `'UNKNOWN'`). Adopters tag DD/Prom by the bucket;
+ * `errorMessages` carries the raw text for log adopters.
+ */
+function bucketWebhookError(msg: string): string {
+  const lower = msg.toLowerCase();
+  if (lower.includes('timeout') || lower.includes('etimedout')) return 'TIMEOUT';
+  if (lower.includes('econnrefused') || lower.includes('connection refused')) return 'CONNECTION_REFUSED';
+  if (lower.includes('signature') || lower.includes('rfc 9421')) return 'SIGNATURE_FAILURE';
+  const httpMatch = lower.match(/\b(4\d\d|5\d\d)\b/);
+  if (httpMatch) {
+    return httpMatch[1]!.startsWith('4') ? 'HTTP_4XX' : 'HTTP_5XX';
+  }
+  return 'UNKNOWN';
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,11 +1233,23 @@ function ctxFor(handlerCtx: HandlerContext<Account>): RequestContext<Account> {
  * inside their `taskWebhookEmitter` impl. Adopters needing to relax for
  * legitimate internal-network test setups use the env-var ack.
  *
- * On rejection, returns the URL + token absent — the framework then skips
- * webhook delivery silently (rather than failing the task) and logs at
- * warn level so operators can spot the buyer's malformed config.
+ * **DNS rebinding caveat.** This validator only inspects the literal
+ * hostname/IP in the URL. A buyer registers `https://rebind.attacker.com/`
+ * whose A-record returns `8.8.8.8` at validate time and `127.0.0.1` /
+ * `169.254.169.254` at fetch time bypasses this layer. The framework's
+ * own `serve({ webhooks })`-wired emitter (RFC 9421-signed delivery via
+ * `WebhookManager`) re-resolves the host at fetch time and DOES NOT
+ * pin-and-bind to the validate-time IP. Adopters wiring a custom
+ * `taskWebhookEmitter` SHOULD pin the resolved IP at validate time and
+ * connect to that specific IP, OR run all webhook delivery through a
+ * forward proxy with an egress allowlist. Tracking issue:
+ * `adcp-client#TBD` for framework-side pin-and-bind.
+ *
+ * On rejection, throws `AdcpError('INVALID_REQUEST', { field })` so the
+ * buyer sees the bad config at the request boundary. Previous silent-skip
+ * posture lost buyer visibility.
  */
-function extractPushConfig(params: unknown, logger: AdcpLogger): { url?: string; token?: string } {
+function extractPushConfig(params: unknown, _logger: AdcpLogger): { url?: string; token?: string } {
   if (!params || typeof params !== 'object') return {};
   const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
   if (!cfg || typeof cfg !== 'object') return {};
@@ -1125,27 +1259,33 @@ function extractPushConfig(params: unknown, logger: AdcpLogger): { url?: string;
   let url: string | undefined;
   if (typeof rawUrl === 'string') {
     const validation = validatePushNotificationUrl(rawUrl);
-    if (validation.ok) {
-      url = rawUrl;
-    } else {
-      logger.warn(
-        `[adcp/decisioning] push_notification_config.url rejected: ${validation.reason}. ` +
-          `Webhook delivery skipped. Buyer should resend with a public https URL.`
-      );
+    if (!validation.ok) {
+      // Fail fast: buyers thought they wired push and never saw it under
+      // the previous silent-skip posture. Rejecting upfront with
+      // `INVALID_REQUEST` and `field: 'push_notification_config.url'`
+      // surfaces the problem at the request boundary so buyers can fix
+      // their config before relying on webhooks. Buyers can still poll
+      // via `tasks_get` if they need a fallback path.
+      throw new AdcpError('INVALID_REQUEST', {
+        message: `push_notification_config.url rejected: ${validation.reason}`,
+        field: 'push_notification_config.url',
+        recovery: 'terminal',
+      });
     }
+    url = rawUrl;
   }
 
   let token: string | undefined;
   if (typeof rawToken === 'string') {
     const validation = validatePushNotificationToken(rawToken);
-    if (validation.ok) {
-      token = rawToken;
-    } else {
-      logger.warn(
-        `[adcp/decisioning] push_notification_config.token rejected: ${validation.reason}. ` +
-          `Webhook delivered without token round-trip.`
-      );
+    if (!validation.ok) {
+      throw new AdcpError('INVALID_REQUEST', {
+        message: `push_notification_config.token rejected: ${validation.reason}`,
+        field: 'push_notification_config.token',
+        recovery: 'terminal',
+      });
     }
+    token = rawToken;
   }
 
   return {
@@ -1298,19 +1438,24 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     createMediaBuy: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       if (sales.createMediaBuyTask) {
-        const push = extractPushConfig(params, logger);
-        return dispatchHitl(
-          taskRegistry,
-          {
-            tool: 'create_media_buy',
-            accountId: reqCtx.account.id,
-            pushNotificationUrl: push.url,
-            pushNotificationToken: push.token,
-            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-            observability,
-            logger,
+        return projectSync(
+          async () => {
+            const push = extractPushConfig(params, logger);
+            return dispatchHitl(
+              taskRegistry,
+              {
+                tool: 'create_media_buy',
+                accountId: reqCtx.account.id,
+                pushNotificationUrl: push.url,
+                pushNotificationToken: push.token,
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                observability,
+                logger,
+              },
+              taskId => sales.createMediaBuyTask!(taskId, params, reqCtx)
+            );
           },
-          taskId => sales.createMediaBuyTask!(taskId, params, reqCtx)
+          r => r
         );
       }
       if (!sales.createMediaBuy) {
@@ -1349,19 +1494,24 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
       if (sales.syncCreativesTask) {
-        const push = extractPushConfig(params, logger);
-        return dispatchHitl(
-          taskRegistry,
-          {
-            tool: 'sync_creatives',
-            accountId: reqCtx.account.id,
-            pushNotificationUrl: push.url,
-            pushNotificationToken: push.token,
-            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-            observability,
-            logger,
+        return projectSync(
+          async () => {
+            const push = extractPushConfig(params, logger);
+            return dispatchHitl(
+              taskRegistry,
+              {
+                tool: 'sync_creatives',
+                accountId: reqCtx.account.id,
+                pushNotificationUrl: push.url,
+                pushNotificationToken: push.token,
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                observability,
+                logger,
+              },
+              taskId => sales.syncCreativesTask!(taskId, creatives, reqCtx)
+            );
           },
-          taskId => sales.syncCreativesTask!(taskId, creatives, reqCtx)
+          r => r
         );
       }
       if (!sales.syncCreatives) {
@@ -1465,19 +1615,24 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
       if (creative.syncCreativesTask) {
-        const push = extractPushConfig(params, logger);
-        return dispatchHitl(
-          taskRegistry,
-          {
-            tool: 'sync_creatives',
-            accountId: reqCtx.account.id,
-            pushNotificationUrl: push.url,
-            pushNotificationToken: push.token,
-            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-            observability,
-            logger,
+        return projectSync(
+          async () => {
+            const push = extractPushConfig(params, logger);
+            return dispatchHitl(
+              taskRegistry,
+              {
+                tool: 'sync_creatives',
+                accountId: reqCtx.account.id,
+                pushNotificationUrl: push.url,
+                pushNotificationToken: push.token,
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                observability,
+                logger,
+              },
+              taskId => creative.syncCreativesTask!(taskId, creatives, reqCtx)
+            );
           },
-          taskId => creative.syncCreativesTask!(taskId, creatives, reqCtx)
+          r => r
         );
       }
       if (!creative.syncCreatives) {

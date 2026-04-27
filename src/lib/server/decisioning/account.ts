@@ -98,15 +98,29 @@ export interface Account<TMeta = Record<string, unknown>> {
  *
  * @public
  */
+/**
+ * The OAuth-style auth shape extracted by `serve({ authenticate })`. Threaded
+ * to `accounts.resolve(ref, ctx)` and to the `tasks_get` custom-tool handler
+ * so adopters can authorize the resolution against the principal.
+ *
+ * Distinct from {@link AuthPrincipal} — `ResolvedAuthInfo` is the RAW
+ * transport-level auth the framework hands to the resolver; `AuthPrincipal`
+ * is what the resolver chooses to persist on the resolved `Account`. The
+ * resolver decides what to keep / drop / re-shape.
+ *
+ * @public
+ */
+export interface ResolvedAuthInfo {
+  token: string;
+  clientId: string;
+  scopes: string[];
+  expiresAt?: number;
+  extra?: Record<string, unknown>;
+}
+
 export interface ResolveContext {
   /** Authenticated principal extracted by `serve({ authenticate })`. Undefined when no `authenticate` is configured. */
-  authInfo?: {
-    token: string;
-    clientId: string;
-    scopes: string[];
-    expiresAt?: number;
-    extra?: Record<string, unknown>;
-  };
+  authInfo?: ResolvedAuthInfo;
   /** Tool the buyer is calling — useful for tool-aware tenant routing. */
   toolName?: string;
 }

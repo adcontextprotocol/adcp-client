@@ -1689,11 +1689,17 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
       const emits = [];
       const server = makeServer({ warns, emits });
       const result = await dispatchWithUrl(server, url);
-      assert.notStrictEqual(result.isError, true, 'task accepted; webhook silently skipped');
-      await server.awaitTask(result.structuredContent.task_id);
+      // Spec posture: fail fast with INVALID_REQUEST so buyers see the
+      // bad config at the request boundary instead of waiting for
+      // never-fired webhooks. (Was silent-skip before round-3 DX review.)
+      assert.strictEqual(result.isError, true, 'task rejected upfront with INVALID_REQUEST');
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.url');
+      assert.ok(
+        result.structuredContent.adcp_error.message.includes(reasonFragment),
+        `expected rejection reason "${reasonFragment}", got: ${result.structuredContent.adcp_error.message}`
+      );
       assert.strictEqual(emits.length, 0, 'no webhook delivered to rejected URL');
-      const warn = warns.find(w => w.includes('push_notification_config.url rejected') && w.includes(reasonFragment));
-      assert.ok(warn, `expected rejection reason "${reasonFragment}", got: ${JSON.stringify(warns)}`);
     });
   }
 
@@ -1716,41 +1722,35 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
   });
 
   it('rejects empty token', async () => {
-    const warns = [];
     const emits = [];
-    const server = makeServer({ warns, emits });
+    const server = makeServer({ emits });
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', '');
-    await server.awaitTask(result.structuredContent.task_id);
-    assert.strictEqual(emits.length, 1);
-    assert.strictEqual(emits[0].payload.token, undefined, 'empty token NOT round-tripped');
-    const warn = warns.find(w => w.includes('token rejected') && w.includes('empty'));
-    assert.ok(warn, `expected empty-token rejection, got: ${JSON.stringify(warns)}`);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.token');
+    assert.ok(result.structuredContent.adcp_error.message.includes('empty'));
+    assert.strictEqual(emits.length, 0);
   });
 
   it('rejects token over 255 chars', async () => {
-    const warns = [];
     const emits = [];
-    const server = makeServer({ warns, emits });
+    const server = makeServer({ emits });
     const longToken = 'a'.repeat(300);
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', longToken);
-    await server.awaitTask(result.structuredContent.task_id);
-    // Webhook still delivers (URL was valid) but without the rejected token
-    assert.strictEqual(emits.length, 1);
-    assert.strictEqual(emits[0].payload.token, undefined, 'long token NOT round-tripped');
-    const warn = warns.find(w => w.includes('token rejected') && w.includes('longer than'));
-    assert.ok(warn, `expected token-length rejection, got: ${JSON.stringify(warns)}`);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.ok(result.structuredContent.adcp_error.message.includes('longer than'));
+    assert.strictEqual(emits.length, 0);
   });
 
   it('rejects token with control characters', async () => {
-    const warns = [];
     const emits = [];
-    const server = makeServer({ warns, emits });
+    const server = makeServer({ emits });
     const result = await dispatchWithUrl(server, 'https://buyer.example.com/webhook', 'tok\x00\x01with-controls');
-    await server.awaitTask(result.structuredContent.task_id);
-    assert.strictEqual(emits.length, 1);
-    assert.strictEqual(emits[0].payload.token, undefined, 'control-char token NOT round-tripped');
-    const warn = warns.find(w => w.includes('token rejected') && w.includes('control characters'));
-    assert.ok(warn);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.ok(result.structuredContent.adcp_error.message.includes('control characters'));
+    assert.strictEqual(emits.length, 0);
   });
 
   it('accepts a well-formed token', async () => {
@@ -1826,7 +1826,7 @@ describe('tasks_get wire tool (B9)', () => {
     assert.deepStrictEqual(payload.result, { media_buy_id: 'mb_42', status: 'active' });
   });
 
-  it('returns failed task with structured error in result.errors[0]', async () => {
+  it('returns failed task with top-level error per spec tasks-get-response.json', async () => {
     const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
     const server = createAdcpServerFromPlatform(
       buildHitlPlatform(async () => {
@@ -1840,8 +1840,28 @@ describe('tasks_get wire tool (B9)', () => {
       params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_owner' } } },
     });
     assert.notStrictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.status, 'failed');
-    assert.strictEqual(result.structuredContent.result.errors[0].code, 'GOVERNANCE_DENIED');
+    const payload = result.structuredContent;
+    assert.strictEqual(payload.status, 'failed');
+    // Spec: top-level `error: { code, message, details? }` — NOT nested
+    // inside `result`. Required fields are `code` + `message`.
+    assert.strictEqual(payload.error.code, 'GOVERNANCE_DENIED');
+    assert.strictEqual(payload.error.message, 'denied');
+    assert.strictEqual(payload.result, undefined, 'failed task should not carry success result');
+    // Terminal-state stamp.
+    assert.ok(typeof payload.completed_at === 'string', 'completed_at present on terminal status');
+  });
+
+  it('emits completed_at on completed terminal task', async () => {
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' })),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const taskId = await createTask(server, 'acc_owner');
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_owner' } } },
+    });
+    assert.ok(typeof result.structuredContent.completed_at === 'string');
   });
 
   it('returns REFERENCE_NOT_FOUND on cross-tenant probe (B7-aligned)', async () => {

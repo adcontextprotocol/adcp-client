@@ -58,6 +58,8 @@ export type {
   AccountFilter,
   SyncAccountsResultRow,
   AdcpAccountStatus,
+  ResolveContext,
+  ResolvedAuthInfo,
 } from './account';
 
 export { AccountNotFoundError } from './account';
