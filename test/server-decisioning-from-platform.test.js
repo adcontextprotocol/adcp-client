@@ -653,14 +653,78 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
     assert.ok(sawCtx?.account, 'platform method received the resolved RequestContext');
   });
 
-  // TODO(rc.1): providePerformanceFeedback + listCreativeFormats tests are
-  // pending auth-derived account resolution. Their wire requests don't carry
-  // an `account` field, so the framework's `hasAccount` check skips
-  // `resolveAccount`, and `buildRequestContext` throws on the missing
-  // account. The rc.1 framework refactor adds `resolveAccount(undefined,
-  // { authInfo, toolName })` for these tools so platform methods always see
-  // a tenant-scoped ctx. The dispatch wiring is in place; once that lands,
-  // these tests light up. Pinned in the rc.1 issue list.
+  it('providePerformanceFeedback dispatches via auth-derived resolveAccount (no `account` field on wire)', async () => {
+    let received;
+    let resolveCalledWithRef;
+    const platform = buildPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async ref => {
+          resolveCalledWithRef = ref;
+          return { id: 'singleton', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' } };
+        },
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        providePerformanceFeedback: async req => {
+          received = req;
+          return { success: true };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'provide_performance_feedback',
+        arguments: {
+          media_buy_id: 'mb_1',
+          performance_index: 0.85,
+          measurement_period: { start: '2026-04-01T00:00:00Z', end: '2026-04-08T00:00:00Z' },
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(received.media_buy_id, 'mb_1');
+    assert.strictEqual(resolveCalledWithRef, undefined, 'auth-derived path passes undefined ref to platform resolver');
+  });
+
+  it('listCreativeFormats dispatches via auth-derived resolveAccount', async () => {
+    const platform = buildPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({
+          id: 'singleton', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        listCreativeFormats: async () => ({
+          formats: [{ agent_url: 'https://example.com/mcp', id: 'video_30s', type: 'video' }],
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_creative_formats', arguments: {} },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.formats[0].id, 'video_30s');
+  });
 });
 
 describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
@@ -869,6 +933,148 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     });
     assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
     assert.ok(listCalled, 'custom listContentStandards handler invoked');
+  });
+});
+
+describe('HITL push notification webhook on terminal state', () => {
+  // When a buyer passes `push_notification_config: { url, token }` and the
+  // host wires `webhooks` on serve(), the framework emits a signed RFC 9421
+  // webhook to that URL on terminal state with the task lifecycle payload.
+  // Polling via getTaskState continues to work; webhook is push-on-top.
+
+  function buildHitlPlatform(taskFn) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
+          metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuyTask: taskFn,
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  it('emits webhook on completed task with push_notification_config', async () => {
+    const emits = [];
+    const fakeEmitter = {
+      emit: async params => {
+        emits.push(params);
+        return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+      },
+    };
+
+    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'webhook', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: fakeEmitter,
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook', token: 'shhh' },
+        },
+      },
+    });
+
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTask(taskId);
+
+    assert.strictEqual(emits.length, 1, 'one webhook emitted on terminal completion');
+    const emit = emits[0];
+    assert.strictEqual(emit.url, 'https://buyer.example.com/webhook');
+    assert.strictEqual(emit.payload.task.task_id, taskId);
+    assert.strictEqual(emit.payload.task.status, 'completed');
+    assert.deepStrictEqual(emit.payload.task.result, { media_buy_id: 'mb_42', status: 'active' });
+    assert.strictEqual(emit.payload.validation_token, 'shhh');
+    assert.ok(emit.operation_id.startsWith('create_media_buy.task_'));
+  });
+
+  it('emits webhook on failed task with structured error', async () => {
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
+    const emits = [];
+    const fakeEmitter = {
+      emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
+    };
+
+    const platform = buildHitlPlatform(async () => {
+      throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'op declined' });
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'webhook', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: fakeEmitter,
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].payload.task.status, 'failed');
+    assert.strictEqual(emits[0].payload.task.error.code, 'GOVERNANCE_DENIED');
+    assert.strictEqual(emits[0].payload.validation_token, undefined, 'token omitted when buyer didn\'t supply one');
+  });
+
+  it('does not emit webhook when push_notification_config is absent', async () => {
+    const emits = [];
+    const fakeEmitter = {
+      emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
+    };
+    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_silent' }));
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'webhook', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: fakeEmitter,
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+
+    assert.strictEqual(emits.length, 0, 'no webhook when buyer didn\'t opt in');
   });
 });
 

@@ -1038,6 +1038,23 @@ export interface AdcpServerConfig<TAccount = unknown> {
   resolveAccount?: (ref: AccountReference, ctx: ResolveAccountContext) => Promise<TAccount | null>;
 
   /**
+   * Resolve an account when the wire request doesn't carry one.
+   *
+   * For tools whose request schema lacks an `account` field
+   * (`provide_performance_feedback`, `list_creative_formats`, the
+   * `tasks/get` polling path, etc.), the framework can't extract a wire
+   * ref. When this resolver is configured, the framework calls it with the
+   * caller's `authInfo` instead so single-tenant agents (`resolution: 'derived'`)
+   * and principal-keyed agents (`resolution: 'implicit'`) still get a
+   * tenant-scoped `ctx.account`.
+   *
+   * Returns `null` when no account can be derived. The handler then runs
+   * with `ctx.account` undefined — appropriate for tools that legitimately
+   * don't need tenant scoping (publisher-wide format catalogs).
+   */
+  resolveAccountFromAuth?: (ctx: ResolveAccountContext) => Promise<TAccount | null>;
+
+  /**
    * Derive a session-scoping key from the request. Populates `ctx.sessionKey`
    * so handlers don't re-implement key derivation (tenant, brand, publisher
    * account id, etc.). Called after `resolveAccount`, so the resolved account
@@ -2051,6 +2068,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     name,
     version,
     resolveAccount,
+    resolveAccountFromAuth,
     resolveSessionKey,
     exposeErrorDetails = process.env.NODE_ENV !== 'production',
     stateStore = new InMemoryStateStore(),
@@ -2396,6 +2414,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Account resolution failed', { tool: toolName, error: reason });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Account resolution failed',
+                ...(exposeErrorDetails && { details: { reason } }),
+              })
+            );
+          }
+        } else if ((!hasAccount || params.account == null) && resolveAccountFromAuth) {
+          // Auth-derived path for tools whose wire schema lacks an `account`
+          // field (provide_performance_feedback, list_creative_formats, the
+          // `tasks/get` polling path). Single-tenant agents return their
+          // singleton; principal-keyed agents look up by authInfo. A `null`
+          // return is allowed — handler sees ctx.account undefined and
+          // either tolerates it (publisher-wide reads) or throws AdcpError.
+          try {
+            const account = await resolveAccountFromAuth({
+              toolName: toolName as AdcpServerToolName,
+              authInfo: ctx.authInfo,
+            });
+            if (account != null) ctx.account = account;
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',

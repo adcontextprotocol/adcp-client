@@ -95,6 +95,19 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    */
   statusChangeBus?: StatusChangeBus;
 
+  /**
+   * Override the webhook emitter the framework uses to push HITL task
+   * completion to the buyer's `push_notification_config.url`. Default: when
+   * the host wired `webhooks` on the underlying `AdcpServerConfig`, use
+   * `ctx.emitWebhook` from the per-request HandlerContext (the framework
+   * binds `webhookEmitter.emit` to it). Pass an explicit emitter here when
+   * you want a dedicated webhook delivery path for task completions
+   * (different signing key, different retry policy, different fetch impl)
+   * separate from your other webhook emissions, or to inject a fake for
+   * tests without wiring full RFC 9421 signing.
+   */
+  taskWebhookEmitter?: { emit: NonNullable<HandlerContext<Account>['emitWebhook']> };
+
   // ---------------------------------------------------------------------
   // Custom-handler escape hatch (incremental migration seam)
   // ---------------------------------------------------------------------
@@ -186,6 +199,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
   const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
   const statusChangeBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
+  const taskWebhookEmit = opts.taskWebhookEmitter?.emit;
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -197,13 +211,27 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         throw err;
       }
     },
+    // Auth-derived path: framework calls this for tools whose wire request
+    // doesn't carry an `account` field (`provide_performance_feedback`,
+    // `list_creative_formats`, `tasks/get`). The platform's resolver runs
+    // with `undefined` ref; per its `resolution` mode it returns the
+    // singleton (`'derived'`), looks up by auth (`'implicit'`), or `null`
+    // for `'explicit'` adopters who don't model these tools.
+    resolveAccountFromAuth: async () => {
+      try {
+        return await platform.accounts.resolve(undefined);
+      } catch (err) {
+        if (err instanceof AccountNotFoundError) return null;
+        throw err;
+      }
+    },
     // Merge: platform-derived handlers WIN per-key over adopter-supplied
     // custom handlers. Adopter handlers fill gaps for tools the v6 platform
     // doesn't yet model (getMediaBuys, listCreativeFormats, content-standards
     // CRUD, sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
     // JSDoc for the migration-seam contract.
-    mediaBuy: mergeHandlers(opts.mediaBuy, buildMediaBuyHandlers(platform, taskRegistry)),
-    creative: mergeHandlers(opts.creative, buildCreativeHandlers(platform, taskRegistry)),
+    mediaBuy: mergeHandlers(opts.mediaBuy, buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit)),
+    creative: mergeHandlers(opts.creative, buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit)),
     eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, taskRegistry)),
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform)),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform)),
@@ -317,10 +345,26 @@ async function projectSync<TResult, TWire>(
  * HITL dispatch: allocate task, return submitted envelope to buyer
  * immediately, run `*Task(taskId, ...)` in background. Method's return
  * value becomes terminal `result`; throws become terminal `error`.
+ *
+ * **Webhook delivery on terminal state.** When the buyer passed
+ * `push_notification_config: { url, token? }` in the request and the host
+ * wired `webhooks` on `serve()`, the framework emits a signed RFC 9421
+ * webhook to that URL on terminal state with the task lifecycle payload.
+ * Buyers don't need to poll — they receive completion via push. Polling via
+ * `server.getTaskState(taskId)` continues to work for harnesses + the
+ * forthcoming wire-level `tasks/get`.
  */
+interface DispatchHitlOpts {
+  tool: string;
+  accountId: string;
+  pushNotificationUrl?: string;
+  pushNotificationToken?: string;
+  emitWebhook?: HandlerContext<Account>['emitWebhook'];
+}
+
 async function dispatchHitl<TResult>(
   taskRegistry: TaskRegistry,
-  opts: { tool: string; accountId: string },
+  opts: DispatchHitlOpts,
   taskFn: (taskId: string) => Promise<TResult>
 ): Promise<SubmittedEnvelope> {
   const { taskId } = await taskRegistry.create({ tool: opts.tool, accountId: opts.accountId });
@@ -329,21 +373,50 @@ async function dispatchHitl<TResult>(
     try {
       const result = await taskFn(taskId);
       await taskRegistry.complete(taskId, result);
+      await emitTaskWebhook(opts, {
+        task: { task_id: taskId, status: 'completed', result },
+      });
     } catch (err) {
-      if (err instanceof AdcpError) {
-        await taskRegistry.fail(taskId, err.toStructuredError());
-      } else {
-        await taskRegistry.fail(taskId, {
-          code: 'SERVICE_UNAVAILABLE',
-          recovery: 'transient',
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
+      const structured =
+        err instanceof AdcpError
+          ? err.toStructuredError()
+          : {
+              code: 'SERVICE_UNAVAILABLE' as const,
+              recovery: 'transient' as const,
+              message: err instanceof Error ? err.message : String(err),
+            };
+      await taskRegistry.fail(taskId, structured);
+      await emitTaskWebhook(opts, {
+        task: { task_id: taskId, status: 'failed', error: structured },
+      });
     }
   })();
   taskRegistry._registerBackground(taskId, completion);
 
   return { status: 'submitted', task_id: taskId };
+}
+
+async function emitTaskWebhook(
+  opts: DispatchHitlOpts,
+  payload: { task: { task_id: string; status: string; result?: unknown; error?: unknown } }
+): Promise<void> {
+  if (!opts.emitWebhook || !opts.pushNotificationUrl) return;
+  const wirePayload: Record<string, unknown> = { ...payload };
+  if (opts.pushNotificationToken !== undefined) {
+    wirePayload.validation_token = opts.pushNotificationToken;
+  }
+  try {
+    await opts.emitWebhook({
+      url: opts.pushNotificationUrl,
+      payload: wirePayload,
+      operation_id: `${opts.tool}.${payload.task.task_id}`,
+    });
+  } catch (err) {
+    // Webhook failures don't fail the task — registry already records the
+    // terminal state. Log via console so operators can investigate.
+    // eslint-disable-next-line no-console
+    console.warn(`[adcp] task webhook for ${payload.task.task_id} failed:`, err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -354,9 +427,28 @@ function ctxFor(handlerCtx: HandlerContext<Account>): RequestContext<Account> {
   return buildRequestContext(handlerCtx);
 }
 
+/**
+ * Extract the buyer's push-notification webhook config from a request body.
+ * AdCP wire requests for HITL tools carry `push_notification_config: { url,
+ * token? }`. The framework emits a signed RFC 9421 webhook to that URL on
+ * task terminal state.
+ */
+function extractPushConfig(params: unknown): { url?: string; token?: string } {
+  if (!params || typeof params !== 'object') return {};
+  const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
+  if (!cfg || typeof cfg !== 'object') return {};
+  const url = (cfg as { url?: unknown }).url;
+  const token = (cfg as { token?: unknown }).token;
+  return {
+    ...(typeof url === 'string' && { url }),
+    ...(typeof token === 'string' && { token }),
+  };
+}
+
 function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  taskRegistry: TaskRegistry
+  taskRegistry: TaskRegistry,
+  taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
@@ -373,8 +465,17 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     createMediaBuy: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       if (sales.createMediaBuyTask) {
-        return dispatchHitl(taskRegistry, { tool: 'create_media_buy', accountId: reqCtx.account.id }, taskId =>
-          sales.createMediaBuyTask!(taskId, params, reqCtx)
+        const push = extractPushConfig(params);
+        return dispatchHitl(
+          taskRegistry,
+          {
+            tool: 'create_media_buy',
+            accountId: reqCtx.account.id,
+            pushNotificationUrl: push.url,
+            pushNotificationToken: push.token,
+            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+          },
+          taskId => sales.createMediaBuyTask!(taskId, params, reqCtx)
         );
       }
       return projectSync(
@@ -407,8 +508,17 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
       if (sales.syncCreativesTask) {
-        return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
-          sales.syncCreativesTask!(taskId, creatives, reqCtx)
+        const push = extractPushConfig(params);
+        return dispatchHitl(
+          taskRegistry,
+          {
+            tool: 'sync_creatives',
+            accountId: reqCtx.account.id,
+            pushNotificationUrl: push.url,
+            pushNotificationToken: push.token,
+            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+          },
+          taskId => sales.syncCreativesTask!(taskId, creatives, reqCtx)
         );
       }
       return projectSync(
@@ -471,7 +581,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
 function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  taskRegistry: TaskRegistry
+  taskRegistry: TaskRegistry,
+  taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined
 ): CreativeHandlers<Account> | undefined {
   const creative = platform.creative;
   if (!creative) return undefined;
@@ -507,8 +618,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
       if (creative.syncCreativesTask) {
-        return dispatchHitl(taskRegistry, { tool: 'sync_creatives', accountId: reqCtx.account.id }, taskId =>
-          creative.syncCreativesTask!(taskId, creatives, reqCtx)
+        const push = extractPushConfig(params);
+        return dispatchHitl(
+          taskRegistry,
+          {
+            tool: 'sync_creatives',
+            accountId: reqCtx.account.id,
+            pushNotificationUrl: push.url,
+            pushNotificationToken: push.token,
+            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+          },
+          taskId => creative.syncCreativesTask!(taskId, creatives, reqCtx)
         );
       }
       return projectSync(

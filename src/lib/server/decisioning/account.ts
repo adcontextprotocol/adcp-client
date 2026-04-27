@@ -116,6 +116,17 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
   /**
    * Resolve buyer's AccountReference into the platform's tenant model.
    *
+   * `ref` is `undefined` when the wire request didn't carry an account
+   * field — `provide_performance_feedback` and `list_creative_formats` are
+   * the canonical examples. Per `resolution` mode:
+   * - `'derived'` (single-tenant): return the singleton account regardless.
+   * - `'implicit'`: look up the account from the auth principal.
+   * - `'explicit'` (default): no account is available; either throw
+   *   `AccountNotFoundError` to signal "tool requires account" OR return
+   *   a synthetic singleton if the tool legitimately doesn't need
+   *   tenant scoping (e.g., publisher-wide format catalog from
+   *   `list_creative_formats`).
+   *
    * Two failure shapes:
    * - **Unknown / cross-tenant reference**: return `null` (canonical) — OR
    *   throw `AccountNotFoundError` if your codebase already throws a
@@ -126,7 +137,7 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *   throw a generic exception. Framework maps to `SERVICE_UNAVAILABLE`
    *   so the buyer can retry.
    */
-  resolve(ref: AccountReference): Promise<Account<TMeta> | null>;
+  resolve(ref: AccountReference | undefined): Promise<Account<TMeta> | null>;
 
   /**
    * sync_accounts API surface. Framework normalizes the wire request; platform
