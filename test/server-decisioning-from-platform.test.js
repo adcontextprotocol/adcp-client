@@ -619,6 +619,147 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
   });
 });
 
+describe('Custom-handler merge seam (incremental migration)', () => {
+  // The platform shape models the v1.0 stable surface. Adopters with
+  // established handler-style adapters use the merge seam to fill gaps for
+  // tools the platform doesn't yet model — getMediaBuys, listCreativeFormats,
+  // providePerformanceFeedback, reportUsage, sync_event_sources, content-
+  // standards CRUD, etc. — without forking the runtime. Platform-derived
+  // handlers WIN per-key; adopter handlers fill the rest.
+
+  it('dispatches getMediaBuys (un-wired by SalesPlatform) through opts.mediaBuy', async () => {
+    const platform = buildPlatform();
+    let sawArgs;
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'merged',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: {
+        getMediaBuys: async (params, ctx) => {
+          sawArgs = { params, account: ctx.account };
+          return { media_buys: [{ media_buy_id: 'mb_42', status: 'active' }] };
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_media_buys',
+        arguments: { account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.strictEqual(result.structuredContent.media_buys[0].media_buy_id, 'mb_42');
+    assert.ok(sawArgs, 'custom getMediaBuys handler was invoked');
+    assert.strictEqual(sawArgs.account.id, 'acc_1', 'custom handler received the resolved account in ctx');
+  });
+
+  it('platform-derived handler wins when both define the same key', async () => {
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({
+          products: [
+            {
+              product_id: 'platform_wins',
+              name: 'platform',
+              description: '',
+              format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+              delivery_type: 'non_guaranteed',
+              publisher_properties: { reportable: true },
+              reporting_capabilities: { available_dimensions: ['geo'] },
+              pricing_options: [{ pricing_model: 'cpm', rate: 1, currency: 'USD' }],
+            },
+          ],
+        }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'merged',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: {
+        // Custom handler tries to override platform.sales.getProducts.
+        // Platform-derived MUST win — opts is the gap-filler, not an override.
+        getProducts: async () => ({ products: [{ product_id: 'opts_should_lose', name: 'opts', description: '', format_ids: [], delivery_type: 'non_guaranteed', publisher_properties: { reportable: true }, reporting_capabilities: { available_dimensions: [] }, pricing_options: [] }] }),
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(
+      result.structuredContent.products[0].product_id,
+      'platform_wins',
+      'platform-derived handler must win over opts.mediaBuy.getProducts'
+    );
+  });
+
+  it('dispatches eventTracking handlers for tools without a v6 specialism', async () => {
+    const platform = buildPlatform();
+    let logEventCalled = false;
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'merged',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      eventTracking: {
+        logEvent: async () => {
+          logEventCalled = true;
+          return { event_id: 'evt_1' };
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'log_event',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          event_id: 'evt_1',
+          event_type: 'conversion',
+          event_source_id: 'src_1',
+          timestamp: '2026-04-27T00:00:00Z',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.ok(logEventCalled, 'custom logEvent handler invoked');
+  });
+
+  it('dispatches governance content-standards handlers (deferred specialism)', async () => {
+    const platform = buildPlatform();
+    let listCalled = false;
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'merged',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      governance: {
+        listContentStandards: async () => {
+          listCalled = true;
+          return { standards: [] };
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_content_standards',
+        arguments: { account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.ok(listCalled, 'custom listContentStandards handler invoked');
+  });
+});
+
 describe('CollectionListsPlatform wiring', () => {
   function buildListsPlatform(overrides = {}) {
     return {

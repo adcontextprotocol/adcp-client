@@ -74,7 +74,7 @@ import { createInMemoryStatusChangeBus, type StatusChangeBus } from '../status-c
 
 export interface CreateAdcpServerFromPlatformOptions extends Omit<
   AdcpServerConfig,
-  'mediaBuy' | 'creative' | 'accounts' | 'eventTracking' | 'resolveAccount' | 'capabilities' | 'name' | 'version'
+  'resolveAccount' | 'capabilities' | 'name' | 'version'
 > {
   name: string;
   version: string;
@@ -94,6 +94,43 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * — pass an explicit bus here only when you want a per-server channel.
    */
   statusChangeBus?: StatusChangeBus;
+
+  // ---------------------------------------------------------------------
+  // Custom-handler escape hatch (incremental migration seam)
+  // ---------------------------------------------------------------------
+  //
+  // The inherited `mediaBuy` / `creative` / `accounts` / `eventTracking` /
+  // `signals` / `governance` / `brandRights` / `sponsoredIntelligence`
+  // / `testController` keys (from `AdcpServerConfig`) accept raw
+  // handler-style entries for tools the v6 platform doesn't yet model.
+  //
+  // **Merge semantics**: platform-derived handlers WIN per-key. Adopter-
+  // supplied handlers fill gaps for un-wired tools (`getMediaBuys`,
+  // `listCreativeFormats`, `providePerformanceFeedback`, `reportUsage`,
+  // `syncEventSources`, `logEvent`, `getAccountFinancials`, content-
+  // standards CRUD, etc.).
+  //
+  // Lets adopters with established handler-style adapters migrate
+  // incrementally — move sales / audiences / signals to the v6 platform
+  // shape today, keep custom handlers wired for tools whose specialism
+  // interfaces are deferred to v1.1+ / rc.1 (event-tracking, catalog,
+  // financials, content-standards, creative-review, brand-rights).
+  //
+  //     createAdcpServerFromPlatform(platform, {
+  //       name: 'Adapter', version: '1.0.0',
+  //       mediaBuy: {
+  //         // platform.sales already wires get_products / create / update /
+  //         // sync_creatives / get_media_buy_delivery; fill the rest:
+  //         getMediaBuys: async (params, ctx) => myDb.queryBuys(params),
+  //         providePerformanceFeedback: async (params, ctx) => ack(params),
+  //       },
+  //       eventTracking: {
+  //         // platform.audiences wires sync_audiences; fill the trio:
+  //         syncEventSources: async (params, ctx) => ...,
+  //         logEvent: async (params, ctx) => ...,
+  //         syncCatalogs: async (params, ctx) => ...,
+  //       },
+  //     });
 }
 
 /**
@@ -155,12 +192,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         throw err;
       }
     },
-    mediaBuy: buildMediaBuyHandlers(platform, taskRegistry),
-    creative: buildCreativeHandlers(platform, taskRegistry),
-    eventTracking: buildEventTrackingHandlers(platform, taskRegistry),
-    signals: buildSignalsHandlers(platform),
-    governance: buildGovernanceHandlers(platform),
-    accounts: buildAccountHandlers(platform),
+    // Merge: platform-derived handlers WIN per-key over adopter-supplied
+    // custom handlers. Adopter handlers fill gaps for tools the v6 platform
+    // doesn't yet model (getMediaBuys, listCreativeFormats, content-standards
+    // CRUD, sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
+    // JSDoc for the migration-seam contract.
+    mediaBuy: mergeHandlers(opts.mediaBuy, buildMediaBuyHandlers(platform, taskRegistry)),
+    creative: mergeHandlers(opts.creative, buildCreativeHandlers(platform, taskRegistry)),
+    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, taskRegistry)),
+    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform)),
+    governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform)),
+    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform)),
   };
 
   const server = createAdcpServer(config);
@@ -171,6 +213,30 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     awaitTask: (taskId: string): Promise<void> => taskRegistry.awaitTask(taskId),
     statusChange: statusChangeBus,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Handler merge — incremental migration seam
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge adopter-supplied custom handlers with platform-derived handlers.
+ * Platform-derived wins per-key when both define the same handler; adopter
+ * handlers fill any gaps. Returns `undefined` when neither side has any
+ * handlers (so the framework knows the domain is unrouted and can omit it
+ * from `tools/list`).
+ *
+ * Used to bridge the gap between v6 specialism interfaces (which model the
+ * stable v1.0 surface) and adopter codebases that need to dispatch
+ * tools the platform shape doesn't cover yet (getMediaBuys,
+ * listCreativeFormats, providePerformanceFeedback, reportUsage,
+ * sync_event_sources, log_event, content-standards CRUD, etc.).
+ */
+function mergeHandlers<T extends object>(custom: T | undefined, platform: T | undefined): T | undefined {
+  if (!custom && !platform) return undefined;
+  if (!custom) return platform;
+  if (!platform) return custom;
+  return { ...custom, ...platform };
 }
 
 // ---------------------------------------------------------------------------
