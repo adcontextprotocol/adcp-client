@@ -431,6 +431,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform), 'accounts', mergeOpts),
+    customTools: {
+      ...opts.customTools,
+      tasks_get: buildTasksGetTool(platform, taskRegistry),
+    },
   };
 
   const server = createAdcpServer(config);
@@ -454,6 +458,112 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     awaitTask: (taskId: string): Promise<void> => taskRegistry.awaitTask(taskId),
     statusChange: statusChangeBus,
   });
+}
+
+// ---------------------------------------------------------------------------
+// `tasks_get` polling tool — buyer-facing wire path for HITL task lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Custom tool exposing `taskRegistry.getTask(taskId)` over the wire so
+ * buyer agents can poll HITL task state. Snake-case `tasks_get` (MCP tool
+ * names disallow `/`) approximates the spec's `tasks/get` method.
+ *
+ * Native MCP `tasks/get` integration via the SDK's experimental
+ * `registerToolTask` path lands in v6.1 — that registers HITL tools
+ * (`create_media_buy`, `sync_creatives`) as MCP task tools and the SDK
+ * handles the protocol-level `tasks/get` natively. Until then, this
+ * custom tool is the buyer-facing polling surface.
+ *
+ * **Tenant scoping.** The tool reads from `taskRegistry.getTask`
+ * directly. Adopters with multi-tenant deployments MUST pass `account`
+ * in the request so the framework's account-resolution flow scopes the
+ * read; the handler then verifies `record.accountId` matches the
+ * resolved account before returning the task. Single-tenant agents
+ * (`resolution: 'derived'`) get scoping for free via the auth-derived
+ * resolver.
+ */
+function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
+  platform: P,
+  taskRegistry: TaskRegistry
+) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const z = require('zod') as typeof import('zod');
+  const inputShape = {
+    task_id: z.string().min(1).describe('Task identifier returned in the submitted envelope of a HITL tool call.'),
+    account: z
+      .object({ account_id: z.string().optional() })
+      .passthrough()
+      .optional()
+      .describe('Optional account reference for tenant scoping. Required for multi-tenant deployments.'),
+  };
+  return {
+    description:
+      'Poll the lifecycle of a HITL task (create_media_buy / sync_creatives) by task_id. ' +
+      'Returns the current status, terminal result on completed, or structured error on failed. ' +
+      'Spec-aligned alternative to the MCP-native `tasks/get` method (native integration lands in v6.1).',
+    title: 'Get Task State',
+    inputSchema: inputShape,
+    annotations: { readOnlyHint: true },
+    handler: async (args: { task_id: string; account?: { account_id?: string } }) => {
+      const ref = args.account;
+      let resolvedAccountId: string | undefined;
+      if (ref) {
+        try {
+          const resolved = await platform.accounts.resolve(ref as AccountReference);
+          if (resolved) resolvedAccountId = resolved.id;
+        } catch (err) {
+          if (!(err instanceof AccountNotFoundError)) throw err;
+        }
+        if (!resolvedAccountId) {
+          return adcpError('ACCOUNT_NOT_FOUND', {
+            message: 'The specified account does not exist',
+            field: 'account',
+          });
+        }
+      } else {
+        try {
+          const resolved = await platform.accounts.resolve(undefined);
+          if (resolved) resolvedAccountId = resolved.id;
+        } catch (err) {
+          if (!(err instanceof AccountNotFoundError)) throw err;
+        }
+      }
+
+      const record = await taskRegistry.getTask(args.task_id);
+      if (record == null) {
+        return adcpError('REFERENCE_NOT_FOUND', {
+          message: `Task ${args.task_id} not found`,
+          field: 'task_id',
+        });
+      }
+      if (resolvedAccountId !== undefined && record.accountId !== resolvedAccountId) {
+        return adcpError('REFERENCE_NOT_FOUND', {
+          message: `Task ${args.task_id} not found`,
+          field: 'task_id',
+        });
+      }
+
+      const payload: Record<string, unknown> = {
+        task_id: record.taskId,
+        task_type: record.tool,
+        status: record.status,
+        timestamp: record.updatedAt,
+        protocol: protocolForTool(record.tool),
+      };
+      if (record.statusMessage) payload.message = record.statusMessage;
+      if (record.status === 'completed' && record.result !== undefined) {
+        payload.result = record.result;
+      }
+      if (record.status === 'failed' && record.error) {
+        payload.result = { errors: [record.error] };
+      }
+      return {
+        content: [{ type: 'text' as const, text: `Task ${record.taskId} status: ${record.status}` }],
+        structuredContent: payload,
+      };
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1230,10 +1340,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   return {
     buildCreative: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      // build_creative is sync-only at the wire level — BuildCreativeResponse
-      // doesn't define a Submitted arm. Long-running generation awaits in
-      // the request; status changes for downstream effects flow via
-      // publishStatusChange.
       return projectSync(
         () => creative.buildCreative(params, reqCtx),
         manifest => ({ creative_manifest: manifest })

@@ -1712,6 +1712,136 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
   });
 });
 
+describe('tasks_get wire tool (B9)', () => {
+  // Buyer-facing polling path for HITL task lifecycle. The framework
+  // registers a `tasks_get` custom tool automatically; buyers call it with
+  // task_id (+ optional account for tenant scoping) and receive the
+  // spec-flat lifecycle shape.
+
+  function buildHitlPlatform(taskFn) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
+          metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuyTask: taskFn,
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  async function createTask(server, accountId) {
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: accountId },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+    return result.structuredContent.task_id;
+  }
+
+  it('returns spec-flat lifecycle shape for a completed task', async () => {
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' })),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const taskId = await createTask(server, 'acc_owner');
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_owner' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const payload = result.structuredContent;
+    assert.strictEqual(payload.task_id, taskId);
+    assert.strictEqual(payload.task_type, 'create_media_buy');
+    assert.strictEqual(payload.status, 'completed');
+    assert.strictEqual(payload.protocol, 'media-buy');
+    assert.deepStrictEqual(payload.result, { media_buy_id: 'mb_42', status: 'active' });
+  });
+
+  it('returns failed task with structured error in result.errors[0]', async () => {
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => {
+        throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'denied' });
+      }),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const taskId = await createTask(server, 'acc_owner');
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_owner' } } },
+    });
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.status, 'failed');
+    assert.strictEqual(result.structuredContent.result.errors[0].code, 'GOVERNANCE_DENIED');
+  });
+
+  it('returns REFERENCE_NOT_FOUND on cross-tenant probe (B7-aligned)', async () => {
+    // Use a platform whose resolver checks the ref strictly so cross-tenant
+    // resolution succeeds (returning the requested foreign account) but
+    // the task ownership mismatch still blocks.
+    const server = createAdcpServerFromPlatform(
+      {
+        capabilities: {
+          specialisms: ['sales-non-guaranteed'],
+          creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+        },
+        accounts: {
+          resolve: async ref => ({
+            id: ref?.account_id ?? 'acc_unknown', name: 'X', status: 'active',
+            metadata: {}, authInfo: { kind: 'api_key' },
+          }),
+        },
+        sales: {
+          getProducts: async () => ({ products: [] }),
+          createMediaBuyTask: async () => ({ media_buy_id: 'mb_42' }),
+          updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
+          syncCreatives: async () => [],
+          getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        },
+      },
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const taskId = await createTask(server, 'acc_owner');
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_attacker' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+  });
+
+  it('returns REFERENCE_NOT_FOUND for unknown task_id', async () => {
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'mb_x' })),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'tasks_get', arguments: { task_id: 'task_unknown', account: { account_id: 'acc_1' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+  });
+});
+
 describe('getTaskState account-scoping (B7)', () => {
   // Cross-tenant leak protection. getTaskState must filter by account when
   // an `expectedAccountId` is supplied — adopters wrapping it as `tasks/get`

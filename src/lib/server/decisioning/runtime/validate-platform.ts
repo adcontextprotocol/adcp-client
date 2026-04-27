@@ -58,18 +58,18 @@ export class PlatformConfigError extends Error {
 }
 
 /**
- * Dual-method tool pairs. Only the two spec-HITL-eligible tools that have
- * `Submitted` arms in their wire response unions today: `create_media_buy`
- * and `sync_creatives`. Adopters implement EXACTLY ONE per pair when the
- * specialism uses the tool; defining both is an error.
+ * Dual-method tool pairs. Today's SDK supports the two tools whose
+ * generated response types ARE response unions including a Submitted arm:
+ * `create_media_buy` (CreateMediaBuyResponse = Success | Error | Submitted)
+ * and `sync_creatives` (SyncCreativesResponse = same shape).
  *
- * `get_products`, `update_media_buy`, `build_creative`, and `sync_audiences`
- * are sync-only — their wire response unions don't define Submitted arms.
- * Long-running flows for those tools surface via `publishStatusChange` on
- * the appropriate resource type (audience, plan, proposal, etc.).
- *
- * If you want HITL on a sync-only tool, file an issue against
- * adcontextprotocol/adcp to add a Submitted arm to its response union.
+ * Spec also defines Submitted arms in `core/async-response-data.json` for
+ * `update_media_buy`, `get_products`, and `build_creative`, but the SDK
+ * codegen reads the success-body schema only and emits a single interface
+ * for those types. Until codegen models the full response union, the SDK
+ * can't route HITL on those tools with type safety. Long-form flows
+ * surface via `publishStatusChange` on the appropriate resource type
+ * (proposal / media_buy / creative).
  */
 const DUAL_METHOD_PAIRS: Record<string, ReadonlyArray<readonly [string, string]>> = {
   sales: [

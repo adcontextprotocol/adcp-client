@@ -39,13 +39,13 @@ export type { SyncCreativesRow };
 
 export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
   /**
-   * Build the creative. Stateless transform. **Sync only** — the spec's
-   * `BuildCreativeResponse` union does not define a `Submitted` arm, so
-   * HITL-shaped task envelopes aren't representable on the wire today.
-   * Slow operations (TTS, audio mixing) await in-request; framework's
-   * standard timeout is generous. If your operation runs past 5+ minutes
-   * regularly, file an issue with adcp spec to add a Submitted arm to
-   * BuildCreativeResponse.
+   * Build the creative. Stateless transform. Spec defines a Submitted arm
+   * via `async-response-data.json` (`BuildCreativeAsyncSubmitted`) but the
+   * SDK's generated `BuildCreativeResponse` is currently the success-body
+   * shape only — codegen gap matches `get_products` / `update_media_buy`.
+   * Until codegen models the full response union, slow operations (TTS,
+   * audio mixing) await in-request; long-running generation surfaces via
+   * `publishStatusChange` on `resource_type: 'creative'`.
    */
   buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
@@ -73,10 +73,10 @@ export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
  */
 export interface CreativeGenerativePlatform<TMeta = Record<string, unknown>> {
   /**
-   * Build the creative. **Sync only** until the spec adds a Submitted arm
-   * to `BuildCreativeResponse` (file issue against adcp). For long-running
-   * generation, consider returning a placeholder manifest with `expires_at`
-   * and emitting `publishStatusChange` events as iterations land.
+   * Build the creative. Same codegen-gap caveat as
+   * `CreativeTemplatePlatform.buildCreative`. For long-running generation,
+   * return a placeholder manifest with `expires_at` and emit
+   * `publishStatusChange` events as iterations land.
    */
   buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 

@@ -56,9 +56,11 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    *     ad-server side effects: register the creative in the library,
    *     generate the tag, etc.).
    *
-   * Sync only — `BuildCreativeResponse` has no `Submitted` arm. Slow
-   * tag-generation pipelines await in-request; status changes for
-   * downstream effects flow via `publishStatusChange`.
+   * Spec defines a Submitted arm via `async-response-data.json` but the
+   * SDK's generated `BuildCreativeResponse` is currently the success-body
+   * shape only — codegen gap. Until that closes, slow tag-generation
+   * pipelines await in-request; status changes flow via
+   * `publishStatusChange`.
    */
   buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 

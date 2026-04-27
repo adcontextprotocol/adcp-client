@@ -79,10 +79,17 @@ type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 
 export interface SalesPlatform<TMeta = Record<string, unknown>> {
-  // ── get_products: sync only ─────────────────────────────────────────
-  // Spec doesn't define a Submitted arm in GetProductsResponse. Long-form
-  // proposal/offline workflows surface the eventual proposal via per-account
-  // notification channels, not this tool.
+  // ── get_products: sync only (today) ─────────────────────────────────
+  // Spec defines a Submitted arm in `async-response-data.json`
+  // (`GetProductsAsyncSubmitted`), but the SDK's generated
+  // `GetProductsResponse` type is currently the success-body shape only —
+  // codegen reads `get-products-response.json` (success body) without
+  // walking the `async-response-data.json` union. Until codegen models
+  // the full response union, the SDK can't route HITL get_products
+  // dispatch with type safety. Long-form discovery flows (proposal-mode
+  // sales agents, broadcast TV) surface the eventual proposal via per-
+  // account notification channels (`publishStatusChange` on
+  // `resource_type: 'proposal'`) rather than HITL on this tool.
   /** Sync discovery: brief in, products out. */
   getProducts(req: GetProductsRequest, ctx: Ctx<TMeta>): Promise<GetProductsResponse>;
 
@@ -105,11 +112,14 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    */
   createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
 
-  // ── update_media_buy: sync only ─────────────────────────────────────
-  // Spec doesn't define a Submitted arm in UpdateMediaBuyResponse. Operator
-  // re-approval flows return the patched buy synchronously after the
-  // operator confirms (or with the previous state if a re-approval is queued
-  // off-band) and `publishStatusChange` carries the eventual transition.
+  // ── update_media_buy: sync only (today) ─────────────────────────────
+  // Spec defines a Submitted arm in `async-response-data.json`
+  // (`UpdateMediaBuyAsyncSubmitted`), but the SDK's generated
+  // `UpdateMediaBuyResponse` type is currently the success-body shape
+  // only — same codegen gap as get_products. Until codegen models the
+  // full response union, operator re-approval flows surface eventual
+  // transitions via `publishStatusChange` on `resource_type: 'media_buy'`
+  // rather than HITL on this tool.
   /** Sync update. Returns the patched buy. */
   updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<UpdateMediaBuySuccess>;
 
