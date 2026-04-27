@@ -619,6 +619,66 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
   });
 });
 
+describe('CollectionListsPlatform wiring', () => {
+  function buildListsPlatform(overrides = {}) {
+    return {
+      capabilities: {
+        specialisms: ['collection-lists'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+      collectionLists: {
+        createCollectionList: async () => ({
+          list: { list_id: 'cl_1', name: 'Top Brands', authorized_collections: [] },
+          fetch_token: 'tok_abc',
+        }),
+        updateCollectionList: async () => ({
+          list: { list_id: 'cl_1', name: 'Updated', authorized_collections: [] },
+        }),
+        getCollectionList: async () => ({
+          list: { list_id: 'cl_1', name: 'Top Brands', authorized_collections: [] },
+        }),
+        listCollectionLists: async () => ({ lists: [] }),
+        deleteCollectionList: async () => ({ success: true }),
+      },
+      ...overrides,
+    };
+  }
+
+  it('create_collection_list dispatches through platform.collectionLists.createCollectionList', async () => {
+    const platform = buildListsPlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'lists',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_collection_list',
+        arguments: {
+          name: 'Top Brands',
+          authorized_collections: [],
+          account: { account_id: 'acc_test' },
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success but got ${JSON.stringify(result.structuredContent)}`);
+    assert.strictEqual(result.structuredContent.fetch_token, 'tok_abc');
+    assert.strictEqual(result.structuredContent.list.list_id, 'cl_1');
+  });
+});
+
 describe('validatePlatform', () => {
   it('passes when claimed specialism has its required platform interface', () => {
     const platform = buildPlatform();
@@ -727,6 +787,52 @@ describe('server.statusChange — per-server bus', () => {
 
     assert.strictEqual(server1.statusChange.recent().length, 1);
     assert.strictEqual(server2.statusChange.recent().length, 0, 'server2 bus should not receive server1 events');
+    restoreBus();
+  });
+
+  it('honors an explicit statusChangeBus override', () => {
+    const sharedBus = createInMemoryStatusChangeBus();
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      name: 'shared',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      statusChangeBus: sharedBus,
+    });
+    assert.strictEqual(server.statusChange, sharedBus, 'server.statusChange exposes the override');
+    server.statusChange.publish({
+      account_id: 'acc_1',
+      resource_type: 'collection_list',
+      resource_id: 'cl_99',
+      payload: { status: 'updated' },
+    });
+    assert.strictEqual(sharedBus.recent().length, 1);
+    assert.strictEqual(sharedBus.recent()[0].resource_id, 'cl_99');
+    assert.strictEqual(sharedBus.recent()[0].resource_type, 'collection_list');
+    restoreBus();
+  });
+
+  it('accepts property_list + collection_list resource types', () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      name: 'lists',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    server.statusChange.publish({
+      account_id: 'acc_1',
+      resource_type: 'property_list',
+      resource_id: 'pl_42',
+      payload: { status: 'updated' },
+    });
+    server.statusChange.publish({
+      account_id: 'acc_1',
+      resource_type: 'collection_list',
+      resource_id: 'cl_42',
+      payload: { status: 'updated' },
+    });
+    const recent = server.statusChange.recent();
+    assert.strictEqual(recent.length, 2);
+    assert.strictEqual(recent[0].resource_type, 'property_list');
+    assert.strictEqual(recent[1].resource_type, 'collection_list');
     restoreBus();
   });
 });

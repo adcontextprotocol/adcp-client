@@ -92,14 +92,19 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   ): DecisioningCapabilities<TConfig> | Promise<DecisioningCapabilities<TConfig>>;
 
   // Per-specialism sub-interfaces — optional at the type level; required at the
-  // call site by RequiredPlatformsFor<S>. v1.0 ships these:
-  sales?: SalesPlatform;
-  creative?: CreativeTemplatePlatform | CreativeGenerativePlatform | CreativeAdServerPlatform;
-  audiences?: AudiencePlatform;
-  signals?: SignalsPlatform;
-  campaignGovernance?: CampaignGovernancePlatform;
-  propertyLists?: PropertyListsPlatform;
-  collectionLists?: CollectionListsPlatform;
+  // call site by RequiredPlatformsFor<S>. v1.0 ships these. Each is parameterized
+  // by `TMeta` so adopters get typed `ctx.account.metadata` access in their
+  // method bodies without casting.
+  sales?: SalesPlatform<TMeta>;
+  creative?:
+    | CreativeTemplatePlatform<TMeta>
+    | CreativeGenerativePlatform<TMeta>
+    | CreativeAdServerPlatform<TMeta>;
+  audiences?: AudiencePlatform<TMeta>;
+  signals?: SignalsPlatform<TMeta>;
+  campaignGovernance?: CampaignGovernancePlatform<TMeta>;
+  propertyLists?: PropertyListsPlatform<TMeta>;
+  collectionLists?: CollectionListsPlatform<TMeta>;
 
   // v1.1+ specialisms add: creative-review, content-standards, brand-rights.
 }
@@ -150,24 +155,34 @@ type SignalSpecialism = 'signal-marketplace' | 'signal-owned';
 // value without shape changes.
 type CampaignGovernanceSpecialism = 'governance-spend-authority' | 'governance-delivery-monitor';
 
-export type RequiredPlatformsFor<S extends AdCPSpecialism> = S extends 'creative-template'
-  ? { creative: CreativeTemplatePlatform }
+// `TMeta` defaults to `any` so callers that don't pass it explicitly (the
+// common case — `RequiredPlatformsFor<S>` without a second argument) get a
+// constraint that accepts any adopter metadata shape. The `any` is not a
+// soundness escape — adopters declare metadata inside `DecisioningPlatform<_,
+// TMeta>` directly; this constraint exists only to compile-check that
+// claimed specialisms have a matching sub-interface field on the platform.
+export type RequiredPlatformsFor<
+  S extends AdCPSpecialism,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TMeta = any,
+> = S extends 'creative-template'
+  ? { creative: CreativeTemplatePlatform<TMeta> }
   : S extends 'creative-generative'
-    ? { creative: CreativeGenerativePlatform }
+    ? { creative: CreativeGenerativePlatform<TMeta> }
     : S extends 'creative-ad-server'
-      ? { creative: CreativeAdServerPlatform }
+      ? { creative: CreativeAdServerPlatform<TMeta> }
       : S extends SalesSpecialism
-        ? { sales: SalesPlatform }
+        ? { sales: SalesPlatform<TMeta> }
         : S extends 'audience-sync'
-          ? { audiences: AudiencePlatform }
+          ? { audiences: AudiencePlatform<TMeta> }
           : S extends SignalSpecialism
-            ? { signals: SignalsPlatform }
+            ? { signals: SignalsPlatform<TMeta> }
             : S extends CampaignGovernanceSpecialism
-              ? { campaignGovernance: CampaignGovernancePlatform }
+              ? { campaignGovernance: CampaignGovernancePlatform<TMeta> }
               : S extends 'property-lists'
-                ? { propertyLists: PropertyListsPlatform }
+                ? { propertyLists: PropertyListsPlatform<TMeta> }
                 : S extends 'collection-lists'
-                  ? { collectionLists: CollectionListsPlatform }
+                  ? { collectionLists: CollectionListsPlatform<TMeta> }
                   : Record<string, never>;
 
 /**

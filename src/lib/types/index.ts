@@ -62,9 +62,30 @@ export type {
   VendorPricingOption,
   // Capability declaration
   AdCPSpecialism,
-  // Property / collection lists
+  // Property lists — full CRUD surface for governance adopters
   PropertyList,
+  CreatePropertyListRequest,
+  CreatePropertyListResponse,
+  UpdatePropertyListRequest,
+  UpdatePropertyListResponse,
+  GetPropertyListRequest,
+  GetPropertyListResponse,
+  ListPropertyListsRequest,
+  ListPropertyListsResponse,
+  DeletePropertyListRequest,
+  DeletePropertyListResponse,
+  // Collection lists — full CRUD surface for governance adopters
   CollectionList,
+  CreateCollectionListRequest,
+  CreateCollectionListResponse,
+  UpdateCollectionListRequest,
+  UpdateCollectionListResponse,
+  GetCollectionListRequest,
+  GetCollectionListResponse,
+  ListCollectionListsRequest,
+  ListCollectionListsResponse,
+  DeleteCollectionListRequest,
+  DeleteCollectionListResponse,
   Format,
 } from './tools.generated';
 

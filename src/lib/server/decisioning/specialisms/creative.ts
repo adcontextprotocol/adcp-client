@@ -27,7 +27,7 @@ import type {
 import type { SyncCreativesRow } from './sales';
 
 type Creative = CreativeAsset;
-type Ctx = RequestContext<Account>;
+type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 
 // Re-export SyncCreativesRow so creative-specialism adopters don't need to
 // reach into the sales module to import the shared row type.
@@ -37,7 +37,7 @@ export type { SyncCreativesRow };
 // CreativeTemplatePlatform — stateless transform
 // ---------------------------------------------------------------------------
 
-export interface CreativeTemplatePlatform {
+export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
   /**
    * Build the creative. Stateless transform. **Sync only** — the spec's
    * `BuildCreativeResponse` union does not define a `Submitted` arm, so
@@ -47,18 +47,18 @@ export interface CreativeTemplatePlatform {
    * regularly, file an issue with adcp spec to add a Submitted arm to
    * BuildCreativeResponse.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<CreativeManifest>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
   /** Preview-only variant — sandbox URL or inline HTML, expires. Always sync. */
-  previewCreative(req: PreviewCreativeRequest, ctx: Ctx): Promise<PreviewCreativeResponse>;
+  previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
 
   // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
 
   /** Sync review surface. Stateless template platforms typically auto-approve. */
-  syncCreatives?(creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   /** HITL review (rare for templates; available when review is mandatory pre-persist). */
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,24 +71,24 @@ export interface CreativeTemplatePlatform {
  * union doesn't define a `Submitted` arm — generation runs sync today.
  * Refinement is sync (mutation on existing task state).
  */
-export interface CreativeGenerativePlatform {
+export interface CreativeGenerativePlatform<TMeta = Record<string, unknown>> {
   /**
    * Build the creative. **Sync only** until the spec adds a Submitted arm
    * to `BuildCreativeResponse` (file issue against adcp). For long-running
    * generation, consider returning a placeholder manifest with `expires_at`
    * and emitting `publishStatusChange` events as iterations land.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<CreativeManifest>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
   /**
    * Refine an in-flight or completed generation. `taskId` references
    * a prior submission. Sync — refinement is a mutation on existing
    * state, not a new task creation.
    */
-  refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx): Promise<CreativeManifest>;
+  refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
-  syncCreatives?(creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 }
 
 // ---------------------------------------------------------------------------

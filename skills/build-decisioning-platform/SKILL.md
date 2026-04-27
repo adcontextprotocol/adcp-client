@@ -189,6 +189,33 @@ syncCreatives: async (creatives, ctx) => {
 
 The wire spec carries `status` per row, so you don't need to wrap the whole batch in `ctx.runAsync`. For platforms whose ENTIRE batch goes through async manual review (Innovid, broadcast TV — 4-72h SLA), use `ctx.runAsync` around the whole call.
 
+## HITL-sometimes (the "fast path through the slow door")
+
+Many specialisms — broadcast TV, retail-media-with-traffic-review, governed-buy flows — are **HITL-by-default but fast-path-eligible**. Pre-approved buyers, low-risk amounts, or whitelisted SKUs sometimes resolve in milliseconds without paging a human.
+
+The right answer is to **always declare the HITL variant** (`createMediaBuyTask`) and let it resolve immediately when no gate triggers. Don't conditionally pick between `createMediaBuy` and `createMediaBuyTask` — `validatePlatform()` rejects defining both, and the buyer experience should be uniform.
+
+```ts
+sales: SalesPlatform = {
+  // Always-HITL declaration — buyer always sees `submitted` first.
+  createMediaBuyTask: async (taskId, req, ctx) => {
+    // Fast path: pre-approved buyer + low-risk amount → resolve before
+    // the buyer's polling tick lands.
+    if (this.isFastPathEligible(req, ctx.account)) {
+      return this.commitImmediately(req); // resolves task in <10ms
+    }
+    // Slow path: trafficker review queue (hours-to-days). Returns when
+    // the human acts.
+    return await this.waitForTrafficker(taskId, req);
+  },
+  // ...
+};
+```
+
+Why declare HITL even on the fast path: buyers receive `{ status: 'submitted', task_id }` on every call and either poll `tasks/get` or subscribe to status changes. That's a uniform contract — no branching on response shape, no "sometimes sync, sometimes async" surprises. The framework's task envelope handles immediate completion fine; the buyer gets the terminal artifact on its first poll.
+
+If the fast path is the 99% case and HITL is rare, the right answer is still HITL-by-default — a sync `createMediaBuy` that occasionally throws `INVALID_STATE` to redirect buyers into a separate approval flow is worse UX than a uniform task envelope where most tasks complete in &lt;100ms.
+
 ## Buyer-driven approval as separate methods
 
 Don't smush approval into `createMediaBuy` as a side-effect when the buyer can drive the workflow explicitly. AdCP has dedicated specialisms:

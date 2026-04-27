@@ -51,24 +51,24 @@ import type {
   DeleteCollectionListResponse,
 } from '../../../types/tools.generated';
 
-type Ctx = RequestContext<Account>;
+type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 
-export interface PropertyListsPlatform {
+export interface PropertyListsPlatform<TMeta = Record<string, unknown>> {
   /**
    * Create a property list. Returns a `fetch_token` the buyer stores in
    * their secret manager. Token is scoped to this list_id; MUST NOT be
    * reused across lists.
    */
-  createPropertyList(req: CreatePropertyListRequest, ctx: Ctx): Promise<CreatePropertyListResponse>;
+  createPropertyList(req: CreatePropertyListRequest, ctx: Ctx<TMeta>): Promise<CreatePropertyListResponse>;
 
   /** Patch an existing property list. */
-  updatePropertyList(req: UpdatePropertyListRequest, ctx: Ctx): Promise<UpdatePropertyListResponse>;
+  updatePropertyList(req: UpdatePropertyListRequest, ctx: Ctx<TMeta>): Promise<UpdatePropertyListResponse>;
 
   /** Read a property list by id. Sellers call this with the fetch_token. */
-  getPropertyList(req: GetPropertyListRequest, ctx: Ctx): Promise<GetPropertyListResponse>;
+  getPropertyList(req: GetPropertyListRequest, ctx: Ctx<TMeta>): Promise<GetPropertyListResponse>;
 
   /** Discover property lists the caller is authorized to read. */
-  listPropertyLists(req: ListPropertyListsRequest, ctx: Ctx): Promise<ListPropertyListsResponse>;
+  listPropertyLists(req: ListPropertyListsRequest, ctx: Ctx<TMeta>): Promise<ListPropertyListsResponse>;
 
   /**
    * Delete a property list. MUST revoke the fetch_token immediately and
@@ -76,13 +76,13 @@ export interface PropertyListsPlatform {
    * a list-changed webhook). Compromise-driven revocation MUST also
    * trigger this path.
    */
-  deletePropertyList(req: DeletePropertyListRequest, ctx: Ctx): Promise<DeletePropertyListResponse>;
+  deletePropertyList(req: DeletePropertyListRequest, ctx: Ctx<TMeta>): Promise<DeletePropertyListResponse>;
 }
 
-export interface CollectionListsPlatform {
-  createCollectionList(req: CreateCollectionListRequest, ctx: Ctx): Promise<CreateCollectionListResponse>;
-  updateCollectionList(req: UpdateCollectionListRequest, ctx: Ctx): Promise<UpdateCollectionListResponse>;
-  getCollectionList(req: GetCollectionListRequest, ctx: Ctx): Promise<GetCollectionListResponse>;
-  listCollectionLists(req: ListCollectionListsRequest, ctx: Ctx): Promise<ListCollectionListsResponse>;
-  deleteCollectionList(req: DeleteCollectionListRequest, ctx: Ctx): Promise<DeleteCollectionListResponse>;
+export interface CollectionListsPlatform<TMeta = Record<string, unknown>> {
+  createCollectionList(req: CreateCollectionListRequest, ctx: Ctx<TMeta>): Promise<CreateCollectionListResponse>;
+  updateCollectionList(req: UpdateCollectionListRequest, ctx: Ctx<TMeta>): Promise<UpdateCollectionListResponse>;
+  getCollectionList(req: GetCollectionListRequest, ctx: Ctx<TMeta>): Promise<GetCollectionListResponse>;
+  listCollectionLists(req: ListCollectionListsRequest, ctx: Ctx<TMeta>): Promise<ListCollectionListsResponse>;
+  deleteCollectionList(req: DeleteCollectionListRequest, ctx: Ctx<TMeta>): Promise<DeleteCollectionListResponse>;
 }

@@ -218,6 +218,12 @@ export const GOVERNANCE_TOOLS = [
   'get_property_list',
   'list_property_lists',
   'delete_property_list',
+  // Collection list management (program-level brand safety)
+  'create_collection_list',
+  'update_collection_list',
+  'get_collection_list',
+  'list_collection_lists',
+  'delete_collection_list',
   // Content standards
   'list_content_standards',
   'get_content_standards',

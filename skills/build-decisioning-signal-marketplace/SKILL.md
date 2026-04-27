@@ -83,7 +83,7 @@ class DataMatrixPlatform implements DecisioningPlatform<DataMatrixConfig, DataMa
     },
   };
 
-  signals: SignalsPlatform = {
+  signals: SignalsPlatform<DataMatrixMeta> = {
     getSignals: async (_req: GetSignalsRequest): Promise<GetSignalsResponse> => {
       return {
         signals: [

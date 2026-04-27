@@ -55,7 +55,7 @@ import type {
 } from '../../../types/tools.generated';
 
 type Creative = CreativeAsset;
-type Ctx = RequestContext<Account>;
+type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 
 /**
  * Wire success-row shape for `sync_creatives`. Returning the array of these
@@ -64,13 +64,13 @@ type Ctx = RequestContext<Account>;
  */
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 
-export interface SalesPlatform {
+export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // ── get_products: sync only ─────────────────────────────────────────
   // Spec doesn't define a Submitted arm in GetProductsResponse. Long-form
   // proposal/offline workflows surface the eventual proposal via per-account
   // notification channels, not this tool.
   /** Sync discovery: brief in, products out. */
-  getProducts(req: GetProductsRequest, ctx: Ctx): Promise<GetProductsResponse>;
+  getProducts(req: GetProductsRequest, ctx: Ctx<TMeta>): Promise<GetProductsResponse>;
 
   // ── create_media_buy: sync OR task ──────────────────────────────────
 
@@ -82,14 +82,14 @@ export interface SalesPlatform {
    * Required: `media_buy_id`. Other fields optional — populate the ones
    * your platform tracks at creation time.
    */
-  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx): Promise<CreateMediaBuySuccess>;
+  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
 
   /**
    * HITL media-buy creation. Framework returns the submitted envelope to
    * the buyer; this method runs in background. Method's return value
    * becomes the task's terminal artifact.
    */
-  createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx): Promise<CreateMediaBuySuccess>;
+  createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
 
   // ── update_media_buy: sync only ─────────────────────────────────────
   // Spec doesn't define a Submitted arm in UpdateMediaBuyResponse. Operator
@@ -97,7 +97,7 @@ export interface SalesPlatform {
   // operator confirms (or with the previous state if a re-approval is queued
   // off-band) and `publishStatusChange` carries the eventual transition.
   /** Sync update. Returns the patched buy. */
-  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx): Promise<UpdateMediaBuySuccess>;
+  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<UpdateMediaBuySuccess>;
 
   // ── sync_creatives: sync OR task ────────────────────────────────────
 
@@ -108,16 +108,16 @@ export interface SalesPlatform {
    * `pending_review` rows in one response. Subsequent review state changes
    * flow via `publishStatusChange(...)`.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   /**
    * HITL creative review. Framework returns the submitted envelope to the
    * buyer; this method runs in background. Returns per-creative result rows
    * once review is complete.
    */
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 
-  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx): Promise<GetMediaBuyDeliveryResponse>;
+  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuyDeliveryResponse>;
 }

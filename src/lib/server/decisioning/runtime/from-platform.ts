@@ -85,6 +85,15 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * (gated by NODE_ENV — see `buildDefaultTaskRegistry`).
    */
   taskRegistry?: TaskRegistry;
+  /**
+   * Override the framework's status-change event bus for this server.
+   * Defaults to a fresh per-server `createInMemoryStatusChangeBus()` so
+   * tests get isolation without touching the module-level singleton from
+   * `publishStatusChange(...)`. Adopters who publish from non-handler code
+   * (webhook handlers, crons) typically use the module-level primitive
+   * — pass an explicit bus here only when you want a per-server channel.
+   */
+  statusChangeBus?: StatusChangeBus;
 }
 
 /**
@@ -126,7 +135,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   validatePlatform(platform);
 
   const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
-  const statusChangeBus = createInMemoryStatusChangeBus();
+  const statusChangeBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -461,10 +470,8 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 ): GovernanceHandlers<Account> | undefined {
   const cg = platform.campaignGovernance;
   const pl = platform.propertyLists;
-  // collectionLists dispatch is gated on framework AdcpToolMap support
-  // landing for `create_collection_list` etc. The interface ships now;
-  // wire-level dispatch follows in a focused framework PR.
-  if (!cg && !pl) return undefined;
+  const cl = platform.collectionLists;
+  if (!cg && !pl && !cl) return undefined;
 
   const handlers: GovernanceHandlers<Account> = {};
 
@@ -532,6 +539,44 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       return projectSync(
         () => pl.deletePropertyList(params, reqCtx),
+        r => r
+      );
+    };
+  }
+
+  if (cl) {
+    handlers.createCollectionList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cl.createCollectionList(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.updateCollectionList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cl.updateCollectionList(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.getCollectionList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cl.getCollectionList(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.listCollectionLists = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cl.listCollectionLists(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.deleteCollectionList = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cl.deleteCollectionList(params, reqCtx),
         r => r
       );
     };

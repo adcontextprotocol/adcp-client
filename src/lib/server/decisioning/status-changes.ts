@@ -8,17 +8,19 @@
  * the MCP Resources subscription extension (`notifications/resources/updated`)
  * and the equivalent A2A DataPart-typed message contract.
  *
- * Eight resource types are wired in v6.0 (matches AdCP 3.0 lifecycle
+ * Ten resource types are wired in v6.0 (matches AdCP 3.0 lifecycle
  * channels):
  *
- *   - `media_buy`   — pending → active → completed; paused, canceled
- *   - `creative`    — pending_review → approved/rejected
- *   - `audience`    — matching → matched → activating → active
- *   - `signal`      — pending → activated → expired
- *   - `proposal`    — issued → accepted/expired/withdrawn
- *   - `plan`        — draft → submitted → approved/rejected
- *   - `rights_grant`— pending → granted/denied/expired
- *   - `delivery_report` — staging → published (manual report-runs)
+ *   - `media_buy`      — pending → active → completed; paused, canceled
+ *   - `creative`       — pending_review → approved/rejected
+ *   - `audience`       — matching → matched → activating → active
+ *   - `signal`         — pending → activated → expired
+ *   - `proposal`       — issued → accepted/expired/withdrawn
+ *   - `plan`           — draft → submitted → approved/rejected
+ *   - `rights_grant`   — pending → granted/denied/expired
+ *   - `delivery_report`— staging → published (manual report-runs)
+ *   - `property_list`  — list-changed events (cache invalidation, fetch_token revoke)
+ *   - `collection_list`— list-changed events (cache invalidation, fetch_token revoke)
  *
  * The bus is module-level so adopters can call `publishStatusChange(...)`
  * without holding a reference to the server. The framework wires the bus
@@ -41,7 +43,9 @@ export type StatusChangeResourceType =
   | 'proposal'
   | 'plan'
   | 'rights_grant'
-  | 'delivery_report';
+  | 'delivery_report'
+  | 'property_list'
+  | 'collection_list';
 
 /**
  * A single status-change event.

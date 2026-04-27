@@ -150,6 +150,11 @@ import type {
   GetPropertyListRequestSchema,
   ListPropertyListsRequestSchema,
   DeletePropertyListRequestSchema,
+  CreateCollectionListRequestSchema,
+  UpdateCollectionListRequestSchema,
+  GetCollectionListRequestSchema,
+  ListCollectionListsRequestSchema,
+  DeleteCollectionListRequestSchema,
   ListContentStandardsRequestSchema,
   GetContentStandardsRequestSchema,
   CreateContentStandardsRequestSchema,
@@ -207,6 +212,11 @@ import type {
   GetPropertyListResponse,
   ListPropertyListsResponse,
   DeletePropertyListResponse,
+  CreateCollectionListResponse,
+  UpdateCollectionListResponse,
+  GetCollectionListResponse,
+  ListCollectionListsResponse,
+  DeleteCollectionListResponse,
   SyncPlansResponse,
   CheckGovernanceResponse,
   ReportPlanOutcomeResponse,
@@ -525,6 +535,31 @@ export interface AdcpToolMap {
     result: DeletePropertyListResponse;
     response: DeletePropertyListResponse;
   };
+  create_collection_list: {
+    params: z.input<typeof CreateCollectionListRequestSchema>;
+    result: CreateCollectionListResponse;
+    response: CreateCollectionListResponse;
+  };
+  update_collection_list: {
+    params: z.input<typeof UpdateCollectionListRequestSchema>;
+    result: UpdateCollectionListResponse;
+    response: UpdateCollectionListResponse;
+  };
+  get_collection_list: {
+    params: z.input<typeof GetCollectionListRequestSchema>;
+    result: GetCollectionListResponse;
+    response: GetCollectionListResponse;
+  };
+  list_collection_lists: {
+    params: z.input<typeof ListCollectionListsRequestSchema>;
+    result: ListCollectionListsResponse;
+    response: ListCollectionListsResponse;
+  };
+  delete_collection_list: {
+    params: z.input<typeof DeleteCollectionListRequestSchema>;
+    result: DeleteCollectionListResponse;
+    response: DeleteCollectionListResponse;
+  };
   list_content_standards: {
     params: z.input<typeof ListContentStandardsRequestSchema>;
     result: ListContentStandardsResponse;
@@ -684,6 +719,11 @@ export interface GovernanceHandlers<TAccount = unknown> {
   getPropertyList?: DomainHandler<'get_property_list', TAccount>;
   listPropertyLists?: DomainHandler<'list_property_lists', TAccount>;
   deletePropertyList?: DomainHandler<'delete_property_list', TAccount>;
+  createCollectionList?: DomainHandler<'create_collection_list', TAccount>;
+  updateCollectionList?: DomainHandler<'update_collection_list', TAccount>;
+  getCollectionList?: DomainHandler<'get_collection_list', TAccount>;
+  listCollectionLists?: DomainHandler<'list_collection_lists', TAccount>;
+  deleteCollectionList?: DomainHandler<'delete_collection_list', TAccount>;
   listContentStandards?: DomainHandler<'list_content_standards', TAccount>;
   getContentStandards?: DomainHandler<'get_content_standards', TAccount>;
   createContentStandards?: DomainHandler<'create_content_standards', TAccount>;
@@ -1506,6 +1546,13 @@ const TOOL_META: Record<string, ToolMeta> = {
   list_property_lists: { wrap: null, annotations: RO },
   delete_property_list: { wrap: null, annotations: DEST },
 
+  // Governance - Collection Lists
+  create_collection_list: { wrap: null, annotations: MUT },
+  update_collection_list: { wrap: null, annotations: MUT },
+  get_collection_list: { wrap: null, annotations: RO },
+  list_collection_lists: { wrap: null, annotations: RO },
+  delete_collection_list: { wrap: null, annotations: DEST },
+
   // Governance - Content Standards
   list_content_standards: { wrap: null, annotations: RO },
   get_content_standards: { wrap: null, annotations: RO },
@@ -1579,6 +1626,11 @@ const GOVERNANCE_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getPropertyList', toolName: 'get_property_list' },
   { handlerKey: 'listPropertyLists', toolName: 'list_property_lists' },
   { handlerKey: 'deletePropertyList', toolName: 'delete_property_list' },
+  { handlerKey: 'createCollectionList', toolName: 'create_collection_list' },
+  { handlerKey: 'updateCollectionList', toolName: 'update_collection_list' },
+  { handlerKey: 'getCollectionList', toolName: 'get_collection_list' },
+  { handlerKey: 'listCollectionLists', toolName: 'list_collection_lists' },
+  { handlerKey: 'deleteCollectionList', toolName: 'delete_collection_list' },
   { handlerKey: 'listContentStandards', toolName: 'list_content_standards' },
   { handlerKey: 'getContentStandards', toolName: 'get_content_standards' },
   { handlerKey: 'createContentStandards', toolName: 'create_content_standards' },

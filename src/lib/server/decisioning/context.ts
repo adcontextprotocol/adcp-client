@@ -25,7 +25,12 @@
 import type { Account } from './account';
 import type { Format, FormatID, PropertyList, CollectionList } from '../../types/tools.generated';
 
-export interface RequestContext<TAccount extends Account = Account> {
+// Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
+// types that don't extend `Record<string, unknown>` (interfaces without index
+// signatures, type aliases pointing to unions, etc.) can still parameterize.
+// The framework only ever passes the resolved `Account<TMeta>` here; constraint
+// is implicit through the generic flow from `DecisioningPlatform<_, TMeta>`.
+export interface RequestContext<TAccount = Account> {
   /** Resolved account for this request. */
   account: TAccount;
 

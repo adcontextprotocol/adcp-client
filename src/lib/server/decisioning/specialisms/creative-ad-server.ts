@@ -40,9 +40,9 @@ import type {
 import type { SyncCreativesRow } from './sales';
 
 type Creative = CreativeAsset;
-type Ctx = RequestContext<Account>;
+type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 
-export interface CreativeAdServerPlatform {
+export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
   /**
    * Build / retrieve creative tags. Two invocation modes per the spec:
    *
@@ -60,10 +60,10 @@ export interface CreativeAdServerPlatform {
    * tag-generation pipelines await in-request; status changes for
    * downstream effects flow via `publishStatusChange`.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx): Promise<CreativeManifest>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
   /** Preview-only variant — sandbox URL or inline HTML, expires. Always sync. */
-  previewCreative(req: PreviewCreativeRequest, ctx: Ctx): Promise<PreviewCreativeResponse>;
+  previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
 
   // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
 
@@ -74,7 +74,7 @@ export interface CreativeAdServerPlatform {
    * matches. Optional `status: 'pending_review'` for assets awaiting
    * manual review.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   /**
    * HITL creative review. Framework returns the submitted envelope to the
@@ -82,7 +82,7 @@ export interface CreativeAdServerPlatform {
    * rows once review is complete. Use when your platform requires
    * mandatory pre-persist approval (brand-suitability, S&P).
    */
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   /**
    * Read creatives from the library. Filters + pagination. When
@@ -90,7 +90,7 @@ export interface CreativeAdServerPlatform {
    * graph. When `req.include_pricing`, include vendor pricing options
    * on each creative.
    */
-  listCreatives(req: ListCreativesRequest, ctx: Ctx): Promise<ListCreativesResponse>;
+  listCreatives(req: ListCreativesRequest, ctx: Ctx<TMeta>): Promise<ListCreativesResponse>;
 
   /**
    * Per-creative delivery actuals (impressions, spend, pacing). Sync —
@@ -98,5 +98,5 @@ export interface CreativeAdServerPlatform {
    * latest cached actuals and emit `delivery_report` status changes
    * via `publishStatusChange` when fresh reports are available.
    */
-  getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx): Promise<GetCreativeDeliveryResponse>;
+  getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TMeta>): Promise<GetCreativeDeliveryResponse>;
 }

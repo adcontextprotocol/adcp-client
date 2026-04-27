@@ -101,7 +101,7 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
     // upsert / list omitted — stateless platform doesn't manage accounts.
   };
 
-  creative: CreativeTemplatePlatform = {
+  creative: CreativeTemplatePlatform<WatermarkMeta> = {
     /** Sync transform — fast operation, return result immediately. */
     buildCreative: async (req: BuildCreativeRequest): Promise<CreativeManifest> => {
       // requireAsset throws AdcpError with field path if missing/wrong type.

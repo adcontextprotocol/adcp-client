@@ -15,7 +15,7 @@ import type { Account } from '../account';
 import type { RequestContext } from '../context';
 import type { SyncAudiencesRequest, SyncAudiencesSuccess } from '../../../types/tools.generated';
 
-type Ctx = RequestContext<Account>;
+type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 
 /**
  * The wire schema doesn't export a top-level `Audience` type; the shape lives
@@ -37,7 +37,7 @@ export type SyncAudiencesRow = SyncAudiencesSuccess['audiences'][number];
 
 export type AudienceStatus = NonNullable<SyncAudiencesRow['status']>;
 
-export interface AudiencePlatform {
+export interface AudiencePlatform<TMeta = Record<string, unknown>> {
   /**
    * Push audiences to the platform. Framework handles batching, idempotency,
    * cross-tenant scoping. Platform handles match-rate computation and
@@ -54,12 +54,12 @@ export interface AudiencePlatform {
    * Throw `new AdcpError(...)` for buyer-fixable rejection
    * (`AUDIENCE_TOO_SMALL`, etc.).
    */
-  syncAudiences(audiences: Audience[], ctx: Ctx): Promise<SyncAudiencesRow[]>;
+  syncAudiences(audiences: Audience[], ctx: Ctx<TMeta>): Promise<SyncAudiencesRow[]>;
 
   /**
    * Read current audience status. Sync — this is a state-read, not a
    * mutating operation. Useful for buyer-side polling outside the framework's
    * task envelope (e.g., querying long-lived audiences).
    */
-  getAudienceStatus(audienceId: string, ctx: Ctx): Promise<AudienceStatus>;
+  getAudienceStatus(audienceId: string, ctx: Ctx<TMeta>): Promise<AudienceStatus>;
 }

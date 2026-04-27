@@ -131,6 +131,10 @@ export {
 // boilerplate per call.
 export { getAsset, requireAsset } from './manifest-helpers';
 
+// List helpers — wrap row arrays + pagination into the heavier wire shapes
+// (today: list_creatives, which carries query_summary alongside the rows).
+export { buildListCreativesResponse, type BuildListCreativesResponseOpts } from './list-helpers';
+
 // Start-time helper — normalize the wire `start_time` union into a Date,
 // with platform-aware ASAP lead-time injection.
 export { resolveStartTime, type ResolveStartTimeOptions } from './start-time';
