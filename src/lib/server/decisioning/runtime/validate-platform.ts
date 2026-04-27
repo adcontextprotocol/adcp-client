@@ -46,6 +46,8 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   // Property + collection list publishing.
   'property-lists': ['propertyLists'],
   'collection-lists': ['collectionLists'],
+  // Content standards — brand-safety / policy compliance enforcement.
+  'content-standards': ['contentStandards'],
 };
 
 export class PlatformConfigError extends Error {

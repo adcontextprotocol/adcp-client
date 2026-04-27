@@ -19,6 +19,7 @@ import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server'
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
 import type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
+import type { ContentStandardsPlatform } from './specialisms/content-standards';
 import type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
 import type { AdCPSpecialism } from '../../types/tools.generated';
 
@@ -103,6 +104,7 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   audiences?: AudiencePlatform<TMeta>;
   signals?: SignalsPlatform<TMeta>;
   campaignGovernance?: CampaignGovernancePlatform<TMeta>;
+  contentStandards?: ContentStandardsPlatform<TMeta>;
   propertyLists?: PropertyListsPlatform<TMeta>;
   collectionLists?: CollectionListsPlatform<TMeta>;
 
@@ -183,7 +185,9 @@ export type RequiredPlatformsFor<
                 ? { propertyLists: PropertyListsPlatform<TMeta> }
                 : S extends 'collection-lists'
                   ? { collectionLists: CollectionListsPlatform<TMeta> }
-                  : Record<string, never>;
+                  : S extends 'content-standards'
+                    ? { contentStandards: ContentStandardsPlatform<TMeta> }
+                    : Record<string, never>;
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to

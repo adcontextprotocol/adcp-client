@@ -92,6 +92,8 @@ export type { CreativeAdServerPlatform } from './specialisms/creative-ad-server'
 
 export type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
 
+export type { ContentStandardsPlatform } from './specialisms/content-standards';
+
 export type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
 
 export type { SalesPlatform } from './specialisms/sales';

@@ -58,6 +58,12 @@ import type {
   ListCreativeFormatsResponse,
   ListCreativesRequest,
   ListCreativesResponse,
+  SyncCatalogsRequest,
+  SyncCatalogsSuccess,
+  LogEventRequest,
+  LogEventSuccess,
+  SyncEventSourcesRequest,
+  SyncEventSourcesSuccess,
   SyncCreativesSuccess,
   CreativeAsset,
 } from '../../../types/tools.generated';
@@ -165,4 +171,24 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // platforms implement directly. Note: also lives on `CreativeAdServerPlatform.listCreatives`
   // for the standalone-creative-agent shape.
   listCreatives?(req: ListCreativesRequest, ctx: Ctx<TMeta>): Promise<ListCreativesResponse>;
+
+  // ── sync_catalogs: sync only ────────────────────────────────────────
+  // Retail-media catalog sync. Buyers push product catalogs (SKUs, ASINs,
+  // store-ids) for `sales-catalog-driven` agents (Amazon, Criteo, Citrusad,
+  // Walmart Connect, Shopify ad surfaces). Optional — non-retail sales
+  // adopters omit. Idempotent on the buyer's `idempotency_key`.
+  syncCatalogs?(req: SyncCatalogsRequest, ctx: Ctx<TMeta>): Promise<SyncCatalogsSuccess>;
+
+  // ── log_event: sync only ────────────────────────────────────────────
+  // Conversion / engagement event logging. Buyers post events tied to
+  // a `media_buy_id` for performance attribution. Used by retail-media
+  // (post-purchase events) and conversion-tracked sales (Snap pixel,
+  // Meta CAPI, LinkedIn conversions API). Optional.
+  logEvent?(req: LogEventRequest, ctx: Ctx<TMeta>): Promise<LogEventSuccess>;
+
+  // ── sync_event_sources: sync only ──────────────────────────────────
+  // Register conversion event sources (websites, apps, offline pixel
+  // IDs) so subsequent `log_event` calls can be attributed correctly.
+  // Optional — adopters who don't expose conversion tracking omit.
+  syncEventSources?(req: SyncEventSourcesRequest, ctx: Ctx<TMeta>): Promise<SyncEventSourcesSuccess>;
 }

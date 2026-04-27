@@ -936,6 +936,233 @@ describe('Custom-handler merge seam (incremental migration)', () => {
   });
 });
 
+describe('SalesPlatform retail-media tools (M2)', () => {
+  it('syncCatalogs dispatches via sales.syncCatalogs (sales-catalog-driven)', async () => {
+    let received;
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        syncCatalogs: async req => {
+          received = req;
+          return { catalogs: [] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'rm', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_catalogs',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          catalogs: [],
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(received, 'syncCatalogs invoked');
+  });
+
+  it('logEvent dispatches via sales.logEvent (conversion tracking)', async () => {
+    const platform = buildPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({
+          id: 'acc_1', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        logEvent: async () => ({ success: true }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'rm', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'log_event',
+        arguments: {
+          event_id: 'e1',
+          event_type: 'conversion',
+          event_source_id: 'src_1',
+          timestamp: '2026-04-27T00:00:00Z',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  });
+
+  it('syncEventSources dispatches via sales.syncEventSources', async () => {
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        syncEventSources: async () => ({ event_sources: [] }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'rm', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_event_sources',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          event_sources: [],
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  });
+});
+
+describe('ContentStandardsPlatform (M1)', () => {
+  it('listContentStandards dispatches via platform.contentStandards', async () => {
+    let invoked = false;
+    const platform = buildPlatform({
+      capabilities: {
+        specialisms: ['sales-non-guaranteed', 'content-standards'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      contentStandards: {
+        listContentStandards: async () => {
+          invoked = true;
+          return { standards: [] };
+        },
+        getContentStandards: async () => ({ standards: [] }),
+        createContentStandards: async () => ({ standard: { standard_id: 's_1' } }),
+        updateContentStandards: async () => ({ standard: { standard_id: 's_1' } }),
+        calibrateContent: async () => ({ calibration: {} }),
+        validateContentDelivery: async () => ({ result: {} }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'cs', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_content_standards', arguments: { account: { account_id: 'acc_1' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(invoked, 'listContentStandards invoked');
+  });
+
+  it('validatePlatform requires contentStandards when content-standards specialism claimed', () => {
+    const platform = buildPlatform({
+      capabilities: {
+        specialisms: ['sales-non-guaranteed', 'content-standards'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+    });
+    delete platform.contentStandards;
+    assert.throws(() => validatePlatform(platform), /contentStandards/);
+  });
+});
+
+describe('Merge-seam collision warning (M3)', () => {
+  it('warns when opts handler is shadowed by platform-derived handler', () => {
+    const warnings = [];
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        getMediaBuys: async () => ({ media_buys: [] }), // platform now models it
+      },
+    });
+    createAdcpServerFromPlatform(platform, {
+      name: 'collide', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      logger: {
+        debug: () => {}, info: () => {},
+        warn: msg => warnings.push(msg),
+        error: () => {},
+      },
+      mediaBuy: {
+        // Adopter override that's about to be silently shadowed.
+        getMediaBuys: async () => ({ media_buys: [{ media_buy_id: 'opts_should_warn' }] }),
+      },
+    });
+    const collisionWarn = warnings.find(w => w.includes('opts.mediaBuy') && w.includes('getMediaBuys'));
+    assert.ok(collisionWarn, `expected merge-seam collision warning, got: ${JSON.stringify(warnings)}`);
+  });
+
+  it('throws PlatformConfigError on collision in strict mode', () => {
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        getMediaBuys: async () => ({ media_buys: [] }),
+      },
+    });
+    assert.throws(() => createAdcpServerFromPlatform(platform, {
+      name: 'collide', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      mergeSeam: 'strict',
+      mediaBuy: {
+        getMediaBuys: async () => ({ media_buys: [] }),
+      },
+    }), /opts\.mediaBuy.*shadowed/);
+  });
+
+  it('silent mode: no warning, no throw', () => {
+    const warnings = [];
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        getMediaBuys: async () => ({ media_buys: [] }),
+      },
+    });
+    assert.doesNotThrow(() => createAdcpServerFromPlatform(platform, {
+      name: 'silent', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      mergeSeam: 'silent',
+      logger: {
+        debug: () => {}, info: () => {},
+        warn: msg => warnings.push(msg),
+        error: () => {},
+      },
+      mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
+    }));
+    const mergeWarnings = warnings.filter(w => w.includes('shadowed by platform-derived'));
+    assert.strictEqual(mergeWarnings.length, 0, 'silent mode emits no merge-seam warnings');
+  });
+});
+
 describe('HITL push notification webhook on terminal state', () => {
   // When a buyer passes `push_notification_config: { url, token }` and the
   // host wires `webhooks` on serve(), the framework emits a signed RFC 9421

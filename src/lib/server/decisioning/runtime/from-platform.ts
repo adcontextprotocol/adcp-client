@@ -67,7 +67,8 @@ import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
 import type { AccountReference } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
-import { validatePlatform } from './validate-platform';
+import { validatePlatform, PlatformConfigError } from './validate-platform';
+import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext } from './to-context';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './task-registry';
 import { createInMemoryStatusChangeBus, type StatusChangeBus } from '../status-changes';
@@ -94,6 +95,23 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * — pass an explicit bus here only when you want a per-server channel.
    */
   statusChangeBus?: StatusChangeBus;
+
+  /**
+   * Merge-seam collision behavior. When an adopter-supplied custom handler
+   * (e.g. `opts.mediaBuy.getMediaBuys`) collides with a platform-derived
+   * handler (e.g. `platform.sales.getMediaBuys`), the platform-derived one
+   * wins per-key and the adopter override is silently shadowed.
+   *
+   * Modes:
+   * - `'warn'` (default) — log a warning at construction. Migration signal
+   *   without breaking running deployments.
+   * - `'strict'` — throw `PlatformConfigError`. Recommended for CI / new
+   *   deployments where the v6 surface is the canonical source.
+   * - `'silent'` — skip the check. For adopters who deliberately use the
+   *   merge seam as an override (e.g., wrapping platform behavior with
+   *   logging in their custom handler).
+   */
+  mergeSeam?: MergeSeamMode;
 
   /**
    * Override the webhook emitter the framework uses to push HITL task
@@ -200,6 +218,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
   const statusChangeBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
   const taskWebhookEmit = opts.taskWebhookEmitter?.emit;
+  const mergeOpts = {
+    mode: opts.mergeSeam ?? 'warn',
+    // eslint-disable-next-line no-console
+    logger: opts.logger ?? { debug: () => {}, info: () => {}, warn: console.warn.bind(console), error: console.error.bind(console) },
+  };
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -230,12 +253,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // doesn't yet model (getMediaBuys, listCreativeFormats, content-standards
     // CRUD, sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
     // JSDoc for the migration-seam contract.
-    mediaBuy: mergeHandlers(opts.mediaBuy, buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit)),
-    creative: mergeHandlers(opts.creative, buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit)),
-    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, taskRegistry)),
-    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform)),
-    governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform)),
-    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform)),
+    mediaBuy: mergeHandlers(opts.mediaBuy, buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit), 'mediaBuy', mergeOpts),
+    creative: mergeHandlers(opts.creative, buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit), 'creative', mergeOpts),
+    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, taskRegistry), 'eventTracking', mergeOpts),
+    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform), 'signals', mergeOpts),
+    governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform), 'governance', mergeOpts),
+    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform), 'accounts', mergeOpts),
   };
 
   const server = createAdcpServer(config);
@@ -264,11 +287,45 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
  * tools the platform shape doesn't cover yet (getMediaBuys,
  * listCreativeFormats, providePerformanceFeedback, reportUsage,
  * sync_event_sources, log_event, content-standards CRUD, etc.).
+ *
+ * **Collision detection.** When a custom-supplied handler would be
+ * shadowed by a platform-derived one (i.e., the framework added native
+ * coverage for a tool the adopter previously filled via the merge seam),
+ * the resolver logs a warning by default. Tells adopters to migrate the
+ * custom logic into the platform method. Adopters who genuinely want
+ * the custom logic to win can pass `mergeSeam: 'silent'` to skip the
+ * warning, or `'strict'` to throw a `PlatformConfigError`.
  */
-function mergeHandlers<T extends object>(custom: T | undefined, platform: T | undefined): T | undefined {
+type MergeSeamMode = 'warn' | 'silent' | 'strict';
+
+function mergeHandlers<T extends object>(
+  custom: T | undefined,
+  platform: T | undefined,
+  domain: string,
+  opts: { mode: MergeSeamMode; logger: AdcpLogger }
+): T | undefined {
   if (!custom && !platform) return undefined;
   if (!custom) return platform;
   if (!platform) return custom;
+
+  if (opts.mode !== 'silent') {
+    const collisions: string[] = [];
+    for (const key of Object.keys(platform)) {
+      if (key in (custom as Record<string, unknown>)) collisions.push(key);
+    }
+    if (collisions.length > 0) {
+      const message =
+        `[adcp/decisioning] opts.${domain}.{${collisions.join(', ')}} ` +
+        `${collisions.length === 1 ? 'is' : 'are'} shadowed by platform-derived handlers. ` +
+        `The merge seam is for tools the platform doesn't model yet — once a tool has a native ` +
+        `platform method, move the logic there and remove the opts override.`;
+      if (opts.mode === 'strict') {
+        throw new PlatformConfigError(message);
+      }
+      opts.logger.warn(message);
+    }
+  }
+
   return { ...custom, ...platform };
 }
 
@@ -675,17 +732,58 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
   _taskRegistry: TaskRegistry
 ): EventTrackingHandlers<Account> | undefined {
   const audiences = platform.audiences;
-  if (!audiences) return undefined;
-  return {
-    syncAudiences: async (params, ctx) => {
+  const sales = platform.sales;
+  // Retail-media adopters (sales-catalog-driven) implement sync_catalogs /
+  // log_event / sync_event_sources on `SalesPlatform`. The wire spec routes
+  // these through the `event-tracking` framework category so the handlers
+  // land on `EventTrackingHandlers` regardless of which specialism owns
+  // them on the platform side.
+  if (!audiences && !sales) return undefined;
+
+  const handlers: EventTrackingHandlers<Account> = {};
+
+  if (audiences) {
+    handlers.syncAudiences = async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       const audienceList = (params.audiences ?? []) as Audience[];
       return projectSync(
         () => audiences.syncAudiences(audienceList, reqCtx),
         rows => ({ audiences: rows })
       );
-    },
-  };
+    };
+  }
+
+  if (sales?.syncCatalogs) {
+    handlers.syncCatalogs = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => sales.syncCatalogs!(params, reqCtx),
+        r => r
+      );
+    };
+  }
+
+  if (sales?.logEvent) {
+    handlers.logEvent = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => sales.logEvent!(params, reqCtx),
+        r => r
+      );
+    };
+  }
+
+  if (sales?.syncEventSources) {
+    handlers.syncEventSources = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => sales.syncEventSources!(params, reqCtx),
+        r => r
+      );
+    };
+  }
+
+  return Object.keys(handlers).length > 0 ? handlers : undefined;
 }
 
 function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
@@ -717,7 +815,8 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
   const cg = platform.campaignGovernance;
   const pl = platform.propertyLists;
   const cl = platform.collectionLists;
-  if (!cg && !pl && !cl) return undefined;
+  const cs = platform.contentStandards;
+  if (!cg && !pl && !cl && !cs) return undefined;
 
   const handlers: GovernanceHandlers<Account> = {};
 
@@ -826,6 +925,69 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
         r => r
       );
     };
+  }
+
+  if (cs) {
+    handlers.listContentStandards = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cs.listContentStandards(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.getContentStandards = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cs.getContentStandards(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.createContentStandards = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cs.createContentStandards(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.updateContentStandards = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cs.updateContentStandards(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.calibrateContent = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cs.calibrateContent(params, reqCtx),
+        r => r
+      );
+    };
+    handlers.validateContentDelivery = async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => cs.validateContentDelivery(params, reqCtx),
+        r => r
+      );
+    };
+    if (cs.getMediaBuyArtifacts) {
+      handlers.getMediaBuyArtifacts = async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          () => cs.getMediaBuyArtifacts!(params, reqCtx),
+          r => r
+        );
+      };
+    }
+    if (cs.getCreativeFeatures) {
+      handlers.getCreativeFeatures = async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          () => cs.getCreativeFeatures!(params, reqCtx),
+          r => r
+        );
+      };
+    }
   }
 
   return handlers;
