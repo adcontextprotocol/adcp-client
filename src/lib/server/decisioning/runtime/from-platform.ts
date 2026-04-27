@@ -103,8 +103,13 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * wins per-key and the adopter override is silently shadowed.
    *
    * Modes:
-   * - `'warn'` (default) — log a warning at construction. Migration signal
-   *   without breaking running deployments.
+   * - `'warn'` (default) — log a warning at every construction that hits a
+   *   collision. Migration signal without breaking running deployments.
+   * - `'log-once'` — log a warning the first time each `(domain, keys)`
+   *   collision is seen in the process; subsequent constructions with the
+   *   same shape stay silent. Right default for multi-tenant hosts (one
+   *   process, N `createAdcpServerFromPlatform` calls) and hot-reload dev
+   *   (server reconstructed every file change).
    * - `'strict'` — throw `PlatformConfigError`. Recommended for CI / new
    *   deployments where the v6 surface is the canonical source.
    * - `'silent'` — skip the check. For adopters who deliberately use the
@@ -294,9 +299,22 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
  * the resolver logs a warning by default. Tells adopters to migrate the
  * custom logic into the platform method. Adopters who genuinely want
  * the custom logic to win can pass `mergeSeam: 'silent'` to skip the
- * warning, or `'strict'` to throw a `PlatformConfigError`.
+ * warning, `'strict'` to throw a `PlatformConfigError`, or `'log-once'`
+ * to suppress duplicate warnings across multiple server constructions
+ * in the same process (multi-tenant deployments, hot-reload dev).
  */
-type MergeSeamMode = 'warn' | 'silent' | 'strict';
+type MergeSeamMode = 'warn' | 'log-once' | 'silent' | 'strict';
+
+// Module-level dedupe set for `'log-once'` mode. Keyed on
+// `${domain}|${sortedColliders}` so two constructions hitting the same
+// collision pattern only log once across the lifetime of the process.
+// Cleared via `_resetMergeSeamDedupe()` in tests.
+const mergeSeamLoggedKeys = new Set<string>();
+
+/** @internal — reset the log-once dedupe set. Tests only. */
+export function _resetMergeSeamDedupe(): void {
+  mergeSeamLoggedKeys.clear();
+}
 
 function mergeHandlers<T extends object>(
   custom: T | undefined,
@@ -314,15 +332,24 @@ function mergeHandlers<T extends object>(
       if (key in (custom as Record<string, unknown>)) collisions.push(key);
     }
     if (collisions.length > 0) {
+      // Sort for stable dedupe key — same collision set logs the same key
+      // regardless of declaration order across constructions.
+      const dedupeKey = `${domain}|${[...collisions].sort().join(',')}`;
+      const shouldLog = opts.mode !== 'log-once' || !mergeSeamLoggedKeys.has(dedupeKey);
+
       const message =
         `[adcp/decisioning] opts.${domain}.{${collisions.join(', ')}} ` +
         `${collisions.length === 1 ? 'is' : 'are'} shadowed by platform-derived handlers. ` +
         `The merge seam is for tools the platform doesn't model yet — once a tool has a native ` +
         `platform method, move the logic there and remove the opts override.`;
+
       if (opts.mode === 'strict') {
         throw new PlatformConfigError(message);
       }
-      opts.logger.warn(message);
+      if (shouldLog) {
+        opts.logger.warn(message);
+        if (opts.mode === 'log-once') mergeSeamLoggedKeys.add(dedupeKey);
+      }
     }
   }
 

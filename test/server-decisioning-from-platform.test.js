@@ -1135,6 +1135,48 @@ describe('Merge-seam collision warning (M3)', () => {
     }), /opts\.mediaBuy.*shadowed/);
   });
 
+  it('log-once mode: first construction warns, subsequent identical-collision constructions stay silent', () => {
+    const { _resetMergeSeamDedupe } = require('../dist/lib/server/decisioning/runtime/from-platform');
+    _resetMergeSeamDedupe();
+
+    function buildCollidingPlatform() {
+      return buildPlatform({
+        sales: {
+          getProducts: async () => ({ products: [] }),
+          createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+          updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+          syncCreatives: async () => [],
+          getMediaBuyDelivery: async () => ({ media_buys: [] }),
+          getMediaBuys: async () => ({ media_buys: [] }),
+        },
+      });
+    }
+
+    const warnings1 = [];
+    const warnings2 = [];
+
+    createAdcpServerFromPlatform(buildCollidingPlatform(), {
+      name: 't1', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      mergeSeam: 'log-once',
+      logger: { debug: () => {}, info: () => {}, warn: m => warnings1.push(m), error: () => {} },
+      mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
+    });
+
+    createAdcpServerFromPlatform(buildCollidingPlatform(), {
+      name: 't2', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      mergeSeam: 'log-once',
+      logger: { debug: () => {}, info: () => {}, warn: m => warnings2.push(m), error: () => {} },
+      mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
+    });
+
+    const merge1 = warnings1.filter(w => w.includes('shadowed by platform-derived'));
+    const merge2 = warnings2.filter(w => w.includes('shadowed by platform-derived'));
+    assert.strictEqual(merge1.length, 1, 'first construction warns once');
+    assert.strictEqual(merge2.length, 0, 'second construction with same collision is silent');
+  });
+
   it('silent mode: no warning, no throw', () => {
     const warnings = [];
     const platform = buildPlatform({
