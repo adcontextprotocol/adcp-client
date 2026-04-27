@@ -47,7 +47,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { AdcpStructuredError } from '../async-outcome';
-import type { TaskRecord, TaskRegistry } from './task-registry';
+import type { TaskRecord, TaskRegistry, TaskStatus } from './task-registry';
 
 /**
  * Minimal subset of the `pg.Pool` interface used by the registry.
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   CONSTRAINT ${table}_valid_status CHECK (
-    status IN ('submitted', 'completed', 'failed')
+    status IN ('submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required', 'unknown')
   )
 );
 
@@ -131,7 +131,7 @@ interface DbTaskRow {
   task_id: string;
   tool: string;
   account_id: string;
-  status: 'submitted' | 'completed' | 'failed';
+  status: TaskStatus;
   status_message: string | null;
   result: unknown;
   error: AdcpStructuredError | null;

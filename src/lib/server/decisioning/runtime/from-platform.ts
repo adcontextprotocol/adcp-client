@@ -45,6 +45,7 @@
  * @public
  */
 
+import { randomUUID } from 'node:crypto';
 import type { AdcpServer } from '../../adcp-server';
 import {
   createAdcpServer,
@@ -60,7 +61,7 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
 import type { Account } from '../account';
 import { AccountNotFoundError, toWireAccount } from '../account';
-import { AdcpError } from '../async-outcome';
+import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeTemplatePlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
@@ -70,7 +71,7 @@ import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext } from './to-context';
-import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord } from './task-registry';
+import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
 import {
   createInMemoryStatusChangeBus,
   type StatusChangeBus,
@@ -362,7 +363,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       const start = Date.now();
       let resolved = false;
       try {
-        const account = await platform.accounts.resolve(ref);
+        const account = await platform.accounts.resolve(ref, {
+          ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+          toolName: ctx.toolName,
+        });
         resolved = account != null;
         return account;
       } catch (err) {
@@ -380,14 +384,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // Auth-derived path: framework calls this for tools whose wire request
     // doesn't carry an `account` field (`provide_performance_feedback`,
     // `list_creative_formats`, `tasks/get`). The platform's resolver runs
-    // with `undefined` ref; per its `resolution` mode it returns the
-    // singleton (`'derived'`), looks up by auth (`'implicit'`), or `null`
-    // for `'explicit'` adopters who don't model these tools.
+    // with `undefined` ref + `authInfo` available; per its `resolution`
+    // mode it returns the singleton (`'derived'`), looks up by auth
+    // (`'implicit'`), or `null` for `'explicit'` adopters who don't model
+    // these tools.
     resolveAccountFromAuth: async ctx => {
       const start = Date.now();
       let resolved = false;
       try {
-        const account = await platform.accounts.resolve(undefined);
+        const account = await platform.accounts.resolve(undefined, {
+          ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+          toolName: ctx.toolName,
+        });
         resolved = account != null;
         return account;
       } catch (err) {
@@ -686,10 +694,38 @@ async function dispatchHitl<TResult>(
   );
   const taskStart = Date.now();
 
+  // Three failure surfaces:
+  //   1. taskFn throws → record failure → emit failed webhook
+  //   2. taskFn succeeds but registry write fails (DB outage) → log only;
+  //      do NOT emit webhook (buyer doesn't know task succeeded), do NOT
+  //      try to fail() the task (taskFn DID succeed; mismatch would
+  //      mislead operator reconciliation)
+  //   3. taskFn fails AND registry fail-write also fails → log only;
+  //      do not emit webhook (registry state is inconsistent)
+  //
+  // Webhook delivery is gated on the registry write succeeding so the
+  // buyer's view (via webhook OR getTaskState) is always consistent.
   const completion: Promise<void> = (async () => {
+    let result: TResult | undefined;
+    let taskFnError: unknown;
     try {
-      const result = await taskFn(taskId);
-      await taskRegistry.complete(taskId, result);
+      result = await taskFn(taskId);
+    } catch (err) {
+      taskFnError = err;
+    }
+
+    if (taskFnError === undefined) {
+      // Success path
+      try {
+        await taskRegistry.complete(taskId, result as TResult);
+      } catch (registryErr) {
+        opts.logger.error(
+          `[adcp/decisioning] task ${taskId} (${opts.tool}) completed but registry write failed — ` +
+            `manual reconciliation required. Webhook not emitted; buyer state will diverge until resolved. ` +
+            `Error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
+        );
+        return;
+      }
       safeFire(
         opts.observability?.onTaskTransition,
         {
@@ -705,48 +741,138 @@ async function dispatchHitl<TResult>(
       await emitTaskWebhook(opts, {
         task: { task_id: taskId, status: 'completed', result },
       });
-    } catch (err) {
-      const structured =
-        err instanceof AdcpError
-          ? err.toStructuredError()
-          : {
-              code: 'SERVICE_UNAVAILABLE' as const,
-              recovery: 'transient' as const,
-              message: err instanceof Error ? err.message : String(err),
-            };
-      await taskRegistry.fail(taskId, structured);
-      safeFire(
-        opts.observability?.onTaskTransition,
-        {
-          taskId,
-          tool: opts.tool,
-          accountId: opts.accountId,
-          status: 'failed',
-          durationMs: Date.now() - taskStart,
-          errorCode: structured.code,
-        },
-        'onTaskTransition',
-        opts.logger
-      );
-      await emitTaskWebhook(opts, {
-        task: { task_id: taskId, status: 'failed', error: structured },
-      });
+      return;
     }
+
+    // Failure path
+    const structured =
+      taskFnError instanceof AdcpError
+        ? taskFnError.toStructuredError()
+        : {
+            code: 'SERVICE_UNAVAILABLE' as const,
+            recovery: 'transient' as const,
+            message: taskFnError instanceof Error ? taskFnError.message : String(taskFnError),
+          };
+    try {
+      await taskRegistry.fail(taskId, structured);
+    } catch (registryErr) {
+      opts.logger.error(
+        `[adcp/decisioning] task ${taskId} (${opts.tool}) failed AND registry fail-write also failed — ` +
+          `manual reconciliation required. Webhook not emitted. ` +
+          `taskFn error: ${structured.message}; registry error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
+      );
+      return;
+    }
+    safeFire(
+      opts.observability?.onTaskTransition,
+      {
+        taskId,
+        tool: opts.tool,
+        accountId: opts.accountId,
+        status: 'failed',
+        durationMs: Date.now() - taskStart,
+        errorCode: structured.code,
+      },
+      'onTaskTransition',
+      opts.logger
+    );
+    await emitTaskWebhook(opts, {
+      task: { task_id: taskId, status: 'failed', error: structured },
+    });
   })();
   taskRegistry._registerBackground(taskId, completion);
 
   return { status: 'submitted', task_id: taskId };
 }
 
+/**
+ * AdCP wire spec puts task / status / context fields on the webhook envelope
+ * top level (`mcp-webhook-payload.json`); the success / failure body lives on
+ * `result`. This helper builds that shape from the v6 task lifecycle data.
+ *
+ * Spec requires top-level: `idempotency_key`, `task_id`, `task_type`, `status`,
+ * `timestamp`. Optional: `protocol`, `context_id`, `message`, `result`,
+ * `operation_id`. We add `validation_token` (echoed from
+ * `push_notification_config.token`) outside the spec but consistent with the
+ * intent — receivers that don't expect it ignore the extra property.
+ *
+ * The webhook emitter generates `idempotency_key` internally from
+ * `operation_id`; we mirror it on the payload body so receivers running
+ * spec-conformant `mcp-webhook-payload.json` validation see the required
+ * field. Same value is on the HTTP `Idempotency-Key` header for HTTP-level
+ * dedup.
+ */
+function buildTaskWebhookPayload(
+  opts: DispatchHitlOpts,
+  taskId: string,
+  status: TaskStatus,
+  artifact: { result?: unknown; error?: AdcpStructuredError }
+): Record<string, unknown> {
+  const idempotencyKey = randomUUID();
+  const payload: Record<string, unknown> = {
+    idempotency_key: idempotencyKey,
+    task_id: taskId,
+    task_type: opts.tool,
+    status,
+    timestamp: new Date().toISOString(),
+    protocol: protocolForTool(opts.tool),
+  };
+  if (opts.pushNotificationToken !== undefined) {
+    payload.validation_token = opts.pushNotificationToken;
+  }
+  // `result` is the AdCP async-response-data union — for completed it's
+  // the success-arm body; for failed it carries `errors: AdcpStructuredError[]`
+  // alongside the empty success shape.
+  if (status === 'completed' && artifact.result !== undefined) {
+    payload.result = artifact.result;
+  }
+  if (status === 'failed' && artifact.error !== undefined) {
+    payload.result = { errors: [artifact.error] };
+    payload.message = artifact.error.message;
+  }
+  return payload;
+}
+
+/**
+ * Map a v6 tool name to its AdCP protocol category, per
+ * `enums/adcp-protocol.json`. Goes on the webhook payload's `protocol`
+ * field so receivers can route to the right pipeline before parsing the
+ * task body.
+ */
+function protocolForTool(tool: string): string {
+  if (tool.startsWith('si_')) return 'sponsored-intelligence';
+  if (
+    tool === 'check_governance' ||
+    tool === 'sync_plans' ||
+    tool === 'report_plan_outcome' ||
+    tool === 'get_plan_audit_logs' ||
+    tool.endsWith('_property_list') ||
+    tool.endsWith('_property_lists') ||
+    tool.endsWith('_collection_list') ||
+    tool.endsWith('_collection_lists') ||
+    tool.endsWith('_content_standards') ||
+    tool === 'calibrate_content' ||
+    tool === 'validate_content_delivery' ||
+    tool === 'get_media_buy_artifacts'
+  ) {
+    return 'governance';
+  }
+  if (tool === 'get_signals' || tool === 'activate_signal') return 'signals';
+  if (tool === 'build_creative' || tool === 'preview_creative' || tool === 'get_creative_delivery') return 'creative';
+  if (tool === 'get_brand_identity' || tool === 'get_rights' || tool === 'acquire_rights') return 'brand';
+  return 'media-buy';
+}
+
 async function emitTaskWebhook(
   opts: DispatchHitlOpts,
-  payload: { task: { task_id: string; status: string; result?: unknown; error?: unknown } }
+  source: { task: { task_id: string; status: 'completed' | 'failed'; result?: unknown; error?: AdcpStructuredError } }
 ): Promise<void> {
   if (!opts.emitWebhook || !opts.pushNotificationUrl) return;
-  const wirePayload: Record<string, unknown> = { ...payload };
-  if (opts.pushNotificationToken !== undefined) {
-    wirePayload.validation_token = opts.pushNotificationToken;
-  }
+  const taskId = source.task.task_id;
+  const wirePayload = buildTaskWebhookPayload(opts, taskId, source.task.status, {
+    ...(source.task.result !== undefined && { result: source.task.result }),
+    ...(source.task.error !== undefined && { error: source.task.error }),
+  });
   const start = Date.now();
   let success = false;
   let errors: string[] | undefined;
@@ -754,7 +880,7 @@ async function emitTaskWebhook(
     const result = await opts.emitWebhook({
       url: opts.pushNotificationUrl,
       payload: wirePayload,
-      operation_id: `${opts.tool}.${payload.task.task_id}`,
+      operation_id: `${opts.tool}.${taskId}`,
     });
     success = result?.delivered === true;
     if (result && Array.isArray(result.errors) && result.errors.length > 0) {
@@ -763,16 +889,19 @@ async function emitTaskWebhook(
   } catch (err) {
     errors = [err instanceof Error ? err.message : String(err)];
     // Webhook failures don't fail the task — registry already records the
-    // terminal state. Log via console so operators can investigate.
-    // eslint-disable-next-line no-console
-    console.warn(`[adcp] task webhook for ${payload.task.task_id} failed:`, err);
+    // terminal state. URL redacted from log to avoid leaking buyer-supplied
+    // attacker-controllable values into operator log aggregators.
+    opts.logger.warn(
+      `[adcp/decisioning] task webhook for ${taskId} (${opts.tool}, status=${source.task.status}) ` +
+        `failed: ${err instanceof Error ? err.message : String(err)}`
+    );
   } finally {
     safeFire(
       opts.observability?.onWebhookEmit,
       {
-        taskId: payload.task.task_id,
+        taskId,
         tool: opts.tool,
-        status: payload.task.status,
+        status: source.task.status,
         url: opts.pushNotificationUrl,
         success,
         durationMs: Date.now() - start,
@@ -973,6 +1102,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           taskId => sales.createMediaBuyTask!(taskId, params, reqCtx)
         );
       }
+      if (!sales.createMediaBuy) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'create_media_buy not supported by this sales platform (declare either createMediaBuy or createMediaBuyTask)',
+          recovery: 'terminal',
+        });
+      }
       return projectSync(
         () => sales.createMediaBuy!(params, reqCtx),
         r => r
@@ -1017,6 +1152,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           },
           taskId => sales.syncCreativesTask!(taskId, creatives, reqCtx)
         );
+      }
+      if (!sales.syncCreatives) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'sync_creatives not supported by this sales platform (declare either syncCreatives or syncCreativesTask)',
+          recovery: 'terminal',
+        });
       }
       return projectSync(
         () => sales.syncCreatives!(creatives, reqCtx),
@@ -1131,6 +1272,12 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
           },
           taskId => creative.syncCreativesTask!(taskId, creatives, reqCtx)
         );
+      }
+      if (!creative.syncCreatives) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'sync_creatives not supported by this creative platform (declare either syncCreatives or syncCreativesTask)',
+          recovery: 'terminal',
+        });
       }
       return projectSync(
         () => creative.syncCreatives!(creatives, reqCtx),

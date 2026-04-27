@@ -1497,9 +1497,16 @@ describe('HITL push notification webhook on terminal state', () => {
     assert.strictEqual(emits.length, 1, 'one webhook emitted on terminal completion');
     const emit = emits[0];
     assert.strictEqual(emit.url, 'https://buyer.example.com/webhook');
-    assert.strictEqual(emit.payload.task.task_id, taskId);
-    assert.strictEqual(emit.payload.task.status, 'completed');
-    assert.deepStrictEqual(emit.payload.task.result, { media_buy_id: 'mb_42', status: 'active' });
+    // Spec-flat envelope (mcp-webhook-payload.json): top-level task_id /
+    // task_type / status / timestamp / idempotency_key / protocol; result
+    // carries the success-arm body.
+    assert.strictEqual(emit.payload.task_id, taskId);
+    assert.strictEqual(emit.payload.task_type, 'create_media_buy');
+    assert.strictEqual(emit.payload.status, 'completed');
+    assert.strictEqual(emit.payload.protocol, 'media-buy');
+    assert.ok(typeof emit.payload.idempotency_key === 'string' && emit.payload.idempotency_key.length >= 16);
+    assert.ok(typeof emit.payload.timestamp === 'string');
+    assert.deepStrictEqual(emit.payload.result, { media_buy_id: 'mb_42', status: 'active' });
     assert.strictEqual(emit.payload.validation_token, 'shhh');
     assert.ok(emit.operation_id.startsWith('create_media_buy.task_'));
   });
@@ -1535,8 +1542,9 @@ describe('HITL push notification webhook on terminal state', () => {
     await server.awaitTask(result.structuredContent.task_id);
 
     assert.strictEqual(emits.length, 1);
-    assert.strictEqual(emits[0].payload.task.status, 'failed');
-    assert.strictEqual(emits[0].payload.task.error.code, 'GOVERNANCE_DENIED');
+    assert.strictEqual(emits[0].payload.status, 'failed');
+    assert.deepStrictEqual(emits[0].payload.result.errors[0].code, 'GOVERNANCE_DENIED');
+    assert.strictEqual(emits[0].payload.message, 'op declined');
     assert.strictEqual(emits[0].payload.validation_token, undefined, 'token omitted when buyer didn\'t supply one');
   });
 

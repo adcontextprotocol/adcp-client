@@ -21,14 +21,34 @@
 import { randomUUID } from 'node:crypto';
 import type { AdcpStructuredError } from '../async-outcome';
 
+/**
+ * AdCP-spec task lifecycle states. Mirrors `enums/task-status.json` —
+ * the v6 framework writes `'submitted'` on create, transitions terminal
+ * to `'completed'` / `'failed'`. The other 6 states (`'working'`,
+ * `'input-required'`, `'canceled'`, `'rejected'`, `'auth-required'`,
+ * `'unknown'`) are reserved for adopter-emitted transitions via the
+ * forthcoming `taskRegistry.transition()` API (v6.1) — for now the
+ * framework only writes the three terminal-or-initial values.
+ */
+export type TaskStatus =
+  | 'submitted'
+  | 'working'
+  | 'input-required'
+  | 'completed'
+  | 'canceled'
+  | 'failed'
+  | 'rejected'
+  | 'auth-required'
+  | 'unknown';
+
 export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredError = AdcpStructuredError> {
   taskId: string;
   /** Tool name that started the task (e.g., 'create_media_buy'). */
   tool: string;
   /** Account that started the task — sessionKey-like for cross-request scoping. */
   accountId: string;
-  /** Current lifecycle state. */
-  status: 'submitted' | 'completed' | 'failed';
+  /** Current lifecycle state — full AdCP-spec `task-status` enum. */
+  status: TaskStatus;
   /** Status message on the final arm (`error.message` on failed). */
   statusMessage?: string;
   /** Terminal result on `completed`. */

@@ -29,21 +29,25 @@ import type { RequestContext } from '../context';
 export function buildRequestContext<TMeta = Record<string, unknown>>(
   handlerCtx: HandlerContext<Account<TMeta>>
 ): RequestContext<Account<TMeta>> {
-  const account = handlerCtx.account;
-  if (!account) {
-    // The framework calls `resolveAccount` before dispatch and aborts with
-    // ACCOUNT_NOT_FOUND when it returns null. Reaching this branch means
-    // either (a) a handler dispatched without a resolved account (framework
-    // bug) or (b) a test harness invoked `buildRequestContext` directly
-    // with an unresolved context. Surface a precise diagnostic.
-    throw new Error(
-      'buildRequestContext: handler context missing resolved account. ' +
-        'This is a framework invariant violation — every dispatch path runs ' +
-        '`resolveAccount` before reaching the platform layer. If you see this ' +
-        'in a test, the test fixture is constructing HandlerContext without ' +
-        'an `account` field; pass one explicitly.'
-    );
-  }
+  // `account` may legitimately be undefined for tools whose wire request
+  // doesn't carry an `account` field AND whose `resolveAccountFromAuth`
+  // returned null (`'explicit'`-mode adopters who don't model the
+  // no-account tools, or buyers calling without auth). Adopter handlers
+  // for those tools are responsible for either deriving the account
+  // themselves (e.g., via `media_buy_id` ownership) or throwing
+  // `AdcpError('ACCOUNT_NOT_FOUND')` if account is required.
+  //
+  // The `RequestContext.account` type is non-optional for ergonomic typing
+  // — adopters writing handlers for the 90% case (tools with `account` on
+  // the wire) shouldn't have to optional-chain everywhere. Adopters of
+  // no-account tools either:
+  //   1. Declare `resolution: 'derived'` and return a singleton from
+  //      `accounts.resolve(undefined)` — `ctx.account` is always set
+  //   2. Implement only `'explicit'` and never claim no-account
+  //      specialisms — the tool is unreachable
+  //   3. Read `ctx.account` defensively (`as Account | undefined` cast)
+  //      and look up by request body when missing
+  const account = handlerCtx.account as Account<TMeta>;
 
   const stubResolver = (name: string) => async (): Promise<never> => {
     throw new Error(

@@ -83,6 +83,34 @@ export interface Account<TMeta = Record<string, unknown>> {
   authInfo: AuthPrincipal;
 }
 
+/**
+ * Request context passed to `AccountStore.resolve()` so adopters fronting
+ * an upstream platform API can translate the auth principal into their
+ * tenant model on resolution. Mirrors `ResolveAccountContext` on the
+ * underlying `AdcpServerConfig`.
+ *
+ * `authInfo` is the OAuth-style token shape the framework extracts from
+ * `serve({ authenticate })` — it's the FRAMEWORK auth shape, not the v6
+ * `AuthPrincipal` (which is what the platform sets on the RESOLVED
+ * `Account.authInfo`). The transition is intentional: the framework hands
+ * the resolver the raw transport-level auth, and the resolver decides
+ * what to persist on the Account as `AuthPrincipal`.
+ *
+ * @public
+ */
+export interface ResolveContext {
+  /** Authenticated principal extracted by `serve({ authenticate })`. Undefined when no `authenticate` is configured. */
+  authInfo?: {
+    token: string;
+    clientId: string;
+    scopes: string[];
+    expiresAt?: number;
+    extra?: Record<string, unknown>;
+  };
+  /** Tool the buyer is calling — useful for tool-aware tenant routing. */
+  toolName?: string;
+}
+
 export interface AuthPrincipal {
   /** Stable identifier for the calling agent (e.g., `https://buyer.example.com/mcp`). */
   agent_url?: string;
@@ -127,6 +155,18 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *   tenant scoping (e.g., publisher-wide format catalog from
    *   `list_creative_formats`).
    *
+   * `ctx.authInfo` is the caller's authenticated principal (when
+   * `serve({ authenticate })` is wired). Adapters fronting an upstream
+   * platform API (Snap, Meta, retail-media) translate auth to tenant ID:
+   *
+   * ```ts
+   * resolve: async (ref, ctx) => {
+   *   if (ref?.account_id) return await this.db.findById(ref.account_id);
+   *   const platformAcct = await myUpstream.findByOAuthClient(ctx?.authInfo?.clientId);
+   *   return platformAcct ? this.toAccount(platformAcct) : null;
+   * }
+   * ```
+   *
    * Two failure shapes:
    * - **Unknown / cross-tenant reference**: return `null` (canonical) — OR
    *   throw `AccountNotFoundError` if your codebase already throws a
@@ -137,7 +177,7 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *   throw a generic exception. Framework maps to `SERVICE_UNAVAILABLE`
    *   so the buyer can retry.
    */
-  resolve(ref: AccountReference | undefined): Promise<Account<TMeta> | null>;
+  resolve(ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TMeta> | null>;
 
   /**
    * sync_accounts API surface. Framework normalizes the wire request; platform
