@@ -27,9 +27,6 @@ import type { ShapeDriftHint } from './types';
  */
 const HELPER_MIN_VERSION: Record<string, string> = {
   buildCreativeResponse: '5.14.0',
-  audioAsset: '5.14.0',
-  displayRender: '5.14.0',
-  parameterizedRender: '5.14.0',
   listCreativesResponse: '5.10.0',
   listCreativeFormatsResponse: '5.10.0',
   listAccountsResponse: '5.10.0',
@@ -50,8 +47,12 @@ const HELPER_MIN_VERSION: Record<string, string> = {
  * Handles `@adcp/client@X.Y.Z` format by stripping the package prefix.
  */
 function semverLessThan(a: string, b: string): boolean {
-  const strip = (v: string) => v.replace(/^.*@/, '');
-  const segs = (v: string) => strip(v).split('.').map(s => parseInt(s, 10) || 0);
+  // Strip package prefix (e.g. "@adcp/client@") and pre-release suffix (e.g. "-beta.1")
+  const normalize = (v: string) => v.replace(/^.*@/, '').replace(/-.*$/, '');
+  const segs = (v: string) =>
+    normalize(v)
+      .split('.')
+      .map(s => parseInt(s, 10) || 0);
   const [aMaj, aMin, aPatch] = segs(a);
   const [bMaj, bMin, bPatch] = segs(b);
   if (aMaj !== bMaj) return aMaj < bMaj;
@@ -113,6 +114,9 @@ export function detectShapeDriftHints(taskName: string, payload: unknown, librar
  * no match.
  */
 function appendVersionSuffix(message: string, libraryVersion: string): string {
+  // Skip non-numeric version strings (e.g. "local-dev") to avoid spurious suffixes
+  const stripped = libraryVersion.replace(/^.*@/, '').replace(/-.*$/, '');
+  if (!/^\d+\.\d+/.test(stripped)) return message;
   for (const [helper, minVersion] of Object.entries(HELPER_MIN_VERSION)) {
     if (message.includes(helper) && semverLessThan(libraryVersion, minVersion)) {
       return (

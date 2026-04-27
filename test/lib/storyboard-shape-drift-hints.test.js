@@ -210,7 +210,7 @@ describe('detectShapeDriftHints: version-staleness suffix (issue #850)', () => {
     const [hint] = detectShapeDriftHints('list_creatives', [{ creative_id: 'c1' }], '@adcp/client@4.16.2');
     assert.ok(hint, 'expected a hint');
     assert.match(hint.message, /Note: your agent reports @adcp\/client@4\.16\.2/);
-    assert.match(hint.message, /listCreativesResponse/);
+    assert.match(hint.message, /listCreativesResponse\(\) ships in @adcp\/client ≥5\.10\.0/);
   });
 
   test('no drift detected → no hints regardless of library_version', () => {
