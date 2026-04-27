@@ -37,7 +37,12 @@ export async function testSignalsFlow(
   }
 
   // Discover available signals
-  const { signals: discoveredSignals, step: signalsStep, schemaStep } = await discoverSignals(client, profile, options);
+  const {
+    signals: discoveredSignals,
+    rawSignals: rawDiscoveredSignals,
+    step: signalsStep,
+    schemaStep,
+  } = await discoverSignals(client, profile, options);
   steps.push(signalsStep);
   if (schemaStep) steps.push(schemaStep);
 
@@ -73,35 +78,31 @@ export async function testSignalsFlow(
   profile.supported_signals = allSignals;
 
   // Check for governance metadata on discovered signals (advisory)
-  if (signalsStep.passed && signalsStep.response_preview) {
-    try {
-      const rawSignals = JSON.parse(signalsStep.response_preview);
-      const signalsArray = rawSignals.signals || rawSignals.all_signals || [];
-      const withRestrictedAttrs = signalsArray.filter((s: any) => s.restricted_attributes?.length > 0);
-      const withPolicyCategories = signalsArray.filter((s: any) => s.policy_categories?.length > 0);
+  if (signalsStep.passed && rawDiscoveredSignals.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- restricted_attributes/policy_categories are governance extensions not in the core schema
+    const withRestrictedAttrs = rawDiscoveredSignals.filter((s: any) => s.restricted_attributes?.length > 0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withPolicyCategories = rawDiscoveredSignals.filter((s: any) => s.policy_categories?.length > 0);
 
-      if (signalsArray.length > 0 && withRestrictedAttrs.length === 0 && withPolicyCategories.length === 0) {
-        steps.push({
-          step: 'Governance metadata on signals (advisory)',
-          task: 'get_signals',
-          passed: true,
-          duration_ms: 0,
-          details: `None of ${signalsArray.length} signal(s) declare restricted_attributes or policy_categories. Governance agents will fall back to semantic inference for these signals.`,
-          warnings: [
-            'Signals without declared governance metadata require LLM-based inference for compliance checking. Consider declaring restricted_attributes and policy_categories on sensitive signals.',
-          ],
-        });
-      } else if (withRestrictedAttrs.length > 0 || withPolicyCategories.length > 0) {
-        steps.push({
-          step: 'Governance metadata on signals (advisory)',
-          task: 'get_signals',
-          passed: true,
-          duration_ms: 0,
-          details: `${withRestrictedAttrs.length}/${signalsArray.length} signal(s) declare restricted_attributes, ${withPolicyCategories.length}/${signalsArray.length} declare policy_categories`,
-        });
-      }
-    } catch {
-      // response_preview may not be parseable JSON — skip advisory
+    if (withRestrictedAttrs.length === 0 && withPolicyCategories.length === 0) {
+      steps.push({
+        step: 'Governance metadata on signals (advisory)',
+        task: 'get_signals',
+        passed: true,
+        duration_ms: 0,
+        details: `None of ${rawDiscoveredSignals.length} signal(s) declare restricted_attributes or policy_categories. Governance agents will fall back to semantic inference for these signals.`,
+        warnings: [
+          'Signals without declared governance metadata require LLM-based inference for compliance checking. Consider declaring restricted_attributes and policy_categories on sensitive signals.',
+        ],
+      });
+    } else {
+      steps.push({
+        step: 'Governance metadata on signals (advisory)',
+        task: 'get_signals',
+        passed: true,
+        duration_ms: 0,
+        details: `${withRestrictedAttrs.length}/${rawDiscoveredSignals.length} signal(s) declare restricted_attributes, ${withPolicyCategories.length}/${rawDiscoveredSignals.length} declare policy_categories`,
+      });
     }
   }
 
