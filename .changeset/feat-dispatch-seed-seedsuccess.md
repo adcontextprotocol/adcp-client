@@ -23,5 +23,5 @@ Affects all six seed scenarios: `seed_product`, `seed_pricing_option`, `seed_cre
 ### Migration
 
 - Callers narrowing seed responses with `expectControllerSuccess(result, 'transition')` switch to `expectControllerSuccess(result, 'seed')`. The narrowing falls through to the new arm via the existing `'seed'` overload.
-- Idempotent-replay detection moves from `previous_state === 'existing'` to a stable `message` token (`'Fixture re-seeded (equivalent)'`).
 - Adopters consuming raw `comply_test_controller` responses for seed scenarios stop reading `previous_state`/`current_state` on those responses (the spec's `not.anyOf` forbids them on `SeedSuccess`).
+- Idempotent-replay detection: the SDK now exports `SEED_MESSAGES.replay` (`'Fixture re-seeded (equivalent)'`) and `SEED_MESSAGES.fresh` (`'Fixture seeded'`) for adopters that want to match the SDK's own emission. **Note**: `message` is not a portable replay protocol — third-party sellers MAY emit any string the spec allows (only `success: true` is required), so cross-implementation buyers should not rely on `message` strings. For SDK-emitted responses the constants give a non-magic-string contract.

@@ -84,6 +84,7 @@ export {
   TOOL_INPUT_SHAPE,
   CONTROLLER_SCENARIOS,
   SEED_SCENARIOS,
+  SEED_MESSAGES,
   SESSION_ENTRY_CAP,
   enforceMapCap,
   createSeedFixtureCache,

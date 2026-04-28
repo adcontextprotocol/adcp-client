@@ -167,6 +167,21 @@ export const SEED_SCENARIOS = {
 } as const satisfies Record<string, SeedScenario>;
 
 /**
+ * Stable `SeedSuccess.message` strings the SDK's `dispatchSeed` emits.
+ * Adopters who want to detect first-seed vs idempotent-replay can match
+ * on these constants instead of grepping for the literal prose.
+ *
+ * Third-party sellers MAY emit any string the spec allows (the spec only
+ * requires `success: true`); these constants are SDK-specific contracts
+ * and not portable across implementations. For cross-implementation
+ * replay detection, do not rely on `message`.
+ */
+export const SEED_MESSAGES = {
+  fresh: 'Fixture seeded',
+  replay: 'Fixture re-seeded (equivalent)',
+} as const;
+
+/**
  * Build-time check: every scenario in the generated union must appear in
  * {@link CONTROLLER_SCENARIOS}. When the protocol adds a new scenario and
  * this type goes non-`never`, TypeScript will reject the assignment below
@@ -636,14 +651,14 @@ async function dispatchSeed(
     await dispatch.invoke();
     // SeedSuccess (3.0.1+): message-only arm. The schema's `oneOf` excludes
     // `previous_state`/`current_state` from this branch — seeds are
-    // pre-population, not entity transitions. Idempotent-replay token is
-    // the trailing "(equivalent)" qualifier on the message string.
-    return { success: true, message: 'Fixture re-seeded (equivalent)' };
+    // pre-population, not entity transitions. {@link SEED_MESSAGES} carries
+    // the SDK-specific replay-detection token.
+    return { success: true, message: SEED_MESSAGES.replay };
   }
 
   await dispatch.invoke();
   cache?.set(dispatch.key, fixture);
-  return { success: true, message: 'Fixture seeded' };
+  return { success: true, message: SEED_MESSAGES.fresh };
 }
 
 /**
