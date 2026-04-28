@@ -497,6 +497,121 @@ app.use((req, res, next) => {
 
 **Shared infrastructure across tenants.** Idempotency stores, task registries, and status-change buses can be shared (one Postgres for all tenants). The framework's account scoping prevents cross-tenant reads. When sharing a task registry, prefix account ids per-tenant (`tenantA:acme`) to prevent collisions if two tenants both use the literal account id `acme`.
 
+## Capability projections (`audience_targeting` / `conversion_tracking` / `content_standards`)
+
+Three discovery blocks live under `get_adcp_capabilities.media_buy.*` in the wire spec. Adopters declare them on `platform.capabilities` and the framework projects them onto `get_adcp_capabilities` automatically (no custom `get_adcp_capabilities` tool needed — the framework refuses one anyway).
+
+```ts
+class MyPlatform implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['sales-non-guaranteed', 'audience-sync'] as const,
+    creative_agents: [{ agent_url: 'https://creative.example.com/mcp' }],
+    channels: ['display', 'olv'] as const,
+    pricingModels: ['cpm'] as const,
+    config: {},
+
+    // Audience-matching capability — required for audience-sync adopters
+    audience_targeting: {
+      supported_identifier_types: ['hashed_email', 'hashed_phone'],
+      supported_uid_types: [/* UID2, RampID, MAID, etc. */],
+      minimum_audience_size: 100,
+      matching_latency_hours: { min: 1, max: 24 },
+    },
+
+    // Conversion-tracking capability — required if adopter accepts events
+    conversion_tracking: {
+      multi_source_event_dedup: true,
+      supported_event_types: ['purchase', 'add_to_cart', 'lead'],
+      supported_action_sources: ['website', 'app'],
+      attribution_windows: [
+        { event_type: 'purchase', post_click: [{ interval: 7, unit: 'days' }] },
+      ],
+    },
+
+    // Content-standards capability — required if adopter claims
+    // 'content-standards' specialism
+    content_standards: {
+      supports_local_evaluation: true,
+      supported_channels: ['display', 'olv'],
+      supports_webhook_delivery: false,
+    },
+  };
+}
+```
+
+Each block is independently optional. Wire shape lives at `core/get-adcp-capabilities-response.json#media_buy.{audience_targeting,conversion_tracking,content_standards}` — declare what your platform actually supports, omit blocks you don't.
+
+## Brand rights (`brand-rights` specialism)
+
+The `brand-rights` specialism covers identity discovery + licensing for branded inventory — IP holders (sports leagues, movie studios), CTV brand-rights desks, and brand-licensing marketplaces. v6.0 ships first-class platform support for the 3 wire tools that have framework dispatch infrastructure:
+
+```ts
+import type {
+  DecisioningPlatform,
+  BrandRightsPlatform,
+  AccountStore,
+} from '@adcp/client/server/decisioning';
+
+class MyBrandRightsAgent implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['brand-rights'] as const,
+    creative_agents: [],
+    channels: ['display'] as const,
+    pricingModels: ['cpm'] as const,
+    config: {},
+  };
+
+  statusMappers = {};
+  accounts: AccountStore = { /* ... */ };
+
+  brandRights: BrandRightsPlatform = {
+    // Sync — read brand identity record
+    getBrandIdentity: async (req, ctx) => ({
+      brand: req.brand,
+      identity: { legal_name: '...', jurisdictions: ['US'], ip_categories: ['trademark'] },
+    }),
+
+    // Sync — list available rights offerings
+    getRights: async (req, ctx) => ({
+      offerings: [/* RightsOffering[] */],
+    }),
+
+    // Three native wire-spec arms — return whichever matches the request
+    acquireRights: async (req, ctx) => {
+      if (canClearImmediately(req)) {
+        return { rights_grant_id: 'rg_42', /* ...AcquireRightsAcquired */ };
+      }
+      if (requiresHumanReview(req)) {
+        return {
+          status: 'pending_approval',
+          rights_grant_id: 'rg_pending_42',
+          approval_workflow: { type: 'manual_review', estimated_completion: '2026-05-03' },
+          /* ...AcquireRightsPendingApproval */
+        };
+      }
+      return { /* ...AcquireRightsRejected with rejection_reason */ };
+    },
+  };
+}
+```
+
+**`acquire_rights` async shape is spec-native, not the framework task envelope.** Unlike `create_media_buy` / `sync_creatives` which use `ctx.handoffToTask(fn)` for HITL, `acquire_rights` has its own three wire-spec arms (`Acquired` / `PendingApproval` / `Rejected`). Buyers polling for pending grants use the spec's own approval-status mechanism — NOT `tasks_get`. Adopters return the spec arm directly; the framework wraps the response without the `Submitted` envelope.
+
+**Two surfaces still on the merge seam (deferred to v6.1):** `update_rights` and `creative_approval` are spec-published but not yet in `AdcpToolMap`, so they don't have framework dispatch infrastructure. Wire them via `opts.brandRights.{updateRights,creativeApproval}` until v6.1:
+
+```ts
+createAdcpServerFromPlatform(myBrandRightsAgent, {
+  name: 'my-rights-agent', version: '1.0.0',
+  // 3 wire tools auto-wire from platform.brandRights;
+  // 2 stay on the merge seam until they land in AdcpToolMap (v6.1):
+  brandRights: {
+    updateRights: async (params, ctx) => ({ /* UpdateRightsSuccess */ }),
+    // creative_approval is a webhook receiver, not an MCP tool — wire as
+    // a separate HTTP endpoint outside this seam until the spec settles.
+  },
+});
+```
+
 ## Compliance testing (`comply_test_controller`)
 
 Conformance harnesses (the AdCP storyboard suite, in particular) drive seller-side state-machine tests via the wire-spec `comply_test_controller` tool. The framework registers it for you when you supply `complyTest` adapters on `createAdcpServerFromPlatform`.

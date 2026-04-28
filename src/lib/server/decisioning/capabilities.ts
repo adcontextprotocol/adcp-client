@@ -13,7 +13,12 @@
  */
 
 import type { ZodSchema } from 'zod';
-import type { AdCPSpecialism, MediaChannel, PricingModel } from '../../types/tools.generated';
+import type {
+  AdCPSpecialism,
+  MediaChannel,
+  PricingModel,
+  GetAdCPCapabilitiesResponse,
+} from '../../types/tools.generated';
 
 export interface DecisioningCapabilities<TConfig = unknown> {
   /**
@@ -47,6 +52,43 @@ export interface DecisioningCapabilities<TConfig = unknown> {
 
   /** Reporting capabilities. Optional — framework infers reasonable defaults if omitted. */
   reporting?: ReportingCapabilities;
+
+  /**
+   * Audience-matching capabilities — projected onto
+   * `get_adcp_capabilities.media_buy.audience_targeting`. Required for
+   * audience-sync adopters (CRM-list adopters that accept hashed
+   * identifiers + UID types) so buyers know which identifier shapes
+   * the platform will match against and what minimum audience size /
+   * matching latency to expect. Omit when the platform doesn't accept
+   * external audience uploads.
+   *
+   * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.audience_targeting`.
+   */
+  audience_targeting?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['audience_targeting']>;
+
+  /**
+   * Conversion-tracking capabilities — projected onto
+   * `get_adcp_capabilities.media_buy.conversion_tracking`. Required for
+   * adopters that accept conversion events via `sync_event_sources` /
+   * `log_event` so buyers know which event types, action sources,
+   * attribution windows, and identifier shapes the platform supports.
+   * Omit when the platform doesn't track conversions.
+   *
+   * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.conversion_tracking`.
+   */
+  conversion_tracking?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['conversion_tracking']>;
+
+  /**
+   * Content-standards capabilities — projected onto
+   * `get_adcp_capabilities.media_buy.content_standards`. Required for
+   * adopters claiming the `content-standards` specialism so buyers know
+   * whether the platform runs local evaluation, which channels it
+   * covers, and whether it supports webhook artifact delivery. Omit
+   * when the platform doesn't ship content-standards artifacts.
+   *
+   * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.content_standards`.
+   */
+  content_standards?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['content_standards']>;
 
   /**
    * Compliance-testing capabilities. The presence of this block declares

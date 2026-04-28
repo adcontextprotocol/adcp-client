@@ -48,6 +48,11 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   'collection-lists': ['collectionLists'],
   // Content standards — brand-safety / policy compliance enforcement.
   'content-standards': ['contentStandards'],
+  // Brand-rights — identity discovery + licensing for branded inventory.
+  // 3 of 5 wire tools wire through `brandRights`; the other 2
+  // (`update_rights`, `creative_approval`) await AdcpToolMap landing
+  // and stay on the merge-seam path until then.
+  'brand-rights': ['brandRights'],
 };
 
 export class PlatformConfigError extends Error {

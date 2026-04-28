@@ -20,6 +20,7 @@ import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
 import type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
 import type { ContentStandardsPlatform } from './specialisms/content-standards';
+import type { BrandRightsPlatform } from './specialisms/brand-rights';
 import type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
 import type { AdCPSpecialism } from '../../types/tools.generated';
 
@@ -107,8 +108,10 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   contentStandards?: ContentStandardsPlatform<TMeta>;
   propertyLists?: PropertyListsPlatform<TMeta>;
   collectionLists?: CollectionListsPlatform<TMeta>;
+  brandRights?: BrandRightsPlatform<TMeta>;
 
-  // v1.1+ specialisms add: creative-review, content-standards, brand-rights.
+  // v1.1+ specialisms add: creative-review, plus the 2 brand-rights wire
+  // tools awaiting AdcpToolMap landing (`update_rights`, `creative_approval`).
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +190,9 @@ export type RequiredPlatformsFor<
                   ? { collectionLists: CollectionListsPlatform<TMeta> }
                   : S extends 'content-standards'
                     ? { contentStandards: ContentStandardsPlatform<TMeta> }
-                    : Record<string, never>;
+                    : S extends 'brand-rights'
+                      ? { brandRights: BrandRightsPlatform<TMeta> }
+                      : Record<string, never>;
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to

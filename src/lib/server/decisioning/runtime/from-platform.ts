@@ -59,6 +59,7 @@ import {
   type AccountHandlers,
   type SignalsHandlers,
   type GovernanceHandlers,
+  type BrandRightsHandlers,
   type HandlerContext,
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
@@ -69,7 +70,7 @@ import type { CreativeTemplatePlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
-import type { AccountReference } from '../../../types/tools.generated';
+import type { AccountReference, GetAdCPCapabilitiesResponse } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
@@ -498,8 +499,31 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const fwLogger = opts.logger ?? DEFAULT_FRAMEWORK_LOGGER;
   const mergeOpts = { mode: opts.mergeSeam ?? 'warn', logger: fwLogger };
 
+  // Project per-domain capability blocks declared on the platform onto
+  // get_adcp_capabilities via createAdcpServer's `overrides.media_buy`
+  // deep-merge seam. Adopters declare audience_targeting /
+  // conversion_tracking / content_standards on `platform.capabilities`;
+  // the framework wires the deep-merge so buyers see the discovery
+  // fields without an opaque custom get_adcp_capabilities tool (which
+  // the framework refuses anyway).
+  const mediaBuyOverrides: Record<string, unknown> = {};
+  if (platform.capabilities.audience_targeting) {
+    mediaBuyOverrides.audience_targeting = platform.capabilities.audience_targeting;
+  }
+  if (platform.capabilities.conversion_tracking) {
+    mediaBuyOverrides.conversion_tracking = platform.capabilities.conversion_tracking;
+  }
+  if (platform.capabilities.content_standards) {
+    mediaBuyOverrides.content_standards = platform.capabilities.content_standards;
+  }
+  const projectedCapabilitiesConfig =
+    Object.keys(mediaBuyOverrides).length > 0
+      ? { overrides: { media_buy: mediaBuyOverrides as Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> } }
+      : undefined;
+
   const config: AdcpServerConfig<Account> = {
     ...opts,
+    ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),
     resolveAccount: async (ref, ctx) => {
       const start = Date.now();
       let resolved = false;
@@ -598,6 +622,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform), 'accounts', mergeOpts),
+    brandRights: mergeHandlers(
+      opts.brandRights,
+      buildBrandRightsHandlers(platform),
+      'brandRights',
+      mergeOpts
+    ),
     customTools: {
       ...opts.customTools,
       tasks_get: buildTasksGetTool(platform, taskRegistry),
@@ -1901,6 +1931,40 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       return projectSync(
         () => signals.activateSignal(params, reqCtx),
+        r => r
+      );
+    },
+  };
+}
+
+function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
+  platform: P
+): BrandRightsHandlers<Account> | undefined {
+  const br = platform.brandRights;
+  if (!br) return undefined;
+  return {
+    getBrandIdentity: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => br.getBrandIdentity(params, reqCtx),
+        r => r
+      );
+    },
+    getRights: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => br.getRights(params, reqCtx),
+        r => r
+      );
+    },
+    // `acquire_rights` has 3 native wire-spec arms (Acquired / PendingApproval /
+    // Rejected) handled by the platform directly. No framework task envelope —
+    // adopters return the spec-defined arm; buyers poll via the spec's own
+    // approval-status mechanism, not `tasks_get`.
+    acquireRights: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => br.acquireRights(params, reqCtx),
         r => r
       );
     },

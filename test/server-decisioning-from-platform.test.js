@@ -2203,14 +2203,18 @@ describe('validatePlatform', () => {
   });
 
   it('passes for unknown future specialisms (forward-compat)', () => {
-    // brand-rights and content-standards are in the AdCP enum but not yet
-    // wired to a v6.0 platform interface (deferred per the gap matrix).
-    // validatePlatform's forward-compat path lets adopters claim them
-    // without the framework knowing how to enforce the platform field.
+    // Specialisms in the AdCP enum but not yet wired to a v6.0 platform
+    // interface fall through to validatePlatform's forward-compat path —
+    // adopters can claim them without the framework knowing how to
+    // enforce the platform field.
+    //
+    // `signed-requests` is the canonical example: it's a cross-cutting
+    // capability wired on `serve({ authenticate })`, not a specialism
+    // platform interface, so claiming it is always forward-compat.
     const platform = buildPlatform({
       capabilities: {
         ...buildPlatform().capabilities,
-        specialisms: ['sales-non-guaranteed', 'brand-rights'],
+        specialisms: ['sales-non-guaranteed', 'signed-requests'],
       },
     });
     assert.doesNotThrow(() => validatePlatform(platform));
