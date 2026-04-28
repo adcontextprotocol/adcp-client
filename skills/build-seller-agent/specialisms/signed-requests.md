@@ -22,7 +22,7 @@ The `WWW-Authenticate` header is the grading surface — return the right error 
 2. Your JWKS accepts the runner's test keypairs (`test-ed25519-2026`, `test-es256-2026`) as a registered test counterparty with `adcp_use: "request-signing"`.
 3. For negative vectors `016` (replayed nonce), `017` (revoked key), `020` (per-keyid cap), your verifier is pre-configured per `signed-requests-runner.yaml` — the runner cannot set that state from outside. Missing prerequisites grade as **FAIL**, not SKIP.
 
-**Use the SDK's server verifier.** Don't write signature parsing or canonicalization yourself — `@adcp/client/signing/server` ships the full pipeline. The canonical wiring lives in [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) which feeds `verifyRequestSignature` through `serve({ preTransport })`; don't hand-roll an Express middleware chain alongside it. What you need that's specific to this specialism is the capability advertisement and the revocation-store pre-state:
+**Use the SDK's server verifier.** Don't write signature parsing or canonicalization yourself — `@adcp/sdk/signing/server` ships the full pipeline. The canonical wiring lives in [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) which feeds `verifyRequestSignature` through `serve({ preTransport })`; don't hand-roll an Express middleware chain alongside it. What you need that's specific to this specialism is the capability advertisement and the revocation-store pre-state:
 
 **Auto-wiring via `createAdcpServer`.** When you're already using `createAdcpServer`, pass `signedRequests: { jwks, replayStore, revocationStore }` and add `'signed-requests'` to `capabilities.specialisms` — the framework builds the verifier preTransport for you and `serve()` auto-mounts it. `createAdcpServer` throws at startup when `signedRequests` is set without the specialism claim (buyers wouldn't sign), and logs a loud error in the other direction (leaving the legacy manual `serve({ preTransport })` path working). Keep `request_signing` in capabilities separately — it's still how buyers discover your `required_for` policy.
 
@@ -46,7 +46,7 @@ createAdcpServer({
 ```
 
 ```typescript
-import { InMemoryRevocationStore, StaticJwksResolver, type VerifierCapability } from '@adcp/client/signing/server';
+import { InMemoryRevocationStore, StaticJwksResolver, type VerifierCapability } from '@adcp/sdk/signing/server';
 
 // Policy that ships in your get_adcp_capabilities response under capabilities.request_signing:
 const capability: VerifierCapability = {
@@ -82,7 +82,7 @@ const revocationStore = new InMemoryRevocationStore({
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp signed_requests --json
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signed_requests --json
 ```
 
 Every negative vector must return the exact `expected_outcome.error_code` in `WWW-Authenticate: Signature error="<code>"`. A non-claiming agent is not graded against this specialism.

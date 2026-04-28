@@ -1,6 +1,7 @@
 {
   "name": "adcp-client",
-  "description": "Adds the /adcp skill for calling AdCP advertising agent tools over MCP or A2A, running protocol compliance scenarios, and querying the AdCP registry. Includes built-in test agents for zero-config use.",
+  "npm": "@adcp/sdk",
+  "description": "Adds the /adcp skill for calling AdCP advertising agent tools over MCP or A2A, running protocol compliance scenarios, and querying the AdCP registry. Includes built-in test agents for zero-config use. Backed by the `@adcp/sdk` npm package (formerly `@adcp/client`).",
   "author": {
     "name": "AdCP Community",
     "email": "maintainers@adcontextprotocol.org"

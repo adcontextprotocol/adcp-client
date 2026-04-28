@@ -129,6 +129,7 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
  */
 export type InProcessAgentClientConfig = Pick<
   SingleAgentClientConfig,
+  | 'adcpVersion'
   | 'debug'
   | 'validation'
   | 'governance'
@@ -194,6 +195,14 @@ export class AgentClient {
   }
 
   /**
+   * Returns the AdCP protocol version this client speaks. Mirrors
+   * `SingleAgentClient.getAdcpVersion()`. See {@link SingleAgentClientConfig.adcpVersion}.
+   */
+  getAdcpVersion(): string {
+    return this.client.getAdcpVersion();
+  }
+
+  /**
    * Create an `AgentClient` backed by a pre-connected MCP `Client` instead of
    * an HTTP endpoint. Useful for in-process compliance testing without spinning
    * up a loopback HTTP server.
@@ -213,7 +222,7 @@ export class AgentClient {
    * ```ts
    * import { Client } from '@modelcontextprotocol/sdk/client/index.js';
    * import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-   * import { AgentClient } from '@adcp/client';
+   * import { AgentClient } from '@adcp/sdk';
    *
    * const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
    * const mcpClient = new Client({ name: 'test', version: '1.0.0' });

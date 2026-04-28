@@ -178,7 +178,7 @@ const DEFAULT_LOOKUP_ALL: DnsLookupAll = (hostname, options, callback) => {
  *
  * @example
  * ```ts
- * import { createWebhookEmitter, createPinAndBindFetch } from '@adcp/client/server';
+ * import { createWebhookEmitter, createPinAndBindFetch } from '@adcp/sdk/server';
  *
  * const emitter = createWebhookEmitter({
  *   signerKey: webhookKey,

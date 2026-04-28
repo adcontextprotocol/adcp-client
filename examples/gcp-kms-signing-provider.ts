@@ -11,7 +11,7 @@
  * // non-GCP users don't pay the install cost.
  * import { KeyManagementServiceClient } from '@google-cloud/kms';
  * import { createGcpKmsSigningProvider } from './gcp-kms-signing-provider';
- * import type { AgentConfig } from '@adcp/client';
+ * import type { AgentConfig } from '@adcp/sdk';
  *
  * const kmsClient = new KeyManagementServiceClient(); // ADC inside GCP, or
  *                                                     // explicit credentials elsewhere
@@ -62,8 +62,8 @@
  */
 
 import { createHash, createPublicKey } from 'node:crypto';
-import type { SigningProvider } from '@adcp/client/signing';
-import { derEcdsaToP1363, SigningProviderAlgorithmMismatchError } from '@adcp/client/signing';
+import type { SigningProvider } from '@adcp/sdk/signing';
+import { derEcdsaToP1363, SigningProviderAlgorithmMismatchError } from '@adcp/sdk/signing';
 
 /**
  * Minimal subset of `KeyManagementServiceClient` the adapter calls. Defined

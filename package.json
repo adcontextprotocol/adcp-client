@@ -1,7 +1,11 @@
 {
-  "name": "@adcp/client",
+  "name": "@adcp/sdk",
   "version": "5.22.0",
-  "description": "AdCP client library with protocol support for MCP and A2A",
+  "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
+  "workspaces": [
+    ".",
+    "packages/*"
+  ],
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
   "type": "commonjs",
@@ -10,6 +14,16 @@
       "import": "./dist/lib/index.js",
       "require": "./dist/lib/index.js",
       "types": "./dist/lib/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/lib/client/index.js",
+      "require": "./dist/lib/client/index.js",
+      "types": "./dist/lib/client/index.d.ts"
+    },
+    "./compliance": {
+      "import": "./dist/lib/compliance/index.js",
+      "require": "./dist/lib/compliance/index.js",
+      "types": "./dist/lib/compliance/index.d.ts"
     },
     "./advanced": {
       "import": "./dist/lib/advanced.js",
@@ -80,10 +94,17 @@
       "import": "./dist/lib/express-mcp/index.js",
       "require": "./dist/lib/express-mcp/index.js",
       "types": "./dist/lib/express-mcp/index.d.ts"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
+      "client": [
+        "dist/lib/client/index.d.ts"
+      ],
+      "compliance": [
+        "dist/lib/compliance/index.d.ts"
+      ],
       "advanced": [
         "dist/lib/advanced.d.ts"
       ],
@@ -191,7 +212,7 @@
     "ci:validate": "node scripts/ci-validate.js",
     "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types' && exit 1)",
-    "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' -I '> (Library: )?@adcp/client v' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
+    "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' -I '> (Library: )?@adcp/sdk v' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
     "hooks:uninstall": "rm -f .git/hooks/pre-push",

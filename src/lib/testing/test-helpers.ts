@@ -64,7 +64,7 @@ export const TEST_AGENT_NO_AUTH_A2A_CONFIG: AgentConfig = {
  *
  * @example
  * ```typescript
- * import { testAgent } from '@adcp/client/testing';
+ * import { testAgent } from '@adcp/sdk/testing';
  *
  * // Simple getProducts call
  * const result = await testAgent.getProducts({
@@ -101,7 +101,7 @@ export const testAgent: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_MCP_C
  *
  * @example
  * ```typescript
- * import { testAgentA2A } from '@adcp/client/testing';
+ * import { testAgentA2A } from '@adcp/sdk/testing';
  *
  * const result = await testAgentA2A.getProducts({
  *   brief: 'Sustainable fashion brands',
@@ -123,7 +123,7 @@ export const testAgentA2A: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_A2
  *
  * @example
  * ```typescript
- * import { testAgentNoAuth } from '@adcp/client/testing';
+ * import { testAgentNoAuth } from '@adcp/sdk/testing';
  *
  * // This will fail with authentication error
  * try {
@@ -151,10 +151,10 @@ export const testAgentNoAuth: AgentClient = new ADCPMultiAgentClient([TEST_AGENT
  *
  * @example
  * ```typescript
- * import { testAgentNoAuthA2A } from '@adcp/client/testing';
+ * import { testAgentNoAuthA2A } from '@adcp/sdk/testing';
  *
  * // Compare authenticated vs unauthenticated
- * import { testAgentA2A } from '@adcp/client/testing';
+ * import { testAgentA2A } from '@adcp/sdk/testing';
  *
  * // This works (has auth)
  * const authResult = await testAgentA2A.getProducts({ brief: 'Test' });
@@ -177,7 +177,7 @@ export const testAgentNoAuthA2A: AgentClient = new ADCPMultiAgentClient([TEST_AG
  *
  * @example
  * ```typescript
- * import { testAgentClient } from '@adcp/client/testing';
+ * import { testAgentClient } from '@adcp/sdk/testing';
  *
  * // Access individual agents
  * const mcpAgent = testAgentClient.agent('test-agent-mcp');
@@ -205,7 +205,7 @@ export const testAgentClient = new ADCPMultiAgentClient([TEST_AGENT_MCP_CONFIG, 
  *
  * @example
  * ```typescript
- * import { createTestAgent, AdCPClient } from '@adcp/client/testing';
+ * import { createTestAgent, AdCPClient } from '@adcp/sdk/testing';
  *
  * // Use default test agent with custom ID
  * const config = createTestAgent({ id: 'my-test-agent' });
@@ -236,7 +236,7 @@ export function createTestAgent(overrides?: Partial<AgentConfig>): AgentConfig {
  *
  * @example
  * ```typescript
- * import { creativeAgent } from '@adcp/client/testing';
+ * import { creativeAgent } from '@adcp/sdk/testing';
  *
  * // List available creative formats
  * const formats = await creativeAgent.listFormats();

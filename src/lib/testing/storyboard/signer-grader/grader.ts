@@ -194,7 +194,7 @@ function buildVerifierDiagnostic(err: RequestSignatureError, algorithm: AdcpSign
     return (
       `${base}\n  Common cause: signing oracle returned a DER-encoded signature.` +
       ` AdCP / RFC 9421 §3.3.1 require raw r‖s (IEEE P1363, 64 bytes for P-256).` +
-      ` See \`derEcdsaToP1363\` in @adcp/client/signing.`
+      ` See \`derEcdsaToP1363\` in @adcp/sdk/signing.`
     );
   }
   return base;

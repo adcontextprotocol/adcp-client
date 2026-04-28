@@ -1,4 +1,4 @@
-// Unit tests for the @adcp/client/express-mcp Accept-header middleware.
+// Unit tests for the @adcp/sdk/express-mcp Accept-header middleware.
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 

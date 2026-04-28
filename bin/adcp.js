@@ -1437,7 +1437,7 @@ async function handleStoryboardRun(args) {
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side
   // bootstrap into one command. See `runAgainstLocalAgent` in
-  // `@adcp/client/testing`.
+  // `@adcp/sdk/testing`.
   if (localAgent) {
     return handleLocalAgentStoryboardRun(localAgent, args, opts);
   }
@@ -3254,6 +3254,17 @@ function formatVerdict(verdict) {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // `--version` / `-v` is handled before subcommands and before the
+  // staleness probe — it should be a fast, side-effect-free identity
+  // check. Adds a (compat shim) note when invoked through @adcp/client
+  // so users know which package they're actually running. The shim sets
+  // ADCP_INVOKED_VIA_SHIM=1 in its bin wrapper.
+  if (args[0] === '--version' || args[0] === '-v') {
+    const viaShim = process.env.ADCP_INVOKED_VIA_SHIM === '1';
+    process.stdout.write(`@adcp/sdk@${LIBRARY_VERSION}${viaShim ? ' (invoked via @adcp/client compat shim)' : ''}\n`);
+    process.exit(0);
+  }
 
   // Fire a staleness check in the background so a months-old cached
   // CLI doesn't run silently. Fails silent on any network/FS hiccup;

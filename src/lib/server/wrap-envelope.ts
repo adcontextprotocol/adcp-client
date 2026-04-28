@@ -107,7 +107,7 @@ function isEchoableContext(value: unknown): boolean {
  *
  * @example Seller handler — success + IDEMPOTENCY_CONFLICT error paths
  * ```ts
- * import { wrapEnvelope } from '@adcp/client/server';
+ * import { wrapEnvelope } from '@adcp/sdk/server';
  *
  * async function handleCreateMediaBuy(request) {
  *   try {

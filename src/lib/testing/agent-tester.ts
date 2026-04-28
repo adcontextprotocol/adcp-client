@@ -7,11 +7,11 @@
  * - Channel-aware testing (only tests features the agent supports)
  * - Sandbox mode for safe testing (real testing requires actual media buys)
  * - Comprehensive scenario coverage based on AdCP spec
- * - Schema validation via @adcp/client
+ * - Schema validation via @adcp/sdk
  *
  * @example
  * ```typescript
- * import { testAgent, formatTestResults } from '@adcp/client/testing';
+ * import { testAgent, formatTestResults } from '@adcp/sdk/testing';
  *
  * const result = await testAgent(
  *   'https://test-agent.adcontextprotocol.org/mcp',

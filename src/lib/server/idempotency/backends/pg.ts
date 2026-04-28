@@ -52,7 +52,7 @@ function quoteIdent(name: string): string {
  *
  * @example
  * ```typescript
- * import { getIdempotencyMigration } from '@adcp/client/server';
+ * import { getIdempotencyMigration } from '@adcp/sdk/server';
  * await pool.query(getIdempotencyMigration());
  * ```
  */

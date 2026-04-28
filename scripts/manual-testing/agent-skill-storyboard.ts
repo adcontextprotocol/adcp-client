@@ -9,7 +9,7 @@
  * storyboards?" — the capstone dogfood test for the publisher stack.
  *
  * Boundaries:
- *   - Harness pre-populates `package.json` with `"@adcp/client": "file:<repo>"`
+ *   - Harness pre-populates `package.json` with `"@adcp/sdk": "file:<repo>"`
  *     and runs `npm install` upfront, so Claude never touches deps.
  *   - Claude writes `server.ts` + `start.sh` + any helpers. That's it.
  *   - Harness runs `start.sh`, waits for the port, invokes the existing
@@ -45,7 +45,7 @@ interface Args {
   /** When set, skip `npm install` and symlink `node_modules` from this path
    * instead. Matrix driver uses this to amortize the ~15-30s per-workspace
    * install across many pairs — the template's node_modules is valid for
-   * every harness run since the deps are fixed (@adcp/client + tsx). */
+   * every harness run since the deps are fixed (@adcp/sdk + tsx). */
   sharedNodeModules?: string;
 }
 
@@ -102,19 +102,19 @@ ${skill}
 
 ## Task
 
-The current working directory already has a \`package.json\` with \`@adcp/client\` installed via \`npm install\`. Do NOT touch package.json or run npm install — deps are ready.
+The current working directory already has a \`package.json\` with \`@adcp/sdk\` installed via \`npm install\`. Do NOT touch package.json or run npm install — deps are ready.
 
 1. Write \`server.ts\` that:
-   - Uses \`createAdcpServer\` from \`@adcp/client/server\`.
+   - Uses \`createAdcpServer\` from \`@adcp/sdk/server\`.
    - Implements handlers minimally sufficient to pass \`${storyboardId}\`.
    - If the storyboard grades outbound webhooks, generate an Ed25519 keypair at startup and pass \`webhooks: { signerKey }\` to \`createAdcpServer\`. Call \`ctx.emitWebhook\` on completion.
    - Binds MCP over HTTP on port **${port}** exactly (the harness connects to \`http://127.0.0.1:${port}/mcp\`).
-   - Uses \`serve()\` from \`@adcp/client/server\` and wires authentication with the harness key below.
+   - Uses \`serve()\` from \`@adcp/sdk/server\` and wires authentication with the harness key below.
 
 **Authentication (non-negotiable, overrides any conflicting guidance from the skill above).** The harness grader authenticates with a static API key. Wire it exactly like this:
 
 \`\`\`ts
-import { serve, createAdcpServer, verifyApiKey, type ServeContext } from '@adcp/client/server';
+import { serve, createAdcpServer, verifyApiKey, type ServeContext } from '@adcp/sdk/server';
 
 function createAgent(_ctx: ServeContext) {
   return createAdcpServer({ /* your handlers here */ });
@@ -159,7 +159,7 @@ async function bootstrapWorkspace(dir: string, port: number, sharedNodeModules?:
     type: 'module',
     scripts: { start: 'tsx server.ts' },
     dependencies: {
-      '@adcp/client': `file:${REPO_ROOT}`,
+      '@adcp/sdk': `file:${REPO_ROOT}`,
       tsx: '^4.7.0',
     },
   };

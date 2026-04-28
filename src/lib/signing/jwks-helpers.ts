@@ -54,7 +54,7 @@ export interface PemToAdcpJwkOptions {
  *
  * @example
  * ```ts
- * import { pemToAdcpJwk } from '@adcp/client/signing';
+ * import { pemToAdcpJwk } from '@adcp/sdk/signing';
  *
  * const jwk = pemToAdcpJwk(fs.readFileSync('keys/addie-2026-04.pem', 'utf8'), {
  *   kid: 'addie-2026-04',

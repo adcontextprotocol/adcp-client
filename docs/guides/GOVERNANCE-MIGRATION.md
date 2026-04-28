@@ -60,7 +60,7 @@ import {
   buildHumanReviewPlan,
   buildHumanOverride,
   validateGovernancePlan,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Stamps human_review_required: true. The caller still declares the
 // reason via policy_categories / policy_ids.

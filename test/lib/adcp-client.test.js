@@ -2,7 +2,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-// Import the library - in real tests this would be: const { AdCPClient } = require('@adcp/client');
+// Import the library - in real tests this would be: const { AdCPClient } = require('@adcp/sdk');
 const { AdCPClient, ConfigurationManager } = require('../../dist/lib/index.js');
 
 describe('AdCPClient', () => {

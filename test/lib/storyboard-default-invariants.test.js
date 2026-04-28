@@ -1,7 +1,7 @@
 /**
  * Default assertion registrations (`default-invariants.ts`).
  *
- * Verifies that importing `@adcp/client/testing` auto-registers the three
+ * Verifies that importing `@adcp/sdk/testing` auto-registers the three
  * built-in assertion ids that upstream storyboards reference — fresh
  * installs of the SDK should just work against storyboards declaring
  * `invariants: [context.no_secret_echo, idempotency.conflict_no_payload_leak,

@@ -115,7 +115,7 @@ export interface AdcpErrorResponse {
  *
  * @example
  * ```typescript
- * import { adcpError } from '@adcp/client';
+ * import { adcpError } from '@adcp/sdk';
  *
  * server.registerTool("get_products", { inputSchema: schema }, async ({ query }) => {
  *   if (!products.length) {

@@ -23,14 +23,14 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createAdcpServer, InMemoryStateStore, serve, type ServeContext } from '@adcp/client';
+import { createAdcpServer, InMemoryStateStore, serve, type ServeContext } from '@adcp/sdk';
 import {
   createExpressVerifier,
   InMemoryReplayStore,
   InMemoryRevocationStore,
   StaticJwksResolver,
   type AdcpJsonWebKey,
-} from '@adcp/client/signing';
+} from '@adcp/sdk/signing';
 
 // ── Test-kit-driven verifier configuration ──────────────────────────
 

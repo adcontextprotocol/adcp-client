@@ -138,7 +138,7 @@ If every handler's state is scoped to a tenant/brand/publisher account, use
 the session-scoping primitives instead of threading a key through every call:
 
 ```ts
-import { createAdcpServer, scopedStore, requireSessionKey } from '@adcp/client/server';
+import { createAdcpServer, scopedStore, requireSessionKey } from '@adcp/sdk/server';
 
 const server = createAdcpServer({
   name: 'My Publisher', version: '1.0.0',
@@ -188,7 +188,7 @@ updates can compare-and-swap.
 Handles the get → compute → putIfMatch → retry loop for you:
 
 ```ts
-import { patchWithRetry } from '@adcp/client/server';
+import { patchWithRetry } from '@adcp/sdk/server';
 
 await patchWithRetry(ctx.store, 'media_buys', 'mb_1', current => ({
   ...(current ?? {}),

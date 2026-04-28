@@ -28,7 +28,7 @@ import {
   createFieldHandler,
   createConditionalHandler,
   type TaskResult
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 interface CampaignPlan {
   name: string;

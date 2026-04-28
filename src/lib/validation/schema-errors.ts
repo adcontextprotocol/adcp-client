@@ -91,7 +91,7 @@ export function buildAdcpValidationErrorPayload(
   //     detail that can fingerprint the seller's handler ordering.
   //   - `variants[]` summarizes the PUBLIC spec's union shape (each
   //     variant's required / properties keys). The bundled AdCP
-  //     schemas are already npm-shipped with `@adcp/client` and
+  //     schemas are already npm-shipped with `@adcp/sdk` and
   //     published at adcontextprotocol.org — a motivated buyer has
   //     them offline anyway. Gating would only hurt naive LLM clients
   //     in production, which is exactly the audience `variants[]` was

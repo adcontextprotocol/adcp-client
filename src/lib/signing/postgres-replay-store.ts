@@ -11,7 +11,7 @@
  * @example
  * ```typescript
  * import { Pool } from 'pg';
- * import { PostgresReplayStore, getReplayStoreMigration } from '@adcp/client/signing/server';
+ * import { PostgresReplayStore, getReplayStoreMigration } from '@adcp/sdk/signing/server';
  *
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  * await pool.query(getReplayStoreMigration());          // run once at boot

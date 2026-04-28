@@ -151,7 +151,7 @@ async function prepareSharedNodeModules(): Promise<string> {
     private: true,
     type: 'module',
     dependencies: {
-      '@adcp/client': `file:${REPO_ROOT}`,
+      '@adcp/sdk': `file:${REPO_ROOT}`,
       tsx: '^4.7.0',
     },
   };

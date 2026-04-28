@@ -1,5 +1,5 @@
 // Environment Configuration Example
-import { AdCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/sdk';
 
 async function envConfigExample() {
   // Load agents from environment using factory method

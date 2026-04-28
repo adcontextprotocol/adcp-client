@@ -42,3 +42,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
+
+      # Surface the rename to anyone still installing under the old name.
+      # Without this step the `keywords: ["deprecated"]` and shim README do
+      # nothing visible at install time — npm only emits the deprecation
+      # warning when the version is registered as deprecated on the registry.
+      # We deprecate each shim version as it ships (the version is linked to
+      # @adcp/sdk via .changeset/config.json's `linked` config, so the values
+      # match). The shim still publishes and still works — `npm install` just
+      # prints the rename pointer alongside.
+      - name: Deprecate @adcp/client (rename notice)
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          SHIM_VERSION=$(node -p "require('./packages/client-shim/package.json').version")
+          npm deprecate "@adcp/client@$SHIM_VERSION" \
+            "Renamed to @adcp/sdk. Replace '@adcp/client' with '@adcp/sdk' in your imports — APIs are identical. See https://www.npmjs.com/package/@adcp/sdk."

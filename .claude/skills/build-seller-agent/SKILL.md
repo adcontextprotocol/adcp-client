@@ -240,8 +240,8 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 Add `registerTestController` so the comply framework can deterministically test your state machines. Without it, compliance testing relies on observational storyboards that can't force state transitions.
 
 ```
-import { registerTestController } from '@adcp/client';
-import type { TestControllerStore } from '@adcp/client';
+import { registerTestController } from '@adcp/sdk';
+import type { TestControllerStore } from '@adcp/sdk';
 
 const store: TestControllerStore = {
   async forceAccountStatus(accountId, status) {
@@ -314,7 +314,7 @@ import {
   CONTROLLER_SCENARIOS,
   enforceMapCap,
   TestControllerError,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 registerTestController(server, {
   scenarios: [
@@ -370,7 +370,7 @@ If you need `AsyncLocalStorage`, sandbox gating, or a custom task store around t
 
 ```
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { handleTestControllerRequest, toMcpResponse, TOOL_INPUT_SHAPE } from '@adcp/client';
+import { handleTestControllerRequest, toMcpResponse, TOOL_INPUT_SHAPE } from '@adcp/sdk';
 
 const sessionContext = new AsyncLocalStorage<{ sessionId: string }>();
 const store = { async forceAccountStatus(id, status) { /* ... */ } };
@@ -410,13 +410,13 @@ server.tool('comply_test_controller', 'Sandbox only.', TOOL_INPUT_SHAPE, async i
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by `createAdcpServer` — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import everything from `@adcp/sdk`. Types from `@adcp/sdk` with `import type`.
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -441,7 +441,7 @@ Minimal `tsconfig.json`:
 
 Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
 
-**Imports**: most things live at `@adcp/client`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/client/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
+**Imports**: most things live at `@adcp/sdk`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/sdk/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
 
 ```typescript
 import { randomUUID } from 'node:crypto';
@@ -452,9 +452,9 @@ import {
   InMemoryStateStore,
   checkGovernance,
   governanceDeniedError,
-} from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
-import type { ServeContext } from '@adcp/client';
+} from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import type { ServeContext } from '@adcp/sdk';
 
 const stateStore = new InMemoryStateStore(); // shared across requests
 
@@ -621,7 +621,7 @@ import {
   PostgresTaskStore,
   MCP_TASKS_MIGRATION,
   cleanupExpiredIdempotency,
-} from '@adcp/client/server';
+} from '@adcp/sdk/server';
 
 // Fail fast — pg silently defaults to localhost+OS-user if DATABASE_URL is
 // missing, which works on a dev laptop and breaks cryptically in CI.
@@ -680,7 +680,7 @@ Two things the example doesn't wire (app-specific):
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --json
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
 **Sandbox validation** (if ports are blocked):

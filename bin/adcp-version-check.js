@@ -1,7 +1,7 @@
 /**
  * CLI startup staleness check.
  *
- * Unpinned `npx @adcp/client` reuses whatever version is cached in
+ * Unpinned `npx @adcp/sdk` reuses whatever version is cached in
  * ~/.npm/_npx/ — users run months-old code without knowing. Doc pins
  * to `@latest` fix the copy-paste path; this catches every other way
  * stale code lands (global installs, locked package.json, corporate
@@ -22,7 +22,7 @@ const CONFIG_DIR = path.join(os.homedir(), '.adcp');
 const CACHE_FILE = path.join(CONFIG_DIR, 'version-check.json');
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 800;
-const REGISTRY_URL = 'https://registry.npmjs.org/@adcp/client/latest';
+const REGISTRY_URL = 'https://registry.npmjs.org/@adcp/sdk/latest';
 
 function shouldSkipCheck() {
   if (process.env.ADCP_SKIP_VERSION_CHECK === '1') return true;
@@ -109,8 +109,8 @@ function compareVersions(a, b) {
 
 function printStaleWarning(current, latest) {
   process.stderr.write(
-    `\n⚠️  Running @adcp/client ${current} — latest is ${latest}.\n` +
-      `   Upgrade with \`npx @adcp/client@latest …\` (or clear \`~/.npm/_npx\` if you copy-pasted commands without the @latest pin).\n` +
+    `\n⚠️  Running @adcp/sdk ${current} — latest is ${latest}.\n` +
+      `   Upgrade with \`npx @adcp/sdk@latest …\` (or clear \`~/.npm/_npx\` if you copy-pasted commands without the @latest pin).\n` +
       `   Silence this check with ADCP_SKIP_VERSION_CHECK=1.\n\n`
   );
 }

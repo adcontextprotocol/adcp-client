@@ -30,8 +30,8 @@ import {
   type MediaBuyStatus,
   type TestControllerStore,
   type TestControllerStoreFactory,
-} from '@adcp/client/testing';
-import { createTaskCapableServer, serve, type ServeContext } from '@adcp/client';
+} from '@adcp/sdk/testing';
+import { createTaskCapableServer, serve, type ServeContext } from '@adcp/sdk';
 
 // ---------------------------------------------------------------------------
 // Typed domain state.

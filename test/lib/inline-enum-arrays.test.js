@@ -149,7 +149,7 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     );
   });
 
-  it('exports are accessible via the public surface @adcp/client/types', async () => {
+  it('exports are accessible via the public surface @adcp/sdk/types', async () => {
     const typesEntry = await import('../../dist/lib/types/index.js');
     assert.ok(typesEntry.ImageAssetRequirements_FormatsValues, 'inline-enum reachable via /types entrypoint');
   });

@@ -101,7 +101,7 @@ taskToolResponse({
 **`get_products`** — `GetProductsRequestSchema.shape`
 
 ```typescript
-import { DEFAULT_REPORTING_CAPABILITIES } from '@adcp/client/server';
+import { DEFAULT_REPORTING_CAPABILITIES } from '@adcp/sdk/server';
 
 productsResponse({
   products: [
@@ -230,8 +230,8 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 Add `registerTestController` so the comply framework can deterministically test your state machines. One function call — the SDK handles request parsing, status validation, and response formatting.
 
 ```
-import { registerTestController, TestControllerError } from '@adcp/client';
-import type { TestControllerStore } from '@adcp/client';
+import { registerTestController, TestControllerError } from '@adcp/sdk';
+import type { TestControllerStore } from '@adcp/sdk';
 
 const store: TestControllerStore = {
   async forceAccountStatus(accountId, status) {
@@ -266,13 +266,13 @@ Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, e
 
 `get_adcp_capabilities` is auto-generated from registered handlers. Do not register it manually.
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -306,8 +306,8 @@ Event tracking tools (`syncEventSources`, `logEvent`, `syncCatalogs`, `syncAudie
 
 ```typescript
 import { randomUUID } from 'node:crypto';
-import { createAdcpServer, serve, adcpError } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createAdcpServer, serve, adcpError } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 // Idempotency — required for v3. Retail media has many mutating tools:
 // create/update_media_buy, sync_creatives, sync_catalogs, sync_event_sources,
@@ -398,8 +398,8 @@ Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempote
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
@@ -442,14 +442,14 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy path — catalog-driven creative + conversion tracking
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp sales_catalog_driven --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp sales_catalog_driven --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz — includes the catalog surface
-npx @adcp/client@latest fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp \
   --tools get_products,list_creative_formats \
   --auth-token $TOKEN
 ```

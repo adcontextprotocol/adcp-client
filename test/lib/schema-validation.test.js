@@ -249,7 +249,7 @@ describe('schema-driven validation', () => {
       // Different sensitivity classes:
       //   - schemaPath encodes seller handler branch ordering (impl detail) → gated
       //   - variants reflects the PUBLIC spec's union shape (already in bundled
-      //     schemas shipped with @adcp/client) → NOT gated, so production LLMs
+      //     schemas shipped with @adcp/sdk) → NOT gated, so production LLMs
       //     get the recovery info #919 was built to provide.
       const issues = [
         {

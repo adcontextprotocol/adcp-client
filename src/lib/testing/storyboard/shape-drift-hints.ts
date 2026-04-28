@@ -141,7 +141,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
       message:
         `${taskName} returned a bare array at the top level. ` +
         `Required: { ${listMeta.wrapperKey}: [...] }. ` +
-        `Use ${listMeta.helper}() from @adcp/client/server.`,
+        `Use ${listMeta.helper}() from @adcp/sdk/server.`,
     };
   }
 
@@ -162,7 +162,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
         message:
           `build_creative returned platform-native fields at the top level (${platformNativePresent.join(', ')}). ` +
           `Required: { creative_manifest: { format_id, assets } }. ` +
-          `Use buildCreativeResponse() from @adcp/client/server.`,
+          `Use buildCreativeResponse() from @adcp/sdk/server.`,
       };
     }
   }
@@ -181,7 +181,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
         message:
           `sync_creatives returned a single creative's inner shape at the top level (${perItemPresent.join(', ')}). ` +
           `Required: { creatives: [{ creative_id, action, ... }] } (or { errors: [...] } / { status: 'submitted', task_id }). ` +
-          `Use syncCreativesResponse() from @adcp/client/server.`,
+          `Use syncCreativesResponse() from @adcp/sdk/server.`,
       };
     }
 
@@ -200,7 +200,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
           message:
             `sync_creatives returned { results: [...] } instead of { creatives: [...] } — wrong wrapper key. ` +
             `Required: { creatives: [{ creative_id, action, ... }] }. ` +
-            `Use syncCreativesResponse() from @adcp/client/server.`,
+            `Use syncCreativesResponse() from @adcp/sdk/server.`,
         };
       }
     }
@@ -221,7 +221,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
         message:
           `preview_creative returned raw render fields at the top level (${driftSignal.join(', ')}). ` +
           `Required: { response_type: 'single', previews: [{ renders: [{ preview_url | preview_html }] }], expires_at }. ` +
-          `Use previewCreativeResponse() from @adcp/client/server.`,
+          `Use previewCreativeResponse() from @adcp/sdk/server.`,
       };
     }
   }

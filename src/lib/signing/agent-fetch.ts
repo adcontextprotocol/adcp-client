@@ -305,7 +305,7 @@ export interface CreateAgentSignedFetchOptions {
  *
  * ```ts
  * // fetch.ts
- * import { createAgentSignedFetch } from '@adcp/client/signing';
+ * import { createAgentSignedFetch } from '@adcp/sdk/signing';
  *
  * export const signedFetch = createAgentSignedFetch({
  *   signing: {

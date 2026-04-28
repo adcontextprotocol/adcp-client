@@ -114,8 +114,8 @@ AdCP webhooks use at-least-once delivery — publishers retry until they see a 2
 Wire the client's `webhookDedup` on the `AsyncHandler` to get this for free:
 
 ```typescript
-import { AdCPClient } from '@adcp/client';
-import { memoryBackend } from '@adcp/client/server';
+import { AdCPClient } from '@adcp/sdk';
+import { memoryBackend } from '@adcp/sdk/server';
 
 const client = new AdCPClient(agents, {
   webhookUrlTemplate: 'https://your-app.com/adcp/webhook/{task_type}/{agent_id}/{operation_id}',

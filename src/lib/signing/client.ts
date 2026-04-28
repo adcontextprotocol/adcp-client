@@ -3,8 +3,8 @@
  * requests per RFC 9421 — signer, canonicalization helpers, fetch wrapper,
  * and the capability cache that gates auto-wiring.
  *
- * Paired with `@adcp/client/signing/server` (verifier / middleware / stores).
- * The aggregate `@adcp/client/signing` barrel re-exports both for back-compat.
+ * Paired with `@adcp/sdk/signing/server` (verifier / middleware / stores).
+ * The aggregate `@adcp/sdk/signing` barrel re-exports both for back-compat.
  */
 export {
   buildSignatureBase,

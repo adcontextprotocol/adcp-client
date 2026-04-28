@@ -31,34 +31,34 @@ import {
 } from './enums.generated';
 import { RateLimitedDetails_ScopeValues } from './inline-enums.generated';
 
-/** @deprecated Use `AccountScopeValues` from `@adcp/client/types`. */
+/** @deprecated Use `AccountScopeValues` from `@adcp/sdk/types`. */
 export const Account_AccountScopeValues = AccountScopeValues;
 
-/** @deprecated Use `BillingPartyValues` from `@adcp/client/types`. */
+/** @deprecated Use `BillingPartyValues` from `@adcp/sdk/types`. */
 export const Account_BillingValues = BillingPartyValues;
 
-/** @deprecated Use `PaymentTermsValues` from `@adcp/client/types`. */
+/** @deprecated Use `PaymentTermsValues` from `@adcp/sdk/types`. */
 export const Account_PaymentTermsValues = PaymentTermsValues;
 
-/** @deprecated Use `AudioChannelLayoutValues` from `@adcp/client/types`. */
+/** @deprecated Use `AudioChannelLayoutValues` from `@adcp/sdk/types`. */
 export const AudioAsset_ChannelsValues = AudioChannelLayoutValues;
 
-/** @deprecated Use `GovernanceDecisionValues` from `@adcp/client/types`. */
+/** @deprecated Use `GovernanceDecisionValues` from `@adcp/sdk/types`. */
 export const CheckGovernanceResponse_StatusValues = GovernanceDecisionValues;
 
-/** @deprecated Use `CollectionKindValues` from `@adcp/client/types`. */
+/** @deprecated Use `CollectionKindValues` from `@adcp/sdk/types`. */
 export const CollectionListFilters_KindsValues = CollectionKindValues;
 
-/** @deprecated Use `CollectionKindValues` from `@adcp/client/types`. */
+/** @deprecated Use `CollectionKindValues` from `@adcp/sdk/types`. */
 export const Collection_KindValues = CollectionKindValues;
 
-/** @deprecated Use `MediaBuyValidActionValues` from `@adcp/client/types`. */
+/** @deprecated Use `MediaBuyValidActionValues` from `@adcp/sdk/types`. */
 export const CreateMediaBuySuccess_ValidActionsValues = MediaBuyValidActionValues;
 
-/** @deprecated Use `PaymentTermsValues` from `@adcp/client/types`. */
+/** @deprecated Use `PaymentTermsValues` from `@adcp/sdk/types`. */
 export const GetAccountFinancialsSuccess_PaymentTermsValues = PaymentTermsValues;
 
-/** @deprecated Use `SnapshotUnavailableReasonValues` from `@adcp/client/types`. */
+/** @deprecated Use `SnapshotUnavailableReasonValues` from `@adcp/sdk/types`. */
 export const PackageStatus_SnapshotUnavailableReasonValues = SnapshotUnavailableReasonValues;
 
 /**
@@ -68,41 +68,41 @@ export const PackageStatus_SnapshotUnavailableReasonValues = SnapshotUnavailable
  */
 export const RATE_LIMITEDDetails_ScopeValues = RateLimitedDetails_ScopeValues;
 
-/** @deprecated Use `RightsBillingPeriodValues` from `@adcp/client/types`. */
+/** @deprecated Use `RightsBillingPeriodValues` from `@adcp/sdk/types`. */
 export const RightsPricingOption_PeriodValues = RightsBillingPeriodValues;
 
-/** @deprecated Use `RightsBillingPeriodValues` from `@adcp/client/types`. */
+/** @deprecated Use `RightsBillingPeriodValues` from `@adcp/sdk/types`. */
 export const RightsTerms_PeriodValues = RightsBillingPeriodValues;
 
-/** @deprecated Use `MediaBuyValidActionValues` from `@adcp/client/types`. */
+/** @deprecated Use `MediaBuyValidActionValues` from `@adcp/sdk/types`. */
 export const UpdateMediaBuySuccess_ValidActionsValues = MediaBuyValidActionValues;
 
-/** @deprecated Use `AudioChannelLayoutValues` from `@adcp/client/types`. */
+/** @deprecated Use `AudioChannelLayoutValues` from `@adcp/sdk/types`. */
 export const VideoAsset_AudioChannelsValues = AudioChannelLayoutValues;
 
-/** @deprecated Use `FrameRateTypeValues` from `@adcp/client/types`. */
+/** @deprecated Use `FrameRateTypeValues` from `@adcp/sdk/types`. */
 export const VideoAsset_FrameRateTypeValues = FrameRateTypeValues;
 
-/** @deprecated Use `GOPTypeValues` from `@adcp/client/types`. */
+/** @deprecated Use `GOPTypeValues` from `@adcp/sdk/types`. */
 export const VideoAsset_GopTypeValues = GOPTypeValues;
 
-/** @deprecated Use `MoovAtomPositionValues` from `@adcp/client/types`. */
+/** @deprecated Use `MoovAtomPositionValues` from `@adcp/sdk/types`. */
 export const VideoAsset_MoovAtomPositionValues = MoovAtomPositionValues;
 
-/** @deprecated Use `ScanTypeValues` from `@adcp/client/types`. */
+/** @deprecated Use `ScanTypeValues` from `@adcp/sdk/types`. */
 export const VideoAsset_ScanTypeValues = ScanTypeValues;
 
-/** @deprecated Use `AudioChannelLayoutValues` from `@adcp/client/types`. */
+/** @deprecated Use `AudioChannelLayoutValues` from `@adcp/sdk/types`. */
 export const VideoAssetRequirements_AudioChannelsValues = AudioChannelLayoutValues;
 
-/** @deprecated Use `FrameRateTypeValues` from `@adcp/client/types`. */
+/** @deprecated Use `FrameRateTypeValues` from `@adcp/sdk/types`. */
 export const VideoAssetRequirements_FrameRateTypeValues = FrameRateTypeValues;
 
-/** @deprecated Use `GOPTypeValues` from `@adcp/client/types`. */
+/** @deprecated Use `GOPTypeValues` from `@adcp/sdk/types`. */
 export const VideoAssetRequirements_GopTypeValues = GOPTypeValues;
 
-/** @deprecated Use `MoovAtomPositionValues` from `@adcp/client/types`. */
+/** @deprecated Use `MoovAtomPositionValues` from `@adcp/sdk/types`. */
 export const VideoAssetRequirements_MoovAtomPositionValues = MoovAtomPositionValues;
 
-/** @deprecated Use `ScanTypeValues` from `@adcp/client/types`. */
+/** @deprecated Use `ScanTypeValues` from `@adcp/sdk/types`. */
 export const VideoAssetRequirements_ScanTypeValues = ScanTypeValues;

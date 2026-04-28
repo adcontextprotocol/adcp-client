@@ -54,7 +54,7 @@ export interface ValidationIssue {
    * ships on the wire by default. Rationale: it reflects the PUBLIC
    * spec's union shape, which the bundled AdCP schemas under
    * `schemas/cache/<version>/` already make available to anyone with
-   * `@adcp/client` installed. Gating would hurt naive LLM clients in
+   * `@adcp/sdk` installed. Gating would hurt naive LLM clients in
    * production — exactly the audience this field was built to help
    * (adcp-client#919).
    */

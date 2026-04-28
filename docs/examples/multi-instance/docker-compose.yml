@@ -3,7 +3,7 @@
 # Two replicas of your agent (agent-a, agent-b) share one Postgres store.
 # Caddy fronts both with round-robin routing for the "single LB endpoint"
 # test path. You can also hit the replicas directly via their host ports
-# (4100, 4101) and pass both to `npx @adcp/client@latest storyboard run --url`.
+# (4100, 4101) and pass both to `npx @adcp/sdk@latest storyboard run --url`.
 #
 # Swap `image: CHANGEME/your-adcp-agent:latest` for your own image (or a
 # build context). Everything else is reusable.
@@ -16,7 +16,7 @@
 #
 #   # (A) Runner-level round-robin across two direct URLs. Each request
 #   # gets a distinct MCP session and round-robins at the client.
-#   npx @adcp/client@latest storyboard run \
+#   npx @adcp/sdk@latest storyboard run \
 #     --url http://localhost:4100/mcp/ \
 #     --url http://localhost:4101/mcp/ \
 #     property_lists --auth $AGENT_TOKEN --allow-http
@@ -24,7 +24,7 @@
 #   # (B) LB-level rotation at Caddy. Single MCP session; Caddy round-robins
 #   # per request. This matches what a production Fly.io / K8s deployment
 #   # looks like from the outside.
-#   npx @adcp/client@latest storyboard run http://localhost:4099/mcp/ \
+#   npx @adcp/sdk@latest storyboard run http://localhost:4099/mcp/ \
 #     property_lists --auth $AGENT_TOKEN --allow-http
 #
 # Both shapes exercise cross-replica state persistence. (A) gives you

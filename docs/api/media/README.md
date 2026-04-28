@@ -1,6 +1,6 @@
 # ADCP Client Documentation
 
-Complete documentation for the `@adcp/client` TypeScript library.
+Complete documentation for the `@adcp/sdk` TypeScript library.
 
 ## 📚 Getting Started
 

@@ -416,7 +416,7 @@ export interface AgentRequestSigningConfigProvider extends AgentRequestSigningOp
   kind: 'provider';
   /**
    * The signing provider that produces RFC 9421 signature bytes. Imported
-   * from `@adcp/client/signing` — see `SigningProvider` for the interface
+   * from `@adcp/sdk/signing` — see `SigningProvider` for the interface
    * contract and `examples/gcp-kms-signing-provider.ts` for a reference
    * KMS adapter.
    */

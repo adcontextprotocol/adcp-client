@@ -158,13 +158,13 @@ activateSignalResponse({
 | `ActivateSignalRequestSchema.shape`                     | Zod schema for activate_signal input                                |
 | `type Signal = GetSignalsResponse['signals'][number]`   | Type for a single signal object                                     |
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import everything from `@adcp/sdk`. Types from `@adcp/sdk` with `import type`.
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -203,8 +203,8 @@ The skill contains everything you need. Do not read additional docs before writi
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_owned --json       # for owned data
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_marketplace --json  # for marketplace
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signal_owned --json       # for owned data
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signal_marketplace --json  # for marketplace
 ```
 
 **Sandbox validation** (if ports are blocked):

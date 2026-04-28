@@ -22,11 +22,11 @@
  * For custom MCP wrappers that need AsyncLocalStorage, sandbox gating at the
  * transport layer, or a session-backed store factory, compose
  * `handleTestControllerRequest`, `toMcpResponse`, and `TOOL_INPUT_SHAPE` from
- * `@adcp/client/server` directly — the flat-store surface documented there.
+ * `@adcp/sdk/server` directly — the flat-store surface documented there.
  *
  * @example
  * ```ts
- * import { createComplyController } from '@adcp/client/testing';
+ * import { createComplyController } from '@adcp/sdk/testing';
  *
  * const controller = createComplyController({
  *   sandboxGate: input => input.auth?.sandbox === true,

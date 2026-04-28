@@ -22,7 +22,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, checkGovernance, governanceDeniedError } from '@adcp/client/server';
+ * import { createAdcpServer, checkGovernance, governanceDeniedError } from '@adcp/sdk/server';
  *
  * const server = createAdcpServer({
  *   name: 'My Publisher', version: '1.0.0',

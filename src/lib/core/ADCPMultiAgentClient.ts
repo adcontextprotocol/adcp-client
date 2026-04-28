@@ -3,6 +3,8 @@
 import type { AgentConfig } from '../types';
 import { AgentClient } from './AgentClient';
 import type { SingleAgentClientConfig } from './SingleAgentClient';
+import { ADCP_VERSION } from '../version';
+import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { ConfigurationManager } from './ConfigurationManager';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
 import type { CreativeFormat } from './CreativeAgentClient';
@@ -269,7 +271,7 @@ export class AgentCollection {
 /**
  * Main multi-agent AdCP client providing unified access to multiple advertising protocol agents.
  *
- * This is the **primary entry point** for the @adcp/client library. It provides flexible
+ * This is the **primary entry point** for the @adcp/sdk library. It provides flexible
  * access patterns for working with one or multiple AdCP agents (MCP or A2A protocols).
  *
  * ## Key Features
@@ -355,14 +357,30 @@ export class AgentCollection {
  */
 export class ADCPMultiAgentClient {
   private agentClients: Map<string, AgentClient> = new Map();
+  private readonly resolvedAdcpVersion: string;
 
   constructor(
     agentConfigs: AgentConfig[] = [],
     private config: SingleAgentClientConfig = {}
   ) {
+    // Validates `config.adcpVersion` once for the orchestrator; per-agent
+    // AgentClients will re-validate via SingleAgentClient (cheap pure check)
+    // and surface the same ConfigurationError if the pin is invalid.
+    this.resolvedAdcpVersion = resolveAdcpVersion(config.adcpVersion);
+
     for (const agentConfig of agentConfigs) {
       this.agentClients.set(agentConfig.id, new AgentClient(agentConfig, config));
     }
+  }
+
+  /**
+   * Returns the AdCP protocol version this multi-agent client speaks. The
+   * value is shared across every per-agent client created by this orchestrator
+   * and originates from the constructor `config.adcpVersion`. See
+   * {@link SingleAgentClientConfig.adcpVersion}.
+   */
+  getAdcpVersion(): string {
+    return this.resolvedAdcpVersion;
   }
 
   // ====== FACTORY METHODS FOR EASY SETUP ======

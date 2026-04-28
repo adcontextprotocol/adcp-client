@@ -10,15 +10,15 @@
  *
  * Then test with:
  *
- *   npx @adcp/client@latest http://localhost:3001/mcp
- *   npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
- *   npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
- *   npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
+ *   npx @adcp/sdk@latest http://localhost:3001/mcp
+ *   npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
+ *   npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
+ *   npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
  */
 
-import { createAdcpServer, serve } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
-import type { GetSignalsResponse, ServeContext } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import type { GetSignalsResponse, ServeContext } from '@adcp/sdk';
 
 // ---------------------------------------------------------------------------
 // Audience segment catalog — typed to match the AdCP signals response schema

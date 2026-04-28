@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { createTaskCapableServer, serve } from '@adcp/client';
+ * import { createTaskCapableServer, serve } from '@adcp/sdk';
  *
  * function createAgent({ taskStore }) {
  *   const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
@@ -659,7 +659,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         options.onListening(url);
       } else {
         console.log(`AdCP agent running at ${url}`);
-        console.log(`\nTest with:\n  npx @adcp/client@latest ${url}`);
+        console.log(`\nTest with:\n  npx @adcp/sdk@latest ${url}`);
       }
     });
   };
@@ -759,7 +759,7 @@ export function hostname(host: string): string {
  * @example
  * ```ts
  * import express from 'express';
- * import { resolveHost } from '@adcp/client/server';
+ * import { resolveHost } from '@adcp/sdk/server';
  *
  * const routersByHost = new Map<string, express.Router>();
  *

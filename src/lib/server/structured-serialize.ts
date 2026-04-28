@@ -6,7 +6,7 @@
  * Handlers that keep those types in memory can wrap reads and writes:
  *
  * ```ts
- * import { structuredSerialize, structuredDeserialize } from '@adcp/client/server';
+ * import { structuredSerialize, structuredDeserialize } from '@adcp/sdk/server';
  *
  * await ctx.store.put('sessions', id, structuredSerialize(session));
  * const session = structuredDeserialize(await ctx.store.get('sessions', id));
