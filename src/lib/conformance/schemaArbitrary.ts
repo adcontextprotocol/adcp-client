@@ -10,6 +10,30 @@ export interface ArbitraryOptions {
    * producing random strings. See {@link resolvePoolForKey}.
    */
   fixtures?: ConformanceFixtures;
+  /**
+   * Root schema used to resolve `$ref` pointers like `#/$defs/Name` or
+   * `#/definitions/Name`. Set once at the top of `schemaToArbitrary` and
+   * threaded through recursive calls. AdCP 3.0.1 introduced bundler-side
+   * enum hoisting (adcp#3170) that emits these pointers; without root
+   * resolution, the generator falls through to `fc.anything()` and produces
+   * samples that fail validation.
+   */
+  rootSchema?: JsonSchema;
+}
+
+/** Resolve a `#/`-prefixed JSON pointer against the root schema. */
+function resolveLocalRef(root: JsonSchema | undefined, ref: string): JsonSchema | undefined {
+  if (!root || !ref.startsWith('#/')) return undefined;
+  const segments = ref
+    .slice(2)
+    .split('/')
+    .map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'));
+  let node: unknown = root;
+  for (const seg of segments) {
+    if (!node || typeof node !== 'object') return undefined;
+    node = (node as Record<string, unknown>)[seg];
+  }
+  return node && typeof node === 'object' ? (node as JsonSchema) : undefined;
 }
 
 /**
@@ -22,6 +46,18 @@ export interface ArbitraryOptions {
 export function schemaToArbitrary(schema: JsonSchema, opts: ArbitraryOptions = {}): fc.Arbitrary<unknown> {
   if (!schema || typeof schema !== 'object') return fc.anything();
 
+  // Pin the root on the first call so $ref resolution always finds the
+  // bundler's `$defs` / `definitions` block. Recursive calls re-use the
+  // same root rather than re-pinning to a sub-schema.
+  const rootSchema = opts.rootSchema ?? schema;
+  const optsWithRoot: ArbitraryOptions = opts.rootSchema ? opts : { ...opts, rootSchema };
+
+  if (typeof schema.$ref === 'string') {
+    const resolved = resolveLocalRef(rootSchema, schema.$ref);
+    if (resolved) return schemaToArbitrary(resolved, optsWithRoot);
+    return fc.anything();
+  }
+
   if ('const' in schema) return fc.constant(schema.const);
   if (Array.isArray(schema.enum)) return fc.constantFrom(...(schema.enum as unknown[]));
 
@@ -29,10 +65,10 @@ export function schemaToArbitrary(schema: JsonSchema, opts: ArbitraryOptions = {
   // Only replaces the dispatch when the outer schema has no standalone
   // `properties` — otherwise oneOf is a side-constraint we generate past.
   if (Array.isArray(schema.oneOf) && !hasOwnProperties(schema)) {
-    return fc.oneof(...schema.oneOf.map(s => schemaToArbitrary(s as JsonSchema, opts)));
+    return fc.oneof(...schema.oneOf.map(s => schemaToArbitrary(s as JsonSchema, optsWithRoot)));
   }
   if (Array.isArray(schema.anyOf) && !hasOwnProperties(schema)) {
-    return fc.oneof(...schema.anyOf.map(s => schemaToArbitrary(s as JsonSchema, opts)));
+    return fc.oneof(...schema.anyOf.map(s => schemaToArbitrary(s as JsonSchema, optsWithRoot)));
   }
   // `allOf` is usually conditional (if/then/else) in AdCP schemas; the base
   // shape on the outer schema is the right generator. Ignoring the `if`
@@ -52,9 +88,9 @@ export function schemaToArbitrary(schema: JsonSchema, opts: ArbitraryOptions = {
     case 'null':
       return fc.constant(null);
     case 'array':
-      return arrayArb(schema, opts);
+      return arrayArb(schema, optsWithRoot);
     case 'object':
-      return objectArb(schema, opts);
+      return objectArb(schema, optsWithRoot);
     default:
       return fc.anything();
   }
