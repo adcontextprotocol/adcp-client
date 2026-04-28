@@ -123,15 +123,19 @@ function startReferenceVerifier({ replayCap = 1000 } = {}) {
 }
 
 describe('request-signing: synthesize step expansion', () => {
-  test('compliance loader synthesizes per-vector steps for the signed-requests specialism', () => {
+  test('compliance loader synthesizes per-vector steps for the signed-requests universal storyboard', () => {
+    // AdCP 3.0.1 promoted `signed-requests` from a specialism to a universal
+    // capability-gated storyboard (lives at `universal/signed-requests.yaml`,
+    // gated on `request_signing.supported: true`). The deprecated specialism
+    // enum value is still accepted for back-compat (adcp#3075) but the
+    // bundle source-of-truth is the universal entry.
     const index = loadComplianceIndex();
-    const specialism = index.specialisms.find(s => s.id === 'signed-requests');
-    assert.ok(specialism, 'signed-requests specialism is indexed');
+    assert.ok(index.universal.includes('signed-requests'), 'signed-requests is indexed under universal storyboards');
 
     const storyboards = loadBundleStoryboards({
-      kind: 'specialism',
+      kind: 'universal',
       id: 'signed-requests',
-      path: path.join('compliance', 'cache', 'latest', 'specialisms', 'signed-requests'),
+      path: path.join('compliance', 'cache', 'latest', 'universal', 'signed-requests.yaml'),
     });
     const sb = storyboards.find(s => s.id === 'signed_requests');
     assert.ok(sb, 'signed_requests storyboard loaded');
@@ -158,9 +162,9 @@ describe('request-signing: synthesize step expansion', () => {
 
   test('synthesizeRequestSigningSteps respects skipVectors', () => {
     const bare = loadBundleStoryboards({
-      kind: 'specialism',
+      kind: 'universal',
       id: 'signed-requests',
-      path: path.join('compliance', 'cache', 'latest', 'specialisms', 'signed-requests'),
+      path: path.join('compliance', 'cache', 'latest', 'universal', 'signed-requests.yaml'),
     })[0];
     // Already synthesized by the loader, so re-synthesize with skipVectors on
     // a clone with empty phases to check the skip path.

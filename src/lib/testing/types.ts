@@ -2,7 +2,7 @@
  * Types for AdCP Agent E2E Testing
  */
 
-import type { FormatID } from '../types/core.generated';
+import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type { ControllerDetection } from './test-controller';
 
 // Test scenarios that can be run

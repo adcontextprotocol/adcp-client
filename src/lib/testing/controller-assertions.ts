@@ -9,7 +9,16 @@ import type {
   ListScenariosSuccess,
   StateTransitionSuccess,
   SimulationSuccess,
+  ForcedDirectiveSuccess,
+  SeedSuccess,
 } from '../types/tools.generated';
+
+type AnyControllerSuccess =
+  | ListScenariosSuccess
+  | StateTransitionSuccess
+  | SimulationSuccess
+  | ForcedDirectiveSuccess
+  | SeedSuccess;
 
 /**
  * `ControllerError` with `error_detail` guaranteed to be present. The SDK's
@@ -81,13 +90,24 @@ export function expectControllerSuccess(
   kind: 'transition'
 ): StateTransitionSuccess;
 export function expectControllerSuccess(result: ComplyTestControllerResponse, kind: 'simulation'): SimulationSuccess;
-export function expectControllerSuccess(
-  result: ComplyTestControllerResponse
-): ListScenariosSuccess | StateTransitionSuccess | SimulationSuccess;
+export function expectControllerSuccess(result: ComplyTestControllerResponse, kind: 'forced'): ForcedDirectiveSuccess;
+/**
+ * Narrow to the `SeedSuccess` arm (3.0.1+ message-only seed acknowledgement).
+ *
+ * Use this when consuming responses from sellers that emit the new
+ * `SeedSuccess` shape (`{ success: true, message? }`). The SDK's own
+ * `dispatchSeed` continues to return `StateTransitionSuccess`
+ * (`previous_state` / `current_state`) — that path narrows under
+ * `kind: 'transition'`. A future minor will migrate the SDK to emit
+ * `SeedSuccess` directly; this overload is in place now for inter-op
+ * with sellers already on the new arm.
+ */
+export function expectControllerSuccess(result: ComplyTestControllerResponse, kind: 'seed'): SeedSuccess;
+export function expectControllerSuccess(result: ComplyTestControllerResponse): AnyControllerSuccess;
 export function expectControllerSuccess(
   result: ComplyTestControllerResponse,
-  kind?: 'list' | 'transition' | 'simulation'
-): ListScenariosSuccess | StateTransitionSuccess | SimulationSuccess {
+  kind?: 'list' | 'transition' | 'simulation' | 'forced' | 'seed'
+): AnyControllerSuccess {
   if (result.success !== true) {
     throw new Error(
       `expectControllerSuccess: expected a success response but got ControllerError ${result.error}${
@@ -100,8 +120,19 @@ export function expectControllerSuccess(
     return result;
   }
 
-  const actual: 'list' | 'transition' | 'simulation' =
-    'scenarios' in result ? 'list' : 'previous_state' in result ? 'transition' : 'simulation';
+  // Discriminate by required field — every success arm has exactly one
+  // distinguishing key. `seed` is the message-only fallback when no other
+  // arm's required field is present.
+  const actual: 'list' | 'transition' | 'simulation' | 'forced' | 'seed' =
+    'scenarios' in result
+      ? 'list'
+      : 'previous_state' in result
+        ? 'transition'
+        : 'simulated' in result
+          ? 'simulation'
+          : 'forced' in result
+            ? 'forced'
+            : 'seed';
   if (actual !== kind) {
     throw new Error(`expectControllerSuccess(${kind}): expected "${kind}" arm but got "${actual}"`);
   }
