@@ -126,6 +126,29 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.ok(mb?.content_standards, 'content_standards missing');
   });
 
+  it('rich blocks force corresponding media_buy.features.* booleans to true', async () => {
+    // Buyers gating on `features.audience_targeting === false` (the
+    // framework's auto-derived default) would otherwise skip the rich
+    // block sitting next to it. The projection forces the boolean to
+    // true when the rich block is present so feature-gating buyers see
+    // the discovery field.
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        audience_targeting: { supported_identifier_types: ['hashed_email'], minimum_audience_size: 50 },
+        conversion_tracking: { multi_source_event_dedup: false },
+        // content_standards intentionally omitted — boolean stays at framework default
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const features = result.structuredContent?.media_buy?.features;
+    assert.ok(features, 'features block present');
+    assert.strictEqual(features.audience_targeting, true, 'audience_targeting feature flipped to true');
+    assert.strictEqual(features.conversion_tracking, true, 'conversion_tracking feature flipped to true');
+    // content_standards stays at framework default (false, since not declared)
+    assert.notStrictEqual(features.content_standards, true);
+  });
+
   it('omitting all three leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
     const server = createAdcpServerFromPlatform(basePlatform(), {
       name: 'h',

@@ -506,20 +506,30 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // the framework wires the deep-merge so buyers see the discovery
   // fields without an opaque custom get_adcp_capabilities tool (which
   // the framework refuses anyway).
-  const mediaBuyOverrides: Record<string, unknown> = {};
-  if (platform.capabilities.audience_targeting) {
-    mediaBuyOverrides.audience_targeting = platform.capabilities.audience_targeting;
-  }
-  if (platform.capabilities.conversion_tracking) {
-    mediaBuyOverrides.conversion_tracking = platform.capabilities.conversion_tracking;
-  }
-  if (platform.capabilities.content_standards) {
-    mediaBuyOverrides.content_standards = platform.capabilities.content_standards;
-  }
-  const projectedCapabilitiesConfig =
-    Object.keys(mediaBuyOverrides).length > 0
-      ? { overrides: { media_buy: mediaBuyOverrides as Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> } }
-      : undefined;
+  //
+  // Each rich block also forces the corresponding `media_buy.features.*`
+  // boolean to `true`. Buyers gating on `features.audience_targeting`
+  // (which the framework auto-derives as `false` by default) would
+  // otherwise skip the rich block sitting next to it.
+  const at = platform.capabilities.audience_targeting;
+  const ct = platform.capabilities.conversion_tracking;
+  const cs = platform.capabilities.content_standards;
+  const hasMediaBuyProjection = at != null || ct != null || cs != null;
+  const mediaBuyOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> = {
+    ...(at != null && { audience_targeting: at }),
+    ...(ct != null && { conversion_tracking: ct }),
+    ...(cs != null && { content_standards: cs }),
+    ...(hasMediaBuyProjection && {
+      features: {
+        ...(at != null && { audience_targeting: true }),
+        ...(ct != null && { conversion_tracking: true }),
+        ...(cs != null && { content_standards: true }),
+      },
+    }),
+  };
+  const projectedCapabilitiesConfig = hasMediaBuyProjection
+    ? { overrides: { media_buy: mediaBuyOverrides } }
+    : undefined;
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -1959,8 +1969,9 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     },
     // `acquire_rights` has 3 native wire-spec arms (Acquired / PendingApproval /
     // Rejected) handled by the platform directly. No framework task envelope —
-    // adopters return the spec-defined arm; buyers poll via the spec's own
-    // approval-status mechanism, not `tasks_get`.
+    // adopters return the spec-defined arm. Async delivery for the
+    // PendingApproval arm rides the buyer's `push_notification_config` webhook
+    // (the spec doesn't define a polling tool for `acquire_rights`).
     acquireRights: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       return projectSync(

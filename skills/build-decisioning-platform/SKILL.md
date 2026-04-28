@@ -550,6 +550,10 @@ import type {
   DecisioningPlatform,
   BrandRightsPlatform,
   AccountStore,
+  GetBrandIdentitySuccess,
+  AcquireRightsAcquired,
+  AcquireRightsPendingApproval,
+  AcquireRightsRejected,
 } from '@adcp/client/server/decisioning';
 
 class MyBrandRightsAgent implements DecisioningPlatform {
@@ -566,36 +570,91 @@ class MyBrandRightsAgent implements DecisioningPlatform {
 
   brandRights: BrandRightsPlatform = {
     // Sync — read brand identity record
-    getBrandIdentity: async (req, ctx) => ({
-      brand: req.brand,
-      identity: { legal_name: '...', jurisdictions: ['US'], ip_categories: ['trademark'] },
+    getBrandIdentity: async (req, ctx): Promise<GetBrandIdentitySuccess> => ({
+      brand_id: 'brand_acme_42',
+      house: { domain: 'acme-corp.example.com', name: 'Acme Corp' },
+      names: [{ en_US: 'Acme', en_GB: 'ACME Co.' }],
+      industries: ['retail'],
+      keller_type: 'master',
     }),
 
-    // Sync — list available rights offerings
+    // Sync — list rights matching the query. Wire field is `rights:` (NOT
+    // `offerings:`); each entry is a RightsOffering with pricing_options.
     getRights: async (req, ctx) => ({
-      offerings: [/* RightsOffering[] */],
+      rights: [
+        {
+          rights_id: 'rights_endorsement_us',
+          brand_id: 'brand_acme_42',
+          name: 'Acme endorsement, US',
+          available_uses: ['endorsement'],
+          countries: ['US'],
+          pricing_options: [{
+            pricing_option_id: 'po_flat_100k',
+            model: 'flat_rate',
+            price: 100000,
+            currency: 'USD',
+            uses: ['endorsement'],
+            period: 'one_time',
+          }],
+        },
+      ],
     }),
 
-    // Three native wire-spec arms — return whichever matches the request
+    // Three wire-spec arms — return whichever matches the request.
     acquireRights: async (req, ctx) => {
       if (canClearImmediately(req)) {
-        return { rights_grant_id: 'rg_42', /* ...AcquireRightsAcquired */ };
+        const acquired: AcquireRightsAcquired = {
+          rights_id: req.rights_id,
+          status: 'acquired',
+          brand_id: 'brand_acme_42',
+          terms: {
+            pricing_option_id: req.pricing_option_id,
+            amount: 100000,
+            currency: 'USD',
+            uses: ['endorsement'],
+            period: 'one_time',
+            start_date: '2026-05-01',
+            end_date: '2026-12-31',
+          },
+          generation_credentials: [
+            // Per-LLM-provider scoped keys for rights-cleared content gen
+            // { provider: 'midjourney', rights_key: '...', uses: ['endorsement'] },
+          ],
+          rights_constraint: {
+            rights_id: req.rights_id,
+            rights_agent: { url: 'https://my-rights-agent.example.com/mcp', id: 'my-rights-agent' },
+            uses: ['endorsement'],
+            countries: ['US'],
+            valid_from: '2026-05-01T00:00:00Z',
+            valid_until: '2026-12-31T23:59:59Z',
+          },
+        };
+        return acquired;
       }
       if (requiresHumanReview(req)) {
-        return {
+        const pending: AcquireRightsPendingApproval = {
+          rights_id: req.rights_id,
           status: 'pending_approval',
-          rights_grant_id: 'rg_pending_42',
-          approval_workflow: { type: 'manual_review', estimated_completion: '2026-05-03' },
-          /* ...AcquireRightsPendingApproval */
+          brand_id: 'brand_acme_42',
+          detail: 'Awaiting rights-holder counter-signature',
+          estimated_response_time: '48h',
         };
+        return pending;
       }
-      return { /* ...AcquireRightsRejected with rejection_reason */ };
+      const rejected: AcquireRightsRejected = {
+        rights_id: req.rights_id,
+        status: 'rejected',
+        brand_id: 'brand_acme_42',
+        reason: 'Rights unavailable in requested jurisdiction',
+        suggestions: ['Try US-only deployment'],
+      };
+      return rejected;
     },
   };
 }
 ```
 
-**`acquire_rights` async shape is spec-native, not the framework task envelope.** Unlike `create_media_buy` / `sync_creatives` which use `ctx.handoffToTask(fn)` for HITL, `acquire_rights` has its own three wire-spec arms (`Acquired` / `PendingApproval` / `Rejected`). Buyers polling for pending grants use the spec's own approval-status mechanism — NOT `tasks_get`. Adopters return the spec arm directly; the framework wraps the response without the `Submitted` envelope.
+**`acquire_rights` async delivery is webhook-only, not polling.** Unlike `create_media_buy` / `sync_creatives` which use `ctx.handoffToTask(fn)` for HITL, `acquire_rights` has its own three wire-spec arms (`Acquired` / `PendingApproval` / `Rejected`). When you return `PendingApproval`, the buyer's `push_notification_config.url` receives the eventual `Acquired` or `Rejected` outcome — the spec does NOT define a polling tool for this surface. Don't reach for `tasks_get` here.
 
 **Two surfaces still on the merge seam (deferred to v6.1):** `update_rights` and `creative_approval` are spec-published but not yet in `AdcpToolMap`, so they don't have framework dispatch infrastructure. Wire them via `opts.brandRights.{updateRights,creativeApproval}` until v6.1:
 

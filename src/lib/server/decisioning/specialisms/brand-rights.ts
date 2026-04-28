@@ -8,11 +8,11 @@
  * AND framework dispatch infrastructure (in `AdcpToolMap`):
  *
  *   - `get_brand_identity` — sync read; brand catalog + identity record
- *   - `get_rights` — sync read; available rights offerings for a brand
- *   - `acquire_rights` — buyer commits to an offering. Native spec
- *     async shape via `AcquireRightsPendingApproval` (NOT the framework
- *     task envelope) — return that arm when human counter-signature
- *     is required.
+ *   - `get_rights` — sync read; rights matching a brand + use query
+ *   - `acquire_rights` — buyer commits to an offering. Async outcomes
+ *     are delivered via the buyer-supplied `push_notification_config`
+ *     webhook (NOT a polling tool — the spec doesn't define one for
+ *     this surface).
  *
  * The two other surfaces in this domain (`update_rights`,
  * `creative_approval`) are spec-published but not yet in `AdcpToolMap`;
@@ -26,6 +26,11 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+// Brand-rights wire types only live in `core.generated`; the other
+// specialism files import from `tools.generated` (where most
+// per-tool wire types are emitted). Don't "consistency-fix" this
+// import path — `tools.generated` doesn't re-export the brand-rights
+// shapes.
 import type {
   GetBrandIdentityRequest,
   GetBrandIdentitySuccess,
@@ -41,10 +46,10 @@ type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 
 export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
   /**
-   * Read brand identity record — name, canonical IDs, jurisdictions, IP
-   * categories. Sync; no async ceremony. Throw
-   * `AdcpError('REFERENCE_NOT_FOUND')` when the brand reference doesn't
-   * resolve to an identity the platform tracks.
+   * Read brand identity record — `brand_id`, `house`, localized `names`,
+   * optional logos / industries / `keller_type`. Sync; no async ceremony.
+   * Throw `AdcpError('REFERENCE_NOT_FOUND')` when the brand reference
+   * doesn't resolve to an identity the platform tracks.
    */
   getBrandIdentity(
     req: GetBrandIdentityRequest,
@@ -52,32 +57,52 @@ export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
   ): Promise<GetBrandIdentitySuccess>;
 
   /**
-   * List available rights offerings for a brand + use category. Sync
-   * read; framework wraps the response in the wire envelope. Returning
-   * an empty `offerings` array is valid (= "no rights available for the
-   * requested terms"); throw `AdcpError` only for buyer-fixable
-   * rejection (e.g., unsupported jurisdiction).
+   * List rights matching a brand + use query. Sync read; framework
+   * wraps the response in the wire envelope. Returning an empty
+   * `rights` array is valid (= "no rights available for the requested
+   * terms"); throw `AdcpError` only for buyer-fixable rejection (e.g.,
+   * unsupported jurisdiction).
+   *
+   * Note: the wire field is `rights`, NOT `offerings`. Adopters who
+   * named their internal model `offerings` translate at this seam.
    */
   getRights(req: GetRightsRequest, ctx: Ctx<TMeta>): Promise<GetRightsSuccess>;
 
   /**
-   * Acquire rights — buyer commits to an offering. Three wire-spec arms:
+   * Acquire rights — buyer commits to an offering. Four wire-spec arms:
    *
-   *   - `AcquireRightsAcquired` — rights granted immediately (digital-
-   *     only, programmatic, pre-approved buyer). Buyer can use the
-   *     `rights_grant_id` in subsequent campaigns.
-   *   - `AcquireRightsPendingApproval` — clearance pending human
-   *     counter-signature, legal review, or rights-holder approval.
-   *     Buyer polls the spec-defined approval status (NOT the
-   *     framework's `tasks_get` — `acquire_rights` has its own native
-   *     async shape).
-   *   - `AcquireRightsRejected` — terminal rejection (offering expired,
-   *     buyer not authorized, jurisdiction unsupported).
+   *   - `AcquireRightsAcquired` — rights granted immediately. Carries
+   *     `rights_id`, `status: 'acquired'`, `brand_id`, `terms`,
+   *     `generation_credentials` (scoped per-LLM-provider keys), and
+   *     `rights_constraint` so the buyer can plumb the grant directly
+   *     into creative generation.
+   *   - `AcquireRightsPendingApproval` — clearance pending counter-
+   *     signature, legal review, or rights-holder approval. Carries
+   *     `rights_id`, `status: 'pending_approval'`, `brand_id`, plus
+   *     optional `detail` and `estimated_response_time` (e.g., '48h').
+   *     **Async delivery is webhook-only** — the buyer's
+   *     `push_notification_config.url` receives the eventual
+   *     `Acquired` or `Rejected` outcome. The spec does NOT define
+   *     a polling tool for `acquire_rights`; do not reach for
+   *     `tasks_get` here.
+   *   - `AcquireRightsRejected` — terminal rejection. Carries
+   *     `rights_id`, `status: 'rejected'`, `brand_id`, `reason`,
+   *     and optional `suggestions[]` for buyer remediation.
    *
-   * Throw `AdcpError` only for buyer-fixable request rejection
-   * (`INVALID_REQUEST`, `BUDGET_TOO_LOW`); for spec-defined rejection
-   * shapes return `AcquireRightsRejected` so the buyer sees the
-   * structured wire response with `rejection_reason` etc.
+   * The wire spec also defines a fourth `AcquireRightsError` arm
+   * (multi-error `{ errors: Error[] }`) for batch-style failures.
+   * Adopters who need that shape throw
+   * `AdcpError('INVALID_REQUEST', { details: { errors: [...] } })`
+   * — the framework projects to the same wire envelope. The platform
+   * interface accepts only the 3 success-arm shapes by design;
+   * `AdcpError` is the canonical multi-error path here, matching
+   * `SalesPlatform.createMediaBuy` preflight.
+   *
+   * Throw `AdcpError` only for buyer-fixable REQUEST rejection
+   * (`INVALID_REQUEST`, `BUDGET_TOO_LOW`). For spec-defined GRANT
+   * rejection (rights unavailable in jurisdiction, talent dispute
+   * pending) return the `AcquireRightsRejected` arm so the buyer sees
+   * the structured wire response with `reason` + `suggestions`.
    *
    * Pre-flight (catalog availability, agency authorization) MUST run
    * sync regardless of arm — invalid requests reject before allocating
@@ -86,5 +111,7 @@ export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
   acquireRights(
     req: AcquireRightsRequest,
     ctx: Ctx<TMeta>
-  ): Promise<AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected>;
+  ): Promise<
+    AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected
+  >;
 }
