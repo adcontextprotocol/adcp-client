@@ -244,7 +244,9 @@ describe('neg/016 K-pair replay-window grading', () => {
 
   describe('single-instance verifier (shared replay store)', () => {
     let instance;
-    before(async () => { instance = await startSingleInstanceServer(); });
+    before(async () => {
+      instance = await startSingleInstanceServer();
+    });
     after(() => instance.server.close());
 
     test('passes with replayProbePairs=4 when all pairs are correctly rejected', async () => {
@@ -271,7 +273,9 @@ describe('neg/016 K-pair replay-window grading', () => {
 
   describe('multi-instance verifier (per-process replay stores)', () => {
     let instance;
-    before(async () => { instance = await startMultiInstanceServer(); });
+    before(async () => {
+      instance = await startMultiInstanceServer();
+    });
     after(() => instance.server.close());
 
     test('fails with multi-instance diagnostic when second probes land on different instances', async () => {
@@ -282,8 +286,14 @@ describe('neg/016 K-pair replay-window grading', () => {
       assert.strictEqual(v016.replay_pairs_tried, 4);
       // Every second probe hits the other instance — 0 rejections
       assert.strictEqual(v016.replay_pairs_rejected, 0);
-      assert.ok(v016.diagnostic?.includes('InMemoryReplayStore'), `diagnostic should mention InMemoryReplayStore: ${v016.diagnostic}`);
-      assert.ok(v016.diagnostic?.includes('PostgresReplayStore'), `diagnostic should mention PostgresReplayStore: ${v016.diagnostic}`);
+      assert.ok(
+        v016.diagnostic?.includes('InMemoryReplayStore'),
+        `diagnostic should mention InMemoryReplayStore: ${v016.diagnostic}`
+      );
+      assert.ok(
+        v016.diagnostic?.includes('PostgresReplayStore'),
+        `diagnostic should mention PostgresReplayStore: ${v016.diagnostic}`
+      );
     });
   });
 
@@ -291,7 +301,9 @@ describe('neg/016 K-pair replay-window grading', () => {
 
   describe('broken verifier (no replay protection)', () => {
     let instance;
-    before(async () => { instance = await startNoopReplayServer(); });
+    before(async () => {
+      instance = await startNoopReplayServer();
+    });
     after(() => instance.server.close());
 
     test('fails with 0/K diagnostic when verifier has no replay protection', async () => {
@@ -301,8 +313,14 @@ describe('neg/016 K-pair replay-window grading', () => {
       assert.ok(!v016.passed && !v016.skipped, `expected fail`);
       assert.strictEqual(v016.replay_pairs_tried, 3);
       assert.strictEqual(v016.replay_pairs_rejected, 0);
-      assert.ok(v016.diagnostic?.includes('all 3 probe pairs'), `diagnostic should mention pair count: ${v016.diagnostic}`);
-      assert.ok(v016.diagnostic?.includes('InMemoryReplayStore'), `diagnostic should mention replay store: ${v016.diagnostic}`);
+      assert.ok(
+        v016.diagnostic?.includes('all 3 probe pairs'),
+        `diagnostic should mention pair count: ${v016.diagnostic}`
+      );
+      assert.ok(
+        v016.diagnostic?.includes('InMemoryReplayStore'),
+        `diagnostic should mention replay store: ${v016.diagnostic}`
+      );
     });
   });
 
