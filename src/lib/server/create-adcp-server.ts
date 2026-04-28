@@ -2993,7 +2993,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // Cast needed because GetAdCPCapabilitiesResponse is generated and lacks
   // this field; it remains a forward-compatible extension until the spec
   // formally defines library_version in a future AdCP minor.
-  (capabilitiesData as Record<string, unknown>).library_version = `@adcp/client@${LIBRARY_VERSION}`;
+  (capabilitiesData as unknown as Record<string, unknown>).library_version = `@adcp/client@${LIBRARY_VERSION}`;
 
   // Passthrough inputSchema — framework validation is authoritative on
   // both transports (#909). Same rationale as the domain-tool loop above.

@@ -53,8 +53,8 @@ function semverLessThan(a: string, b: string): boolean {
     normalize(v)
       .split('.')
       .map(s => parseInt(s, 10) || 0);
-  const [aMaj, aMin, aPatch] = segs(a);
-  const [bMaj, bMin, bPatch] = segs(b);
+  const [aMaj = 0, aMin = 0, aPatch = 0] = segs(a);
+  const [bMaj = 0, bMin = 0, bPatch = 0] = segs(b);
   if (aMaj !== bMaj) return aMaj < bMaj;
   if (aMin !== bMin) return aMin < bMin;
   return aPatch < bPatch;
