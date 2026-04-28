@@ -22,6 +22,10 @@ Preconditions (owned by the operator):
 Options:
   --skip-rate-abuse          Skip vector 020 (fastest grading run)
   --rate-abuse-cap <N>       Override per-keyid cap the grader targets
+  --replay-probe-pairs <N>   Probe pairs for vector 016 (neg/016-replayed-nonce).
+                             Each pair uses a fresh nonce + new TCP connection,
+                             making multi-instance InMemoryReplayStore bugs
+                             deterministic. Must be ≥ 2. Default 10.
   --skip <id[,id...]>        Skip specific vector ids (e.g. 007-…,018-…)
   --covers-content-digest    Agent's covers_content_digest policy from
     <required|forbidden|either>                           get_adcp_capabilities.request_signing. Auto-skips
@@ -165,6 +169,13 @@ async function runRequestSigningGrader(args) {
         options.rateAbuseCap = Number.parseInt(args[++i], 10);
         if (!Number.isFinite(options.rateAbuseCap) || options.rateAbuseCap < 1) {
           console.error(`ERROR: --rate-abuse-cap requires a positive integer\n`);
+          process.exit(2);
+        }
+        break;
+      case '--replay-probe-pairs':
+        options.replayProbePairs = Number.parseInt(args[++i], 10);
+        if (!Number.isFinite(options.replayProbePairs) || options.replayProbePairs < 2) {
+          console.error(`ERROR: --replay-probe-pairs requires an integer >= 2\n`);
           process.exit(2);
         }
         break;
