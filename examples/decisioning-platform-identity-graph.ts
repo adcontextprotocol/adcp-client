@@ -1,26 +1,29 @@
 /**
- * LiveRampAudienceProvider — worked example for `audience-sync`.
+ * IdentityGraphProvider — worked example for `audience-sync`.
  *
- * Identity-graph providers like LiveRamp / Oracle Data Cloud / Salesforce
- * CDP have a long-tail activation pipeline: ingest → match → activate to
- * destinations. Match takes 5-30 minutes; activation per destination
- * takes hours. Buyers can't usefully wait synchronously, but they DO
- * want immediate confirmation that the audience was accepted and to know
- * when it's ready.
+ * Identity-graph providers (the category covers vendors like LiveRamp,
+ * Oracle Data Cloud, Salesforce CDP, Neustar) have a long-tail
+ * activation pipeline: ingest → match → activate to destinations. Match
+ * takes 5-30 minutes; activation per destination takes hours. Buyers
+ * can't usefully wait synchronously, but they DO want immediate
+ * confirmation that the audience was accepted and to know when it's
+ * ready.
  *
- * The v2.1 shape is:
+ * This sample is generic — no real provider's API or branding is
+ * implied; the latencies and stages are illustrative. The shape adapters
+ * use is:
  *
  *   - Sync `syncAudiences` returns per-audience rows with the *current*
- *     state (`pending` / `matching` is fine — the buyer's audience_id
- *     is now known and they can subscribe for updates).
+ *     wire status (`processing` is fine — the buyer's audience_id is
+ *     now known and they can subscribe for updates).
  *   - `publishStatusChange({ resource_type: 'audience', ... })` fires from
  *     the match-pipeline + activation-pipeline as each audience reaches
- *     `matched` → `activating` → `active`.
+ *     internal stages `matched` → `activating` → `active`.
  *
- * `AdcpError` for buyer-fixable rejection (`AUDIENCE_TOO_SMALL`,
+ * `AdcpError` for buyer-fixable rejection (`REFERENCE_NOT_FOUND`,
  * insufficient identifiers, etc.).
  *
- * @see `docs/proposals/decisioning-platform-v2-hitl-split.md`
+ * @see `skills/build-decisioning-platform/SKILL.md`
  */
 
 import {
@@ -41,7 +44,7 @@ import type { AccountReference } from '@adcp/client/types';
 // Config + state
 // ---------------------------------------------------------------------------
 
-export interface LiveRampConfig {
+export interface IdentityGraphConfig {
   /** Minimum identifier count before activation; audiences below this reject. */
   minIdentifiers: number;
   /** Identity-graph match latency (ms). */
@@ -52,8 +55,8 @@ export interface LiveRampConfig {
   defaultMatchRate: number;
 }
 
-interface LiveRampMeta {
-  ramp_id: string;
+interface IdentityGraphMeta {
+  graph_id: string;
   [key: string]: unknown;
 }
 
@@ -65,9 +68,9 @@ interface LiveRampMeta {
  * stage transitions. The wire-shaped `getAudienceStatus` collapses
  * back to the spec enum.
  */
-type LiveRampStage = 'matching' | 'matched' | 'activating' | 'active' | 'failed';
+type IdentityGraphStage = 'matching' | 'matched' | 'activating' | 'active' | 'failed';
 
-function toWireStatus(stage: LiveRampStage): AudienceStatus {
+function toWireStatus(stage: IdentityGraphStage): AudienceStatus {
   switch (stage) {
     case 'active':
       return 'ready';
@@ -80,7 +83,7 @@ function toWireStatus(stage: LiveRampStage): AudienceStatus {
 
 type AudienceState = {
   audience_id: string;
-  stage: LiveRampStage;
+  stage: IdentityGraphStage;
   matched_count?: number;
   match_rate?: number;
 };
@@ -89,7 +92,7 @@ type AudienceState = {
 // Implementation
 // ---------------------------------------------------------------------------
 
-export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampConfig, LiveRampMeta> {
+export class IdentityGraphProvider implements DecisioningPlatform<IdentityGraphConfig, IdentityGraphMeta> {
   private audienceState = new Map<string, AudienceState>();
 
   capabilities = {
@@ -102,26 +105,26 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
       matchLatencyMs: 60,
       activationLatencyMs: 80,
       defaultMatchRate: 0.42,
-    } satisfies LiveRampConfig,
+    } satisfies IdentityGraphConfig,
   };
 
   statusMappers = {};
 
-  accounts: AccountStore<LiveRampMeta> = {
+  accounts: AccountStore<IdentityGraphMeta> = {
     resolve: async (ref: AccountReference) => {
-      const id = 'account_id' in ref ? ref.account_id : 'liveramp_acc_1';
+      const id = 'account_id' in ref ? ref.account_id : 'idg_acc_1';
       return {
         id,
-        name: `LiveRamp — ${id}`,
+        name: `IdentityGraph — ${id}`,
         status: 'active',
-        operator: 'liveramp.example.com',
-        metadata: { ramp_id: 'XR-12345' },
+        operator: 'identity-graph.example.com',
+        metadata: { graph_id: 'IG-12345' },
         authInfo: { kind: 'api_key' },
       };
     },
   };
 
-  audiences: AudiencePlatform<LiveRampMeta> = {
+  audiences: AudiencePlatform<IdentityGraphMeta> = {
     /**
      * Sync acknowledgment: return current state for each audience. Match
      * pipeline + activation pipeline run in background and emit
@@ -133,7 +136,7 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
      */
     syncAudiences: async (audiences: Audience[]): Promise<SyncAudiencesRow[]> => {
       const results: SyncAudiencesRow[] = [];
-      const accountId = 'liveramp_acc_1';
+      const accountId = 'idg_acc_1';
 
       for (const aud of audiences) {
         const audienceId = (aud as { audience_id?: string }).audience_id ?? `aud_${Math.random()}`;

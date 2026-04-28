@@ -17,7 +17,7 @@
     "examples/seller-test-controller.ts",
     "examples/decisioning-platform-mock-seller.ts",
     "examples/decisioning-platform-broadcast-tv.ts",
-    "examples/decisioning-platform-liveramp.ts",
+    "examples/decisioning-platform-identity-graph.ts",
     "examples/decisioning-platform-multi-tenant.ts",
     "examples/decisioning-platform-programmatic.ts"
   ],

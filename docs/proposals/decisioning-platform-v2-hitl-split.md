@@ -726,7 +726,7 @@ Genuinely-residual cases (Flashtalking `library_id` if libraries scope across cr
 2. **Phase 2 (v6.0-alpha.3)**: Sample builds + adopter spike
    - BroadcastTvSeller (HITL — `*Task` variants)
    - ProgrammaticSeller (sync — non-`*Task` variants)
-   - LiveRampAudienceProvider (sync ack + `publishStatusChange`)
+   - IdentityGraphProvider (sync ack + `publishStatusChange`)
    - Multi-tenant deployment example (TenantRegistry with mixed shapes)
 
 3. **Phase 3 (v6.0-rc.1)**: Wire integration

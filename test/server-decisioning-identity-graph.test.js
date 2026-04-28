@@ -1,4 +1,4 @@
-// Integration test for the LiveRampAudienceProvider worked example.
+// Integration test for the IdentityGraphProvider worked example.
 // Exercises sync ack + multi-stage publishStatusChange (matching →
 // matched → activating → active) for the audience-sync specialism.
 
@@ -24,7 +24,7 @@ async function waitFor(predicate, { timeoutMs = 2000, intervalMs = 5 } = {}) {
   throw new Error(`waitFor: predicate not satisfied within ${timeoutMs}ms`);
 }
 
-function makeLiveRamp({
+function makeIdentityGraph({
   minIdentifiers = 5,
   matchLatencyMs = 25,
   activationLatencyMs = 25,
@@ -44,8 +44,8 @@ function makeLiveRamp({
     statusMappers: {},
     accounts: {
       resolve: async () => ({
-        id: 'liveramp_acc_1',
-        metadata: { ramp_id: 'XR-12345' },
+        id: 'idg_acc_1',
+        metadata: { graph_id: 'IG-12345' },
         authInfo: { kind: 'api_key' },
       }),
       upsert: async () => [],
@@ -54,7 +54,7 @@ function makeLiveRamp({
     audiences: {
       syncAudiences: async audiences => {
         const results = [];
-        const accountId = 'liveramp_acc_1';
+        const accountId = 'idg_acc_1';
 
         for (const aud of audiences) {
           const audienceId = aud.audience_id ?? `aud_${Math.random()}`;
@@ -137,15 +137,15 @@ function makeLiveRamp({
 
 function buildServer(platform) {
   return createAdcpServerFromPlatform(platform, {
-    name: 'LiveRamp',
+    name: 'IdentityGraph',
     version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },
   });
 }
 
-describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', () => {
+describe('IdentityGraphProvider — sync ack + multi-stage status changes', () => {
   it('syncAudiences returns matching status immediately; lifecycle channel emits matched/activating/active', async () => {
-    const platform = makeLiveRamp({ minIdentifiers: 3, matchLatencyMs: 20, activationLatencyMs: 20 });
+    const platform = makeIdentityGraph({ minIdentifiers: 3, matchLatencyMs: 20, activationLatencyMs: 20 });
     const bus = createInMemoryStatusChangeBus();
     const prevBus = setStatusChangeBus(bus);
     const received = [];
@@ -160,7 +160,7 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
           arguments: {
             audiences: [{ audience_id: 'aud_42', identifiers: ['e1', 'e2', 'e3', 'e4'] }],
             idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
-            account: { account_id: 'liveramp_acc_1' },
+            account: { account_id: 'idg_acc_1' },
           },
         },
       });
@@ -188,7 +188,7 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
   });
 
   it('audience below minIdentifiers rejects with reason in sync row (no status changes)', async () => {
-    const platform = makeLiveRamp({ minIdentifiers: 100 });
+    const platform = makeIdentityGraph({ minIdentifiers: 100 });
     const bus = createInMemoryStatusChangeBus();
     const prevBus = setStatusChangeBus(bus);
     const received = [];
@@ -203,7 +203,7 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
           arguments: {
             audiences: [{ audience_id: 'aud_small', identifiers: ['e1', 'e2'] }],
             idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
-            account: { account_id: 'liveramp_acc_1' },
+            account: { account_id: 'idg_acc_1' },
           },
         },
       });
@@ -223,7 +223,7 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
   });
 
   it('multiple audiences in one batch get independent lifecycle channels', async () => {
-    const platform = makeLiveRamp({ minIdentifiers: 3, matchLatencyMs: 15, activationLatencyMs: 15 });
+    const platform = makeIdentityGraph({ minIdentifiers: 3, matchLatencyMs: 15, activationLatencyMs: 15 });
     const bus = createInMemoryStatusChangeBus();
     const prevBus = setStatusChangeBus(bus);
     const received = [];
@@ -241,7 +241,7 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
               { audience_id: 'aud_b', identifiers: ['e5', 'e6', 'e7'] },
             ],
             idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
-            account: { account_id: 'liveramp_acc_1' },
+            account: { account_id: 'idg_acc_1' },
           },
         },
       });
