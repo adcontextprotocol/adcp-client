@@ -243,9 +243,14 @@ createAdcpServerFromPlatform(platform, {
 - `ctx.task.update({ progress })` projection to `tasks_get`'s `progress`
   field — interface ships in v6.0; framework wires the projection in
   v6.1 alongside `taskRegistry.transition()`.
-- Spec codegen for `Submitted` arms on `update_media_buy`, `get_products`,
-  `build_creative` — currently deferred until codegen models the response
-  union.
+- `*Task` methods for `update_media_buy`, `get_products`, `build_creative`,
+  `sync_catalogs` — blocked on a spec inconsistency tracked as
+  [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392)
+  (per-tool response schemas don't include the `Submitted` arm even
+  though the corresponding `xxx-async-response-submitted.json` schemas
+  exist). When the spec consolidation lands, codegen produces unions
+  including `Submitted` and the SDK ships `*Task` methods. Until then,
+  long-form flows on those tools surface via `publishStatusChange`.
 
 ## Need help?
 

@@ -114,15 +114,20 @@ export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // ── get_products: sync only (today) ─────────────────────────────────
   // Spec defines a Submitted arm in `async-response-data.json`
-  // (`GetProductsAsyncSubmitted`), but the SDK's generated
-  // `GetProductsResponse` type is currently the success-body shape only —
-  // codegen reads `get-products-response.json` (success body) without
-  // walking the `async-response-data.json` union. Until codegen models
-  // the full response union, the SDK can't route HITL get_products
-  // dispatch with type safety. Long-form discovery flows (proposal-mode
-  // sales agents, broadcast TV) surface the eventual proposal via per-
-  // account notification channels (`publishStatusChange` on
-  // `resource_type: 'proposal'`) rather than HITL on this tool.
+  // (`GetProductsAsyncSubmitted`), but the per-tool
+  // `get-products-response.json` doesn't include Submitted in its
+  // `oneOf` — so codegen produces a `Success`-only shape, and the SDK
+  // can't route HITL get_products dispatch with type safety until the
+  // spec inconsistency is resolved.
+  //
+  // This is a SPEC issue, not a codegen bug — codegen faithfully
+  // reflects the per-tool wire schema. Filed upstream as
+  // adcontextprotocol/adcp#3392.
+  //
+  // Long-form discovery flows (proposal-mode sales agents, broadcast
+  // TV) surface the eventual proposal via per-account notification
+  // channels (`publishStatusChange` on `resource_type: 'proposal'`)
+  // rather than HITL on this tool.
   /** Sync discovery: brief in, products out. */
   getProducts(req: GetProductsRequest, ctx: Ctx<TMeta>): Promise<GetProductsResponse>;
 
@@ -152,13 +157,14 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   createMediaBuyTask?(req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
 
   // ── update_media_buy: sync only (today) ─────────────────────────────
-  // Spec defines a Submitted arm in `async-response-data.json`
-  // (`UpdateMediaBuyAsyncSubmitted`), but the SDK's generated
-  // `UpdateMediaBuyResponse` type is currently the success-body shape
-  // only — same codegen gap as get_products. Until codegen models the
-  // full response union, operator re-approval flows surface eventual
-  // transitions via `publishStatusChange` on `resource_type: 'media_buy'`
-  // rather than HITL on this tool.
+  // Spec inconsistency — same root cause as get_products above. The
+  // `UpdateMediaBuyAsyncSubmitted` schema exists, but the per-tool
+  // `update-media-buy-response.json` `oneOf` doesn't reference it, so
+  // codegen produces `Success | Error` (no Submitted). Tracked as
+  // adcontextprotocol/adcp#3392. Until that lands, operator
+  // re-approval flows surface eventual transitions via
+  // `publishStatusChange` on `resource_type: 'media_buy'` rather than
+  // HITL on this tool.
   /** Sync update. Returns the patched buy. */
   updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<UpdateMediaBuySuccess>;
 

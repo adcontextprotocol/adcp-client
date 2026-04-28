@@ -63,13 +63,30 @@ export class PlatformConfigError extends Error {
  * `create_media_buy` (CreateMediaBuyResponse = Success | Error | Submitted)
  * and `sync_creatives` (SyncCreativesResponse = same shape).
  *
- * Spec also defines Submitted arms in `core/async-response-data.json` for
- * `update_media_buy`, `get_products`, and `build_creative`, but the SDK
- * codegen reads the success-body schema only and emits a single interface
- * for those types. Until codegen models the full response union, the SDK
- * can't route HITL on those tools with type safety. Long-form flows
- * surface via `publishStatusChange` on the appropriate resource type
- * (proposal / media_buy / creative).
+ * **Why only 2 of 6.** The spec ships Submitted arms in
+ * `core/async-response-data.json` for SIX tools (`create_media_buy`,
+ * `sync_creatives`, `update_media_buy`, `build_creative`, `sync_catalogs`,
+ * `get_products`) — but only `create_media_buy` and `sync_creatives` roll
+ * the Submitted arm into their per-tool `xxx-response.json` `oneOf`. The
+ * other 4 have inconsistent response schemas: their per-tool wire
+ * response is `Success | Error` (no Submitted), even though the
+ * `xxx-async-response-submitted.json` schema files exist and are
+ * referenced from `core/async-response-data.json`.
+ *
+ * This is a SPEC inconsistency, not a codegen bug. SDK codegen reads
+ * each tool's `xxx-response.json` `oneOf` and produces a faithful TS
+ * union — for the 2 tools where Submitted is in the `oneOf`, the union
+ * includes it; for the 4 where it isn't, the union is narrower. Adding
+ * dual-method support in the SDK without the spec fix would mean the
+ * SDK accepts a Submitted envelope that wire-validating receivers
+ * (which check against the per-tool response schema) would reject.
+ *
+ * Filed upstream as adcontextprotocol/adcp#3392 — proposes adding the
+ * Submitted arm to the per-tool `oneOf` for the 4 missing tools.
+ * When it lands, SDK ships `*Task` methods for `update_media_buy`,
+ * `build_creative`, `sync_catalogs`, `get_products`. Until then,
+ * long-form flows on those tools surface via `publishStatusChange` on
+ * the appropriate resource type (`proposal` / `media_buy` / `creative`).
  */
 const DUAL_METHOD_PAIRS: Record<string, ReadonlyArray<readonly [string, string]>> = {
   sales: [

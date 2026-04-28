@@ -216,7 +216,7 @@ sales: SalesPlatform<MyMeta> = {
 
 **Always declare HITL when the surface is HITL-eligible.** Don't conditionally pick between sync and task variants based on the request — `validatePlatform()` rejects defining both anyway. If the fast path is the 99% case (pre-approved buyers, low-risk amounts), the `*Task` method resolves immediately and the buyer's first poll catches the terminal state. Uniform contract for the buyer; one code path for you. See § "HITL-sometimes" below.
 
-**Sync-only tools that need long-running completion** use `publishStatusChange(...)` for lifecycle updates instead of HITL. The wire spec doesn't define `Submitted` arms for `update_media_buy`, `get_media_buy_delivery`, `build_creative` — long-running work for those publishes status changes (`media_buy` → `active` → `completed`) on the event bus and buyers subscribe.
+**Sync-only tools that need long-running completion** use `publishStatusChange(...)` for lifecycle updates instead of HITL. The per-tool wire response schemas don't include `Submitted` arms for `update_media_buy`, `build_creative`, `sync_catalogs`, or `get_products` (a spec inconsistency tracked as [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392) — the Submitted schemas exist but aren't rolled into each tool's response `oneOf`). Until the spec consolidates, long-running work on those tools publishes status changes (`media_buy` → `active` → `completed`) on the event bus and buyers subscribe. When adcp#3392 lands, the SDK will ship `*Task` methods for those tools.
 
 ## Per-creative review (partial-batch)
 

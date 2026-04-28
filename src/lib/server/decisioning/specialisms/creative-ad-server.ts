@@ -57,10 +57,11 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    *     generate the tag, etc.).
    *
    * Spec defines a Submitted arm via `async-response-data.json` but the
-   * SDK's generated `BuildCreativeResponse` is currently the success-body
-   * shape only — codegen gap. Until that closes, slow tag-generation
-   * pipelines await in-request; status changes flow via
-   * `publishStatusChange`.
+   * per-tool `build-creative-response.json` `oneOf` doesn't include it,
+   * so codegen produces a `BuildCreativeResponse` without Submitted —
+   * a SPEC inconsistency, tracked as adcontextprotocol/adcp#3392. Until
+   * that lands, slow tag-generation pipelines await in-request; status
+   * changes flow via `publishStatusChange`.
    */
   buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 

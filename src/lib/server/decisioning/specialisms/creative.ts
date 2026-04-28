@@ -41,11 +41,12 @@ export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
   /**
    * Build the creative. Stateless transform. Spec defines a Submitted arm
    * via `async-response-data.json` (`BuildCreativeAsyncSubmitted`) but the
-   * SDK's generated `BuildCreativeResponse` is currently the success-body
-   * shape only — codegen gap matches `get_products` / `update_media_buy`.
-   * Until codegen models the full response union, slow operations (TTS,
-   * audio mixing) await in-request; long-running generation surfaces via
-   * `publishStatusChange` on `resource_type: 'creative'`.
+   * per-tool `build-creative-response.json` `oneOf` doesn't include it —
+   * a SPEC inconsistency tracked as adcontextprotocol/adcp#3392 (same
+   * issue as `get_products`, `update_media_buy`, `sync_catalogs`). Until
+   * the spec rolls Submitted into the `oneOf`, slow operations (TTS,
+   * audio mixing) await in-request; long-running generation surfaces
+   * via `publishStatusChange` on `resource_type: 'creative'`.
    */
   buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
@@ -67,9 +68,10 @@ export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
 
 /**
  * Brief-to-creative agent. Generative pipelines often want HITL semantics
- * (generation takes seconds-to-minutes) but the spec's `BuildCreativeResponse`
- * union doesn't define a `Submitted` arm — generation runs sync today.
- * Refinement is sync (mutation on existing task state).
+ * (generation takes seconds-to-minutes) but the per-tool
+ * `build-creative-response.json` `oneOf` doesn't include the Submitted
+ * arm (spec inconsistency — adcontextprotocol/adcp#3392), so generation
+ * runs sync today. Refinement is sync (mutation on existing task state).
  */
 export interface CreativeGenerativePlatform<TMeta = Record<string, unknown>> {
   /**
