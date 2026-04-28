@@ -12,6 +12,14 @@
       "@adcp/client/*": ["./dist/lib/*"]
     }
   },
-  "include": ["examples/comply-controller-seller.ts", "examples/seller-test-controller.ts"],
+  "include": [
+    "examples/comply-controller-seller.ts",
+    "examples/seller-test-controller.ts",
+    "examples/decisioning-platform-mock-seller.ts",
+    "examples/decisioning-platform-broadcast-tv.ts",
+    "examples/decisioning-platform-liveramp.ts",
+    "examples/decisioning-platform-multi-tenant.ts",
+    "examples/decisioning-platform-programmatic.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

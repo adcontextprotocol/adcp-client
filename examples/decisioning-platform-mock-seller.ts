@@ -74,6 +74,7 @@ export interface MockSellerConfig {
 interface MockSellerMeta {
   network_id: string;
   advertiser_id: string;
+  [key: string]: unknown;
 }
 
 type MockMediaBuy = CreateMediaBuySuccess;
@@ -155,7 +156,7 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
       pricing_options: [{
         pricing_option_id: 'cpm_12_50',
         pricing_model: 'cpm',
-        rate: 12.5,
+        fixed_price: 12.5,
         currency: 'USD',
       }],
       reporting_capabilities: {
@@ -217,7 +218,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
   capabilities = {
     specialisms: ['sales-non-guaranteed'] as const,
     creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
-    channels: ['display', 'video'] as const,
+    channels: ['display', 'olv'] as const,
     pricingModels: ['cpm'] as const,
     config: { ...DEFAULT_CONFIG } satisfies MockSellerConfig,
   };
@@ -225,7 +226,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
   statusMappers = {};
   accounts = makeAccounts();
 
-  sales: SalesPlatform = {
+  sales: SalesPlatform<MockSellerMeta> = {
     getProducts: SHARED_GET_PRODUCTS,
 
     /**

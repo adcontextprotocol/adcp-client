@@ -54,11 +54,33 @@ export interface LiveRampConfig {
 
 interface LiveRampMeta {
   ramp_id: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Internal lifecycle stages — richer than the wire `AudienceStatus` enum
+ * (`'processing' | 'ready' | 'too_small'`). The internal stages flow
+ * through `publishStatusChange.payload` (freeform JSON) so buyers
+ * subscribed to the bus see `matched_count`, `match_rate`, and the
+ * stage transitions. The wire-shaped `getAudienceStatus` collapses
+ * back to the spec enum.
+ */
+type LiveRampStage = 'matching' | 'matched' | 'activating' | 'active' | 'failed';
+
+function toWireStatus(stage: LiveRampStage): AudienceStatus {
+  switch (stage) {
+    case 'active':
+      return 'ready';
+    case 'failed':
+      return 'too_small';
+    default:
+      return 'processing';
+  }
 }
 
 type AudienceState = {
   audience_id: string;
-  status: AudienceStatus;
+  stage: LiveRampStage;
   matched_count?: number;
   match_rate?: number;
 };
@@ -99,11 +121,15 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
     },
   };
 
-  audiences_platform: AudiencePlatform = {
+  audiences: AudiencePlatform<LiveRampMeta> = {
     /**
      * Sync acknowledgment: return current state for each audience. Match
      * pipeline + activation pipeline run in background and emit
-     * publishStatusChange events as each audience progresses.
+     * publishStatusChange events as each audience progresses through the
+     * richer internal stages (`matching` → `matched` → `activating` →
+     * `active`). Buyers subscribed to the status-change bus see the full
+     * lifecycle; buyers polling `getAudienceStatus` see the wire-flat
+     * `processing | ready | too_small`.
      */
     syncAudiences: async (audiences: Audience[]): Promise<SyncAudiencesRow[]> => {
       const results: SyncAudiencesRow[] = [];
@@ -114,16 +140,17 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
         const identifiers = ((aud as { identifiers?: unknown[] }).identifiers ?? []) as unknown[];
 
         if (identifiers.length < this.capabilities.config.minIdentifiers) {
+          this.audienceState.set(audienceId, { audience_id: audienceId, stage: 'failed' });
           results.push({
             audience_id: audienceId,
             action: 'failed',
-            status: 'failed',
+            status: 'too_small',
           });
           continue;
         }
 
         const isUpdate = this.audienceState.has(audienceId);
-        const initial: AudienceState = { audience_id: audienceId, status: 'matching' };
+        const initial: AudienceState = { audience_id: audienceId, stage: 'matching' };
         this.audienceState.set(audienceId, initial);
 
         // Schedule match → matched
@@ -131,7 +158,7 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
           const matched = Math.floor(identifiers.length * this.capabilities.config.defaultMatchRate);
           const next: AudienceState = {
             audience_id: audienceId,
-            status: 'matched',
+            stage: 'matched',
             matched_count: matched,
             match_rate: this.capabilities.config.defaultMatchRate,
           };
@@ -141,7 +168,8 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
             resource_type: 'audience',
             resource_id: audienceId,
             payload: {
-              status: 'matched',
+              stage: 'matched',
+              status: 'processing',
               matched_count: matched,
               match_rate: this.capabilities.config.defaultMatchRate,
             },
@@ -149,21 +177,21 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
 
           // Schedule matched → activating → active
           setTimeout(() => {
-            this.audienceState.set(audienceId, { ...next, status: 'activating' });
+            this.audienceState.set(audienceId, { ...next, stage: 'activating' });
             publishStatusChange({
               account_id: accountId,
               resource_type: 'audience',
               resource_id: audienceId,
-              payload: { status: 'activating' },
+              payload: { stage: 'activating', status: 'processing' },
             });
 
             setTimeout(() => {
-              this.audienceState.set(audienceId, { ...next, status: 'active' });
+              this.audienceState.set(audienceId, { ...next, stage: 'active' });
               publishStatusChange({
                 account_id: accountId,
                 resource_type: 'audience',
                 resource_id: audienceId,
-                payload: { status: 'active' },
+                payload: { stage: 'active', status: 'ready' },
               });
             }, this.capabilities.config.activationLatencyMs).unref?.();
           }, 10).unref?.();
@@ -172,9 +200,9 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
         results.push({
           audience_id: audienceId,
           action: isUpdate ? 'updated' : 'created',
-          status: 'matching',
+          status: 'processing',
           matched_count: 0,
-          match_rate: 0,
+          effective_match_rate: 0,
         });
       }
 
@@ -190,13 +218,7 @@ export class LiveRampAudienceProvider implements DecisioningPlatform<LiveRampCon
           field: 'audience_id',
         });
       }
-      return state.status;
+      return toWireStatus(state.stage);
     },
   };
-
-  // The DecisioningPlatform interface uses the field name `audiences` for
-  // the AudiencePlatform — alias the implementation onto that field.
-  get audiences(): AudiencePlatform {
-    return this.audiences_platform;
-  }
 }

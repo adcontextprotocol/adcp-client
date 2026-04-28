@@ -3,28 +3,27 @@
  *
  * Broadcast linear TV is the canonical HITL case: a media buy isn't real
  * until the trafficker confirms inventory holds and the plan clears
- * standards & practices. Buyers don't get an `media_buy_id` until the
- * trafficker accepts; the v2.1 dual-method shape projects this directly:
+ * standards & practices. Buyers don't get a `media_buy_id` until the
+ * trafficker accepts; the unified hybrid shape projects this directly:
  *
- *   - `getProductsTask` — proposal-style discovery (sales rep packages
- *     inventory in response to brief; happens off-line in 1-3 business
- *     days).
- *   - `createMediaBuyTask` — trafficker review + IO sign-off; ranges from
- *     hours to days.
- *   - `syncCreativesTask` — mandatory standards-and-practices review on
- *     every spot; can take 24-48 hours.
+ *   - `getProducts` — sync catalog read of the affiliate's standing
+ *     inventory packages (no trafficker review for catalog reads). Brief-
+ *     based proposal generation is a separate verb (`request_proposal`,
+ *     adcp#3407) and rides on a status-change channel, not on
+ *     `get_products`.
+ *   - `createMediaBuy(req, ctx)` — returns `ctx.handoffToTask(fn)` for
+ *     trafficker review + IO sign-off (hours to days). The handoff fn
+ *     does the actual work and returns the wire `Success` arm when the
+ *     trafficker accepts; `throw AdcpError` becomes the terminal error.
+ *   - `syncCreatives(creatives, ctx)` — returns `ctx.handoffToTask(fn)`
+ *     for the standards-and-practices review (24-48 hour SLA in
+ *     production; demo uses `standardsReviewMs`).
  *
- * The framework allocates `taskId` BEFORE invoking each `*Task` method,
- * returns the submitted envelope to the buyer, and runs the method in
- * background. Method's return value becomes terminal `result`; thrown
- * `AdcpError` becomes terminal `error`.
- *
- * Lifecycle changes after acceptance (plan goes from `accepted` →
+ * Lifecycle changes after acceptance (plan goes from `pending_start` →
  * `active` → `completed` over the campaign window) flow via
- * `publishStatusChange` — the seller's traffic system has the truth and
- * the framework projects it to subscribed buyers.
+ * `publishStatusChange`.
  *
- * @see `docs/proposals/decisioning-platform-v2-hitl-split.md`
+ * @see `skills/build-decisioning-platform/SKILL.md`
  */
 
 import {
@@ -66,10 +65,9 @@ export interface BroadcastTvConfig {
 interface BroadcastTvMeta {
   agency_buyer_id: string;
   affiliate_advertiser_id: string;
+  [key: string]: unknown;
 }
 
-// Local stash type — what we keep in our internal Map. The values returned
-// from the createMediaBuy method are typed as wire `CreateMediaBuySuccess`.
 type BroadcastBuy = CreateMediaBuySuccess & { daypart?: string };
 
 // ---------------------------------------------------------------------------
@@ -82,7 +80,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
   capabilities = {
     specialisms: ['sales-broadcast-tv'] as const,
     creative_agents: [{ agent_url: 'https://example.com/broadcast-creative-agent/mcp' }],
-    channels: ['video'] as const,
+    channels: ['linear_tv'] as const,
     pricingModels: ['cpm'] as const,
     config: {
       affiliateId: 'WCBS',
@@ -108,22 +106,17 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Sales — every spec-HITL tool uses the *Task variant
-  // ---------------------------------------------------------------------------
-
-  sales: SalesPlatform = {
+  sales: SalesPlatform<BroadcastTvMeta> = {
     /**
-     * HITL discovery: sales rep reads the brief, packages inventory off-line,
-     * returns when the proposal is ready. Buyer initially sees submitted
-     * envelope with task_id; resource lands on completion.
+     * Sync catalog read. Returns the affiliate's standing packages —
+     * primetime daypart, sports tentpoles, etc. Brief-based proposal
+     * generation is a separate verb the spec is consolidating
+     * (adcp#3407 `request_proposal`); proposal-mode adopters surface
+     * the eventual products via `publishStatusChange` on
+     * `resource_type: 'proposal'`.
      */
-    getProductsTask: async (_taskId: string, req: GetProductsRequest) => {
-      // Simulate the rep's packaging window
-      await new Promise(r => setTimeout(r, 50));
-
+    getProducts: async (req: GetProductsRequest): Promise<GetProductsResponse> => {
       const promotedOffering = (req as { promoted_offering?: string }).promoted_offering ?? '';
-      // Reject categories the affiliate doesn't carry (Pattern: AdcpError throw)
       if (/political|cannabis|gambling/i.test(promotedOffering)) {
         throw new AdcpError('POLICY_VIOLATION', {
           recovery: 'terminal',
@@ -141,22 +134,39 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
             description: 'Local broadcast primetime, :30 spots',
             format_ids: [{ id: 'video_30s', agent_url: 'https://example.com/broadcast-creative-agent/mcp' }],
             delivery_type: 'guaranteed',
-            publisher_properties: { reportable: true },
-            reporting_capabilities: { available_dimensions: ['daypart', 'creative'] },
-            pricing_options: [{ pricing_model: 'cpm', rate: 42.0, currency: 'USD' }],
+            publisher_properties: [{ publisher_domain: 'broadcast.example.com', selection_type: 'all' }],
+            reporting_capabilities: {
+              available_reporting_frequencies: ['daily'],
+              expected_delay_minutes: 240,
+              timezone: 'UTC',
+              supports_webhooks: false,
+              available_metrics: [],
+              date_range_support: 'date_range',
+            },
+            pricing_options: [{
+              pricing_option_id: 'cpm_42_00',
+              pricing_model: 'cpm',
+              fixed_price: 42.0,
+              currency: 'USD',
+              min_spend_per_package: 5_000,
+            }],
           },
         ],
-      } satisfies GetProductsResponse;
+      };
     },
 
     /**
-     * HITL media-buy creation: trafficker review + IO sign-off. Buyer sees
-     * submitted envelope; final media_buy_id only exists once the trafficker
-     * accepts. Subsequent lifecycle (active → completed) flows via
-     * publishStatusChange.
+     * Hybrid HITL: trafficker review + IO sign-off. Buyer sees `submitted`
+     * envelope with `task_id` immediately; the framework runs the handoff
+     * fn in background. Trafficker accepts → handoff returns the wire
+     * `Success` arm with `media_buy_id`; trafficker rejects → handoff
+     * throws `AdcpError`, framework surfaces terminal error.
+     *
+     * Pre-flight runs sync (rejects bad budgets before allocating a task
+     * id). Lifecycle after acceptance flows via `publishStatusChange`.
      */
-    createMediaBuyTask: async (_taskId: string, req: CreateMediaBuyRequest) => {
-      // Pre-flight (Pattern: multi-error AdcpError throw)
+    createMediaBuy: (req, ctx) => {
+      // Pre-flight runs sync regardless of path
       const errors = this.preflight(req);
       if (errors.length > 0) {
         throw new AdcpError('INVALID_REQUEST', {
@@ -167,40 +177,38 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
         });
       }
 
-      // Trafficker review window
-      await new Promise(r => setTimeout(r, this.capabilities.config.trafficReviewMs));
+      return Promise.resolve(ctx.handoffToTask(async (taskCtx) => {
+        void taskCtx; // taskCtx.id available if you need to log it
+        // Trafficker review window
+        await new Promise(r => setTimeout(r, this.capabilities.config.trafficReviewMs));
 
-      const buyId = `mb_${this.capabilities.config.affiliateId}_${Date.now()}`;
-      const totalBudget =
-        typeof req.total_budget === 'number'
-          ? req.total_budget
-          : ((req.total_budget as { amount?: number })?.amount ?? 0);
-      const buy: BroadcastBuy = {
-        media_buy_id: buyId,
-        status: 'pending_start',
-        confirmed_at: new Date().toISOString(),
-        revision: 1,
-        daypart: 'primetime',
-      };
-      this.mediaBuys.set(buyId, buy);
-      void totalBudget;
+        const buyId = `mb_${this.capabilities.config.affiliateId}_${Date.now()}`;
+        const buy: BroadcastBuy = {
+          media_buy_id: buyId,
+          status: 'pending_start',
+          confirmed_at: new Date().toISOString(),
+          revision: 1,
+          daypart: 'primetime',
+          packages: [],
+        };
+        this.mediaBuys.set(buyId, buy);
 
-      // After acceptance, the broadcast traffic system controls the campaign
-      // window. The SDK demo schedules a status-change at activationOffsetMs
-      // to demonstrate the post-acceptance lifecycle channel.
-      const account = (req as { account?: { account_id?: string } }).account;
-      const accountId = account?.account_id ?? 'broadcast_acc_1';
-      setTimeout(() => {
-        buy.status = 'active';
-        publishStatusChange({
-          account_id: accountId,
-          resource_type: 'media_buy',
-          resource_id: buyId,
-          payload: { status: 'active', activated_at: new Date().toISOString() },
-        });
-      }, this.capabilities.config.activationOffsetMs).unref?.();
+        // After acceptance, the broadcast traffic system controls the
+        // campaign window. Schedule the post-acceptance status-change.
+        const account = (req as { account?: { account_id?: string } }).account;
+        const accountId = account?.account_id ?? 'broadcast_acc_1';
+        setTimeout(() => {
+          buy.status = 'active';
+          publishStatusChange({
+            account_id: accountId,
+            resource_type: 'media_buy',
+            resource_id: buyId,
+            payload: { status: 'active', activated_at: new Date().toISOString() },
+          });
+        }, this.capabilities.config.activationOffsetMs).unref?.();
 
-      return buy;
+        return buy;
+      }));
     },
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
@@ -212,38 +220,43 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
           field: 'media_buy_id',
         });
       }
-      // Broadcast: pause = preempt the schedule; can resume only with re-IO.
-      if (patch.active === false) existing.status = 'rejected';
+      // Broadcast: pause = preempt the schedule; canceled is irreversible
+      // (cannot reactivate without a fresh IO).
+      if (patch.paused === true) existing.status = 'paused';
+      if (patch.paused === false && existing.status === 'paused') existing.status = 'active';
       return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
     },
 
     /**
-     * HITL S&P review: every spot goes through standards-and-practices
-     * before it can air. 24-48 hour SLA in production; demo uses
-     * standardsReviewMs.
+     * Hybrid HITL S&P review: every spot goes through standards-and-
+     * practices before it can air. 24-48 hour SLA in production. Returns
+     * `ctx.handoffToTask(fn)` so the buyer sees the submitted envelope
+     * immediately and the review runs in background.
      */
-    syncCreativesTask: async (_taskId: string, creatives: CreativeAsset[]): Promise<SyncCreativesRow[]> => {
-      await new Promise(r => setTimeout(r, this.capabilities.config.standardsReviewMs));
-      // Mock policy: anything tagged "political" rejects; rest approve.
-      return creatives.map(c => {
-        const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
-        const tags = ((c as { tags?: string[] }).tags ?? []).map(t => t.toLowerCase());
-        if (tags.includes('political')) {
-          return {
-            creative_id: id,
-            action: 'failed',
-            status: 'rejected',
-            errors: [
-              {
-                code: 'CREATIVE_REJECTED',
-                message: 'Political ads require FCC disclosure file + station GM sign-off',
-              },
-            ],
-          };
-        }
-        return { creative_id: id, action: 'created', status: 'approved' };
-      });
-    },
+    syncCreatives: (creatives, ctx) =>
+      Promise.resolve(ctx.handoffToTask(async (taskCtx) => {
+        void taskCtx;
+        await new Promise(r => setTimeout(r, this.capabilities.config.standardsReviewMs));
+        // Mock policy: anything tagged "political" rejects; rest approve.
+        return creatives.map(c => {
+          const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
+          const tags = ((c as { tags?: string[] }).tags ?? []).map(t => t.toLowerCase());
+          if (tags.includes('political')) {
+            return {
+              creative_id: id,
+              action: 'failed',
+              status: 'rejected',
+              errors: [
+                {
+                  code: 'CREATIVE_REJECTED',
+                  message: 'Political ads require FCC disclosure file + station GM sign-off',
+                },
+              ],
+            } satisfies SyncCreativesRow;
+          }
+          return { creative_id: id, action: 'created', status: 'approved' } satisfies SyncCreativesRow;
+        });
+      })),
 
     getMediaBuyDelivery: async (filter: GetMediaBuyDeliveryRequest): Promise<GetMediaBuyDeliveryResponse> => {
       return {
@@ -252,7 +265,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
           start: filter.start_date ?? '2026-04-01',
           end: filter.end_date ?? '2026-04-30',
         },
-        media_buys: [],
+        media_buy_deliveries: [],
       };
     },
   };
@@ -263,7 +276,6 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       typeof req.total_budget === 'number'
         ? req.total_budget
         : ((req.total_budget as { amount?: number })?.amount ?? 0);
-    // Broadcast minimum: $5k (low for a demo; real station floors are higher)
     if (totalBudget < 5_000) {
       errors.push({
         code: 'BUDGET_TOO_LOW',

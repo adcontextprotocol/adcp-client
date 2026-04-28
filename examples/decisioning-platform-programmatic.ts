@@ -57,6 +57,7 @@ export interface ProgrammaticConfig {
 interface ProgrammaticMeta {
   network_id: string;
   advertiser_id: string;
+  [key: string]: unknown;
 }
 
 type ProgrammaticBuy = CreateMediaBuySuccess;
@@ -67,7 +68,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
   capabilities = {
     specialisms: ['sales-non-guaranteed'] as const,
     creative_agents: [{ agent_url: 'https://example.com/programmatic-creative-agent/mcp' }],
-    channels: ['display', 'video', 'native'] as const,
+    channels: ['display', 'olv'] as const,
     pricingModels: ['cpm'] as const,
     config: {
       networkId: 'NET_42',
@@ -92,7 +93,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
     },
   };
 
-  sales: SalesPlatform = {
+  sales: SalesPlatform<ProgrammaticMeta> = {
     /** Sync discovery: catalog read; no async ceremony. */
     getProducts: async (_req: GetProductsRequest): Promise<GetProductsResponse> => ({
       products: [
@@ -102,9 +103,21 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
           description: 'Run-of-network display, 300x250 + 728x90',
           format_ids: [{ id: 'display_300x250', agent_url: 'https://example.com/programmatic-creative-agent/mcp' }],
           delivery_type: 'non_guaranteed',
-          publisher_properties: { reportable: true },
-          reporting_capabilities: { available_dimensions: ['geo', 'creative', 'site'] },
-          pricing_options: [{ pricing_model: 'cpm', rate: 2.5, currency: 'USD' }],
+          publisher_properties: [{ publisher_domain: 'programmatic.example.com', selection_type: 'all' }],
+          reporting_capabilities: {
+            available_reporting_frequencies: ['daily'],
+            expected_delay_minutes: 60,
+            timezone: 'UTC',
+            supports_webhooks: false,
+            available_metrics: [],
+            date_range_support: 'date_range',
+          },
+          pricing_options: [{
+            pricing_option_id: 'cpm_2_50',
+            pricing_model: 'cpm',
+            fixed_price: 2.5,
+            currency: 'USD',
+          }],
         },
         {
           product_id: 'prod_premium_video_15s',
@@ -112,9 +125,21 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
           description: 'In-stream video on premium publishers',
           format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/programmatic-creative-agent/mcp' }],
           delivery_type: 'non_guaranteed',
-          publisher_properties: { reportable: true },
-          reporting_capabilities: { available_dimensions: ['geo', 'creative', 'site'] },
-          pricing_options: [{ pricing_model: 'cpm', rate: 18.0, currency: 'USD' }],
+          publisher_properties: [{ publisher_domain: 'programmatic.example.com', selection_type: 'all' }],
+          reporting_capabilities: {
+            available_reporting_frequencies: ['daily'],
+            expected_delay_minutes: 60,
+            timezone: 'UTC',
+            supports_webhooks: false,
+            available_metrics: [],
+            date_range_support: 'date_range',
+          },
+          pricing_options: [{
+            pricing_option_id: 'cpm_18_00',
+            pricing_model: 'cpm',
+            fixed_price: 18.0,
+            currency: 'USD',
+          }],
         },
       ],
     }),
@@ -143,6 +168,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
         status: 'pending_creatives',
         confirmed_at: new Date().toISOString(),
         revision: 1,
+        packages: [],
       };
       this.mediaBuys.set(buyId, buy);
       void totalBudget;
@@ -174,8 +200,8 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
           field: 'media_buy_id',
         });
       }
-      if (patch.active === false) existing.status = 'paused';
-      if (patch.active === true && existing.status === 'paused') existing.status = 'active';
+      if (patch.paused === true) existing.status = 'paused';
+      if (patch.paused === false && existing.status === 'paused') existing.status = 'active';
       return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
     },
 
@@ -214,7 +240,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
         start: filter.start_date ?? '2026-04-01',
         end: filter.end_date ?? '2026-04-30',
       },
-      media_buys: [],
+      media_buy_deliveries: [],
     }),
   };
 }

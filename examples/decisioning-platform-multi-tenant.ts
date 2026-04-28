@@ -13,13 +13,33 @@
  * @see `docs/proposals/decisioning-platform-v2-hitl-split.md`
  */
 
-import { createTenantRegistry, type TenantRegistry, type TenantSigningKey } from '@adcp/client/server/decisioning';
+import {
+  createTenantRegistry,
+  type TenantRegistry,
+  type TenantSigningKey,
+  type DecisioningAdcpServer,
+} from '@adcp/client/server/decisioning';
 import { BroadcastTvSeller } from './decisioning-platform-broadcast-tv';
 import { ProgrammaticSeller } from './decisioning-platform-programmatic';
 
-// In a real deployment these come from a key-management system (HashiCorp
-// Vault, AWS KMS, GCP Secret Manager). The sample uses dummy fixtures so
-// the example file typechecks; the JWKS validator is mocked for tests.
+// ---------------------------------------------------------------------------
+// 🔴 PRODUCTION: REPLACE WITH KMS-BACKED LOADER
+// ---------------------------------------------------------------------------
+//
+// The fixtures below are DUMMY values — the `n` modulus is a placeholder
+// string, not a valid RSA modulus. They exist so the example file
+// typechecks and the test harness can mock the JWKS validator.
+//
+// In a real multi-tenant deployment these MUST come from a key-management
+// system (HashiCorp Vault, AWS KMS, GCP Secret Manager) — never commit
+// real signing material to source. The TenantRegistry's `pending` health
+// state will refuse to serve a tenant whose JWKS validation fails, but
+// shipping placeholder keys to a non-test environment is still a
+// production incident waiting to happen.
+//
+// See `skills/build-decisioning-platform/SKILL.md` § "Multi-tenant
+// hosting (TenantRegistry)" for the production wiring pattern.
+// ---------------------------------------------------------------------------
 const TENANT_KEYS: Record<string, TenantSigningKey> = {
   acme_tv: {
     keyId: 'acme_tv-2026-04',
@@ -99,9 +119,7 @@ export function buildMultiTenantRegistry(): TenantRegistry {
  */
 export function makeMultiTenantFactory(
   registry: TenantRegistry
-): (ctx: {
-  host: string;
-}) => ReturnType<NonNullable<ReturnType<typeof buildMultiTenantRegistry>['resolveByHost']>>['server'] {
+): (ctx: { host: string }) => DecisioningAdcpServer {
   return ctx => {
     const resolved = registry.resolveByHost(ctx.host);
     if (!resolved) {
