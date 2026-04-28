@@ -274,6 +274,8 @@ The escape hatch — `ctx.runAsync` + `ctx.startTask` — exists for the genuine
 
 `AdcpError`'s `code` field is `ErrorCode | (string & {})`. The 45 standard codes mirror `schemas/cache/3.0.0/enums/error-code.json`. Autocomplete works on the standard set; platform-specific codes are accepted (the `(string & {})` escape hatch).
 
+**Misspellings warn at runtime.** `'BUDGET_TO_LOW'` (typo) compiles fine but the framework warns once per unknown code at construction. Set `ADCP_DECISIONING_ALLOW_CUSTOM_CODES=1` to silence the warn for platforms that intentionally mint vendor-specific codes (e.g., `'GAM_INTERNAL_QUOTA_EXCEEDED'`). Verify against the `ErrorCode` union before shipping.
+
 Common codes:
 
 - **Buyer-fixable** (`recovery: 'correctable'`): `INVALID_REQUEST`, `BUDGET_TOO_LOW`, `POLICY_VIOLATION`, `CREATIVE_REJECTED`, `MEDIA_BUY_NOT_FOUND`, `INVALID_STATE`, `REQUOTE_REQUIRED`
@@ -449,11 +451,20 @@ The seam logs a warning when an adopter handler is shadowed by a platform-derive
 | `'strict'` | CI / new deployments. Throws `PlatformConfigError` so the build fails before silent regression ships. |
 | `'silent'` | Intentional override — you've audited the collision and the platform-derived handler is correct; suppress the noise. |
 
+CI vs. local-dev side-by-side:
+
 ```ts
+// CI / new deployments — fail the build on silent migration regression.
 createAdcpServerFromPlatform(platform, {
   name: 'My Ad Network', version: '1.0.0',
-  mergeSeam: 'strict',  // CI default
-  // v5 leftovers — incremental migration:
+  mergeSeam: 'strict',
+  mediaBuy: { listCreativeFormats, providePerformanceFeedback, /* ... */ },
+});
+
+// Local dev / hot-reload — see every collision in the log, never crash.
+createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network', version: '1.0.0',
+  mergeSeam: process.env.NODE_ENV === 'production' ? 'log-once' : 'warn',
   mediaBuy: { listCreativeFormats, providePerformanceFeedback, /* ... */ },
 });
 ```

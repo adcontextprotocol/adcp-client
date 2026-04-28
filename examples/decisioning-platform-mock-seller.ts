@@ -286,3 +286,32 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
     getMediaBuyDelivery: SHARED_GET_MEDIA_BUY_DELIVERY,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Merge-seam demonstration: v6 platform + v5 leftover handlers
+// ---------------------------------------------------------------------------
+//
+// Adopters migrating from v5.x's `createAdcpServer({ mediaBuy: { ... } })`
+// don't have to rewrite all of it. `createAdcpServerFromPlatform` accepts
+// v5-style handler entries on `opts` that fill gaps the v6 specialism
+// interfaces don't yet model (e.g., `listCreativeFormats`,
+// `providePerformanceFeedback`, content-standards CRUD).
+//
+// The seam logs collisions so v6.x silently shadowing your override is
+// loud, not silent. Set `mergeSeam: 'strict'` in CI for migration safety.
+
+export function buildHybridServerExample(platform: MockSyncSeller) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createAdcpServerFromPlatform } =
+    require('../src/lib/server/decisioning') as typeof import('../src/lib/server/decisioning');
+  return createAdcpServerFromPlatform(platform, {
+    name: 'mock-hybrid', version: '0.0.1',
+    validation: { requests: 'off', responses: 'off' },
+    mergeSeam: 'strict',
+    mediaBuy: {
+      // v5 leftover — listCreativeFormats isn't on SalesPlatform v1.0
+      // (deferred to rc.1). Custom handler here fills the gap until then.
+      listCreativeFormats: async () => ({ formats: [] }),
+    },
+  });
+}
