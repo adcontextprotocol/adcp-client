@@ -393,6 +393,155 @@ describe('TenantRegistry — register, resolve, health', () => {
   });
 });
 
+describe('TenantRegistry — path-based routing', () => {
+  it('resolveByRequest matches host + path prefix', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('sales', {
+      agentUrl: 'https://training.example.com/sales',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('creative', {
+      agentUrl: 'https://training.example.com/creative',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await Promise.all([registry.recheck('sales'), registry.recheck('creative')]);
+
+    const sales = registry.resolveByRequest('training.example.com', '/sales/mcp');
+    assert.strictEqual(sales.tenantId, 'sales');
+
+    const creative = registry.resolveByRequest('training.example.com', '/creative/a2a');
+    assert.strictEqual(creative.tenantId, 'creative');
+
+    // Path miss → no resolution (even though host matches both tenants).
+    assert.strictEqual(registry.resolveByRequest('training.example.com', '/nobody'), null);
+  });
+
+  it('longest-prefix wins for overlapping paths', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('sales', {
+      agentUrl: 'https://training.example.com/sales',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('sales-broadcast', {
+      agentUrl: 'https://training.example.com/sales-broadcast',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await Promise.all([registry.recheck('sales'), registry.recheck('sales-broadcast')]);
+
+    // /sales-broadcast/* → sales-broadcast (longest prefix).
+    const broadcastHit = registry.resolveByRequest('training.example.com', '/sales-broadcast/mcp');
+    assert.strictEqual(broadcastHit.tenantId, 'sales-broadcast');
+
+    // /sales/* → sales (sales-broadcast doesn't match because boundary check).
+    const salesHit = registry.resolveByRequest('training.example.com', '/sales/mcp');
+    assert.strictEqual(salesHit.tenantId, 'sales');
+  });
+
+  it('subdomain-routed tenants have prefix `/` and match any pathname', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('subdomain', {
+      agentUrl: 'https://sales.training.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('subdomain');
+
+    // resolveByHost still works (legacy/convenience).
+    assert.strictEqual(registry.resolveByHost('sales.training.example.com').tenantId, 'subdomain');
+    // resolveByRequest with any path also works (root prefix matches everything).
+    assert.strictEqual(
+      registry.resolveByRequest('sales.training.example.com', '/mcp').tenantId,
+      'subdomain'
+    );
+    assert.strictEqual(
+      registry.resolveByRequest('sales.training.example.com', '/anything/deep').tenantId,
+      'subdomain'
+    );
+  });
+
+  it('mixed subdomain + path tenants on the same registry', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    // Some tenants use subdomain, some use path. Real-world: not every
+    // adopter can stand up subdomain DNS; the SDK supports both shapes.
+    registry.register('sub', {
+      agentUrl: 'https://sales.training.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('path', {
+      agentUrl: 'https://training.example.com/creative',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await Promise.all([registry.recheck('sub'), registry.recheck('path')]);
+
+    assert.strictEqual(
+      registry.resolveByRequest('sales.training.example.com', '/mcp').tenantId,
+      'sub'
+    );
+    assert.strictEqual(
+      registry.resolveByRequest('training.example.com', '/creative/mcp').tenantId,
+      'path'
+    );
+  });
+
+  it('trailing-slash and exact-prefix paths normalize the same way', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('with_trailing', {
+      agentUrl: 'https://training.example.com/sales/',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('with_trailing');
+
+    // Either request-path style hits the tenant — trailing slash on
+    // agentUrl normalizes to /sales prefix; both /sales/mcp and /sales
+    // match.
+    assert.strictEqual(
+      registry.resolveByRequest('training.example.com', '/sales/mcp').tenantId,
+      'with_trailing'
+    );
+    assert.strictEqual(
+      registry.resolveByRequest('training.example.com', '/sales').tenantId,
+      'with_trailing'
+    );
+  });
+});
+
 describe('TenantRegistry — default JWKS validator (fetch-based)', () => {
   const { createDefaultJwksValidator } = require('../dist/lib/server/decisioning/tenant-registry');
 

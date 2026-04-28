@@ -148,12 +148,42 @@ export interface TenantRegistry {
   ): Promise<TenantStatus> | void;
   unregister(tenantId: string): void;
   /**
-   * Resolve a tenant by host (the lowercased authority of the request).
-   * Returns null if no tenant matches or the tenant is disabled.
-   * `unverified` tenants resolve normally — operators choose graceful
-   * degradation over hard failure during JWKS validation race.
+   * Resolve a tenant by host alone (the lowercased authority of the
+   * request). Convenience wrapper around `resolveByRequest(host, '/')` —
+   * works for the canonical subdomain-routing pattern (e.g.,
+   * `sales.training.example.com`) where each tenant has its own host.
+   *
+   * For path-based routing (`training.example.com/sales`,
+   * `training.example.com/creative` on a single host), use
+   * `resolveByRequest(host, pathname)` instead.
+   *
+   * Returns null if no tenant matches, the tenant is `pending` (first
+   * validation hasn't succeeded), or the tenant is `disabled`.
+   * `unverified` tenants resolve normally — graceful degradation for
+   * known-good tenants whose latest recheck failed transiently.
    */
   resolveByHost(host: string): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null;
+  /**
+   * Resolve a tenant by host AND request path. The framework matches
+   * tenants whose `agentUrl` host equals the request host AND whose
+   * `agentUrl` path is a prefix of the request `pathname`. When multiple
+   * tenants share a host, the LONGEST matching path prefix wins (so
+   * `/sales-broadcast` is preferred over `/sales` for a request to
+   * `/sales-broadcast/mcp`).
+   *
+   * Use this for path-routed multi-tenant deployments where adopters
+   * don't want per-tenant subdomain DNS / TLS overhead. Each tenant's
+   * `agentUrl` carries the path: `https://training.example.com/sales`.
+   * Subdomain-routed tenants (`https://sales.training.example.com`)
+   * keep working — their path prefix is `/`, which matches any pathname.
+   *
+   * Returns null on no match, `pending`, or `disabled`. `unverified`
+   * tenants resolve normally (graceful degradation).
+   */
+  resolveByRequest(
+    host: string,
+    pathname: string
+  ): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null;
   getStatus(tenantId: string): TenantStatus | null;
   list(): readonly TenantStatus[];
   /**
@@ -261,8 +291,48 @@ interface TenantEntry {
   config: TenantConfig;
   server: DecisioningAdcpServer;
   status: TenantStatus;
+  /** Lowercased host parsed from `config.agentUrl`. */
+  host: string;
+  /**
+   * Path prefix parsed from `config.agentUrl`. Always starts with `/`,
+   * never ends with a trailing `/` unless the prefix IS `/` (root).
+   * Subdomain-routed tenants have prefix `/`; path-routed tenants have
+   * prefix like `/sales` or `/creative`.
+   */
+  pathPrefix: string;
   /** Pending revalidation; consulted by `recheck` to dedupe in-flight work. */
   pending?: Promise<TenantStatus>;
+}
+
+/**
+ * Parse host + path prefix from an agent URL. Normalizes the path:
+ * always starts with `/`; trailing `/` stripped unless the prefix is
+ * itself `/` (root, the subdomain-routing case).
+ */
+function parseHostAndPrefix(agentUrl: string): { host: string; pathPrefix: string } {
+  const url = new URL(agentUrl);
+  const host = url.host.toLowerCase();
+  let pathPrefix = url.pathname || '/';
+  if (pathPrefix.length > 1 && pathPrefix.endsWith('/')) {
+    pathPrefix = pathPrefix.slice(0, -1);
+  }
+  return { host, pathPrefix };
+}
+
+/**
+ * Does `requestPath` fall under tenant's `pathPrefix`?
+ *
+ *   - Tenant prefix `/` matches any path (subdomain-routing case).
+ *   - Tenant prefix `/sales` matches `/sales`, `/sales/mcp`, `/sales/a2a`, etc.
+ *     Does NOT match `/sales-broadcast` (no boundary).
+ */
+function pathPrefixMatches(pathPrefix: string, requestPath: string): boolean {
+  if (pathPrefix === '/') return true;
+  if (!requestPath.startsWith(pathPrefix)) return false;
+  // Boundary check: char immediately after the prefix must be `/` or
+  // end-of-string. Prevents `/sales` from matching `/sales-broadcast`.
+  const next = requestPath.charAt(pathPrefix.length);
+  return next === '' || next === '/';
 }
 
 export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistry {
@@ -352,7 +422,14 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         reason: 'awaiting initial JWKS validation',
         lastCheckedAt: new Date().toISOString(),
       };
-      const entry: TenantEntry = { config: config as unknown as TenantConfig, server, status: initialStatus };
+      const { host, pathPrefix } = parseHostAndPrefix(config.agentUrl);
+      const entry: TenantEntry = {
+        config: config as unknown as TenantConfig,
+        server,
+        status: initialStatus,
+        host,
+        pathPrefix,
+      };
       tenants.set(tenantId, entry);
       if (!autoValidate) return;
       const validation = runValidation(tenantId);
@@ -379,18 +456,33 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
     },
 
     resolveByHost(host: string): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null {
+      // Convenience for subdomain-routed deployments — request path is
+      // implicitly `/`, which only matches root-prefix tenants.
+      return this.resolveByRequest(host, '/');
+    },
+
+    resolveByRequest(
+      host: string,
+      pathname: string
+    ): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null {
       const lowered = host.toLowerCase();
+      let best: { tenantId: string; entry: TenantEntry; prefixLength: number } | null = null;
       for (const [tenantId, entry] of tenants) {
-        const tenantHost = new URL(entry.config.agentUrl).host.toLowerCase();
-        if (tenantHost !== lowered) continue;
+        if (entry.host !== lowered) continue;
+        if (!pathPrefixMatches(entry.pathPrefix, pathname)) continue;
         // Refuse traffic for pending (first validation hasn't succeeded)
         // and disabled (permanent validation failure). `unverified` —
         // previously healthy, latest recheck failed transiently — still
         // resolves; operators choose graceful degradation here.
-        if (entry.status.health === 'pending' || entry.status.health === 'disabled') return null;
-        return { tenantId, config: entry.config, server: entry.server };
+        if (entry.status.health === 'pending' || entry.status.health === 'disabled') continue;
+        // Longest-prefix match wins. `/sales-broadcast` beats `/sales`.
+        const prefixLength = entry.pathPrefix === '/' ? 0 : entry.pathPrefix.length;
+        if (best === null || prefixLength > best.prefixLength) {
+          best = { tenantId, entry, prefixLength };
+        }
       }
-      return null;
+      if (best === null) return null;
+      return { tenantId: best.tenantId, config: best.entry.config, server: best.entry.server };
     },
 
     getStatus(tenantId: string): TenantStatus | null {
