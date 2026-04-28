@@ -109,6 +109,12 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    * HITL media-buy creation. Framework returns the submitted envelope to
    * the buyer; this method runs in background. Method's return value
    * becomes the task's terminal artifact.
+   *
+   * Return value is persisted as JSONB in the task registry. Postgres-backed
+   * registries cap row size at 4MB — offload large payloads to blob
+   * storage and return references in the result body instead. Oversized
+   * returns surface via `onTaskTransition` with
+   * `errorCode: 'REGISTRY_WRITE_FAILED'` and skip webhook delivery.
    */
   createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
 
@@ -138,6 +144,10 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    * HITL creative review. Framework returns the submitted envelope to the
    * buyer; this method runs in background. Returns per-creative result rows
    * once review is complete.
+   *
+   * Return value is persisted as JSONB in the task registry. Postgres-backed
+   * registries cap row size at 4MB — return per-creative result rows
+   * (not full creative bodies) to stay well under the cap.
    */
   syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 

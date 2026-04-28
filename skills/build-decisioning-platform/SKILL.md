@@ -412,6 +412,30 @@ Cross-instance reads work — process A allocates the task, process B reads the 
 
 Custom backend? Implement the `TaskRegistry` interface (8 methods) for Redis / DynamoDB / Spanner / etc. — the framework awaits each call so all 4 mutators (`create`, `complete`, `fail`, `getTask`) can be storage-backed.
 
+**Adopter `*Task` return size cap.** Postgres-backed registries cap `result` / `error` JSONB rows at 4MB. Returns over the cap surface via `onTaskTransition` with `errorCode: 'REGISTRY_WRITE_FAILED'` and skip webhook delivery (registry state is inconsistent, so the framework refuses to push). Offload large payloads to blob storage and return references in the result body instead. The cap protects the DB write path only — adopter code that serializes `result` for logs/metrics MUST impose its own bound.
+
+## Custom webhook emitter
+
+Default behavior: when the host wires `webhooks` on `serve()`, the framework binds the per-request `ctx.emitWebhook` to a signed RFC 9421 path. You don't need a custom emitter unless you want a different retry policy, a different signing key for task webhooks vs. status-change webhooks, or a fake for tests.
+
+```ts
+createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network', version: '1.0.0',
+  taskWebhookEmitter: {
+    emit: async ({ url, payload, operation_id }) => {
+      // Your custom delivery — must sign per RFC 9421 if you claim
+      // signed-requests. Or delegate to ctx.emitWebhook (use the default
+      // path) if you only need to wrap with logging.
+      return await mySigningEmitter.deliver(url, payload, operation_id);
+    },
+    // Required acknowledgment when your emitter does NOT sign:
+    // unsigned: true,  // for dev/test fakes
+  },
+});
+```
+
+**Signing posture is your responsibility.** If your platform claims `signed-requests` and you wire a custom emitter without `unsigned: true`, the framework warns at construction (in non-test envs) — buyers who verify signatures will reject your unsigned webhooks. Either delegate to the framework's signing pipeline or set `unsigned: true` to acknowledge dev/test usage. Set `ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER=1` to silence the warn for staging environments where signing isn't yet wired.
+
 ## Migrating from v5.x handler-style — the merge seam
 
 If you have a v5.x agent built on `createAdcpServer({ mediaBuy: { ... } })`, you don't need to rewrite all of it before adopting v6.0. `createAdcpServerFromPlatform` accepts the v5 handler-style domains (`mediaBuy`, `creative`, `accounts`, `eventTracking`, `signals`, `governance`, `brandRights`, `sponsoredIntelligence`) as `opts` alongside the v6 platform interface. Platform-derived handlers WIN per-key; adopter handlers fill gaps for tools the platform doesn't yet model. Migrate one specialism at a time.
