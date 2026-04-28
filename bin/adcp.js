@@ -646,6 +646,12 @@ function parseAgentOptions(args) {
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
   const allowHttp = args.includes('--allow-http');
+  // `--no-sandbox` forces `account.sandbox: false` (production) on every
+  // request the runner builds. The default behavior leaves the field unset
+  // (spec-equivalent to false), but agents that key sandbox routing on
+  // field PRESENCE rather than VALUE behave differently. Setting the flag
+  // makes the production intent explicit on the wire.
+  const noSandbox = args.includes('--no-sandbox');
 
   // Webhook-receiver flags are captured here solely so their values are excluded
   // from `positionalArgs`. The authoritative parse lives in
@@ -722,6 +728,7 @@ function parseAgentOptions(args) {
     debug,
     dryRun,
     allowHttp,
+    noSandbox,
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
@@ -1104,6 +1111,14 @@ RUN OPTIONS (full assessment):
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
+  --no-sandbox        Force account.sandbox=false on every request, signaling
+                      "route to the production code path." The default leaves
+                      sandbox unset (spec-equivalent to false), but agents that
+                      branch on field PRESENCE behave differently from agents
+                      that branch on VALUE. Use this to grade against the real
+                      handler when an agent has both a sandbox stub and a
+                      production path. The comply_test_controller scenario
+                      always forces sandbox=true regardless — spec contract.
 
 WEBHOOK OPTIONS:
   --webhook-receiver [MODE]       Host an ephemeral receiver so expect_webhook*
@@ -1520,7 +1535,11 @@ async function handleStoryboardRun(args) {
   if (!jsonOutput) {
     console.error(`Running storyboard: ${storyboard.title}`);
     console.error(`Agent: ${agentUrl} (${protocol})`);
-    console.error(`Steps: ${stepCount}\n`);
+    console.error(`Steps: ${stepCount}`);
+    if (opts.noSandbox) {
+      console.error(`Run mode: production accounts (--no-sandbox: account.sandbox=false)`);
+    }
+    console.error('');
   }
 
   // --dry-run: preview mode — show the plan without executing
@@ -1564,6 +1583,7 @@ async function handleStoryboardRun(args) {
       resolvedOauthClientCredentials,
     }),
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.noSandbox && { sandbox: false }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2243,6 +2263,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     result = await runAgainstLocalAgent({
       createAgent,
       storyboards: storyboardsSpec,
+      ...(opts.noSandbox && { runStoryboardOptions: { sandbox: false } }),
       onStoryboardComplete:
         jsonOutput || format === 'junit'
           ? undefined
@@ -2455,8 +2476,12 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     console.error(`  Storyboards: ${storyboards.map(s => s.id).join(', ')}`);
     const effectiveSteps = strategy === 'multi-pass' ? totalSteps * urls.length : totalSteps;
     console.error(
-      `  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}\n`
+      `  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}`
     );
+    if (opts.noSandbox) {
+      console.error(`  Run mode: production accounts (--no-sandbox: account.sandbox=false)`);
+    }
+    console.error('');
     // N=2 is the deployment shape most operators have. Offset-shift preserves
     // pair parity there, so every even-distance write→read pair lands
     // same-replica in every pass — including the canonical property_lists
@@ -2549,6 +2574,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.noSandbox && { sandbox: false }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2715,6 +2741,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(authOption && { auth: authOption }),
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.noSandbox && { sandbox: false }),
   };
 
   if (!opts.jsonOutput) {
