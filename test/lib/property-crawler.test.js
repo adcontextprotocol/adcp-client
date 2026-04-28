@@ -632,5 +632,40 @@ describe('PropertyCrawler', () => {
       assert.strictEqual(result.properties.length, 0);
       assert.ok(result.warning);
     });
+
+    test('should drop identifier items missing type/value and keep the rest', async () => {
+      global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'Test' }],
+          properties: [
+            {
+              property_type: 'website',
+              name: 'Mixed identifiers',
+              identifiers: [
+                { type: 'domain', value: 'example.com' },
+                { type: 'domain' }, // missing value
+                { value: 'orphan.example.com' }, // missing type
+                null,
+              ],
+            },
+          ],
+        }),
+      });
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      const result = await crawler.fetchAdAgentsJson('example.com');
+
+      assert.strictEqual(result.properties.length, 1, 'Should keep the property with one valid identifier');
+      assert.strictEqual(result.properties[0].identifiers.length, 1);
+      assert.deepStrictEqual(result.properties[0].identifiers[0], {
+        type: 'domain',
+        value: 'example.com',
+      });
+    });
   });
 });

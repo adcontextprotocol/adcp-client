@@ -323,23 +323,30 @@ export class PropertyCrawler {
         return { properties: [] };
       }
 
-      // Filter out malformed properties (missing/empty identifiers). The
-      // schema requires a non-empty identifiers array, but real adagents.json
-      // files in the wild sometimes omit it. Skipping is preferable to
-      // crashing the whole crawl on one bad publisher.
+      // Filter out malformed properties (missing/empty identifiers, or
+      // identifier items missing string type/value). The schema requires
+      // a non-empty identifiers array of well-shaped items, but real
+      // adagents.json files in the wild sometimes omit pieces. Skipping
+      // is preferable to crashing the whole crawl on one bad publisher.
       const normalized: Property[] = [];
       let skipped = 0;
       for (const prop of data.properties) {
-        if (!Array.isArray(prop.identifiers) || prop.identifiers.length === 0) {
+        const validIdentifiers = Array.isArray(prop.identifiers)
+          ? prop.identifiers.filter(id => !!id && typeof id.type === 'string' && typeof id.value === 'string')
+          : [];
+        if (validIdentifiers.length === 0) {
           skipped++;
+          // Cap publisher-supplied name to bound log volume.
+          const name = typeof prop.name === 'string' ? prop.name.slice(0, 200) : undefined;
           this.logger.warn(`Skipping property in ${originalDomain} adagents.json: missing or empty identifiers`, {
             domain: originalDomain,
-            name: prop.name,
+            name,
           });
           continue;
         }
         normalized.push({
           ...prop,
+          identifiers: validIdentifiers,
           publisher_domain: prop.publisher_domain || originalDomain,
         });
       }
