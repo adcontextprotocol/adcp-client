@@ -274,8 +274,27 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * (different signing key, different retry policy, different fetch impl)
    * separate from your other webhook emissions, or to inject a fake for
    * tests without wiring full RFC 9421 signing.
+   *
+   * **Signing posture is your responsibility.** When adopters claim
+   * `signed-requests` capability, buyers expect RFC 9421-signed webhooks.
+   * The default emitter (bound to `serve({ webhooks })`) signs;
+   * a custom emitter passed here MUST either delegate to the same signed
+   * pipeline or sign itself. Set `unsigned: true` to acknowledge that this
+   * emitter intentionally bypasses signing — without that flag, an
+   * unsigned emitter wired in production would silently ship unsigned
+   * webhooks to buyers expecting signatures. Tests / dev paths set
+   * `unsigned: true`.
    */
-  taskWebhookEmitter?: { emit: NonNullable<HandlerContext<Account>['emitWebhook']> };
+  taskWebhookEmitter?: {
+    emit: NonNullable<HandlerContext<Account>['emitWebhook']>;
+    /**
+     * Set to `true` to acknowledge this emitter does NOT sign the webhook
+     * payload (RFC 9421). Required for tests and development; production
+     * deployments with `signed-requests` claimed should leave this
+     * unset / `false` and rely on the framework's signing path.
+     */
+    unsigned?: boolean;
+  };
 
   // ---------------------------------------------------------------------
   // Custom-handler escape hatch (incremental migration seam)
@@ -379,6 +398,30 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   opts: CreateAdcpServerFromPlatformOptions
 ): DecisioningAdcpServer {
   validatePlatform(platform);
+
+  // Sec-M2: warn when `signed-requests` is claimed but a custom
+  // taskWebhookEmitter is wired without acknowledging signing posture.
+  // The default emitter (bound to `serve({ webhooks })`) signs; a custom
+  // emitter that doesn't declare `unsigned: true` and doesn't delegate
+  // to the framework's signed pipeline ships unsigned webhooks to buyers
+  // who expect signatures.
+  if (opts.taskWebhookEmitter && !opts.taskWebhookEmitter.unsigned) {
+    const claimsSigned = platform.capabilities?.specialisms?.includes(
+      'signed-requests' as never
+    );
+    const isProd = process.env.NODE_ENV === 'production';
+    if (claimsSigned && isProd) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[adcp/decisioning] taskWebhookEmitter wired without unsigned:true while ' +
+          "platform.capabilities.specialisms claims 'signed-requests'. " +
+          'Buyers expecting RFC 9421 signatures will receive unsigned webhooks ' +
+          'unless your custom emitter delegates to the framework signing path. ' +
+          'If this is intentional (your emitter signs internally), set ' +
+          'unsigned: true to silence this warn.'
+      );
+    }
+  }
 
   const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
   const baseBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();

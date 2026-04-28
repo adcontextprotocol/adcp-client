@@ -82,6 +82,16 @@ const _check_creative_template: _ok_creative_template = true;
 type _ok_audience_sync = RequiredPlatformsFor<'audience-sync'> extends { audiences: AudiencePlatform } ? true : false;
 const _check_audience_sync: _ok_audience_sync = true;
 
+// Negative: misspelled specialism MUST fail compile. Without the
+// `S extends AdCPSpecialism` constraint, a typo like `'sales-non-guarenteed'`
+// would silently fall through to a permissive constraint and only fail
+// at runtime in `validatePlatform()`. The constraint surfaces the typo
+// at the use site.
+function _required_platforms_rejects_typo() {
+  // @ts-expect-error — 'sales-non-guarenteed' is not a known AdCPSpecialism (typo for 'sales-non-guaranteed').
+  type _typo = RequiredPlatformsFor<'sales-non-guarenteed'>;
+}
+
 // ── Account is generic over TMeta ─────────────────────────────────────
 
 interface GAMAccountMeta {

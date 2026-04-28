@@ -24,52 +24,84 @@
  * TODO(6.0): generate this from `schemas/cache/<version>/enums/error-code.json`
  * via the same codegen pipeline as the rest of `tools.generated.ts`.
  */
-export type ErrorCode =
-  | 'INVALID_REQUEST'
-  | 'AUTH_REQUIRED'
-  | 'RATE_LIMITED'
-  | 'SERVICE_UNAVAILABLE'
-  | 'POLICY_VIOLATION'
-  | 'PRODUCT_NOT_FOUND'
-  | 'PRODUCT_UNAVAILABLE'
-  | 'PRODUCT_EXPIRED'
-  | 'PROPOSAL_EXPIRED'
-  | 'PROPOSAL_NOT_COMMITTED'
-  | 'BUDGET_TOO_LOW'
-  | 'BUDGET_EXHAUSTED'
-  | 'BUDGET_EXCEEDED'
-  | 'CREATIVE_REJECTED'
-  | 'CREATIVE_DEADLINE_EXCEEDED'
-  | 'CREATIVE_NOT_FOUND'
-  | 'UNSUPPORTED_FEATURE'
-  | 'AUDIENCE_TOO_SMALL'
-  | 'ACCOUNT_NOT_FOUND'
-  | 'ACCOUNT_SETUP_REQUIRED'
-  | 'ACCOUNT_AMBIGUOUS'
-  | 'ACCOUNT_PAYMENT_REQUIRED'
-  | 'ACCOUNT_SUSPENDED'
-  | 'COMPLIANCE_UNSATISFIED'
-  | 'GOVERNANCE_DENIED'
-  | 'GOVERNANCE_UNAVAILABLE'
-  | 'CAMPAIGN_SUSPENDED'
-  | 'CONFLICT'
-  | 'IDEMPOTENCY_CONFLICT'
-  | 'IDEMPOTENCY_EXPIRED'
-  | 'INVALID_STATE'
-  | 'IO_REQUIRED'
-  | 'MEDIA_BUY_NOT_FOUND'
-  | 'NOT_CANCELLABLE'
-  | 'PACKAGE_NOT_FOUND'
-  | 'PERMISSION_DENIED'
-  | 'PLAN_NOT_FOUND'
-  | 'REFERENCE_NOT_FOUND'
-  | 'REQUOTE_REQUIRED'
-  | 'SESSION_NOT_FOUND'
-  | 'SESSION_TERMINATED'
-  | 'SIGNAL_NOT_FOUND'
-  | 'TERMS_REJECTED'
-  | 'VALIDATION_ERROR'
-  | 'VERSION_UNSUPPORTED';
+export const KNOWN_ERROR_CODES = [
+  'INVALID_REQUEST',
+  'AUTH_REQUIRED',
+  'RATE_LIMITED',
+  'SERVICE_UNAVAILABLE',
+  'POLICY_VIOLATION',
+  'PRODUCT_NOT_FOUND',
+  'PRODUCT_UNAVAILABLE',
+  'PRODUCT_EXPIRED',
+  'PROPOSAL_EXPIRED',
+  'PROPOSAL_NOT_COMMITTED',
+  'BUDGET_TOO_LOW',
+  'BUDGET_EXHAUSTED',
+  'BUDGET_EXCEEDED',
+  'CREATIVE_REJECTED',
+  'CREATIVE_DEADLINE_EXCEEDED',
+  'CREATIVE_NOT_FOUND',
+  'UNSUPPORTED_FEATURE',
+  'AUDIENCE_TOO_SMALL',
+  'ACCOUNT_NOT_FOUND',
+  'ACCOUNT_SETUP_REQUIRED',
+  'ACCOUNT_AMBIGUOUS',
+  'ACCOUNT_PAYMENT_REQUIRED',
+  'ACCOUNT_SUSPENDED',
+  'COMPLIANCE_UNSATISFIED',
+  'GOVERNANCE_DENIED',
+  'GOVERNANCE_UNAVAILABLE',
+  'CAMPAIGN_SUSPENDED',
+  'CONFLICT',
+  'IDEMPOTENCY_CONFLICT',
+  'IDEMPOTENCY_EXPIRED',
+  'INVALID_STATE',
+  'IO_REQUIRED',
+  'MEDIA_BUY_NOT_FOUND',
+  'NOT_CANCELLABLE',
+  'PACKAGE_NOT_FOUND',
+  'PERMISSION_DENIED',
+  'PLAN_NOT_FOUND',
+  'REFERENCE_NOT_FOUND',
+  'REQUOTE_REQUIRED',
+  'SESSION_NOT_FOUND',
+  'SESSION_TERMINATED',
+  'SIGNAL_NOT_FOUND',
+  'TERMS_REJECTED',
+  'VALIDATION_ERROR',
+  'VERSION_UNSUPPORTED',
+] as const;
+
+export type ErrorCode = (typeof KNOWN_ERROR_CODES)[number];
+
+const KNOWN_ERROR_CODE_SET: ReadonlySet<string> = new Set(KNOWN_ERROR_CODES);
+
+/**
+ * Detect typoed error codes in `AdcpError` constructor calls. The
+ * `code: ErrorCode | (string & {})` escape hatch keeps platform-specific
+ * codes available, but it also defeats autocomplete on misspellings —
+ * `'BUDGET_TO_LOW'` (typo) compiles fine. The runtime warns once per
+ * unknown code so `npm run dev` log review surfaces typos before they
+ * ship to a buyer who can't pattern-match `recovery`.
+ *
+ * Set `ADCP_DECISIONING_ALLOW_CUSTOM_CODES=1` to silence the warn for
+ * platforms that intentionally mint vendor-specific codes
+ * (`'GAM_INTERNAL_QUOTA_EXCEEDED'` etc.).
+ */
+const warnedUnknownCodes = new Set<string>();
+function maybeWarnUnknownErrorCode(code: string): void {
+  if (KNOWN_ERROR_CODE_SET.has(code)) return;
+  if (process.env.ADCP_DECISIONING_ALLOW_CUSTOM_CODES === '1') return;
+  if (warnedUnknownCodes.has(code)) return;
+  warnedUnknownCodes.add(code);
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[adcp/decisioning] AdcpError code "${code}" is not in the known ErrorCode set ` +
+      `(45 standard codes per schemas/cache/3.0.0/enums/error-code.json). ` +
+      `If this is intentional (vendor-specific code), set ADCP_DECISIONING_ALLOW_CUSTOM_CODES=1. ` +
+      `Otherwise check spelling against the ErrorCode union.`
+  );
+}
 
 /**
  * Structured error envelope. Mirrors `schemas/cache/3.0.0/core/error.json`.
@@ -143,6 +175,7 @@ export class AdcpError extends Error {
     super(options.message);
     this.code = code;
     this.recovery = options.recovery;
+    maybeWarnUnknownErrorCode(code);
     if (options.field !== undefined) this.field = options.field;
     if (options.suggestion !== undefined) this.suggestion = options.suggestion;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;
