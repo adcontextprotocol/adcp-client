@@ -5,7 +5,7 @@
  * in `../rfc3986.ts` so a single bug-fix path covers producer and verifier.
  *
  * ```ts
- * import { SubstitutionEncoder } from '@adcp/client/substitution';
+ * import { SubstitutionEncoder } from '@adcp/sdk/substitution';
  *
  * const encoder = new SubstitutionEncoder();
  * encoder.reject_if_contains_macro(rawValue); // optional input guard

@@ -21,7 +21,7 @@ const result = await client.agent('my-agent').getProducts({
 });
 
 // ✅ New Pattern
-import { createFieldHandler } from '@adcp/client';
+import { createFieldHandler } from '@adcp/sdk';
 
 const handler = createFieldHandler({
   budget: 50000,
@@ -76,7 +76,7 @@ if (result.status === 'submitted' && result.submitted) {
 
 ```typescript
 // ❌ Old Imports
-import { AdCPClient, InputHandler } from '@adcp/client';
+import { AdCPClient, InputHandler } from '@adcp/sdk';
 
 // ✅ New Imports
 import { 
@@ -87,7 +87,7 @@ import {
   type TaskResult,
   type DeferredContinuation,
   type SubmittedContinuation
-} from '@adcp/client';
+} from '@adcp/sdk';
 ```
 
 ### Step 2: Replace Configuration Objects with Handlers
@@ -101,7 +101,7 @@ const result = await agent.getProducts(params, {
 });
 
 // ✅ New Pattern
-import { autoApproveHandler } from '@adcp/client';
+import { autoApproveHandler } from '@adcp/sdk';
 
 const result = await agent.getProducts(params, autoApproveHandler);
 ```
@@ -242,7 +242,7 @@ import {
   TaskTimeoutError,
   MaxClarificationError,
   DeferredTaskError
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 try {
   const result = await agent.getProducts(params, handler);
@@ -280,7 +280,7 @@ const taskId = await agent.startTask(params);
 const status = await agent.getTaskStatus(taskId);
 
 // ✅ New Pattern - Built-in task tracking
-import { TaskExecutor } from '@adcp/client';
+import { TaskExecutor } from '@adcp/sdk';
 
 const executor = new TaskExecutor({
   workingTimeout: 120000,

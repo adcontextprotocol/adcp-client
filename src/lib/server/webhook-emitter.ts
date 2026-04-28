@@ -1,7 +1,7 @@
 /**
  * Publisher-side webhook emitter — the symmetric counterpart to PR #629's
  * receiver-side dedup. A seller / governance agent / rights agent building
- * with `@adcp/client` gets a one-call API that handles:
+ * with `@adcp/sdk` gets a one-call API that handles:
  *
  *   - RFC 9421 webhook signing on every attempt (adcp#2423).
  *   - A stable `idempotency_key` per logical event, reused across retries

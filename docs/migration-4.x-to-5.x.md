@@ -1,6 +1,8 @@
-# Migrating from @adcp/client 4.x to 5.x
+# Migrating from @adcp/client 4.x to @adcp/sdk 5.x
 
-`@adcp/client` 5.x tracks **AdCP 3.0 GA**. As of library 5.13 the
+> **Package renamed in 5.22.** The library was published as `@adcp/client` through 5.21.x and renamed to `@adcp/sdk` starting at 5.22.0. `@adcp/client` continues to publish as a thin re-export shim, so existing installs keep working. Replace `@adcp/client` with `@adcp/sdk` in your imports when convenient — APIs are identical. This document uses the new name throughout.
+
+`@adcp/sdk` 5.x tracks **AdCP 3.0 GA**. As of library 5.13 the
 `ADCP_VERSION` pin is `3.0.0` (the published GA release) instead of
 the rolling `latest` alias — generated types, Zod schemas, and the
 compliance/storyboard tree are now locked to the 3.0.0 registry.
@@ -35,8 +37,8 @@ Library code surface (what you write in TypeScript) changes on almost every
 minor release. The **wire protocol** — the JSON that crosses between a buyer
 and a seller — is a different thing, and its compat story is narrower than
 the TS churn suggests. If the library version you're on declares
-compatibility with an AdCP version (see `COMPATIBLE_ADCP_VERSIONS` in
-`@adcp/client/version`), cross-version traffic is supported at the wire
+compatibility with an AdCP version (see `COMPATIBLE_ADCP_VERSIONS` exported
+from `@adcp/sdk`), cross-version traffic is supported at the wire
 level with the caveats below.
 
 **As of 5.10 (AdCP 3.0 GA):**
@@ -103,7 +105,7 @@ builder. Migrate.
 **Before:**
 
 ```typescript
-import { createTaskCapableServer, GetProductsRequestSchema, productsResponse } from '@adcp/client';
+import { createTaskCapableServer, GetProductsRequestSchema, productsResponse } from '@adcp/sdk';
 
 const server = createTaskCapableServer('Seller', '1.0.0', { taskStore });
 server.tool('get_products', 'Products', GetProductsRequestSchema.shape, async (args) => {
@@ -114,7 +116,7 @@ server.tool('get_products', 'Products', GetProductsRequestSchema.shape, async (a
 **After:**
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
 
 serve(() => createAdcpServer({
   name: 'Seller',
@@ -167,7 +169,7 @@ tools have schemas; `update_rights` and `creative_approval` don't
 
 ## Part 2 — Exports and tooling cleanup (5.1.0)
 
-_Skim only if your 4.x code imported `@adcp/client/storyboards/*` or used `ComplyOptions.platform_type` / the `--platform-type` CLI flag._
+_Skim only if your 4.x code imported `@adcp/sdk/storyboards/*` or used `ComplyOptions.platform_type` / the `--platform-type` CLI flag._
 
 ### 2a. **BREAKING** — Storyboards no longer bundled in npm
 
@@ -177,7 +179,7 @@ the compliance tarball via `npm run sync-schemas` — it fetches
 and extracts to `schemas/cache/{version}/` + `compliance/cache/{version}/`.
 The cache ships with npm on first install.
 
-If you had code referencing `@adcp/client/storyboards/*` directly, switch
+If you had code referencing `@adcp/sdk/storyboards/*` directly, switch
 to the new compliance-cache testing exports:
 
 ```typescript
@@ -185,7 +187,7 @@ import {
   resolveStoryboardsForCapabilities,
   loadComplianceIndex,
   getComplianceCacheDir,
-} from '@adcp/client/testing';
+} from '@adcp/sdk/testing';
 ```
 
 Storyboard selection is now driven by the agent's `get_adcp_capabilities`:
@@ -200,7 +202,7 @@ to specialism bundles. The runner fails closed on unknown specialisms.
 | `ComplianceResult.platform_coherence` / `expected_tracks`                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Gone                                                                                                                                                                                                                                                                                                                                                                                              |
 | `ComplianceSummary.tracks_expected`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Gone                                                                                                                                                                                                                                                                                                                                                                                              |
 | `PlatformType`, `SalesPlatformType`, `CreativeAgentType`, `SponsoredIntelligenceType`, `AINativePlatformType`, `PlatformProfile`, `PlatformCoherenceResult`, `CoherenceFinding`, `InventoryModel`, `PricingModel`                                                                                                                                                                                                                                                                                                                | Type exports — just delete usages                                                                                                                                                                                                                                                                                                                                                                 |
-| `getPlatformProfile`, `getAllPlatformTypes`, `getPlatformTypesWithLabels`, `PLATFORM_STORYBOARDS`, `getStoryboardIdsForPlatform`, `extractScenariosFromStoryboard`, `filterToKnownScenarios`, `loadBundledStoryboards`, `loadBundledScenarios`, `getStoryboardById`, `getScenarioById`, `getStoryboardsForPlatformType`, `getComplianceStoryboards`, `getApplicableComplianceStoryboards`, `listStoryboards`                                                                                                                      | Helper exports — replace with `resolveStoryboardsForCapabilities` + `loadBundleStoryboards` + `getComplianceStoryboardById` from `@adcp/client/testing`                                                                                                                                                                                                                                           |
+| `getPlatformProfile`, `getAllPlatformTypes`, `getPlatformTypesWithLabels`, `PLATFORM_STORYBOARDS`, `getStoryboardIdsForPlatform`, `extractScenariosFromStoryboard`, `filterToKnownScenarios`, `loadBundledStoryboards`, `loadBundledScenarios`, `getStoryboardById`, `getScenarioById`, `getStoryboardsForPlatformType`, `getComplianceStoryboards`, `getApplicableComplianceStoryboards`, `listStoryboards`                                                                                                                      | Helper exports — replace with `resolveStoryboardsForCapabilities` + `loadBundleStoryboards` + `getComplianceStoryboardById` from `@adcp/sdk/testing`                                                                                                                                                                                                                                           |
 | CLI: `adcp storyboard list --platform-type`, `adcp storyboard run --platform-type`, `adcp storyboard run --list-platform-types`                                                                                                                                                                                                                                                                                                                                                                                                 | CLI: `adcp storyboard run <agent>` (capability-driven), or `adcp storyboard run <agent> --file <path.yaml>` for one-off runs                                                                                                                                                                                                                                                                      |
 
 ### 2c. Optimistic concurrency on `AdcpStateStore` (additive)
@@ -282,8 +284,8 @@ The SDK rejects mutating requests without `idempotency_key` as
 `createIdempotencyStore` into `createAdcpServer`:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createAdcpServer, serve } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 serve(() => createAdcpServer({
   idempotency: createIdempotencyStore({
@@ -295,13 +297,13 @@ serve(() => createAdcpServer({
 }));
 ```
 
-Authoritative list: **`MUTATING_TASKS`** exported from `@adcp/client`
+Authoritative list: **`MUTATING_TASKS`** exported from `@adcp/sdk`
 (and derived at runtime in `src/lib/utils/idempotency.ts`). A partial
 hand-written list here would drift as soon as the spec adds a new
 mutating task. Import it if you need to branch on it programmatically:
 
 ```typescript
-import { MUTATING_TASKS } from '@adcp/client';
+import { MUTATING_TASKS } from '@adcp/sdk';
 if (MUTATING_TASKS.has(toolName)) { /* … */ }
 ```
 
@@ -317,7 +319,7 @@ layer**, not with a `pending_approval` MediaBuy status. Return a task
 envelope — no `media_buy_id`, no `packages`, not yet.
 
 ```typescript
-import { taskToolResponse } from '@adcp/client/server';
+import { taskToolResponse } from '@adcp/sdk/server';
 
 createMediaBuy: async (params, ctx) => {
   if (needsIoSigning(params)) {
@@ -345,8 +347,8 @@ An agent that accepts unauthenticated requests fails the universal
 `security_baseline` storyboard. Wire one of the new helpers:
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
 
 serve(createAgent, {
   publicUrl: 'https://seller.example.com/mcp',
@@ -363,7 +365,7 @@ serve(createAgent, {
 ```
 
 `verifyApiKey` / `verifyBearer` / `anyOf` are exported from
-`@adcp/client/server`, not the root barrel.
+`@adcp/sdk/server`, not the root barrel.
 
 ### 3h. **BREAKING** — Webhook payloads now carry `idempotency_key`
 
@@ -382,7 +384,7 @@ sender identity. The SDK does this for you if you wire `webhookDedup`
 ### 3i. Webhook emitter + `ctx.emitWebhook` (new, strongly recommended)
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
 
 serve(() => createAdcpServer({
   name, version,
@@ -411,8 +413,8 @@ backoff + jitter on 5xx/429, and terminal handling of
 ### 3j. Receiver-side webhook dedup (new)
 
 ```typescript
-import { AdCPClient } from '@adcp/client';
-import { memoryBackend } from '@adcp/client/server';
+import { AdCPClient } from '@adcp/sdk';
+import { memoryBackend } from '@adcp/sdk/server';
 
 const client = new AdCPClient(agents, {
   webhookUrlTemplate: 'https://your-app.com/adcp/webhook/{task_type}/{agent_id}/{operation_id}',
@@ -440,7 +442,7 @@ import {
   BrandJsonJwksResolver,
   InMemoryReplayStore,
   InMemoryRevocationStore,
-} from '@adcp/client/signing/server';
+} from '@adcp/sdk/signing/server';
 
 const jwks = new BrandJsonJwksResolver('https://publisher.example/.well-known/brand.json', {
   agentType: 'sales',
@@ -501,7 +503,7 @@ consumer.
   `"vast"`, `"daast"`, etc.). Handlers that emit assets must populate it.
   This is the only wire-level breaker against beta.3 — see the wire
   interop table at the top of this doc. Use the new typed builders from
-  `@adcp/client` to inject the discriminator without the boilerplate:
+  `@adcp/sdk` to inject the discriminator without the boilerplate:
   `imageAsset({ url, width, height })` → `{ url, width, height,
   asset_type: 'image' }`. Helpers are available for every asset type
   (`imageAsset`, `videoAsset`, `audioAsset`, `textAsset`, `urlAsset`,
@@ -672,7 +674,7 @@ use.
 
 `createAdcpServer()` now returns the opaque `AdcpServer` type (not the
 SDK's `McpServer`). Annotate with `import type { AdcpServer } from
-'@adcp/client'`. Test harnesses use `server.dispatchTestRequest({
+'@adcp/sdk'`. Test harnesses use `server.dispatchTestRequest({
 method, params })` instead of `(server as any)._requestHandlers.get(...)`.
 
 For tools outside `AdcpToolMap` (seller extensions, `creative_approval`,
@@ -722,7 +724,7 @@ fields the framework doesn't auto-derive — e.g.
 For agents mounted under Express:
 
 ```typescript
-import { createExpressAdapter } from '@adcp/client/server';
+import { createExpressAdapter } from '@adcp/sdk/server';
 
 const { rawBodyVerify, protectedResourceMiddleware, getUrl, resetHook } =
   createExpressAdapter({ mountPath: '/mcp', publicUrl, prm, server });
@@ -730,10 +732,10 @@ const { rawBodyVerify, protectedResourceMiddleware, getUrl, resetHook } =
 
 New subpath exports for conformance work:
 
-- `@adcp/client/compliance-fixtures` — `COMPLIANCE_FIXTURES` +
+- `@adcp/sdk/compliance-fixtures` — `COMPLIANCE_FIXTURES` +
   `seedComplianceFixtures(server)` for hardcoded storyboard IDs
   (`test-product`, `sports_ctv_q2`, `gov_acme_q2_2027`, etc.).
-- `@adcp/client/schemas` — generated Zod request schemas,
+- `@adcp/sdk/schemas` — generated Zod request schemas,
   `TOOL_INPUT_SHAPES`, and `customToolFor(name, description, shape, handler)`.
 
 `AdcpServer.compliance.reset({ force? })` drops session state and the
@@ -755,7 +757,7 @@ If you ship a `comply_test_controller` tool, use `createComplyController`
 instead of hand-registering:
 
 ```typescript
-import { createComplyController } from '@adcp/client/testing';
+import { createComplyController } from '@adcp/sdk/testing';
 
 const controller = createComplyController({
   sandboxGate: () => process.env.ADCP_SANDBOX === '1',
@@ -814,7 +816,7 @@ code. A `logger.warn` fires so agent authors see they should switch to
 ### 5g. Typed `CapabilityResolutionError` (5.9)
 
 ```typescript
-import { CapabilityResolutionError } from '@adcp/client/testing';
+import { CapabilityResolutionError } from '@adcp/sdk/testing';
 
 try { /* resolveStoryboardsForCapabilities(...) */ }
 catch (err) {
@@ -919,7 +921,7 @@ Parts 1–4 are the migration. Part 5 items are adoption-gated.
 
 - [ ] Delete `ComplyOptions.platform_type` callers and `PlatformType`/`PlatformProfile`/`getPlatformProfile` imports.
 - [ ] Replace CLI `--platform-type` usage with capability-driven runs or `--file <path.yaml>`.
-- [ ] Switch storyboard-file imports to `@adcp/client/testing` helpers.
+- [ ] Switch storyboard-file imports to `@adcp/sdk/testing` helpers.
 
 ### Part 3 — AdCP 3.0 GA protocol alignment (5.2)
 
@@ -937,7 +939,7 @@ Parts 1–4 are the migration. Part 5 items are adoption-gated.
 
 ### Part 4 — AdCP 3.0 GA schema tightening + library defaults (5.10)
 
-- [ ] Populate `asset_type` on every asset literal your handlers emit (`"image"`, `"video"`, `"vast"`, `"daast"`, …). Prefer the typed builders — `imageAsset(...)`, `videoAsset(...)`, etc. from `@adcp/client` — over hand-rolled literals; they inject the discriminator as a write-last property so a TS escape-hatch cast can't overwrite it.
+- [ ] Populate `asset_type` on every asset literal your handlers emit (`"image"`, `"video"`, `"vast"`, `"daast"`, …). Prefer the typed builders — `imageAsset(...)`, `videoAsset(...)`, etc. from `@adcp/sdk` — over hand-rolled literals; they inject the discriminator as a write-last property so a TS escape-hatch cast can't overwrite it.
 - [ ] Rename `refine[].id` → `refine[].product_id` / `refine[].proposal_id` on the scope-matching arm.
 - [ ] Run `tsc --noEmit`; fix every brand-rights handler whose return type is no longer assignable to the concrete generated types (`AcquireRights*`, `GetRightsSuccess`, `GetBrandIdentitySuccess`).
 - [ ] Expect dev/test response validation to fail on sparse fixtures — fill in required fields or set `validation: { responses: 'off' }` on test servers.
@@ -989,7 +991,7 @@ request_signing: {
 
 Wire format unchanged. Sellers can't tell the difference between a request signed in-process and one signed by KMS — sync and async paths share the same canonicalization helpers.
 
-New exports from `@adcp/client/signing`:
+New exports from `@adcp/sdk/signing`:
 
 - `SigningProvider` interface, `AdcpSignAlg` type
 - `signRequestAsync` / `signWebhookAsync`
@@ -998,7 +1000,7 @@ New exports from `@adcp/client/signing`:
 - `SigningProviderAlgorithmMismatchError` — typed error for adapter misconfigurations
 - Reusable canonicalization helpers `prepareRequestSignature`, `prepareWebhookSignature`, `finalizeRequestSignature` — for anyone building a third signer (sigstore, custom HSM)
 
-`@adcp/client/signing/testing` sub-path: `InMemorySigningProvider` (NODE_ENV-gated against accidental production use) and `signerKeyToProvider` adapter for the conformance runner.
+`@adcp/sdk/signing/testing` sub-path: `InMemorySigningProvider` (NODE_ENV-gated against accidental production use) and `signerKeyToProvider` adapter for the conformance runner.
 
 A reference GCP KMS adapter ships at `examples/gcp-kms-signing-provider.ts` (type-checked under `npm run typecheck:examples`). AWS KMS / Azure Key Vault adapters can mirror the same shape; users `npm i` the cloud SDK they need.
 

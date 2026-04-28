@@ -4,7 +4,7 @@
 
 ## Quick Reference
 
-This is **@adcp/client** - the official TypeScript client library for the Ad Context Protocol (AdCP).
+This is **@adcp/sdk** - the official TypeScript client library for the Ad Context Protocol (AdCP).
 
 **Critical rules** (see [AGENTS.md](../AGENTS.md) for details):
 
@@ -119,7 +119,7 @@ npm run test:all          # Full test suite
 ### CLI Async Operations
 
 ```bash
-npx @adcp/client@latest agent-url get_products '{"brief":"test"}' --webhook --timeout 30
+npx @adcp/sdk@latest agent-url get_products '{"brief":"test"}' --webhook --timeout 30
 # Automatically starts webhook handler with ngrok tunnel
 ```
 
@@ -157,4 +157,4 @@ webhookUrlTemplate: 'https://app.com/webhook/{task_type}/{agent_id}/{operation_i
 
 - **AdCP Specification**: https://docs.adcontextprotocol.org/docs/
 - **Protocol Repository**: https://github.com/adcontextprotocol/adcp
-- **NPM Package**: https://www.npmjs.com/package/@adcp/client
+- **NPM Package**: https://www.npmjs.com/package/@adcp/sdk

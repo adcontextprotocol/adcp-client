@@ -2,7 +2,7 @@
  * Default assertion registrations for invariant ids that upstream storyboards
  * reference but that every SDK consumer would otherwise have to implement
  * themselves. Importing this module side-registers the ids below, so
- * `resolveAssertions` doesn't throw on fresh `@adcp/client` installs.
+ * `resolveAssertions` doesn't throw on fresh `@adcp/sdk` installs.
  *
  * The implementations aim for the spec's stated intent, not byte-perfect
  * fidelity with the upstream reference. Consumers can override a default by
@@ -38,7 +38,7 @@ import { CONFLICT_ADCP_ERROR_ALLOWLIST } from '../../server/envelope-allowlist';
 import { registerAssertion } from './assertions';
 
 // Register only once per process. `registerAssertion` throws on duplicates —
-// consumers who import `@adcp/client/testing` multiple times would hit that.
+// consumers who import `@adcp/sdk/testing` multiple times would hit that.
 const REGISTERED = new Set<string>();
 
 function registerOnce(id: string, spec: Parameters<typeof registerAssertion>[0]): void {

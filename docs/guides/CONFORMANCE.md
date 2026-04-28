@@ -1,6 +1,6 @@
 # Conformance Fuzzing
 
-`@adcp/client/conformance` exports `runConformance(agentUrl, options)` —
+`@adcp/sdk/conformance` exports `runConformance(agentUrl, options)` —
 property-based fuzzing against an agent's published JSON schemas.
 
 ## Why
@@ -25,7 +25,7 @@ classifies every response under a two-path oracle:
 ## Quickstart
 
 ```ts
-import { runConformance } from '@adcp/client/conformance';
+import { runConformance } from '@adcp/sdk/conformance';
 
 const report = await runConformance('https://agent.example.com/mcp', {
   seed: 42,
@@ -226,7 +226,7 @@ nightly job to broaden coverage.
 ## Not a replacement for
 
 - **Storyboards** — narrative flow, multi-step sequences, async task
-  lifecycle. Use `@adcp/client/testing` storyboard runners.
+  lifecycle. Use `@adcp/sdk/testing` storyboard runners.
 - **LLM red-team runner** — `adcp#2630`. Multi-step conversational
   fuzzing driven by an LLM.
 - **Semantic validation** — budget math, referential integrity across

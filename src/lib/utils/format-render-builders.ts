@@ -90,7 +90,7 @@ export type RenderItem = DimensionsRender | ParameterizedRender;
 /**
  * Grouped namespace for `Format.renders[]` factories — one-dot autocomplete
  * when building `renders[]` by hand. Parallels `Asset.*` (creative assets)
- * and `Render.*` (preview renders) from `@adcp/client`.
+ * and `Render.*` (preview renders) from `@adcp/sdk`.
  *
  * Note: `FormatRender` is also re-exported as a type from
  * `utils/format-renders.ts` (v3 structural interface). TypeScript keeps

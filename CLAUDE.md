@@ -91,7 +91,7 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 
 ## Development & Release Guide
 
-**@adcp/client** is the official TypeScript client library for the Ad Context Protocol (AdCP), with CLI tooling for testing agents.
+**@adcp/sdk** is the official TypeScript client library for the Ad Context Protocol (AdCP), with CLI tooling for testing agents.
 
 ## NPM Publishing & Release Management
 
@@ -117,7 +117,7 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 - ❌ Configuration files (`.eslintrc`, `tsconfig.json`, etc.)
 
 **Why CLI changes need changesets:**
-The CLI (`bin/adcp.js`) is bundled with the npm package. Users who run `npx @adcp/client@latest` or install the package globally need version bumps to get CLI fixes. Without a changeset, the fix won't be published to npm.
+The CLI (`bin/adcp.js`) is bundled with the npm package. Users who run `npx @adcp/sdk@latest` or install the package globally need version bumps to get CLI fixes. Without a changeset, the fix won't be published to npm.
 
 ### 🚨 REQUIRED: Make Changeset Check a Required Status Check 🚨
 
@@ -203,7 +203,7 @@ The CI workflow includes a `Changeset Check` job that validates changesets are i
    - Merging Release PR triggers publish workflow
    - GitHub Actions publishes to npm automatically
    - Package appears on npm registry within ~1 minute
-   - Verify: `npm view @adcp/client version`
+   - Verify: `npm view @adcp/sdk version`
 
 ### Version Bump Guidelines
 
@@ -267,7 +267,7 @@ npm version
 ls .changeset/*.md
 
 # Check npm package versions
-npm view @adcp/client versions
+npm view @adcp/sdk versions
 
 # View release history
 gh release list
@@ -310,7 +310,7 @@ gh release create v$(node -p "require('./package.json').version") --generate-not
 
    ```bash
    # Check what's on npm
-   npm view @adcp/client version  # e.g., 2.0.2
+   npm view @adcp/sdk version  # e.g., 2.0.2
 
    # Edit package.json to match npm version
    # Edit src/lib/version.ts LIBRARY_VERSION to match
@@ -391,4 +391,4 @@ gh run view <run-id>
 ---
 
 _Last updated: 2026-03-13_
-_Project: @adcp/client_
+_Project: @adcp/sdk_

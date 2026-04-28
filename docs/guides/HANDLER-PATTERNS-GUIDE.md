@@ -9,7 +9,7 @@ Input handlers are the core mechanism for controlling how your ADCP client respo
 ### Basic Handler Anatomy
 
 ```typescript
-import type { InputHandler, ConversationContext } from '@adcp/client';
+import type { InputHandler, ConversationContext } from '@adcp/sdk';
 
 const myHandler: InputHandler = async (context: ConversationContext) => {
   // 1. Analyze the context
@@ -64,7 +64,7 @@ interface ConversationContext {
 Always returns `true` for any input request:
 
 ```typescript
-import { autoApproveHandler } from '@adcp/client';
+import { autoApproveHandler } from '@adcp/sdk';
 
 // Usage
 const result = await agent.getProducts(params, autoApproveHandler);
@@ -76,7 +76,7 @@ const result = await agent.getProducts(params, autoApproveHandler);
 Always defers to human for every input request:
 
 ```typescript
-import { deferAllHandler } from '@adcp/client';
+import { deferAllHandler } from '@adcp/sdk';
 
 // Usage
 const result = await agent.getProducts(params, deferAllHandler);
@@ -97,7 +97,7 @@ if (result.status === 'deferred') {
 Maps specific fields to responses:
 
 ```typescript
-import { createFieldHandler } from '@adcp/client';
+import { createFieldHandler } from '@adcp/sdk';
 
 // Simple field mapping
 const handler = createFieldHandler({
@@ -136,7 +136,7 @@ const dynamicHandler = createFieldHandler({
 Applies different logic based on context conditions:
 
 ```typescript
-import { createConditionalHandler, autoApproveHandler, deferAllHandler } from '@adcp/client';
+import { createConditionalHandler, autoApproveHandler, deferAllHandler } from '@adcp/sdk';
 
 const smartHandler = createConditionalHandler([
   {
@@ -168,7 +168,7 @@ const smartHandler = createConditionalHandler([
 Different responses for different attempt numbers:
 
 ```typescript
-import { createRetryHandler } from '@adcp/client';
+import { createRetryHandler } from '@adcp/sdk';
 
 const retryHandler = createRetryHandler([
   100000,  // First attempt: generous budget
@@ -183,7 +183,7 @@ const retryHandler = createRetryHandler([
 Uses agent-provided suggestions:
 
 ```typescript
-import { createSuggestionHandler } from '@adcp/client';
+import { createSuggestionHandler } from '@adcp/sdk';
 
 // Use first suggestion
 const firstSuggestion = createSuggestionHandler(0, deferAllHandler);
@@ -203,7 +203,7 @@ const balancedHandler = createSuggestionHandler(
 Respects validation rules:
 
 ```typescript
-import { createValidatedHandler } from '@adcp/client';
+import { createValidatedHandler } from '@adcp/sdk';
 
 const validatedHandler = createValidatedHandler(
   75000, // Value to provide

@@ -607,7 +607,7 @@ function buildReplayWindowFailDiagnostic(vector: NegativeVector, rejectedCount: 
       `pairs were accepted (got 200 on second submission every time). Verifier has no replay protection for this nonce. ` +
       `If your verifier runs more than one process or machine instance, confirm the replay store is shared across ` +
       `the pool — the default \`InMemoryReplayStore\` is per-process. For distributed deployments use ` +
-      `\`PostgresReplayStore\` from \`@adcp/client/signing/server\` or a Redis-backed \`ReplayStore\` ` +
+      `\`PostgresReplayStore\` from \`@adcp/sdk/signing/server\` or a Redis-backed \`ReplayStore\` ` +
       `implementation. See https://github.com/adcontextprotocol/adcp-client/pull/1018`
     );
   }
@@ -616,7 +616,7 @@ function buildReplayWindowFailDiagnostic(vector: NegativeVector, rejectedCount: 
     `${pairCount - rejectedCount} pair(s) had the second submission accepted. ` +
     `This is the classic multi-instance \`InMemoryReplayStore\` pattern — the two probes in an ` +
     `accepted pair landed on different load-balanced instances, each with its own per-process replay store. ` +
-    `For distributed deployments use \`PostgresReplayStore\` from \`@adcp/client/signing/server\` ` +
+    `For distributed deployments use \`PostgresReplayStore\` from \`@adcp/sdk/signing/server\` ` +
     `or a Redis-backed \`ReplayStore\` implementation so all instances share one replay cache. ` +
     `See https://github.com/adcontextprotocol/adcp-client/pull/1018`
   );

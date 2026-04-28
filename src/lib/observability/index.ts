@@ -1,5 +1,5 @@
 /**
- * Observability utilities for @adcp/client
+ * Observability utilities for @adcp/sdk
  *
  * Provides OpenTelemetry tracing integration. All functions gracefully
  * handle the case where @opentelemetry/api is not installed.

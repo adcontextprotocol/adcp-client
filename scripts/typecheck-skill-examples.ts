@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Typecheck every fenced TypeScript block in `skills/**\/*.md` against the
- * published `@adcp/client` types. Catches drift between skill code samples
+ * published `@adcp/sdk` types. Catches drift between skill code samples
  * and the actual SDK surface — the failure mode that landed PR #945
  * (the creative skill taught a `server.registerTool` API that doesn't
  * exist on `AdcpServer`).
@@ -13,7 +13,7 @@
  * 3. Writes each block to its own file under `.cache/skill-examples/`,
  *    one file per block, so top-level imports + top-level statements
  *    work and one block's syntax error doesn't poison the next.
- * 4. Generates a `tsconfig.json` resolving `@adcp/client` to the local
+ * 4. Generates a `tsconfig.json` resolving `@adcp/sdk` to the local
  *    `dist/` so we test the *published* surface — same thing a downstream
  *    consumer sees.
  * 5. Runs `tsc --noEmit` over the cache and reports.
@@ -126,7 +126,7 @@ interface ExtractedBlock {
  * `createAdcpServer(`, `createIdempotencyStore(`, or similar entry-point
  * that anchors it as a complete agent file.
  *
- * Why both checks: a fragment like `import { displayRender } from '@adcp/client'; \n
+ * Why both checks: a fragment like `import { displayRender } from '@adcp/sdk'; \n
  * buildCreative: async (params) => { ... }` has imports but is still a
  * partial handler — the property syntax fails to parse at the top level.
  * Requiring an entry-point call rules those out without false-skipping
@@ -219,14 +219,14 @@ async function ensureDistBuilt(): Promise<void> {
   const s = await stat(DIST_DIR).catch(() => null);
   if (!s?.isDirectory()) {
     console.error(
-      `[typecheck-skill-examples] error: dist/ not found at ${DIST_DIR}. Run "npm run build:lib" first so @adcp/client resolves to the published surface.`
+      `[typecheck-skill-examples] error: dist/ not found at ${DIST_DIR}. Run "npm run build:lib" first so @adcp/sdk resolves to the published surface.`
     );
     process.exit(2);
   }
 }
 
 async function writeTsconfig(): Promise<void> {
-  // Per-block files import `@adcp/client` and `@adcp/client/server`. Map both
+  // Per-block files import `@adcp/sdk` and `@adcp/sdk/server`. Map both
   // to the built dist so we test the *exported* shape, not the in-tree source.
   // baseUrl + paths handles the resolution; module/moduleResolution match what
   // a downstream Node16 consumer would use.
@@ -244,9 +244,9 @@ async function writeTsconfig(): Promise<void> {
       allowJs: false,
       baseUrl: '.',
       paths: {
-        '@adcp/client': [join(REPO_ROOT, 'dist/lib/index.d.ts')],
-        '@adcp/client/server': [join(REPO_ROOT, 'dist/lib/server/index.d.ts')],
-        '@adcp/client/*': [join(REPO_ROOT, 'dist/lib/*')],
+        '@adcp/sdk': [join(REPO_ROOT, 'dist/lib/index.d.ts')],
+        '@adcp/sdk/server': [join(REPO_ROOT, 'dist/lib/server/index.d.ts')],
+        '@adcp/sdk/*': [join(REPO_ROOT, 'dist/lib/*')],
       },
     },
     include: ['*.ts'],

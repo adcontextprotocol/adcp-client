@@ -15,8 +15,8 @@ Companion to [`SKILL.md`](./SKILL.md). Read this only when you need deployment s
 Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in the factory, and turn on `trustForwardedHost` when a proxy terminates TLS:
 
 ```typescript
-import { serve, createAdcpServer, UnknownHostError, hostname } from '@adcp/client';
-import { verifyBearer } from '@adcp/client/server';
+import { serve, createAdcpServer, UnknownHostError, hostname } from '@adcp/sdk';
+import { verifyBearer } from '@adcp/sdk/server';
 
 // Host → adapter config. Whatever shape suits your deployment (DB, env, static).
 // Cache the CONFIG (not the AdcpServer). serve() still instantiates the
@@ -116,7 +116,7 @@ When your agent is _both_ an OAuth 2.1 AS (issues tokens) and a protected resour
 
 ```typescript
 import express from 'express';
-import { createAdcpServer, createExpressAdapter, verifyBearer, anyOf, verifyApiKey } from '@adcp/client/server';
+import { createAdcpServer, createExpressAdapter, verifyBearer, anyOf, verifyApiKey } from '@adcp/sdk/server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
@@ -196,7 +196,7 @@ import {
   resolveHost,
   hostname,
   UnknownHostError,
-} from '@adcp/client/server';
+} from '@adcp/sdk/server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
@@ -336,7 +336,7 @@ Used when the adapter is a thin proxy over an external IdP (Snap OAuth, Meta OAu
 Bearer verification is NOT `verifyBearer({...})` — the token isn't your JWT. Use `verifyIntrospection` (RFC 7662) when the upstream exposes an introspection endpoint:
 
 ```typescript
-import { verifyIntrospection } from '@adcp/client/server';
+import { verifyIntrospection } from '@adcp/sdk/server';
 
 const authenticate = verifyIntrospection({
   introspectionUrl: 'https://accounts.snapchat.com/oauth2/introspect',
@@ -382,13 +382,13 @@ Both provider shapes compose with the multi-host Express scaffold above — swap
 - `getUrl` for signature verifier audience reconstruction (Express strips the mount prefix from `req.url`)
 - `resetHook` for conformance-runner storyboard resets
 
-You own: the `mcpAuthRouter` wiring (provider-specific), the per-request `transport.connect()` + `handleRequest()` dance, the host-dispatch middleware. `resolveHost` + `hostname` + `UnknownHostError` from `@adcp/client/server` give you the same security posture as `serve()`'s internal resolution — export and reuse rather than re-deriving.
+You own: the `mcpAuthRouter` wiring (provider-specific), the per-request `transport.connect()` + `handleRequest()` dance, the host-dispatch middleware. `resolveHost` + `hostname` + `UnknownHostError` from `@adcp/sdk/server` give you the same security posture as `serve()`'s internal resolution — export and reuse rather than re-deriving.
 
 ### Stdio
 
 ```typescript
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createAdcpServer } from '@adcp/client/server';
+import { createAdcpServer } from '@adcp/sdk/server';
 
 const server = createAdcpServer({
   name: 'Local Seller',

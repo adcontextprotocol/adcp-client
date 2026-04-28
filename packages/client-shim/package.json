@@ -1,0 +1,129 @@
+{
+  "name": "@adcp/client",
+  "version": "5.22.0",
+  "description": "Renamed to @adcp/sdk. Compatibility shim that re-exports @adcp/sdk under the legacy package name.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "type": "commonjs",
+  "bin": {
+    "adcp": "./bin/adcp.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "require": "./index.js",
+      "types": "./index.d.ts"
+    },
+    "./client": {
+      "import": "./client.js",
+      "require": "./client.js",
+      "types": "./client.d.ts"
+    },
+    "./compliance": {
+      "import": "./compliance.js",
+      "require": "./compliance.js",
+      "types": "./compliance.d.ts"
+    },
+    "./advanced": {
+      "import": "./advanced.js",
+      "require": "./advanced.js",
+      "types": "./advanced.d.ts"
+    },
+    "./types": {
+      "import": "./types.js",
+      "require": "./types.js",
+      "types": "./types.d.ts"
+    },
+    "./testing": {
+      "import": "./testing.js",
+      "require": "./testing.js",
+      "types": "./testing.d.ts"
+    },
+    "./auth": {
+      "import": "./auth.js",
+      "require": "./auth.js",
+      "types": "./auth.d.ts"
+    },
+    "./server": {
+      "import": "./server.js",
+      "require": "./server.js",
+      "types": "./server.d.ts"
+    },
+    "./signing": {
+      "import": "./signing.js",
+      "require": "./signing.js",
+      "types": "./signing.d.ts"
+    },
+    "./signing/client": {
+      "import": "./signing/client.js",
+      "require": "./signing/client.js",
+      "types": "./signing/client.d.ts"
+    },
+    "./signing/server": {
+      "import": "./signing/server.js",
+      "require": "./signing/server.js",
+      "types": "./signing/server.d.ts"
+    },
+    "./signing/testing": {
+      "import": "./signing/testing.js",
+      "require": "./signing/testing.js",
+      "types": "./signing/testing.d.ts"
+    },
+    "./schemas": {
+      "import": "./schemas.js",
+      "require": "./schemas.js",
+      "types": "./schemas.d.ts"
+    },
+    "./compliance-fixtures": {
+      "import": "./compliance-fixtures.js",
+      "require": "./compliance-fixtures.js",
+      "types": "./compliance-fixtures.d.ts"
+    },
+    "./conformance": {
+      "import": "./conformance.js",
+      "require": "./conformance.js",
+      "types": "./conformance.d.ts"
+    },
+    "./substitution": {
+      "import": "./substitution.js",
+      "require": "./substitution.js",
+      "types": "./substitution.d.ts"
+    },
+    "./express-mcp": {
+      "import": "./express-mcp.js",
+      "require": "./express-mcp.js",
+      "types": "./express-mcp.d.ts"
+    }
+  },
+  "files": [
+    "*.js",
+    "*.d.ts",
+    "signing/*.js",
+    "signing/*.d.ts",
+    "bin/**/*.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@adcp/sdk": "^5.22.0"
+  },
+  "keywords": [
+    "adcp",
+    "deprecated"
+  ],
+  "author": {
+    "name": "AdCP Community",
+    "email": "maintainers@adcontextprotocol.org",
+    "url": "https://adcontextprotocol.org"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adcontextprotocol/adcp-client.git",
+    "directory": "packages/client-shim"
+  },
+  "homepage": "https://github.com/adcontextprotocol/adcp-client#readme",
+  "bugs": {
+    "url": "https://github.com/adcontextprotocol/adcp-client/issues"
+  }
+}

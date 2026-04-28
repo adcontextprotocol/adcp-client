@@ -1,6 +1,6 @@
 # AdCP Client Examples
 
-This directory contains practical examples of how to use the `@adcp/client` library.
+This directory contains practical examples of how to use the `@adcp/sdk` library.
 
 ## Examples
 
@@ -52,7 +52,7 @@ ADCP_AGENTS_CONFIG='[{"id":"test-agent","name":"Test Agent","agent_uri":"https:/
 ### 1. Multi-Agent Client
 
 ```typescript
-import { ADCPMultiAgentClient, type AgentConfig } from '@adcp/client';
+import { ADCPMultiAgentClient, type AgentConfig } from '@adcp/sdk';
 
 const agents: AgentConfig[] = [/* your agents */];
 const client = new ADCPMultiAgentClient(agents);
@@ -68,7 +68,7 @@ const results = await client.agents(['id1', 'id2']).getProducts({ brief: '...' }
 ### 2. Environment-based Configuration
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 // Auto-discover from env vars and config files
 const client = ADCPMultiAgentClient.fromConfig();

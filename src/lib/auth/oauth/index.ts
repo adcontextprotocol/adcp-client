@@ -5,7 +5,7 @@
  *
  * @example
  * ```typescript
- * import { MCPOAuthProvider, CLIFlowHandler } from '@adcp/client';
+ * import { MCPOAuthProvider, CLIFlowHandler } from '@adcp/sdk';
  *
  * // Agent config - tokens will be stored here
  * const agent: AgentConfig = {

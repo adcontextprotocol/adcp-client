@@ -48,10 +48,10 @@ createMediaBuy: async (params, ctx) => {
 
 **`get_media_buys` must echo `packages[].property_list` / `collection_list`.** The `inventory_list_targeting` baseline scenarios call `create_media_buy` with list references, then call `get_media_buys` expecting those same `list_id` values to appear at `media_buys[].packages[].property_list.list_id` / `.collection_list.list_id`. Persist verbatim, echo verbatim. `update_media_buy` should merge new list refs without dropping prior ones.
 
-**Task envelope — when IO signing is required.** Use `registerAdcpTaskTool` from `@adcp/client/server` so `tasks/get` returns the completion artifact:
+**Task envelope — when IO signing is required.** Use `registerAdcpTaskTool` from `@adcp/sdk/server` so `tasks/get` returns the completion artifact:
 
 ```typescript
-import { taskToolResponse } from '@adcp/client/server';
+import { taskToolResponse } from '@adcp/sdk/server';
 
 return taskToolResponse(
   { status: 'submitted', task_id: taskId, message: 'Awaiting IO signature; typical turnaround 2-4 hours' },
@@ -63,5 +63,5 @@ When the task completes, emit the final `create_media_buy` result (carrying `med
 
 Declare `requires_io_approval` in your `capabilities.features` for this path. For deterministic compliance testing, implement `forceTaskStatus` (not `forceMediaBuyStatus`) in your `TestControllerStore` to drive the task from `submitted → completed` without waiting for a human.
 
-**Governance denial (`GOVERNANCE_DENIED`).** Baseline `media_buy_seller/governance_denied*` scenarios exercise governance refusal. For sellers that compose with a governance agent, call `checkGovernance(...)` from `@adcp/client/server` at the top of `create_media_buy`. If the governance agent returns denial, surface with `governanceDeniedError(result)` so the error code is `GOVERNANCE_DENIED` and context echoes. Sellers that don't compose with governance will see these scenarios fail with `INVALID_REQUEST` — expected until upstream gates the scenarios behind a composition-claim specialism (tracked at adcontextprotocol/adcp#2521).
+**Governance denial (`GOVERNANCE_DENIED`).** Baseline `media_buy_seller/governance_denied*` scenarios exercise governance refusal. For sellers that compose with a governance agent, call `checkGovernance(...)` from `@adcp/sdk/server` at the top of `create_media_buy`. If the governance agent returns denial, surface with `governanceDeniedError(result)` so the error code is `GOVERNANCE_DENIED` and context echoes. Sellers that don't compose with governance will see these scenarios fail with `INVALID_REQUEST` — expected until upstream gates the scenarios behind a composition-claim specialism (tracked at adcontextprotocol/adcp#2521).
 

@@ -844,7 +844,7 @@ import {
   createConditionalHandler,
   InputRequiredError,
   TaskTimeoutError
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Setup
 const client = ADCPMultiAgentClient.fromConfig();

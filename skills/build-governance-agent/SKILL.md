@@ -43,7 +43,7 @@ Specialism ID (kebab-case) = storyboard directory. Storyboard `id:` (snake_case,
 Every production governance agent — regardless of specialism — must wire these. Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing OAuth, signing, and idempotency; minimum-viable pointers:
 
 - **`idempotency_key`** on every mutating request (`sync_plans`, `create_property_list`/`update_property_list`/`delete_property_list`, `create_collection_list`/`update_collection_list`/`delete_collection_list`, `create_content_standards`/`update_content_standards`, `calibrate_content`). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
-- **Authentication** via `serve({ authenticate: verifyApiKey(...)/verifyBearer(...) })` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Authentication** via `serve({ authenticate: verifyApiKey(...)/verifyBearer(...) })` from `@adcp/sdk/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: don't reject requests that carry `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 - **Resolve-then-authorize** on id lookups (`get_property_list`, `get_content_standards`, `get_collection_list`): return byte-equivalent errors whether the id is cross-tenant or nonexistent — always `REFERENCE_NOT_FOUND`, never `PERMISSION_DENIED`. `adcp fuzz` runs a paired-probe invariant that enforces this; stand up two test tenants and pass `--auth-token` + `--auth-token-cross-tenant` for full coverage. See `skills/build-seller-agent/SKILL.md` §Resolve-then-authorize for the full rules.
 - **`comply_test_controller`** — required to pass the `governance_spend_authority` and `property_lists` storyboards. Each seeds fixtures via `comply_test_controller.seed_plan` / `seed_property_list` before running the business-logic phases. Register via `createComplyController({ seed: { plan, property_list, collection_list, content_standards } })` and call `controller.register(server)` — same pattern as seller. Full treatment in `skills/build-seller-agent/SKILL.md` §Compliance Testing. Without it, all business-logic steps skip with `missing_test_controller` and the track vacuously "passes" (no tests run, vacuous green detected by the grader as fail).
@@ -469,13 +469,13 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -507,8 +507,8 @@ Minimal `tsconfig.json`:
 
 ```typescript
 import { randomUUID } from 'node:crypto';
-import { createAdcpServer, serve } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createAdcpServer, serve } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 const idempotency = createIdempotencyStore({
   backend: memoryBackend(),
@@ -568,10 +568,10 @@ Route decisions based on the plan state and request parameters:
 
 ## Idempotency
 
-AdCP v3 requires an `idempotency_key` on every mutating request — for governance agents that's `create_property_list` / `update_property_list` / `delete_property_list`, `create_content_standards` / `update_content_standards`, `sync_plans`, and `report_plan_outcome` (`check_governance` and the various `get_*` / `list_*` tools are read-only and exempt). Wire `createIdempotencyStore` from `@adcp/client/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry so a failed `sync_plans` or outcome report can be retried cleanly. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) — typically the operator / tenant id.
+AdCP v3 requires an `idempotency_key` on every mutating request — for governance agents that's `create_property_list` / `update_property_list` / `delete_property_list`, `create_content_standards` / `update_content_standards`, `sync_plans`, and `report_plan_outcome` (`check_governance` and the various `get_*` / `list_*` tools are read-only and exempt). Wire `createIdempotencyStore` from `@adcp/sdk/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry so a failed `sync_plans` or outcome report can be retried cleanly. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) — typically the operator / tenant id.
 
 ```typescript
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 const idempotency = createIdempotencyStore({
   backend: memoryBackend(), // or pgBackend(pool) for production
@@ -594,8 +594,8 @@ const server = createAdcpServer({
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
@@ -638,19 +638,19 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy paths — run the storyboards matching your claimed specialisms
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards governance_spend_authority,governance_spend_authority/denied,governance_delivery_monitor \
   --auth $TOKEN
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards property_lists,collection_lists,content_standards \
   --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz — includes update_property_list / update_content_standards (Tier 3)
-npx @adcp/client@latest fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 ```
 
 Common failure decoder:
@@ -842,7 +842,7 @@ type BaseProperty = {
 **`list_property_lists` / `list_collection_lists`** — destructure `ctx.store.list`. It returns `{ items, nextCursor? }`, never a bare array. Calling `.map` / `.filter` on the raw result throws `TypeError` and the dispatcher wraps it as `SERVICE_UNAVAILABLE`. Use the typed response helper so you can't accidentally ship a bare `[...]` at the top level (the storyboard runner flags that as shape drift):
 
 ```typescript
-import { listPropertyListsResponse } from '@adcp/client/server';
+import { listPropertyListsResponse } from '@adcp/sdk/server';
 
 listPropertyLists: async (params, ctx) => {
   const { items } = await ctx.store.list('property_list');

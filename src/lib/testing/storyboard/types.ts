@@ -300,7 +300,7 @@ export interface StoryboardStep {
   schema_ref?: string;
   response_schema_ref?: string;
   doc_ref?: string;
-  /** Maps to existing @adcp/client test scenario (legacy, partial coverage) */
+  /** Maps to existing @adcp/sdk test scenario (legacy, partial coverage) */
   comply_scenario?: string;
   /** Whether this step depends on state from a previous step */
   stateful?: boolean;

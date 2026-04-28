@@ -1,4 +1,4 @@
-# Contributing to @adcp/client
+# Contributing to @adcp/sdk
 
 We love your input! We want to make contributing to the AdCP client library as easy and transparent as possible, whether it's:
 
@@ -37,6 +37,12 @@ npm test
 # Build the library
 npm run build
 ```
+
+#### npm-only workspaces
+
+This repo is an npm workspace with two packages — the SDK at the root (`@adcp/sdk`) and the legacy-name compat shim under `packages/client-shim/` (`@adcp/client`). The root `package.json` lists `workspaces: [".", "packages/*"]`, with the leading `"."` so the shim can resolve the root package as a workspace member rather than reaching for the registry.
+
+That `"."` entry is supported by **npm only** — pnpm rejects it, and Yarn behavior varies by version. The repo pins `packageManager: "npm@10.9.7"` so Corepack-aware setups pick the right tool automatically. If you contribute via pnpm or Yarn, the install will fail until you switch to npm. Once a future restructure moves the SDK into `packages/sdk/`, the `"."` entry can drop and pnpm/Yarn become viable.
 
 ## Project Structure
 

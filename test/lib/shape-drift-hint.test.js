@@ -24,7 +24,7 @@ test('build_creative with platform-native tag_url at top level → hint fires', 
   assert.match(hint, /platform-native fields at the top level/);
   assert.match(hint, /creative_manifest/);
   assert.match(hint, /buildCreativeResponse/);
-  assert.match(hint, /@adcp\/client\/server/);
+  assert.match(hint, /@adcp\/sdk\/server/);
   // Names which offending fields were found so the reader sees the evidence
   assert.match(hint, /tag_url/);
 });
@@ -94,7 +94,7 @@ test('sync_creatives with top-level creative_id + platform_id + action → hint 
   assert.match(hint, /single creative's inner shape/);
   assert.match(hint, /creatives: \[\{/);
   assert.match(hint, /syncCreativesResponse/);
-  assert.match(hint, /@adcp\/client\/server/);
+  assert.match(hint, /@adcp\/sdk\/server/);
   assert.match(hint, /creative_id/);
 });
 
@@ -171,7 +171,7 @@ test('preview_creative with top-level preview_url → hint fires', () => {
   assert.match(hint, /raw render fields at the top level/);
   assert.match(hint, /previews: \[\{ renders/);
   assert.match(hint, /previewCreativeResponse/);
-  assert.match(hint, /@adcp\/client\/server/);
+  assert.match(hint, /@adcp\/sdk\/server/);
   assert.match(hint, /preview_url/);
 });
 
@@ -242,7 +242,7 @@ test('list_creatives with bare array at the root → hint suggests { creatives: 
   assert.match(hint, /bare array at the top level/);
   assert.match(hint, /\{ creatives: \[\.\.\.\] \}/);
   assert.match(hint, /listCreativesResponse/);
-  assert.match(hint, /@adcp\/client\/server/);
+  assert.match(hint, /@adcp\/sdk\/server/);
 });
 
 test('list_creative_formats with bare array → hint suggests { formats: [...] }', () => {

@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-04-28
-> Library: @adcp/client v5.21.1
+> Library: @adcp/sdk v5.21.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -15,7 +15,7 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 - **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` instead. Minimal example:
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
+import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/sdk';
 
 function createAgent({ taskStore }) {
   const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
@@ -30,12 +30,12 @@ function createAgent({ taskStore }) {
 serve(createAgent); // http://localhost:3001/mcp
 ```
 
-Low-level server (bypassing `createAdcpServer`)? Use `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/client/server` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops `replayed`).
+Low-level server (bypassing `createAdcpServer`)? Use `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/sdk/server` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops `replayed`).
 
 ## Quick Start (Client)
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {
   authToken: process.env.ADCP_TOKEN,
@@ -126,7 +126,7 @@ if (result.success && !result.metadata.replayed) {
 **Typed errors:** on failure, `result.errorInstance` carries a typed `ADCPError` subclass for codes with dedicated classes — currently `IdempotencyConflictError` and `IdempotencyExpiredError`. Prefer `instanceof` checks over switching on `adcpError.code` strings.
 
 ```typescript
-import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';
+import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/sdk';
 
 if (result.errorInstance instanceof IdempotencyConflictError) {
   // Agent re-planned with different payload. Retry with a fresh key.
@@ -152,7 +152,7 @@ const ttl = await client.getIdempotencyReplayTtlSeconds();
 Pass your persisted key with `useIdempotencyKey(key)` — it validates against the spec pattern (`^[A-Za-z0-9_.:-]{16,255}$`) before the network round-trip:
 
 ```typescript
-import { useIdempotencyKey } from '@adcp/client';
+import { useIdempotencyKey } from '@adcp/sdk';
 const key = await db.getOrCreateIdempotencyKey(campaign.id);
 await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
 ```
@@ -267,7 +267,7 @@ Request parameters for discovering format IDs and creative agents supported by t
 
 **Watch out:**
 - Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.
-- Use the typed factories from `@adcp/client`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
+- Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
 #### `create_media_buy`
@@ -398,7 +398,7 @@ Request parameters for AI-powered creative generation.
 
 **Watch out:**
 - Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.
-- Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to enforce the shape at compile time.
+- Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to enforce the shape at compile time.
 - Each asset under `creative_manifest.assets` needs an `asset_type` discriminator — use the factories: `imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset` (or `Asset.image(...)`).
 
 #### `preview_creative`
@@ -429,7 +429,7 @@ Request parameters for discovering creative formats from this creative agent.
 
 **Watch out:**
 - Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.
-- Use the typed factories from `@adcp/client`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
+- Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
 #### `get_creative_delivery`
@@ -1192,6 +1192,6 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 ## External Resources
 
 - Documentation: https://adcontextprotocol.github.io/adcp-client/
-- npm: https://www.npmjs.com/package/@adcp/client
+- npm: https://www.npmjs.com/package/@adcp/sdk
 - Spec: https://adcontextprotocol.org
-- CLI: `npx @adcp/client@latest`
+- CLI: `npx @adcp/sdk@latest`

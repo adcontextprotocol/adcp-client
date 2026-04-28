@@ -301,7 +301,7 @@ export interface AsyncHandlerConfig {
    * dispatches to handlers; subsequent deliveries are dropped and surface
    * as a `webhook_duplicate` activity.
    *
-   * Reuses `IdempotencyBackend` from `@adcp/client/server` — you can share
+   * Reuses `IdempotencyBackend` from `@adcp/sdk/server` — you can share
    * the same backend across request-side and webhook-side dedup, or use a
    * dedicated one. Scope is per-agent so keys from different senders are
    * independent, matching the spec's "scoped to authenticated sender

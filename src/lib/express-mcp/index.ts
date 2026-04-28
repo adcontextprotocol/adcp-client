@@ -37,7 +37,7 @@
  *
  * ```ts
  * import express from 'express';
- * import { mcpAcceptHeaderMiddleware } from '@adcp/client/express-mcp';
+ * import { mcpAcceptHeaderMiddleware } from '@adcp/sdk/express-mcp';
  *
  * const app = express();
  * app.use('/mcp', mcpAcceptHeaderMiddleware());

@@ -133,9 +133,9 @@ Each concern above is straightforward in isolation. The pitfalls are at their bo
 **The pipeline.** `serve({ authenticate, preTransport })` runs steps in this order and buffers the request body into `req.rawBody` so the signature verifier can hash it without racing the MCP transport:
 
 ```typescript
-import { serve } from '@adcp/client';
+import { serve } from '@adcp/sdk';
 // verifyBearer / verifyApiKey / anyOf live on the server subpath, not the root barrel:
-import { verifyBearer } from '@adcp/client/server';
+import { verifyBearer } from '@adcp/sdk/server';
 // Low-level verifier is preTransport-shaped: use it instead of createExpressVerifier
 // (which is Express (req, res, next) middleware and won't type-check against preTransport):
 import {
@@ -145,7 +145,7 @@ import {
   InMemoryReplayStore,
   InMemoryRevocationStore,
   type VerifierCapability,
-} from '@adcp/client/signing/server';
+} from '@adcp/sdk/signing/server';
 
 const capability: VerifierCapability = {
   supported: true,
@@ -280,7 +280,7 @@ This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` 
 Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Wire `createAdcpServer({ webhooks: { signerKey } })` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
 
 // Dev: generate a signer JWK once at boot. Production: load from KMS/env with a stable `kid`,
 // and publish the public half at your `jwks_uri` so buyers can verify without OOB exchange.
@@ -335,7 +335,7 @@ serve(() =>
 
 **`ctx.emitWebhook` is typed optional** (`emitWebhook?:`) even when you configure `webhooks` on the server. The framework populates it on every handler once `webhooks.signerKey` is set; use `ctx.emitWebhook!` or a local guard. Strict-mode assert-once-at-boot works too.
 
-**Return envelope — use `taskToolResponse`, not the default `mediaBuyResponse` wrap.** The framework auto-wraps `createMediaBuy` returns with `mediaBuyResponse`, which stamps `revision`/`confirmed_at`/`valid_actions` onto the response — semantically wrong on a `submitted` envelope. For submitted returns, import `taskToolResponse` from `@adcp/client/server` and wrap explicitly (see [§ sales-guaranteed](#specialism-sales-guaranteed) for the full pattern).
+**Return envelope — use `taskToolResponse`, not the default `mediaBuyResponse` wrap.** The framework auto-wraps `createMediaBuy` returns with `mediaBuyResponse`, which stamps `revision`/`confirmed_at`/`valid_actions` onto the response — semantically wrong on a `submitted` envelope. For submitted returns, import `taskToolResponse` from `@adcp/sdk/server` and wrap explicitly (see [§ sales-guaranteed](#specialism-sales-guaranteed) for the full pattern).
 
 **`operation_id` must be stable across retries.** The emitter hashes `operation_id` into the outbound `idempotency_key` so receivers can dedupe retried deliveries. Regenerating `operation_id` on retry is the top at-least-once-delivery bug the webhook conformance runner catches — use an ID derived from the logical event (the task_id, media_buy_id, or report batch), not a timestamp or fresh UUID.
 
@@ -411,7 +411,7 @@ Non-guaranteed buys are always instant confirmation.
 > - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows are strict: each requires `package_id`, `spend` (number), `pricing_model`, `rate` (number), and `currency`. A mock that returns `{package_id, impressions, clicks}` fails validation — include the billing quintet on every package row.
 > - `get_media_buy_delivery /reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`YYYY-MM-DDTHH:MM:SS.sssZ` via `new Date().toISOString()`), not date-only. A mock that returns `'2026-04-21'` fails the format check in GA.
 > - `get_media_buys /media_buys[i]` rows require **`media_buy_id`, `status`, `currency`, `total_budget`, `packages`**. When you persist a buy in `create_media_buy`, save `currency` and `total_budget` so the `get_media_buys` response can echo them verbatim — reconstructing later drops one of the required fields in ~every Claude build we've tested.
-> - `sync_accounts` response: each row in `accounts[]` requires **`action: 'created' | 'updated' | 'unchanged' | 'failed'`** (not just `account_id`, `status`). Compare to sync_creatives — same pattern. Omitting `action` fails schema validation at `/accounts/0/action` and blocks every downstream stateful step in the storyboard. Type your row array as `SyncAccountsResponseRow[]` (exported from `@adcp/client`) to catch the missing-`action` drift at compile time instead of runtime.
+> - `sync_accounts` response: each row in `accounts[]` requires **`action: 'created' | 'updated' | 'unchanged' | 'failed'`** (not just `account_id`, `status`). Compare to sync_creatives — same pattern. Omitting `action` fails schema validation at `/accounts/0/action` and blocks every downstream stateful step in the storyboard. Type your row array as `SyncAccountsResponseRow[]` (exported from `@adcp/sdk`) to catch the missing-`action` drift at compile time instead of runtime.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 
@@ -465,7 +465,7 @@ productsResponse({
       fixed_price: 12.00,
       currency: 'USD',
     }],
-    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // from @adcp/client/server — stays in sync with schema
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // from @adcp/sdk/server — stays in sync with schema
   }],
   sandbox: true,        // for mock data
 })
@@ -551,7 +551,7 @@ import {
   repeatableGroup,
   imageGroupAsset,
   textGroupAsset,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Single image asset slot
 imageAssetSlot({
@@ -644,7 +644,7 @@ To pass the `deterministic_testing` storyboard — and the rejection-branch step
 Handles dispatch + validation + re-seed idempotency + sandbox gating for you. Your adapter bodies run; the helper routes:
 
 ```ts
-import { createComplyController } from '@adcp/client/testing';
+import { createComplyController } from '@adcp/sdk/testing';
 
 const controller = createComplyController({
   sandboxGate: input => input.auth?.sandbox === true,
@@ -681,7 +681,7 @@ Group A storyboards call `comply_test_controller.seed_product` (and `seed_pricin
 **1. `mergeSeed*` helpers** — permissive merge over your seller defaults. Storyboard fixtures declare only the fields they want to override; everything else (delivery type, channels, reporting capabilities, ...) comes from your baseline. Arrays replace by default; id-keyed lists (`pricing_options`, `publisher_properties`, `packages`, `assets`, plan `findings`) overlay by their id so seeding one entry doesn't wipe the rest.
 
 ```ts
-import { mergeSeedProduct } from '@adcp/client/testing';
+import { mergeSeedProduct } from '@adcp/sdk/testing';
 
 const baseline: Partial<Product> = {
   delivery_type: 'guaranteed',
@@ -697,8 +697,8 @@ productRepo.upsert(merged.product_id, merged);
 **2. `bridgeFromTestControllerStore`** — wires your seeded `Map` into `get_products` responses automatically. Sandbox requests see seeded + handler products merged (with seeded winning collisions); production traffic (no sandbox marker, or resolved non-sandbox account) skips the bridge entirely.
 
 ```ts
-import { createAdcpServer } from '@adcp/client';
-import { bridgeFromTestControllerStore } from '@adcp/client/server';
+import { createAdcpServer } from '@adcp/sdk';
+import { bridgeFromTestControllerStore } from '@adcp/sdk/server';
 
 const seedStore = new Map<string, unknown>();
 
@@ -723,7 +723,7 @@ Pick this when your seed and force handlers must mutate typed domain records (`M
 See [`examples/seller-test-controller.ts`](../../examples/seller-test-controller.ts) for the end-to-end pattern (typed `MediaBuyState` + `CreativeState`, per-request factory, `enforceMapCap` + `createSeedFixtureCache`, transition guards shared with production code). Sketch:
 
 ```
-import { registerTestController, type TestControllerStore } from '@adcp/client/testing';
+import { registerTestController, type TestControllerStore } from '@adcp/sdk/testing';
 
 const store: TestControllerStore = {
   async forceAccountStatus(accountId, status) {
@@ -779,7 +779,7 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 For production test controllers with persisted-session state (Postgres/Redis/JSONB), the per-session factory shape, `enforceMapCap` for bounded session maps, and custom MCP wrappers with `AsyncLocalStorage` or sandbox gating — see [`docs/guides/BUILD-AN-AGENT.md`](../../docs/guides/BUILD-AN-AGENT.md) § createTaskCapableServer.
 
-Key SDK pieces you'll import from `@adcp/client`: `CONTROLLER_SCENARIOS`, `enforceMapCap`, `SESSION_ENTRY_CAP`, `handleTestControllerRequest`, `toMcpResponse`, `TOOL_INPUT_SHAPE`.
+Key SDK pieces you'll import from `@adcp/sdk`: `CONTROLLER_SCENARIOS`, `enforceMapCap`, `SESSION_ENTRY_CAP`, `handleTestControllerRequest`, `toMcpResponse`, `TOOL_INPUT_SHAPE`.
 
 ## SDK Quick Reference
 
@@ -804,13 +804,13 @@ Key SDK pieces you'll import from `@adcp/client`: `CONTROLLER_SCENARIOS`, `enfor
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by `createAdcpServer` — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import everything from `@adcp/sdk`. Types from `@adcp/sdk` with `import type`.
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -835,7 +835,7 @@ Minimal `tsconfig.json`:
 
 Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
 
-**Imports**: most things live at `@adcp/client`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/client/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
+**Imports**: most things live at `@adcp/sdk`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/sdk/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
 
 ```typescript
 import { randomUUID } from 'node:crypto';
@@ -846,9 +846,9 @@ import {
   InMemoryStateStore,
   checkGovernance,
   governanceDeniedError,
-} from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
-import type { ServeContext } from '@adcp/client';
+} from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import type { ServeContext } from '@adcp/sdk';
 
 const stateStore = new InMemoryStateStore(); // shared across requests
 
@@ -1038,8 +1038,8 @@ import {
   buildHumanOverride,
   checkGovernance,
   governanceDeniedError,
-} from '@adcp/client';
-import { taskToolResponse, type AdcpStateStore } from '@adcp/client/server';
+} from '@adcp/sdk';
+import { taskToolResponse, type AdcpStateStore } from '@adcp/sdk/server';
 import { randomUUID } from 'node:crypto';
 
 serve(() =>
@@ -1140,7 +1140,7 @@ async function onHumanApproval(store: AdcpStateStore, taskId: string, approver: 
 | Fair-housing, fair-lending, fair-employment, pharmaceutical (US regulated) | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
 | Explicit `policy_ids: ['eu_ai_act_annex_iii']`                             | `true` (required)       | Human reviewer       | `human_override` built via `buildHumanOverride` |
 
-`REGULATED_HUMAN_REVIEW_CATEGORIES` (exported from `@adcp/client`) is the client-side minimum: `['fair_housing', 'fair_lending', 'fair_employment', 'pharmaceutical_advertising']`. `ANNEX_III_POLICY_IDS` is `['eu_ai_act_annex_iii']`. Governance agents resolve synonyms and per-publisher extensions server-side; these constants exist so pre-submit validation doesn't round-trip. Extend with your own vertical list if needed.
+`REGULATED_HUMAN_REVIEW_CATEGORIES` (exported from `@adcp/sdk`) is the client-side minimum: `['fair_housing', 'fair_lending', 'fair_employment', 'pharmaceutical_advertising']`. `ANNEX_III_POLICY_IDS` is `['eu_ai_act_annex_iii']`. Governance agents resolve synonyms and per-publisher extensions server-side; these constants exist so pre-submit validation doesn't round-trip. Extend with your own vertical list if needed.
 
 ### Pitfalls
 
@@ -1224,8 +1224,8 @@ Ask the operator which mechanism they want before generating code. "API key, OAu
 ### API key
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey } from '@adcp/sdk/server';
 
 serve(createAgent, {
   authenticate: verifyApiKey({
@@ -1243,8 +1243,8 @@ For local development use the static `keys` map: `verifyApiKey({ keys: { sk_test
 ### OAuth
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyBearer } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyBearer } from '@adcp/sdk/server';
 
 const AGENT_URL = 'https://my-agent.example.com/mcp';
 
@@ -1267,8 +1267,8 @@ Set `publicUrl` to the canonical https:// URL clients use — the framework serv
 ### Both
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
 
 serve(createAgent, {
   publicUrl: AGENT_URL,
@@ -1299,25 +1299,25 @@ npx tsx agent.ts &
 
 ```bash
 # Full seller lifecycle
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
 
 # Your specialism bundle (one of: sales_guaranteed, sales_non_guaranteed,
 # sales_broadcast_tv, sales_streaming_tv, sales_social, sales_proposal_mode)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp sales_guaranteed --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp sales_guaranteed --auth $TOKEN
 
 # Cross-cutting obligations — every seller must pass these
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards idempotency,security_baseline,schema_validation,error_compliance --auth $TOKEN
 
 # Webhook conformance (if you claim async task lifecycles)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp webhook_emission \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp webhook_emission \
   --webhook-receiver --auth $TOKEN
 ```
 
 **Rejection-surface conformance (property-based fuzzer — catches crashes on edge inputs):**
 
 ```bash
-npx @adcp/client@latest fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp \
   --tools get_products,get_media_buys,list_creative_formats \
   --auth-token $TOKEN
 ```

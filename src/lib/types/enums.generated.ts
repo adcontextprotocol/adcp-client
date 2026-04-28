@@ -8,7 +8,7 @@
 // here. Use these when you need to enumerate, filter, or validate against
 // the spec's literal sets — e.g.:
 //
-//   import { MediaChannelValues } from '@adcp/client/types';
+//   import { MediaChannelValues } from '@adcp/sdk/types';
 //   const channels = new Set<string>(MediaChannelValues);
 //   if (!channels.has(input)) throw new Error('unknown channel');
 

@@ -16,11 +16,11 @@
  *
  * ```ts
  * // Seller-side
- * import { SubstitutionEncoder } from '@adcp/client/substitution';
+ * import { SubstitutionEncoder } from '@adcp/sdk/substitution';
  * const safe = new SubstitutionEncoder().encode_for_url_context(raw);
  *
  * // Runner-side
- * import { SubstitutionObserver, CATALOG_MACRO_VECTORS } from '@adcp/client/substitution';
+ * import { SubstitutionObserver, CATALOG_MACRO_VECTORS } from '@adcp/sdk/substitution';
  * const observer = new SubstitutionObserver();
  * const matches = observer.match_bindings(observer.parse_html(html), template, bindings);
  * ```

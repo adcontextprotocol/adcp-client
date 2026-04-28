@@ -131,7 +131,7 @@ describe('adcp --save-auth (CLI smoke)', () => {
       ]);
       assert.strictEqual(code, 0, `CLI should exit 0, got ${code}`);
       assert.match(stdout, /Discovering OAuth token endpoint/);
-      assert.match(stdout, /Found token endpoint:/);
+      assert.match(stdout, /Found token endpoint host:/);
       assert.match(stdout, /Token exchange succeeded/);
       assert.ok(config, 'config.json was written');
       assert.strictEqual(config.agents.smoke.oauth_client_credentials.token_endpoint, stack.tokenUrl);

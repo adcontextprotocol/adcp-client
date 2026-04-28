@@ -20,7 +20,7 @@
  *   anyOf,
  *   verifySignatureAsAuthenticator,
  *   mcpToolNameResolver,
- * } from '@adcp/client/server';
+ * } from '@adcp/sdk/server';
  *
  * serve(createAgent, {
  *   authenticate: anyOf(
@@ -231,7 +231,7 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
  *   verifyApiKey,
  *   verifySignatureAsAuthenticator,
  *   requireSignatureWhenPresent,
- * } from '@adcp/client/server';
+ * } from '@adcp/sdk/server';
  *
  * serve(createAgent, {
  *   authenticate: requireSignatureWhenPresent(
@@ -410,7 +410,7 @@ export interface RequireAuthenticatedOrSignedOptions {
    * credential is presented. See
    * {@link RequireSignatureWhenPresentOptions.requiredFor}.
    *
-   * Pass `MUTATING_TASKS` (exported from `@adcp/client`) to require
+   * Pass `MUTATING_TASKS` (exported from `@adcp/sdk`) to require
    * signatures on every mutating AdCP operation — matches the common
    * declaration in `capabilities.request_signing.required_for`.
    */
@@ -443,7 +443,7 @@ export interface RequireAuthenticatedOrSignedOptions {
  *   requireAuthenticatedOrSigned,
  *   mcpToolNameResolver,
  *   MUTATING_TASKS,
- * } from '@adcp/client/server';
+ * } from '@adcp/sdk/server';
  *
  * serve(createAgent, {
  *   authenticate: requireAuthenticatedOrSigned({
@@ -475,7 +475,7 @@ export function requireAuthenticatedOrSigned(options: RequireAuthenticatedOrSign
  *
  * Pass directly as `resolveOperation` on {@link verifySignatureAsAuthenticator},
  * {@link requireSignatureWhenPresent}, {@link requireAuthenticatedOrSigned},
- * or `createExpressVerifier` from `@adcp/client/signing`:
+ * or `createExpressVerifier` from `@adcp/sdk/signing`:
  *
  * ```ts
  * serve(createAgent, {

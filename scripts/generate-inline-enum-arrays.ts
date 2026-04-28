@@ -18,7 +18,7 @@ import path from 'path';
  * (see adcp-client#932). With these exports, they import the
  * authoritative values directly:
  *
- *   import { ImageAssetRequirements_FormatsValues } from '@adcp/client/types';
+ *   import { ImageAssetRequirements_FormatsValues } from '@adcp/sdk/types';
  *   const formats = new Set<string>(ImageAssetRequirements_FormatsValues);
  *
  * Implementation note: walks the compiled Zod schemas via runtime
@@ -259,7 +259,7 @@ function renderOutput(items: ExtractedInlineEnum[]): string {
 // the spec's per-field literal sets without re-deriving from the parent
 // schema — e.g.:
 //
-//   import { ImageAssetRequirements_FormatsValues } from '@adcp/client/types';
+//   import { ImageAssetRequirements_FormatsValues } from '@adcp/sdk/types';
 //   const formats = new Set<string>(ImageAssetRequirements_FormatsValues);
 //   if (!formats.has(input)) throw new Error('unsupported image format');
 //

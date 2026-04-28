@@ -418,7 +418,7 @@ export async function testErrorTransport(
       details: details.join(', '),
       error:
         level < 2
-          ? 'Error response missing JSON text fallback. Use adcpError() from @adcp/client for L3 compliance.'
+          ? 'Error response missing JSON text fallback. Use adcpError() from @adcp/sdk for L3 compliance.'
           : undefined,
       response_preview: JSON.stringify(
         {

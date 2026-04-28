@@ -1,5 +1,5 @@
 /**
- * OpenTelemetry tracing utilities for @adcp/client
+ * OpenTelemetry tracing utilities for @adcp/sdk
  *
  * Uses dynamic require to gracefully handle missing @opentelemetry/api.
  * When the package is not installed, all tracing becomes a no-op.
@@ -8,7 +8,7 @@
 // Type imports are safe - erased at compile time, no runtime dependency
 import type { Tracer, Span, SpanKind } from '@opentelemetry/api';
 
-const TRACER_NAME = '@adcp/client';
+const TRACER_NAME = '@adcp/sdk';
 
 // Lazy-load the OTel API - null if not installed
 let otelApi: typeof import('@opentelemetry/api') | null = null;
@@ -26,7 +26,7 @@ function getOtelApi(): typeof import('@opentelemetry/api') | null {
 }
 
 /**
- * Get the OpenTelemetry tracer for @adcp/client.
+ * Get the OpenTelemetry tracer for @adcp/sdk.
  * Returns null if @opentelemetry/api is not installed.
  */
 export function getTracer(): Tracer | null {

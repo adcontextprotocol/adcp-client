@@ -1437,7 +1437,7 @@ async function handleStoryboardRun(args) {
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side
   // bootstrap into one command. See `runAgainstLocalAgent` in
-  // `@adcp/client/testing`.
+  // `@adcp/sdk/testing`.
   if (localAgent) {
     return handleLocalAgentStoryboardRun(localAgent, args, opts);
   }
@@ -3255,6 +3255,17 @@ function formatVerdict(verdict) {
 async function main() {
   const args = process.argv.slice(2);
 
+  // `--version` / `-v` is handled before subcommands and before the
+  // staleness probe — it should be a fast, side-effect-free identity
+  // check. Adds a (compat shim) note when invoked through @adcp/client
+  // so users know which package they're actually running. The shim sets
+  // ADCP_INVOKED_VIA_SHIM=1 in its bin wrapper.
+  if (args[0] === '--version' || args[0] === '-v') {
+    const viaShim = process.env.ADCP_INVOKED_VIA_SHIM === '1';
+    process.stdout.write(`@adcp/sdk@${LIBRARY_VERSION}${viaShim ? ' (invoked via @adcp/client compat shim)' : ''}\n`);
+    process.exit(0);
+  }
+
   // Fire a staleness check in the background so a months-old cached
   // CLI doesn't run silently. Fails silent on any network/FS hiccup;
   // skipped in CI, non-TTY, --json, and when ADCP_SKIP_VERSION_CHECK=1.
@@ -3562,7 +3573,19 @@ credential material — never sync or commit.
           discoveredRequirements = await discoverAuthorizationRequirements(url, { allowPrivateIp: true });
           if (discoveredRequirements && discoveredRequirements.tokenEndpoint) {
             resolvedOauthEndpoint = discoveredRequirements.tokenEndpoint;
-            console.log(`   Found token endpoint: ${resolvedOauthEndpoint}`);
+            // Print only the host so the operator can confirm the discovered
+            // realm without exposing query-string or path components that
+            // sometimes carry tenant identifiers. CodeQL flags this site as
+            // clear-text logging when it sees the full URL flowing from the
+            // discovery probe.
+            const endpointHost = (() => {
+              try {
+                return new URL(resolvedOauthEndpoint).host;
+              } catch {
+                return '<unparseable>';
+              }
+            })();
+            console.log(`   Found token endpoint host: ${endpointHost}`);
             if (discoveredRequirements.authorizationServer) {
               console.log(`   Authorization server: ${discoveredRequirements.authorizationServer}`);
             }

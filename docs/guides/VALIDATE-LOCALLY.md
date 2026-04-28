@@ -2,12 +2,12 @@
 
 If you're writing a server-side AdCP agent, the minimum loop you want is: **change code → run compliance → see failures**, with nothing else between you and the answer. No Express bootstrap. No webhook tunnel. No hand-seeded fixtures.
 
-`runAgainstLocalAgent` from `@adcp/client/testing` composes `createAdcpServer` + `serve` + `seedComplianceFixtures` + the webhook receiver + the storyboard runner into one call. If you already know your handlers, ten lines is enough.
+`runAgainstLocalAgent` from `@adcp/sdk/testing` composes `createAdcpServer` + `serve` + `seedComplianceFixtures` + the webhook receiver + the storyboard runner into one call. If you already know your handlers, ten lines is enough.
 
 ```ts
 // tests/compliance.test.ts
-import { runAgainstLocalAgent } from '@adcp/client/testing';
-import { createAdcpServer, InMemoryStateStore } from '@adcp/client/server';
+import { runAgainstLocalAgent } from '@adcp/sdk/testing';
+import { createAdcpServer, InMemoryStateStore } from '@adcp/sdk/server';
 
 const stateStore = new InMemoryStateStore();
 
@@ -56,10 +56,10 @@ Prefer a one-shot from the shell? Point the CLI at a module file:
 
 ```bash
 # agent.mjs exports `createAgent`
-npx @adcp/client@latest storyboard run --local-agent ./agent.mjs
+npx @adcp/sdk@latest storyboard run --local-agent ./agent.mjs
 
 # Single storyboard, CI-friendly JUnit output
-npx @adcp/client@latest storyboard run --local-agent ./agent.mjs capability_discovery \
+npx @adcp/sdk@latest storyboard run --local-agent ./agent.mjs capability_discovery \
   --format junit > junit.xml
 ```
 
@@ -169,7 +169,7 @@ for (const sb of result.results) {
 Or emit JSON for richer tooling:
 
 ```bash
-npx @adcp/client@latest storyboard run --local-agent ./agent.mjs --json | jq '.results[] | select(.overall_passed | not)'
+npx @adcp/sdk@latest storyboard run --local-agent ./agent.mjs --json | jq '.results[] | select(.overall_passed | not)'
 ```
 
 ## Related

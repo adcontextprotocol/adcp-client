@@ -1,27 +1,27 @@
 # Validate Your Agent
 
-Your checklist to get from "agent boots" to "agent ships." Every tool below is already in `@adcp/client`; this page tells you which one runs when, what it catches, and how to read the output.
+Your checklist to get from "agent boots" to "agent ships." Every tool below is already in `@adcp/sdk`; this page tells you which one runs when, what it catches, and how to read the output.
 
 ## TL;DR — five commands, roughly in order
 
 ```bash
 # 1. Does it answer at all? (60s)
-npx @adcp/client@latest http://localhost:3001/mcp get_adcp_capabilities '{}'              # MCP
-npx @adcp/client@latest --protocol a2a http://localhost:3001 get_adcp_capabilities '{}'   # A2A (preview)
+npx @adcp/sdk@latest http://localhost:3001/mcp get_adcp_capabilities '{}'              # MCP
+npx @adcp/sdk@latest --protocol a2a http://localhost:3001 get_adcp_capabilities '{}'   # A2A (preview)
 
 # 2. Does it walk the golden path? (2–5 min)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp --auth $TOKEN            # MCP
-npx @adcp/client@latest storyboard run --protocol a2a http://localhost:3001 --auth $TOKEN # A2A (preview)
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --auth $TOKEN            # MCP
+npx @adcp/sdk@latest storyboard run --protocol a2a http://localhost:3001 --auth $TOKEN # A2A (preview)
 
 # 3. Does it crash on weird inputs? (1–3 min)
-npx @adcp/client@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
 
 # 4. Does webhook/async conformance pass? (2–5 min)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --webhook-receiver --auth $TOKEN
 
 # 5. Does it survive horizontal scaling? (same as 2, two URLs)
-npx @adcp/client@latest storyboard run \
+npx @adcp/sdk@latest storyboard run \
   --url https://a.agent.example/mcp --url https://b.agent.example/mcp \
   sales-guaranteed --auth $TOKEN
 ```
@@ -32,7 +32,7 @@ If all five pass and your skill's specialism-specific checks below pass, you're 
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
-**Why `@latest` in every `npx` command?** Without the pin, `npx` reuses whatever version happens to be cached in `~/.npm/_npx/` — and it never re-checks. If you ran `npx @adcp/client` six months ago, you're still on that version today. `npx @adcp/client@latest` forces npx to resolve the `latest` dist-tag against the registry on every run. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
+**Why `@latest` in every `npx` command?** Without the pin, `npx` reuses whatever version happens to be cached in `~/.npm/_npx/` — and it never re-checks. If you ran `npx @adcp/sdk` six months ago, you're still on that version today. `npx @adcp/sdk@latest` forces npx to resolve the `latest` dist-tag against the registry on every run. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
 
 ---
 
@@ -60,19 +60,19 @@ The main compliance entry point. Runs every storyboard that applies to your agen
 
 ```bash
 # Full capability-driven run — resolves bundles from your capabilities
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --auth $TOKEN
 
 # Single bundle or storyboard by id
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp sales-guaranteed --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp sales-guaranteed --auth $TOKEN
 
 # Specific tracks only (faster feedback when iterating)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
 # Ad-hoc YAML (new storyboards under development)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
 
 # JSON report for CI / tooling
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp --json > report.json
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --json > report.json
 ```
 
 **Flags you'll actually use:**
@@ -91,12 +91,12 @@ npx @adcp/client@latest storyboard run http://localhost:3001/mcp --json > report
 
 ```bash
 # (a) pre-save tokens
-npx @adcp/client@latest --save-auth my-agent https://agent.example.com/mcp --oauth
-npx @adcp/client@latest storyboard run my-agent
+npx @adcp/sdk@latest --save-auth my-agent https://agent.example.com/mcp --oauth
+npx @adcp/sdk@latest storyboard run my-agent
 
 # (b) inline on first run
-npx @adcp/client@latest --save-auth my-agent https://agent.example.com/mcp --no-auth
-npx @adcp/client@latest storyboard run my-agent --oauth
+npx @adcp/sdk@latest --save-auth my-agent https://agent.example.com/mcp --no-auth
+npx @adcp/sdk@latest storyboard run my-agent --oauth
 ```
 
 Either way, subsequent runs reuse the cached tokens (auto-refresh on expiry via the stored `refresh_token`). Raw URLs don't support `--oauth` — save an alias first.
@@ -111,27 +111,27 @@ Generates schema-valid requests, calls your agent, checks every response under t
 
 ```bash
 # Tier 1 + Tier 2 stateless + referential (safe, no mutation)
-npx @adcp/client@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
 
 # Reproducible (rerun with same seed to repro a failure)
-npx @adcp/client@latest fuzz http://localhost:3001/mcp --seed 42 --auth-token $TOKEN
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp --seed 42 --auth-token $TOKEN
 
 # Pre-seeded ID pools for referential tools (Tier 2)
-npx @adcp/client@latest fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp \
   --fixture creative_ids=cre_a,cre_b \
   --fixture media_buy_ids=mb_1
 
 # Auto-seed + Tier 3 update-tool fuzzing (mutates agent state — SANDBOX ONLY)
-npx @adcp/client@latest fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 
 # Uniform-error-response invariant in full cross-tenant mode
-npx @adcp/client@latest fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp \
   --auto-seed \
   --auth-token            $TENANT_A_TOKEN \
   --auth-token-cross-tenant $TENANT_B_TOKEN
 
 # Inspect the tool list + tier classification
-npx @adcp/client@latest fuzz --list-tools
+npx @adcp/sdk@latest fuzz --list-tools
 ```
 
 See [`docs/guides/CONFORMANCE.md`](./CONFORMANCE.md) for the fixture map, tier-by-tier tool list, and failure interpretation.
@@ -178,16 +178,16 @@ If you claim the `signed-requests` specialism, run the RFC 9421 grader. The grad
 
 ```bash
 # All 38 vectors
-npx @adcp/client@latest grade request-signing https://sandbox.agent.example/mcp
+npx @adcp/sdk@latest grade request-signing https://sandbox.agent.example/mcp
 
 # Skip rate-abuse (vector 020 fires cap+1 requests; skip in dev loops)
-npx @adcp/client@latest grade request-signing https://sandbox.agent.example/mcp --skip-rate-abuse
+npx @adcp/sdk@latest grade request-signing https://sandbox.agent.example/mcp --skip-rate-abuse
 
 # MCP transport (wraps vectors in JSON-RPC envelopes)
-npx @adcp/client@latest grade request-signing https://sandbox.agent.example/mcp --transport mcp
+npx @adcp/sdk@latest grade request-signing https://sandbox.agent.example/mcp --transport mcp
 
 # Isolate a single vector
-npx @adcp/client@latest grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
+npx @adcp/sdk@latest grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
 ```
 
 ### Multi-instance testing
@@ -195,7 +195,7 @@ npx @adcp/client@latest grade request-signing https://sandbox.agent.example/mcp 
 Exposes `(brand, account)`-scoped state that lives per-process instead of in a shared store — a class of bug that single-URL runs never catch. See [`docs/guides/MULTI-INSTANCE-TESTING.md`](./MULTI-INSTANCE-TESTING.md).
 
 ```bash
-npx @adcp/client@latest storyboard run \
+npx @adcp/sdk@latest storyboard run \
   --url https://a.agent.example/mcp \
   --url https://b.agent.example/mcp \
   sales-guaranteed --auth $TOKEN
@@ -210,7 +210,7 @@ The `deterministic_testing` universal storyboard — plus rejection-branch and d
 **Use `createComplyController`** — adapter-based scaffold that handles dispatch, param validation, typed error envelopes, and re-seed idempotency for you:
 
 ```typescript
-import { createComplyController } from '@adcp/client/testing';
+import { createComplyController } from '@adcp/sdk/testing';
 
 const controller = createComplyController({
   sandboxGate: input => input.auth?.sandbox === true,   // fail closed
@@ -243,7 +243,7 @@ Wire AJV-based validation into your client or server so payload drift surfaces i
 
 ```typescript
 // Client side — strict response validation in dev
-import { SingleAgentClient } from '@adcp/client';
+import { SingleAgentClient } from '@adcp/sdk';
 
 const client = new SingleAgentClient(url, {
   validation: {
@@ -253,7 +253,7 @@ const client = new SingleAgentClient(url, {
 });
 
 // Server side — opt-in validation on incoming requests + handler responses
-import { createAdcpServer } from '@adcp/client';
+import { createAdcpServer } from '@adcp/sdk';
 
 createAdcpServer({
   validation: {
@@ -276,7 +276,7 @@ Use `--invariants` to load modules that assert properties across storyboard step
 
 ```bash
 # Load ./my-invariants.js (relative path) or a bare specifier (npm package)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --invariants ./assertions/idempotency.js,@my-org/adcp-invariants
 ```
 
@@ -293,7 +293,7 @@ import {
   SubstitutionEncoder,
   SubstitutionObserver,
   CATALOG_MACRO_VECTORS,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Seller side — encode every substituted value:
 const encoder = new SubstitutionEncoder();
@@ -373,7 +373,7 @@ Hints also land in machine-readable output:
   </failure>
   ```
 
-- **JSON report** (`--format json`) — on `StoryboardStepResult.hints[]` as `ContextValueRejectedHint` objects. Fields: `kind`, `context_key`, `source_step_id`, `source_kind`, `response_path`, `source_task`, `rejected_value`, `request_field`, `accepted_values`, `error_code`, `message`. Dashboards can aggregate rejections by `source_step_id` or `context_key` to spot systemic catalog-drift. See `StoryboardStepHint` / `ContextValueRejectedHint` types exported from `@adcp/client/testing`.
+- **JSON report** (`--format json`) — on `StoryboardStepResult.hints[]` as `ContextValueRejectedHint` objects. Fields: `kind`, `context_key`, `source_step_id`, `source_kind`, `response_path`, `source_task`, `rejected_value`, `request_field`, `accepted_values`, `error_code`, `message`. Dashboards can aggregate rejections by `source_step_id` or `context_key` to spot systemic catalog-drift. See `StoryboardStepHint` / `ContextValueRejectedHint` types exported from `@adcp/sdk/testing`.
 
 > The rejection-envelope shape (`errors[].details.available` etc.) is tracked in [adcontextprotocol/adcp#3049](https://github.com/adcontextprotocol/adcp/issues/3049); field names here may evolve as the spec pins a canonical key.
 
@@ -401,18 +401,18 @@ Hints also land in machine-readable output:
 
 ```yaml
 - name: Storyboard (core + products)
-  run: npx @adcp/client@latest storyboard run $AGENT_URL --tracks core,products --auth $TOKEN
+  run: npx @adcp/sdk@latest storyboard run $AGENT_URL --tracks core,products --auth $TOKEN
 - name: Fuzz (fixed seed)
-  run: npx @adcp/client@latest fuzz $AGENT_URL --seed 42 --auth-token $TOKEN --format json
+  run: npx @adcp/sdk@latest fuzz $AGENT_URL --seed 42 --auth-token $TOKEN --format json
 ```
 
 ### Nightly (slow, broader coverage)
 
 ```yaml
 - name: Fuzz (random seed, auto-seed)
-  run: npx @adcp/client@latest fuzz $AGENT_URL --auto-seed --auth-token $TOKEN
+  run: npx @adcp/sdk@latest fuzz $AGENT_URL --auto-seed --auth-token $TOKEN
 - name: Full storyboard assessment
-  run: npx @adcp/client@latest storyboard run $AGENT_URL --auth $TOKEN --json > report.json
+  run: npx @adcp/sdk@latest storyboard run $AGENT_URL --auth $TOKEN --json > report.json
 ```
 
 Random seed on nightly broadens the surface; fixed seed on per-PR keeps reproducibility.

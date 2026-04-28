@@ -4,6 +4,8 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
+import { ADCP_VERSION, type AdcpVersion } from '../version';
+import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -180,6 +182,22 @@ type NormalizedWebhookPayload = {
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
+  /**
+   * AdCP protocol version this client speaks to agents. Defaults to
+   * {@link ADCP_VERSION} — the GA version the SDK ships against. Override
+   * to pin to an older stable (e.g., `'3.0.0'`) or opt into a beta channel
+   * (`'3.1.0-beta.1'`) once that registry ships.
+   *
+   * Stage 2 plumbs the option through and validates it at construction
+   * time; cross-major pins (e.g. `'4.0.0-beta.1'` while the SDK ships
+   * against major 3) throw `ConfigurationError`. Stage 3 wires per-instance
+   * schema/validator selection off this field.
+   *
+   * Typed as `AdcpVersion | (string & {})` so editors autocomplete
+   * canonical values from {@link COMPATIBLE_ADCP_VERSIONS} while still
+   * accepting forward-compatible strings.
+   */
+  adcpVersion?: AdcpVersion | (string & {});
   /** Enable debug logging */
   debug?: boolean;
   /** Custom User-Agent header sent with all outbound protocol requests.
@@ -333,11 +351,17 @@ export class SingleAgentClient {
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
+  private readonly resolvedAdcpVersion: string;
 
   constructor(
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
+    // Validate the configured adcpVersion at construction time. Throws
+    // ConfigurationError if the pin's major differs from ADCP_MAJOR_VERSION
+    // — cross-major support lands in Stage 3 of the multi-version refactor.
+    this.resolvedAdcpVersion = resolveAdcpVersion(config.adcpVersion);
+
     // Inject userAgent into agent headers so it flows through both MCP and A2A transports
     if (config.userAgent) {
       validateUserAgent(config.userAgent);
@@ -372,6 +396,20 @@ export class SingleAgentClient {
     if (config.handlers) {
       this.asyncHandler = new AsyncHandler(config.handlers);
     }
+  }
+
+  /**
+   * Returns the AdCP protocol version this client is configured to speak.
+   *
+   * Defaults to {@link ADCP_VERSION} (the GA version the SDK ships against)
+   * unless overridden via `new SingleAgentClient(agent, { adcpVersion })`.
+   *
+   * Plumbing surface — Stage 2 of the multi-version refactor exposes the
+   * configured value but does not yet vary validator/schema selection by
+   * version. Wire-shape adapters key off this method in subsequent stages.
+   */
+  getAdcpVersion(): string {
+    return this.resolvedAdcpVersion;
   }
 
   /**
@@ -2648,15 +2686,21 @@ export class SingleAgentClient {
         // Log when executeTask returns but success is false — this causes
         // the server to be treated as v2 even though it advertises
         // get_adcp_capabilities, which will trigger v2 field adapters.
+        // We deliberately omit `result.data` from the log: it can carry
+        // OAuth metadata that flowed through `agent.oauth_client_credentials`,
+        // and CodeQL traces clear-text logging when it appears here. The
+        // shape booleans + status are enough to triage the v2 fallback.
         console.warn(
           `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
             `returned non-success — falling back to v2 synthetic capabilities. ` +
             `This may cause v2 field adapters to run against a v3 server.`,
           {
             success: result.success,
-            error: result.error,
+            // result.error is a string error message; we don't include its full
+            // text because it can carry agent identifiers from transport-level
+            // failures, but presence/absence is useful for triage.
+            hasError: !!result.error,
             hasData: !!result.data,
-            data: result.data,
           }
         );
       } catch (error: unknown) {

@@ -10,7 +10,7 @@
  *
  * @example
  * ```typescript
- * import { resolvePropertyList, matchesPropertyList } from '@adcp/client/server';
+ * import { resolvePropertyList, matchesPropertyList } from '@adcp/sdk/server';
  *
  * if (targeting.property_list) {
  *   const list = await resolvePropertyList(targeting.property_list);

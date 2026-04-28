@@ -186,9 +186,9 @@ For each vector in `negative/`:
 3. Feed `vec.request` to your verifier.
 4. Assert the verifier rejects with `success: false` AND `error_code` equal to `vec.expected_outcome.error_code` byte-for-byte. The `failed_step` is not graded.
 
-### Integration with `@adcp/client`
+### Integration with `@adcp/sdk`
 
-Receiver libraries built on top of `@adcp/client` SHOULD run these vectors in CI against the library's 9421 webhook verifier. The `webhook-emission` universal's live E2E grading complements but does not replace this — live grading exercises positive paths; static negative vectors are the only reliable path to cover every `webhook_signature_*` error code deterministically.
+Receiver libraries built on top of `@adcp/sdk` SHOULD run these vectors in CI against the library's 9421 webhook verifier. The `webhook-emission` universal's live E2E grading complements but does not replace this — live grading exercises positive paths; static negative vectors are the only reliable path to cover every `webhook_signature_*` error code deterministically.
 
 ## Key material
 

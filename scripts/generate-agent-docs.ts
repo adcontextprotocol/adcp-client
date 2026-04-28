@@ -50,7 +50,7 @@ const SKIP_TOOLS = new Set(['comply-test-controller']);
 const TOOL_GOTCHAS: Record<string, string[]> = {
   build_creative: [
     'Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.',
-    'Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to enforce the shape at compile time.',
+    'Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to enforce the shape at compile time.',
     'Each asset under `creative_manifest.assets` needs an `asset_type` discriminator — use the factories: `imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset` (or `Asset.image(...)`).',
   ],
   preview_creative: [
@@ -58,7 +58,7 @@ const TOOL_GOTCHAS: Record<string, string[]> = {
   ],
   list_creative_formats: [
     'Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.',
-    'Use the typed factories from `@adcp/client`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).',
+    'Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).',
     'Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).',
   ],
 };
@@ -485,7 +485,7 @@ function generateLlmsTxt(
   ln(`# Ad Context Protocol (AdCP)`);
   ln();
   ln(`> Generated at: ${now}`);
-  ln(`> Library: @adcp/client v${version}`);
+  ln(`> Library: @adcp/sdk v${version}`);
   ln(`> AdCP major version: 3`);
   ln(`> Canonical URL: ${DOCS_BASE_URL}/llms.txt`);
   ln();
@@ -505,7 +505,7 @@ function generateLlmsTxt(
   );
   ln();
   ln('```typescript');
-  ln(`import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';`);
+  ln(`import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/sdk';`);
   ln();
   ln(`function createAgent({ taskStore }) {`);
   ln(`  const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });`);
@@ -521,7 +521,7 @@ function generateLlmsTxt(
   ln('```');
   ln();
   ln(
-    `Low-level server (bypassing \`createAdcpServer\`)? Use \`wrapEnvelope(inner, { replayed, context, operationId })\` from \`@adcp/client/server\` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops \`replayed\`).`
+    `Low-level server (bypassing \`createAdcpServer\`)? Use \`wrapEnvelope(inner, { replayed, context, operationId })\` from \`@adcp/sdk/server\` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops \`replayed\`).`
   );
   ln();
 
@@ -529,7 +529,7 @@ function generateLlmsTxt(
   ln(`## Quick Start (Client)`);
   ln();
   ln('```typescript');
-  ln(`import { ADCPMultiAgentClient } from '@adcp/client';`);
+  ln(`import { ADCPMultiAgentClient } from '@adcp/sdk';`);
   ln();
   ln(`const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {`);
   ln(`  authToken: process.env.ADCP_TOKEN,`);
@@ -640,7 +640,7 @@ function generateLlmsTxt(
   );
   ln();
   ln('```typescript');
-  ln("import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';");
+  ln("import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/sdk';");
   ln();
   ln('if (result.errorInstance instanceof IdempotencyConflictError) {');
   ln('  // Agent re-planned with different payload. Retry with a fresh key.');
@@ -670,7 +670,7 @@ function generateLlmsTxt(
   );
   ln();
   ln('```typescript');
-  ln("import { useIdempotencyKey } from '@adcp/client';");
+  ln("import { useIdempotencyKey } from '@adcp/sdk';");
   ln('const key = await db.getOrCreateIdempotencyKey(campaign.id);');
   ln('await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });');
   ln('```');
@@ -951,9 +951,9 @@ function generateLlmsTxt(
   ln(`## External Resources`);
   ln();
   ln(`- Documentation: ${DOCS_BASE_URL}/`);
-  ln(`- npm: https://www.npmjs.com/package/@adcp/client`);
+  ln(`- npm: https://www.npmjs.com/package/@adcp/sdk`);
   ln(`- Spec: https://adcontextprotocol.org`);
-  ln(`- CLI: \`npx @adcp/client@latest\``);
+  ln(`- CLI: \`npx @adcp/sdk@latest\``);
   ln();
 
   return lines.join('\n');
@@ -973,7 +973,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`# AdCP Type Summary`);
   ln();
   ln(`> Generated at: ${now}`);
-  ln(`> @adcp/client v${version}`);
+  ln(`> @adcp/sdk v${version}`);
   ln();
   ln(
     `Curated reference of the types that matter for using the AdCP client. For full generated types see \`src/lib/types/tools.generated.ts\` and \`src/lib/types/core.generated.ts\`.`

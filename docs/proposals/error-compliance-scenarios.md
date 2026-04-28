@@ -18,7 +18,7 @@ With the transport error mapping spec landed, we can now grade agents on error q
 
 ## Decisions
 
-**L3 is the default expectation for all agents.** We'll ship a server-side `adcpError()` helper in `@adcp/client` that makes L3 a one-liner. If every agent builder imports it, there's no excuse for unstructured errors. Comply should expect `structuredContent.adcp_error` and flag its absence as a warning.
+**L3 is the default expectation for all agents.** We'll ship a server-side `adcpError()` helper in `@adcp/sdk` that makes L3 a one-liner. If every agent builder imports it, there's no excuse for unstructured errors. Comply should expect `structuredContent.adcp_error` and flag its absence as a warning.
 
 **Stress testing is in scope.** Gate behind `--stress-test` flag. Send a burst of rapid requests to intentionally trigger rate limits, then validate the response structure matches the transport error mapping spec (correct code, `retry_after` present, proper transport delivery).
 
@@ -26,12 +26,12 @@ With the transport error mapping spec landed, we can now grade agents on error q
 
 ## Server-Side Helper: `adcpError()`
 
-The key to making L3 the default. Ships in `@adcp/client` so agent builders get structured errors for free.
+The key to making L3 the default. Ships in `@adcp/sdk` so agent builders get structured errors for free.
 
 ### API
 
 ```typescript
-import { adcpError, adcpErrors } from '@adcp/client';
+import { adcpError, adcpErrors } from '@adcp/sdk';
 
 // Single error — returns a complete MCP tool response
 server.tool("get_products", schema, async ({ query }) => {
@@ -266,7 +266,7 @@ Error Handling  L1  3/6 scenarios pass  (0.8s)
    Error Compliance: Level 1
      ⚠ Some error codes used, some plain text
      ✗ No recovery classification
-     ✗ No structuredContent (use adcpError() helper from @adcp/client)
+     ✗ No structuredContent (use adcpError() helper from @adcp/sdk)
      ✗ No field or suggestion on correctable errors
 ```
 
@@ -274,7 +274,7 @@ Error Handling  L1  3/6 scenarios pass  (0.8s)
 
 | Condition | Severity | Message |
 |-----------|----------|---------|
-| No structured errors at all (plain text only) | warning | "Error responses are unstructured text. Use `adcpError()` from @adcp/client for L3 compliance." |
+| No structured errors at all (plain text only) | warning | "Error responses are unstructured text. Use `adcpError()` from @adcp/sdk for L3 compliance." |
 | Codes present but no `recovery` field | suggestion | "Add recovery classification to enable automatic agent retry/fix behavior." |
 | `recovery` present but no `field`/`suggestion` on correctable | suggestion | "Add field and suggestion to correctable errors so agents can self-correct." |
 | No `structuredContent.adcp_error` | warning | "Missing structuredContent. Use `adcpError()` helper for automatic L3 transport binding." |

@@ -1,15 +1,15 @@
-# @adcp/client API Reference
+# @adcp/sdk API Reference
 
-Complete TypeScript API documentation for the **@adcp/client** library - the official client for the Ad Context Protocol (AdCP).
+Complete TypeScript API documentation for the **@adcp/sdk** library - the official client for the Ad Context Protocol (AdCP).
 
 ## Overview
 
-The @adcp/client library provides a comprehensive, type-safe interface for interacting with AdCP agents supporting both **MCP** (Model Context Protocol) and **A2A** (Agent-to-Agent) protocols. Whether you're working with a single agent or orchestrating operations across multiple agents, this library provides the tools you need.
+The @adcp/sdk library provides a comprehensive, type-safe interface for interacting with AdCP agents supporting both **MCP** (Model Context Protocol) and **A2A** (Agent-to-Agent) protocols. Whether you're working with a single agent or orchestrating operations across multiple agents, this library provides the tools you need.
 
 ## Quick Start
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 // Configure agents
 const client = new ADCPMultiAgentClient([
@@ -147,7 +147,7 @@ allResults.forEach((result, i) => {
 Build agent registries by discovering what properties agents can sell:
 
 ```typescript
-import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+import { PropertyCrawler, getPropertyIndex } from '@adcp/sdk';
 
 // Crawl agents
 const crawler = new PropertyCrawler();
@@ -207,7 +207,7 @@ import type {
   BrandManifest,
   Product,
   Format
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Full IntelliSense support
 const request: GetProductsRequest = {
@@ -224,7 +224,7 @@ Runtime validation using Zod schemas:
 import {
   GetProductsRequestSchema,
   GetProductsResponseSchema
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Validate request
 const validRequest = GetProductsRequestSchema.parse(requestData);
@@ -262,7 +262,7 @@ See [`AsyncHandler`](./classes/AsyncHandler.html) for webhook configuration.
 Work with creative format agents:
 
 ```typescript
-import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from '@adcp/client';
+import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from '@adcp/sdk';
 
 const creativeClient = new CreativeAgentClient({
   agentUrl: STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE,
@@ -293,7 +293,7 @@ import {
   LIBRARY_VERSION,
   ADCP_VERSION,
   isCompatibleWith
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 console.log(`Library: ${LIBRARY_VERSION}`);
 console.log(`AdCP Protocol: ${ADCP_VERSION}`);
@@ -308,7 +308,7 @@ if (isCompatibleWith('2.4.0')) {
 - **Main README**: [Getting Started Guide](../README.md)
 - **Protocol Spec**: [AdCP Specification](https://github.com/adcontextprotocol/adcp)
 - **Full Documentation**: [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org)
-- **npm Package**: [@adcp/client](https://www.npmjs.com/package/@adcp/client)
+- **npm Package**: [@adcp/sdk](https://www.npmjs.com/package/@adcp/sdk)
 - **GitHub**: [adcontextprotocol/adcp-client](https://github.com/adcontextprotocol/adcp-client)
 
 ## Browse the API

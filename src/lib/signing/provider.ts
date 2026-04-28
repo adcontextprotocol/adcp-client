@@ -29,7 +29,7 @@ import type { AdcpSignAlg } from './types';
  *   `cryptoKeyVersions/N`, or AWS `kms:Sign` conditioned on the key ARN) so
  *   only the AdCP signing path can invoke this key.
  *
- * The bundled `InMemorySigningProvider` (under `@adcp/client/signing/testing`)
+ * The bundled `InMemorySigningProvider` (under `@adcp/sdk/signing/testing`)
  * carries a `NODE_ENV=production` gate as a self-discipline aid for the
  * reference implementation only — `createSigningFetchAsync` does NOT and
  * cannot enforce hygiene on third-party providers, so a custom adapter

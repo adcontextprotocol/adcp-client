@@ -2,7 +2,7 @@
  * Server-side comply_test_controller implementation.
  *
  * Most new code should use {@link createComplyController} from
- * `@adcp/client/testing` — it wraps this module with a domain-grouped
+ * `@adcp/sdk/testing` — it wraps this module with a domain-grouped
  * (`seed` / `force` / `simulate`) adapter surface, typed params, sandbox
  * gating, and built-in seed idempotency. The functions below remain
  * supported for existing integrations and for custom wrappers that need
@@ -16,7 +16,7 @@
  * @example Basic usage — single in-memory store
  * ```typescript
  * import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
- * import { registerTestController, TestControllerError } from '@adcp/client';
+ * import { registerTestController, TestControllerError } from '@adcp/sdk';
  *
  * const accounts = new Map<string, string>();
  *
@@ -40,7 +40,7 @@
  * session.
  *
  * ```typescript
- * import { registerTestController, CONTROLLER_SCENARIOS, enforceMapCap } from '@adcp/client';
+ * import { registerTestController, CONTROLLER_SCENARIOS, enforceMapCap } from '@adcp/sdk';
  *
  * registerTestController(server, {
  *   scenarios: [CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS, CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS],
@@ -72,7 +72,7 @@
  *   handleTestControllerRequest,
  *   toMcpResponse,
  *   TOOL_INPUT_SHAPE,
- * } from '@adcp/client';
+ * } from '@adcp/sdk';
  *
  * const sessionContext = new AsyncLocalStorage<{ sessionId: string }>();
  * const store = { async forceAccountStatus() { ... } };

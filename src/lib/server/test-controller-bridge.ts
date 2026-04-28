@@ -269,7 +269,7 @@ export interface BridgeFromSessionStoreOptions<TSession> {
  *
  * @example
  * ```ts
- * import { bridgeFromSessionStore } from '@adcp/client/server';
+ * import { bridgeFromSessionStore } from '@adcp/sdk/server';
  *
  * const server = createAdcpServer({
  *   testController: bridgeFromSessionStore({

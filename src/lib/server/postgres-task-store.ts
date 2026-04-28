@@ -9,7 +9,7 @@
  * @example
  * ```typescript
  * import { Pool } from 'pg';
- * import { PostgresTaskStore, serve, createTaskCapableServer } from '@adcp/client';
+ * import { PostgresTaskStore, serve, createTaskCapableServer } from '@adcp/sdk';
  *
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  * const taskStore = new PostgresTaskStore(pool);
@@ -59,7 +59,7 @@ const PAGE_SIZE = 10;
  *
  * @example
  * ```typescript
- * import { getMcpTasksMigration } from '@adcp/client';
+ * import { getMcpTasksMigration } from '@adcp/sdk';
  * await pool.query(getMcpTasksMigration()); // creates adcp_mcp_tasks
  * await pool.query(getMcpTasksMigration({ tableName: 'my_tasks' })); // custom name
  * ```

@@ -1,8 +1,8 @@
-# @adcp/client
+# @adcp/sdk
 
-[![npm version](https://badge.fury.io/js/@adcp%2Fclient.svg)](https://badge.fury.io/js/@adcp%2Fclient)
-[![npm downloads](https://img.shields.io/npm/dm/@adcp/client.svg)](https://www.npmjs.com/package/@adcp/client)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://badge.fury.io/js/@adcp%2Fsdk.svg)](https://badge.fury.io/js/@adcp%2Fsdk)
+[![npm downloads](https://img.shields.io/npm/dm/@adcp/sdk.svg)](https://www.npmjs.com/package/@adcp/sdk)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![API Documentation](https://img.shields.io/badge/API-Documentation-blue.svg)](https://adcontextprotocol.github.io/adcp-client/api/)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/adcontextprotocol/adcp-client/ci.yml?branch=main)](https://github.com/adcontextprotocol/adcp-client/actions)
@@ -22,13 +22,13 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ## Installation
 
 ```bash
-npm install @adcp/client
+npm install @adcp/sdk
 ```
 
 ## Quick Start: Distributed Operations
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 // Configure agents and handlers
 const client = new ADCPMultiAgentClient([
@@ -363,7 +363,7 @@ Build agent registries by discovering properties agents can sell. Works with AdC
 ### Three Key Queries
 
 ```typescript
-import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+import { PropertyCrawler, getPropertyIndex } from '@adcp/sdk';
 
 // First, crawl agents to discover properties
 const crawler = new PropertyCrawler();
@@ -389,7 +389,7 @@ const premiumProperties = index.findAgentsByPropertyTags(['premium', 'ctv']);
 ### Full Example
 
 ```typescript
-import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+import { PropertyCrawler, getPropertyIndex } from '@adcp/sdk';
 
 const crawler = new PropertyCrawler();
 
@@ -468,13 +468,13 @@ Save agents for quick access:
 
 ```bash
 # Save an agent with an alias
-npx @adcp/client --save-auth test https://test-agent.adcontextprotocol.org
+npx @adcp/sdk --save-auth test https://test-agent.adcontextprotocol.org
 
 # Use the alias
-npx @adcp/client test get_products '{"brief":"Coffee brands"}'
+npx @adcp/sdk test get_products '{"brief":"Coffee brands"}'
 
 # List saved agents
-npx @adcp/client --list-agents
+npx @adcp/sdk --list-agents
 ```
 
 ### Direct URL Usage
@@ -483,20 +483,20 @@ Auto-detect protocol and call directly:
 
 ```bash
 # Protocol auto-detection (default)
-npx @adcp/client https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
+npx @adcp/sdk https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
 
 # Force specific protocol with --protocol flag
-npx @adcp/client https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
-npx @adcp/client https://agent.example.com list_authorized_properties --protocol a2a
+npx @adcp/sdk https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
+npx @adcp/sdk https://agent.example.com list_authorized_properties --protocol a2a
 
 # List available tools
-npx @adcp/client https://agent.example.com
+npx @adcp/sdk https://agent.example.com
 
 # Use a file for payload
-npx @adcp/client https://agent.example.com create_media_buy @payload.json
+npx @adcp/sdk https://agent.example.com create_media_buy @payload.json
 
 # JSON output for scripting
-npx @adcp/client https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
+npx @adcp/sdk https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
 ```
 
 ### Authentication
@@ -505,31 +505,31 @@ Three ways to provide auth tokens (priority order):
 
 ```bash
 # 1. Explicit flag (highest priority)
-npx @adcp/client test get_products '{"brief":"..."}' --auth your-token
+npx @adcp/sdk test get_products '{"brief":"..."}' --auth your-token
 
 # 2. Saved in agent config (recommended)
-npx @adcp/client --save-auth prod https://prod-agent.com
+npx @adcp/sdk --save-auth prod https://prod-agent.com
 # Will prompt for auth token securely
 
 # 3. Environment variable (fallback)
 export ADCP_AUTH_TOKEN=your-token
-npx @adcp/client test get_products '{"brief":"..."}'
+npx @adcp/sdk test get_products '{"brief":"..."}'
 ```
 
 ### Agent Management
 
 ```bash
 # Save agent with auth
-npx @adcp/client --save-auth prod https://prod-agent.com mcp
+npx @adcp/sdk --save-auth prod https://prod-agent.com mcp
 
 # List all saved agents
-npx @adcp/client --list-agents
+npx @adcp/sdk --list-agents
 
 # Remove an agent
-npx @adcp/client --remove-agent test
+npx @adcp/sdk --remove-agent test
 
 # Show config file location
-npx @adcp/client --show-config
+npx @adcp/sdk --show-config
 ```
 
 **Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. Override with `--protocol mcp` or `--protocol a2a` if needed.

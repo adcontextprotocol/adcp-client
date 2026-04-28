@@ -11,7 +11,7 @@ import {
   type AgentConfig,
   type InputHandler,
   type ConversationContext,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Example agent configurations
 const agents: AgentConfig[] = [

@@ -38,7 +38,7 @@ The `interaction_model` in each specialism's `index.yaml` is the forcing functio
 Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers for a creative agent:
 
 - **`idempotency_key`** on every mutating request (`sync_creatives`, `build_creative`, `report_usage`, any `sync_*` you implement). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
-- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/sdk/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: accept requests with `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 
 ## Webhooks (for async review pipelines)
@@ -93,7 +93,7 @@ What happens when a creative is synced:
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
 > - **Declare `capabilities: { specialisms: ['creative-ad-server'] }` (or `'creative-template'` / `'creative-generative'`) on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
-> - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to lock the shape at compile time.
+> - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to lock the shape at compile time.
 > - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator. Use the typed factories (`imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
 > - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
 > - `get_creative_delivery` requires **top-level `currency: string`** (ISO 4217), in addition to any per-row spend fields. `reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only.
@@ -144,13 +144,13 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `previewCreativeResponse(data)`                                     | Auto-applied response builder (don't call manually)                       |
 | `adcpError(code, { message })`                                      | Structured error                                                          |
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -182,8 +182,8 @@ Minimal `tsconfig.json`:
 7. Context passthrough is handled by the framework — no need to manually echo `args.context`
 
 ```typescript
-import { createAdcpServer, serve, adcpError, urlRender } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createAdcpServer, serve, adcpError, urlRender } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 const formats = [
   {
@@ -338,7 +338,7 @@ import {
   repeatableGroup,
   imageGroupAsset,
   textGroupAsset,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // MRec banner with typed image requirements
 {
@@ -416,8 +416,8 @@ Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempote
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
@@ -456,7 +456,7 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 Creative generative sellers — and any creative agent that wants to pass `deterministic_testing` — must expose `comply_test_controller` so the grader can force creative-status transitions deterministically. `createComplyController` handles the scaffolding:
 
 ```ts
-import { createComplyController } from '@adcp/client/testing';
+import { createComplyController } from '@adcp/sdk/testing';
 
 const controller = createComplyController({
   sandboxGate: input => input.auth?.sandbox === true,
@@ -484,16 +484,16 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --auth $TOKEN`
 npx tsx agent.ts &
 
 # Happy path — the archetype you're claiming
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_ad_server --auth $TOKEN     # stateful
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_template --auth $TOKEN      # stateless
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_generative --auth $TOKEN    # brief-to-creative
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp creative_ad_server --auth $TOKEN     # stateful
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp creative_template --auth $TOKEN      # stateless
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp creative_generative --auth $TOKEN    # brief-to-creative
 
 # Cross-cutting obligations (all creative agents)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz — includes preview_creative (referential, fixture-eligible)
-npx @adcp/client@latest fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp \
   --tools list_creative_formats,list_creatives,get_creative_features,preview_creative \
   --fixture creative_ids=cre_a,cre_b \
   --auth-token $TOKEN
@@ -643,7 +643,7 @@ Storyboard: `creative_template`. Stateless — build from the inline `creative_m
 Formats declare `variables` the template will substitute:
 
 ```typescript
-import { displayRender } from '@adcp/client';
+import { displayRender } from '@adcp/sdk';
 
 listCreativeFormats: async (params) => ({
   formats: [{
@@ -702,7 +702,7 @@ Audio creative agents (AudioStack, ElevenLabs, Resemble) fit the `creative-templ
 Format declaration:
 
 ```typescript
-import { parameterizedRender } from '@adcp/client';
+import { parameterizedRender } from '@adcp/sdk';
 
 listCreativeFormats: async () => ({
   formats: [{
@@ -730,7 +730,7 @@ listCreativeFormats: async () => ({
 Handler — inline manifest in, rendered audio out:
 
 ```typescript
-import { buildCreativeResponse, audioAsset } from '@adcp/client/server';
+import { buildCreativeResponse, audioAsset } from '@adcp/sdk/server';
 
 buildCreative: async (params) => {
   const inputManifest = params.creative_manifest;                 // already inline — no lookup

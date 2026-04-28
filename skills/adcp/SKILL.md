@@ -1,13 +1,13 @@
 ---
 name: adcp
-description: Interact with AdCP (Ad Context Protocol) advertising agents over MCP or A2A protocols. Use when the user wants to call AdCP tools (get_products, create_media_buy, sync_creatives, etc.), discover an agent's capabilities, run protocol compliance tests, look up brands or properties in the AdCP registry, manage saved agent aliases, or debug agent responses. NOT for general HTTP/REST API calls. Requires @adcp/client (npm).
+description: Interact with AdCP (Ad Context Protocol) advertising agents over MCP or A2A protocols. Use when the user wants to call AdCP tools (get_products, create_media_buy, sync_creatives, etc.), discover an agent's capabilities, run protocol compliance tests, look up brands or properties in the AdCP registry, manage saved agent aliases, or debug agent responses. NOT for general HTTP/REST API calls. Requires @adcp/sdk (npm).
 argument-hint: "<agent> [tool] [payload] | comply <agent> | storyboard <cmd> | test <agent> [scenario] | registry <command>"
 allowed-tools: Bash, Read
 ---
 
 # AdCP CLI
 
-Use `adcp` (or `npx @adcp/client@latest`) to interact with AdCP advertising agents, run compliance tests, and query the AdCP registry.
+Use `adcp` (or `npx @adcp/sdk@latest`) to interact with AdCP advertising agents, run compliance tests, and query the AdCP registry.
 
 ## Quick start — zero config
 
@@ -285,9 +285,9 @@ Remote `--wait` requires ngrok: `brew install ngrok`
 
 ### Step 1: Check installation
 ```bash
-which adcp 2>/dev/null && echo "installed" || echo "use npx @adcp/client@latest"
+which adcp 2>/dev/null && echo "installed" || echo "use npx @adcp/sdk@latest"
 ```
-If not installed, prefix all commands with `npx @adcp/client@latest`. Requires Node.js 18+.
+If not installed, prefix all commands with `npx @adcp/sdk@latest`. Requires Node.js 18+.
 
 ### Step 2: Route the request
 

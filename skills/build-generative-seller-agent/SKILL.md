@@ -127,13 +127,13 @@ productsResponse({
       fixed_price: 15.00,
       currency: 'USD',
     }],
-    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // from @adcp/client/server — stays in sync with schema
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // from @adcp/sdk/server — stays in sync with schema
   }],
   sandbox: true,
 })
 ```
 
-Import: `import { DEFAULT_REPORTING_CAPABILITIES } from '@adcp/client/server';`. Hand-rolling `reporting_capabilities: { ... }` on every product is the biggest source of schema-drift failures — the constant stays in sync with the spec.
+Import: `import { DEFAULT_REPORTING_CAPABILITIES } from '@adcp/sdk/server';`. Hand-rolling `reporting_capabilities: { ... }` on every product is the biggest source of schema-drift failures — the constant stays in sync with the spec.
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
 
@@ -206,7 +206,7 @@ import {
   repeatableGroup,
   imageGroupAsset,
   textGroupAsset,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Generative display format — brief in, spec-compliant image out
 {
@@ -243,7 +243,7 @@ import {
 Reading requirements on the generation path — discriminate by `asset_type` to narrow to the correct requirements shape, then feed it to the generator:
 
 ```typescript
-import type { IndividualAssetSlot } from '@adcp/client';
+import type { IndividualAssetSlot } from '@adcp/sdk';
 
 function constraintsFor(slot: IndividualAssetSlot) {
   switch (slot.asset_type) {
@@ -325,8 +325,8 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 Add `registerTestController` so the comply framework can deterministically test your state machines. One function call — the SDK handles request parsing, status validation, and response formatting.
 
 ```
-import { registerTestController, TestControllerError } from '@adcp/client';
-import type { TestControllerStore } from '@adcp/client';
+import { registerTestController, TestControllerError } from '@adcp/sdk';
+import type { TestControllerStore } from '@adcp/sdk';
 
 const store: TestControllerStore = {
   async forceAccountStatus(accountId, status) {
@@ -361,13 +361,13 @@ Response builders (`productsResponse`, `mediaBuyResponse`, `syncCreativesRespons
 
 `get_adcp_capabilities` is auto-generated from registered handlers. Do not register it manually.
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -401,8 +401,8 @@ Creative tools (`listCreativeFormats`, `syncCreatives`, `buildCreative`, `listCr
 
 ```typescript
 import { randomUUID } from 'node:crypto';
-import { createAdcpServer, serve, adcpError } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createAdcpServer, serve, adcpError } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 // Idempotency — required for v3. Generative creation is expensive and
 // non-deterministic, so caching successful responses per key is critical:
@@ -491,8 +491,8 @@ Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempote
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
@@ -535,15 +535,15 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy paths — sells inventory AND generates creatives
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_generative/seller --auth $TOKEN
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp creative_generative/seller --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp media_buy_seller --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz
-npx @adcp/client@latest fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp \
   --tools get_products,list_creative_formats,get_creative_features,preview_creative \
   --auth-token $TOKEN
 ```
