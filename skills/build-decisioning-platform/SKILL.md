@@ -470,6 +470,17 @@ createAdcpServerFromPlatform(platform, {
 
 **Signing posture is your responsibility.** If your platform claims `signed-requests` and you wire a custom emitter without `unsigned: true`, the framework warns at construction (in non-test envs) — buyers who verify signatures will reject your unsigned webhooks. Either delegate to the framework's signing pipeline or set `unsigned: true` to acknowledge dev/test usage. Set `ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER=1` to silence the warn for staging environments where signing isn't yet wired.
 
+### DNS rebinding — production hardening
+
+The framework's URL validator (`validatePushNotificationUrl`) rejects RFC 1918, loopback, link-local, CGNAT, IPv6 ULA, and IPv4-mapped IPv6 addresses against the LITERAL hostname in the URL. This catches the common case but does NOT defeat DNS rebinding: a buyer registers `https://rebind.attacker.com/`, validation passes (literal host isn't in any private range), then the A-record TTL flips to `169.254.169.254` between validate and fetch — the metadata service receives the signed payload.
+
+Two production-grade mitigations:
+
+1. **Egress proxy with allowlist** (deployment-side, simplest). Pin all outbound webhook traffic through a forward proxy that only allows explicitly listed destinations. Standard hosting practice; framework doesn't need to know.
+2. **Pin-and-bind custom fetch** (SDK-side). Wire a custom `fetch` on `createWebhookEmitter({ webhooks })` that resolves DNS at request time, re-validates the resolved IP against the SSRF rules, and opens the TCP/TLS connection to that specific IP with the original `Host:` header preserved. Tracking issue [adcp-client#1038](https://github.com/adcontextprotocol/adcp-client/issues/1038) — v6.1 ships this as the default.
+
+Until v6.1, adopters running in security-sensitive environments (handling buyer-supplied URLs from untrusted principals) MUST do one of the above. The SDK's literal-hostname check is correctness, not security-against-rebinding.
+
 ## Migrating from v5.x handler-style — the merge seam
 
 If you have a v5.x agent built on `createAdcpServer({ mediaBuy: { ... } })`, you don't need to rewrite all of it before adopting v6.0. `createAdcpServerFromPlatform` accepts the v5 handler-style domains (`mediaBuy`, `creative`, `accounts`, `eventTracking`, `signals`, `governance`, `brandRights`, `sponsoredIntelligence`) as `opts` alongside the v6 platform interface. Platform-derived handlers WIN per-key; adopter handlers fill gaps for tools the platform doesn't yet model. Migrate one specialism at a time.

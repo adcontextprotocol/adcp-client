@@ -35,6 +35,29 @@
  * @public
  */
 
+/**
+ * Resource categories whose lifecycle changes can be published on the
+ * status-change bus and projected to subscribed buyers.
+ *
+ * **Spec status (v6.0):** The AdCP spec doesn't yet ship a closed enum
+ * for `resource_type`. The values below are the v6 SDK's working set —
+ * the resource categories adopters publish lifecycle events against
+ * today. They become wire-visible via the URI scheme
+ * `adcp://{account_id}/{resource_type}/{resource_id}` projected to MCP
+ * Resources subscriptions.
+ *
+ * Filed upstream as adcontextprotocol/adcp#3412 proposing a normative
+ * `enums/status-change-resource-type.json`. When the spec lands the
+ * enum, this type becomes a `$ref` to the generated schema. Until then
+ * adopters subscribing across multiple AdCP agents may see drift; the
+ * SDK's set is the working canonical until the spec consolidates.
+ *
+ * Adopters publishing custom resource types not in this list should
+ * prefix with `x-` (e.g., `'x-pcim_session'`) to reduce collision risk
+ * with the eventual normative enum. The framework accepts any string
+ * (the type is widened with `(string & {})` for forward-compat) but
+ * only the values listed here have stable cross-SDK semantics.
+ */
 export type StatusChangeResourceType =
   | 'media_buy'
   | 'creative'
@@ -45,7 +68,9 @@ export type StatusChangeResourceType =
   | 'rights_grant'
   | 'delivery_report'
   | 'property_list'
-  | 'collection_list';
+  | 'collection_list'
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  | (string & {});
 
 /**
  * A single status-change event.
