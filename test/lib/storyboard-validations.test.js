@@ -233,3 +233,73 @@ describe('envelope_field_present (adcp#3429)', () => {
     assert.match(result.error, /No path specified for envelope_field_present/);
   });
 });
+
+describe('field_absent / envelope_field_absent (adcp#3429)', () => {
+  it('passes when the asserted path is absent from the task data', () => {
+    const taskResult = { success: true, data: { status: 'completed' } };
+    const [result] = runOne(
+      [{ check: 'field_absent', path: 'legacy_status', description: 'legacy_status must not appear' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'field_absent');
+  });
+
+  it('fails when the asserted path is present', () => {
+    const taskResult = { success: true, data: { status: 'completed', legacy_status: 'active' } };
+    const [result] = runOne(
+      [{ check: 'field_absent', path: 'legacy_status', description: 'legacy_status must not appear' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.check, 'field_absent');
+    assert.match(result.error, /Field found at path: legacy_status/);
+  });
+
+  it('fails with no-path error when path is missing', () => {
+    const taskResult = { success: true, data: { status: 'completed' } };
+    const [result] = runOne(
+      [{ check: 'field_absent', description: 'no path given' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /No path specified for field_absent/);
+  });
+
+  it('envelope_field_absent passes when envelope field is absent', () => {
+    const taskResult = { success: true, data: { task_id: 'task-1' } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_absent', path: 'legacy_status', description: 'envelope must not carry legacy_status' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'envelope_field_absent');
+  });
+
+  it('envelope_field_absent fails when envelope field is present', () => {
+    const taskResult = { success: true, data: { task_id: 'task-1', legacy_status: 'active' } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_absent', path: 'legacy_status', description: 'envelope must not carry legacy_status' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.check, 'envelope_field_absent');
+    assert.match(result.error, /Field found at path: legacy_status/);
+  });
+
+  it('envelope_field_absent fails with no-path error when path is missing', () => {
+    const taskResult = { success: true, data: { status: 'completed' } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_absent', description: 'no path given' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /No path specified for envelope_field_absent/);
+  });
+});

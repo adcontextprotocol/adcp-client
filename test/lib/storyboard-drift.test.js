@@ -214,7 +214,9 @@ function collectFieldValidations(storyboards) {
         for (const v of step.validations) {
           if (
             (v.check === 'field_present' ||
+              v.check === 'field_absent' ||
               v.check === 'envelope_field_present' ||
+              v.check === 'envelope_field_absent' ||
               v.check === 'field_value' ||
               v.check === 'envelope_field_value' ||
               v.check === 'field_value_or_absent' ||
@@ -325,6 +327,22 @@ describe('storyboard schema drift', () => {
     }
   });
 
+  describe('field_absent / envelope_field_absent are collected but skip reachability', () => {
+    // Absence checks have no schema target by design — a `field_absent` assertion
+    // validates that a path does NOT exist, so there is no schema field to walk.
+    // We still collect them in collectFieldValidations (above) so a future sweep
+    // can cross-reference storyboard intent, but we do not assert reachability.
+    const absentValidations = fieldValidations.filter(
+      v => v.check === 'field_absent' || v.check === 'envelope_field_absent'
+    );
+    it('absence-check validations are collected without reachability assertions', () => {
+      // Structural smoke-test: if any are present, they must have a path.
+      for (const entry of absentValidations) {
+        assert.ok(entry.path, `${entry.storyboard}/${entry.step}: field_absent entry missing path`);
+      }
+    });
+  });
+
   describe('envelope-scoped validations resolve in the v3 envelope schema', () => {
     // adcp#3429: storyboards assert envelope-level fields (`status`,
     // `task_id`, `message`, `replayed`, `governance_context`, `timestamp`,
@@ -332,6 +350,8 @@ describe('storyboard schema drift', () => {
     // checks so the drift detector knows to walk `protocol-envelope.json`
     // rather than the per-tool response schema. `errors` and `adcp_version`
     // are NOT envelope fields — keep them on the un-prefixed checks.
+    // `envelope_field_absent` is excluded here — absence checks have no schema
+    // target (see the `field_absent / envelope_field_absent` block above).
     const envelopeValidations = fieldValidations.filter(
       v =>
         v.check === 'envelope_field_present' ||
