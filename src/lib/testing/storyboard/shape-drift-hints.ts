@@ -21,6 +21,46 @@
 import type { ShapeDriftHint } from './types';
 
 /**
+ * Minimum @adcp/client version in which each server-side helper first shipped.
+ * Used to suffix shape-drift hints when the agent reports an older SDK version.
+ * Keys match the helper name referenced in the hint `message`.
+ */
+const HELPER_MIN_VERSION: Record<string, string> = {
+  buildCreativeResponse: '5.14.0',
+  listCreativesResponse: '5.10.0',
+  listCreativeFormatsResponse: '5.10.0',
+  listAccountsResponse: '5.10.0',
+  productsResponse: '5.10.0',
+  getMediaBuysResponse: '5.10.0',
+  getSignalsResponse: '5.10.0',
+  listPropertyListsResponse: '5.10.0',
+  listCollectionListsResponse: '5.10.0',
+  listContentStandardsResponse: '5.10.0',
+  getPlanAuditLogsResponse: '5.10.0',
+  syncCreativesResponse: '5.10.0',
+  previewCreativeResponse: '5.10.0',
+};
+
+/**
+ * Compare two semver strings using numeric segment ordering.
+ * Returns true when `a` is strictly less than `b`.
+ * Handles `@adcp/client@X.Y.Z` format by stripping the package prefix.
+ */
+function semverLessThan(a: string, b: string): boolean {
+  // Strip package prefix (e.g. "@adcp/client@") and pre-release suffix (e.g. "-beta.1")
+  const normalize = (v: string) => v.replace(/^.*@/, '').replace(/-.*$/, '');
+  const segs = (v: string) =>
+    normalize(v)
+      .split('.')
+      .map(s => parseInt(s, 10) || 0);
+  const [aMaj = 0, aMin = 0, aPatch = 0] = segs(a);
+  const [bMaj = 0, bMin = 0, bPatch = 0] = segs(b);
+  if (aMaj !== bMaj) return aMaj < bMaj;
+  if (aMin !== bMin) return aMin < bMin;
+  return aPatch < bPatch;
+}
+
+/**
  * List-shaped tools where handlers commonly return the bare inner array
  * (`[{...}]`) at the top level instead of wrapping it in the required
  * object envelope. Each entry names the wrapper key and the response
@@ -55,10 +95,37 @@ export const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: st
  *   pre-strip. `unknown` rather than `Record<string, unknown>` so bare-
  *   array payloads are recognizable at the top level; object branches
  *   guard internally.
+ * @param libraryVersion — optional SDK version string the agent self-reported
+ *   in `get_adcp_capabilities` (e.g. `"@adcp/client@4.16.2"`). When present
+ *   and below the helper's minimum version, the hint message is suffixed with
+ *   an upgrade note so developers know to update their SDK dep.
  */
-export function detectShapeDriftHints(taskName: string, payload: unknown): ShapeDriftHint[] {
+export function detectShapeDriftHints(taskName: string, payload: unknown, libraryVersion?: string): ShapeDriftHint[] {
   const hint = detect(taskName, payload);
-  return hint ? [hint] : [];
+  if (!hint) return [];
+  if (libraryVersion) hint.message = appendVersionSuffix(hint.message, libraryVersion);
+  return [hint];
+}
+
+/**
+ * If the hint message references a helper that requires a minimum SDK
+ * version and the agent's reported version is below it, append an upgrade
+ * note to the message. Returns the message unchanged if no version data or
+ * no match.
+ */
+function appendVersionSuffix(message: string, libraryVersion: string): string {
+  // Skip non-numeric version strings (e.g. "local-dev") to avoid spurious suffixes
+  const stripped = libraryVersion.replace(/^.*@/, '').replace(/-.*$/, '');
+  if (!/^\d+\.\d+/.test(stripped)) return message;
+  for (const [helper, minVersion] of Object.entries(HELPER_MIN_VERSION)) {
+    if (message.includes(helper) && semverLessThan(libraryVersion, minVersion)) {
+      return (
+        message +
+        ` (Note: your agent reports ${libraryVersion} — ${helper}() ships in @adcp/client ≥${minVersion}. Upgrade your SDK dep.)`
+      );
+    }
+  }
+  return message;
 }
 
 function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined {

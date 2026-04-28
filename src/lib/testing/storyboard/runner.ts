@@ -816,6 +816,7 @@ async function executeStoryboardPass(
         runnerVars,
         contextProvenance,
         priorA2aEnvelopes,
+        agentLibraryVersion: profile?.library_version,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance) {
@@ -1241,9 +1242,15 @@ export async function runStoryboardStep(
   validateTestKit(options.test_kit);
   const client = getOrCreateClient(agentUrl, options);
 
-  // Discover agent profile for standalone step execution
+  // Discover agent profile for standalone step execution. Captured so the
+  // executeStep call below can thread `library_version` through to
+  // shape-drift hint detection (issue #850).
+  let profile: AgentProfile | undefined;
   if (!options._client) {
-    await getOrDiscoverProfile(client, options);
+    const discovered = await getOrDiscoverProfile(client, options);
+    profile = discovered.profile;
+  } else {
+    profile = options._profile;
   }
 
   const context: StoryboardContext = { ...options.context };
@@ -1286,6 +1293,7 @@ export async function runStoryboardStep(
     runnerVars,
     contextProvenance,
     priorA2aEnvelopes: new Map(),
+    agentLibraryVersion: profile?.library_version,
   });
 
   if (!options._client) {
@@ -1330,6 +1338,14 @@ interface ExecutionState {
    * up from the per-step `ExecutionState` literal.
    */
   priorA2aEnvelopes?: Map<string, A2ATaskEnvelope>;
+  /**
+   * Agent's reported `@adcp/client@X.Y.Z` library version, captured from
+   * the `get_adcp_capabilities` discovery probe. Threaded into shape-drift
+   * hints so the runner can suffix recommendations with a version-staleness
+   * note when a recommended helper postdates the agent's pinned SDK. Issue
+   * #850. Undefined when the agent did not advertise `library_version`.
+   */
+  agentLibraryVersion?: string;
 }
 
 async function executeStep(
@@ -1810,7 +1826,10 @@ async function executeStep(
     }
     return raw;
   })();
-  const shapeDriftHints = driftPayload === undefined ? [] : detectShapeDriftHints(effectiveStep.task, driftPayload);
+  const shapeDriftHints =
+    driftPayload === undefined
+      ? []
+      : detectShapeDriftHints(effectiveStep.task, driftPayload, runState.agentLibraryVersion);
   const strictHints = detectStrictValidationHints(effectiveStep.task, validations);
   // Same root cause MAY produce both a `shape_drift` hint and a
   // `format_mismatch` (keyword: 'type') hint — e.g. `list_creatives`
