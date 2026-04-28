@@ -57,44 +57,17 @@ export class PlatformConfigError extends Error {
   }
 }
 
-/**
- * Dual-method tool pairs. Today's SDK supports the two tools whose
- * generated response types ARE response unions including a Submitted arm:
- * `create_media_buy` (CreateMediaBuyResponse = Success | Error | Submitted)
- * and `sync_creatives` (SyncCreativesResponse = same shape).
- *
- * **Why only 2 of 6.** The spec ships Submitted arms in
- * `core/async-response-data.json` for SIX tools (`create_media_buy`,
- * `sync_creatives`, `update_media_buy`, `build_creative`, `sync_catalogs`,
- * `get_products`) — but only `create_media_buy` and `sync_creatives` roll
- * the Submitted arm into their per-tool `xxx-response.json` `oneOf`. The
- * other 4 have inconsistent response schemas: their per-tool wire
- * response is `Success | Error` (no Submitted), even though the
- * `xxx-async-response-submitted.json` schema files exist and are
- * referenced from `core/async-response-data.json`.
- *
- * This is a SPEC inconsistency, not a codegen bug. SDK codegen reads
- * each tool's `xxx-response.json` `oneOf` and produces a faithful TS
- * union — for the 2 tools where Submitted is in the `oneOf`, the union
- * includes it; for the 4 where it isn't, the union is narrower. Adding
- * dual-method support in the SDK without the spec fix would mean the
- * SDK accepts a Submitted envelope that wire-validating receivers
- * (which check against the per-tool response schema) would reject.
- *
- * Filed upstream as adcontextprotocol/adcp#3392 — proposes adding the
- * Submitted arm to the per-tool `oneOf` for the 4 missing tools.
- * When it lands, SDK ships `*Task` methods for `update_media_buy`,
- * `build_creative`, `sync_catalogs`, `get_products`. Until then,
- * long-form flows on those tools surface via `publishStatusChange` on
- * the appropriate resource type (`proposal` / `media_buy` / `creative`).
- */
-const DUAL_METHOD_PAIRS: Record<string, ReadonlyArray<readonly [string, string]>> = {
-  sales: [
-    ['createMediaBuy', 'createMediaBuyTask'],
-    ['syncCreatives', 'syncCreativesTask'],
-  ],
-  creative: [['syncCreatives', 'syncCreativesTask']],
-};
+// Note on HITL tools: the v6 unified shape collapses sync/HITL into a
+// single method per tool whose return type is `Success | TaskHandoff<Success>`.
+// Adopters branch in the body and call `ctx.handoffToTask(fn)` to defer
+// to a background task. The framework detects the handoff marker at the
+// dispatch seam — there's no exactly-one validation needed because the
+// shape is the same regardless of which path the adopter takes.
+//
+// This applies to `create_media_buy` and `sync_creatives` today (the 2
+// spec-listed tools whose per-tool response oneOf includes the Submitted
+// arm). When adcontextprotocol/adcp#3392 lands, the same shape extends
+// to `update_media_buy`, `build_creative`, `sync_catalogs`, `get_products`.
 
 export function validatePlatform(platform: DecisioningPlatform): void {
   const claimed = platform.capabilities?.specialisms ?? [];
@@ -107,25 +80,6 @@ export function validatePlatform(platform: DecisioningPlatform): void {
     for (const field of required) {
       if (platform[field] == null) {
         errors.push(`capabilities.specialisms claims '${specialism}'; platform.${String(field)} is missing`);
-      }
-    }
-  }
-
-  // 2. Dual-method exactly-one enforcement on each spec-HITL tool
-  for (const [field, pairs] of Object.entries(DUAL_METHOD_PAIRS)) {
-    const specialism = (platform as unknown as Record<string, unknown>)[field];
-    if (specialism == null) continue;
-    const methods = specialism as Record<string, unknown>;
-    for (const [syncName, taskName] of pairs) {
-      const hasSync = typeof methods[syncName] === 'function';
-      const hasTask = typeof methods[taskName] === 'function';
-      if (hasSync && hasTask) {
-        errors.push(
-          `${field}.${syncName} and ${field}.${taskName} are both defined. ` +
-            `Each spec-HITL tool requires exactly one method shape per platform — ` +
-            `pick sync (${syncName}) for "buyer gets resource ID immediately" workflows OR ` +
-            `task (${taskName}) for HITL workflows where buyer cannot get the resource until human acts.`
-        );
       }
     }
   }

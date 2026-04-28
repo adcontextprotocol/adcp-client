@@ -206,3 +206,85 @@ export class AdcpError extends Error {
     return `AdcpError [${this.code}, ${this.recovery}]: ${this.message}`;
   }
 }
+
+// ---------------------------------------------------------------------------
+// TaskHandoff — unified hybrid-seller shape
+// ---------------------------------------------------------------------------
+
+/**
+ * Brand value framework checks at the dispatch seam to detect "this method
+ * is handing off to a task." Module-level constant so adopters can't construct
+ * one without going through `ctx.handoffToTask(fn)`.
+ */
+const TASK_HANDOFF_BRAND: unique symbol = Symbol.for('@adcp/decisioning/task-handoff');
+
+/**
+ * Marker the framework recognizes as "promote this call to a task."
+ * Returned from `ctx.handoffToTask(fn)`. Type parameter `TResult` is the
+ * eventual terminal artifact `fn` resolves to.
+ *
+ * Adopters never construct this directly — `ctx.handoffToTask(fn)` is the
+ * only sanctioned producer. The framework's dispatch layer detects the
+ * brand, allocates a `task_id`, returns the spec-defined `Submitted`
+ * envelope to the buyer, and runs `fn` in the background. `fn`'s return
+ * value becomes the task's terminal artifact; `throw AdcpError` becomes
+ * the terminal error.
+ *
+ * Status: Preview / 6.0.
+ *
+ * @public
+ */
+export interface TaskHandoff<TResult> {
+  readonly [TASK_HANDOFF_BRAND]: true;
+  /** @internal — framework consumes this; adopters never read it. */
+  readonly _taskFn: (taskCtx: TaskHandoffContext) => Promise<TResult>;
+}
+
+/**
+ * Context the framework supplies to the handoff function. Mirrors
+ * `RequestContext.task` from the deprecated `*Task` shape — `id` is the
+ * framework-issued task id, `update`/`heartbeat` are the same affordances.
+ *
+ * @public
+ */
+export interface TaskHandoffContext {
+  readonly id: string;
+  update(progress: TaskHandoffProgress): Promise<void>;
+  heartbeat(): Promise<void>;
+}
+
+export interface TaskHandoffProgress {
+  message?: string;
+  percentage?: number;
+  step_number?: number;
+  total_steps?: number;
+  current_step?: string;
+}
+
+/**
+ * Construct a `TaskHandoff<T>` marker. The framework's `ctx.handoffToTask`
+ * helper invokes this; adopters don't call it directly.
+ *
+ * @internal
+ */
+export function _createTaskHandoff<TResult>(
+  fn: (taskCtx: TaskHandoffContext) => Promise<TResult>
+): TaskHandoff<TResult> {
+  return {
+    [TASK_HANDOFF_BRAND]: true,
+    _taskFn: fn,
+  };
+}
+
+/**
+ * Type guard — does the value the adopter returned mark a task handoff?
+ *
+ * @internal
+ */
+export function isTaskHandoff<TResult>(value: unknown): value is TaskHandoff<TResult> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<symbol, unknown>)[TASK_HANDOFF_BRAND] === true
+  );
+}

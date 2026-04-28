@@ -22,9 +22,13 @@ Concrete wins:
 - **Framework-owned response envelopes** — return wire success arms;
   `throw AdcpError(code, opts)` for structured rejection. No more
   `wrapEnvelope` / `serviceUnavailable` / `versionUnsupported` plumbing.
-- **HITL split** — `createMediaBuyTask(req, ctx)` returns the terminal
-  artifact; framework returns the submitted envelope to the buyer
-  immediately and runs your method in the background.
+- **Unified hybrid HITL shape** — `createMediaBuy(req, ctx)` returns
+  either the wire `Success` arm (sync fast path) or
+  `ctx.handoffToTask(fn)` (HITL slow path). Adopters branch per call:
+  programmatic remnant resolves sync, guaranteed inventory hands off to
+  background task. No upfront sync-vs-HITL choice — same tool serves
+  both. Framework projects the spec-defined `Submitted` envelope to the
+  buyer when the adopter hands off.
 - **`tasks_get` auto-registered** — buyers poll HITL task lifecycle
   without you writing the polling tool.
 - **`publishStatusChange(...)` event bus** replaces ad-hoc webhook
@@ -131,26 +135,38 @@ Differences:
 - `recovery` is required on `AdcpError` (not on the v5 envelope).
 - Return the success arm directly.
 
-### 3. HITL: rename `createMediaBuy` → `createMediaBuyTask`
+### 3. HITL: return `ctx.handoffToTask(fn)` from `createMediaBuy`
 
-If your handler queues for human review, rename to `*Task` and use
-`ctx.task` for the framework-issued task id:
+There's only one method per tool — `createMediaBuy` (or
+`syncCreatives`). To run HITL, return `ctx.handoffToTask(fn)` from
+inside the same method. The framework allocates `task_id`, returns the
+spec-defined `Submitted` envelope to the buyer, and runs `fn` in the
+background.
 
 ```ts
 sales: {
-  createMediaBuyTask: async (req, ctx) => {
-    await this.queueForReview({ taskId: ctx.task.id, request: req });
+  createMediaBuy: (req, ctx) => ctx.handoffToTask(async (taskCtx) => {
+    await this.queueForReview({ taskId: taskCtx.id, request: req });
     const decision = await this.waitForOperator(req);
     if (decision.denied) {
       throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: decision.reason });
     }
-    return { media_buy_id: decision.id, status: 'pending_creatives', confirmed_at: new Date().toISOString() };
-  },
+    return { media_buy_id: decision.id, status: 'pending_creatives', confirmed_at: new Date().toISOString(), packages: [] };
+  }),
 }
 ```
 
-`validatePlatform()` rejects defining BOTH `createMediaBuy` and
-`createMediaBuyTask` — pick exactly one per pair.
+**Hybrid sellers** (programmatic + guaranteed in one tenant) branch per
+call: return the success arm directly for fast paths, return
+`ctx.handoffToTask(fn)` for slow paths. Same tool, dynamic dispatch,
+predictable wire shape per request.
+
+```ts
+createMediaBuy: async (req, ctx) => {
+  if (this.isProgrammatic(req)) return await this.commitSync(req);
+  return ctx.handoffToTask(async (taskCtx) => await this.runHITL(req, taskCtx.id));
+}
+```
 
 ### 4. Account resolution — explicit handling for no-account tools
 
@@ -224,9 +240,10 @@ createAdcpServerFromPlatform(platform, {
 - **`AccountNotFoundError`** should be thrown from `accounts.resolve()`,
   not from specialism methods. The framework projects either to
   `ACCOUNT_NOT_FOUND`, but resolve() is the canonical surface.
-- **Don't return `Submitted`-style envelopes manually** from `*Task`
-  methods. Framework returns the `submitted` envelope to the buyer
-  itself; your method's return value becomes the terminal artifact.
+- **Don't return `Submitted`-style envelopes manually** from inside a
+  handoff function. Framework returns the `submitted` envelope to the
+  buyer itself the moment your method returns `ctx.handoffToTask(fn)`;
+  `fn`'s return value becomes the terminal artifact.
 - **Postgres registry caps `result` / `error` JSON at 4MB** — return
   per-resource references for large payloads, not the full body.
 
@@ -240,17 +257,18 @@ createAdcpServerFromPlatform(platform, {
 - `EventTrackingPlatform` / `CatalogPlatform` / `FinancialsPlatform` as
   separate specialisms — v6.0 routes these tools through `SalesPlatform`
   optional methods.
-- `ctx.task.update({ progress })` projection to `tasks_get`'s `progress`
+- `taskCtx.update({ progress })` projection to `tasks_get`'s `progress`
   field — interface ships in v6.0; framework wires the projection in
   v6.1 alongside `taskRegistry.transition()`.
-- `*Task` methods for `update_media_buy`, `get_products`, `build_creative`,
+- Handoff support for `update_media_buy`, `get_products`, `build_creative`,
   `sync_catalogs` — blocked on a spec inconsistency tracked as
   [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392)
   (per-tool response schemas don't include the `Submitted` arm even
   though the corresponding `xxx-async-response-submitted.json` schemas
   exist). When the spec consolidation lands, codegen produces unions
-  including `Submitted` and the SDK ships `*Task` methods. Until then,
-  long-form flows on those tools surface via `publishStatusChange`.
+  including `Submitted` and the unified shape extends to those tools.
+  Until then, long-form flows on those tools surface via
+  `publishStatusChange`.
 
 ## Need help?
 

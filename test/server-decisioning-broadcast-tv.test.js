@@ -74,7 +74,7 @@ function makeBroadcastTvSeller({
         };
       },
 
-      createMediaBuyTask: async (req) => {
+      createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => {
         const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
         if (totalBudget < 5000) {
           throw new AdcpError('BUDGET_TOO_LOW', {
@@ -100,7 +100,7 @@ function makeBroadcastTvSeller({
         }, config.activationOffsetMs).unref?.();
 
         return buy;
-      },
+      }),
 
       updateMediaBuy: async (buyId, patch) => {
         const existing = mediaBuys.get(buyId);
@@ -115,7 +115,7 @@ function makeBroadcastTvSeller({
         return existing;
       },
 
-      syncCreativesTask: async (creatives) => {
+      syncCreatives: (creatives, ctx) => ctx.handoffToTask(async () => {
         await new Promise(r => setTimeout(r, config.standardsReviewMs));
         return creatives.map(c => {
           const id = c.creative_id ?? `cr_${Math.random()}`;
@@ -130,7 +130,7 @@ function makeBroadcastTvSeller({
           }
           return { creative_id: id, action: 'created', status: 'approved' };
         });
-      },
+      }),
 
       getMediaBuyDelivery: async () => ({
         currency: 'USD',
@@ -268,7 +268,9 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
 
     const final = await server.getTaskState(taskId);
     assert.strictEqual(final.status, 'completed');
-    const reviews = final.result;
+    // Task result is the wire-shape `{ creatives: [...] }` envelope (framework
+    // wraps the per-creative rows when the handoff resolves).
+    const reviews = final.result.creatives;
     assert.strictEqual(reviews.length, 2);
     const brand = reviews.find(r => r.creative_id === 'cr_brand');
     const pol = reviews.find(r => r.creative_id === 'cr_pol');

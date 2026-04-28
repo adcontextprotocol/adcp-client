@@ -4,8 +4,9 @@
  *
  * The handler-style framework already resolves the account, sets sessionKey,
  * and exposes `store` + `authInfo` + `emitWebhook`. The new context layers
- * `state.*` (sync state reads) and `resolve.*` (async framework-mediated
- * resolvers) on top.
+ * `state.*` (sync state reads), `resolve.*` (async framework-mediated
+ * resolvers), and `handoffToTask(...)` (the unified hybrid-seller handoff
+ * primitive) on top.
  *
  * **Stub status — v6.0 alpha.** `state.*` (workflow-step reads, proposal
  * lookups, governance JWS) and `resolve.*` (property/collection-list +
@@ -16,20 +17,20 @@
  *
  * Adopters spiking against the preview surface MUST avoid `ctx.state.*`
  * and `ctx.resolve.*` until the wire-up commits land in rc.1. Use
- * `ctx.account` (fully wired) and the structured-error / status-change
- * primitives only.
+ * `ctx.account`, `ctx.handoffToTask(...)`, and the structured-error /
+ * status-change primitives only.
  *
  * @public
  */
 
 import type { HandlerContext } from '../../create-adcp-server';
 import type { Account } from '../account';
-import type { RequestContext, TaskHandle } from '../context';
+import type { RequestContext } from '../context';
 import type { TaskRegistry } from './task-registry';
+import { _createTaskHandoff, type TaskHandoffContext, type TaskHandoff } from '../async-outcome';
 
 export function buildRequestContext<TMeta = Record<string, unknown>>(
-  handlerCtx: HandlerContext<Account<TMeta>>,
-  taskHandle?: TaskHandle
+  handlerCtx: HandlerContext<Account<TMeta>>
 ): RequestContext<Account<TMeta>> {
   // `account` may legitimately be undefined for tools whose wire request
   // doesn't carry an `account` field AND whose `resolveAccountFromAuth`
@@ -72,38 +73,34 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
       collectionList: stubResolver('collectionList'),
       creativeFormat: stubResolver('creativeFormat'),
     },
-    ...(taskHandle !== undefined && { task: taskHandle }),
+    handoffToTask<TResult>(
+      fn: (taskCtx: TaskHandoffContext) => Promise<TResult>
+    ): TaskHandoff<TResult> {
+      return _createTaskHandoff(fn);
+    },
   };
 }
 
 /**
- * Construct a `TaskHandle` from a registry + framework-issued task id.
- * `update`/`heartbeat` write to the registry; in v6.0 the writes mark the
- * record updated_at + statusMessage so subsequent `tasks_get` reads
- * surface the latest progress. v6.1 will project to MCP Resources.
+ * Construct a `TaskHandoffContext` from a registry + framework-issued
+ * task id. The framework calls this AFTER detecting a `TaskHandoff`
+ * marker on a method's return — the handoff function gets a context
+ * carrying the framework-allocated `taskId` plus `update`/`heartbeat`
+ * affordances.
  *
  * v6.0 doesn't yet model the `progress` field on the task record — the
- * `message` from `update(...)` lands on `statusMessage`; structured
- * progress (percentage / step_number / current_step) is captured but not
- * yet projected to the wire response. v6.1 ships
- * `taskRegistry.transition(taskId, { status: 'working', progress })`
- * which closes that loop. Until then, adopters can call `update(...)`
- * for the side-effect of bumping `updated_at`; the structured progress
- * fields ride through but aren't surfaced to buyers yet.
+ * `message` from `update(...)` rides through but isn't yet projected
+ * onto `tasks_get`. v6.1 ships `taskRegistry.transition(taskId, { ... })`
+ * which closes the loop. Until then, adopters can call `update(...)`
+ * to bump `updated_at`; structured progress fields are captured but
+ * not surfaced to buyers.
  */
-export function buildTaskHandle(taskRegistry: TaskRegistry, taskId: string): TaskHandle {
+export function buildHandoffContext(taskRegistry: TaskRegistry, taskId: string): TaskHandoffContext {
+  void taskRegistry;
   return {
     id: taskId,
     update: async (progress) => {
-      // Best-effort progress write: marks the record updated_at and stamps
-      // the message on statusMessage. Other progress fields are captured
-      // for v6.1 wire projection — today they ride alongside without
-      // surfacing on tasks_get.
       void progress;
-      // No-op against the current registry interface; v6.1 widens
-      // TaskRegistry with a transition() method that lands these fields.
-      // For now: heartbeat-equivalent semantics so adopters wiring the
-      // call early aren't writing dead code.
       await Promise.resolve();
     },
     heartbeat: async () => {

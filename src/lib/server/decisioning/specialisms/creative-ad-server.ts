@@ -26,6 +26,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { TaskHandoff } from '../async-outcome';
 import type {
   BuildCreativeRequest,
   CreativeManifest,
@@ -71,21 +72,16 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
   // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
 
   /**
-   * Sync creative push. Persist the assets into your library and return
-   * per-creative result rows. `action: 'created'` for new entries,
-   * `'updated'` for replacements, `'unchanged'` when the asset already
-   * matches. Optional `status: 'pending_review'` for assets awaiting
-   * manual review.
+   * Push creatives. Return per-creative result rows (sync fast path) OR
+   * `ctx.handoffToTask(fn)` to promote to a background task (HITL —
+   * brand-suitability, S&P review). `action: 'created'` for new entries,
+   * `'updated'` for replacements, `'unchanged'` when matching. Optional
+   * `status: 'pending_review'` for sync-arm rows awaiting manual review.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
-
-  /**
-   * HITL creative review. Framework returns the submitted envelope to the
-   * buyer; this method runs in background. Returns per-creative result
-   * rows once review is complete. Use when your platform requires
-   * mandatory pre-persist approval (brand-suitability, S&P).
-   */
-  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreatives?(
+    creatives: Creative[],
+    ctx: Ctx<TMeta>
+  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 
   /**
    * Read creatives from the library. Filters + pagination. When

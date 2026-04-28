@@ -122,9 +122,9 @@ What the framework wires automatically when you call `createAdcpServerFromPlatfo
 
 1. Methods return `Promise<T>` directly — no `ok()` / `submitted()` / `rejected()` wrappers.
 2. `throw new AdcpError(code, opts)` for buyer-facing structured rejection.
-3. For HITL: implement `xxxTask(req, ctx)` instead of `xxx(req, ctx)` — same signature, framework supplies `ctx.task: { id, update, heartbeat }` for the task-side affordances. Pick exactly one per pair (`createMediaBuy` OR `createMediaBuyTask`); `validatePlatform()` rejects defining both.
+3. For HITL on tools whose wire response defines a `Submitted` arm (`create_media_buy`, `sync_creatives`): return `ctx.handoffToTask(fn)` from inside the same method. The framework allocates `task_id`, returns the spec-defined `Submitted` envelope to the buyer, and runs `fn` in the background. Hybrid sellers branch per call.
 
-## Three async patterns
+## Two async patterns
 
 ### 1. Sync happy path
 
@@ -174,19 +174,19 @@ if (errors.length > 0) {
 }
 ```
 
-### 3. HITL — implement the `*Task` variant
+### 3. HITL — return `ctx.handoffToTask(fn)`
 
-For tools whose wire response unions define a `Submitted` arm (today: `create_media_buy`, `sync_creatives`), adopters with human-in-the-loop workflows implement the `*Task` variant instead of the sync one. Same signature as the sync variant — `(req, ctx)` — but the framework supplies `ctx.task` carrying the framework-issued `task_id` and task-side affordances (`update`, `heartbeat`). The framework returns the spec-defined submitted envelope to the buyer immediately, then runs your `*Task` method in the background. Your method's return value becomes the task's terminal artifact; `throw new AdcpError(...)` becomes the terminal error.
+For tools whose wire response defines a `Submitted` arm (today: `create_media_buy`, `sync_creatives`), adopters with human-in-the-loop workflows return `ctx.handoffToTask(fn)` from inside the same method. The framework allocates `task_id`, returns the spec-defined `Submitted` envelope to the buyer immediately, then runs `fn` in the background. `fn`'s return value becomes the task's terminal artifact; `throw new AdcpError(...)` becomes the terminal error. `fn` receives a `TaskHandoffContext` with `id` (framework-issued task id), `update(progress)`, and `heartbeat()`.
 
 ```ts
 sales: SalesPlatform<MyMeta> = {
   // ... other methods ...
-  createMediaBuyTask: async (req, ctx) => {
+  createMediaBuy: (req, ctx) => ctx.handoffToTask(async (taskCtx) => {
     // Persist the task_id on your side first, before waiting on a human:
-    await this.queueForReview({ taskId: ctx.task.id, request: req });
+    await this.queueForReview({ taskId: taskCtx.id, request: req });
 
     // Optional: push a status message visible to the buyer's polling.
-    await ctx.task.update({ message: 'Awaiting trafficker review...' });
+    await taskCtx.update({ message: 'Awaiting trafficker review...' });
 
     // Then await the operator. Hours-to-days are fine — buyer received
     // the submitted envelope already and polls / receives webhook.
@@ -199,68 +199,76 @@ sales: SalesPlatform<MyMeta> = {
       });
     }
 
-    // Sync return → task transitions to `completed` with this as `result`
+    // Return → task transitions to `completed` with this as `result`
     return {
       media_buy_id: decision.media_buy_id,
       status: 'pending_creatives',
       confirmed_at: new Date().toISOString(),
+      packages: [],
     };
-  },
+  }),
 };
 ```
 
 **The buyer gets terminal state two ways:**
 
 1. **Webhook push** — buyer included `push_notification_config: { url, token }` in the original request. Framework signs (RFC 9421) + delivers to that URL with the spec's `mcp-webhook-payload.json` envelope on terminal state. URL is validated server-side: rejects RFC 1918, loopback, link-local, CGNAT, IPv6 unique-local, alternate IPv4 forms, and IPv4-mapped IPv6 before delivery (SSRF guard). Bad URLs FAIL FAST with `INVALID_REQUEST` at the request boundary — buyers see their config error immediately, not as silent webhook drops.
-2. **Polling** — framework auto-registers a `tasks_get` custom tool. Buyers call it with `{ task_id, account }` and receive the spec-flat lifecycle shape (`task_id`, `task_type`, `status`, `created_at`, `updated_at`, `completed_at` on terminal, `result` on completed, top-level `error: { code, message, details? }` on failed). Tenant-scoped — passes `account` through `accounts.resolve(ref, ctx)` and refuses cross-tenant probes with `REFERENCE_NOT_FOUND`. You don't write this tool; it's wired in by the framework. (Snake-case `tasks_get` is the MCP-tool-name substitute for the spec's `tasks/get` — MCP forbids `/` in tool names. When MCP lands native `tasks/get` method dispatch, the framework will support both surfaces.) Programmatic access for ops / cron code is via `server.getTaskState(taskId, accountId)`.
+2. **Polling** — framework auto-registers a `tasks_get` custom tool. Buyers call it with `{ task_id, account }` and receive the spec-flat lifecycle shape (`task_id`, `task_type`, `status`, `created_at`, `updated_at`, `completed_at` on terminal, `result` on completed, top-level `error: { code, message, details? }` on failed). Tenant-scoped — passes `account` through `accounts.resolve(ref, ctx)` and refuses cross-tenant probes with `REFERENCE_NOT_FOUND`. You don't write this tool; it's wired in by the framework. Programmatic access for ops / cron code is via `server.getTaskState(taskId, accountId)`.
 
-**Always declare HITL when the surface is HITL-eligible.** Don't conditionally pick between sync and task variants based on the request — `validatePlatform()` rejects defining both anyway. If the fast path is the 99% case (pre-approved buyers, low-risk amounts), the `*Task` method resolves immediately and the buyer's first poll catches the terminal state. Uniform contract for the buyer; one code path for you. See § "HITL-sometimes" below.
+**Sync-only tools that need long-running completion** use `publishStatusChange(...)` for lifecycle updates instead of HITL. The per-tool wire response schemas don't include `Submitted` arms for `update_media_buy`, `build_creative`, `sync_catalogs`, or `get_products` (a spec inconsistency tracked as [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392) — the Submitted schemas exist but aren't rolled into each tool's response `oneOf`). Until the spec consolidates, long-running work on those tools publishes status changes (`media_buy` → `active` → `completed`) on the event bus and buyers subscribe. When adcp#3392 lands, the SDK will widen the unified shape to those tools.
 
-**Sync-only tools that need long-running completion** use `publishStatusChange(...)` for lifecycle updates instead of HITL. The per-tool wire response schemas don't include `Submitted` arms for `update_media_buy`, `build_creative`, `sync_catalogs`, or `get_products` (a spec inconsistency tracked as [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392) — the Submitted schemas exist but aren't rolled into each tool's response `oneOf`). Until the spec consolidates, long-running work on those tools publishes status changes (`media_buy` → `active` → `completed`) on the event bus and buyers subscribe. When adcp#3392 lands, the SDK will ship `*Task` methods for those tools.
+## Hybrid sellers (programmatic + guaranteed in one tenant)
+
+A real publisher commonly sells both **programmatic remnant** (sync, instant `media_buy_id`) and **guaranteed/sponsorship** (HITL, trafficker review) through the same `create_media_buy` tool. The unified shape handles this natively — branch in your method body on whatever signal determines the path (product type, buyer pre-approval, amount thresholds, etc.):
+
+```ts
+sales: SalesPlatform = {
+  createMediaBuy: async (req, ctx) => {
+    // Fast path: programmatic remnant, pre-approved buyer, low-risk amount.
+    // Returns Success directly — buyer gets media_buy_id on the immediate response.
+    if (this.isProgrammatic(req)) {
+      return await this.commitSync(req);
+    }
+    // Slow path: guaranteed inventory, trafficker review needed.
+    // Returns TaskHandoff — buyer gets { status: 'submitted', task_id }.
+    return ctx.handoffToTask(async (taskCtx) => {
+      await taskCtx.update({ message: 'Awaiting trafficker review' });
+      return await this.waitForTrafficker(req, taskCtx.id);
+    });
+  },
+};
+```
+
+Buyers pattern-match on the wire response shape. Predictable per request (deterministic given the products selected), dynamic per call. No latency tax on the 99% programmatic fast path; no awkward wire workarounds for the HITL slow path.
 
 ## Per-creative review (partial-batch)
 
-`syncCreatives` returns per-creative `status`. Mix freely:
+`syncCreatives` returns per-creative `status`. Mix freely on the sync arm:
 
 ```ts
 syncCreatives: async (creatives, ctx) => {
   return creatives.map(c => ({
     creative_id: c.creative_id,
+    action: 'created',
     status: this.requiresManualReview(c) ? 'pending_review' : 'approved',
-    ...(c.violatesPolicy && { reason: c.violationReason }),
   }));
 };
 ```
 
-The wire spec carries `status` per row, so you don't need to wrap the whole batch in `ctx.runAsync`. For platforms whose ENTIRE batch goes through async manual review (Innovid, broadcast TV — 4-72h SLA), use `ctx.runAsync` around the whole call.
-
-## HITL-sometimes (the "fast path through the slow door")
-
-Many specialisms — broadcast TV, retail-media-with-traffic-review, governed-buy flows — are **HITL-by-default but fast-path-eligible**. Pre-approved buyers, low-risk amounts, or whitelisted SKUs sometimes resolve in milliseconds without paging a human.
-
-The right answer is to **always declare the HITL variant** (`createMediaBuyTask`) and let it resolve immediately when no gate triggers. Don't conditionally pick between `createMediaBuy` and `createMediaBuyTask` — `validatePlatform()` rejects defining both, and the buyer experience should be uniform.
+When the ENTIRE batch needs background review (Innovid, broadcast TV — 4-72h SLA), return `ctx.handoffToTask(fn)` and the framework projects the spec's `Submitted` envelope:
 
 ```ts
-sales: SalesPlatform = {
-  // Always-HITL declaration — buyer always sees `submitted` first.
-  createMediaBuyTask: async (req, ctx) => {
-    // Fast path: pre-approved buyer + low-risk amount → resolve before
-    // the buyer's polling tick lands.
-    if (this.isFastPathEligible(req, ctx.account)) {
-      return this.commitImmediately(req); // resolves task in <10ms
-    }
-    // Slow path: trafficker review queue (hours-to-days). Returns when
-    // the human acts. ctx.task.id passes through to your queue so the
-    // approval workflow can stamp it on the platform-side pending record.
-    return await this.waitForTrafficker(ctx.task.id, req);
-  },
-  // ...
+syncCreatives: async (creatives, ctx) => {
+  if (creatives.some(c => this.needsBatchReview(c))) {
+    return ctx.handoffToTask(async (taskCtx) => {
+      await taskCtx.update({ message: 'S&P review pending' });
+      return await this.reviewAndPersist(creatives);
+    });
+  }
+  // Sync arm — return rows directly.
+  return creatives.map(c => ({ creative_id: c.creative_id, action: 'created', status: 'approved' }));
 };
 ```
-
-Why declare HITL even on the fast path: buyers receive `{ status: 'submitted', task_id }` on every call and either poll `tasks/get` or subscribe to status changes. That's a uniform contract — no branching on response shape, no "sometimes sync, sometimes async" surprises. The framework's task envelope handles immediate completion fine; the buyer gets the terminal artifact on its first poll.
-
-If the fast path is the 99% case and HITL is rare, the right answer is still HITL-by-default — a sync `createMediaBuy` that occasionally throws `INVALID_STATE` to redirect buyers into a separate approval flow is worse UX than a uniform task envelope where most tasks complete in &lt;100ms.
 
 ## Buyer-driven approval as separate methods
 

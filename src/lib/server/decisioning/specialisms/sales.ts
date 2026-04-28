@@ -74,6 +74,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { TaskHandoff } from '../async-outcome';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -131,30 +132,58 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   /** Sync discovery: brief in, products out. */
   getProducts(req: GetProductsRequest, ctx: Ctx<TMeta>): Promise<GetProductsResponse>;
 
-  // ── create_media_buy: sync OR task ──────────────────────────────────
+  // ── create_media_buy: unified hybrid shape ──────────────────────────
 
   /**
-   * Sync media-buy creation. Return the wire success-arm shape immediately.
-   * Status changes (pending_creatives → active → completed) flow via
-   * `publishStatusChange(...)` after creation.
+   * Create a media buy. Return the wire success-arm shape (sync fast path)
+   * OR `ctx.handoffToTask(fn)` to promote the call to a background task
+   * (HITL slow path). Adopters can branch per-call: hybrid sellers route
+   * programmatic remnant sync, guaranteed inventory through HITL, all
+   * from the same method.
    *
-   * Required: `media_buy_id`. Other fields optional — populate the ones
-   * your platform tracks at creation time.
-   */
-  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
-
-  /**
-   * HITL media-buy creation. Framework returns the submitted envelope to
-   * the buyer; this method runs in background. Method's return value
-   * becomes the task's terminal artifact.
+   * Buyers pattern-match on the wire response shape (`media_buy_id` on
+   * the immediate response → sync; `task_id` + `status: 'submitted'` →
+   * poll `tasks_get` or receive webhook). Predictable per request,
+   * dynamic per call.
    *
-   * Return value is persisted as JSONB in the task registry. Postgres-backed
-   * registries cap row size at 4MB — offload large payloads to blob
-   * storage and return references in the result body instead. Oversized
-   * returns surface via `onTaskTransition` with
-   * `errorCode: 'REGISTRY_WRITE_FAILED'` and skip webhook delivery.
+   * Status changes flow via `publishStatusChange(...)` regardless of
+   * which path was taken.
+   *
+   * The handoff function's return value is persisted as JSONB in the
+   * task registry. Postgres-backed registries cap row size at 4MB —
+   * offload large payloads to blob storage and return references.
+   *
+   * @example Sync-only adopter (no HITL inventory)
+   * ```ts
+   * createMediaBuy: async (req, ctx) => {
+   *   return await this.commitSync(req);
+   * }
+   * ```
+   *
+   * @example HITL-only adopter (every call goes through trafficker review)
+   * ```ts
+   * createMediaBuy: async (req, ctx) => {
+   *   return ctx.handoffToTask(async (taskCtx) => {
+   *     await taskCtx.update({ message: 'Awaiting trafficker' });
+   *     return await this.runHITL(req);
+   *   });
+   * }
+   * ```
+   *
+   * @example Hybrid adopter (programmatic + guaranteed in same tenant)
+   * ```ts
+   * createMediaBuy: async (req, ctx) => {
+   *   if (this.requiresHITL(req)) {
+   *     return ctx.handoffToTask(async (taskCtx) => await this.runHITL(req));
+   *   }
+   *   return await this.commitSync(req);
+   * }
+   * ```
    */
-  createMediaBuyTask?(req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
+  createMediaBuy(
+    req: CreateMediaBuyRequest,
+    ctx: Ctx<TMeta>
+  ): Promise<CreateMediaBuySuccess | TaskHandoff<CreateMediaBuySuccess>>;
 
   // ── update_media_buy: sync only (today) ─────────────────────────────
   // Spec inconsistency — same root cause as get_products above. The
@@ -168,27 +197,36 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   /** Sync update. Returns the patched buy. */
   updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<UpdateMediaBuySuccess>;
 
-  // ── sync_creatives: sync OR task ────────────────────────────────────
+  // ── sync_creatives: unified hybrid shape ────────────────────────────
 
   /**
-   * Sync creative push. Returns the array of wire success rows — one per
-   * creative processed. Each row carries `action` (CRUD outcome) and
-   * optional `status` (review state). Buyers see mixed `approved` /
-   * `pending_review` rows in one response. Subsequent review state changes
-   * flow via `publishStatusChange(...)`.
-   */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
-
-  /**
-   * HITL creative review. Framework returns the submitted envelope to the
-   * buyer; this method runs in background. Returns per-creative result rows
-   * once review is complete.
+   * Push creatives. Return the array of wire success rows (sync fast
+   * path) OR `ctx.handoffToTask(fn)` to defer to a background task
+   * (HITL slow path — manual review, brand-suitability gates, etc.).
+   * Hybrid: branch per-batch — auto-approve simple creatives sync,
+   * route everything else to HITL.
    *
-   * Return value is persisted as JSONB in the task registry. Postgres-backed
-   * registries cap row size at 4MB — return per-creative result rows
-   * (not full creative bodies) to stay well under the cap.
+   * Each row carries `action` (CRUD outcome) and optional `status`
+   * (review state). Buyers see mixed `approved` / `pending_review`
+   * rows on the sync path; subsequent review changes flow via
+   * `publishStatusChange(...)`.
+   *
+   * @example Hybrid adopter
+   * ```ts
+   * syncCreatives: async (creatives, ctx) => {
+   *   if (creatives.some(c => this.needsReview(c))) {
+   *     return ctx.handoffToTask(async (taskCtx) => {
+   *       return await this.reviewAndPersist(creatives);
+   *     });
+   *   }
+   *   return creatives.map(c => ({ creative_id: c.creative_id, action: 'created', status: 'approved' }));
+   * }
+   * ```
    */
-  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreatives?(
+    creatives: Creative[],
+    ctx: Ctx<TMeta>
+  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 

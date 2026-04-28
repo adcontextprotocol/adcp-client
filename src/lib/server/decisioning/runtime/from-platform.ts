@@ -72,7 +72,8 @@ import type { AccountReference } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
-import { buildRequestContext, buildTaskHandle } from './to-context';
+import { buildRequestContext, buildHandoffContext } from './to-context';
+import { isTaskHandoff } from '../async-outcome';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
 import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
@@ -1506,10 +1507,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     createMediaBuy: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      if (sales.createMediaBuyTask) {
-        return projectSync(
-          async () => {
-            const push = extractPushConfig(params, logger);
+      return projectSync(
+        async () => {
+          const push = extractPushConfig(params, logger);
+          const result = await sales.createMediaBuy(params, reqCtx);
+          // Unified hybrid shape: adopter returns either Success (sync fast
+          // path) or a TaskHandoff marker (HITL slow path). Detect the
+          // marker and route through the registry.
+          if (isTaskHandoff(result)) {
             return dispatchHitl(
               taskRegistry,
               {
@@ -1521,23 +1526,11 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              taskId => sales.createMediaBuyTask!(
-                params,
-                { ...reqCtx, task: buildTaskHandle(taskRegistry, taskId) }
-              )
+              taskId => result._taskFn(buildHandoffContext(taskRegistry, taskId))
             );
-          },
-          r => r
-        );
-      }
-      if (!sales.createMediaBuy) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'create_media_buy not supported by this sales platform (declare either createMediaBuy or createMediaBuyTask)',
-          recovery: 'terminal',
-        });
-      }
-      return projectSync(
-        () => sales.createMediaBuy!(params, reqCtx),
+          }
+          return result;
+        },
         r => r
       );
     },
@@ -1565,10 +1558,19 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
-      if (sales.syncCreativesTask) {
-        return projectSync(
-          async () => {
-            const push = extractPushConfig(params, logger);
+      if (!sales.syncCreatives) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'sync_creatives not supported by this sales platform',
+          recovery: 'terminal',
+        });
+      }
+      return projectSync(
+        async () => {
+          const push = extractPushConfig(params, logger);
+          const result = await sales.syncCreatives!(creatives, reqCtx);
+          if (isTaskHandoff(result)) {
+            // HITL handoff: wrap the eventual rows in `{ creatives: [...] }`
+            // when the task completes (matches the sync-arm projection below).
             return dispatchHitl(
               taskRegistry,
               {
@@ -1580,24 +1582,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              taskId => sales.syncCreativesTask!(
-                creatives,
-                { ...reqCtx, task: buildTaskHandle(taskRegistry, taskId) }
-              )
+              async taskId => {
+                const rows = await result._taskFn(buildHandoffContext(taskRegistry, taskId));
+                return { creatives: rows };
+              }
             );
-          },
-          r => r
-        );
-      }
-      if (!sales.syncCreatives) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'sync_creatives not supported by this sales platform (declare either syncCreatives or syncCreativesTask)',
-          recovery: 'terminal',
-        });
-      }
-      return projectSync(
-        () => sales.syncCreatives!(creatives, reqCtx),
-        rows => ({ creatives: rows })
+          }
+          return { creatives: result };
+        },
+        r => r
       );
     },
 
@@ -1689,10 +1682,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
-      if (creative.syncCreativesTask) {
-        return projectSync(
-          async () => {
-            const push = extractPushConfig(params, logger);
+      if (!creative.syncCreatives) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'sync_creatives not supported by this creative platform',
+          recovery: 'terminal',
+        });
+      }
+      return projectSync(
+        async () => {
+          const push = extractPushConfig(params, logger);
+          const result = await creative.syncCreatives!(creatives, reqCtx);
+          if (isTaskHandoff(result)) {
             return dispatchHitl(
               taskRegistry,
               {
@@ -1704,24 +1704,15 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              taskId => creative.syncCreativesTask!(
-                creatives,
-                { ...reqCtx, task: buildTaskHandle(taskRegistry, taskId) }
-              )
+              async taskId => {
+                const rows = await result._taskFn(buildHandoffContext(taskRegistry, taskId));
+                return { creatives: rows };
+              }
             );
-          },
-          r => r
-        );
-      }
-      if (!creative.syncCreatives) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'sync_creatives not supported by this creative platform (declare either syncCreatives or syncCreativesTask)',
-          recovery: 'terminal',
-        });
-      }
-      return projectSync(
-        () => creative.syncCreatives!(creatives, reqCtx),
-        rows => ({ creatives: rows })
+          }
+          return { creatives: result };
+        },
+        r => r
       );
     },
 

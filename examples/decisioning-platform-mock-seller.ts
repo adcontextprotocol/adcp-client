@@ -262,12 +262,13 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
     getProducts: SHARED_GET_PRODUCTS,
 
     /**
-     * HITL: framework allocates `taskId` BEFORE invoking, returns submitted
-     * envelope to buyer immediately, runs this method in background. Method's
-     * return value becomes terminal `result`; thrown `AdcpError` becomes
-     * terminal `error`.
+     * HITL: return `ctx.handoffToTask(fn)`. Framework allocates `task_id`,
+     * returns the submitted envelope to the buyer immediately, then runs
+     * `fn` in the background. `fn`'s return value becomes terminal
+     * `result`; thrown `AdcpError` becomes terminal `error`.
      */
-    createMediaBuyTask: async (req: CreateMediaBuyRequest): Promise<CreateMediaBuySuccess> => {
+    createMediaBuy: (req, ctx) => ctx.handoffToTask(async (taskCtx) => {
+      void taskCtx;
       const errors = preflight(req, this.capabilities.config);
       if (errors.length > 0) rejectPreflight(errors);
 
@@ -283,7 +284,7 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
       };
       this.mediaBuys.set(buyId, buy);
       return buy;
-    },
+    }),
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
       const existing = this.mediaBuys.get(buyId);

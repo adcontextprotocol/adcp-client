@@ -121,7 +121,7 @@ function makeSyncMockSeller({ floorCpm = 1.0 } = {}) {
 
 function makeHitlMockSeller({ floorCpm = 1.0, approvalDurationMs = 30 } = {}) {
   const platform = basePlatformShape({
-    createMediaBuyTask: async (req) => {
+    createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => {
       const errors = preflight(req, { floorCpm });
       if (errors.length > 0) {
         throw new AdcpError('INVALID_REQUEST', {
@@ -138,7 +138,7 @@ function makeHitlMockSeller({ floorCpm = 1.0, approvalDurationMs = 30 } = {}) {
       const buy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
       platform.mediaBuys.set(buyId, buy);
       return buy;
-    },
+    }),
   });
   return platform;
 }

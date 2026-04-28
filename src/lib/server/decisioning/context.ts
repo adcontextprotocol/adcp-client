@@ -24,6 +24,7 @@
 
 import type { Account } from './account';
 import type { Format, FormatID, PropertyList, CollectionList } from '../../types/tools.generated';
+import type { TaskHandoff, TaskHandoffContext } from './async-outcome';
 
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
 // types that don't extend `Record<string, unknown>` (interfaces without index
@@ -41,63 +42,37 @@ export interface RequestContext<TAccount = Account> {
   resolve: ResourceResolver;
 
   /**
-   * Present only inside `*Task` HITL methods. Carries the framework-issued
-   * task id and task-side affordances (progress updates, heartbeats).
-   * `undefined` for sync methods.
-   */
-  task?: TaskHandle;
-}
-
-/**
- * Task-side affordances available inside `*Task` HITL method bodies.
- * Adopters call `update(...)` to push progress to subscribers without
- * blocking on the terminal return; `id` is the framework-issued task id
- * the framework already returned to the buyer in the `submitted` envelope.
- *
- * Adopters who need the buyer-visible task id (e.g., to persist alongside
- * their own platform's pending-record id) read `ctx.task.id`; the body
- * itself takes only `(req, ctx)`.
- *
- * Status: Preview / 6.0.
- *
- * @public
- */
-export interface TaskHandle {
-  /** Framework-issued task identifier (`task_<UUIDv4>`). */
-  readonly id: string;
-
-  /**
-   * Push a progress update / status message to subscribers without
-   * resolving the task. Maps to the spec's `tasks-get-response.progress`
-   * and `message` fields. Optional — omit if the platform doesn't model
-   * intermediate states.
+   * Hand off the call to a background task. Returns a `TaskHandoff<T>`
+   * marker — return that from your method to signal the framework should
+   * project the spec-defined `Submitted` envelope to the buyer and run
+   * `fn` asynchronously. `fn` receives a `TaskHandoffContext` with the
+   * framework-issued `id` plus `update`/`heartbeat` affordances; its
+   * return value becomes the task's terminal artifact.
    *
-   * v6.0: framework records the latest update on the task record so
-   * subsequent `tasks_get` reads return it. v6.1 will project to MCP
-   * Resources subscriptions.
+   * Use this for hybrid sellers — the same tool serves both fast
+   * (programmatic remnant, instant `media_buy_id`) and slow (guaranteed
+   * inventory, trafficker review) inventory. Branch in your method body
+   * on whatever signal determines the path (product type, buyer
+   * pre-approval, etc.). Buyers pattern-match on the wire response shape
+   * (`media_buy_id` → sync; `task_id` → submitted) — predictable per
+   * request, dynamic per call.
+   *
+   * @example
+   * ```ts
+   * createMediaBuy: async (req, ctx) => {
+   *   if (this.requiresHITL(req)) {
+   *     return ctx.handoffToTask(async (taskCtx) => {
+   *       await taskCtx.update({ message: 'Awaiting trafficker' });
+   *       return await this.runHITL(req);
+   *     });
+   *   }
+   *   return await this.commitSync(req);
+   * }
+   * ```
    */
-  update(progress: TaskProgress): Promise<void>;
-
-  /**
-   * Liveness signal for long-running tasks — bumps the task record's
-   * `updated_at` without changing status / message. Cheap to call from
-   * inside long-running adopter loops; helpful for SRE dashboards
-   * showing per-task heartbeat timing.
-   */
-  heartbeat(): Promise<void>;
-}
-
-export interface TaskProgress {
-  /** Status message — short human-readable phrase ("Trafficker reviewing..."). */
-  message?: string;
-  /** Completion percentage, 0–100. */
-  percentage?: number;
-  /** Current step number (1-based). */
-  step_number?: number;
-  /** Total steps in the operation. */
-  total_steps?: number;
-  /** Current step description. */
-  current_step?: string;
+  handoffToTask<TResult>(
+    fn: (taskCtx: TaskHandoffContext) => Promise<TResult>
+  ): TaskHandoff<TResult>;
 }
 
 // ---------------------------------------------------------------------------

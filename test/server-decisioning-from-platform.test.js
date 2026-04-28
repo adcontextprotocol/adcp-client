@@ -388,9 +388,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       },
       statusMappers: {},
       sales: {
-        // No sync method; HITL `*Task` variant only.
-        getProducts: undefined,
-        createMediaBuy: undefined,
+        // Default sync createMediaBuy; tests override with handoff variant.
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_default' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -416,14 +416,14 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
   }
 
-  it('createMediaBuyTask returns submitted envelope; background completes terminal state', async () => {
+  it('createMediaBuy returning ctx.handoffToTask: submitted envelope, background completes terminal state', async () => {
     let capturedTaskId;
     const platform = buildHitlPlatform({
-      createMediaBuyTask: async (req, ctx) => {
-        capturedTaskId = ctx.task.id;
+      createMediaBuy: async (req, ctx) => ctx.handoffToTask(async (taskCtx) => {
+        capturedTaskId = taskCtx.id;
         await new Promise(r => setTimeout(r, 30));
         return { media_buy_id: 'mb_final', status: 'active' };
-      },
+      }),
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -448,12 +448,59 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
   });
 
-  it('createMediaBuyTask throwing AdcpError records terminal failed with structured fields', async () => {
+  it('hybrid createMediaBuy: returns Success directly OR ctx.handoffToTask per call', async () => {
+    // Same method handles both paths. Branch on a request signal
+    // (here: a flag on req); buyer pattern-matches on response shape.
     const platform = buildHitlPlatform({
-      createMediaBuyTask: async () => {
+      createMediaBuy: async (req, ctx) => {
+        if ((req).buyer_ref === 'fast') {
+          return { media_buy_id: 'mb_sync_fast', status: 'active', confirmed_at: new Date().toISOString(), packages: [] };
+        }
+        return ctx.handoffToTask(async () => {
+          await new Promise(r => setTimeout(r, 20));
+          return { media_buy_id: 'mb_hitl_slow', status: 'pending_creatives', confirmed_at: new Date().toISOString(), packages: [] };
+        });
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'hybrid', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    // Fast path: returns Success directly. No task_id, has media_buy_id.
+    const fastResult = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'create_media_buy', arguments: {
+        buyer_ref: 'fast', idempotency_key: '11111111-1111-1111-1111-111111111111',
+        packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+        account: { account_id: 'acc_1' },
+      } },
+    });
+    assert.strictEqual(fastResult.structuredContent.media_buy_id, 'mb_sync_fast');
+    assert.strictEqual(fastResult.structuredContent.task_id, undefined);
+
+    // Slow path: returns Submitted. Has task_id, no media_buy_id yet.
+    const slowResult = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'create_media_buy', arguments: {
+        buyer_ref: 'slow', idempotency_key: '22222222-2222-2222-2222-222222222222',
+        packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+        account: { account_id: 'acc_1' },
+      } },
+    });
+    assert.strictEqual(slowResult.structuredContent.status, 'submitted');
+    assert.ok(slowResult.structuredContent.task_id);
+    await server.awaitTask(slowResult.structuredContent.task_id);
+    const finalSlow = await server.getTaskState(slowResult.structuredContent.task_id);
+    assert.strictEqual(finalSlow.result.media_buy_id, 'mb_hitl_slow');
+  });
+
+  it('createMediaBuy handoff throwing AdcpError records terminal failed with structured fields', async () => {
+    const platform = buildHitlPlatform({
+      createMediaBuy: async (req, ctx) => ctx.handoffToTask(async () => {
         await new Promise(r => setTimeout(r, 20));
         throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'operator declined' });
-      },
+      }),
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -473,12 +520,12 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(finalRecord.error.recovery, 'terminal');
   });
 
-  it('createMediaBuyTask throwing generic Error records terminal failed as SERVICE_UNAVAILABLE', async () => {
+  it('createMediaBuy handoff throwing generic Error records terminal failed as SERVICE_UNAVAILABLE', async () => {
     const platform = buildHitlPlatform({
-      createMediaBuyTask: async () => {
+      createMediaBuy: async (req, ctx) => ctx.handoffToTask(async () => {
         await new Promise(r => setTimeout(r, 20));
         throw new Error('upstream API timeout');
-      },
+      }),
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -1223,7 +1270,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuyTask: taskFn,
+        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1532,7 +1579,7 @@ describe('HITL push notification webhook on terminal state', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuyTask: taskFn,
+        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1677,7 +1724,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuyTask: taskFn,
+        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1838,7 +1885,7 @@ describe('tasks_get wire tool (B9)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuyTask: taskFn,
+        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1937,7 +1984,7 @@ describe('tasks_get wire tool (B9)', () => {
         },
         sales: {
           getProducts: async () => ({ products: [] }),
-          createMediaBuyTask: async () => ({ media_buy_id: 'mb_42' }),
+          createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_42' })),
           updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
           syncCreatives: async () => [],
           getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1979,7 +2026,7 @@ describe('tasks_get wire tool (B9)', () => {
         },
         sales: {
           getProducts: async () => ({ products: [] }),
-          createMediaBuyTask: async () => ({ media_buy_id: 'mb_42', status: 'active' }),
+          createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_42', status: 'active' })),
           updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
           syncCreatives: async () => [],
           getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -2029,7 +2076,7 @@ describe('getTaskState account-scoping (B7)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuyTask: async () => ({ media_buy_id: 'mb_42' }),
+        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_42' })),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -2169,18 +2216,21 @@ describe('validatePlatform', () => {
     assert.doesNotThrow(() => validatePlatform(platform));
   });
 
-  it('throws PlatformConfigError when both sync and *Task method-pair are defined', () => {
+  it('accepts unified createMediaBuy returning either Success or TaskHandoff', () => {
+    // The unified hybrid shape: validatePlatform doesn't enforce
+    // exactly-one anymore; the method's return type is what discriminates
+    // sync vs HITL at dispatch time. validatePlatform just checks that
+    // the specialism declaration matches the implemented interfaces.
     const platform = buildPlatform({
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
-        createMediaBuyTask: async (_req, _ctx) => ({ media_buy_id: 'mb_1' }),
+        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_1' })),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
       },
     });
-    assert.throws(() => validatePlatform(platform), /both defined/);
+    assert.doesNotThrow(() => validatePlatform(platform));
   });
 });
 

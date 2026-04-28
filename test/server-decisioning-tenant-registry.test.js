@@ -259,7 +259,7 @@ describe('TenantRegistry — register, resolve, health', () => {
     const hitlPlatform = basePlatform();
     // Replace sync createMediaBuy with the HITL *Task variant
     delete hitlPlatform.sales.createMediaBuy;
-    hitlPlatform.sales.createMediaBuyTask = async (taskId, _req) => ({ media_buy_id: 'mb_hitl' });
+    hitlPlatform.sales.createMediaBuy = (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_hitl' }));
 
     registry.register('sync', {
       agentUrl: 'https://sync.example.com',

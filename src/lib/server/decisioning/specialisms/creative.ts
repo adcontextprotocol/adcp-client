@@ -17,6 +17,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { TaskHandoff } from '../async-outcome';
 import type {
   CreativeAsset,
   CreativeManifest,
@@ -53,13 +54,16 @@ export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
   /** Preview-only variant — sandbox URL or inline HTML, expires. Always sync. */
   previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
 
-  // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
-
-  /** Sync review surface. Stateless template platforms typically auto-approve. */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
-
-  /** HITL review (rare for templates; available when review is mandatory pre-persist). */
-  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  // sync_creatives: unified hybrid shape — return rows OR ctx.handoffToTask(fn).
+  /**
+   * Sync review surface. Stateless template platforms typically auto-approve;
+   * adopters needing mandatory pre-persist review return
+   * `ctx.handoffToTask(fn)` to defer to a background task.
+   */
+  syncCreatives?(
+    creatives: Creative[],
+    ctx: Ctx<TMeta>
+  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,8 +93,10 @@ export interface CreativeGenerativePlatform<TMeta = Record<string, unknown>> {
    */
   refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
-  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreatives?(
+    creatives: Creative[],
+    ctx: Ctx<TMeta>
+  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }
 
 // ---------------------------------------------------------------------------
