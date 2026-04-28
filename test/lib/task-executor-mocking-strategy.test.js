@@ -19,8 +19,11 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
   let originalCallTool;
   let mockAgent;
   let testEmitter;
+  let pendingTimers;
 
   beforeEach(() => {
+    pendingTimers = [];
+
     // Fresh module imports
     delete require.cache[require.resolve('../../dist/lib/index.js')];
     const lib = require('../../dist/lib/index.js');
@@ -40,6 +43,8 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
   });
 
   afterEach(() => {
+    for (const id of pendingTimers) clearTimeout(id);
+    pendingTimers = [];
     if (originalCallTool) {
       ProtocolClient.callTool = originalCallTool;
     }
@@ -56,9 +61,11 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         generateUrl: mock.fn(taskId => `https://webhook.test/${taskId}`),
         registerWebhook: mock.fn(async (agent, taskId, webhookUrl) => {
           // Simulate webhook delivery after a delay
-          setTimeout(() => {
-            testEmitter.emit('webhook', taskId, webhookData);
-          }, 100);
+          pendingTimers.push(
+            setTimeout(() => {
+              testEmitter.emit('webhook', taskId, webhookData);
+            }, 100)
+          );
         }),
         processWebhook: mock.fn(async (token, body) => {
           webhookReceived = true;
@@ -561,10 +568,12 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
           if (stepIndex < realWorldSteps.length - 1 && !stepTransitionScheduled) {
             stepTransitionScheduled = true;
             const duration = stepDurations[stepIndex];
-            setTimeout(() => {
-              stepIndex++;
-              stepTransitionScheduled = false;
-            }, duration);
+            pendingTimers.push(
+              setTimeout(() => {
+                stepIndex++;
+                stepTransitionScheduled = false;
+              }, duration)
+            );
           }
 
           return { task: step };
@@ -605,5 +614,3 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
     });
   });
 });
-
-console.log('TaskExecutor mocking strategy test suite loaded successfully');
