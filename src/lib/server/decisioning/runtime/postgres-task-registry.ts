@@ -46,7 +46,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { AdcpStructuredError } from '../async-outcome';
+import type { AdcpStructuredError, TaskHandoffProgress } from '../async-outcome';
 import type { TaskRecord, TaskRegistry, TaskStatus } from './task-registry';
 
 /**
@@ -157,21 +157,20 @@ CREATE TABLE IF NOT EXISTS ${table} (
   status_message  TEXT,
   result          JSONB,
   error           JSONB,
+  progress        JSONB,
   has_webhook     BOOLEAN NOT NULL DEFAULT FALSE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   CONSTRAINT ${table}_valid_status CHECK (
-    -- Only the 3 framework-written values today. The other 6 spec-defined
-    -- states ('working', 'input-required', 'canceled', 'rejected',
-    -- 'auth-required', 'unknown') are reserved for adopter-emitted
-    -- transitions via the v6.1 \`taskRegistry.transition()\` API; the
-    -- v6.1 migration will widen this CHECK. Keeping it narrow today
-    -- prevents adopters writing the other 6 directly via SQL from
-    -- pinning tasks in non-terminal states the framework's
-    -- \`complete()\`/\`fail()\` no-op against (their WHERE predicates
-    -- match \`status='submitted'\`).
-    status IN ('submitted', 'completed', 'failed')
+    -- Framework-written values: 'submitted' (initial), 'working'
+    -- (after first updateProgress() call), 'completed' / 'failed'
+    -- (terminal). The other 5 spec-defined states ('input-required',
+    -- 'canceled', 'rejected', 'auth-required', 'unknown') are reserved
+    -- for adopter-emitted transitions via the v6.1
+    -- \`taskRegistry.transition()\` API; the v6.1 migration will widen
+    -- this CHECK.
+    status IN ('submitted', 'working', 'completed', 'failed')
   )
 );
 
@@ -191,6 +190,7 @@ interface DbTaskRow {
   status_message: string | null;
   result: unknown;
   error: AdcpStructuredError | null;
+  progress: TaskHandoffProgress | null;
   has_webhook: boolean;
   created_at: Date;
   updated_at: Date;
@@ -205,6 +205,7 @@ function rowToRecord<TResult>(row: DbTaskRow): TaskRecord<TResult> {
     ...(row.status_message !== null && { statusMessage: row.status_message }),
     ...(row.result !== null && row.result !== undefined && { result: row.result as TResult }),
     ...(row.error !== null && row.error !== undefined && { error: row.error }),
+    ...(row.progress !== null && row.progress !== undefined && { progress: row.progress }),
     ...(row.has_webhook && { hasWebhook: true }),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -241,7 +242,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
 
     async getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
       const { rows } = await pool.query(
-        `SELECT task_id, tool, account_id, status, status_message, result, error, has_webhook, created_at, updated_at
+        `SELECT task_id, tool, account_id, status, status_message, result, error, progress, has_webhook, created_at, updated_at
          FROM ${table} WHERE task_id = $1`,
         [taskId]
       );
@@ -255,7 +256,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       await pool.query(
         `UPDATE ${table}
          SET status = 'completed', result = $2::jsonb, updated_at = NOW()
-         WHERE task_id = $1 AND status = 'submitted'`,
+         WHERE task_id = $1 AND status NOT IN ('completed', 'failed')`,
         [taskId, json]
       );
     },
@@ -266,8 +267,20 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       await pool.query(
         `UPDATE ${table}
          SET status = 'failed', error = $2::jsonb, status_message = $3, updated_at = NOW()
-         WHERE task_id = $1 AND status = 'submitted'`,
+         WHERE task_id = $1 AND status NOT IN ('completed', 'failed')`,
         [taskId, json, error.message]
+      );
+    },
+
+    async updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void> {
+      const json = safeStringify(progress, taskId);
+      await pool.query(
+        `UPDATE ${table}
+         SET progress = $2::jsonb,
+             status = CASE WHEN status = 'submitted' THEN 'working' ELSE status END,
+             updated_at = NOW()
+         WHERE task_id = $1 AND status NOT IN ('completed', 'failed')`,
+        [taskId, json]
       );
     },
 

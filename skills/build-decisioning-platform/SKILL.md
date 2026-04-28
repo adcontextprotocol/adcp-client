@@ -210,6 +210,8 @@ sales: SalesPlatform<MyMeta> = {
 };
 ```
 
+> **`TaskHandoff` is a framework contract — never inspect or unwrap it.** `ctx.handoffToTask(fn)` returns an opaque marker. Do not `instanceof`-check it, read `._taskFn`, or call it yourself. Return it from your method and the dispatcher handles allocation, background execution, and terminal-state writes. Any code that reaches inside the marker bypasses lifecycle accounting and will break silently.
+
 **The buyer gets terminal state two ways:**
 
 1. **Webhook push** — buyer included `push_notification_config: { url, token }` in the original request. Framework signs (RFC 9421) + delivers to that URL with the spec's `mcp-webhook-payload.json` envelope on terminal state. URL is validated server-side: rejects RFC 1918, loopback, link-local, CGNAT, IPv6 unique-local, alternate IPv4 forms, and IPv4-mapped IPv6 before delivery (SSRF guard). Bad URLs FAIL FAST with `INVALID_REQUEST` at the request boundary — buyers see their config error immediately, not as silent webhook drops.

@@ -73,9 +73,7 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
       collectionList: stubResolver('collectionList'),
       creativeFormat: stubResolver('creativeFormat'),
     },
-    handoffToTask<TResult>(
-      fn: (taskCtx: TaskHandoffContext) => Promise<TResult>
-    ): TaskHandoff<TResult> {
+    handoffToTask<TResult>(fn: (taskCtx: TaskHandoffContext) => Promise<TResult>): TaskHandoff<TResult> {
       return _createTaskHandoff(fn);
     },
   };
@@ -88,20 +86,28 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
  * carrying the framework-allocated `taskId` plus `update`/`heartbeat`
  * affordances.
  *
- * v6.0 doesn't yet model the `progress` field on the task record — the
- * `message` from `update(...)` rides through but isn't yet projected
- * onto `tasks_get`. v6.1 ships `taskRegistry.transition(taskId, { ... })`
- * which closes the loop. Until then, adopters can call `update(...)`
- * to bump `updated_at`; structured progress fields are captured but
- * not surfaced to buyers.
+ * `update(progress)` writes the progress payload to the task record and
+ * transitions status `submitted` → `working`. Buyers polling `tasks_get`
+ * see the `progress` object and the `'working'` status — this is the
+ * buyer-facing UX signal that distinguishes "stuck/no news" from
+ * "step 2/3, awaiting trafficker." Errors from the registry write are
+ * swallowed so a transient DB hiccup doesn't abort the adopter's handoff
+ * function.
+ *
+ * `heartbeat()` remains a no-op stub (v6.1); it is a liveness / TTL-reset
+ * signal for operator infrastructure, not buyer-facing.
  */
 export function buildHandoffContext(taskRegistry: TaskRegistry, taskId: string): TaskHandoffContext {
-  void taskRegistry;
   return {
     id: taskId,
-    update: async (progress) => {
-      void progress;
-      await Promise.resolve();
+    update: async progress => {
+      try {
+        await taskRegistry.updateProgress(taskId, progress);
+      } catch {
+        // Swallow — a transient registry write failure must not abort the
+        // adopter's background handoff function. The buyer-facing impact is
+        // a missed progress event, not a failed task.
+      }
     },
     heartbeat: async () => {
       await Promise.resolve();

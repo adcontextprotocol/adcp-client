@@ -1,35 +1,23 @@
 /**
- * SalesPlatform — sales specialism platform interface (v2.1).
+ * SalesPlatform — sales specialism platform interface.
  *
- * **HITL coverage matches the AdCP wire spec.** Only `create_media_buy` and
- * `sync_creatives` define `Submitted` arms in their sync response unions;
- * those are the two tools where the v2.1 dual-method shape applies. Every
+ * **Unified hybrid shape.** `create_media_buy` and `sync_creatives` use a
+ * single method each. The method returns the wire success arm (sync fast
+ * path) OR `ctx.handoffToTask(fn)` to promote the call to a background
+ * task (HITL slow path). Branch per-call — the same method handles
+ * programmatic remnant, guaranteed inventory, and hybrid sellers. Every
  * other tool is sync-only:
  *
  *   - `get_products` — sync. Brief in, products out.
- *   - `create_media_buy` — sync OR `*Task` HITL.
+ *   - `create_media_buy` — sync OR `ctx.handoffToTask(...)`.
  *   - `update_media_buy` — sync only. Re-approval flows that need HITL run
  *     out-of-band; `publishStatusChange` carries the result.
- *   - `sync_creatives` — sync OR `*Task` HITL.
+ *   - `sync_creatives` — sync OR `ctx.handoffToTask(...)`.
  *   - `get_media_buy_delivery` — sync only.
  *
- * For the two HITL-eligible tools, adopter implements EXACTLY ONE per pair:
- *
- *   - **Sync variant** (`xxx`): adopter returns the wire success arm
- *     synchronously. Framework awaits in foreground; projects the value to
- *     the wire response. Lifecycle changes flow via `publishStatusChange(...)`.
- *
- *   - **HITL variant** (`xxxTask`): framework allocates `taskId` BEFORE
- *     calling the platform, returns the spec-defined submitted envelope
- *     (`{ status: 'submitted', task_id }`) to the buyer immediately, then
- *     runs the task method in background. Method's return value becomes
- *     the task's terminal artifact.
- *
- * Sync-only tools that need long completion semantics use
- * `publishStatusChange` (see `status-changes.ts`) — that's the spec-aligned
- * channel for tools whose wire response unions don't define a Submitted
- * arm. See `docs/proposals/decisioning-platform-v2-hitl-split.md`
- * § "v2.1 spec-alignment" for rationale.
+ * Sync-only tools that need long-running semantics use `publishStatusChange`
+ * (see `status-changes.ts`) — that's the spec-aligned channel for tools
+ * whose wire response unions don't define a Submitted arm.
  *
  * Each method either returns the value or throws `AdcpError` for structured
  * rejection. Generic thrown errors map to `SERVICE_UNAVAILABLE`.
@@ -39,16 +27,16 @@
  * | Group | Methods | Claim when |
  * |---|---|---|
  * | Core sales (required) | `getProducts`, `updateMediaBuy`, `getMediaBuyDelivery` | Any `sales-*` specialism |
- * | Core sales (one-of pair) | `createMediaBuy` **or** `createMediaBuyTask` | Any `sales-*` specialism |
- * | Core sales (one-of pair) | `syncCreatives` **or** `syncCreativesTask` | Any `sales-*` specialism |
+ * | Core sales (unified hybrid) | `createMediaBuy` | Any `sales-*` specialism |
+ * | Core sales (unified hybrid) | `syncCreatives` | Any `sales-*` specialism |
  * | Read / feedback | `getMediaBuys`, `providePerformanceFeedback`, `listCreativeFormats`, `listCreatives` | Most sellers; optional |
  * | Retail-media extensions | `syncCatalogs`, `logEvent`, `syncEventSources` | `sales-catalog-driven`, `sales-retail-media` |
  *
  * New adopters implementing a non-retail seller (GAM, FreeWheel, a social
- * platform) only need the three core-required methods plus one pair each
- * for `createMediaBuy` and `syncCreatives`. The retail-media extension
- * methods (`syncCatalogs`, `logEvent`, `syncEventSources`) are unnecessary
- * unless you claim `sales-catalog-driven` or `sales-retail-media`.
+ * platform) only need the three core-required methods plus `createMediaBuy`
+ * and `syncCreatives`. The retail-media extension methods (`syncCatalogs`,
+ * `logEvent`, `syncEventSources`) are unnecessary unless you claim
+ * `sales-catalog-driven` or `sales-retail-media`.
  *
  * **No-account tools (`providePerformanceFeedback`, `listCreativeFormats`):**
  * the wire requests for these two tools don't carry an `account` field, so
@@ -229,10 +217,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  syncCreatives?(
-    creatives: Creative[],
-    ctx: Ctx<TMeta>
-  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 

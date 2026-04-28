@@ -1,12 +1,13 @@
 /**
  * In-memory task registry for the v6.0 alpha runtime.
  *
- * The framework owns task lifecycle. For each spec-HITL tool, when the
- * adopter implements the `*Task` variant the framework:
+ * The framework owns task lifecycle. When an adopter method returns a
+ * `TaskHandoff` marker, the framework:
  *   1. Allocates a `taskId` and writes a `submitted` record.
  *   2. Returns the submitted envelope to the buyer immediately.
- *   3. Invokes `platform.xxxTask(taskId, ...)` in the background.
- *   4. Updates the record terminal state from the method's return/throw.
+ *   3. Runs the handoff function in the background.
+ *   4. Updates the record on progress (`updateProgress`) and terminal
+ *      state (`complete` / `fail`) from the method's return/throw.
  *
  * Adopters never call into the registry directly. Wire-level `tasks/get`
  * integration (so buyers can poll the lifecycle) reads via `getTask`;
@@ -19,16 +20,16 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { AdcpStructuredError } from '../async-outcome';
+import type { AdcpStructuredError, TaskHandoffProgress } from '../async-outcome';
 
 /**
  * AdCP-spec task lifecycle states. Mirrors `enums/task-status.json` —
- * the v6 framework writes `'submitted'` on create, transitions terminal
- * to `'completed'` / `'failed'`. The other 6 states (`'working'`,
- * `'input-required'`, `'canceled'`, `'rejected'`, `'auth-required'`,
- * `'unknown'`) are reserved for adopter-emitted transitions via the
- * forthcoming `taskRegistry.transition()` API (v6.1) — for now the
- * framework only writes the three terminal-or-initial values.
+ * the v6 framework writes `'submitted'` on create, transitions to
+ * `'working'` on the first `updateProgress()` call, and terminates at
+ * `'completed'` / `'failed'`. The other states (`'input-required'`,
+ * `'canceled'`, `'rejected'`, `'auth-required'`, `'unknown'`) are
+ * reserved for adopter-emitted transitions via the forthcoming
+ * `taskRegistry.transition()` API (v6.1).
  */
 export type TaskStatus =
   | 'submitted'
@@ -55,6 +56,12 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
   result?: TResult;
   /** Terminal error on `failed`. */
   error?: TError;
+  /**
+   * Intermediate progress from `TaskHandoffContext.update(...)` calls.
+   * Written by the background handoff function; surfaced to buyers polling
+   * `tasks_get` via the spec `progress` field.
+   */
+  progress?: TaskHandoffProgress;
   /**
    * Whether the buyer wired `push_notification_config.url` on the original
    * request. Surfaced to the buyer via `tasks_get`'s spec-defined
@@ -95,6 +102,14 @@ export interface TaskRegistry {
    * already terminal (idempotent).
    */
   fail(taskId: string, error: AdcpStructuredError): Promise<void>;
+
+  /**
+   * Record intermediate progress from `TaskHandoffContext.update(...)`.
+   * Transitions the task from `'submitted'` → `'working'` on the first
+   * call. No-op on already-terminal tasks. The `progress` payload is
+   * written to the record and surfaced to buyers polling `tasks_get`.
+   */
+  updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void>;
 
   /**
    * Register the background completion promise the framework spawned for
@@ -154,6 +169,24 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       existing.status = 'failed';
       existing.error = error;
       existing.statusMessage = error.message;
+      existing.updatedAt = new Date().toISOString();
+    },
+
+    async updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void> {
+      const existing = tasks.get(taskId);
+      if (!existing) return;
+      if (existing.status === 'completed' || existing.status === 'failed') return;
+      if (existing.status === 'submitted') existing.status = 'working';
+      existing.progress = progress;
+      existing.updatedAt = new Date().toISOString();
+    },
+
+    async updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void> {
+      const existing = tasks.get(taskId);
+      if (!existing) return;
+      if (existing.status === 'completed' || existing.status === 'failed') return;
+      if (existing.status === 'submitted') existing.status = 'working';
+      existing.progress = progress;
       existing.updatedAt = new Date().toISOString();
     },
 

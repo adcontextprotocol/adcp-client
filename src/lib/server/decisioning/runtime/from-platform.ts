@@ -8,27 +8,28 @@
  * wire mapping, sandbox boundary — applies unchanged. The new code is the
  * adapter shim, not a forked runtime.
  *
- * **Adopter shape** (v2.1 dual-method): each spec-HITL tool has a method-pair.
- * Adopter implements EXACTLY ONE per pair. `validatePlatform()` enforces
- * exactly-one at construction; the framework dispatches on whichever is
- * defined:
+ * **Adopter shape (unified hybrid):** each HITL-eligible tool is a single
+ * method. The method returns the wire success arm (sync fast path) OR
+ * `ctx.handoffToTask(fn)` to promote the call to a background task (HITL
+ * slow path). Adopters branch per-call; framework detects the `TaskHandoff`
+ * marker and dispatches accordingly:
  *
- *   - Sync (`xxx`): framework awaits in foreground; return value projects to
- *     the wire success arm. `throw new AdcpError(...)` projects to the wire
- *     `adcp_error` envelope.
- *   - HITL (`xxxTask`): framework allocates `taskId` BEFORE calling, returns
- *     the submitted envelope to the buyer immediately, then invokes
- *     `xxxTask(taskId, ...)` in the background. Method's return value
- *     becomes the task's terminal `result`; thrown `AdcpError` becomes the
- *     terminal `error`.
+ *   - Sync path: framework awaits the return value in foreground; projects
+ *     it to the wire success arm. `throw new AdcpError(...)` projects to
+ *     the wire `adcp_error` envelope.
+ *   - HITL path: framework detects the `TaskHandoff` marker, allocates
+ *     `taskId`, returns the submitted envelope to the buyer immediately,
+ *     then runs the handoff function in background. The function's return
+ *     value becomes the task's terminal `result`; thrown `AdcpError` becomes
+ *     the terminal `error`.
  *
  * Generic thrown errors (`Error`, `TypeError`) fall through to the
  * framework's `SERVICE_UNAVAILABLE` mapping.
  *
  * **Wired surface (6.0):** `SalesPlatform` (14 tools — 3 required core +
- * 11 optional; dual-method on `create_media_buy` / `sync_creatives`),
+ * 11 optional; unified hybrid on `create_media_buy` / `sync_creatives`),
  * `CreativeTemplatePlatform` / `CreativeGenerativePlatform` (build_creative /
- * sync_creatives dual-method, preview_creative sync-only),
+ * sync_creatives unified hybrid, preview_creative sync-only),
  * `AudiencePlatform.syncAudiences`, `SignalsPlatform` (activate_signal,
  * list_signals), `AccountStore` (reportUsage, getAccountFinancials),
  * `ContentStandardsPlatform`, `CampaignGovernancePlatform`,
@@ -93,11 +94,7 @@ const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
   // eslint-disable-next-line no-console
   error: console.error.bind(console),
 };
-import {
-  createInMemoryStatusChangeBus,
-  type StatusChangeBus,
-  type PublishStatusChangeOpts,
-} from '../status-changes';
+import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatusChangeOpts } from '../status-changes';
 
 /**
  * Lifecycle observability hooks the v6 runtime fires at well-known points.
@@ -150,12 +147,7 @@ export interface DecisioningObservabilityHooks {
    * `durationMs` is the registry-create call latency (typically
    * sub-millisecond for in-memory, single-digit ms for Postgres).
    */
-  onTaskCreate?(info: {
-    tool: string;
-    taskId: string;
-    accountId: string;
-    durationMs: number;
-  }): void;
+  onTaskCreate?(info: { tool: string; taskId: string; accountId: string; durationMs: number }): void;
 
   /**
    * Fired when a task transitions to a terminal state (`completed`,
@@ -201,11 +193,7 @@ export interface DecisioningObservabilityHooks {
    * module-level singleton routes both go through the wrapped bus). Lets
    * adopters meter event rates per resource type without subscribing.
    */
-  onStatusChangePublish?(info: {
-    accountId: string;
-    resourceType: string;
-    resourceId: string;
-  }): void;
+  onStatusChangePublish?(info: { accountId: string; resourceType: string; resourceId: string }): void;
 }
 
 export interface CreateAdcpServerFromPlatformOptions extends Omit<
@@ -359,13 +347,10 @@ export interface DecisioningAdcpServer extends AdcpServer {
    * Async to accommodate storage-backed task registries
    * (`createPostgresTaskRegistry`); the in-memory impl resolves synchronously.
    */
-  getTaskState<TResult = unknown>(
-    taskId: string,
-    expectedAccountId?: string
-  ): Promise<TaskRecord<TResult> | null>;
+  getTaskState<TResult = unknown>(taskId: string, expectedAccountId?: string): Promise<TaskRecord<TResult> | null>;
   /**
-   * Await any in-flight background completion for `taskId` (HITL `*Task`
-   * method still running). Resolves immediately if the task is terminal
+   * Await any in-flight background completion for `taskId` (HITL handoff
+   * function still running). Resolves immediately if the task is terminal
    * or has no registered background. Used by tests + the `tasks/get` wire
    * path for deterministic settlement.
    */
@@ -415,9 +400,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // production deployments that the previous `=== 'production'` check
   // failed open on.
   if (opts.taskWebhookEmitter && !opts.taskWebhookEmitter.unsigned) {
-    const claimsSigned = platform.capabilities?.specialisms?.includes(
-      'signed-requests' as never
-    );
+    const claimsSigned = platform.capabilities?.specialisms?.includes('signed-requests' as never);
     const env = process.env.NODE_ENV;
     const isDevOrTest = env === 'test' || env === 'development';
     const ackUnsignedTestEmitter = process.env.ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER === '1';
@@ -602,10 +585,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
  * (`resolution: 'derived'`) get scoping for free via the auth-derived
  * resolver.
  */
-function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
-  platform: P,
-  taskRegistry: TaskRegistry
-) {
+function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(platform: P, taskRegistry: TaskRegistry) {
   const inputShape = {
     // Cap task_id length: framework-issued task ids are
     // `task_<UUIDv4>` = 41 chars. Cap at 128 so a malicious buyer can't
@@ -631,7 +611,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       'or sync_creatives — pass the same `task_id` plus your `account` to retrieve the ' +
       'terminal lifecycle state. Returns the spec-flat tasks-get-response shape ' +
       '(`status`, `result` on completed, `error: { code, message }` on failed). ' +
-      'Snake-case substitute for the spec\'s `tasks/get` method (MCP tool names disallow ' +
+      "Snake-case substitute for the spec's `tasks/get` method (MCP tool names disallow " +
       '`/`); native MCP method dispatch lands in v6.1. Webhook delivery is the push-based ' +
       'alternative when the buyer set `push_notification_config` on the original request.',
     title: 'Get Task State',
@@ -981,10 +961,9 @@ async function projectSync<TResult, TWire>(
   }
 }
 
-
 /**
  * HITL dispatch: allocate task, return submitted envelope to buyer
- * immediately, run `*Task(taskId, ...)` in background. Method's return
+ * immediately, run the handoff function in background. Method's return
  * value becomes terminal `result`; throws become terminal `error`.
  *
  * **Webhook delivery on terminal state.** When the buyer passed
@@ -1220,8 +1199,7 @@ async function emitTaskWebhook(
     // terminal state. URL redacted from log to avoid leaking buyer-supplied
     // attacker-controllable values into operator log aggregators.
     opts.logger.warn(
-      `[adcp/decisioning] task webhook for ${taskId} (${opts.tool}, status=${source.task.status}) ` +
-        `failed: ${msg}`
+      `[adcp/decisioning] task webhook for ${taskId} (${opts.tool}, status=${source.task.status}) ` + `failed: ${msg}`
     );
   } finally {
     safeFire(
@@ -1383,7 +1361,10 @@ function validatePushNotificationUrl(rawUrl: string): UrlValidationResult {
     process.env.ADCP_DECISIONING_ALLOW_HTTP_WEBHOOKS === '1';
 
   if (parsed.protocol === 'http:' && !allowHttp) {
-    return { ok: false, reason: 'http:// scheme not allowed (use https:// or set ADCP_DECISIONING_ALLOW_HTTP_WEBHOOKS=1)' };
+    return {
+      ok: false,
+      reason: 'http:// scheme not allowed (use https:// or set ADCP_DECISIONING_ALLOW_HTTP_WEBHOOKS=1)',
+    };
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return { ok: false, reason: `unsupported scheme "${parsed.protocol}" (only http: / https:)` };
