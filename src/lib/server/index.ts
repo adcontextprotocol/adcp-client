@@ -277,6 +277,9 @@ export type {
 } from './webhook-emitter';
 export type { SigningProvider } from '../signing/provider';
 
+export { createPinAndBindFetch, WEBHOOK_SSRF_POLICY } from './pin-and-bind-fetch';
+export type { PinAndBindFetchOptions, DnsLookupAll } from './pin-and-bind-fetch';
+
 export { checkGovernance, governanceDeniedError } from './governance';
 export type {
   CheckGovernanceOptions,

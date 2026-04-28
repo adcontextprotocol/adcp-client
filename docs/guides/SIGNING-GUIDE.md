@@ -476,6 +476,32 @@ serve(() => createAdcpServer({
 
 The framework signs every outbound webhook automatically using the configured key.
 
+### Webhook SSRF defense — pin-and-bind fetch
+
+Buyers register an arbitrary `push_notification_config.url` and your agent posts signed payloads to it. Validating the literal hostname at registration time is not enough: a DNS-rebinding attack (TTL flip from a public IP to `169.254.169.254` or `127.0.0.1` between registration and delivery) routes the signed payload to attacker-controlled infrastructure or your own cloud-metadata endpoint.
+
+The SDK exports `createPinAndBindFetch()` — a `fetch` that resolves DNS, validates every resolved IP against the AdCP SSRF policy (RFC 1918, loopback, link-local, CGNAT, IPv6 ULA, IPv4-mapped IPv6, cloud metadata), and pins the TCP/TLS connection to the validated address. TLS SNI and the `Host:` header are preserved so HTTPS routing still works.
+
+Wire it as the `fetch` for production webhook delivery:
+
+```typescript
+import { createWebhookEmitter, createPinAndBindFetch } from '@adcp/client/server';
+
+createAdcpServer({
+  webhooks: {
+    signerKey: { /* ... */ },
+    fetch: createPinAndBindFetch(),
+  },
+  mediaBuy: { /* ... */ },
+});
+```
+
+The default in 5.x is still `globalThis.fetch` because pin-and-bind blocks loopback http URLs (the storyboard runner's `createWebhookReceiver` listens on `http://127.0.0.1:port`); flipping the default would break in-process storyboard runs without a migration. In v6 the default flips to `createPinAndBindFetch()` and storyboard tests will need to pass `fetch: globalThis.fetch` explicitly, or relax the policy via `createPinAndBindFetch({ policy })`.
+
+For adopters running behind an egress proxy that already enforces the SSRF policy at the network boundary, keep your existing `fetch`; pin-and-bind is redundant in that case.
+
+`createPinAndBindFetch` is generic and not webhook-specific — wire it anywhere you make outbound calls to a URL you don't fully trust.
+
 ## Step 7: Declare the Capability
 
 If your seller agent verifies inbound signatures, declare `request_signing` in your capabilities so buyers know to sign:
