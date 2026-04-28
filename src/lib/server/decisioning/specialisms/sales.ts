@@ -113,23 +113,29 @@ type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 
 export interface SalesPlatform<TMeta = Record<string, unknown>> {
-  // ── get_products: sync only (today) ─────────────────────────────────
-  // Spec defines a Submitted arm in `async-response-data.json`
-  // (`GetProductsAsyncSubmitted`), but the per-tool
-  // `get-products-response.json` doesn't include Submitted in its
-  // `oneOf` — so codegen produces a `Success`-only shape, and the SDK
-  // can't route HITL get_products dispatch with type safety until the
-  // spec inconsistency is resolved.
+  // ── get_products: sync only — by design, not just by spec ─────────
+  // get_products is a CATALOG LOOKUP — fast read against the seller's
+  // existing inventory. It is NOT the right wire surface for proposal
+  // generation (brief-to-pitch creative workflows that produce new
+  // products tailored to the buyer's request). Those are different
+  // verbs in the AdCP buyer's vocabulary and conflating them is a
+  // buyer-predictability tax: a buyer calling get_products for fast
+  // catalog filtering against a proposal-mode tenant gets a slow
+  // response they didn't expect.
   //
-  // This is a SPEC issue, not a codegen bug — codegen faithfully
-  // reflects the per-tool wire schema. Filed upstream as
-  // adcontextprotocol/adcp#3392.
+  // The SDK keeps get_products sync-only deliberately, even when
+  // adcp#3392 lands consolidated Submitted arms for the OTHER 5 HITL
+  // tools (create_media_buy, update_media_buy, sync_creatives,
+  // sync_catalogs, build_creative). For proposal generation, file
+  // adcp#3407 advocates a separate `request_proposal` wire tool with
+  // explicit Submitted-only semantics.
   //
-  // Long-form discovery flows (proposal-mode sales agents, broadcast
-  // TV) surface the eventual proposal via per-account notification
-  // channels (`publishStatusChange` on `resource_type: 'proposal'`)
-  // rather than HITL on this tool.
-  /** Sync discovery: brief in, products out. */
+  // Until that lands: long-form proposal flows surface the eventual
+  // proposal via per-account notification channels (`publishStatusChange`
+  // on `resource_type: 'proposal'`). Adopters running proposal-mode
+  // workflows declare it via `capabilities` so buyers can route
+  // appropriately before the first call.
+  /** Sync catalog lookup: filters in, products out. NOT for proposal generation. */
   getProducts(req: GetProductsRequest, ctx: Ctx<TMeta>): Promise<GetProductsResponse>;
 
   // ── create_media_buy: unified hybrid shape ──────────────────────────
