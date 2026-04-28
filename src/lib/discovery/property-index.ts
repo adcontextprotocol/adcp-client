@@ -80,8 +80,24 @@ export class PropertyIndex {
    * Add a property to the index
    */
   addProperty(property: Property, agentUrl: string, publisherDomain: string): void {
+    // identifiers is required by the schema, but malformed adagents.json
+    // entries occasionally omit it. Drop the property entirely so consumers
+    // that iterate AgentAuthorization.properties (e.g. findAgentsByPropertyTags
+    // or the adcp-registry CLI) never see an entry that cannot be looked up
+    // by identifier. PropertyCrawler already filters most of these at parse
+    // time; this is the defensive guard for any other call site.
+    const validIdentifiers = Array.isArray(property.identifiers)
+      ? property.identifiers.filter(
+          (id): id is { type: PropertyIdentifierType; value: string } =>
+            !!id && typeof id.type === 'string' && typeof id.value === 'string'
+        )
+      : [];
+    if (validIdentifiers.length === 0) {
+      return;
+    }
+
     // Add to identifier index for all identifiers
-    for (const identifier of property.identifiers) {
+    for (const identifier of validIdentifiers) {
       const key = this.makeIdentifierKey(identifier.type, identifier.value);
       const match: PropertyMatch = {
         property: { ...property, publisher_domain: publisherDomain },
