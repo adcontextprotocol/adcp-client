@@ -181,15 +181,6 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       existing.updatedAt = new Date().toISOString();
     },
 
-    async updateProgress(taskId: string, progress: TaskHandoffProgress): Promise<void> {
-      const existing = tasks.get(taskId);
-      if (!existing) return;
-      if (existing.status === 'completed' || existing.status === 'failed') return;
-      if (existing.status === 'submitted') existing.status = 'working';
-      existing.progress = progress;
-      existing.updatedAt = new Date().toISOString();
-    },
-
     _registerBackground(taskId: string, completion: Promise<void>): void {
       const composed: Promise<void> = completion.then(
         () => {
