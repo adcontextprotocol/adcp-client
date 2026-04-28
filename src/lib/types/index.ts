@@ -19,8 +19,14 @@ export type {
   SyncCreativesAsyncResponseData,
 } from './adcp';
 
-// Re-export FormatID from generated core types
-export type { FormatID } from './core.generated';
+// Re-export the structured format identifier from generated core types.
+// AdCP 3.0.1 renamed the schema title from "Format ID" to "Format Reference
+// (Structured Object)" — purely a doc change, the wire shape is identical.
+// We expose the new canonical name AND keep the historical `FormatID` alias
+// so SDK consumers don't break across the version bump.
+export type { FormatReferenceStructuredObject } from './core.generated';
+import type { FormatReferenceStructuredObject } from './core.generated';
+export type FormatID = FormatReferenceStructuredObject;
 
 // Strict format asset slot types (hand-authored — the codegen drops the
 // discriminated per-asset-type branches of Format.assets[]).

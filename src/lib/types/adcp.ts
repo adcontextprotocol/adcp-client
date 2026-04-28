@@ -16,12 +16,14 @@ export const ADCP_ENVELOPE_FIELDS = new Set([
   'idempotency_key', // Prevents duplicate processing on retries
 ]);
 
-// Import structured FormatID from generated core types
+// Import structured FormatID from generated core types. AdCP 3.0.1 renamed
+// the schema title to "Format Reference (Structured Object)" — wire shape
+// unchanged; we keep the local `FormatID` name via the `as` alias.
 import type {
   CreateMediaBuyAsyncInputRequired,
   CreateMediaBuyAsyncSubmitted,
   CreateMediaBuyAsyncWorking,
-  FormatID,
+  FormatReferenceStructuredObject as FormatID,
   FrequencyCap,
   CreateMediaBuyResponse,
   GetProductsResponse,

@@ -298,17 +298,15 @@ function main(): void {
 
   const items = extractFromAllSchemas();
 
-  // Guardrail: AdCP 3.0 GA produces ~104 inline string-literal unions
-  // across asset-requirements (image/video/audio formats, codecs,
-  // channels, frame-rate-types), account/billing schemas, catalog/
-  // property helpers, and discriminated-error details. A floor of 90
-  // catches partial regression — well below current 104 but high
-  // enough that losing 10+ entries to a Zod-internal change or a
-  // missed wrapper type fails fast. Bump whenever the spec adds a
-  // significant wave of new inline enums.
-  if (items.length < 90) {
+  // Guardrail: AdCP 3.0.1 hoisted 20 inline string-literal unions into
+  // named `enums/*.json` files (adcp#3148 + #3174), dropping the count
+  // from ~100 to ~78. A floor of 65 catches partial regression — well
+  // below current 78 but high enough that losing 10+ entries to a
+  // Zod-internal change or a missed wrapper type fails fast. Bump
+  // whenever the spec adds a significant wave of new inline enums.
+  if (items.length < 65) {
     throw new Error(
-      `generate-inline-enum-arrays: extracted only ${items.length} inline enums — expected at least 90. ` +
+      `generate-inline-enum-arrays: extracted only ${items.length} inline enums — expected at least 65. ` +
         'Either Zod 4 internal API changed (check `unwrap` and `_def` access) or the schema layout shifted.'
     );
   }

@@ -886,6 +886,8 @@ describe('CONTROLLER_SCENARIOS / SCENARIO_MAP coverage', () => {
       async forceAccountStatus() {},
       async forceMediaBuyStatus() {},
       async forceSessionStatus() {},
+      async forceCreateMediaBuyArm() {},
+      async forceTaskCompletion() {},
       async simulateDelivery() {},
       async simulateBudgetSpend() {},
     };

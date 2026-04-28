@@ -102,6 +102,7 @@ import type {
   ListScenariosSuccess,
   StateTransitionSuccess,
   SimulationSuccess,
+  ForcedDirectiveSuccess,
   ControllerError,
   ComplyTestControllerResponse,
 } from '../types/tools.generated';
@@ -123,7 +124,13 @@ export type ControllerScenario = Exclude<ListScenariosSuccess['scenarios'][numbe
 
 /** Scenario names accepted in `scenario` requests but not advertised via
  * `list_scenarios`. Sellers opt in by implementing the matching store method. */
-export type SeedScenario = 'seed_product' | 'seed_pricing_option' | 'seed_creative' | 'seed_plan' | 'seed_media_buy';
+export type SeedScenario =
+  | 'seed_product'
+  | 'seed_pricing_option'
+  | 'seed_creative'
+  | 'seed_plan'
+  | 'seed_media_buy'
+  | 'seed_creative_format';
 
 /**
  * Scenario name constants for force_* and simulate_* (the advertised set).
@@ -139,6 +146,8 @@ export const CONTROLLER_SCENARIOS = {
   FORCE_ACCOUNT_STATUS: 'force_account_status',
   FORCE_MEDIA_BUY_STATUS: 'force_media_buy_status',
   FORCE_SESSION_STATUS: 'force_session_status',
+  FORCE_CREATE_MEDIA_BUY_ARM: 'force_create_media_buy_arm',
+  FORCE_TASK_COMPLETION: 'force_task_completion',
   SIMULATE_DELIVERY: 'simulate_delivery',
   SIMULATE_BUDGET_SPEND: 'simulate_budget_spend',
 } as const satisfies Record<string, ControllerScenario>;
@@ -154,6 +163,7 @@ export const SEED_SCENARIOS = {
   SEED_CREATIVE: 'seed_creative',
   SEED_PLAN: 'seed_plan',
   SEED_MEDIA_BUY: 'seed_media_buy',
+  SEED_CREATIVE_FORMAT: 'seed_creative_format',
 } as const satisfies Record<string, SeedScenario>;
 
 /**
@@ -208,6 +218,26 @@ export interface TestControllerStore {
     terminationReason?: string
   ): Promise<StateTransitionSuccess>;
 
+  /**
+   * Register a directive shaping the next `create_media_buy` call from this
+   * authenticated sandbox account into the requested arm. The directive is
+   * consumed on the next call. `arm: 'submitted'` requires `task_id` so the
+   * seller's task envelope is deterministic (the buyer can drive
+   * `tasks/get` with the registered id).
+   */
+  forceCreateMediaBuyArm?(params: {
+    arm: 'submitted' | 'input-required';
+    task_id?: string;
+    message?: string;
+  }): Promise<ForcedDirectiveSuccess>;
+
+  /**
+   * Transition an in-flight task to `completed` and record the supplied
+   * completion payload. The seller MUST deliver `result` verbatim to the
+   * buyer's `push_notification_config.url` per the AdCP 3.0 completion path.
+   */
+  forceTaskCompletion?(taskId: string, result: Record<string, unknown>): Promise<StateTransitionSuccess>;
+
   /** Inject synthetic delivery data for a media buy. */
   simulateDelivery?(
     mediaBuyId: string,
@@ -244,6 +274,13 @@ export interface TestControllerStore {
 
   /** Seed a media-buy fixture. */
   seedMediaBuy?(mediaBuyId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /**
+   * Seed a creative-format fixture. The seller MUST expose this format ID
+   * in `list_creative_formats` responses for the duration of the compliance
+   * session.
+   */
+  seedCreativeFormat?(formatId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
 }
 
 /**
@@ -373,6 +410,8 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceAccountStatus', CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS],
   ['forceMediaBuyStatus', CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS],
   ['forceSessionStatus', CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS],
+  ['forceCreateMediaBuyArm', CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM],
+  ['forceTaskCompletion', CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION],
   ['simulateDelivery', CONTROLLER_SCENARIOS.SIMULATE_DELIVERY],
   ['simulateBudgetSpend', CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND],
 ];
@@ -564,6 +603,19 @@ async function dispatchSeed(
       };
       break;
     }
+    case SEED_SCENARIOS.SEED_CREATIVE_FORMAT: {
+      if (!params?.format_id) {
+        missingParam = 'seed_creative_format requires params.format_id';
+        break;
+      }
+      if (!store.seedCreativeFormat) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const formatId = params.format_id as string;
+      dispatch = {
+        key: `seed_creative_format:${formatId}`,
+        invoke: () => store.seedCreativeFormat!(formatId, fixture),
+      };
+      break;
+    }
   }
 
   if (missingParam) return controllerError('INVALID_PARAMS', missingParam);
@@ -744,11 +796,49 @@ export async function handleTestControllerRequest(
         });
       }
 
+      case CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM: {
+        if (!store.forceCreateMediaBuyArm) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const arm = params?.arm;
+        if (arm !== 'submitted' && arm !== 'input-required') {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_create_media_buy_arm requires params.arm = 'submitted' or 'input-required'"
+          );
+        }
+        if (arm === 'submitted' && !params?.task_id) {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_create_media_buy_arm with arm='submitted' requires params.task_id"
+          );
+        }
+        return await store.forceCreateMediaBuyArm({
+          arm,
+          task_id: params?.task_id as string | undefined,
+          message: params?.message as string | undefined,
+        });
+      }
+
+      case CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION: {
+        if (!store.forceTaskCompletion) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.task_id) {
+          return controllerError('INVALID_PARAMS', 'force_task_completion requires params.task_id');
+        }
+        if (!params?.result || typeof params.result !== 'object') {
+          return controllerError('INVALID_PARAMS', 'force_task_completion requires params.result (completion payload)');
+        }
+        return await store.forceTaskCompletion(params.task_id as string, params.result as Record<string, unknown>);
+      }
+
       case SEED_SCENARIOS.SEED_PRODUCT:
       case SEED_SCENARIOS.SEED_PRICING_OPTION:
       case SEED_SCENARIOS.SEED_CREATIVE:
       case SEED_SCENARIOS.SEED_PLAN:
       case SEED_SCENARIOS.SEED_MEDIA_BUY:
+      case SEED_SCENARIOS.SEED_CREATIVE_FORMAT:
         return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache);
 
       default:
@@ -775,7 +865,9 @@ function summarize(data: ComplyTestControllerResponse): string {
       return 'Fixture re-seeded (equivalent)';
     return `Transitioned from ${data.previous_state} to ${data.current_state}`;
   }
-  return `Simulation complete: ${JSON.stringify(data.simulated)}`;
+  if ('simulated' in data) return `Simulation complete: ${JSON.stringify(data.simulated)}`;
+  if ('forced' in data) return `Directive registered: arm=${data.forced.arm}`;
+  return data.message ?? 'Scenario succeeded';
 }
 
 /**

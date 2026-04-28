@@ -15,7 +15,7 @@ import type {
   SyncAudiencesSuccess,
   ListAccountsResponse,
 } from '../../types/tools.generated';
-import type { Product, PricingOption, FormatID } from '../../types/core.generated';
+import type { Product, PricingOption, FormatReferenceStructuredObject as FormatID } from '../../types/core.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import {
   getOrCreateClient,
