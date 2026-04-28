@@ -17,6 +17,10 @@ const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storybo
 const { parsePath } = require('../../dist/lib/testing/storyboard/path.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
 const { CONTEXT_EXTRACTORS } = require('../../dist/lib/testing/storyboard/context.js');
+// `envelope_field_present` validations walk the v3 protocol envelope
+// (`status`, `task_id`, `adcp_version`, `errors`) instead of per-tool
+// response schemas. Added per adcp#3429.
+const { ProtocolEnvelopeSchema } = require('../../dist/lib/types/schemas.generated.js');
 
 // Runner-internal tasks with no agent-facing schema.
 const HARNESS_TASKS = new Set([
@@ -205,7 +209,10 @@ function collectFieldValidations(storyboards) {
         if (isErrorStep) continue;
         for (const v of step.validations) {
           if (
-            (v.check === 'field_present' || v.check === 'field_value' || v.check === 'field_value_or_absent') &&
+            (v.check === 'field_present' ||
+              v.check === 'envelope_field_present' ||
+              v.check === 'field_value' ||
+              v.check === 'field_value_or_absent') &&
             v.path
           ) {
             if (ENVELOPE_PATHS.has(v.path)) continue; // protocol-level, not per-schema
@@ -307,6 +314,27 @@ describe('storyboard schema drift', () => {
           reachable,
           `Path "${entry.path}" is not reachable in ${entry.task} response schema. ` +
             `Segments: ${JSON.stringify(segments)}`
+        );
+      });
+    }
+  });
+
+  describe('envelope_field_present paths are reachable in the v3 envelope schema', () => {
+    // adcp#3429: storyboards assert envelope-level fields (`status`,
+    // `task_id`, `adcp_version`, `errors`) using `envelope_field_present`
+    // so the drift detector knows to walk `protocol-envelope.json`
+    // rather than the per-tool response schema.
+    const envelopeValidations = fieldValidations.filter(v => v.check === 'envelope_field_present');
+
+    for (const entry of envelopeValidations) {
+      const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
+      const skip = skipReason(key);
+      it(`${entry.storyboard}/${entry.step}: ${entry.path} exists in v3 protocol envelope`, { skip }, () => {
+        const segments = parsePath(entry.path);
+        const reachable = isPathReachable(ProtocolEnvelopeSchema, segments);
+        assert.ok(
+          reachable,
+          `Path "${entry.path}" is not reachable in protocol-envelope.json. ` + `Segments: ${JSON.stringify(segments)}`
         );
       });
     }

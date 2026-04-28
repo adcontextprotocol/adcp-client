@@ -140,3 +140,46 @@ describe('validateErrorCode', () => {
     assert.strictEqual(result.passed, true, result.error);
   });
 });
+
+describe('envelope_field_present (adcp#3429)', () => {
+  // Runtime semantics are identical to field_present — TaskResult merges
+  // envelope fields into its surface so `data.status` is the envelope's
+  // status. The check exists to signal scope to static drift detection,
+  // which walks the envelope schema instead of the inner response.
+  it('passes when the asserted path resolves on the task data', () => {
+    const taskResult = {
+      success: true,
+      data: { status: 'completed', task_id: 'task-1', context: { correlation_id: 'c1' } },
+    };
+    const [result] = runOne(
+      [{ check: 'envelope_field_present', path: 'status', description: 'envelope carries status' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'envelope_field_present');
+  });
+
+  it('fails when the asserted envelope field is missing', () => {
+    const taskResult = { success: true, data: { context: { correlation_id: 'c1' } } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_present', path: 'status', description: 'envelope carries status' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.check, 'envelope_field_present');
+    assert.match(result.error, /Field not found at path: status/);
+  });
+
+  it('rejects validation entries without a path', () => {
+    const taskResult = { success: true, data: { status: 'completed' } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_present', description: 'no path' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /No path specified for envelope_field_present/);
+  });
+});

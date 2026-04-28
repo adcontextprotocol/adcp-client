@@ -112,6 +112,13 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       // field_present runs against either MCP task result data OR an HTTP probe body —
       // the storyboard's probe_protected_resource validates fields in the RFC 9728 JSON.
       return validateFieldPresent(validation, resolveTarget(ctx));
+    case 'envelope_field_present':
+      // Envelope-scoped variant — runtime semantics identical to field_present
+      // (TaskResult exposes envelope fields like `status`, `task_id` at the
+      // surface level). The check exists primarily so static drift detection
+      // can walk the envelope schema instead of the inner response. See
+      // adcp#3429.
+      return validateFieldPresent(validation, resolveTarget(ctx));
     case 'field_value':
       return validateFieldValue(validation, resolveTarget(ctx));
     case 'field_value_or_absent':
@@ -496,13 +503,17 @@ export { LIST_WRAPPER_TOOLS } from './shape-drift-hints';
 // ────────────────────────────────────────────────────────────
 
 function validateFieldPresent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  // `check` may be `field_present` or `envelope_field_present` (adcp#3429);
+  // both share runtime semantics, but the result should reflect the
+  // storyboard's choice so reporters can distinguish.
+  const checkName = validation.check === 'envelope_field_present' ? 'envelope_field_present' : 'field_present';
   if (!validation.path) {
     return {
-      check: 'field_present',
+      check: checkName,
       passed: false,
       description: validation.description,
       path: validation.path,
-      error: 'No path specified for field_present validation',
+      error: `No path specified for ${checkName} validation`,
       json_pointer: null,
       expected: 'path must be set in storyboard validation entry',
       actual: null,
@@ -515,7 +526,7 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
 
   if (present) {
     return {
-      check: 'field_present',
+      check: checkName,
       passed: true,
       description: validation.description,
       path: validation.path,
@@ -524,7 +535,7 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
   }
 
   return {
-    check: 'field_present',
+    check: checkName,
     passed: false,
     description: validation.description,
     path: validation.path,
