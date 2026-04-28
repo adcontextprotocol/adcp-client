@@ -193,10 +193,20 @@ function startMultiInstanceServer() {
  */
 function startNoopReplayServer() {
   const jwks = new StaticJwksResolver(loadPublicKeys());
-  // Custom store that never rejects replays
+  // Custom store that never rejects replays — implements the real ReplayStore
+  // interface (has / isCapHit / insert) but always reports "not seen" and "ok"
+  // so the verifier accepts every submission, simulating a deployment with
+  // broken or absent replay protection.
   const noopStore = {
-    async check() {}, // never throws
-    async record() {},
+    async has() {
+      return false;
+    },
+    async isCapHit() {
+      return false;
+    },
+    async insert() {
+      return 'ok';
+    },
   };
   const middleware = createExpressVerifier({
     capability: {
