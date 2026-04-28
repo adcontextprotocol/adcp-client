@@ -23,6 +23,14 @@ Options:
   --skip-rate-abuse          Skip vector 020 (fastest grading run)
   --rate-abuse-cap <N>       Override per-keyid cap the grader targets
   --skip <id[,id...]>        Skip specific vector ids (e.g. 007-…,018-…)
+  --covers-content-digest    Agent's covers_content_digest policy from
+    <required|forbidden|either>                           get_adcp_capabilities.request_signing. Auto-skips
+                             vectors whose capability assertions can't grade
+                             against this policy (skip_reason:
+                             capability_profile_mismatch). If not set, all
+                             vectors run; policy-mismatched vectors (e.g.
+                             neg/007 and neg/018 against an 'either' agent)
+                             will FAIL instead of SKIP.
   --only <id[,id...]>        Run only the named vector ids
   --allow-live-side-effects  Opt in to vectors 016/020 against non-sandbox
                              endpoints (USE WITH CARE — creates real orders)
@@ -44,6 +52,8 @@ Examples:
   adcp grade request-signing https://agent.example.com/adcp
   adcp grade request-signing http://127.0.0.1:3000 --allow-http --skip-rate-abuse
   adcp grade request-signing https://sandbox.seller.com/adcp --json | jq
+  adcp grade request-signing https://sandbox.seller.com/adcp \\
+    --covers-content-digest either --skip-rate-abuse
 `;
 
 const USAGE_SIGNER = `Usage: adcp grade signer <agent-url> [options]
@@ -186,6 +196,17 @@ async function runRequestSigningGrader(args) {
           process.exit(2);
         }
         break;
+      case '--covers-content-digest': {
+        const policy = args[++i];
+        if (policy !== 'required' && policy !== 'forbidden' && policy !== 'either') {
+          console.error(
+            `ERROR: --covers-content-digest must be "required", "forbidden", or "either", got "${policy}"\n`
+          );
+          process.exit(2);
+        }
+        options.agentContentDigestPolicy = policy;
+        break;
+      }
       case '--json':
         emitJson = true;
         break;
