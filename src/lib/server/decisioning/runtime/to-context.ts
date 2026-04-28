@@ -20,7 +20,11 @@
  * `ctx.account`, `ctx.handoffToTask(...)`, and the structured-error /
  * status-change primitives only.
  *
- * @public
+ * @internal — framework-internal wiring; not adopter surface. The
+ * exported helpers (`buildRequestContext`, `buildHandoffContext`) are
+ * called from the dispatch seam in `from-platform.ts`. Adopters should
+ * never construct a `RequestContext` themselves; the framework supplies
+ * one to every specialism method call.
  */
 
 import type { HandlerContext } from '../../create-adcp-server';

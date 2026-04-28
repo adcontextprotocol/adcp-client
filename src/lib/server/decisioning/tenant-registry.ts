@@ -204,14 +204,21 @@ export interface TenantRegistry {
  * Uses the global `fetch`. Network errors classify as `transient`;
  * 4xx / parse-error / key-not-in-JWKS classify as `permanent`.
  */
-export function createDefaultJwksValidator(opts?: { fetchImpl?: typeof fetch }): JwksValidator {
+export function createDefaultJwksValidator(opts?: { fetchImpl?: typeof fetch; timeoutMs?: number }): JwksValidator {
   const fetchImpl = opts?.fetchImpl ?? fetch;
+  // 10-second default timeout. A slow brand.json server (or a malicious
+  // one dribbling bytes) would otherwise pin the tenant in `pending`
+  // for the lifetime of the fetch — and `register({ awaitFirstValidation: true })`
+  // would block the booting host indefinitely. Adopters with strict SLAs
+  // pass a tighter value; adopters fronting brand.json behind a slow
+  // CDN can extend it. Round-6 Sec-M1.
+  const timeoutMs = opts?.timeoutMs ?? 10_000;
   return {
     async validate({ agentUrl, signingKey }): Promise<JwksValidationResult> {
       const url = new URL('/.well-known/brand.json', agentUrl).toString();
       let response: Response;
       try {
-        response = await fetchImpl(url, { method: 'GET' });
+        response = await fetchImpl(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
       } catch (err) {
         return {
           ok: false,
@@ -325,6 +332,15 @@ function parseHostAndPrefix(agentUrl: string): { host: string; pathPrefix: strin
  *   - Tenant prefix `/` matches any path (subdomain-routing case).
  *   - Tenant prefix `/sales` matches `/sales`, `/sales/mcp`, `/sales/a2a`, etc.
  *     Does NOT match `/sales-broadcast` (no boundary).
+ *
+ * **Caller contract.** `requestPath` MUST be a normalized URL pathname:
+ * no query string, no fragment, no leading scheme/authority. Express's
+ * `req.path`, Node's `new URL(req.url, base).pathname`, or any
+ * properly-decoded equivalent. Raw `req.url` includes the query string
+ * (`/sales/mcp?token=abc`) which fails the boundary check at the `?`
+ * char. The framework strips query/fragment defensively (see
+ * `stripQueryAndFragment`) but downstream URL normalization (`..`
+ * resolution, percent-decoding) is the caller's responsibility.
  */
 function pathPrefixMatches(pathPrefix: string, requestPath: string): boolean {
   if (pathPrefix === '/') return true;
@@ -333,6 +349,21 @@ function pathPrefixMatches(pathPrefix: string, requestPath: string): boolean {
   // end-of-string. Prevents `/sales` from matching `/sales-broadcast`.
   const next = requestPath.charAt(pathPrefix.length);
   return next === '' || next === '/';
+}
+
+/**
+ * Defensive normalization for callers who hand us `req.url` (raw HTTP
+ * path with query / fragment). Strips `?...` and `#...` so the boundary
+ * check in `pathPrefixMatches` works. Idempotent on already-normalized
+ * paths.
+ */
+function stripQueryAndFragment(pathname: string): string {
+  const queryIdx = pathname.indexOf('?');
+  const fragmentIdx = pathname.indexOf('#');
+  let cut = pathname.length;
+  if (queryIdx !== -1 && queryIdx < cut) cut = queryIdx;
+  if (fragmentIdx !== -1 && fragmentIdx < cut) cut = fragmentIdx;
+  return cut === pathname.length ? pathname : pathname.slice(0, cut);
 }
 
 export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistry {
@@ -466,10 +497,14 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       pathname: string
     ): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null {
       const lowered = host.toLowerCase();
+      // Strip query/fragment defensively — adopters wiring `req.url`
+      // (Node raw HTTP) instead of `req.path` (Express normalized)
+      // would otherwise fail the boundary check on `/sales/mcp?x=1`.
+      const cleanPath = stripQueryAndFragment(pathname);
       let best: { tenantId: string; entry: TenantEntry; prefixLength: number } | null = null;
       for (const [tenantId, entry] of tenants) {
         if (entry.host !== lowered) continue;
-        if (!pathPrefixMatches(entry.pathPrefix, pathname)) continue;
+        if (!pathPrefixMatches(entry.pathPrefix, cleanPath)) continue;
         // Refuse traffic for pending (first validation hasn't succeeded)
         // and disabled (permanent validation failure). `unverified` —
         // previously healthy, latest recheck failed transiently — still

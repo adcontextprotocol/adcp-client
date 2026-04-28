@@ -219,6 +219,20 @@ export class AdcpError extends Error {
 const TASK_HANDOFF_BRAND: unique symbol = Symbol.for('@adcp/decisioning/task-handoff');
 
 /**
+ * The handoff function lives in a WeakMap keyed by the `TaskHandoff`
+ * marker object — NOT on the marker itself. This means the framework
+ * can extract the function (it has the WeakMap reference) but adopters
+ * holding only a `TaskHandoff<T>` value cannot invoke or inspect it.
+ * Closes round-6 CR-3 / Protocol-L2: `_taskFn` was previously a
+ * type-visible field that adopters could forge with their own
+ * `Symbol.for(...)` call.
+ */
+const taskHandoffFns = new WeakMap<
+  object,
+  (taskCtx: TaskHandoffContext) => Promise<unknown>
+>();
+
+/**
  * Marker the framework recognizes as "promote this call to a task."
  * Returned from `ctx.handoffToTask(fn)`. Type parameter `TResult` is the
  * eventual terminal artifact `fn` resolves to.
@@ -230,14 +244,26 @@ const TASK_HANDOFF_BRAND: unique symbol = Symbol.for('@adcp/decisioning/task-han
  * value becomes the task's terminal artifact; `throw AdcpError` becomes
  * the terminal error.
  *
+ * The opaque `_taskFn` field exists only at the type level — at runtime
+ * the function is stored in a module-private WeakMap keyed by the
+ * marker, so adopters who try to invoke `handoff._taskFn(ctx)` directly
+ * get `undefined`. The only way to run the handoff body is to return
+ * the marker from a specialism method and let the framework dispatch.
+ *
  * Status: Preview / 6.0.
  *
  * @public
  */
 export interface TaskHandoff<TResult> {
   readonly [TASK_HANDOFF_BRAND]: true;
-  /** @internal — framework consumes this; adopters never read it. */
-  readonly _taskFn: (taskCtx: TaskHandoffContext) => Promise<TResult>;
+  /**
+   * Phantom field — exists only at the type level so `TResult` is
+   * preserved for inference. At runtime the slot is `undefined`; the
+   * actual function lives in the framework's private WeakMap.
+   *
+   * @internal
+   */
+  readonly _taskResult?: TResult;
 }
 
 /**
@@ -265,19 +291,31 @@ export interface TaskHandoffProgress {
  * Construct a `TaskHandoff<T>` marker. The framework's `ctx.handoffToTask`
  * helper invokes this; adopters don't call it directly.
  *
+ * The `fn` is stashed in a module-private WeakMap keyed by the marker
+ * object. Adopters can hold the marker and pass it through return
+ * values, but cannot extract or invoke `fn` themselves — only the
+ * framework's `_extractTaskFn` can.
+ *
  * @internal
  */
 export function _createTaskHandoff<TResult>(
   fn: (taskCtx: TaskHandoffContext) => Promise<TResult>
 ): TaskHandoff<TResult> {
-  return {
-    [TASK_HANDOFF_BRAND]: true,
-    _taskFn: fn,
-  };
+  // Frozen object so adopters can't mutate the brand field. Even if
+  // they did, the dispatch seam keys on identity (WeakMap), not on
+  // mutable structure.
+  const marker = Object.freeze({ [TASK_HANDOFF_BRAND]: true as const });
+  taskHandoffFns.set(marker, fn as (taskCtx: TaskHandoffContext) => Promise<unknown>);
+  return marker as TaskHandoff<TResult>;
 }
 
 /**
  * Type guard — does the value the adopter returned mark a task handoff?
+ *
+ * Checks both the symbol brand AND WeakMap presence. An adopter who
+ * forges `{ [TASK_HANDOFF_BRAND]: true }` without going through
+ * `_createTaskHandoff` won't be in the WeakMap and the guard returns
+ * false. Belt-and-suspenders against forgery.
  *
  * @internal
  */
@@ -285,6 +323,23 @@ export function isTaskHandoff<TResult>(value: unknown): value is TaskHandoff<TRe
   return (
     typeof value === 'object' &&
     value !== null &&
-    (value as Record<symbol, unknown>)[TASK_HANDOFF_BRAND] === true
+    (value as Record<symbol, unknown>)[TASK_HANDOFF_BRAND] === true &&
+    taskHandoffFns.has(value as object)
   );
+}
+
+/**
+ * Extract the handoff function from a marker. Framework-only — the
+ * dispatch seam in `from-platform.ts` calls this after `isTaskHandoff`.
+ * Returns `undefined` if the marker wasn't created by `_createTaskHandoff`
+ * (forgery).
+ *
+ * @internal
+ */
+export function _extractTaskFn<TResult>(
+  handoff: TaskHandoff<TResult>
+): ((taskCtx: TaskHandoffContext) => Promise<TResult>) | undefined {
+  return taskHandoffFns.get(handoff as unknown as object) as
+    | ((taskCtx: TaskHandoffContext) => Promise<TResult>)
+    | undefined;
 }

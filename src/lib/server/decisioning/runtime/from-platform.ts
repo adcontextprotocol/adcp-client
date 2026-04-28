@@ -74,7 +74,7 @@ import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext, buildHandoffContext } from './to-context';
-import { isTaskHandoff } from '../async-outcome';
+import { isTaskHandoff, _extractTaskFn, type TaskHandoff } from '../async-outcome';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
 import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
@@ -984,6 +984,43 @@ interface DispatchHitlOpts {
   logger: AdcpLogger;
 }
 
+/**
+ * Route a unified-shape return value: if it's a `TaskHandoff` marker,
+ * dispatch through `dispatchHitl`; otherwise pass through the sync
+ * projection.
+ *
+ * Adopter return type is `Success | TaskHandoff<Success>`. Each
+ * specialism dispatcher uses this helper so all three call sites
+ * (`createMediaBuy`, `sales.syncCreatives`, `creative.syncCreatives`)
+ * route through a single seam — closes round-6 CR-1 (drift across
+ * three near-identical `isTaskHandoff` branches).
+ *
+ * `project` shapes both arms identically — for `syncCreatives`,
+ * `rows → { creatives: rows }`; for `createMediaBuy`, identity.
+ */
+async function routeIfHandoff<TInner, TWire>(
+  taskRegistry: TaskRegistry,
+  opts: DispatchHitlOpts,
+  result: TInner | TaskHandoff<TInner>,
+  project: (inner: TInner) => TWire
+): Promise<TWire | SubmittedEnvelope> {
+  if (isTaskHandoff<TInner>(result)) {
+    const taskFn = _extractTaskFn(result);
+    if (!taskFn) {
+      // Forgery — adopter constructed something with the brand symbol
+      // but didn't go through ctx.handoffToTask. Treat as a sync
+      // success arm with an empty body (caller-supplied projection
+      // shapes the result; this branch is defensive).
+      return project(result as unknown as TInner);
+    }
+    return dispatchHitl(taskRegistry, opts, async taskId => {
+      const inner = await taskFn(buildHandoffContext(taskRegistry, taskId));
+      return project(inner);
+    });
+  }
+  return project(result);
+}
+
 async function dispatchHitl<TResult>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
@@ -1492,25 +1529,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         async () => {
           const push = extractPushConfig(params, logger);
           const result = await sales.createMediaBuy(params, reqCtx);
-          // Unified hybrid shape: adopter returns either Success (sync fast
-          // path) or a TaskHandoff marker (HITL slow path). Detect the
-          // marker and route through the registry.
-          if (isTaskHandoff(result)) {
-            return dispatchHitl(
-              taskRegistry,
-              {
-                tool: 'create_media_buy',
-                accountId: reqCtx.account.id,
-                pushNotificationUrl: push.url,
-                pushNotificationToken: push.token,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                observability,
-                logger,
-              },
-              taskId => result._taskFn(buildHandoffContext(taskRegistry, taskId))
-            );
-          }
-          return result;
+          return routeIfHandoff(
+            taskRegistry,
+            {
+              tool: 'create_media_buy',
+              accountId: reqCtx.account.id,
+              pushNotificationUrl: push.url,
+              pushNotificationToken: push.token,
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              observability,
+              logger,
+            },
+            result,
+            r => r  // identity projection for createMediaBuy
+          );
         },
         r => r
       );
@@ -1549,27 +1581,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         async () => {
           const push = extractPushConfig(params, logger);
           const result = await sales.syncCreatives!(creatives, reqCtx);
-          if (isTaskHandoff(result)) {
-            // HITL handoff: wrap the eventual rows in `{ creatives: [...] }`
-            // when the task completes (matches the sync-arm projection below).
-            return dispatchHitl(
-              taskRegistry,
-              {
-                tool: 'sync_creatives',
-                accountId: reqCtx.account.id,
-                pushNotificationUrl: push.url,
-                pushNotificationToken: push.token,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                observability,
-                logger,
-              },
-              async taskId => {
-                const rows = await result._taskFn(buildHandoffContext(taskRegistry, taskId));
-                return { creatives: rows };
-              }
-            );
-          }
-          return { creatives: result };
+          return routeIfHandoff(
+            taskRegistry,
+            {
+              tool: 'sync_creatives',
+              accountId: reqCtx.account.id,
+              pushNotificationUrl: push.url,
+              pushNotificationToken: push.token,
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              observability,
+              logger,
+            },
+            result,
+            rows => ({ creatives: rows })
+          );
         },
         r => r
       );
@@ -1673,25 +1698,20 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
         async () => {
           const push = extractPushConfig(params, logger);
           const result = await creative.syncCreatives!(creatives, reqCtx);
-          if (isTaskHandoff(result)) {
-            return dispatchHitl(
-              taskRegistry,
-              {
-                tool: 'sync_creatives',
-                accountId: reqCtx.account.id,
-                pushNotificationUrl: push.url,
-                pushNotificationToken: push.token,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                observability,
-                logger,
-              },
-              async taskId => {
-                const rows = await result._taskFn(buildHandoffContext(taskRegistry, taskId));
-                return { creatives: rows };
-              }
-            );
-          }
-          return { creatives: result };
+          return routeIfHandoff(
+            taskRegistry,
+            {
+              tool: 'sync_creatives',
+              accountId: reqCtx.account.id,
+              pushNotificationUrl: push.url,
+              pushNotificationToken: push.token,
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              observability,
+              logger,
+            },
+            result,
+            rows => ({ creatives: rows })
+          );
         },
         r => r
       );

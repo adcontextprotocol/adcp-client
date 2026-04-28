@@ -1,27 +1,36 @@
 /**
- * MockSeller — worked example for the v6.0 alpha DecisioningPlatform
- * runtime under the v2.1 dual-method shape.
+ * MockHybridSeller — worked example for the v6.0 DecisioningPlatform
+ * runtime under the unified hybrid shape.
  *
- * Two variants exist because v2.1 enforces exactly-one method per pair:
+ * One method per tool. The same `createMediaBuy` returns either:
  *
- *   - **MockSyncSeller** — implements `createMediaBuy` (sync). Buyer gets
- *     `media_buy_id` immediately; lifecycle changes (pending → active) flow
- *     via `publishStatusChange()` (event bus, separate commit).
+ *   - The wire success arm directly (sync fast path) — buyer gets
+ *     `media_buy_id` on the immediate response. No polling.
+ *   - `ctx.handoffToTask(fn)` (HITL slow path) — buyer gets
+ *     `{ status: 'submitted', task_id }`, framework runs `fn` in
+ *     background; `fn`'s return value becomes the task's terminal
+ *     artifact, `throw AdcpError` becomes the terminal error.
  *
- *   - **MockHitlSeller** — implements `createMediaBuyTask` (HITL). Buyer
- *     sees `submitted` envelope with `task_id`; framework runs the trafficker
- *     review in background, terminal state lands on the task record.
+ * Adopter branches per call on whatever signal determines the path
+ * (product type, buyer pre-approval, amount thresholds, etc.). Hybrid
+ * sellers — programmatic remnant + guaranteed inventory in one tenant —
+ * are the canonical case. Pure-sync adopters never call
+ * `ctx.handoffToTask`; pure-HITL adopters always call it. Same
+ * signature handles all three deployment shapes.
  *
  * Patterns demonstrated:
  *
- *   1. **Sync happy path** (`MockSyncSeller`): plain `Promise<T>`; no async
- *      ceremony.
- *   2. **HITL background work** (`MockHitlSeller`): framework allocates
- *      `taskId`, returns submitted envelope, runs `*Task` in background.
- *   3. **Per-creative review** (both variants): `syncCreatives` returns mixed
- *      `approved` + `pending_review` rows in one response.
- *   4. **Multi-error pre-flight rejection** (both variants): adopter throws
- *      one `AdcpError` carrying all validation failures in `details.errors`.
+ *   1. **Sync fast path** — `MockHybridSeller.createMediaBuy` returns
+ *      `CreateMediaBuySuccess` directly when `req.buyer_ref` is
+ *      pre-approved. No `tasks_get` polling needed.
+ *   2. **HITL slow path** — when not pre-approved, returns
+ *      `ctx.handoffToTask(...)` and the trafficker-review work runs
+ *      in background.
+ *   3. **Per-creative review** — `syncCreatives` returns mixed
+ *      `approved` + `pending_review` rows in one response. Or hands
+ *      off the whole batch to background review when needed.
+ *   4. **Multi-error pre-flight rejection** — adopter throws one
+ *      `AdcpError` carrying all validation failures in `details.errors`.
  *
  * This file doubles as integration tests in
  * `test/server-decisioning-mock-seller.test.js`.
@@ -181,70 +190,28 @@ const SHARED_GET_MEDIA_BUY_DELIVERY = async (
     start: filter.start_date ?? '2026-04-01',
     end: filter.end_date ?? '2026-04-30',
   },
-  media_buys: [],
+  media_buy_deliveries: [],
 });
 
 // ---------------------------------------------------------------------------
-// MockSyncSeller — sync createMediaBuy (auto-approve)
+// MockHybridSeller — unified hybrid shape (sync fast path + HITL slow path)
 // ---------------------------------------------------------------------------
 
-export class MockSyncSeller implements DecisioningPlatform<MockSellerConfig, MockSellerMeta> {
-  private mediaBuys = new Map<string, MockMediaBuy>();
-
-  capabilities = {
-    specialisms: ['sales-non-guaranteed'] as const,
-    creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
-    channels: ['display', 'video'] as const,
-    pricingModels: ['cpm'] as const,
-    config: { ...DEFAULT_CONFIG } satisfies MockSellerConfig,
-  };
-
-  statusMappers = {};
-  accounts = makeAccounts();
-
-  sales: SalesPlatform = {
-    getProducts: SHARED_GET_PRODUCTS,
-
-    /** Sync happy path: pre-flight; auto-approve; return wire success arm. */
-    createMediaBuy: async (req: CreateMediaBuyRequest): Promise<CreateMediaBuySuccess> => {
-      const errors = preflight(req, this.capabilities.config);
-      if (errors.length > 0) rejectPreflight(errors);
-
-      const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const buy: MockMediaBuy = {
-        media_buy_id: buyId,
-        status: 'pending_creatives',
-        confirmed_at: new Date().toISOString(),
-        revision: 1,
-      };
-      this.mediaBuys.set(buyId, buy);
-      return buy;
-    },
-
-    updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
-      const existing = this.mediaBuys.get(buyId);
-      if (!existing) {
-        throw new AdcpError('MEDIA_BUY_NOT_FOUND', {
-          recovery: 'terminal',
-          message: `media buy ${buyId} not found`,
-          field: 'media_buy_id',
-        });
-      }
-      if (patch.active === false) existing.status = 'paused';
-      if (patch.active === true && existing.status === 'paused') existing.status = 'active';
-      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
-    },
-
-    syncCreatives: SHARED_SYNC_CREATIVES,
-    getMediaBuyDelivery: SHARED_GET_MEDIA_BUY_DELIVERY,
-  };
+/**
+ * Whether a request takes the fast (sync) path or the slow (HITL) path
+ * is encoded in the request itself — `buyer_ref: 'pre_approved'` skips
+ * trafficker review; everything else hands off to background.
+ *
+ * Real-world signal would be a join against the seller's pre-approved
+ * buyer list, an amount threshold, or a product type check. The shape
+ * is the same: branch in the method body, return `Success` directly OR
+ * return `ctx.handoffToTask(fn)`.
+ */
+function isPreApprovedBuyer(req: CreateMediaBuyRequest): boolean {
+  return (req as { buyer_ref?: string }).buyer_ref === 'pre_approved';
 }
 
-// ---------------------------------------------------------------------------
-// MockHitlSeller — HITL createMediaBuyTask (trafficker review)
-// ---------------------------------------------------------------------------
-
-export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, MockSellerMeta> {
+export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, MockSellerMeta> {
   private mediaBuys = new Map<string, MockMediaBuy>();
 
   capabilities = {
@@ -262,29 +229,53 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
     getProducts: SHARED_GET_PRODUCTS,
 
     /**
-     * HITL: return `ctx.handoffToTask(fn)`. Framework allocates `task_id`,
-     * returns the submitted envelope to the buyer immediately, then runs
-     * `fn` in the background. `fn`'s return value becomes terminal
-     * `result`; thrown `AdcpError` becomes terminal `error`.
+     * Unified hybrid shape. Pre-approved buyers get the wire `Success` arm
+     * directly (`media_buy_id` + `packages` on the immediate response, no
+     * polling). Everything else hands off to a background task — buyer
+     * sees `{ status: 'submitted', task_id }`, framework runs the
+     * trafficker-review work, and the task's terminal artifact lands on
+     * `tasks_get` / webhook delivery.
+     *
+     * Same method, dynamic decision per call. Buyer pattern-matches on
+     * the response shape — predictable per request (deterministic given
+     * the buyer_ref / products / amount), dynamic per call.
      */
-    createMediaBuy: (req, ctx) => ctx.handoffToTask(async (taskCtx) => {
-      void taskCtx;
+    createMediaBuy: (req, ctx) => {
+      // Pre-flight runs sync regardless of path — bad requests reject
+      // before allocating a task id.
       const errors = preflight(req, this.capabilities.config);
       if (errors.length > 0) rejectPreflight(errors);
 
-      // Trafficker review window
-      await new Promise(r => setTimeout(r, this.capabilities.config.approvalDurationMs));
+      // Fast path: pre-approved buyer → return Success directly.
+      if (isPreApprovedBuyer(req)) {
+        const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const buy: MockMediaBuy = {
+          media_buy_id: buyId,
+          status: 'pending_creatives',
+          confirmed_at: new Date().toISOString(),
+          packages: [],
+        };
+        this.mediaBuys.set(buyId, buy);
+        return Promise.resolve(buy);
+      }
 
-      const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const buy: MockMediaBuy = {
-        media_buy_id: buyId,
-        status: 'active',
-        confirmed_at: new Date().toISOString(),
-        revision: 1,
-      };
-      this.mediaBuys.set(buyId, buy);
-      return buy;
-    }),
+      // Slow path: hand off to background task.
+      return Promise.resolve(ctx.handoffToTask(async (taskCtx) => {
+        void taskCtx;  // taskCtx.id available if you need to persist it
+        // Trafficker review window
+        await new Promise(r => setTimeout(r, this.capabilities.config.approvalDurationMs));
+
+        const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const buy: MockMediaBuy = {
+          media_buy_id: buyId,
+          status: 'active',
+          confirmed_at: new Date().toISOString(),
+          packages: [],
+        };
+        this.mediaBuys.set(buyId, buy);
+        return buy;
+      }));
+    },
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
       const existing = this.mediaBuys.get(buyId);
@@ -295,9 +286,9 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
           field: 'media_buy_id',
         });
       }
-      if (patch.active === false) existing.status = 'paused';
-      if (patch.active === true && existing.status === 'paused') existing.status = 'active';
-      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
+      if (patch.paused === true) existing.status = 'paused';
+      if (patch.paused === false && existing.status === 'paused') existing.status = 'active';
+      return { media_buy_id: existing.media_buy_id, status: existing.status };
     },
 
     syncCreatives: SHARED_SYNC_CREATIVES,
@@ -318,7 +309,7 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
 // The seam logs collisions so v6.x silently shadowing your override is
 // loud, not silent. Set `mergeSeam: 'strict'` in CI for migration safety.
 
-export function buildHybridServerExample(platform: MockSyncSeller) {
+export function buildHybridServerExample(platform: MockHybridSeller) {
   return createAdcpServerFromPlatform(platform, {
     name: 'mock-hybrid', version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },

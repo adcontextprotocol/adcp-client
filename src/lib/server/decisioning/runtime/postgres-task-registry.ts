@@ -219,6 +219,21 @@ function rowToRecord<TResult>(row: DbTaskRow): TaskRecord<TResult> {
  * tasks, matching `createInMemoryTaskRegistry()`. The terminal-state guard
  * is enforced via SQL `WHERE status = 'submitted'` predicates so concurrent
  * webhook deliveries can't race to overwrite each other.
+ *
+ * **Multi-tenant deployments — accountId namespacing.** When sharing a
+ * single Postgres registry across tenants in a `TenantRegistry`
+ * deployment (one table for all tenants), prefix `account_id` per-tenant
+ * to prevent cross-tenant collisions. If tenant A and tenant B both
+ * resolve a buyer to literal `account_id: 'acme'`, their tasks land in
+ * the same row keyspace and `tasks_get` can't distinguish ownership
+ * by `account_id` alone (the tenant boundary upstream IS protected by
+ * `accounts.resolve(ref, ctx)` returning each tenant's own Account, but
+ * the registry sees the same `acme` string in both rows). Recommended
+ * pattern: adopters' `accounts.resolve` returns
+ * `id: \`tenant_${tenantId}_${accountId}\`` so the table-level keys
+ * stay distinct. Alternative: separate `tableName` per tenant, one
+ * `createPostgresTaskRegistry({ pool, tableName })` per `TenantRegistry`
+ * tenant — heavier ops, stronger isolation.
  */
 export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptions): TaskRegistry {
   const table = opts.tableName ?? DEFAULT_TABLE;

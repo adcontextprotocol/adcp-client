@@ -450,6 +450,53 @@ Custom backend? Implement the `TaskRegistry` interface (8 methods) for Redis / D
 
 **Adopter `*Task` return size cap.** Postgres-backed registries cap `result` / `error` JSONB rows at 4MB. Returns over the cap surface via `onTaskTransition` with `errorCode: 'REGISTRY_WRITE_FAILED'` and skip webhook delivery (registry state is inconsistent, so the framework refuses to push). Offload large payloads to blob storage and return references in the result body instead. The cap protects the DB write path only — adopter code that serializes `result` for logs/metrics MUST impose its own bound.
 
+## Multi-tenant hosting (TenantRegistry)
+
+Running multiple tenants from one process — different sellers, or multiple variants of the same agent under different specialisms? `TenantRegistry` is the framework primitive. Each tenant gets its own `DecisioningPlatform`, its own signing key, its own per-tenant capability declaration, and its own `'pending' → 'healthy' → 'unverified' → 'disabled'` lifecycle.
+
+```ts
+import { createTenantRegistry } from '@adcp/client/server/decisioning';
+
+const registry = createTenantRegistry({
+  defaultServerOptions: { name: 'Multi-Tenant', version: '1.0.0', /* shared opts */ },
+});
+
+// Subdomain routing — one tenant per subdomain
+registry.register('snap', {
+  agentUrl: 'https://snap.example.com',
+  signingKey: { keyId: 'snap-key-1', publicJwk: snapPub, privateJwk: snapPriv },
+  platform: snapPlatform,
+});
+
+// Path routing — multiple tenants under one host
+registry.register('sales', {
+  agentUrl: 'https://training.example.com/sales',
+  signingKey: { keyId: 'sales-key-1', publicJwk: salesPub, privateJwk: salesPriv },
+  platform: salesPlatform,
+});
+registry.register('creative', {
+  agentUrl: 'https://training.example.com/creative',
+  signingKey: { keyId: 'creative-key-1', publicJwk: creativePub, privateJwk: creativePriv },
+  platform: creativePlatform,
+});
+
+// Express handler dispatches via host + path
+app.use((req, res, next) => {
+  const resolved = registry.resolveByRequest(req.headers.host ?? '', req.path);
+  if (!resolved) return res.status(503).set('Retry-After', '5').end();
+  // Mount the resolved tenant's MCP+A2A endpoints
+  return resolved.server.handle(req, res, next);
+});
+```
+
+**Subdomain vs. path routing.** `resolveByRequest(host, pathname)` matches both. Subdomain tenants (`https://sales.training.example.com`) have implicit `/` prefix — match any pathname. Path tenants (`https://training.example.com/sales`) match longest-prefix. Mix freely; SDK supports both shapes from the same `TenantRegistry`.
+
+**Pending state — JWKS validation gate.** New tenants land in `'pending'` until first JWKS validation succeeds. `resolveByRequest` REFUSES traffic for pending tenants — host transport responds 503 + Retry-After. Closes the register-then-serve race window where a tenant registered with a wrong signing key would have served signed-but-unverifiable responses for ~60s. Use `register({ awaitFirstValidation: true })` to block registration on the synchronous validation outcome — useful for deploy scripts that gate on health.
+
+**Admin-API auth.** `register()` is the privileged surface. Hosts wiring HTTP/RPC endpoints in front of `register` MUST gate them with operator-level auth — anyone who can call `register` can introduce a tenant that signs outbound webhooks. Framework doesn't ship admin-HTTP scaffolding because the right auth shape varies by deployment.
+
+**Shared infrastructure across tenants.** Idempotency stores, task registries, and status-change buses can be shared (one Postgres for all tenants). The framework's account scoping prevents cross-tenant reads. When sharing a task registry, prefix account ids per-tenant (`tenantA:acme`) to prevent collisions if two tenants both use the literal account id `acme`.
+
 ## Custom webhook emitter
 
 Default behavior: when the host wires `webhooks` on `serve()`, the framework binds the per-request `ctx.emitWebhook` to a signed RFC 9421 path. You don't need a custom emitter unless you want a different retry policy, a different signing key for task webhooks vs. status-change webhooks, or a fake for tests.

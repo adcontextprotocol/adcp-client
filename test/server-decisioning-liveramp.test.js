@@ -15,6 +15,15 @@ const {
   publishStatusChange,
 } = require('../dist/lib/server/decisioning/status-changes');
 
+async function waitFor(predicate, { timeoutMs = 2000, intervalMs = 5 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  throw new Error(`waitFor: predicate not satisfied within ${timeoutMs}ms`);
+}
+
 function makeLiveRamp({
   minIdentifiers = 5,
   matchLatencyMs = 25,
@@ -163,7 +172,11 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
       assert.strictEqual(auds[0].action, 'created');
 
       // Wait for the full match → activating → active pipeline
-      await new Promise(r => setTimeout(r, 200));
+      await waitFor(
+        () =>
+          received.filter(e => e.resource_type === 'audience' && e.resource_id === 'aud_42')
+            .length >= 3
+      );
 
       const stages = received
         .filter(e => e.resource_type === 'audience' && e.resource_id === 'aud_42')
@@ -233,7 +246,11 @@ describe('LiveRampAudienceProvider — sync ack + multi-stage status changes', (
         },
       });
 
-      await new Promise(r => setTimeout(r, 200));
+      await waitFor(
+        () =>
+          received.filter(e => e.resource_id === 'aud_a').length >= 3 &&
+          received.filter(e => e.resource_id === 'aud_b').length >= 3
+      );
 
       const a = received.filter(e => e.resource_id === 'aud_a').map(e => e.payload.status);
       const b = received.filter(e => e.resource_id === 'aud_b').map(e => e.payload.status);

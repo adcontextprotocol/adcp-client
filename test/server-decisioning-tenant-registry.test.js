@@ -513,6 +513,38 @@ describe('TenantRegistry — path-based routing', () => {
     );
   });
 
+  it('strips query strings and fragments before path matching (defensive for raw req.url callers)', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('sales', {
+      agentUrl: 'https://training.example.com/sales',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('sales');
+
+    // Adopter passes Node's raw req.url instead of Express's req.path.
+    // Without query stripping, /sales/mcp?token=abc fails the boundary
+    // check at the `?` char.
+    assert.strictEqual(
+      registry.resolveByRequest('training.example.com', '/sales/mcp?token=abc').tenantId,
+      'sales'
+    );
+    assert.strictEqual(
+      registry.resolveByRequest('training.example.com', '/sales/mcp#frag').tenantId,
+      'sales'
+    );
+    assert.strictEqual(
+      registry.resolveByRequest('training.example.com', '/sales?x=1#y').tenantId,
+      'sales'
+    );
+  });
+
   it('trailing-slash and exact-prefix paths normalize the same way', async () => {
     const validator = fakeValidator(async () => ({ ok: true }));
     const registry = createTenantRegistry({

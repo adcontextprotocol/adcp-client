@@ -194,7 +194,7 @@ function dispatchCreate(server, args = {}) {
   });
 }
 
-describe('MockSeller worked example — v2.1 dual-method', () => {
+describe('MockSeller worked example — unified hybrid shape', () => {
   describe('Pattern 1: sync createMediaBuy (auto-approve)', () => {
     it('valid request: sync success arm with media_buy_id and pending_creatives', async () => {
       const platform = makeSyncMockSeller();
