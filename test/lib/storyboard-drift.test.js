@@ -255,7 +255,19 @@ describe('storyboard schema drift', () => {
   // `oneOf` where the discriminated union gets wrapped in a way we don't
   // unwrap). These are verifier-side limitations, not spec drift; removing
   // an entry requires extending `isPathReachable` to handle the shape.
-  const VERIFIER_UNREACHABLE = new Set([]);
+  const VERIFIER_UNREACHABLE = new Set([
+    // `status` is on the v3 envelope (`protocol-envelope.json`), not the
+    // inner `get-adcp-capabilities-response.json`. The drift detector
+    // walks only the inner response schema today; teaching it to chain
+    // through the envelope wrapper requires schema-loader work tracked
+    // separately. The storyboard step (3.0.1+
+    // universal/v3-envelope-integrity.yaml) asserts the canonical v3
+    // envelope contract — the schema constraint lives on the envelope's
+    // `not: { anyOf: [...] }`, which the runner enforces at wire time.
+    // Filed upstream as adcp#3429 (storyboard authoring: response_schema_ref
+    // vs envelope-level field assertions).
+    'v3_envelope_integrity/no_legacy_status_fields:status',
+  ]);
 
   // Paths that reference spec schema fields the upstream schema doesn't
   // actually define. Each entry MUST cite an open upstream issue — if the

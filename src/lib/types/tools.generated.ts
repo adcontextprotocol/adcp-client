@@ -240,6 +240,10 @@ export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate
  * Measurement standard. Required when metric is 'viewability' (MRC and GroupM define materially different thresholds). Omit for other metrics.
  */
 export type ViewabilityStandard = 'mrc' | 'groupm';
+/**
+ * Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.
+ */
+export type MatchType = 'broad' | 'phrase' | 'exact';
 
 /**
  * Request parameters for discovering or refining advertising products. buying_mode declares the buyer's intent: 'brief' for curated discovery, 'wholesale' for raw catalog access, or 'refine' to iterate on known products and proposals.
@@ -500,7 +504,7 @@ export interface ProductFilters {
   /**
    * Filter by specific format IDs
    */
-  format_ids?: FormatID[];
+  format_ids?: FormatReferenceStructuredObject[];
   /**
    * Only return products accepting IAB standard formats
    */
@@ -619,18 +623,15 @@ export interface ProductFilters {
      * The keyword to target
      */
     keyword: string;
-    /**
-     * Desired match type: broad matches related queries, phrase matches queries containing the keyword phrase, exact matches the query exactly. Defaults to broad.
-     */
-    match_type?: 'broad' | 'phrase' | 'exact';
+    match_type?: MatchType;
   }[];
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * A JSON object — never a plain string — that identifies a creative format by its declaring agent and local slug. Required properties: agent_url (URI of the agent that owns the format) and id (slug matching [a-zA-Z0-9_-]+). Example: {"agent_url": "https://creative.adcontextprotocol.org", "id": "display_300x250"}. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants. Using a plain string here is a schema violation.
  */
-export interface FormatID {
+export interface FormatReferenceStructuredObject {
   /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   * URL of the agent that defines this format (e.g., 'https://creative.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats). Callers comparing two `format-id` values MUST canonicalize `agent_url` per the AdCP URL canonicalization rules before treating two formats as the same. See docs/reference/url-canonicalization.
    */
   agent_url: string;
   /**
@@ -1147,7 +1148,7 @@ export interface Product {
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
-  format_ids: FormatID[];
+  format_ids: FormatReferenceStructuredObject[];
   /**
    * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
    */
@@ -1289,7 +1290,7 @@ export interface Product {
    * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
    */
   product_card?: {
-    format_id: FormatID;
+    format_id: FormatReferenceStructuredObject;
     /**
      * Asset manifest for rendering the card, structure defined by the format
      */
@@ -1299,7 +1300,7 @@ export interface Product {
    * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
    */
   product_card_detailed?: {
-    format_id: FormatID;
+    format_id: FormatReferenceStructuredObject;
     /**
      * Asset manifest for rendering the detailed card, structure defined by the format
      */
@@ -1410,7 +1411,7 @@ export interface Placement {
   /**
    * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
    */
-  format_ids?: FormatID[];
+  format_ids?: FormatReferenceStructuredObject[];
 }
 /**
  * Cost Per Mille (cost per 1,000 impressions) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -2626,7 +2627,7 @@ export interface ListCreativeFormatsRequest {
   /**
    * Return only these specific format IDs (e.g., from get_products response)
    */
-  format_ids?: FormatID[];
+  format_ids?: FormatReferenceStructuredObject[];
   /**
    * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
@@ -2667,11 +2668,11 @@ export interface ListCreativeFormatsRequest {
   /**
    * Filter to formats whose output_format_ids includes any of these format IDs. Returns formats that can produce these outputs — inspect each result's input_format_ids to see what inputs they accept.
    */
-  output_format_ids?: FormatID[];
+  output_format_ids?: FormatReferenceStructuredObject[];
   /**
    * Filter to formats whose input_format_ids includes any of these format IDs. Returns formats that accept these creatives as input — inspect each result's output_format_ids to see what they can produce.
    */
-  input_format_ids?: FormatID[];
+  input_format_ids?: FormatReferenceStructuredObject[];
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -2682,6 +2683,110 @@ export interface ListCreativeFormatsRequest {
  * Types of parameters that template formats accept in format_id objects to create parameterized format identifiers
  */
 export type FormatIDParameter = 'dimensions' | 'duration';
+/**
+ * Image asset
+ */
+export type IndividualImageAsset = BaseIndividualAsset;
+/**
+ * Video asset
+ */
+export type IndividualVideoAsset = BaseIndividualAsset;
+/**
+ * Audio asset
+ */
+export type IndividualAudioAsset = BaseIndividualAsset;
+/**
+ * Text asset
+ */
+export type IndividualTextAsset = BaseIndividualAsset;
+/**
+ * Markdown asset
+ */
+export type IndividualMarkdownAsset = BaseIndividualAsset;
+/**
+ * HTML asset
+ */
+export type IndividualHtmlAsset = BaseIndividualAsset;
+/**
+ * CSS asset
+ */
+export type IndividualCssAsset = BaseIndividualAsset;
+/**
+ * JavaScript asset
+ */
+export type IndividualJavaScriptAsset = BaseIndividualAsset;
+/**
+ * VAST asset
+ */
+export type IndividualVastAsset = BaseIndividualAsset;
+/**
+ * DAAST asset
+ */
+export type IndividualDaastAsset = BaseIndividualAsset;
+/**
+ * URL asset
+ */
+export type IndividualUrlAsset = BaseIndividualAsset;
+/**
+ * Webhook asset
+ */
+export type IndividualWebhookAsset = BaseIndividualAsset;
+/**
+ * Brief asset
+ */
+export type IndividualBriefAsset = BaseIndividualAsset;
+/**
+ * Catalog asset
+ */
+export type IndividualCatalogAsset = BaseIndividualAsset;
+/**
+ * Image asset in group
+ */
+export type GroupImageAsset = BaseGroupAsset;
+/**
+ * Video asset in group
+ */
+export type GroupVideoAsset = BaseGroupAsset;
+/**
+ * Audio asset in group
+ */
+export type GroupAudioAsset = BaseGroupAsset;
+/**
+ * Text asset in group
+ */
+export type GroupTextAsset = BaseGroupAsset;
+/**
+ * Markdown asset in group
+ */
+export type GroupMarkdownAsset = BaseGroupAsset;
+/**
+ * HTML asset in group
+ */
+export type GroupHtmlAsset = BaseGroupAsset;
+/**
+ * CSS asset in group
+ */
+export type GroupCssAsset = BaseGroupAsset;
+/**
+ * JavaScript asset in group
+ */
+export type GroupJavaScriptAsset = BaseGroupAsset;
+/**
+ * VAST asset in group
+ */
+export type GroupVastAsset = BaseGroupAsset;
+/**
+ * DAAST asset in group
+ */
+export type GroupDaastAsset = BaseGroupAsset;
+/**
+ * URL asset in group
+ */
+export type GroupUrlAsset = BaseGroupAsset;
+/**
+ * Webhook asset in group
+ */
+export type GroupWebhookAsset = BaseGroupAsset;
 /**
  * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
  */
@@ -2814,7 +2919,7 @@ export interface ListCreativeFormatsResponse {
  * Represents a creative format with its requirements
  */
 export interface Format {
-  format_id: FormatID;
+  format_id: FormatReferenceStructuredObject;
   /**
    * Human-readable format name
    */
@@ -2846,37 +2951,21 @@ export interface Format {
    * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory.
    */
   assets?: (
-    | BaseIndividualAsset
-    | {
-        /**
-         * Discriminator indicating this is a repeatable asset group
-         */
-        item_type: 'repeatable_group';
-        /**
-         * Identifier for this asset group (e.g., 'product', 'slide', 'card')
-         */
-        asset_group_id: string;
-        /**
-         * Whether this asset group is required. If true, at least min_count repetitions must be provided.
-         */
-        required: boolean;
-        /**
-         * Minimum number of repetitions required (if group is required) or allowed (if optional)
-         */
-        min_count: number;
-        /**
-         * Maximum number of repetitions allowed
-         */
-        max_count: number;
-        /**
-         * How the platform uses repetitions of this group. 'sequential' means all items display in order (carousels, playlists). 'optimize' means the platform selects the best-performing combination from alternatives (asset group optimization like Meta Advantage+ or Google Pmax).
-         */
-        selection_mode?: 'sequential' | 'optimize';
-        /**
-         * Assets within each repetition of this group
-         */
-        assets: BaseGroupAsset[];
-      }
+    | IndividualImageAsset
+    | IndividualVideoAsset
+    | IndividualAudioAsset
+    | IndividualTextAsset
+    | IndividualMarkdownAsset
+    | IndividualHtmlAsset
+    | IndividualCssAsset
+    | IndividualJavaScriptAsset
+    | IndividualVastAsset
+    | IndividualDaastAsset
+    | IndividualUrlAsset
+    | IndividualWebhookAsset
+    | IndividualBriefAsset
+    | IndividualCatalogAsset
+    | RepeatableGroupAsset
   )[];
   /**
    * Delivery method specifications (e.g., hosted, VAST, third-party tags)
@@ -2889,16 +2978,16 @@ export interface Format {
   /**
    * Array of format IDs this format accepts as input creative manifests. When present, indicates this format can take existing creatives in these formats as input. Omit for formats that work from raw assets (images, text, etc.) rather than existing creatives.
    */
-  input_format_ids?: FormatID[];
+  input_format_ids?: FormatReferenceStructuredObject[];
   /**
    * Array of format IDs that this format can produce as output. When present, indicates this format can build creatives in these output formats (e.g., a multi-publisher template format might produce standard display formats across many publishers). Omit for formats that produce a single fixed output (the format itself).
    */
-  output_format_ids?: FormatID[];
+  output_format_ids?: FormatReferenceStructuredObject[];
   /**
    * Optional standard visual card (300x400px) for displaying this format in user interfaces. Can be rendered via preview_creative or pre-generated.
    */
   format_card?: {
-    format_id: FormatID;
+    format_id: FormatReferenceStructuredObject;
     /**
      * Asset manifest for rendering the card, structure defined by the format
      */
@@ -2932,7 +3021,7 @@ export interface Format {
    * Optional detailed card with carousel and full specifications. Provides rich format documentation similar to ad spec pages.
    */
   format_card_detailed?: {
-    format_id: FormatID;
+    format_id: FormatReferenceStructuredObject;
     /**
      * Asset manifest for rendering the detailed card, structure defined by the format
      */
@@ -3023,6 +3112,52 @@ export interface Overlay {
      */
     unit: 'px' | 'fraction' | 'inches' | 'cm' | 'mm' | 'pt';
   };
+}
+/**
+ * Repeatable asset group (for carousels, slideshows, playlists, etc.)
+ */
+export interface RepeatableGroupAsset {
+  /**
+   * Discriminator indicating this is a repeatable asset group
+   */
+  item_type: 'repeatable_group';
+  /**
+   * Identifier for this asset group (e.g., 'product', 'slide', 'card')
+   */
+  asset_group_id: string;
+  /**
+   * Whether this asset group is required. If true, at least min_count repetitions must be provided.
+   */
+  required: boolean;
+  /**
+   * Minimum number of repetitions required (if group is required) or allowed (if optional)
+   */
+  min_count: number;
+  /**
+   * Maximum number of repetitions allowed
+   */
+  max_count: number;
+  /**
+   * How the platform uses repetitions of this group. 'sequential' means all items display in order (carousels, playlists). 'optimize' means the platform selects the best-performing combination from alternatives (asset group optimization like Meta Advantage+ or Google Pmax).
+   */
+  selection_mode?: 'sequential' | 'optimize';
+  /**
+   * Assets within each repetition of this group
+   */
+  assets: (
+    | GroupImageAsset
+    | GroupVideoAsset
+    | GroupAudioAsset
+    | GroupTextAsset
+    | GroupMarkdownAsset
+    | GroupHtmlAsset
+    | GroupCssAsset
+    | GroupJavaScriptAsset
+    | GroupVastAsset
+    | GroupDaastAsset
+    | GroupUrlAsset
+    | GroupWebhookAsset
+  )[];
 }
 export interface BaseGroupAsset {
   /**
@@ -3329,6 +3464,26 @@ export type DigitalSourceType =
   | 'composite_synthetic'
   | 'human_edits'
   | 'data_driven_media';
+/**
+ * Whether the video uses a constant or variable frame rate. Broadcast and SSAI contexts require constant frame rate for seamless splicing.
+ */
+export type FrameRateType = 'constant' | 'variable';
+/**
+ * Video scan method. Modern digital delivery requires progressive scan; interlaced is retained for broadcast legacy content.
+ */
+export type ScanType = 'progressive' | 'interlaced';
+/**
+ * Group of Pictures structure. SSAI and broadcast require closed GOPs for clean splice points; open GOPs may produce artifacts at ad boundaries.
+ */
+export type GOPType = 'closed' | 'open';
+/**
+ * Position of the moov atom in an MP4 container. 'start' enables progressive download without buffering the entire file; required for streaming ad delivery.
+ */
+export type MoovAtomPosition = 'start' | 'end';
+/**
+ * Audio channel configuration
+ */
+export type AudioChannelLayout = 'mono' | 'stereo' | '5.1' | '7.1';
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
@@ -3776,7 +3931,7 @@ export interface PackageRequest {
   /**
    * Array of format IDs that will be used for this package - must be supported by the product. If omitted, defaults to all formats supported by the product.
    */
-  format_ids?: FormatID[];
+  format_ids?: FormatReferenceStructuredObject[];
   /**
    * Budget allocation for this package in the media buy's currency
    */
@@ -3985,10 +4140,7 @@ export interface TargetingOverlay {
      * The keyword to target
      */
     keyword: string;
-    /**
-     * Match type: broad matches related queries, phrase matches queries containing the keyword phrase, exact matches the query exactly
-     */
-    match_type: 'broad' | 'phrase' | 'exact';
+    match_type: MatchType;
     /**
      * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
      */
@@ -4002,10 +4154,7 @@ export interface TargetingOverlay {
      * The keyword to exclude
      */
     keyword: string;
-    /**
-     * Match type for exclusion
-     */
-    match_type: 'broad' | 'phrase' | 'exact';
+    match_type: MatchType;
   }[];
 }
 /**
@@ -4054,7 +4203,7 @@ export interface CreativeAsset {
    * Human-readable creative name
    */
   name: string;
-  format_id: FormatID;
+  format_id: FormatReferenceStructuredObject;
   /**
    * Assets required by the format, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
    */
@@ -4319,14 +4468,8 @@ export interface VideoAsset {
    * Frame rate as string to preserve precision (e.g., '23.976', '29.97', '30')
    */
   frame_rate?: string;
-  /**
-   * Whether the video uses constant (CFR) or variable (VFR) frame rate
-   */
-  frame_rate_type?: 'constant' | 'variable';
-  /**
-   * Scan type of the video
-   */
-  scan_type?: 'progressive' | 'interlaced';
+  frame_rate_type?: FrameRateType;
+  scan_type?: ScanType;
   /**
    * Color space of the video
    */
@@ -4347,14 +4490,8 @@ export interface VideoAsset {
    * GOP/keyframe interval in seconds
    */
   gop_interval_seconds?: number;
-  /**
-   * GOP structure type
-   */
-  gop_type?: 'closed' | 'open';
-  /**
-   * Position of moov atom in MP4 container
-   */
-  moov_atom_position?: 'start' | 'end';
+  gop_type?: GOPType;
+  moov_atom_position?: MoovAtomPosition;
   /**
    * Whether the video contains an audio track
    */
@@ -4367,10 +4504,7 @@ export interface VideoAsset {
    * Audio sampling rate in Hz (e.g., 44100, 48000)
    */
   audio_sampling_rate_hz?: number;
-  /**
-   * Audio channel configuration
-   */
-  audio_channels?: 'mono' | 'stereo' | '5.1' | '7.1';
+  audio_channels?: AudioChannelLayout;
   /**
    * Audio bit depth
    */
@@ -4433,10 +4567,7 @@ export interface AudioAsset {
    * Sampling rate in Hz (e.g., 44100, 48000, 96000)
    */
   sampling_rate_hz?: number;
-  /**
-   * Channel configuration
-   */
-  channels?: 'mono' | 'stereo' | '5.1' | '7.1';
+  channels?: AudioChannelLayout;
   /**
    * Bit depth
    */
@@ -4919,6 +5050,18 @@ export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError
  */
 export type AccountStatus = 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
 /**
+ * Who is invoiced on this account. See billing_entity for the invoiced party's business details.
+ */
+export type BillingParty = 'operator' | 'agent' | 'advertiser';
+/**
+ * Payment terms agreed for this account. Binding for all invoices when the account is active.
+ */
+export type PaymentTerms = 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+/**
+ * How the seller scoped a billing account relative to the operator and brand dimensions.
+ */
+export type AccountScope = 'operator' | 'brand' | 'operator_brand' | 'agent';
+/**
  * Cloud storage protocol
  */
 export type CloudStorageProtocol = 's3' | 'gcs' | 'azure_blob';
@@ -4933,6 +5076,18 @@ export type MediaBuyStatus =
   | 'completed'
   | 'rejected'
   | 'canceled';
+/**
+ * Actions the buyer can perform on a media buy
+ */
+export type MediaBuyValidAction =
+  | 'pause'
+  | 'resume'
+  | 'cancel'
+  | 'update_budget'
+  | 'update_dates'
+  | 'update_packages'
+  | 'add_packages'
+  | 'sync_creatives';
 /**
  * Which party initiated the package cancellation.
  */
@@ -5030,16 +5185,7 @@ export interface CreateMediaBuySuccess {
   /**
    * Actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys.
    */
-  valid_actions?: (
-    | 'pause'
-    | 'resume'
-    | 'cancel'
-    | 'update_budget'
-    | 'update_dates'
-    | 'update_packages'
-    | 'add_packages'
-    | 'sync_creatives'
-  )[];
+  valid_actions?: MediaBuyValidAction[];
   /**
    * Array of created packages with complete state information
    */
@@ -5078,19 +5224,13 @@ export interface Account {
    * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
    */
   operator?: string;
-  /**
-   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. See billing_entity for the invoiced party's business details.
-   */
-  billing?: 'operator' | 'agent' | 'advertiser';
+  billing?: BillingParty;
   billing_entity?: BusinessEntity;
   /**
    * Identifier for the rate card applied to this account
    */
   rate_card?: string;
-  /**
-   * Payment terms agreed for this account. Binding for all invoices when the account is active.
-   */
-  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+  payment_terms?: PaymentTerms;
   /**
    * Maximum outstanding balance allowed
    */
@@ -5115,10 +5255,7 @@ export interface Account {
      */
     expires_at?: string;
   };
-  /**
-   * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to a specific operator+brand combination. agent: the agent's default account with no brand or operator association.
-   */
-  account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
+  account_scope?: AccountScope;
   /**
    * Governance agent endpoints registered on this account. Authentication credentials are write-only and not included in responses — use sync_governance to set or update credentials.
    */
@@ -5209,7 +5346,7 @@ export interface Package {
   /**
    * Format IDs active for this package. Echoed from the create_media_buy request; omitted means all formats for the product are active.
    */
-  format_ids?: FormatID[];
+  format_ids?: FormatReferenceStructuredObject[];
   targeting_overlay?: TargetingOverlay;
   measurement_terms?: MeasurementTerms;
   /**
@@ -5223,7 +5360,7 @@ export interface Package {
   /**
    * Format IDs that creative assets will be provided for this package
    */
-  format_ids_to_provide?: FormatID[];
+  format_ids_to_provide?: FormatReferenceStructuredObject[];
   /**
    * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
    */
@@ -5472,10 +5609,7 @@ export interface PackageUpdate {
      * The keyword to target
      */
     keyword: string;
-    /**
-     * Match type for this keyword
-     */
-    match_type: 'broad' | 'phrase' | 'exact';
+    match_type: MatchType;
     /**
      * Per-keyword bid price. Inherits currency and max_bid interpretation from the package's pricing option.
      */
@@ -5489,10 +5623,7 @@ export interface PackageUpdate {
      * The keyword to stop targeting
      */
     keyword: string;
-    /**
-     * Match type to remove
-     */
-    match_type: 'broad' | 'phrase' | 'exact';
+    match_type: MatchType;
   }[];
   /**
    * Negative keywords to add to this package. Appends to the existing negative keyword list — does not replace it. If a keyword+match_type pair already exists, sellers SHOULD treat it as a no-op for that entry. Use targeting_overlay.negative_keywords in create_media_buy to set the initial list.
@@ -5502,10 +5633,7 @@ export interface PackageUpdate {
      * The keyword to exclude
      */
     keyword: string;
-    /**
-     * Match type for exclusion
-     */
-    match_type: 'broad' | 'phrase' | 'exact';
+    match_type: MatchType;
   }[];
   /**
    * Negative keywords to remove from this package. Removes matching keyword+match_type pairs from the existing list. If a specified pair is not present, sellers SHOULD treat it as a no-op for that entry.
@@ -5515,10 +5643,7 @@ export interface PackageUpdate {
      * The keyword to stop excluding
      */
     keyword: string;
-    /**
-     * Match type to remove
-     */
-    match_type: 'broad' | 'phrase' | 'exact';
+    match_type: MatchType;
   }[];
   /**
    * Replace creative assignments for this package with optional weights and placement targeting. Uses replacement semantics - omit to leave assignments unchanged.
@@ -5560,16 +5685,7 @@ export interface UpdateMediaBuySuccess {
   /**
    * Actions the buyer can perform after this update. Saves a round-trip to get_media_buys.
    */
-  valid_actions?: (
-    | 'pause'
-    | 'resume'
-    | 'cancel'
-    | 'update_budget'
-    | 'update_dates'
-    | 'update_packages'
-    | 'add_packages'
-    | 'sync_creatives'
-  )[];
+  valid_actions?: MediaBuyValidAction[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -5625,6 +5741,13 @@ export interface GetMediaBuysRequest {
  * Approval state of a creative on a specific package
  */
 export type CreativeApprovalStatus = 'pending_review' | 'approved' | 'rejected';
+/**
+ * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot is unavailable for this package.
+ */
+export type SnapshotUnavailableReason =
+  | 'SNAPSHOT_UNSUPPORTED'
+  | 'SNAPSHOT_TEMPORARILY_UNAVAILABLE'
+  | 'SNAPSHOT_PERMISSION_DENIED';
 
 /**
  * Response payload for get_media_buys task. Returns media buy configuration, creative approval state, and optional delivery snapshots.
@@ -5694,16 +5817,7 @@ export interface GetMediaBuysResponse {
     /**
      * Actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now.
      */
-    valid_actions?: (
-      | 'pause'
-      | 'resume'
-      | 'cancel'
-      | 'update_budget'
-      | 'update_dates'
-      | 'update_packages'
-      | 'add_packages'
-      | 'sync_creatives'
-    )[];
+    valid_actions?: MediaBuyValidAction[];
     /**
      * Revision history entries, most recent first. Only present when include_history > 0 in the request. Each entry represents a state change or update to the media buy. Entries are append-only: sellers MUST NOT modify or delete previously emitted history entries. Callers MAY cache entries by revision number. Returns min(N, available entries) when include_history exceeds the total.
      */
@@ -5832,14 +5946,8 @@ export interface PackageStatus {
   /**
    * Format IDs from the original create_media_buy format_ids_to_provide that have not yet been uploaded via sync_creatives. When empty or absent, all required formats have been provided.
    */
-  format_ids_pending?: FormatID[];
-  /**
-   * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot is unavailable for this package.
-   */
-  snapshot_unavailable_reason?:
-    | 'SNAPSHOT_UNSUPPORTED'
-    | 'SNAPSHOT_TEMPORARILY_UNAVAILABLE'
-    | 'SNAPSHOT_PERMISSION_DENIED';
+  format_ids_pending?: FormatReferenceStructuredObject[];
+  snapshot_unavailable_reason?: SnapshotUnavailableReason;
   /**
    * Near-real-time delivery snapshot for this package. Only present when include_snapshot was true in the request. Represents the latest available entity-level stats from the platform — not billing-grade data.
    */
@@ -6243,10 +6351,7 @@ export interface GetMediaBuyDeliveryResponse {
          * The targeted keyword
          */
         keyword?: string;
-        /**
-         * Match type for this keyword
-         */
-        match_type?: 'broad' | 'phrase' | 'exact';
+        match_type?: MatchType;
       })[];
       /**
        * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
@@ -7485,11 +7590,11 @@ export interface BuildCreativeRequest {
    * Package identifier within the media buy. Used with media_buy_id when the creative agent needs line-item-level context for tag generation. Omit to get a tag not scoped to a specific package.
    */
   package_id?: string;
-  target_format_id?: FormatID;
+  target_format_id?: FormatReferenceStructuredObject;
   /**
    * Array of format IDs to generate in a single call. Mutually exclusive with target_format_id. The creative agent produces one manifest per format. Each format definition specifies its own required input assets and output structure.
    */
-  target_format_ids?: FormatID[];
+  target_format_ids?: FormatReferenceStructuredObject[];
   account?: AccountReference;
   brand?: BrandReference;
   quality?: CreativeQuality;
@@ -7539,7 +7644,7 @@ export interface BuildCreativeRequest {
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
  */
 export interface CreativeManifest {
-  format_id: FormatID;
+  format_id: FormatReferenceStructuredObject;
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
@@ -7910,7 +8015,7 @@ export interface BuildCreativeMultiSuccess {
        * Unique identifier for this preview
        */
       preview_id: string;
-      format_id: FormatID;
+      format_id: FormatReferenceStructuredObject;
       /**
        * Array of rendered pieces for this format's preview. Most formats render as a single piece. Companion ad formats render as multiple pieces.
        */
@@ -7989,7 +8094,7 @@ export type PreviewCreativeRequest = {
    */
   request_type: 'single' | 'batch' | 'variant';
   creative_manifest?: CreativeManifest;
-  format_id?: FormatID;
+  format_id?: FormatReferenceStructuredObject;
   /**
    * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. Used in single mode.
    */
@@ -8023,7 +8128,7 @@ export type PreviewCreativeRequest = {
    * Array of preview requests (1-50 items). Required when request_type is 'batch'. Each item follows the single request structure.
    */
   requests?: {
-    format_id?: FormatID;
+    format_id?: FormatReferenceStructuredObject;
     creative_manifest: CreativeManifest;
     /**
      * Array of input sets for generating multiple preview variants
@@ -8330,7 +8435,7 @@ export interface GetCreativeDeliveryResponse {
      * Publisher's media buy identifier for this creative. Present when the request spanned multiple media buys, so the buyer can correlate each creative to its media buy.
      */
     media_buy_id?: string;
-    format_id?: FormatID;
+    format_id?: FormatReferenceStructuredObject;
     totals?: DeliveryMetrics;
     /**
      * Total number of variants for this creative. When max_variants was specified in the request, this may exceed the number of items in the variants array.
@@ -8517,7 +8622,7 @@ export interface CreativeFilters {
   /**
    * Filter by structured format IDs. Returns creatives that match any of these formats.
    */
-  format_ids?: FormatID[];
+  format_ids?: FormatReferenceStructuredObject[];
   /**
    * When true, return only creatives with dynamic variables (DCO). When false, return only static creatives.
    */
@@ -8607,7 +8712,7 @@ export interface ListCreativesResponse {
      * Human-readable creative name
      */
     name: string;
-    format_id: FormatID;
+    format_id: FormatReferenceStructuredObject;
     status: CreativeStatus;
     /**
      * When the creative was created
@@ -8700,13 +8805,7 @@ export interface ListCreativesResponse {
        */
       last_served?: string;
     };
-    /**
-     * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot data is unavailable for this creative.
-     */
-    snapshot_unavailable_reason?:
-      | 'SNAPSHOT_UNSUPPORTED'
-      | 'SNAPSHOT_TEMPORARILY_UNAVAILABLE'
-      | 'SNAPSHOT_PERMISSION_DENIED';
+    snapshot_unavailable_reason?: SnapshotUnavailableReason;
     /**
      * Items for multi-asset formats like carousels and native ads (included when include_items=true)
      */
@@ -8940,7 +9039,8 @@ export type GetSignalsRequest = {
   countries?: string[];
   filters?: SignalFilters;
   /**
-   * Maximum number of results to return
+   * @deprecated
+   * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
    */
   max_results?: number;
   pagination?: PaginationRequest;
@@ -9693,6 +9793,10 @@ export type GenreTaxonomy =
   | 'amazon_genres'
   | 'custom';
 /**
+ * What kind of content program a collection represents. Determines how installments should be interpreted by buyer agents.
+ */
+export type CollectionKind = 'series' | 'publication' | 'event_series' | 'rotation';
+/**
  * Production quality tier for collection content. Maps to OpenRTB content.prodq: professional=1, prosumer=2, ugc=3. Seller-declared — no external validation.
  */
 export type ProductionQuality = 'professional' | 'prosumer' | 'ugc';
@@ -9805,7 +9909,7 @@ export interface CollectionListFilters {
   /**
    * Filter to these collection kinds
    */
-  kinds?: ('series' | 'publication' | 'event_series' | 'rotation')[];
+  kinds?: CollectionKind[];
   /**
    * Always exclude collections with these distribution identifiers
    */
@@ -10007,10 +10111,7 @@ export interface GetCollectionListResponse {
      */
     genre?: string[];
     genre_taxonomy?: GenreTaxonomy;
-    /**
-     * What kind of content program this is
-     */
-    kind?: 'series' | 'publication' | 'event_series' | 'rotation';
+    kind?: CollectionKind;
   }[];
   pagination?: PaginationResponse;
   /**
@@ -10359,7 +10460,7 @@ export interface Artifact {
    * Identifies a specific variant of this artifact. Use for A/B tests, translations, or temporal versions. Examples: 'en', 'es-MX', 'v2', 'headline_test_b'. The combination of artifact_id + variant_id must be unique.
    */
   variant_id?: string;
-  format_id?: FormatID;
+  format_id?: FormatReferenceStructuredObject;
   /**
    * Optional URL for this artifact (web page, podcast feed, video page). Not all artifacts have URLs (e.g., Instagram content, podcast segments, TV scenes).
    */
@@ -10839,10 +10940,7 @@ export interface CalibrateContentRequest {
  */
 export type CalibrateContentResponse =
   | {
-      /**
-       * Overall pass/fail verdict for the content evaluation
-       */
-      verdict: 'pass' | 'fail';
+      verdict: BinaryVerdict;
       /**
        * Model confidence in the verdict (0-1)
        */
@@ -10859,10 +10957,7 @@ export type CalibrateContentResponse =
          * Which feature was evaluated. Data features come from the content-standards feature catalog (e.g., 'brand_safety', 'brand_suitability', 'competitor_adjacency'). Record-level structural checks use reserved namespaces: 'record:malformed_artifact'. Reserved prefixes: 'record:', 'delivery:'.
          */
         feature_id: string;
-        /**
-         * Evaluation status for this feature
-         */
-        status: 'passed' | 'failed' | 'warning' | 'unevaluated';
+        status: FeatureCheckStatus;
         /**
          * Policy ID that triggered this result. Enables the calibration loop to iterate on specific policies by correlating sample outcomes to policy ids.
          */
@@ -10884,6 +10979,14 @@ export type CalibrateContentResponse =
       context?: ContextObject;
       ext?: ExtensionObject;
     };
+/**
+ * Strictly two-outcome evaluation result used for overall record-level verdicts in content standards tasks. For per-feature breakdowns that include warning and unevaluated states, see feature-check-status.
+ */
+export type BinaryVerdict = 'pass' | 'fail';
+/**
+ * Per-feature evaluation outcome in content standards checks. For the two-outcome overall record verdict, see binary-verdict.
+ */
+export type FeatureCheckStatus = 'passed' | 'failed' | 'warning' | 'unevaluated';
 
 
 // validate_content_delivery parameters
@@ -10972,10 +11075,7 @@ export type ValidateContentDeliveryResponse =
          * Which delivery record was evaluated
          */
         record_id: string;
-        /**
-         * Overall pass/fail verdict for this record
-         */
-        verdict: 'pass' | 'fail';
+        verdict: BinaryVerdict;
         /**
          * Per-feature breakdown. When present, SHOULD include all failed and warning features. MAY include passed features. Oracle pattern: exposes verdict + rule pointer, never the seller's threshold or the caller's submitted value (the seller authored the content standards).
          */
@@ -10984,7 +11084,7 @@ export type ValidateContentDeliveryResponse =
            * Which feature was evaluated. Data features come from the content-standards feature catalog (e.g., 'brand_safety', 'brand_suitability', 'image_dpi'). Record-level structural checks use reserved namespaces: 'record:malformed_artifact', 'delivery:authorization'. Reserved prefixes: 'record:', 'delivery:'.
            */
           feature_id: string;
-          status: 'passed' | 'failed' | 'warning' | 'unevaluated';
+          status: FeatureCheckStatus;
           /**
            * Registry policy ID that triggered this result. Present when the result originates from a specific registry policy (e.g., GARM category, CSBS standard). Enables programmatic routing by looking up the policy in the registry.
            */
@@ -11007,7 +11107,6 @@ export type ValidateContentDeliveryResponse =
       context?: ContextObject;
       ext?: ExtensionObject;
     };
-
 
 // get_media_buy_artifacts parameters
 /**
@@ -11533,6 +11632,14 @@ export type GetPlanAuditLogsRequest = {
 
 // get_plan_audit_logs response
 /**
+ * Governance check status (present for check entries).
+ */
+export type GovernanceDecision = 'approved' | 'denied' | 'conditions';
+/**
+ * Governance mode active at the moment this specific check was evaluated. Governance agents SHOULD populate this field on check entries, recording the mode from their runtime configuration at the moment check_governance was processed — not derived from a plan field. This is a per-check value: if the operator changes mode between checks for the same governed action, each entry records the mode active for that entry. A future `governed_actions[].mode` field would describe the action's current mode, which may differ from the most recent entry's `mode` if the plan has since been re-synced. Absent for outcome entries and for pre-3.1 governance agents that do not surface mode on audit responses.
+ */
+export type GovernanceMode = 'audit' | 'advisory' | 'enforce';
+/**
  * Governance state and audit trail for one or more plans.
  */
 export interface GetPlanAuditLogsResponse {
@@ -11714,20 +11821,18 @@ export interface GetPlanAuditLogsResponse {
        * The AdCP tool (present for check entries).
        */
       tool?: string;
-      /**
-       * Governance check status (present for check entries).
-       */
-      status?: 'approved' | 'denied' | 'conditions';
+      status?: GovernanceDecision;
       /**
        * Whether the check was an intent check (orchestrator) or execution check (seller). Inferred from the fields present on the original check request. Present for check entries.
        */
       check_type?: 'intent' | 'execution';
+      mode?: GovernanceMode;
       /**
        * Human-readable explanation of the governance decision (present for check entries).
        */
       explanation?: string;
       /**
-       * Registry policy IDs evaluated during this check (present for check entries).
+       * Policy IDs evaluated during this check. Includes registry policy IDs (resolved via the policy registry) and any inline `policy_id`s declared in the plan's `custom_policies`. Present for check entries.
        */
       policies_evaluated?: string[];
       /**
@@ -11919,10 +12024,7 @@ export type CheckGovernanceResponse = {
    * Unique identifier for this governance check record. Use in report_plan_outcome to link outcomes to the check that authorized them.
    */
   check_id: string;
-  /**
-   * Governance decision. 'approved': proceed as planned. 'denied': do not proceed. 'conditions': approved if the caller accepts the listed conditions, then re-calls check_governance with the adjusted parameters.
-   */
-  status: 'approved' | 'denied' | 'conditions';
+  status: GovernanceDecision;
   /**
    * Echoed from request.
    */
@@ -11995,9 +12097,10 @@ export type CheckGovernanceResponse = {
    */
   categories_evaluated?: string[];
   /**
-   * Registry policy IDs evaluated during this check.
+   * Policy IDs evaluated during this check. Includes registry policy IDs (resolved via the policy registry) and any inline `policy_id`s declared in the plan's `custom_policies`.
    */
   policies_evaluated?: string[];
+  mode?: GovernanceMode;
   /**
    * Governance context token for this governed action. The buyer MUST attach this to the protocol envelope when sending the purchase request (media buy, rights acquisition, signal activation) to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this action's lifecycle.
    *
@@ -12757,7 +12860,7 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The buyer must pass one of these values in sync_accounts.
      */
-    supported_billing: ('operator' | 'agent' | 'advertiser')[];
+    supported_billing: BillingParty[];
     /**
      * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
@@ -12897,7 +13000,7 @@ export interface GetAdCPCapabilitiesResponse {
           /**
            * Match types this seller supports for keyword targets. Sellers must reject goals with unsupported match types.
            */
-          supported_match_types: ('broad' | 'phrase' | 'exact')[];
+          supported_match_types: MatchType[];
         };
         /**
          * Negative keyword capabilities. Presence indicates support for targeting_overlay.negative_keywords and negative_keywords_add/remove in update_media_buy.
@@ -12906,7 +13009,7 @@ export interface GetAdCPCapabilitiesResponse {
           /**
            * Match types this seller supports for negative keywords. Sellers must reject goals with unsupported match types.
            */
-          supported_match_types: ('broad' | 'phrase' | 'exact')[];
+          supported_match_types: MatchType[];
         };
         /**
          * Proximity targeting capabilities from arbitrary coordinates via targeting_overlay.geo_proximity.
@@ -13329,7 +13432,7 @@ export interface GetAdCPCapabilitiesResponse {
     )[];
   };
   /**
-   * Optional — specialized compliance claims this agent supports. Omitting the field means the agent declares no specialism claims (it still passes the universal + domain-baseline storyboards implied by supported_protocols). Each specialism maps to a storyboard bundle at /compliance/{version}/specialisms/{id}/ that the AAO compliance runner executes to verify the claim. Each specialism rolls up to one of the protocols in supported_protocols — the runner rejects a specialism claim whose parent protocol is missing. Only list specialisms your agent actually implements — the AAO Verified badge enumerates which specialisms were demonstrably passed.
+   * Optional — specialized compliance claims this agent supports. Values MUST be kebab-case enum IDs (e.g., 'creative-generative', 'sales-non-guaranteed'). An agent that implements a specialism's tools but omits its ID from this array will receive 'No applicable tracks found' from the compliance runner — tracks for that specialism are not evaluated even if every tool works. Omitting the field means the agent declares no specialism claims (it still passes the universal + domain-baseline storyboards implied by supported_protocols). Each specialism maps to a storyboard bundle at /compliance/{version}/specialisms/{id}/ that the AAO compliance runner executes to verify the claim. Each specialism rolls up to one of the protocols in supported_protocols — the runner rejects a specialism claim whose parent protocol is missing. Only list specialisms your agent actually implements — the AAO Verified badge enumerates which specialisms were demonstrably passed.
    */
   specialisms?: AdCPSpecialism[];
   /**
@@ -13440,15 +13543,9 @@ export interface SyncAccountsRequest {
      * Domain of the entity operating on the brand's behalf (e.g., 'pinnacle-media.com'). When the brand operates directly, this is the brand's domain. Verified against the brand's authorized_operators in brand.json.
      */
     operator: string;
-    /**
-     * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The seller must either accept this billing model or reject the request.
-     */
-    billing: 'operator' | 'agent' | 'advertiser';
+    billing: BillingParty;
     billing_entity?: BusinessEntity;
-    /**
-     * Payment terms for this account. The seller must either accept these terms or reject the account — terms are never silently remapped. When omitted, the seller applies its default terms.
-     */
-    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+    payment_terms?: PaymentTerms;
     /**
      * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
@@ -13506,15 +13603,9 @@ export interface SyncAccountsSuccess {
      * Account status. active: ready for use. pending_approval: seller reviewing (credit, legal). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
      */
     status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
-    /**
-     * Who is invoiced on this account. Matches the requested billing model.
-     */
-    billing?: 'operator' | 'agent' | 'advertiser';
+    billing?: BillingParty;
     billing_entity?: BusinessEntity;
-    /**
-     * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to this operator+brand pair. agent: the agent's default account.
-     */
-    account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
+    account_scope?: AccountScope;
     /**
      * Setup information for pending accounts. Provides the agent (or human) with next steps to complete account activation.
      */
@@ -13536,10 +13627,7 @@ export interface SyncAccountsSuccess {
      * Rate card applied to this account
      */
     rate_card?: string;
-    /**
-     * Payment terms agreed for this account. When the account is active, these are the binding terms for all invoices on this account.
-     */
-    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+    payment_terms?: PaymentTerms;
     credit_limit?: {
       amount: number;
       currency: string;
@@ -13863,10 +13951,7 @@ export interface GetAccountFinancialsSuccess {
    * Overall payment status. current: all obligations met. past_due: one or more invoices overdue. suspended: account suspended due to payment issues.
    */
   payment_status?: 'current' | 'past_due' | 'suspended';
-  /**
-   * Payment terms in effect for this account
-   */
-  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+  payment_terms?: PaymentTerms;
   /**
    * Recent invoices. Sellers may limit the number returned.
    */
@@ -13916,13 +14001,15 @@ export type ComplyTestControllerRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'seed_*' scenarios pre-populate fixtures (product, pricing option, creative, plan, media buy) so storyboards can reference them by stable ID without the implementer having to guess which IDs the conformance suite expects.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'seed_*' scenarios pre-populate fixtures (product, pricing option, creative, plan, media buy, creative format) so storyboards can reference them by stable ID without the implementer having to guess which IDs the conformance suite expects.
    */
   scenario:
     | 'list_scenarios'
     | 'force_creative_status'
     | 'force_account_status'
     | 'force_media_buy_status'
+    | 'force_create_media_buy_arm'
+    | 'force_task_completion'
     | 'force_session_status'
     | 'simulate_delivery'
     | 'simulate_budget_spend'
@@ -13930,7 +14017,8 @@ export type ComplyTestControllerRequest = {
     | 'seed_pricing_option'
     | 'seed_creative'
     | 'seed_plan'
-    | 'seed_media_buy';
+    | 'seed_media_buy'
+    | 'seed_creative_format';
   /**
    * Scenario-specific parameters. Required for all scenarios except list_scenarios.
    */
@@ -14002,10 +14090,345 @@ export type ComplyTestControllerRequest = {
      * Spend to this percentage of budget (0–100). Used by simulate_budget_spend.
      */
     spend_percentage?: number;
+    /**
+     * Response arm for the next create_media_buy call. Used by force_create_media_buy_arm. v1 supports the two arms a buyer-supplied directive can shape without fabricating server state: 'submitted' (async task envelope) and 'input-required' (errors-branch). 'completed' is covered by seed_media_buy + a normal flow; 'working' is an out-of-band progress signal, not an initial response arm.
+     */
+    arm?: 'submitted' | 'input-required';
+    /**
+     * Deterministic task handle the seller MUST emit verbatim on the next create_media_buy response when arm is 'submitted'. The seller MUST accept this exact value on subsequent tasks/get calls within the same authenticated sandbox account. Sandbox task_ids are caller-opaque strings — the seller's production task-id format rules do not apply.
+     */
+    task_id?: string;
+    /**
+     * Optional human-readable explanation surfaced on the next create_media_buy response. Used by force_create_media_buy_arm for the 'submitted' and 'working' arms. Plain text only.
+     */
+    message?: string;
+    /**
+     * Creative format ID to seed. Used by seed_creative_format. The seller MUST expose this format ID in list_creative_formats responses for the duration of the compliance session.
+     */
+    format_id?: string;
+    result?: AdCPAsyncResponseData;
   };
   context?: ContextObject;
   ext?: ExtensionObject;
 };
+/**
+ * Completion payload to record against the task. Used by force_task_completion. Validates against the async-response-data union — for create_media_buy this is a CreateMediaBuyResponse with media_buy_id and packages. The seller MUST deliver this verbatim to the buyer's push_notification_config.url (the canonical 3.0 path for completion payload delivery), with all caller-supplied fields preserved (sellers MAY augment with seller-controlled fields like created_at or dsp_* IDs but MUST NOT overwrite caller-supplied values). A typed projection on the polling response is tracked for 3.1 (#3123). Sellers MUST emit INVALID_PARAMS if the payload does not validate against the response branch for the task's original method, and MAY reject payloads exceeding 256 KB with INVALID_PARAMS.
+ */
+export type AdCPAsyncResponseData =
+  | GetProductsResponse
+  | GetProductsAsyncWorking
+  | GetProductsAsyncInputRequired
+  | GetProductsAsyncSubmitted
+  | CreateMediaBuyResponse
+  | CreateMediaBuyAsyncWorking
+  | CreateMediaBuyAsyncInputRequired
+  | CreateMediaBuyAsyncSubmitted
+  | UpdateMediaBuyResponse
+  | UpdateMediaBuyAsyncWorking
+  | UpdateMediaBuyAsyncInputRequired
+  | UpdateMediaBuyAsyncSubmitted
+  | BuildCreativeResponse
+  | BuildCreativeAsyncWorking
+  | BuildCreativeAsyncInputRequired
+  | BuildCreativeAsyncSubmitted
+  | SyncCreativesResponse
+  | SyncCreativesAsyncWorking
+  | SyncCreativesAsyncInputRequired
+  | SyncCreativesAsyncSubmitted
+  | SyncCatalogsResponse
+  | SyncCatalogsAsyncWorking
+  | SyncCatalogsAsyncInputRequired
+  | SyncCatalogsAsyncSubmitted;
+/**
+ * Progress data for working get_products
+ */
+export interface GetProductsAsyncWorking {
+  /**
+   * Progress percentage of the search operation
+   */
+  percentage?: number;
+  /**
+   * Current step in the search process (e.g., 'searching_inventory', 'validating_availability')
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the search process
+   */
+  total_steps?: number;
+  /**
+   * Current step number (1-indexed)
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for get_products needing clarification
+ */
+export interface GetProductsAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'CLARIFICATION_NEEDED' | 'BUDGET_REQUIRED';
+  /**
+   * Partial product results that may help inform the clarification
+   */
+  partial_results?: Product[];
+  /**
+   * Suggested values or options for the required input
+   */
+  suggestions?: string[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted get_products (custom curation)
+ */
+export interface GetProductsAsyncSubmitted {
+  /**
+   * Estimated completion time for the search
+   */
+  estimated_completion?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working create_media_buy
+ */
+export interface CreateMediaBuyAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for create_media_buy needing user input
+ */
+export interface CreateMediaBuyAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'BUDGET_EXCEEDS_LIMIT';
+  /**
+   * Optional validation errors or warnings for debugging purposes. Helps explain why input is required.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted create_media_buy
+ */
+export interface CreateMediaBuyAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working update_media_buy
+ */
+export interface UpdateMediaBuyAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for update_media_buy needing user input
+ */
+export interface UpdateMediaBuyAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'CHANGE_CONFIRMATION';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted update_media_buy
+ */
+export interface UpdateMediaBuyAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working build_creative
+ */
+export interface BuildCreativeAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation (e.g., 'generating_assets', 'resolving_macros', 'rendering_preview')
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for build_creative needing user input
+ */
+export interface BuildCreativeAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'CREATIVE_DIRECTION_NEEDED' | 'ASSET_SELECTION_NEEDED';
+  /**
+   * Optional validation errors or warnings explaining why input is required.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted build_creative
+ */
+export interface BuildCreativeAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working sync_creatives
+ */
+export interface SyncCreativesAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  /**
+   * Number of creatives processed so far
+   */
+  creatives_processed?: number;
+  /**
+   * Total number of creatives to process
+   */
+  creatives_total?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for sync_creatives needing user input
+ */
+export interface SyncCreativesAsyncInputRequired {
+  /**
+   * Reason code indicating why buyer input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'ASSET_CONFIRMATION' | 'FORMAT_CLARIFICATION';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted sync_creatives
+ */
+export interface SyncCreativesAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working sync_catalogs
+ */
+export interface SyncCatalogsAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation (e.g., 'Fetching product feed', 'Validating items', 'Platform review')
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  /**
+   * Number of catalogs processed so far
+   */
+  catalogs_processed?: number;
+  /**
+   * Total number of catalogs to process
+   */
+  catalogs_total?: number;
+  /**
+   * Total number of catalog items processed across all catalogs
+   */
+  items_processed?: number;
+  /**
+   * Total number of catalog items to process across all catalogs
+   */
+  items_total?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for sync_catalogs needing buyer input
+ */
+export interface SyncCatalogsAsyncInputRequired {
+  /**
+   * Reason code indicating why buyer input is needed. APPROVAL_REQUIRED: platform requires explicit approval before activating the catalog. FEED_VALIDATION: feed URL returned unexpected format or schema errors. ITEM_REVIEW: platform flagged items for manual review. FEED_ACCESS: platform cannot access the feed URL (authentication, CORS, etc.).
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'FEED_VALIDATION' | 'ITEM_REVIEW' | 'FEED_ACCESS';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted sync_catalogs
+ */
+export interface SyncCatalogsAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
 
 
 // comply_test_controller response
@@ -14016,6 +14439,8 @@ export type ComplyTestControllerResponse =
   | ListScenariosSuccess
   | StateTransitionSuccess
   | SimulationSuccess
+  | ForcedDirectiveSuccess
+  | SeedSuccess
   | ControllerError;
 
 /**
@@ -14030,6 +14455,8 @@ export interface ListScenariosSuccess {
     | 'force_creative_status'
     | 'force_account_status'
     | 'force_media_buy_status'
+    | 'force_create_media_buy_arm'
+    | 'force_task_completion'
     | 'force_session_status'
     | 'simulate_delivery'
     | 'simulate_budget_spend'
@@ -14038,6 +14465,7 @@ export interface ListScenariosSuccess {
     | 'seed_creative'
     | 'seed_plan'
     | 'seed_media_buy'
+    | 'seed_creative_format'
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -14075,6 +14503,43 @@ export interface SimulationSuccess {
    * Running totals across all simulation calls (simulate_delivery only)
    */
   cumulative?: {};
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A force_create_media_buy_arm directive was registered. The directive shapes the next create_media_buy call from this caller's authenticated sandbox account into the requested arm, then is consumed. No entity transitioned — there is no media buy yet — so this branch carries 'forced' rather than previous_state/current_state.
+ */
+export interface ForcedDirectiveSuccess {
+  success: true;
+  /**
+   * Echo of the registered directive. The next create_media_buy call from this sandbox account will return the named arm.
+   */
+  forced: {
+    /**
+     * Arm the seller will emit on the next create_media_buy response.
+     */
+    arm: 'submitted' | 'input-required';
+    /**
+     * Echo of the registered task_id. Present only when arm is 'submitted' (the arm that emits a task envelope).
+     */
+    task_id?: string;
+  };
+  /**
+   * Human-readable acknowledgement.
+   */
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A seed_* scenario successfully pre-populated a fixture in the seller's test state
+ */
+export interface SeedSuccess {
+  success: true;
+  /**
+   * Human-readable acknowledgement.
+   */
   message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;

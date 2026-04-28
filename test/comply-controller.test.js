@@ -117,7 +117,7 @@ describe('createComplyController — dispatch', () => {
 });
 
 describe('createComplyController — seed idempotency', () => {
-  it('seeds a fresh fixture and returns previous_state: "none"', async () => {
+  it('seeds a fresh fixture and returns SeedSuccess message="Fixture seeded"', async () => {
     const persisted = new Map();
     const controller = createComplyController({
       seed: {
@@ -131,12 +131,15 @@ describe('createComplyController — seed idempotency', () => {
       params: { product_id: 'p1', fixture: { delivery_type: 'non_guaranteed' } },
     });
     assert.strictEqual(result.success, true);
-    assert.strictEqual(result.previous_state, 'none');
-    assert.strictEqual(result.current_state, 'seeded');
+    assert.strictEqual(result.message, 'Fixture seeded');
+    // SeedSuccess MUST NOT carry transition fields — the spec's `not.anyOf`
+    // forbids them on this arm.
+    assert.strictEqual(result.previous_state, undefined);
+    assert.strictEqual(result.current_state, undefined);
     assert.ok(persisted.has('p1'));
   });
 
-  it('re-seeds with equivalent fixture returns previous_state: "existing" and still invokes adapter', async () => {
+  it('re-seeds with equivalent fixture returns SeedSuccess message="Fixture re-seeded (equivalent)" and still invokes adapter', async () => {
     let adapterCalls = 0;
     const controller = createComplyController({
       seed: {
@@ -149,15 +152,15 @@ describe('createComplyController — seed idempotency', () => {
       scenario: 'seed_product',
       params: { product_id: 'p1', fixture: { delivery_type: 'non_guaranteed', channels: ['display'] } },
     });
-    assert.strictEqual(first.previous_state, 'none');
+    assert.strictEqual(first.message, 'Fixture seeded');
     // Reordered keys — canonical JSON should treat this as equivalent.
     const second = await controller.handleRaw({
       scenario: 'seed_product',
       params: { product_id: 'p1', fixture: { channels: ['display'], delivery_type: 'non_guaranteed' } },
     });
     assert.strictEqual(second.success, true);
-    assert.strictEqual(second.previous_state, 'existing');
-    assert.strictEqual(second.current_state, 'existing');
+    assert.strictEqual(second.message, 'Fixture re-seeded (equivalent)');
+    assert.strictEqual(second.previous_state, undefined);
     assert.strictEqual(adapterCalls, 2, 'adapter invoked on each call so its storage stays idempotent');
   });
 
@@ -200,7 +203,7 @@ describe('createComplyController — seed idempotency', () => {
       params: { creative_id: 'same-id', fixture: { status: 'approved' } },
     });
     assert.strictEqual(creativeResult.success, true);
-    assert.strictEqual(creativeResult.previous_state, 'none', 'creative with same id must be fresh');
+    assert.strictEqual(creativeResult.message, 'Fixture seeded', 'creative with same id must be fresh');
   });
 
   it('honors a caller-supplied seedCache for external scoping', async () => {
@@ -222,7 +225,7 @@ describe('createComplyController — seed idempotency', () => {
       scenario: 'seed_product',
       params: { product_id: 'p1', fixture: { v: 1 } },
     });
-    assert.strictEqual(result.previous_state, 'existing');
+    assert.strictEqual(result.message, 'Fixture re-seeded (equivalent)');
   });
 
   it('returns INVALID_PARAMS when a seed is missing its required id', async () => {
@@ -264,12 +267,12 @@ describe('createComplyController — seed idempotency', () => {
       scenario: 'seed_product',
       params: { product_id: 'p1' },
     });
-    assert.strictEqual(first.previous_state, 'none');
+    assert.strictEqual(first.message, 'Fixture seeded');
     const second = await controller.handleRaw({
       scenario: 'seed_product',
       params: { product_id: 'p1', fixture: {} },
     });
-    assert.strictEqual(second.previous_state, 'existing', 'omitted fixture and {} should be equivalent');
+    assert.strictEqual(second.message, 'Fixture re-seeded (equivalent)', 'omitted fixture and {} should be equivalent');
   });
 
   it('treats a cache that evicted between has() and get() as fresh', async () => {
@@ -294,7 +297,7 @@ describe('createComplyController — seed idempotency', () => {
     });
     assert.ok(hasCalled);
     assert.strictEqual(result.success, true);
-    assert.strictEqual(result.previous_state, 'none', 'evicted entry should seed fresh, not crash');
+    assert.strictEqual(result.message, 'Fixture seeded', 'evicted entry should seed fresh, not crash');
   });
 });
 
@@ -353,7 +356,7 @@ describe('createComplyController — seed cache cap', () => {
       params: { product_id: 'p1', fixture: { v: 1 } },
     });
     assert.strictEqual(replay.success, true);
-    assert.strictEqual(replay.previous_state, 'existing');
+    assert.strictEqual(replay.message, 'Fixture re-seeded (equivalent)');
   });
 });
 

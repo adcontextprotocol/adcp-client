@@ -84,6 +84,7 @@ export {
   TOOL_INPUT_SHAPE,
   CONTROLLER_SCENARIOS,
   SEED_SCENARIOS,
+  SEED_MESSAGES,
   SESSION_ENTRY_CAP,
   enforceMapCap,
   createSeedFixtureCache,
@@ -276,6 +277,9 @@ export type {
   WebhookAuthentication,
 } from './webhook-emitter';
 export type { SigningProvider } from '../signing/provider';
+
+export { createPinAndBindFetch, WEBHOOK_SSRF_POLICY, LOOPBACK_OK_WEBHOOK_SSRF_POLICY } from './pin-and-bind-fetch';
+export type { PinAndBindFetchOptions, DnsLookupAll } from './pin-and-bind-fetch';
 
 export { checkGovernance, governanceDeniedError } from './governance';
 export type {
