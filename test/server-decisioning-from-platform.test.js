@@ -419,8 +419,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
   it('createMediaBuyTask returns submitted envelope; background completes terminal state', async () => {
     let capturedTaskId;
     const platform = buildHitlPlatform({
-      createMediaBuyTask: async (taskId, req) => {
-        capturedTaskId = taskId;
+      createMediaBuyTask: async (req, ctx) => {
+        capturedTaskId = ctx.task.id;
         await new Promise(r => setTimeout(r, 30));
         return { media_buy_id: 'mb_final', status: 'active' };
       },
@@ -2174,7 +2174,7 @@ describe('validatePlatform', () => {
       sales: {
         getProducts: async () => ({ products: [] }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
-        createMediaBuyTask: async (_taskId, _req, _ctx) => ({ media_buy_id: 'mb_1' }),
+        createMediaBuyTask: async (_req, _ctx) => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),

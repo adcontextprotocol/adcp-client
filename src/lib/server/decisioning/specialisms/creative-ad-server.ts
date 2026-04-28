@@ -84,7 +84,7 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    * rows once review is complete. Use when your platform requires
    * mandatory pre-persist approval (brand-suitability, S&P).
    */
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   /**
    * Read creatives from the library. Filters + pagination. When

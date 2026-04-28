@@ -122,7 +122,7 @@ What the framework wires automatically when you call `createAdcpServerFromPlatfo
 
 1. Methods return `Promise<T>` directly — no `ok()` / `submitted()` / `rejected()` wrappers.
 2. `throw new AdcpError(code, opts)` for buyer-facing structured rejection.
-3. For HITL: implement `xxxTask(taskId, req, ctx)` instead of `xxx(req, ctx)`. Pick exactly one per pair (`createMediaBuy` OR `createMediaBuyTask`); `validatePlatform()` rejects defining both.
+3. For HITL: implement `xxxTask(req, ctx)` instead of `xxx(req, ctx)` — same signature, framework supplies `ctx.task: { id, update, heartbeat }` for the task-side affordances. Pick exactly one per pair (`createMediaBuy` OR `createMediaBuyTask`); `validatePlatform()` rejects defining both.
 
 ## Three async patterns
 
@@ -176,14 +176,17 @@ if (errors.length > 0) {
 
 ### 3. HITL — implement the `*Task` variant
 
-For tools whose wire response unions define a `Submitted` arm (today: `create_media_buy`, `sync_creatives`), adopters with human-in-the-loop workflows implement the `*Task` variant instead of the sync one. The framework allocates `taskId` BEFORE invoking your method, returns the spec-defined submitted envelope to the buyer immediately, and runs your `*Task` method in the background. Your method's return value becomes the task's terminal artifact; `throw new AdcpError(...)` becomes the terminal error.
+For tools whose wire response unions define a `Submitted` arm (today: `create_media_buy`, `sync_creatives`), adopters with human-in-the-loop workflows implement the `*Task` variant instead of the sync one. Same signature as the sync variant — `(req, ctx)` — but the framework supplies `ctx.task` carrying the framework-issued `task_id` and task-side affordances (`update`, `heartbeat`). The framework returns the spec-defined submitted envelope to the buyer immediately, then runs your `*Task` method in the background. Your method's return value becomes the task's terminal artifact; `throw new AdcpError(...)` becomes the terminal error.
 
 ```ts
 sales: SalesPlatform<MyMeta> = {
   // ... other methods ...
-  createMediaBuyTask: async (taskId, req, ctx) => {
+  createMediaBuyTask: async (req, ctx) => {
     // Persist the task_id on your side first, before waiting on a human:
-    await this.queueForReview({ taskId, request: req });
+    await this.queueForReview({ taskId: ctx.task.id, request: req });
+
+    // Optional: push a status message visible to the buyer's polling.
+    await ctx.task.update({ message: 'Awaiting trafficker review...' });
 
     // Then await the operator. Hours-to-days are fine — buyer received
     // the submitted envelope already and polls / receives webhook.
@@ -240,15 +243,16 @@ The right answer is to **always declare the HITL variant** (`createMediaBuyTask`
 ```ts
 sales: SalesPlatform = {
   // Always-HITL declaration — buyer always sees `submitted` first.
-  createMediaBuyTask: async (taskId, req, ctx) => {
+  createMediaBuyTask: async (req, ctx) => {
     // Fast path: pre-approved buyer + low-risk amount → resolve before
     // the buyer's polling tick lands.
     if (this.isFastPathEligible(req, ctx.account)) {
       return this.commitImmediately(req); // resolves task in <10ms
     }
     // Slow path: trafficker review queue (hours-to-days). Returns when
-    // the human acts.
-    return await this.waitForTrafficker(taskId, req);
+    // the human acts. ctx.task.id passes through to your queue so the
+    // approval workflow can stamp it on the platform-side pending record.
+    return await this.waitForTrafficker(ctx.task.id, req);
   },
   // ...
 };

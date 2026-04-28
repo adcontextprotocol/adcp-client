@@ -39,6 +39,65 @@ export interface RequestContext<TAccount = Account> {
 
   /** Async framework-mediated resolvers. */
   resolve: ResourceResolver;
+
+  /**
+   * Present only inside `*Task` HITL methods. Carries the framework-issued
+   * task id and task-side affordances (progress updates, heartbeats).
+   * `undefined` for sync methods.
+   */
+  task?: TaskHandle;
+}
+
+/**
+ * Task-side affordances available inside `*Task` HITL method bodies.
+ * Adopters call `update(...)` to push progress to subscribers without
+ * blocking on the terminal return; `id` is the framework-issued task id
+ * the framework already returned to the buyer in the `submitted` envelope.
+ *
+ * Adopters who need the buyer-visible task id (e.g., to persist alongside
+ * their own platform's pending-record id) read `ctx.task.id`; the body
+ * itself takes only `(req, ctx)`.
+ *
+ * Status: Preview / 6.0.
+ *
+ * @public
+ */
+export interface TaskHandle {
+  /** Framework-issued task identifier (`task_<UUIDv4>`). */
+  readonly id: string;
+
+  /**
+   * Push a progress update / status message to subscribers without
+   * resolving the task. Maps to the spec's `tasks-get-response.progress`
+   * and `message` fields. Optional — omit if the platform doesn't model
+   * intermediate states.
+   *
+   * v6.0: framework records the latest update on the task record so
+   * subsequent `tasks_get` reads return it. v6.1 will project to MCP
+   * Resources subscriptions.
+   */
+  update(progress: TaskProgress): Promise<void>;
+
+  /**
+   * Liveness signal for long-running tasks — bumps the task record's
+   * `updated_at` without changing status / message. Cheap to call from
+   * inside long-running adopter loops; helpful for SRE dashboards
+   * showing per-task heartbeat timing.
+   */
+  heartbeat(): Promise<void>;
+}
+
+export interface TaskProgress {
+  /** Status message — short human-readable phrase ("Trafficker reviewing..."). */
+  message?: string;
+  /** Completion percentage, 0–100. */
+  percentage?: number;
+  /** Current step number (1-based). */
+  step_number?: number;
+  /** Total steps in the operation. */
+  total_steps?: number;
+  /** Current step description. */
+  current_step?: string;
 }
 
 // ---------------------------------------------------------------------------

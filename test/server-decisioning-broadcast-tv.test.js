@@ -74,7 +74,7 @@ function makeBroadcastTvSeller({
         };
       },
 
-      createMediaBuyTask: async (_taskId, req) => {
+      createMediaBuyTask: async (req) => {
         const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
         if (totalBudget < 5000) {
           throw new AdcpError('BUDGET_TOO_LOW', {
@@ -115,7 +115,7 @@ function makeBroadcastTvSeller({
         return existing;
       },
 
-      syncCreativesTask: async (_taskId, creatives) => {
+      syncCreativesTask: async (creatives) => {
         await new Promise(r => setTimeout(r, config.standardsReviewMs));
         return creatives.map(c => {
           const id = c.creative_id ?? `cr_${Math.random()}`;

@@ -72,7 +72,7 @@ import type { AccountReference } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
-import { buildRequestContext } from './to-context';
+import { buildRequestContext, buildTaskHandle } from './to-context';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
 import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
@@ -1507,7 +1507,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              taskId => sales.createMediaBuyTask!(taskId, params, reqCtx)
+              taskId => sales.createMediaBuyTask!(
+                params,
+                { ...reqCtx, task: buildTaskHandle(taskRegistry, taskId) }
+              )
             );
           },
           r => r
@@ -1563,7 +1566,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              taskId => sales.syncCreativesTask!(taskId, creatives, reqCtx)
+              taskId => sales.syncCreativesTask!(
+                creatives,
+                { ...reqCtx, task: buildTaskHandle(taskRegistry, taskId) }
+              )
             );
           },
           r => r
@@ -1684,7 +1690,10 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              taskId => creative.syncCreativesTask!(taskId, creatives, reqCtx)
+              taskId => creative.syncCreativesTask!(
+                creatives,
+                { ...reqCtx, task: buildTaskHandle(taskRegistry, taskId) }
+              )
             );
           },
           r => r

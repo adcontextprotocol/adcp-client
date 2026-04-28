@@ -149,7 +149,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    * returns surface via `onTaskTransition` with
    * `errorCode: 'REGISTRY_WRITE_FAILED'` and skip webhook delivery.
    */
-  createMediaBuyTask?(taskId: string, req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
+  createMediaBuyTask?(req: CreateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<CreateMediaBuySuccess>;
 
   // ── update_media_buy: sync only (today) ─────────────────────────────
   // Spec defines a Submitted arm in `async-response-data.json`
@@ -182,7 +182,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    * registries cap row size at 4MB — return per-creative result rows
    * (not full creative bodies) to stay well under the cap.
    */
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 

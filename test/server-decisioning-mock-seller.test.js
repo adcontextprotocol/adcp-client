@@ -121,7 +121,7 @@ function makeSyncMockSeller({ floorCpm = 1.0 } = {}) {
 
 function makeHitlMockSeller({ floorCpm = 1.0, approvalDurationMs = 30 } = {}) {
   const platform = basePlatformShape({
-    createMediaBuyTask: async (taskId, req) => {
+    createMediaBuyTask: async (req) => {
       const errors = preflight(req, { floorCpm });
       if (errors.length > 0) {
         throw new AdcpError('INVALID_REQUEST', {

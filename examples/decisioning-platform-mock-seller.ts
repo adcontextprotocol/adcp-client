@@ -267,7 +267,7 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
      * return value becomes terminal `result`; thrown `AdcpError` becomes
      * terminal `error`.
      */
-    createMediaBuyTask: async (_taskId: string, req: CreateMediaBuyRequest): Promise<CreateMediaBuySuccess> => {
+    createMediaBuyTask: async (req: CreateMediaBuyRequest): Promise<CreateMediaBuySuccess> => {
       const errors = preflight(req, this.capabilities.config);
       if (errors.length > 0) rejectPreflight(errors);
 

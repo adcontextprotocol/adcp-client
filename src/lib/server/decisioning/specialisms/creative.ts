@@ -58,7 +58,7 @@ export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
   syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 
   /** HITL review (rare for templates; available when review is mandatory pre-persist). */
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ export interface CreativeGenerativePlatform<TMeta = Record<string, unknown>> {
   refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
   syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
-  syncCreativesTask?(taskId: string, creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
+  syncCreativesTask?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[]>;
 }
 
 // ---------------------------------------------------------------------------
