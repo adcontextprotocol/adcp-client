@@ -139,7 +139,16 @@ export interface WebhookEmitterOptions {
    * would report as a conformance violation of the publisher).
    */
   generateIdempotencyKey?: () => string;
-  /** Override the HTTP client (tests, proxies, SSRF-wrappers). */
+  /**
+   * Override the HTTP client. Defaults to `globalThis.fetch`. Production
+   * deployments SHOULD pass `createPinAndBindFetch()` to defeat DNS-rebinding
+   * attacks against buyer-supplied `push_notification_config.url` values —
+   * see `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense. The default
+   * will become `createPinAndBindFetch()` in v6 (major). Today's default is
+   * `globalThis.fetch` because pin-and-bind blocks loopback http URLs that
+   * the storyboard runner uses for testing webhook flows; flipping the
+   * default would break in-process storyboard runs without a migration.
+   */
   fetch?: typeof fetch;
   /** Default `User-Agent` header. */
   userAgent?: string;
@@ -298,9 +307,14 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
           terminal = isTerminalStatus(status, response.wwwAuthenticate);
           error = `HTTP ${status}${response.wwwAuthenticate ? ` (${response.wwwAuthenticate})` : ''}`;
         } catch (err) {
-          error = err instanceof Error ? err.message : String(err);
+          error = formatTransportError(err);
           // Network / transport errors are retryable — the delivery didn't
           // reach the receiver, so no risk of double-processing.
+          // Pin-and-bind SSRF blocks are themselves terminal: the URL
+          // (or its DNS resolution) violates policy and won't change on retry.
+          if (errorContainsCode(err, 'EADCP_SSRF_BLOCKED')) {
+            terminal = true;
+          }
         }
 
         if (error) errors.push(`attempt ${attempt}: ${error}`);
@@ -492,4 +506,35 @@ function defaultSleep(ms: number): Promise<void> {
     const t = setTimeout(r, ms);
     t.unref?.();
   });
+}
+
+/**
+ * Format a transport-layer error for `result.errors[]`. Walks `cause` chains
+ * (undici wraps the connector failure under a generic "fetch failed") so
+ * operators see the actual rule that fired (e.g. SSRF policy block) instead
+ * of an opaque outer message.
+ */
+function formatTransportError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts: string[] = [];
+  let cur: Error | undefined = err;
+  let depth = 0;
+  while (cur && depth < 5) {
+    const code = (cur as NodeJS.ErrnoException).code;
+    parts.push(code ? `${code}: ${cur.message}` : cur.message);
+    cur = cur.cause instanceof Error ? cur.cause : undefined;
+    depth++;
+  }
+  return parts.join(' — ');
+}
+
+function errorContainsCode(err: unknown, code: string): boolean {
+  let cur: unknown = err;
+  let depth = 0;
+  while (cur instanceof Error && depth < 5) {
+    if ((cur as NodeJS.ErrnoException).code === code) return true;
+    cur = (cur as { cause?: unknown }).cause;
+    depth++;
+  }
+  return false;
 }
