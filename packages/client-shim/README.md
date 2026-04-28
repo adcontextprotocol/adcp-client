@@ -24,7 +24,7 @@ All subpaths (`/client`, `/server`, `/compliance`, `/testing`, `/conformance`, `
 
 ## Versioning
 
-`@adcp/client` and `@adcp/sdk` are version-linked via the repo's changeset config — both packages release at the same number on every cut, and the shim's `peerDependencies."@adcp/sdk"` covers the published range so npm can dedupe consumers' trees.
+`@adcp/client` and `@adcp/sdk` are version-linked via the repo's changeset config — both packages release at the same number on every cut, and the shim's `dependencies."@adcp/sdk"` covers the published range so npm dedupes consumers' trees that pull both names.
 
 ## Troubleshooting
 
