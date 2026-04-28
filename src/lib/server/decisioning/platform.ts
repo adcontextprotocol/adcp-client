@@ -10,7 +10,7 @@
  * @public
  */
 
-import type { DecisioningCapabilities } from './capabilities';
+import type { DecisioningCapabilities, BrandCapabilities } from './capabilities';
 import type { Account, AccountStore } from './account';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform } from './specialisms/sales';
@@ -208,3 +208,38 @@ export type RequiredPlatformsFor<
  * doesn't yet enforce this. Wiring lands in a follow-up PR with the
  * framework refactor.
  */
+
+/**
+ * Compile-time mapping from a claimed specialism to the capability
+ * blocks the framework requires on `DecisioningCapabilities`. Sister
+ * type to `RequiredPlatformsFor<S>` — that one constrains the per-
+ * specialism platform interfaces; this one constrains capability-block
+ * declarations on `capabilities.*`.
+ *
+ * Mappings populated conservatively in v1.0:
+ *
+ *   - `'brand-rights'` → `{ brand: BrandCapabilities }`. Adopters
+ *     claiming brand-rights MUST declare `capabilities.brand`. The
+ *     framework auto-derives `rights: true` from the
+ *     `BrandRightsPlatform` impl, but adopters still need to declare
+ *     the block (even as `{}`) so `right_types`, `available_uses`,
+ *     etc. land coherently in `get_adcp_capabilities`.
+ *
+ * Other specialisms have no required capability blocks today —
+ * `audience_targeting` is recommended for `audience-sync` adopters but
+ * not enforced (some sync platforms accept anonymous IDs only and
+ * legitimately have no `supported_identifier_types` to declare).
+ *
+ * The `& Record<string, never>` fallthrough means specialisms not
+ * mapped here add no constraint — adopters can claim them without
+ * declaring extra capability blocks.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export type RequiredCapabilitiesFor<S extends AdCPSpecialism> = S extends 'brand-rights'
+  ? { capabilities: { brand: BrandCapabilities } }
+  : {};
+// `{}` (not `Record<string, never>`) is the right "no extra requirements"
+// fallthrough: it intersects to identity (`P & {} = P`) for specialisms
+// without capability constraints. `Record<string, never>` would force the
+// platform to have NO extra properties, which would reject every real
+// platform impl.

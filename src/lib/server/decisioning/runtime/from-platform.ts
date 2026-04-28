@@ -62,7 +62,7 @@ import {
   type BrandRightsHandlers,
   type HandlerContext,
 } from '../../create-adcp-server';
-import type { DecisioningPlatform, RequiredPlatformsFor } from '../platform';
+import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { Account, ResolvedAuthInfo } from '../account';
 import { AccountNotFoundError, toWireAccount } from '../account';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
@@ -414,7 +414,9 @@ export interface DecisioningAdcpServer extends AdcpServer {
 // which is a needless friction point — adopter metadata is opaque to the
 // framework, so we don't need to constrain it here.
 export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, any>>(
-  platform: P & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>,
+  platform: P
+    & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>
+    & RequiredCapabilitiesFor<P['capabilities']['specialisms'][number]>,
   opts: CreateAdcpServerFromPlatformOptions
 ): DecisioningAdcpServer {
   validatePlatform(platform);
@@ -527,9 +529,30 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       },
     }),
   };
-  const projectedCapabilitiesConfig = hasMediaBuyProjection
-    ? { overrides: { media_buy: mediaBuyOverrides } }
-    : undefined;
+
+  // Brand-protocol capability projection. Adopters who declare
+  // `capabilities.brand` get the block projected via `overrides.brand`.
+  // When `BrandRightsPlatform` is supplied, `rights: true` is auto-
+  // derived (the framework knows the wire tools are available); adopter-
+  // declared `right_types` / `available_uses` / `generation_providers` /
+  // `description` ride the deep-merge.
+  const adopterBrand = platform.capabilities.brand;
+  const hasBrandRightsImpl = platform.brandRights != null;
+  const hasBrandProjection = adopterBrand != null || hasBrandRightsImpl;
+  const brandOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['brand']>> = {
+    ...(hasBrandRightsImpl && { rights: true }),
+    ...adopterBrand,
+  };
+
+  const projectedCapabilitiesConfig =
+    hasMediaBuyProjection || hasBrandProjection
+      ? {
+          overrides: {
+            ...(hasMediaBuyProjection && { media_buy: mediaBuyOverrides }),
+            ...(hasBrandProjection && { brand: brandOverrides }),
+          },
+        }
+      : undefined;
 
   const config: AdcpServerConfig<Account> = {
     ...opts,

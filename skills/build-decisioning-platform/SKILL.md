@@ -654,6 +654,25 @@ class MyBrandRightsAgent implements DecisioningPlatform {
 }
 ```
 
+**Capability declaration is required.** Set `capabilities.brand: {}` (empty block opts in) to declare brand-protocol support — the framework auto-derives `rights: true` from the `BrandRightsPlatform` impl, and adopters declare `right_types`, `available_uses`, `generation_providers`, `description` for richer discovery:
+
+```ts
+capabilities = {
+  specialisms: ['brand-rights'] as const,
+  // ...
+  brand: {
+    right_types: ['talent', 'brand_ip'],
+    available_uses: ['endorsement', 'likeness'],
+    generation_providers: ['midjourney', 'elevenlabs'],
+    description: 'Acme Brand-Rights Agent',
+  },
+};
+```
+
+`RequiredCapabilitiesFor<'brand-rights'>` enforces this at compile-time — claiming `brand-rights` without `capabilities.brand` is a TypeScript error at the `createAdcpServerFromPlatform` call site.
+
+**No discovery/search verb in v6.0.** `getBrandIdentity` resolves a `brand_id` into the identity record; it is NOT a search/discovery surface. Real IP desks often need search ("does this league hold rights to this player?") before identity resolves. Until upstream ships `search_brands` ([adcp#3480](https://github.com/adcontextprotocol/adcp/issues/3480)), the workaround is to use `getRights({ query, uses })` for free-text discovery and project unique `brand_id` values out of the result rows — adopters then call `getBrandIdentity({ brand_id })` per unique brand to fetch full identity records.
+
 **`acquire_rights` async delivery is webhook-only, not polling.** Unlike `create_media_buy` / `sync_creatives` which use `ctx.handoffToTask(fn)` for HITL, `acquire_rights` has its own three wire-spec arms (`Acquired` / `PendingApproval` / `Rejected`). When you return `PendingApproval`, the buyer's `push_notification_config.url` receives the eventual `Acquired` or `Rejected` outcome — the spec does NOT define a polling tool for this surface. Don't reach for `tasks_get` here.
 
 **Two surfaces still on the merge seam (deferred to v6.1):** `update_rights` and `creative_approval` are spec-published but not yet in `AdcpToolMap`, so they don't have framework dispatch infrastructure. Wire them via `opts.brandRights.{updateRights,creativeApproval}` until v6.1:

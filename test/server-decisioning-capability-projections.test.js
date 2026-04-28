@@ -149,6 +149,63 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.notStrictEqual(features.content_standards, true);
   });
 
+  it('brand-protocol capability block projects via overrides.brand', async () => {
+    // Brand-rights adopters declare capabilities.brand; the framework
+    // projects via the overrides.brand deep-merge seam. When
+    // BrandRightsPlatform is supplied, rights: true is auto-derived.
+    const platform = {
+      capabilities: {
+        specialisms: ['brand-rights'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+        brand: {
+          right_types: ['talent', 'brand_ip'],
+          available_uses: ['endorsement', 'likeness'],
+          generation_providers: ['midjourney', 'elevenlabs'],
+          description: 'Acme Brand-Rights Agent',
+        },
+      },
+      statusMappers: {},
+      accounts: {
+        resolve: async () => ({
+          id: 'br_acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+      brandRights: {
+        getBrandIdentity: async () => ({
+          brand_id: 'b1',
+          house: { domain: 'acme.example.com', name: 'Acme' },
+          names: [{ en_US: 'Acme' }],
+        }),
+        getRights: async () => ({ rights: [] }),
+        acquireRights: async req => ({
+          rights_id: req.rights_id,
+          status: 'rejected',
+          brand_id: 'b1',
+          reason: 'no rights',
+        }),
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'br-host', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const brand = result.structuredContent?.brand;
+    assert.ok(brand, 'brand block projected');
+    assert.strictEqual(brand.rights, true, 'rights: true auto-derived from BrandRightsPlatform');
+    assert.deepStrictEqual(brand.right_types, ['talent', 'brand_ip']);
+    assert.deepStrictEqual(brand.available_uses, ['endorsement', 'likeness']);
+    assert.deepStrictEqual(brand.generation_providers, ['midjourney', 'elevenlabs']);
+    assert.strictEqual(brand.description, 'Acme Brand-Rights Agent');
+  });
+
   it('omitting all three leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
     const server = createAdcpServerFromPlatform(basePlatform(), {
       name: 'h',

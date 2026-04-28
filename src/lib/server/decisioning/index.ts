@@ -80,7 +80,7 @@ export type {
 } from './context';
 
 // Top-level platform + compile-time capability enforcement
-export type { DecisioningPlatform, RequiredPlatformsFor } from './platform';
+export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
 
 // Specialism interfaces (v1.0)
 export type {

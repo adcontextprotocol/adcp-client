@@ -24,7 +24,7 @@
  * @public
  */
 
-import type { DecisioningPlatform, RequiredPlatformsFor } from './platform';
+import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
 import type { DecisioningAdcpServer, CreateAdcpServerFromPlatformOptions } from './runtime/from-platform';
 import { createAdcpServerFromPlatform } from './runtime/from-platform';
 
@@ -54,7 +54,9 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
   /** Signing keypair for RFC 9421 response signing. */
   signingKey: TenantSigningKey;
   /** The DecisioningPlatform impl for this tenant. */
-  platform: P & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>;
+  platform: P
+    & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>
+    & RequiredCapabilitiesFor<P['capabilities']['specialisms'][number]>;
   /** Display label for admin / logs. Optional. */
   label?: string;
   /** Per-tenant `createAdcpServerFromPlatform` options override. */

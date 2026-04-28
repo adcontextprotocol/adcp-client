@@ -91,6 +91,19 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   content_standards?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['content_standards']>;
 
   /**
+   * Brand-protocol capabilities. Projected onto the wire `brand` block of
+   * `get_adcp_capabilities` (`brand: { rights, right_types, available_uses,
+   * generation_providers, description }`). The framework auto-derives
+   * `rights: true` when `BrandRightsPlatform` is supplied; adopters
+   * declare the rest (right_types they license, RightUses they support,
+   * generation providers they issue credentials for).
+   *
+   * REQUIRED when claiming the `'brand-rights'` specialism — enforced at
+   * compile-time via `RequiredCapabilitiesFor<S>`.
+   */
+  brand?: BrandCapabilities;
+
+  /**
    * Compliance-testing capabilities. The presence of this block declares
    * the agent supports deterministic state-machine testing via the
    * `comply_test_controller` wire tool. Omit entirely if the agent
@@ -234,6 +247,18 @@ export interface ReportingCapabilities {
     'geo' | 'device_type' | 'device_platform' | 'audience' | 'placement' | 'creative' | 'keyword' | 'catalog_item'
   >;
 }
+
+/**
+ * Brand-protocol capabilities — projected onto the wire `brand` block of
+ * `get_adcp_capabilities` via the framework's `overrides.brand` deep-merge
+ * seam. Adopters who also implement `BrandRightsPlatform` get
+ * `rights: true` auto-derived; the other four fields (`right_types`,
+ * `available_uses`, `generation_providers`, `description`) are
+ * adopter-declared.
+ *
+ * Wire spec: `protocol/get-adcp-capabilities-response.json#brand`.
+ */
+export type BrandCapabilities = NonNullable<NonNullable<GetAdCPCapabilitiesResponse['brand']>>;
 
 /**
  * Compliance-testing capabilities — projected onto the wire-side

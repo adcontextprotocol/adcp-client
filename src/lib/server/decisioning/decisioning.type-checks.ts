@@ -11,6 +11,7 @@
 import type {
   DecisioningPlatform,
   RequiredPlatformsFor,
+  RequiredCapabilitiesFor,
   Account,
   AccountStore,
   DecisioningCapabilities,
@@ -91,6 +92,19 @@ function _required_platforms_rejects_typo() {
   // @ts-expect-error — 'sales-non-guarenteed' is not a known AdCPSpecialism (typo for 'sales-non-guaranteed').
   type _typo = RequiredPlatformsFor<'sales-non-guarenteed'>;
 }
+
+// ── RequiredCapabilitiesFor enforces specialism → capability-block mapping ──
+
+// Positive: claiming brand-rights requires capabilities.brand block.
+type _ok_brand_rights_requires_brand =
+  RequiredCapabilitiesFor<'brand-rights'> extends { capabilities: { brand: unknown } } ? true : false;
+const _check_brand_rights_requires_brand: _ok_brand_rights_requires_brand = true;
+
+// Negative: specialisms NOT in the required-cap mapping return `{}` —
+// no extra constraint, no required capability blocks.
+type _ok_sales_no_required_caps =
+  Record<string, never> extends RequiredCapabilitiesFor<'sales-non-guaranteed'> ? true : false;
+const _check_sales_no_required_caps: _ok_sales_no_required_caps = true;
 
 // ── Account is generic over TMeta ─────────────────────────────────────
 
@@ -215,4 +229,6 @@ export const _references = [
   _targeting_capabilities_rejects_unknown_geo_metro,
   _new_codes_compile,
   _check_sales_required,
+  _check_brand_rights_requires_brand,
+  _check_sales_no_required_caps,
 ] as const;
