@@ -16,6 +16,7 @@ Public API:
 
 - `createPinAndBindFetch(options?: PinAndBindFetchOptions): typeof fetch` — re-exported from `@adcp/client/server`.
 - `WEBHOOK_SSRF_POLICY` — the default strict policy (https-only, all common private ranges denied, IP literals allowed subject to CIDR rules).
+- `LOOPBACK_OK_WEBHOOK_SSRF_POLICY` — pre-built relaxation that allows http and IPv4/IPv6 loopback for storyboard / in-process tests; every other deny range is preserved. Safer than swapping in `globalThis.fetch` as a test escape hatch because the rest of the SSRF policy still applies.
 - `PinAndBindFetchOptions` — accepts a `policy` override and a `lookup` override (for tests / custom resolvers).
 
 See `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense for usage and the v6 default-flip migration plan.

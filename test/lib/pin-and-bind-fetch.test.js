@@ -13,7 +13,11 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const { createPinAndBindFetch, WEBHOOK_SSRF_POLICY } = require('../../dist/lib/server/pin-and-bind-fetch.js');
+const {
+  createPinAndBindFetch,
+  WEBHOOK_SSRF_POLICY,
+  LOOPBACK_OK_WEBHOOK_SSRF_POLICY,
+} = require('../../dist/lib/server/pin-and-bind-fetch.js');
 
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -138,27 +142,14 @@ describe('createPinAndBindFetch: DNS rebinding defense', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('createPinAndBindFetch: scheme + hostname guards', () => {
-  test('blocks http:// (default policy is https-only for signed webhooks)', async () => {
-    // Resolution never runs — undici should have rejected at the URL stage,
-    // but our policy is enforced inside lookup. To exercise the scheme
-    // path we need a public IP so resolution succeeds; the scheme deny
-    // check fires earlier in the chain. http URL fails at fetch parsing
-    // (in undici) or at the connect-allowed check; either way, no payload.
+  test('blocks http:// at the synchronous wrapper pre-check', async () => {
+    // The synchronous URL pre-check inside the wrapper enforces scheme
+    // BEFORE any network or lookup work happens, so this must surface as
+    // EADCP_SSRF_BLOCKED with the schemes_denied rule.
     const fetch = createPinAndBindFetch({
       lookup: stubLookup([{ address: '203.0.113.10', family: 4 }]),
     });
-    // Call against http — we expect rejection. The exact error code may
-    // be undici's connect failure rather than EADCP_SSRF_BLOCKED, since
-    // scheme is enforced in synchronous policy compilation. Accept any
-    // failure; the assertion is "did not deliver".
-    let delivered = false;
-    try {
-      await fetch('http://allowed.example/leak');
-      delivered = true;
-    } catch {
-      // expected
-    }
-    assert.strictEqual(delivered, false, 'http:// must not deliver under default webhook policy');
+    await expectSsrfBlocked(fetch('http://allowed.example/leak'));
   });
 
   test('blocks resolution returning empty address list', async () => {
@@ -197,6 +188,37 @@ describe('createPinAndBindFetch: policy override', () => {
         `expected non-SSRF error after policy relaxed; got ${err?.code}: ${err?.message}`
       );
     }
+  });
+
+  test('LOOPBACK_OK_WEBHOOK_SSRF_POLICY allows http loopback (storyboard escape hatch)', async () => {
+    // Storyboard `createWebhookReceiver` listens on http://127.0.0.1:port.
+    // The loopback-OK preset must permit both the http scheme and the
+    // 127.0.0.0/8 address family so adopters can pin-and-bind in production
+    // without breaking in-process storyboard runs.
+    const fetch = createPinAndBindFetch({
+      policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY,
+      lookup: stubLookup([{ address: '127.0.0.1', family: 4 }]),
+    });
+    try {
+      await fetch('http://localhost:9/path');
+    } catch (err) {
+      assert.ok(
+        !ssrfErrorThrown(err),
+        `loopback-OK preset must not raise SSRF; got ${err?.code}: ${err?.message}`
+      );
+    }
+  });
+
+  test('LOOPBACK_OK_WEBHOOK_SSRF_POLICY still blocks cloud metadata (regression guard)', async () => {
+    // The preset relaxes ONLY loopback. Every other deny range — link-local,
+    // RFC 1918, CGNAT, IPv6 ULA, metadata hosts — must still fire. A copy
+    // of the preset that accidentally drops 169.254.0.0/16 would silently
+    // re-open the original DNS-rebinding hole.
+    const fetch = createPinAndBindFetch({
+      policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY,
+      lookup: stubLookup([{ address: '169.254.169.254', family: 4 }]),
+    });
+    await expectSsrfBlocked(fetch('https://rebind.attacker.test/leak'));
   });
 
   test('default WEBHOOK_SSRF_POLICY is the strict baseline (verify constant)', () => {

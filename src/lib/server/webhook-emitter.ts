@@ -143,8 +143,8 @@ export interface WebhookEmitterOptions {
    * Override the HTTP client. Defaults to `globalThis.fetch`. Production
    * deployments SHOULD pass `createPinAndBindFetch()` to defeat DNS-rebinding
    * attacks against buyer-supplied `push_notification_config.url` values —
-   * see `docs/guides/SECURITY.md` § Webhook SSRF defense. The default will
-   * become `createPinAndBindFetch()` in v6 (major). Today's default is
+   * see `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense. The default
+   * will become `createPinAndBindFetch()` in v6 (major). Today's default is
    * `globalThis.fetch` because pin-and-bind blocks loopback http URLs that
    * the storyboard runner uses for testing webhook flows; flipping the
    * default would break in-process storyboard runs without a migration.

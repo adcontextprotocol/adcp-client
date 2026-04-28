@@ -41,6 +41,12 @@ import type { SsrfPolicy } from '../substitution/types';
  * (e.g. `https://203.0.113.10/cb`) as long as the IP is not in a denied
  * CIDR range. Schemes restricted to https; signed webhooks SHOULD be
  * delivered over TLS.
+ *
+ * For storyboard / in-process tests where the receiver runs on
+ * `http://127.0.0.1:port`, use {@link LOOPBACK_OK_WEBHOOK_SSRF_POLICY}
+ * instead. That preset relaxes only the loopback + http rules and keeps
+ * every other deny range — adopters get most of the SSRF protection
+ * during tests without disabling pin-and-bind entirely.
  */
 export const WEBHOOK_SSRF_POLICY: SsrfPolicy = Object.freeze({
   schemes_allowed: Object.freeze(['https']),
@@ -60,6 +66,47 @@ export const WEBHOOK_SSRF_POLICY: SsrfPolicy = Object.freeze({
   hosts_denied_ipv6_cidrs: Object.freeze([
     '::1/128',
     '::/128',
+    '::ffff:0:0/96',
+    '64:ff9b::/96',
+    'fc00::/7',
+    'fe80::/10',
+    'ff00::/8',
+  ]),
+  hosts_denied_metadata: Object.freeze([
+    'metadata.google.internal',
+    'metadata',
+    'metadata.packet.net',
+    'fd00:ec2::254',
+  ]),
+  host_literal_policy: 'allow',
+}) as SsrfPolicy;
+
+/**
+ * Pin-and-bind policy that allows http URLs and IPv4/IPv6 loopback so
+ * adopters can enable pin-and-bind for production webhook delivery while
+ * keeping storyboard / in-process tests working — `createWebhookReceiver`
+ * listens on `http://127.0.0.1:port`. Every other private CIDR, metadata
+ * host, and link-local range is still denied, so loopback is the only
+ * relaxation. Pass to `createPinAndBindFetch({ policy })` from your test
+ * fixture or storyboard runner harness; do NOT use in production.
+ */
+export const LOOPBACK_OK_WEBHOOK_SSRF_POLICY: SsrfPolicy = Object.freeze({
+  schemes_allowed: Object.freeze(['http', 'https']),
+  schemes_denied: Object.freeze(['file', 'gopher', 'ftp', 'ftps', 'data', 'javascript', 'about', 'ws', 'wss']),
+  hosts_denied_ipv4_cidrs: Object.freeze([
+    '0.0.0.0/8',
+    '10.0.0.0/8',
+    '100.64.0.0/10',
+    // 127.0.0.0/8 omitted — loopback allowed for tests.
+    '169.254.0.0/16',
+    '172.16.0.0/12',
+    '192.0.0.0/24',
+    '192.168.0.0/16',
+    '224.0.0.0/4',
+    '240.0.0.0/4',
+  ]),
+  hosts_denied_ipv6_cidrs: Object.freeze([
+    // ::1/128 and ::/128 omitted — IPv6 loopback allowed for tests.
     '::ffff:0:0/96',
     '64:ff9b::/96',
     'fc00::/7',
@@ -118,9 +165,16 @@ const DEFAULT_LOOKUP_ALL: DnsLookupAll = (hostname, options, callback) => {
  * Build a `fetch` that pins outbound connections to the IPs the SSRF policy
  * allows, defeating DNS-rebinding attacks against per-attempt DNS resolution.
  *
- * Use as the `fetch` argument to {@link createWebhookEmitter} (it's the
- * default when none is supplied). Adopters with an egress proxy or a custom
- * dispatcher already in place can keep their existing fetch.
+ * Pass as the `fetch` argument to `createWebhookEmitter` /
+ * `createAdcpServer({ webhooks: { fetch } })` to enable rebinding protection
+ * on outbound webhook delivery. Recommended for production. The default
+ * `fetch` for `createWebhookEmitter` remains `globalThis.fetch` until v6 —
+ * see `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense for the
+ * migration plan and {@link LOOPBACK_OK_WEBHOOK_SSRF_POLICY} for storyboard
+ * tests that need loopback http delivery.
+ *
+ * Construct once per emitter and reuse — each call instantiates a fresh
+ * `undici.Agent` with its own connection pool.
  *
  * @example
  * ```ts
@@ -128,8 +182,6 @@ const DEFAULT_LOOKUP_ALL: DnsLookupAll = (hostname, options, callback) => {
  *
  * const emitter = createWebhookEmitter({
  *   signerKey: webhookKey,
- *   // Explicit — same as the default. Pass a custom fetch to opt out of
- *   // pin-and-bind (e.g. when delivering to an egress proxy).
  *   fetch: createPinAndBindFetch(),
  * });
  * ```

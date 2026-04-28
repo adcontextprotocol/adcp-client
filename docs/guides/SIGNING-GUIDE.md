@@ -496,7 +496,18 @@ createAdcpServer({
 });
 ```
 
-The default in 5.x is still `globalThis.fetch` because pin-and-bind blocks loopback http URLs (the storyboard runner's `createWebhookReceiver` listens on `http://127.0.0.1:port`); flipping the default would break in-process storyboard runs without a migration. In v6 the default flips to `createPinAndBindFetch()` and storyboard tests will need to pass `fetch: globalThis.fetch` explicitly, or relax the policy via `createPinAndBindFetch({ policy })`.
+The default in 5.x is still `globalThis.fetch` because pin-and-bind blocks loopback http URLs (the storyboard runner's `createWebhookReceiver` listens on `http://127.0.0.1:port`); flipping the default would break in-process storyboard runs without a migration. In v6 the default flips to `createPinAndBindFetch()`. Adopters whose tests run against the storyboard runner should pass `LOOPBACK_OK_WEBHOOK_SSRF_POLICY` for those runs — it relaxes only the loopback + http rules and keeps every other CIDR / metadata-host deny in place:
+
+```typescript
+import { createPinAndBindFetch, LOOPBACK_OK_WEBHOOK_SSRF_POLICY } from '@adcp/client/server';
+
+const isStoryboardRun = process.env.ADCP_STORYBOARD === '1';
+const webhookFetch = createPinAndBindFetch({
+  policy: isStoryboardRun ? LOOPBACK_OK_WEBHOOK_SSRF_POLICY : undefined,
+});
+```
+
+`fetch: globalThis.fetch` is also valid as an escape hatch but disables every CIDR + scheme rule, not just loopback — `LOOPBACK_OK_WEBHOOK_SSRF_POLICY` is the safer override.
 
 For adopters running behind an egress proxy that already enforces the SSRF policy at the network boundary, keep your existing `fetch`; pin-and-bind is redundant in that case.
 
